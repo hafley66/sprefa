@@ -10,6 +10,7 @@
 :- use_module(library(gensym), [gensym/2]).
 :- use_module(library(lists), [max_list/2]).
 :- use_module(library(ordsets), [ord_subtract/3]).
+:- use_module(library(pairs), [group_pairs_by_key/2]).
 :- use_module(library(ugraphs),
               [ neighbors/3,
                 transitive_closure/2,
@@ -246,9 +247,16 @@ functional_key_conflict(Relation, Positions, Rows,
                                    functional_key_conflict(
                                        Relation, Positions, Values,
                                        Left, Right))) :-
-    ordered_row_pair(Rows, Left, Right),
-    key_values(Left, Positions, Values),
-    key_values(Right, Positions, Values).
+    keyed_rows(Rows, Positions, KeyedRows0),
+    keysort(KeyedRows0, KeyedRows),
+    group_pairs_by_key(KeyedRows, KeyGroups),
+    member(Values-ConflictingRows, KeyGroups),
+    ordered_row_pair(ConflictingRows, Left, Right).
+
+keyed_rows([], _, []).
+keyed_rows([Row | Rows], Positions, [Values-Row | KeyedRows]) :-
+    key_values(Row, Positions, Values),
+    keyed_rows(Rows, Positions, KeyedRows).
 
 ordered_row_pair([Left | Rows], Left, Right) :- member(Right, Rows).
 ordered_row_pair([_ | Rows], Left, Right) :- ordered_row_pair(Rows, Left, Right).
