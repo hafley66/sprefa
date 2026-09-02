@@ -23,7 +23,7 @@ pub use crate::schema::SCHEMA;
 pub use crate::scip_rows::{flatten_scip, scip_file_edges};
 use crate::shape::{content_id_of, Strings};
 use crate::source::ExtractOutput;
-use crate::tsi::types::{CoverageOut, Method, RunOut, WitnessOut, PROTOCOL_VERSION};
+use crate::tsi::types::{Arg as TsiArg, CoverageOut, Method, RunOut, WitnessOut, PROTOCOL_VERSION};
 use crate::types::{CfgF, DataF};
 pub use crate::types::{FlatFact, SpanOut};
 
@@ -64,15 +64,31 @@ pub fn flatten_each<E>(
     }
     let mut facts = 0u64;
     let mut witnesses: Vec<WitnessOut> = Vec::new();
+    // A TSI `fact` row carries its ordinal in a required field rather than the
+    // optional `fact` slot, so it takes the same counter through its own arm.
+    let digest = witness.map(|run| run.scope.first().map_or("", String::as_str));
     let outcome = {
         let run = witness.map(|run| run.run);
         let mut numbered = 0u32;
         let push = &mut |mut fact: FlatFact| {
             facts += 1;
             if let Some(run) = run {
-                if let Some(slot) = fact.fact_slot() {
-                    numbered += 1;
-                    *slot = Some(numbered);
+                let slot = match &mut fact {
+                    FlatFact::Fact(row) => {
+                        numbered += 1;
+                        row.fact = numbered;
+                        true
+                    }
+                    other => match other.fact_slot() {
+                        Some(slot) => {
+                            numbered += 1;
+                            *slot = Some(numbered);
+                            true
+                        }
+                        None => false,
+                    },
+                };
+                if slot {
                     witnesses.push(WitnessOut {
                         fact: numbered,
                         run,
@@ -87,7 +103,7 @@ pub fn flatten_each<E>(
                 flatten_cst(bundle, &out.strings, push)?;
             }
             if let Some(bundle) = &out.types {
-                flatten_type(bundle, &out.strings, push)?;
+                flatten_type(bundle, &out.strings, digest, push)?;
             }
             if let Some(bundle) = &out.call {
                 flatten_call(bundle, &out.strings, push)?;
@@ -110,7 +126,7 @@ pub fn flatten_each<E>(
         for relation in covered_relations(out) {
             push(FlatFact::Coverage(CoverageOut {
                 run: run.run,
-                relation: relation.to_string(),
+                relation,
                 complete: false,
             }))?;
         }
@@ -120,7 +136,7 @@ pub fn flatten_each<E>(
 
 /// The relations a syntax run touched, in walk order. A parse enumerates no
 /// relation exhaustively, so every row it produces here is `partial`.
-fn covered_relations(out: &ExtractOutput) -> Vec<&'static str> {
+fn covered_relations(out: &ExtractOutput) -> Vec<String> {
     let present = [
         (out.cst.is_some(), "extract.cst"),
         (out.types.is_some(), "extract.type"),
@@ -128,10 +144,20 @@ fn covered_relations(out: &ExtractOutput) -> Vec<&'static str> {
         (out.df.is_some(), "extract.df"),
         (out.data.is_some(), "extract.data"),
     ];
-    present
+    let mut named: Vec<String> = present
         .into_iter()
-        .filter_map(|(seen, relation)| seen.then_some(relation))
-        .collect()
+        .filter_map(|(seen, relation)| seen.then(|| relation.to_string()))
+        .collect();
+    // A TSI relation the pass never emitted gets no row: coverage names what
+    // the run touched, and an absent relation is not a partial claim.
+    if let Some(bundle) = &out.types {
+        for fact in &bundle.aux.tsi {
+            if !named.contains(&fact.relation) {
+                named.push(fact.relation.clone());
+            }
+        }
+    }
+    named
 }
 
 /// Object keys sorted, so the wire does not inherit whichever map `serde_json`
@@ -241,6 +267,7 @@ fn flatten_cst<E>(
 fn flatten_type<E>(
     bundle: &FamilyBundle<TypeF>,
     strings: &Strings,
+    digest: Option<&str>,
     push: &mut impl FnMut(FlatFact) -> Result<(), E>,
 ) -> Result<(), E> {
     for node in &bundle.nodes {
@@ -263,6 +290,20 @@ fn flatten_type<E>(
             pos: sig.pos,
             ty: strings.lookup(sig.ty).to_string(),
         })?;
+    }
+    // The syntax tier's TSI rows ride the envelope only. The adapter left every
+    // span digest empty; the run's scope is where it is known.
+    if let Some(digest) = digest {
+        for row in &bundle.aux.tsi {
+            let mut row = row.clone();
+            for arg in &mut row.args {
+                if let TsiArg::Span(blob, _, _) = arg {
+                    blob.clear();
+                    blob.push_str(digest);
+                }
+            }
+            push(FlatFact::Fact(row))?;
+        }
     }
     for c in &bundle.aux.consts {
         push(FlatFact::Const {

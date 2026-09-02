@@ -308,6 +308,21 @@ TSI ENVELOPE (--witness)
   exhaustively, so a syntax run never claims complete and emits no diagnostic.
   Coverage relations are named `extract.<family>`: extract.cst, extract.type,
   extract.call, extract.df, extract.data.
+  The type family additionally emits `record=fact` TSI rows from the parse, one
+  `coverage partial` row per relation it touched at least once. ts emits
+  tsi.type, tsi.origin, tsi.product, tsi.sum, tsi.edge, tsi.parameter,
+  tsi.called, tsi.argument, tsi.input, tsi.output, tsi.callable, tsi.conforms,
+  ts.interface, ts.optional, ts.readonly. rust emits the same tsi.* set plus
+  rust.trait and rust.impl, and no ts.* row. go, kotlin and python emit none.
+  A target is the id of a type text AS WRITTEN, never a resolved type, and its
+  `tsi.origin` is that text's first occurrence; a written name is one id per
+  file, while a generic parameter and a member callable take one id each per
+  declaration. NOT emitted by a parse: tsi.denotes, tsi.has_type,
+  tsi.primitive, tsi.subtype, tsi.assignable, tsi.equivalent, ts.mapped,
+  ts.conditional, rust.assoc, rust.lifetime, rust.ownership, a `tsi.called`
+  for anything but a written `Name<Args>`, and any variance but `invariant`.
+  Ids are file-local, so a stream over several files renumbers through
+  --ingest before its ids mean one thing.
   NOT numbered yet: `unresolved` and `macro_site`.
 
   --witness ALSO covers --resolve, where the stream carries TWO tiers rather

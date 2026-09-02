@@ -108,7 +108,7 @@ fn flag_off_is_the_old_wire() {
             "the flag is off and a row carries a fact key: {row}"
         );
     }
-    let envelope = ["protocol", "run", "witness", "coverage", "diagnostic"];
+    let envelope = ["protocol", "run", "fact", "witness", "coverage", "diagnostic"];
     let witnessed: Vec<Value> = rows(&["--witness", FIXTURE])
         .into_iter()
         .filter(|row| !envelope.contains(&record(row)))

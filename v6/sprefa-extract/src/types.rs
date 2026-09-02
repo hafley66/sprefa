@@ -391,7 +391,8 @@ impl DocNodeKind {
 }
 
 /// The TypeF side-channel: arrow-type sigs + the const facet + the unresolved
-/// type-edge candidates (4b-iii) + the doc facet + the doc structure rows.
+/// type-edge candidates (4b-iii) + the doc facet + the doc structure rows + the
+/// syntax tier's TSI rows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TypeFAux {
     pub sigs: Vec<TypeSig>,
@@ -400,6 +401,9 @@ pub struct TypeFAux {
     pub docs: Vec<DocFact>,
     pub doc_nodes: Vec<DocNode>,
     pub impl_owners: Vec<ImplOwner>,
+    /// Reaches the wire only under `--witness`; the span arguments carry an
+    /// empty digest until the flatten stamps the run's.
+    pub tsi: Vec<crate::tsi::FactOut>,
 }
 
 /// An impl's owner when its self type is declared in ANOTHER file. Never a
@@ -408,6 +412,109 @@ pub struct TypeFAux {
 pub struct ImplOwner {
     pub span: Span,
     pub name: NameId,
+}
+
+/// One id per distinct WRITTEN type text per file; a member callable and a
+/// generic parameter take a fresh id (identity rules 1 and 4).
+pub struct TsiNames {
+    sink: crate::tsi::TsiSink,
+    seen: std::collections::HashMap<NameId, u32>,
+    lang: &'static str,
+}
+
+impl TsiNames {
+    /// `lang` is the atom `tsi.origin` carries: `ts` or `rust`.
+    pub fn new(lang: &'static str) -> Self {
+        Self {
+            sink: crate::tsi::TsiSink::new(0, crate::tsi::Method::Parse),
+            seen: std::collections::HashMap::new(),
+            lang,
+        }
+    }
+
+    /// The id for a written type text, minted on first sight.
+    pub fn named(&mut self, strings: &mut Strings, text: &str, span: Span) -> u32 {
+        let key = strings.intern(text);
+        if let Some(&id) = self.seen.get(&key) {
+            return id;
+        }
+        let id = self.anonymous(span);
+        self.seen.insert(key, id);
+        id
+    }
+
+    /// A fresh id with an origin and no name-table entry.
+    pub fn anonymous(&mut self, span: Span) -> u32 {
+        let id = self.sink.fresh_id();
+        self.sink.fact("tsi.type", vec![crate::tsi::Arg::Id(id)]);
+        self.sink.fact(
+            "tsi.origin",
+            vec![
+                crate::tsi::Arg::Id(id),
+                crate::tsi::Arg::Atom(self.lang.to_string()),
+                span_arg(span),
+            ],
+        );
+        id
+    }
+
+    /// An id with no `tsi.type` row of its own: an edge id, or a `tsi.called`
+    /// argument list. Both are declaring positions on the wire.
+    pub fn bare_id(&mut self) -> u32 {
+        self.sink.fresh_id()
+    }
+
+    pub fn fact(&mut self, relation: &'static str, args: Vec<crate::tsi::Arg>) {
+        self.sink.fact(relation, args);
+    }
+
+    /// `tsi.edge(Edge, Owner, Label, Target, Position)`, handing back the edge
+    /// id so `ts.optional` and `ts.readonly` can name it.
+    pub fn edge(&mut self, owner: u32, label: &str, target: u32, position: i64) -> u32 {
+        let edge = self.bare_id();
+        self.fact(
+            "tsi.edge",
+            vec![
+                crate::tsi::Arg::Id(edge),
+                crate::tsi::Arg::Id(owner),
+                crate::tsi::Arg::Text(label.to_string()),
+                crate::tsi::Arg::Id(target),
+                crate::tsi::Arg::Int(position),
+            ],
+        );
+        edge
+    }
+
+    /// `tsi.origin` for a declaration whose id already exists.
+    pub fn origin(&mut self, id: u32, span: Span) {
+        self.sink.fact(
+            "tsi.origin",
+            vec![
+                crate::tsi::Arg::Id(id),
+                crate::tsi::Arg::Atom(self.lang.to_string()),
+                span_arg(span),
+            ],
+        );
+    }
+
+    /// The sink's witness and coverage rows are dropped: the wire mints its own
+    /// over the whole stream, so a second copy would double every witness.
+    pub fn into_facts(self) -> Vec<crate::tsi::FactOut> {
+        self.sink
+            .rows()
+            .into_iter()
+            .filter_map(|row| match row {
+                FlatFact::Fact(fact) => Some(fact),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// The digest is empty here and stamped by the flatten, the one layer that
+/// holds the file's bytes.
+pub fn span_arg(span: Span) -> crate::tsi::Arg {
+    crate::tsi::Arg::Span(String::new(), span.start, span.end())
 }
 
 impl Family for TypeF {

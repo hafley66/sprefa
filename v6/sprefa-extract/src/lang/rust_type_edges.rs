@@ -2,11 +2,19 @@
 //! (field/variant/generic/impl/uses) that `Resolve<TypeF>` binds. Port of v5
 //! `edges_from`.
 
-use syn::{Fields, GenericParam, Path, Type, TypeParamBound, WherePredicate};
+use std::collections::BTreeMap;
+
+use syn::punctuated::Punctuated;
+use syn::{
+    Fields, GenericArgument, GenericParam, Path, PathArguments, ReturnType, Type, TypeParamBound,
+    WherePredicate,
+};
 
 use crate::family::{ImplOwner, TypeEdgeCandidate, TypeEdgeKind, TypeF};
 use crate::rows::FamilyBundle;
 use crate::shape::{Span, Strings};
+use crate::tsi::Arg;
+use crate::types::TsiNames;
 
 use super::rust::syn_span;
 use super::rust_type_refs::{collect_path_args, path_name, primary_type, type_refs};
@@ -27,6 +35,7 @@ pub(crate) fn edge_candidates(
     for item in &parsed.items {
         item_edge_candidates(item, line_starts, strings, sink);
     }
+    tsi_rows(parsed, line_starts, strings, sink);
 }
 
 fn item_edge_candidates(
@@ -256,3 +265,480 @@ fn push_candidate(
     });
 }
 
+// ── TSI syntax rows: `rust.assoc`, `rust.lifetime` and `rust.ownership` are
+// the semantic tier's, so an associated item and a reference's mode emit none.
+
+/// Type-parameter names in scope, innermost declaration last.
+type TsiScope = BTreeMap<String, u32>;
+
+/// The rust twin of the ts pass, over the items `edge_candidates` walks.
+fn tsi_rows(
+    parsed: &syn::File,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let mut names = TsiNames::new("rust");
+    let outer = TsiScope::new();
+    for item in &parsed.items {
+        tsi_item(item, &outer, line_starts, strings, &mut names);
+    }
+    sink.aux.tsi = names.into_facts();
+}
+
+fn tsi_item(
+    item: &syn::Item,
+    outer: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+) {
+    match item {
+        syn::Item::Struct(declared) => {
+            let owner = tsi_declaration(&declared.ident, line_starts, strings, names);
+            names.fact("tsi.product", vec![Arg::Id(owner)]);
+            let scope = tsi_generics(
+                owner,
+                &declared.generics,
+                outer,
+                line_starts,
+                strings,
+                names,
+            );
+            tsi_fields(owner, &declared.fields, &scope, line_starts, strings, names);
+        }
+        syn::Item::Union(declared) => {
+            let owner = tsi_declaration(&declared.ident, line_starts, strings, names);
+            names.fact("tsi.product", vec![Arg::Id(owner)]);
+            let scope = tsi_generics(
+                owner,
+                &declared.generics,
+                outer,
+                line_starts,
+                strings,
+                names,
+            );
+            let fields = Fields::Named(declared.fields.clone());
+            tsi_fields(owner, &fields, &scope, line_starts, strings, names);
+        }
+        syn::Item::Enum(declared) => {
+            let owner = tsi_declaration(&declared.ident, line_starts, strings, names);
+            names.fact("tsi.sum", vec![Arg::Id(owner)]);
+            tsi_generics(
+                owner,
+                &declared.generics,
+                outer,
+                line_starts,
+                strings,
+                names,
+            );
+            for (position, variant) in declared.variants.iter().enumerate() {
+                let written = format!("{}::{}", declared.ident, variant.ident);
+                let span = syn_span(line_starts, variant.ident.span());
+                let target = names.named(strings, &written, span);
+                names.edge(owner, &variant.ident.to_string(), target, position as i64);
+            }
+        }
+        syn::Item::Trait(declared) => {
+            let owner = tsi_declaration(&declared.ident, line_starts, strings, names);
+            names.fact("rust.trait", vec![Arg::Id(owner)]);
+            let scope = tsi_generics(
+                owner,
+                &declared.generics,
+                outer,
+                line_starts,
+                strings,
+                names,
+            );
+            for member in &declared.items {
+                if let syn::TraitItem::Fn(method) = member {
+                    tsi_callable(&method.sig, &scope, line_starts, strings, names);
+                }
+            }
+        }
+        syn::Item::Type(declared) => {
+            let owner = tsi_declaration(&declared.ident, line_starts, strings, names);
+            let scope = tsi_generics(
+                owner,
+                &declared.generics,
+                outer,
+                line_starts,
+                strings,
+                names,
+            );
+            tsi_called(owner, &declared.ty, &scope, line_starts, strings, names);
+        }
+        syn::Item::Impl(block) => tsi_impl(block, outer, line_starts, strings, names),
+        syn::Item::Fn(declared) => tsi_callable(&declared.sig, outer, line_starts, strings, names),
+        syn::Item::Mod(module) => {
+            if let Some((_, inner)) = &module.content {
+                for nested in inner {
+                    tsi_item(nested, outer, line_starts, strings, names);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A declaration's own id, keyed on its bare name so a later written reference
+/// to that name lands on the same id.
+fn tsi_declaration(
+    ident: &proc_macro2::Ident,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+) -> u32 {
+    let span = syn_span(line_starts, ident.span());
+    names.named(strings, &ident.to_string(), span)
+}
+
+/// `impl Trait for Type` is the one conformance a parse can state. A bare
+/// `impl Type` block contributes its methods and no conformance.
+fn tsi_impl(
+    block: &syn::ItemImpl,
+    outer: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+) {
+    let Some((self_span, self_name)) = self_ty_head(&block.self_ty, line_starts) else {
+        return;
+    };
+    let owner = names.named(strings, &self_name, self_span);
+    // The block's own type parameters are the block's, never the self type's.
+    let block_id = names.anonymous(syn_span(line_starts, block.impl_token.span));
+    let scope = tsi_generics(
+        block_id,
+        &block.generics,
+        outer,
+        line_starts,
+        strings,
+        names,
+    );
+    if let Some((_, path, _)) = &block.trait_ {
+        if let (Some(name), Some(segment)) = (path_name(path), path.segments.last()) {
+            let span = syn_span(line_starts, segment.ident.span());
+            let contract = names.named(strings, &name, span);
+            names.fact(
+                "rust.impl",
+                vec![Arg::Id(block_id), Arg::Id(owner), Arg::Id(contract)],
+            );
+            names.fact(
+                "tsi.conforms",
+                vec![
+                    Arg::Id(owner),
+                    Arg::Id(contract),
+                    Arg::Atom("syntax".to_string()),
+                ],
+            );
+        }
+    }
+    for member in &block.items {
+        if let syn::ImplItem::Fn(method) = member {
+            tsi_callable(&method.sig, &scope, line_starts, strings, names);
+        }
+    }
+}
+
+/// One `tsi.parameter` per declared type parameter plus a `bound`-labelled
+/// edge per trait bound. Hands back the scope the declaration's members read.
+fn tsi_generics(
+    owner: u32,
+    generics: &syn::Generics,
+    outer: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+) -> TsiScope {
+    let mut scope = outer.clone();
+    for (position, param) in generics.params.iter().enumerate() {
+        let GenericParam::Type(declared) = param else {
+            continue;
+        };
+        let id = names.anonymous(syn_span(line_starts, declared.ident.span()));
+        names.fact(
+            "tsi.parameter",
+            vec![
+                Arg::Id(id),
+                Arg::Id(owner),
+                Arg::Int(position as i64),
+                Arg::Atom("invariant".to_string()),
+            ],
+        );
+        for (at, bound) in declared.bounds.iter().enumerate() {
+            let TypeParamBound::Trait(traited) = bound else {
+                continue;
+            };
+            let (Some(name), Some(segment)) =
+                (path_name(&traited.path), traited.path.segments.last())
+            else {
+                continue;
+            };
+            let span = syn_span(line_starts, segment.ident.span());
+            let target = names.named(strings, &name, span);
+            names.edge(id, "bound", target, at as i64);
+        }
+        scope.insert(declared.ident.to_string(), id);
+    }
+    scope
+}
+
+/// A tuple field's label is its ordinal, which is the name rust itself gives it.
+fn tsi_fields(
+    owner: u32,
+    fields: &Fields,
+    scope: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+) {
+    for (position, field) in fields.iter().enumerate() {
+        let label = match &field.ident {
+            Some(ident) => ident.to_string(),
+            None => position.to_string(),
+        };
+        let target = tsi_type_id(&field.ty, scope, line_starts, strings, names);
+        names.edge(owner, &label, target, position as i64);
+    }
+}
+
+fn tsi_callable(
+    signature: &syn::Signature,
+    outer: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+) {
+    let callable = names.anonymous(syn_span(line_starts, signature.ident.span()));
+    names.fact("tsi.callable", vec![Arg::Id(callable)]);
+    let scope = tsi_generics(
+        callable,
+        &signature.generics,
+        outer,
+        line_starts,
+        strings,
+        names,
+    );
+    let mut position = 0i64;
+    for input in &signature.inputs {
+        let syn::FnArg::Typed(typed) = input else {
+            continue;
+        };
+        let target = tsi_type_id(&typed.ty, &scope, line_starts, strings, names);
+        names.fact(
+            "tsi.input",
+            vec![Arg::Id(callable), Arg::Int(position), Arg::Id(target)],
+        );
+        position += 1;
+    }
+    if let ReturnType::Type(_, returned) = &signature.output {
+        let target = tsi_type_id(returned, &scope, line_starts, strings, names);
+        names.fact(
+            "tsi.output",
+            vec![Arg::Id(callable), Arg::Int(0), Arg::Id(target)],
+        );
+    }
+}
+
+/// A written `Name<Args>` alias body. Anything else emits no body row.
+fn tsi_called(
+    owner: u32,
+    ty: &Type,
+    scope: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+) {
+    let Type::Path(path) = strip_type(ty) else {
+        return;
+    };
+    let Some(segment) = path.path.segments.last() else {
+        return;
+    };
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return;
+    };
+    let span = syn_span(line_starts, segment.ident.span());
+    let callee = names.named(strings, &path_head_text(&path.path), span);
+    let list = names.bare_id();
+    names.fact(
+        "tsi.called",
+        vec![Arg::Id(owner), Arg::Id(callee), Arg::Id(list)],
+    );
+    let mut position = 0i64;
+    for argument in &arguments.args {
+        let GenericArgument::Type(written) = argument else {
+            continue;
+        };
+        let target = tsi_type_id(written, scope, line_starts, strings, names);
+        names.fact(
+            "tsi.argument",
+            vec![Arg::Id(list), Arg::Int(position), Arg::Id(target)],
+        );
+        position += 1;
+    }
+}
+
+/// A type parameter in scope wins over the file's written-text table, so the
+/// `T` of one declaration is never the `T` of another (identity rule 4).
+fn tsi_type_id(
+    ty: &Type,
+    scope: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+) -> u32 {
+    let text = type_text(ty);
+    match scope.get(&text) {
+        Some(&id) => id,
+        None => names.named(strings, &text, tsi_type_span(ty, line_starts)),
+    }
+}
+
+/// The head identifier of a written type. `syn` is parsed without the printing
+/// feature, so no token stream is available to span the whole thing.
+fn tsi_type_span(ty: &Type, line_starts: &[u32]) -> Span {
+    match strip_type(ty) {
+        Type::Path(path) => path
+            .path
+            .segments
+            .first()
+            .map(|segment| syn_span(line_starts, segment.ident.span()))
+            .unwrap_or_else(Span::empty),
+        Type::Array(inner) => tsi_type_span(&inner.elem, line_starts),
+        Type::Slice(inner) => tsi_type_span(&inner.elem, line_starts),
+        _ => Span::empty(),
+    }
+}
+
+fn path_head_text(path: &Path) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+/// The written form of a type, rebuilt from the tree. An array length that is
+/// not an integer literal renders `_`: the tokens are not reachable.
+fn type_text(ty: &Type) -> String {
+    match ty {
+        Type::Array(inner) => format!(
+            "[{}; {}]",
+            type_text(&inner.elem),
+            array_len_text(&inner.len)
+        ),
+        Type::BareFn(inner) => {
+            let inputs: Vec<String> = inner.inputs.iter().map(|arg| type_text(&arg.ty)).collect();
+            match &inner.output {
+                ReturnType::Type(_, returned) => {
+                    format!("fn({}) -> {}", inputs.join(", "), type_text(returned))
+                }
+                ReturnType::Default => format!("fn({})", inputs.join(", ")),
+            }
+        }
+        Type::Group(inner) => type_text(&inner.elem),
+        Type::ImplTrait(inner) => format!("impl {}", bounds_text(&inner.bounds)),
+        Type::Infer(_) => "_".to_string(),
+        Type::Never(_) => "!".to_string(),
+        Type::Paren(inner) => format!("({})", type_text(&inner.elem)),
+        Type::Path(inner) => path_text(&inner.path),
+        Type::Ptr(inner) => {
+            let mode = if inner.mutability.is_some() {
+                "mut "
+            } else {
+                "const "
+            };
+            format!("*{mode}{}", type_text(&inner.elem))
+        }
+        Type::Reference(inner) => {
+            let lifetime = inner
+                .lifetime
+                .as_ref()
+                .map_or(String::new(), |name| format!("'{} ", name.ident));
+            let mode = if inner.mutability.is_some() {
+                "mut "
+            } else {
+                ""
+            };
+            format!("&{lifetime}{mode}{}", type_text(&inner.elem))
+        }
+        Type::Slice(inner) => format!("[{}]", type_text(&inner.elem)),
+        Type::TraitObject(inner) => format!("dyn {}", bounds_text(&inner.bounds)),
+        Type::Tuple(inner) => {
+            let parts: Vec<String> = inner.elems.iter().map(type_text).collect();
+            format!("({})", parts.join(", "))
+        }
+        _ => "_".to_string(),
+    }
+}
+
+fn array_len_text(len: &syn::Expr) -> String {
+    match len {
+        syn::Expr::Lit(literal) => match &literal.lit {
+            syn::Lit::Int(count) => count.base10_digits().to_string(),
+            _ => "_".to_string(),
+        },
+        _ => "_".to_string(),
+    }
+}
+
+fn path_text(path: &Path) -> String {
+    let mut out = String::new();
+    if path.leading_colon.is_some() {
+        out.push_str("::");
+    }
+    for (at, segment) in path.segments.iter().enumerate() {
+        if at > 0 {
+            out.push_str("::");
+        }
+        out.push_str(&segment.ident.to_string());
+        match &segment.arguments {
+            PathArguments::None => {}
+            PathArguments::AngleBracketed(arguments) => {
+                let rendered: Vec<String> =
+                    arguments.args.iter().filter_map(argument_text).collect();
+                if !rendered.is_empty() {
+                    out.push('<');
+                    out.push_str(&rendered.join(", "));
+                    out.push('>');
+                }
+            }
+            PathArguments::Parenthesized(arguments) => {
+                let inputs: Vec<String> = arguments.inputs.iter().map(type_text).collect();
+                out.push('(');
+                out.push_str(&inputs.join(", "));
+                out.push(')');
+                if let ReturnType::Type(_, returned) = &arguments.output {
+                    out.push_str(" -> ");
+                    out.push_str(&type_text(returned));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn argument_text(argument: &GenericArgument) -> Option<String> {
+    match argument {
+        GenericArgument::Type(written) => Some(type_text(written)),
+        GenericArgument::Lifetime(name) => Some(format!("'{}", name.ident)),
+        GenericArgument::AssocType(bound) => {
+            Some(format!("{} = {}", bound.ident, type_text(&bound.ty)))
+        }
+        _ => None,
+    }
+}
+
+fn bounds_text(bounds: &Punctuated<TypeParamBound, syn::Token![+]>) -> String {
+    bounds
+        .iter()
+        .filter_map(|bound| match bound {
+            TypeParamBound::Trait(traited) => Some(path_text(&traited.path)),
+            TypeParamBound::Lifetime(name) => Some(format!("'{}", name.ident)),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
