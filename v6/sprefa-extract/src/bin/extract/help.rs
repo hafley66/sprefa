@@ -361,6 +361,21 @@ compiler), so a bound reaching only the direct child would leave the real work
 running and reparented. A run that exceeds the budget emits a scip_skip row with
 reason timed_out and the stream continues.";
 
+pub const INDEXER_LONG: &str = "\
+Run ONE named SCIP indexer under `--family scip` instead of every one the root's
+marker files match. Roster languages: rust, typescript, python, go, kotlin/java,
+cpp. An unknown name is an error naming the roster, never a silent empty answer.
+
+Marker detection is any-of and a polyglot root matches several rows, so all of
+them run and the answer is their union. A repo carrying both go.mod and
+package.json starts scip-go AND scip-typescript, and the second can spend the
+whole budget on work the caller never asked for. Naming one row ignores markers
+entirely: the pick runs whether or not its marker is present.
+
+A picked index is a DELIBERATE partial, so it is kept in <CACHE>/indexer-<LANG>/
+and reuse is scoped there. It never lands on the shared index.scip an unpicked
+ask would later read, and an unpicked ask never reads it.";
+
 pub const BENCH_LONG: &str = "\
 Extract + flatten, then print one summary line to stderr (per-family node counts
 and total fact count) and emit nothing to stdout. Use it to check which families
