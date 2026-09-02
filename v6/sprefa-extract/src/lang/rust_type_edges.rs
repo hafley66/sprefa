@@ -463,7 +463,7 @@ fn tsi_generics(
                 Arg::Id(id),
                 Arg::Id(owner),
                 Arg::Int(position as i64),
-                Arg::Atom("invariant".to_string()),
+                Arg::Atom("unspecified".to_string()),
             ],
         );
         for (at, bound) in declared.bounds.iter().enumerate() {

@@ -130,7 +130,7 @@ impl Probe {
             .filter(|fact| {
                 as_id(&fact.args[1]) == Some(callee) && as_int(&fact.args[2]) == Some(position)
             })
-            .inspect(|fact| assert_eq!(as_atom(&fact.args[3]), Some("invariant")))
+            .inspect(|fact| assert_eq!(as_atom(&fact.args[3]), Some("unspecified")))
             .filter_map(|fact| as_id(&fact.args[0]))
             .collect();
         assert_eq!(

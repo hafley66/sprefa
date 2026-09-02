@@ -320,7 +320,8 @@ TSI ENVELOPE (--witness)
   declaration. NOT emitted by a parse: tsi.denotes, tsi.has_type,
   tsi.primitive, tsi.subtype, tsi.assignable, tsi.equivalent, ts.mapped,
   ts.conditional, rust.assoc, rust.lifetime, rust.ownership, a `tsi.called`
-  for anything but a written `Name<Args>`, and any variance but `invariant`.
+  for anything but a written `Name<Args>`, and any variance at all: a parse
+  reads none, so `tsi.parameter` carries the atom `unspecified`.
   Ids are file-local, so a stream over several files renumbers through
   --ingest before its ids mean one thing.
   NOT numbered yet: `unresolved` and `macro_site`.

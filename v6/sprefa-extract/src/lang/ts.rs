@@ -1227,7 +1227,7 @@ fn tsi_params(
                 Arg::Id(id),
                 Arg::Id(owner),
                 Arg::Int(position as i64),
-                Arg::Atom("invariant".to_string()),
+                Arg::Atom("unspecified".to_string()),
             ],
         );
         if let Some(constraint) = &param.constraint {
