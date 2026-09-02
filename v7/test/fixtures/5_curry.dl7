@@ -14,6 +14,20 @@
 
 (PairUser Order PairResult)
 
+; References retain their existing node. Primitive values are boxed as
+; content-interned Literal nodes on the application occurrence.
+(: MixedResult (*))
+(: Remaining (*))
+
+(: Mixed
+   (* (: reference type)
+      (: literal text)
+      (: remaining type)
+      (: return type)))
+
+(: MixedUserText (Mixed User "User"))
+(MixedUserText Remaining MixedResult)
+
 ; A relation may return a callable identity. The named bind freezes that
 ; identity before its next application, so emitted Datalog stays static.
 (: CallableFactory

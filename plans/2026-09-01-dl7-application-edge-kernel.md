@@ -54,6 +54,33 @@ carry supplied and derived tuple values at callable positions.
    limit. The next migration must move call-edge production across that phase
    boundary before replacing the carriers.
 
+### Value-node checkpoint
+
+The additive value-node signatures are:
+
+```text
+Literal(Node, PrimitiveType, RawValue)
+Variable(Node, Scope, Name)
+```
+
+Their instance lifetimes and identities are:
+
+- A literal node is content-interned by `(PrimitiveType, RawValue)` and may be
+  shared by every equal occurrence in the compiler closure.
+- A generated variable node is interned by `(Scope, Position, Name)`. Its scope
+  is the generated callable relation, so equal names in different callables do
+  not capture one another.
+- A relation or type reference continues to use its existing node directly.
+
+Storage and flow remain separate. `Literal/3` and `Variable/3` are ordinary
+prelude rows in the compiler graph. Application `:/4` edges point to those
+nodes. The legacy `const`, `var`, `curry_bound`, `head_arg`, and `body_arg`
+terms remain beside them until parity is proved. Runtime emitters eventually
+unbox literals and erase compiler-only variable metadata.
+
+The first implementation changes only escaping-partial call edges and
+generated Curry variables. It adds no evaluator primitive and no macro syntax.
+
 Rejected alternatives:
 
 - Deleting `Kind` immediately loses the distinction between generated
@@ -84,7 +111,6 @@ fixed-arity Datalog
 ```
 
 <!-- todo(refactor): Make the application graph complete at the compiler-round boundary, derive Curry specialization and bound-slot views from it, then remove lowerer-authored curry_specialization and curry_bound rows. -->
-<!-- todo(feature): Box compiler variables and primitive literals as value nodes so generated argument carriers no longer store a separate kind string. -->
 <!-- todo(refactor): Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol. -->
 <!-- todo(refactor): Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges. -->
 
@@ -103,11 +129,15 @@ fixed-arity Datalog
   emission.
 - The complete V7 SWI suite and tree-sitter corpus pass before merge.
 
+The value-node checkpoint passes 38 of 38 SWI tests and the one tree-sitter
+corpus parse. Application edges now target direct relation references or
+boxed literals, and generated Curry variables have scoped interned nodes.
+
 ## Staffing
 
 - Implementation: Codex directly, high reasoning.
-- Worktree: `/private/tmp/sprefa-v7-application-edge-unification`.
-- Branch: `feature/v7-application-edge-unification`.
-- Base SHA: `efa7930cc71c09b0a40bed03801b6b75876bca0b`.
+- Worktree: `/private/tmp/sprefa-v7-value-nodes`.
+- Branch: `feature/v7-value-nodes`.
+- Base SHA: `01b83dad3cf60cd210ce7cdaf49083e26b76fe01`.
 - Suite budget: focused curry tests per checkpoint; complete V7 suite before
   push.
