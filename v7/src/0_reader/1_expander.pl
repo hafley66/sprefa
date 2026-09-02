@@ -4,8 +4,11 @@
           ]).
 
 :- use_module(library(error), [must_be/2]).
+:- use_module(library(gensym), [gensym/2]).
 
 :- multifile dl7_syntax_rewrite/3.
+:- thread_local active_expansion/1.
+:- thread_local expansion_source/3.
 
 %% A trailing colon on the first form item rotates into the canonical prefix
 %% operator. The replacement re-enters the ordinary recursive expansion path,
@@ -22,10 +25,28 @@ expand_dl7(Forms, SourceRows,
            ExpansionRows, Diagnostics) :-
     must_be(list, Forms),
     must_be(list, SourceRows),
-    once(expand_nodes(Forms, SourceRows, Result)),
+    setup_call_cleanup(
+        open_expansion(SourceRows, Expansion),
+        once(expand_nodes(Forms, SourceRows, Result)),
+        close_expansion(Expansion)),
     expansion_result(Result, SourceRows,
                      ExpandedForms, ExpandedSourceRows,
                      ExpansionRows, Diagnostics).
+
+open_expansion(SourceRows, Expansion) :-
+    gensym(dl7_expansion_, Expansion),
+    assertz(active_expansion(Expansion)),
+    index_source_rows(SourceRows, Expansion).
+
+index_source_rows([], _).
+index_source_rows([Source | Sources], Expansion) :-
+    Source = source(NodeId, _, _, _, _, _, _, _),
+    assertz(expansion_source(Expansion, NodeId, Source)),
+    index_source_rows(Sources, Expansion).
+
+close_expansion(Expansion) :-
+    retractall(expansion_source(Expansion, _, _)),
+    retractall(active_expansion(Expansion)).
 
 expansion_result(ok(Forms, GeneratedRows, ExpansionRows), SourceRows,
                  Forms, ExpandedSourceRows, ExpansionRows, []) :-
@@ -41,8 +62,7 @@ expand_nodes([Node | Nodes], AvailableRows, Result) :-
 continue_nodes(_, _, error(Diagnostic), error(Diagnostic)).
 continue_nodes(Nodes, AvailableRows,
                ok(Node, NodeRows, NodeExpansions), Result) :-
-    append(AvailableRows, NodeRows, RowsForRest),
-    expand_nodes(Nodes, RowsForRest, RestResult),
+    expand_nodes(Nodes, AvailableRows, RestResult),
     (   RestResult = ok(RestNodes, RestRows, RestExpansions)
     ->  append(NodeRows, RestRows, GeneratedRows),
         append(NodeExpansions, RestExpansions, ExpansionRows),
@@ -89,11 +109,10 @@ apply_rewrite(node(InputNodeId, _), Replacement, MacroIdentity, AvailableRows,
               Wave, Seen, MacroTrace, Result) :-
     mint_tree(Replacement, InputNodeId, MacroIdentity, Wave, 0,
               AvailableRows, MintedNode, MintedRows, MintedExpansions, _),
-    append(AvailableRows, MintedRows, RowsWithMinted),
-    expand_node_children(MintedNode, RowsWithMinted, ChildResult),
+    expand_node_children(MintedNode, AvailableRows, ChildResult),
     continue_rewrite(ChildResult, MintedRows, MintedExpansions,
                      MacroIdentity, Wave, Seen, MacroTrace,
-                     RowsWithMinted, Result).
+                     AvailableRows, Result).
 
 continue_rewrite(error(Diagnostic), _, _, _, _, _, _, _,
                  error(Diagnostic)).
@@ -101,10 +120,9 @@ continue_rewrite(ok(Node, ChildRows, ChildExpansions),
                  MintedRows, MintedExpansions,
                  MacroIdentity, Wave, Seen, MacroTrace,
                  AvailableRows, Result) :-
-    append(AvailableRows, ChildRows, RowsForNext),
     node_tree(Node, NextTree),
     NextWave is Wave + 1,
-    rewrite_fixpoint(Node, NextTree, RowsForNext, NextWave,
+    rewrite_fixpoint(Node, NextTree, AvailableRows, NextWave,
                      [NextTree | Seen], [MacroIdentity | MacroTrace],
                      NextResult),
     combine_rewrite_results(MintedRows, MintedExpansions,
@@ -150,6 +168,7 @@ mint_tree(Tree, InputNodeId, MacroIdentity, Wave, Index0, AvailableRows,
     NextIndex is Index0 + 1,
     source_for_node(AvailableRows, InputNodeId, Source),
     generated_source(Source, NodeId, GeneratedSource),
+    index_generated_source(NodeId, GeneratedSource),
     mint_payload(Tree, InputNodeId, MacroIdentity, Wave, NextIndex,
                  AvailableRows, Payload, ChildRows, ChildExpansions, Index),
     GeneratedRows = [GeneratedSource | ChildRows],
@@ -177,6 +196,10 @@ mint_trees([Tree | Trees], InputNodeId, MacroIdentity, Wave, Index0,
     append(NodeRows, RestRows, GeneratedRows),
     append(NodeExpansions, RestExpansions, ExpansionRows).
 
+source_for_node(_, NodeId, Source) :-
+    active_expansion(Expansion),
+    expansion_source(Expansion, NodeId, Source),
+    !.
 source_for_node(Rows, NodeId,
                 source(NodeId, Path, StartOffset, EndOffset,
                        StartLine, StartColumn, EndLine, EndColumn)) :-
@@ -185,6 +208,12 @@ source_for_node(Rows, NodeId,
     !.
 source_for_node(_, NodeId, _) :-
     throw(error(existence_error(source_row, NodeId), _)).
+
+index_generated_source(NodeId, Source) :-
+    (   active_expansion(Expansion)
+    ->  assertz(expansion_source(Expansion, NodeId, Source))
+    ;   true
+    ).
 
 generated_source(source(_, Path, StartOffset, EndOffset,
                         StartLine, StartColumn, EndLine, EndColumn),
