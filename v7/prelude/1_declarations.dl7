@@ -129,6 +129,12 @@
    (* (: call type)
       (: callable type)))
 
+; Source partial-expression lowering marks the application occurrences that
+; Curry may specialize. Generated rule applications remain ordinary Apply
+; nodes without this tag.
+(: PartialCall
+   (* (: call type)))
+
 ; Primitive values and generated variables participate in the same node and
 ; edge graph as relation references. Literal identity is content-based.
 ; Variable identity includes its generated callable scope.
@@ -141,6 +147,16 @@
    (* (: node type)
       (: scope type)
       (: name text)))
+
+; Generated rule heads and body goals use distinct application identities.
+(: HeadCall
+   (* (: rule type)
+      (: return type)))
+
+(: BodyCall
+   (* (: rule type)
+      (: goal int)
+      (: return type)))
 
 ; Curry identities are canonical callable specializations. The source lowerer
 ; supplies Apply and call-edge facts. These Curry views, the remaining shape,
@@ -168,15 +184,6 @@
    (* (: result type)
       (: source_index int)
       (: value type)))
-
-(: literal_node
-   (* (: node type)))
-
-(: curry_bound
-   (* (: result type)
-      (: source_index int)
-      (: kind text)
-      (: value any)))
 
 (: curry_is_bound
    (* (: result type)

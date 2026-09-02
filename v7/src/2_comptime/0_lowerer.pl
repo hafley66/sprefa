@@ -198,13 +198,14 @@ partial_bind_rules(
         partial_call_edge_rules(Owner, Call, Literal, InputSlots, Bound,
                                 CallEdgeRules)
     ->  Partial = application(Curry, [Callable, BoundRows]),
-        CallNodeRule = rule(
-                           call(name(Owner, node), [ref(Call)]),
-                           []),
         ApplyRule = rule(
                         call(name(Owner, 'Apply'),
                              [ref(Call), ref(Callable)]),
                         []),
+        PartialCallRule = rule(
+                              call(name(Owner, 'PartialCall'),
+                                   [ref(Call)]),
+                              []),
         ReturnEdgeRule = rule(
                              call(name(Owner, ':'),
                                   [ ref(Call), const(return), ref(Partial),
@@ -217,7 +218,7 @@ partial_bind_rules(
                               const(Index)
                             ]),
                        []),
-        append([[CallNodeRule, ApplyRule], CallEdgeRules,
+        append([[ApplyRule, PartialCallRule], CallEdgeRules,
                 [ReturnEdgeRule, EdgeRule]],
                Rules),
         length(Rules, RuleCount),
@@ -1452,6 +1453,4 @@ kernel_relation(intern_snapshot, 3).
 kernel_relation(predecessor, 3).
 kernel_relation(def, 2).
 kernel_relation(head, 2).
-kernel_relation(head_arg, 4).
 kernel_relation(body, 4).
-kernel_relation(body_arg, 5).

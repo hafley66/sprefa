@@ -671,14 +671,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 6496,
+                    [], [], 6621,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(192, 414, 92, 323, 125, 213, 92),
+                    runtime(counts(190, 408, 91, 318, 129, 224, 91),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -687,9 +687,7 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                          intern([[0, 1]]),
                          intern_snapshot([[0, 1]]),
                          predecessor([[0, 1], [0, 2]]),
-                         def([[0]]), head([[0]]),
-                         head_arg([[0, 1]]), body([[0, 1]]),
-                         body_arg([[0, 1, 2]])),
+                         def([[0]]), head([[0]]), body([[0, 1]])),
                     compound_key(
                         edges([key("account", int, 0),
                                field(payload, text, 1),
@@ -702,7 +700,8 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                         specialization(copy,
                                        [edge(id, int, 0),
                                         edge(name, text, 1)]),
-                        carrier(definition(2), head(2), body(1)),
+                        carrier(definition(2), head_application(2),
+                                body_application(1)),
                         compiler_output([7, "Ada"]),
                         runtime(relation(2, []), rule(copy),
                                 dependency(positive), stratum(0))),
@@ -764,7 +763,6 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
     named_owner(Rows1, 'Literal', Literal),
     named_owner(Rows1, 'Variable', Variable),
     named_owner(Rows1, curry_specialization, CurrySpecialization),
-    named_owner(Rows1, curry_bound, CurryBound),
     named_owner(Rows1, 'MixedResult', MixedResult),
     named_owner(Rows1, 'Remaining', Remaining),
     named_owner(Rows1, 'Mixed', Mixed),
@@ -810,21 +808,9 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
               Rules),
     memberchk(call(ref(CurrySpecialization),
                    [ref(Pair), ref(PairUser)]), Rows1),
-    memberchk(call(ref(CurryBound),
-                   [ ref(PairUser), const(0), const("reference"),
-                     ref(User)
-                   ]),
-              Rows1),
-    memberchk(call(ref(CurryBound),
-                   [ ref(MixedUserText), const(0), const("reference"),
-                     ref(User)
-                   ]),
-              Rows1),
-    memberchk(call(ref(CurryBound),
-                   [ ref(MixedUserText), const(1), const("constant"),
-                     const("User")
-                   ]),
-              Rows1),
+    generated_rule_application_graph(
+        Rows1, Apply, PairUser, Pair, PairHeadCall, PairBodyCall),
+    dif(PairHeadCall, PairBodyCall),
     findall(Call,
             member(call(ref(Apply), [ref(Call), ref(_)]), Rows1),
             ApplicationCalls0),
@@ -887,7 +873,7 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
                         callable(true), partial(true), value(true)),
                     chained(arity(3), arity(2), return(true)),
                     application_graph(
-                        calls(5), pair_user_occurrences(2), parity(true),
+                        calls(13), pair_user_occurrences(2), parity(true),
                         value_nodes(true)),
                     repeat(rows(true), runtime(true)),
                     residual_partial_terms(0)).
@@ -932,9 +918,18 @@ pair_user_application_graph(Rows, Apply, User, Pair, PairUser, Call) :-
                    [ref(Call), const(return), ref(PairUser), const(2)]),
               Rows).
 
+generated_rule_application_graph(
+    Rows, Apply, Rule, BodyRelation, HeadCall, BodyCall) :-
+    memberchk(call(ref(kernel(head)), [ref(Rule), ref(HeadCall)]), Rows),
+    memberchk(call(ref(Apply), [ref(HeadCall), ref(Rule)]), Rows),
+    memberchk(call(ref(kernel(body)),
+                   [ref(Rule), const(0), const("positive"), ref(BodyCall)]),
+              Rows),
+    memberchk(call(ref(Apply), [ref(BodyCall), ref(BodyRelation)]), Rows).
+
 mixed_application_graph(
     Rows, Apply, Literal, User, Mixed, MixedUserText, LiteralNode) :-
-    memberchk(call(ref(Apply), [ref(Call), ref(Mixed)]), Rows),
+    member(call(ref(Apply), [ref(Call), ref(Mixed)]), Rows),
     memberchk(call(ref(kernel(':')),
                    [ref(Call), const(reference), ref(User), const(0)]),
               Rows),
@@ -1042,7 +1037,7 @@ test(final_closure_rejects_declared_functional_key_conflicts) :-
                              [ref(owner), const(name), ref(second), const(1)]))
                    )].
 
-test(generated_program_rejects_identity_collisions_and_orphan_arguments) :-
+test(generated_program_rejects_identity_collisions_and_orphan_bodies) :-
     Existing = ref(existing),
     BaseRelations = [relation(Existing, 1, [])],
     assemble_generated_program(
@@ -1050,9 +1045,9 @@ test(generated_program_rejects_identity_collisions_and_orphan_arguments) :-
         BaseRelations, CollisionRelations, CollisionRules,
         CollisionDiagnostics),
     assemble_generated_program(
-        [call(ref(kernel(body_arg)),
-              [ ref(orphan), const(0), const(0),
-                const("variable"), const(value)
+        [call(ref(kernel(body)),
+              [ ref(orphan), const(0), const("positive"),
+                ref(orphan_call)
               ])],
         BaseRelations, OrphanRelations, OrphanRules, OrphanDiagnostics),
     Observed = generated_program_rejections(
@@ -1069,13 +1064,9 @@ test(generated_program_rejects_identity_collisions_and_orphan_arguments) :-
                                  Existing))]),
                     orphan(
                         [], [],
-                        [ diagnostic(
-                              assemble, none,
-                              orphan_generated_rule_fragment(orphan)),
-                          diagnostic(
-                              assemble, none,
-                              orphan_generated_body_arguments(orphan, 0))
-                        ])).
+                        [diagnostic(
+                             assemble, none,
+                             orphan_generated_rule_fragment(orphan))])).
 
 test(authored_order_kernel_modes_are_checked_left_to_right) :-
     Construct = checked_goal(
@@ -1639,7 +1630,7 @@ runtime_key_snapshot(
          nil(NilKeys), cons(ConsKeys), intern(InternKeys),
          intern_snapshot(InternSnapshotKeys),
          predecessor(PredecessorKeys), def(DefKeys), head(HeadKeys),
-         head_arg(HeadArgKeys), body(BodyKeys), body_arg(BodyArgKeys))) :-
+         body(BodyKeys))) :-
     memberchk(relation(ref(kernel(':')), 4, ColonKeys), Relations),
     memberchk(relation(ref(kernel(edge_snapshot)), 4, SnapshotKeys),
               Relations),
@@ -1652,9 +1643,7 @@ runtime_key_snapshot(
               Relations),
     memberchk(relation(ref(kernel(def)), 2, DefKeys), Relations),
     memberchk(relation(ref(kernel(head)), 2, HeadKeys), Relations),
-    memberchk(relation(ref(kernel(head_arg)), 4, HeadArgKeys), Relations),
-    memberchk(relation(ref(kernel(body)), 4, BodyKeys), Relations),
-    memberchk(relation(ref(kernel(body_arg)), 5, BodyArgKeys), Relations).
+    memberchk(relation(ref(kernel(body)), 4, BodyKeys), Relations).
 
 compound_key_snapshot(
     Rows,
@@ -1706,7 +1695,7 @@ history_v1_snapshot(
                     Depends, Strata),
     history_v1(
         specialization(copy, Edges),
-        carrier(definition(2), head(2), body(1)),
+        carrier(definition(2), head_application(2), body_application(1)),
         compiler_output([7, "Ada"]),
         runtime(relation(2, []), rule(copy),
                 dependency(positive), stratum(0)))) :-
@@ -1729,18 +1718,27 @@ history_v1_snapshot(
                         ]), Rows),
             Edges),
     memberchk(call(ref(kernel(def)), [ref(History), const(2)]), Rows),
+    named_owner(Rows, 'Apply', Apply),
+    named_owner(Rows, 'Variable', Variable),
+    memberchk(call(ref(kernel(head)),
+                   [ref(History), ref(HeadCall)]), Rows),
+    memberchk(call(ref(Apply), [ref(HeadCall), ref(History)]), Rows),
     findall(Position,
-            member(call(ref(kernel(head_arg)),
-                        [ ref(History), const(Position),
-                          const("variable"), const(_)
-                        ]), Rows),
+            ( member(call(ref(kernel(':')),
+                         [ ref(HeadCall), const(Name), ref(Value),
+                           const(Position)
+                         ]), Rows),
+              member(call(ref(Variable),
+                          [ref(Value), ref(History), const(Name)]), Rows)
+            ),
             HeadPositions),
-    memberchk(call(ref(kernel(head)), [ref(History), ref(History)]), Rows),
     findall(Goal,
-            member(call(ref(kernel(body)),
-                        [ ref(History), const(Goal), const("positive"),
-                          ref(User)
-                        ]), Rows),
+            ( member(call(ref(kernel(body)),
+                         [ ref(History), const(Goal), const("positive"),
+                           ref(BodyCall)
+                         ]), Rows),
+              member(call(ref(Apply), [ref(BodyCall), ref(User)]), Rows)
+            ),
             BodyGoals),
     length(HeadPositions, 2),
     length(BodyGoals, 1),
