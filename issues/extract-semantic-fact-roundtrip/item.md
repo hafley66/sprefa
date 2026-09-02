@@ -127,3 +127,55 @@ The measured probe and architecture notes are recorded in:
 
 - `.agents/skills/sprf-dl7-prolog-compiler/references/2_cst_extract_pipeline.md`
 - `.agents/skills/sprf-dl7-prolog-compiler/references/4_polyglot_type_fact_protocol.md`
+
+## Decisions
+
+### 2026-09-02T21:19:27Z · @codex
+
+TSI contract required by this card. The issue's original `extract.run/fact/witness/coverage` rows describe production provenance and completeness; the semantic payload uses these relations:
+
+```text
+tsi.type(TypeId)
+tsi.denotes(SymbolId, TypeId)
+tsi.has_type(OccurrenceId, TypeId)
+tsi.origin(TypeId, Language, SourceRange)
+
+tsi.product(TypeId)
+tsi.sum(TypeId)
+tsi.callable(TypeId)
+tsi.primitive(TypeId, PrimitiveClass)
+
+tsi.edge(EdgeId, OwnerTypeId, Label, TargetTypeId, Position)
+
+tsi.parameter(ParameterTypeId, CalleeTypeId, Position, Variance)
+tsi.called(ResultTypeId, CalleeTypeId, ArgumentListId)
+tsi.argument(ArgumentListId, Position, ArgumentTypeId)
+
+tsi.input(CallableTypeId, Position, InputTypeId)
+tsi.output(CallableTypeId, Position, OutputTypeId)
+
+tsi.subtype(Source, Target, Witness)
+tsi.assignable(Source, Target, Witness)
+tsi.conforms(Source, Contract, Witness)
+tsi.equivalent(Left, Right, Witness)
+```
+
+Identity rules:
+
+1. Nominal source types derive identity from the resolved source symbol.
+2. Anonymous structural types derive identity from the closed ordered edge graph.
+3. A type call result derives identity from callee plus ordered argument IDs.
+4. A generic parameter derives identity from declaration symbol plus position.
+5. Fact IDs derive from relation plus canonical arguments, allowing syntax and semantic runs to witness the same fact.
+
+Mode contract:
+
+- Syntax mode emits candidate facts and `partial` coverage.
+- Semantic mode uses the native checker and emits every reachable fact represented by the protocol.
+- Semantic adapters retain native operators in namespaced relations such as `ts.conditional`, `ts.mapped`, `ts.optional`, `ts.readonly`, `rust.trait`, `rust.impl`, `rust.lifetime`, `rust.ownership`, `go.interface`, `go.type_set`, and `go.embedding`.
+- A semantic run advertises `complete` only after enumerating every reachable row for that relation. Unsupported coverage stays `partial` with an explicit diagnostic.
+- Recursive graphs close through IDs rather than bounded expansion.
+
+Current implementation receipt: `FlatFact` is a closed output-only enum deriving `Serialize`. The reverse door needs decoding, protocol versioning, validation, canonical re-emission, open namespaced semantic rows, and DL7 relation import.
+
+The longer design references currently live on branch `perf/v7-cold-compile` in commits `a99d7c3bf`, `5b98ea5e8`, `430d69fc7`, `6187a6ede`, and `368a1eebd`; they are absent from `main` as of this note. This card and note are the self-contained implementation contract.
