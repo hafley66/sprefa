@@ -9,9 +9,9 @@
 #define LANGUAGE_VERSION 15
 #define STATE_COUNT 9
 #define LARGE_STATE_COUNT 8
-#define SYMBOL_COUNT 10
+#define SYMBOL_COUNT 11
 #define ALIAS_COUNT 0
-#define TOKEN_COUNT 6
+#define TOKEN_COUNT 7
 #define EXTERNAL_TOKEN_COUNT 0
 #define FIELD_COUNT 0
 #define MAX_ALIAS_SEQUENCE_LENGTH 3
@@ -23,12 +23,13 @@ enum ts_symbol_identifiers {
   anon_sym_LPAREN = 1,
   anon_sym_RPAREN = 2,
   sym_string_literal = 3,
-  sym_bare_token = 4,
-  sym_line_comment = 5,
-  sym_source_file = 6,
-  sym__expression = 7,
-  sym_parenthesized_expression = 8,
-  aux_sym_source_file_repeat1 = 9,
+  sym_query_literal = 4,
+  sym_bare_token = 5,
+  sym_line_comment = 6,
+  sym_source_file = 7,
+  sym__expression = 8,
+  sym_parenthesized_expression = 9,
+  aux_sym_source_file_repeat1 = 10,
 };
 
 static const char * const ts_symbol_names[] = {
@@ -36,6 +37,7 @@ static const char * const ts_symbol_names[] = {
   [anon_sym_LPAREN] = "(",
   [anon_sym_RPAREN] = ")",
   [sym_string_literal] = "string_literal",
+  [sym_query_literal] = "query_literal",
   [sym_bare_token] = "bare_token",
   [sym_line_comment] = "line_comment",
   [sym_source_file] = "source_file",
@@ -49,6 +51,7 @@ static const TSSymbol ts_symbol_map[] = {
   [anon_sym_LPAREN] = anon_sym_LPAREN,
   [anon_sym_RPAREN] = anon_sym_RPAREN,
   [sym_string_literal] = sym_string_literal,
+  [sym_query_literal] = sym_query_literal,
   [sym_bare_token] = sym_bare_token,
   [sym_line_comment] = sym_line_comment,
   [sym_source_file] = sym_source_file,
@@ -71,6 +74,10 @@ static const TSSymbolMetadata ts_symbol_metadata[] = {
     .named = false,
   },
   [sym_string_literal] = {
+    .visible = true,
+    .named = true,
+  },
+  [sym_query_literal] = {
     .visible = true,
     .named = true,
   },
@@ -125,37 +132,61 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
   eof = lexer->eof(lexer);
   switch (state) {
     case 0:
-      if (eof) ADVANCE(3);
-      if (lookahead == '"') ADVANCE(1);
-      if (lookahead == '(') ADVANCE(4);
-      if (lookahead == ')') ADVANCE(5);
-      if (lookahead == ';') ADVANCE(8);
+      if (eof) ADVANCE(7);
+      if (lookahead == '"') ADVANCE(2);
+      if (lookahead == '(') ADVANCE(8);
+      if (lookahead == ')') ADVANCE(9);
+      if (lookahead == ';') ADVANCE(13);
+      if (lookahead == '{') ADVANCE(3);
       if (('\t' <= lookahead && lookahead <= '\r') ||
           lookahead == ' ') SKIP(0);
-      if (lookahead != 0) ADVANCE(7);
+      if (lookahead != 0 &&
+          lookahead != '}') ADVANCE(12);
       END_STATE();
     case 1:
-      if (lookahead == '"') ADVANCE(6);
-      if (lookahead == '\\') ADVANCE(2);
+      if (lookahead == '"') ADVANCE(3);
+      if (lookahead == '\\') ADVANCE(6);
       if (lookahead != 0) ADVANCE(1);
       END_STATE();
     case 2:
+      if (lookahead == '"') ADVANCE(10);
+      if (lookahead == '\\') ADVANCE(4);
+      if (lookahead != 0) ADVANCE(2);
+      END_STATE();
+    case 3:
+      if (lookahead == '"') ADVANCE(1);
+      if (lookahead == '\\') ADVANCE(5);
+      if (lookahead == '}') ADVANCE(11);
+      if (lookahead != 0) ADVANCE(3);
+      END_STATE();
+    case 4:
+      if (lookahead != 0 &&
+          lookahead != '\n') ADVANCE(2);
+      END_STATE();
+    case 5:
+      if (lookahead != 0 &&
+          lookahead != '\n') ADVANCE(3);
+      END_STATE();
+    case 6:
       if (lookahead != 0 &&
           lookahead != '\n') ADVANCE(1);
       END_STATE();
-    case 3:
+    case 7:
       ACCEPT_TOKEN(ts_builtin_sym_end);
       END_STATE();
-    case 4:
+    case 8:
       ACCEPT_TOKEN(anon_sym_LPAREN);
       END_STATE();
-    case 5:
+    case 9:
       ACCEPT_TOKEN(anon_sym_RPAREN);
       END_STATE();
-    case 6:
+    case 10:
       ACCEPT_TOKEN(sym_string_literal);
       END_STATE();
-    case 7:
+    case 11:
+      ACCEPT_TOKEN(sym_query_literal);
+      END_STATE();
+    case 12:
       ACCEPT_TOKEN(sym_bare_token);
       if (lookahead != 0 &&
           (lookahead < '\t' || '\r' < lookahead) &&
@@ -163,12 +194,14 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
           lookahead != '"' &&
           lookahead != '(' &&
           lookahead != ')' &&
-          lookahead != ';') ADVANCE(7);
+          lookahead != ';' &&
+          lookahead != '{' &&
+          lookahead != '}') ADVANCE(12);
       END_STATE();
-    case 8:
+    case 13:
       ACCEPT_TOKEN(sym_line_comment);
       if (lookahead != 0 &&
-          lookahead != '\n') ADVANCE(8);
+          lookahead != '\n') ADVANCE(13);
       END_STATE();
     default:
       return false;
@@ -193,6 +226,7 @@ static const uint16_t ts_parse_table[LARGE_STATE_COUNT][SYMBOL_COUNT] = {
     [anon_sym_LPAREN] = ACTIONS(1),
     [anon_sym_RPAREN] = ACTIONS(1),
     [sym_string_literal] = ACTIONS(1),
+    [sym_query_literal] = ACTIONS(1),
     [sym_bare_token] = ACTIONS(1),
     [sym_line_comment] = ACTIONS(3),
   },
@@ -204,6 +238,7 @@ static const uint16_t ts_parse_table[LARGE_STATE_COUNT][SYMBOL_COUNT] = {
     [ts_builtin_sym_end] = ACTIONS(5),
     [anon_sym_LPAREN] = ACTIONS(7),
     [sym_string_literal] = ACTIONS(9),
+    [sym_query_literal] = ACTIONS(9),
     [sym_bare_token] = ACTIONS(9),
     [sym_line_comment] = ACTIONS(3),
   },
@@ -215,6 +250,7 @@ static const uint16_t ts_parse_table[LARGE_STATE_COUNT][SYMBOL_COUNT] = {
     [anon_sym_LPAREN] = ACTIONS(13),
     [anon_sym_RPAREN] = ACTIONS(11),
     [sym_string_literal] = ACTIONS(16),
+    [sym_query_literal] = ACTIONS(16),
     [sym_bare_token] = ACTIONS(16),
     [sym_line_comment] = ACTIONS(3),
   },
@@ -225,6 +261,7 @@ static const uint16_t ts_parse_table[LARGE_STATE_COUNT][SYMBOL_COUNT] = {
     [anon_sym_LPAREN] = ACTIONS(7),
     [anon_sym_RPAREN] = ACTIONS(19),
     [sym_string_literal] = ACTIONS(21),
+    [sym_query_literal] = ACTIONS(21),
     [sym_bare_token] = ACTIONS(21),
     [sym_line_comment] = ACTIONS(3),
   },
@@ -235,6 +272,7 @@ static const uint16_t ts_parse_table[LARGE_STATE_COUNT][SYMBOL_COUNT] = {
     [ts_builtin_sym_end] = ACTIONS(23),
     [anon_sym_LPAREN] = ACTIONS(7),
     [sym_string_literal] = ACTIONS(25),
+    [sym_query_literal] = ACTIONS(25),
     [sym_bare_token] = ACTIONS(25),
     [sym_line_comment] = ACTIONS(3),
   },
@@ -245,6 +283,7 @@ static const uint16_t ts_parse_table[LARGE_STATE_COUNT][SYMBOL_COUNT] = {
     [anon_sym_LPAREN] = ACTIONS(7),
     [anon_sym_RPAREN] = ACTIONS(27),
     [sym_string_literal] = ACTIONS(25),
+    [sym_query_literal] = ACTIONS(25),
     [sym_bare_token] = ACTIONS(25),
     [sym_line_comment] = ACTIONS(3),
   },
@@ -253,6 +292,7 @@ static const uint16_t ts_parse_table[LARGE_STATE_COUNT][SYMBOL_COUNT] = {
     [anon_sym_LPAREN] = ACTIONS(29),
     [anon_sym_RPAREN] = ACTIONS(29),
     [sym_string_literal] = ACTIONS(29),
+    [sym_query_literal] = ACTIONS(29),
     [sym_bare_token] = ACTIONS(29),
     [sym_line_comment] = ACTIONS(3),
   },
@@ -261,6 +301,7 @@ static const uint16_t ts_parse_table[LARGE_STATE_COUNT][SYMBOL_COUNT] = {
     [anon_sym_LPAREN] = ACTIONS(31),
     [anon_sym_RPAREN] = ACTIONS(31),
     [sym_string_literal] = ACTIONS(31),
+    [sym_query_literal] = ACTIONS(31),
     [sym_bare_token] = ACTIONS(31),
     [sym_line_comment] = ACTIONS(3),
   },

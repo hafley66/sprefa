@@ -3,6 +3,8 @@
             compiler_view/2
           ]).
 
+:- use_module('0_logical_program_reifier', [logical_program_rows/2]).
+
 %% compiler_view(+CompiledUnit, -View) is det.
 %
 % Expose one immutable input shape to host-Prolog emitters. The type graph and
@@ -10,7 +12,9 @@
 % statically resolved executable relation graph.
 compiler_view(
     compiled_unit(TypeGraphFacts, RuntimeProgram, CompilerFacts),
-    compiler_view(TypeGraphFacts, CompilerFacts, RuntimeProgram)).
+    compiler_view(TypeGraphFacts, CompilerFacts,
+                  LogicalProgramRows, RuntimeProgram)) :-
+    logical_program_rows(RuntimeProgram, LogicalProgramRows).
 
 %% emit_compiled(+Emitter, +CompiledUnit, -Artifact, -Diagnostics) is det.
 %
@@ -24,6 +28,15 @@ emit_compiled(
     artifact(monomorphic_datalog, RuntimeProgram),
     []) :-
     !.
+emit_compiled(
+    relational_program,
+    CompiledUnit,
+    artifact(relational_program, LogicalProgramRows),
+    []) :-
+    !,
+    compiler_view(
+        CompiledUnit,
+        compiler_view(_, _, LogicalProgramRows, _)).
 emit_compiled(prolog(Callable), CompiledUnit, Artifact, Diagnostics) :-
     !,
     compiler_view(CompiledUnit, View),

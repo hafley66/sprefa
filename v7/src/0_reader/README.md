@@ -194,7 +194,7 @@ compiler planning stay outside this folder.
 After all files exist, the only focused test command is:
 
 ```text
-swipl -q -g "load_files(['v7/test/0_reader.test.pl','v7/test/1_entrypoints.test.pl','v7/test/2_module_system.test.pl'],[silent(true)]),run_tests,halt"
+swipl -q -g "load_files(['v7/test/0_reader.test.pl','v7/test/1_entrypoints.test.pl','v7/test/2_module_system.test.pl','v7/test/3_compiler_trace.test.pl'],[silent(true)]),run_tests,halt"
 ```
 
 The command is run at most twice. No V6, Rust, TypeScript, generated-corpus,

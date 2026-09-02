@@ -46,10 +46,22 @@ read_term_kind([0'( | Codes0], Path, TopNodeId, NodeId, Start, Index,
     read_form_items(Path, TopNodeId, NodeId, Codes0, Position, Index,
                     Variables0, ItemResult),
     finish_form(Path, NodeId, Start, ItemResult, Result).
+read_term_kind([0'{ | Codes0], Path, _, NodeId, Start, Index,
+               Variables, Result) :-
+    !,
+    advance(0'{, Start, Position),
+    read_query_codes(Codes0, Position, outside_string, QueryResult),
+    finish_query(Path, NodeId, Start, Index, Variables,
+                 QueryResult, Result).
 read_term_kind([0') | _], Path, _, NodeId, Position, _, _,
                error(Diagnostic)) :-
     !,
     reader_diagnostic(Path, NodeId, unexpected_closing_parenthesis,
+                      Position, Diagnostic).
+read_term_kind([0'} | _], Path, _, NodeId, Position, _, _,
+               error(Diagnostic)) :-
+    !,
+    reader_diagnostic(Path, NodeId, unexpected_closing_query_brace,
                       Position, Diagnostic).
 read_term_kind([0'" | Codes0], Path, _, NodeId, Start, Index,
                Variables, Result) :-
@@ -113,6 +125,47 @@ finish_form(Path, NodeId, Start,
             ok(Items, ItemRows, Codes, End, Index, Variables),
             ok(node(NodeId, form(Items)), [Source | ItemRows], Codes, End,
                Index, Variables)) :-
+    source_row(NodeId, Path, Start, End, Source).
+
+read_query_codes([], Position, _, error(unterminated_query, Position)).
+read_query_codes([0'} | Codes], Position0, outside_string,
+                 ok([], Codes, Position)) :-
+    !,
+    advance(0'}, Position0, Position).
+read_query_codes([0'" | Codes0], Position0, outside_string, Result) :-
+    !,
+    advance(0'", Position0, Position),
+    read_query_codes(Codes0, Position, inside_string, RestResult),
+    prepend_query_codes([0'"], RestResult, Result).
+read_query_codes([0'" | Codes0], Position0, inside_string, Result) :-
+    !,
+    advance(0'", Position0, Position),
+    read_query_codes(Codes0, Position, outside_string, RestResult),
+    prepend_query_codes([0'"], RestResult, Result).
+read_query_codes([0'\\, Escape | Codes0], Position0, inside_string, Result) :-
+    !,
+    advance(0'\\, Position0, Position1),
+    advance(Escape, Position1, Position2),
+    read_query_codes(Codes0, Position2, inside_string, RestResult),
+    prepend_query_codes([0'\\, Escape], RestResult, Result).
+read_query_codes([Code | Codes0], Position0, State, Result) :-
+    advance(Code, Position0, Position),
+    read_query_codes(Codes0, Position, State, RestResult),
+    prepend_query_codes([Code], RestResult, Result).
+
+prepend_query_codes(_, error(Code, Position), error(Code, Position)).
+prepend_query_codes(Prefix, ok(Rest, Codes, Position),
+                    ok(All, Codes, Position)) :-
+    append(Prefix, Rest, All).
+
+finish_query(Path, NodeId, _Start, _Index, _Variables,
+             error(Code, Position), error(Diagnostic)) :-
+    reader_diagnostic(Path, NodeId, Code, Position, Diagnostic).
+finish_query(Path, NodeId, Start, Index, Variables,
+             ok(QueryCodes, Codes, End),
+             ok(node(NodeId, literal(tree_sitter_query(Text))),
+                [Source], Codes, End, Index, Variables)) :-
+    string_codes(Text, QueryCodes),
     source_row(NodeId, Path, Start, End, Source).
 
 read_string_codes([], Position, error(unterminated_string, Position)).
@@ -276,6 +329,8 @@ take_token([Code | Codes0], Position0, [Code | Token], Codes, Position) :-
 term_delimiter(Code) :- code_type(Code, space), !.
 term_delimiter(0'().
 term_delimiter(0')).
+term_delimiter(0'{).
+term_delimiter(0'}).
 term_delimiter(0';).
 term_delimiter(0'").
 

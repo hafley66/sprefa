@@ -23,7 +23,10 @@
               ]).
 :- use_module('../src/2_comptime/1a_generated_program_assembler',
               [assemble_generated_program/5]).
-:- use_module('../src/3_emit/0_artifact_emitter', [emit_compiled/4]).
+:- use_module('../src/3_emit/0_logical_program_reifier',
+              [logical_program_rows/2]).
+:- use_module('../src/3_emit/1_artifact_emitter',
+              [emit_compiled/4, compiler_view/2]).
 :- use_module('../src/1_libtime/0_evaluator',
               [ evaluate/4,
                 stratify_rules/3,
@@ -671,14 +674,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 6496,
+                    [], [], 6774,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(192, 414, 92, 323, 125, 213, 92),
+                    runtime(counts(192, 411, 92, 320, 129, 224, 92),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -687,9 +690,7 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                          intern([[0, 1]]),
                          intern_snapshot([[0, 1]]),
                          predecessor([[0, 1], [0, 2]]),
-                         def([[0]]), head([[0]]),
-                         head_arg([[0, 1]]), body([[0, 1]]),
-                         body_arg([[0, 1, 2]])),
+                         def([[0]]), head([[0]]), body([[0, 1]])),
                     compound_key(
                         edges([key("account", int, 0),
                                field(payload, text, 1),
@@ -702,7 +703,8 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                         specialization(copy,
                                        [edge(id, int, 0),
                                         edge(name, text, 1)]),
-                        carrier(definition(2), head(2), body(1)),
+                        carrier(definition(2), head_application(2),
+                                body_application(1)),
                         compiler_output([7, "Ada"]),
                         runtime(relation(2, []), rule(copy),
                                 dependency(positive), stratum(0))),
@@ -764,7 +766,6 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
     named_owner(Rows1, 'Literal', Literal),
     named_owner(Rows1, 'Variable', Variable),
     named_owner(Rows1, curry_specialization, CurrySpecialization),
-    named_owner(Rows1, curry_bound, CurryBound),
     named_owner(Rows1, 'MixedResult', MixedResult),
     named_owner(Rows1, 'Remaining', Remaining),
     named_owner(Rows1, 'Mixed', Mixed),
@@ -810,21 +811,9 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
               Rules),
     memberchk(call(ref(CurrySpecialization),
                    [ref(Pair), ref(PairUser)]), Rows1),
-    memberchk(call(ref(CurryBound),
-                   [ ref(PairUser), const(0), const("reference"),
-                     ref(User)
-                   ]),
-              Rows1),
-    memberchk(call(ref(CurryBound),
-                   [ ref(MixedUserText), const(0), const("reference"),
-                     ref(User)
-                   ]),
-              Rows1),
-    memberchk(call(ref(CurryBound),
-                   [ ref(MixedUserText), const(1), const("constant"),
-                     const("User")
-                   ]),
-              Rows1),
+    generated_rule_application_graph(
+        Rows1, Apply, PairUser, Pair, PairHeadCall, PairBodyCall),
+    dif(PairHeadCall, PairBodyCall),
     findall(Call,
             member(call(ref(Apply), [ref(Call), ref(_)]), Rows1),
             ApplicationCalls0),
@@ -887,7 +876,7 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
                         callable(true), partial(true), value(true)),
                     chained(arity(3), arity(2), return(true)),
                     application_graph(
-                        calls(5), pair_user_occurrences(2), parity(true),
+                        calls(13), pair_user_occurrences(2), parity(true),
                         value_nodes(true)),
                     repeat(rows(true), runtime(true)),
                     residual_partial_terms(0)).
@@ -932,9 +921,18 @@ pair_user_application_graph(Rows, Apply, User, Pair, PairUser, Call) :-
                    [ref(Call), const(return), ref(PairUser), const(2)]),
               Rows).
 
+generated_rule_application_graph(
+    Rows, Apply, Rule, BodyRelation, HeadCall, BodyCall) :-
+    memberchk(call(ref(kernel(head)), [ref(Rule), ref(HeadCall)]), Rows),
+    memberchk(call(ref(Apply), [ref(HeadCall), ref(Rule)]), Rows),
+    memberchk(call(ref(kernel(body)),
+                   [ref(Rule), const(0), const("positive"), ref(BodyCall)]),
+              Rows),
+    memberchk(call(ref(Apply), [ref(BodyCall), ref(BodyRelation)]), Rows).
+
 mixed_application_graph(
     Rows, Apply, Literal, User, Mixed, MixedUserText, LiteralNode) :-
-    memberchk(call(ref(Apply), [ref(Call), ref(Mixed)]), Rows),
+    member(call(ref(Apply), [ref(Call), ref(Mixed)]), Rows),
     memberchk(call(ref(kernel(':')),
                    [ref(Call), const(reference), ref(User), const(0)]),
               Rows),
@@ -973,6 +971,9 @@ test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
     emit_compiled(
         monomorphic_datalog, Compiled,
         DatalogArtifact, DatalogDiagnostics),
+    emit_compiled(
+        relational_program, Compiled,
+        RelationalArtifact, RelationalDiagnostics),
     findall(
         [ref(Source), ref(Specialization)],
         member(call(ref(CurryArtifact),
@@ -981,20 +982,55 @@ test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
         ExpectedRows0),
     sort(ExpectedRows0, ExpectedRows),
     length(CompilerRows, RowCount),
+    compiler_view(Compiled, compiler_view(_, _, LogicalRows, _)),
+    length(LogicalRows, LogicalRowCount),
     Observed = emitter_protocol(
                    compile(Diagnostics),
                    dl7(Dl7Diagnostics, Dl7Artifact),
                    prolog(PrologDiagnostics, PrologArtifact),
-                   datalog(DatalogDiagnostics, DatalogArtifact)),
+                   datalog(DatalogDiagnostics, DatalogArtifact),
+                   relational(RelationalDiagnostics,
+                              RelationalArtifact)),
     Observed == emitter_protocol(
                     compile([]),
                     dl7([], artifacts([
                         artifact("specializations", CurryArtifact,
                                  ExpectedRows)
                     ])),
-                    prolog([], compiler_rows(RowCount)),
+                    prolog([], compiler_rows(RowCount, LogicalRowCount)),
                     datalog([], artifact(monomorphic_datalog,
-                                         RuntimeProgram))).
+                                         RuntimeProgram)),
+                    relational([], artifact(relational_program,
+                                            LogicalRows))).
+
+test(checked_program_reifies_as_target_neutral_rows) :-
+    compile_dl7('v7/test/fixtures/4_generated_call.dl7',
+                _CompilerRows, RuntimeProgram, []),
+    logical_program_rows(RuntimeProgram, Rows1),
+    logical_program_rows(RuntimeProgram, Rows2),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(Relations, Seeds, Rules),
+                         Dependencies, Strata),
+    include(is_program_relation, Rows1, RelationRows),
+    include(is_program_seed, Rows1, SeedRows),
+    include(is_program_rule, Rows1, RuleRows),
+    include(is_program_dependency, Rows1, DependencyRows),
+    include(is_program_stratum, Rows1, StratumRows),
+    length(Relations, RelationCount),
+    length(Seeds, SeedCount),
+    length(Rules, RuleCount),
+    length(Dependencies, DependencyCount),
+    length(Strata, StratumCount),
+    maplist(length_is(RelationCount), [RelationRows, StratumRows]),
+    length(SeedRows, SeedCount),
+    length(RuleRows, RuleCount),
+    length(DependencyRows, DependencyCount),
+    length(StratumRows, StratumCount),
+    Rows1 == Rows2,
+    memberchk(program_rule(rule_id(0), call_id(rule(0), head)), Rows1),
+    memberchk(program_apply(call_id(rule(0), head), _), Rows1),
+    memberchk(program_argument(call_id(rule(0), head), 0, _), Rows1),
+    !.
 
 test(userland_type_algebra_proves_contracts_and_constructs_products) :-
     compile_dl7('v7/test/fixtures/3_type_algebra.dl7',
@@ -1023,6 +1059,34 @@ test(userland_type_algebra_proves_contracts_and_constructs_products) :-
                                 runtime_row([7, "Ada", 1])))),
     !.
 
+test(json_is_an_ordinary_type_capability) :-
+    compile_dl7('v7/test/fixtures/3_type_algebra.dl7',
+                Rows, Runtime, Diagnostics),
+    named_owner(Rows, json, Json),
+    named_owner(Rows, 'User', User),
+    Runtime = checked_datalog(
+                  _, datalog_program(Relations, Seeds, _), _, _),
+    memberchk(relation(ref(Json), 1, []), Relations),
+    memberchk(call(ref(Json), [ref(User)]), Seeds),
+    memberchk(call(ref(Json), [ref(User)]), Rows),
+    \+ sub_term(primitive(json), Rows),
+    Diagnostics == [],
+    !.
+
+test(tree_sitter_query_is_ordinary_ground_call_data) :-
+    Text = "(: cst (* (: path text) (: query any)))\n(cst \"user.js\" { (identifier) @name })\n",
+    dl7_text_unit(query_data, query_data_source, Text, Unit, []),
+    compile_unit(Unit, compiled_unit(_, Runtime, Rows), Diagnostics),
+    named_owner(Rows, cst, Cst),
+    Query = tree_sitter_query(" (identifier) @name "),
+    Runtime = checked_datalog(
+                  _, datalog_program(Relations, Seeds, _), _, _),
+    memberchk(relation(ref(Cst), 2, []), Relations),
+    memberchk(call(ref(Cst), [const("user.js"), const(Query)]), Seeds),
+    memberchk(call(ref(Cst), [const("user.js"), const(Query)]), Rows),
+    Diagnostics == [],
+    !.
+
 test(final_closure_rejects_declared_functional_key_conflicts) :-
     Relation = ref(kernel(':')),
     Relations = [relation(Relation, 4, [[0, 1], [0, 3]])],
@@ -1042,7 +1106,7 @@ test(final_closure_rejects_declared_functional_key_conflicts) :-
                              [ref(owner), const(name), ref(second), const(1)]))
                    )].
 
-test(generated_program_rejects_identity_collisions_and_orphan_arguments) :-
+test(generated_program_rejects_identity_collisions_and_orphan_bodies) :-
     Existing = ref(existing),
     BaseRelations = [relation(Existing, 1, [])],
     assemble_generated_program(
@@ -1050,9 +1114,9 @@ test(generated_program_rejects_identity_collisions_and_orphan_arguments) :-
         BaseRelations, CollisionRelations, CollisionRules,
         CollisionDiagnostics),
     assemble_generated_program(
-        [call(ref(kernel(body_arg)),
-              [ ref(orphan), const(0), const(0),
-                const("variable"), const(value)
+        [call(ref(kernel(body)),
+              [ ref(orphan), const(0), const("positive"),
+                ref(orphan_call)
               ])],
         BaseRelations, OrphanRelations, OrphanRules, OrphanDiagnostics),
     Observed = generated_program_rejections(
@@ -1069,13 +1133,9 @@ test(generated_program_rejects_identity_collisions_and_orphan_arguments) :-
                                  Existing))]),
                     orphan(
                         [], [],
-                        [ diagnostic(
-                              assemble, none,
-                              orphan_generated_rule_fragment(orphan)),
-                          diagnostic(
-                              assemble, none,
-                              orphan_generated_body_arguments(orphan, 0))
-                        ])).
+                        [diagnostic(
+                             assemble, none,
+                             orphan_generated_rule_fragment(orphan))])).
 
 test(authored_order_kernel_modes_are_checked_left_to_right) :-
     Construct = checked_goal(
@@ -1639,7 +1699,7 @@ runtime_key_snapshot(
          nil(NilKeys), cons(ConsKeys), intern(InternKeys),
          intern_snapshot(InternSnapshotKeys),
          predecessor(PredecessorKeys), def(DefKeys), head(HeadKeys),
-         head_arg(HeadArgKeys), body(BodyKeys), body_arg(BodyArgKeys))) :-
+         body(BodyKeys))) :-
     memberchk(relation(ref(kernel(':')), 4, ColonKeys), Relations),
     memberchk(relation(ref(kernel(edge_snapshot)), 4, SnapshotKeys),
               Relations),
@@ -1652,9 +1712,7 @@ runtime_key_snapshot(
               Relations),
     memberchk(relation(ref(kernel(def)), 2, DefKeys), Relations),
     memberchk(relation(ref(kernel(head)), 2, HeadKeys), Relations),
-    memberchk(relation(ref(kernel(head_arg)), 4, HeadArgKeys), Relations),
-    memberchk(relation(ref(kernel(body)), 4, BodyKeys), Relations),
-    memberchk(relation(ref(kernel(body_arg)), 5, BodyArgKeys), Relations).
+    memberchk(relation(ref(kernel(body)), 4, BodyKeys), Relations).
 
 compound_key_snapshot(
     Rows,
@@ -1706,7 +1764,7 @@ history_v1_snapshot(
                     Depends, Strata),
     history_v1(
         specialization(copy, Edges),
-        carrier(definition(2), head(2), body(1)),
+        carrier(definition(2), head_application(2), body_application(1)),
         compiler_output([7, "Ada"]),
         runtime(relation(2, []), rule(copy),
                 dependency(positive), stratum(0)))) :-
@@ -1729,18 +1787,27 @@ history_v1_snapshot(
                         ]), Rows),
             Edges),
     memberchk(call(ref(kernel(def)), [ref(History), const(2)]), Rows),
+    named_owner(Rows, 'Apply', Apply),
+    named_owner(Rows, 'Variable', Variable),
+    memberchk(call(ref(kernel(head)),
+                   [ref(History), ref(HeadCall)]), Rows),
+    memberchk(call(ref(Apply), [ref(HeadCall), ref(History)]), Rows),
     findall(Position,
-            member(call(ref(kernel(head_arg)),
-                        [ ref(History), const(Position),
-                          const("variable"), const(_)
-                        ]), Rows),
+            ( member(call(ref(kernel(':')),
+                         [ ref(HeadCall), const(Name), ref(Value),
+                           const(Position)
+                         ]), Rows),
+              member(call(ref(Variable),
+                          [ref(Value), ref(History), const(Name)]), Rows)
+            ),
             HeadPositions),
-    memberchk(call(ref(kernel(head)), [ref(History), ref(History)]), Rows),
     findall(Goal,
-            member(call(ref(kernel(body)),
-                        [ ref(History), const(Goal), const("positive"),
-                          ref(User)
-                        ]), Rows),
+            ( member(call(ref(kernel(body)),
+                         [ ref(History), const(Goal), const("positive"),
+                           ref(BodyCall)
+                         ]), Rows),
+              member(call(ref(Apply), [ref(BodyCall), ref(User)]), Rows)
+            ),
             BodyGoals),
     length(HeadPositions, 2),
     length(BodyGoals, 1),
@@ -1860,9 +1927,19 @@ named_owner(Rows, Name, Owner) :-
            Rows),
     !.
 
-compiler_row_count(compiler_view(_, CompilerRows, _),
-                   compiler_rows(Count)) :-
-    length(CompilerRows, Count).
+compiler_row_count(compiler_view(_, CompilerRows, LogicalRows, _),
+                   compiler_rows(CompilerCount, LogicalCount)) :-
+    length(CompilerRows, CompilerCount),
+    length(LogicalRows, LogicalCount).
+
+is_program_relation(program_relation(_, _)).
+is_program_seed(program_seed(_, _)).
+is_program_rule(program_rule(_, _)).
+is_program_dependency(program_dependency(_, _, _)).
+is_program_stratum(program_stratum(_, _)).
+
+length_is(Expected, List) :-
+    length(List, Expected).
 
 relation_pairs(Rows, Relation, Owner, Pairs) :-
     findall(Earlier-Later,
@@ -1905,9 +1982,9 @@ evaluator_snapshot(
     evaluator(temporary_rules(RuleFacts), temporary_seeds(SeedFacts),
               temporary_lower_rows(LowerFacts),
               temporary_requests(RequestFacts))) :-
-    aggregate_all(count, dl7_evaluator:evaluation_rule(_, _), RuleFacts),
-    aggregate_all(count, dl7_evaluator:evaluation_seed(_, _), SeedFacts),
-    aggregate_all(count, dl7_evaluator:evaluation_lower(_, _), LowerFacts),
+    aggregate_all(count, dl7_evaluator:evaluation_rule(_, _, _), RuleFacts),
+    aggregate_all(count, dl7_evaluator:evaluation_seed(_, _, _), SeedFacts),
+    aggregate_all(count, dl7_evaluator:evaluation_lower(_, _, _), LowerFacts),
     aggregate_all(count, dl7_evaluator:evaluation_request(_, _),
                   RequestFacts).
 

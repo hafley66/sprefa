@@ -316,9 +316,7 @@ kernel_relation_keys(intern_snapshot, [[0, 1]]).
 kernel_relation_keys(predecessor, [[0, 1], [0, 2]]).
 kernel_relation_keys(def, [[0]]).
 kernel_relation_keys(head, [[0]]).
-kernel_relation_keys(head_arg, [[0, 1]]).
 kernel_relation_keys(body, [[0, 1]]).
-kernel_relation_keys(body_arg, [[0, 1, 2]]).
 kernel_relation_keys(node, []).
 kernel_relation_keys(module, []).
 kernel_relation_keys(product, []).
@@ -353,9 +351,7 @@ kernel_graph(
       node(kernel(predecessor)), product(kernel(predecessor)),
       node(kernel(def)), product(kernel(def)),
       node(kernel(head)), product(kernel(head)),
-      node(kernel(head_arg)), product(kernel(head_arg)),
-      node(kernel(body)), product(kernel(body)),
-      node(kernel(body_arg)), product(kernel(body_arg))
+      node(kernel(body)), product(kernel(body))
     ],
     [ ':'(kernel(node), id, ref(primitive(type)), 0),
       ':'(kernel(module), id, ref(primitive(type)), 0),
@@ -385,20 +381,11 @@ kernel_graph(
       ':'(kernel(def), relation, ref(primitive(type)), 0),
       ':'(kernel(def), arity, ref(primitive(int)), 1),
       ':'(kernel(head), rule, ref(primitive(type)), 0),
-      ':'(kernel(head), relation, ref(primitive(type)), 1),
-      ':'(kernel(head_arg), rule, ref(primitive(type)), 0),
-      ':'(kernel(head_arg), position, ref(primitive(int)), 1),
-      ':'(kernel(head_arg), kind, ref(primitive(text)), 2),
-      ':'(kernel(head_arg), value, ref(primitive(any)), 3),
+      ':'(kernel(head), application, ref(primitive(type)), 1),
       ':'(kernel(body), rule, ref(primitive(type)), 0),
       ':'(kernel(body), goal, ref(primitive(int)), 1),
       ':'(kernel(body), polarity, ref(primitive(text)), 2),
-      ':'(kernel(body), relation, ref(primitive(type)), 3),
-      ':'(kernel(body_arg), rule, ref(primitive(type)), 0),
-      ':'(kernel(body_arg), goal, ref(primitive(int)), 1),
-      ':'(kernel(body_arg), position, ref(primitive(int)), 2),
-      ':'(kernel(body_arg), kind, ref(primitive(text)), 3),
-      ':'(kernel(body_arg), value, ref(primitive(any)), 4)
+      ':'(kernel(body), application, ref(primitive(type)), 3)
     ]).
 
 %% Seeds resolve to ground calls over declared product relations.

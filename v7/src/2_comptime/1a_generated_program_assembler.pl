@@ -8,9 +8,10 @@
 %%                            -GeneratedRelations, -GeneratedRules,
 %%                            -Diagnostics) is det.
 %
-% Turn the public def/head/body carrier relations into the checked IR used by
-% the shared evaluator. Every position is zero-based and dense. Variable names
-% are scoped by their generated rule identity before entering checked IR.
+% Turn public def/head/body rows plus application nodes into the checked IR
+% used by the shared evaluator. Every position is zero-based and dense.
+% Variable names are scoped by their generated rule identity before entering
+% checked IR.
 assemble_generated_program(CompilerRows, BaseRelations,
                            GeneratedRelations, GeneratedRules,
                            Diagnostics) :-
@@ -86,50 +87,47 @@ generated_relation_collision_diagnostics(
                                              RestDiagnostics).
 
 assemble_rules(Rows, Relations, Rules, Diagnostics) :-
+    generated_application_context(Rows, ApplicationContext),
     findall(Rule,
             member(call(ref(kernel(head)), [ref(Rule), _]), Rows),
             RuleIds0),
     sort(RuleIds0, RuleIds),
-    assemble_rule_ids(RuleIds, Rows, Relations, Rules, Diagnostics).
+    assemble_rule_ids(RuleIds, Rows, ApplicationContext, Relations,
+                      Rules, Diagnostics).
 
-assemble_rule_ids([], _, _, [], []).
-assemble_rule_ids([RuleId | RuleIds], Rows, Relations,
+assemble_rule_ids([], _, _, _, [], []).
+assemble_rule_ids([RuleId | RuleIds], Rows, ApplicationContext, Relations,
                   Rules, Diagnostics) :-
-    assemble_rule(RuleId, Rows, Relations, RuleResult, OwnDiagnostics),
-    assemble_rule_ids(RuleIds, Rows, Relations,
+    assemble_rule(RuleId, Rows, ApplicationContext, Relations,
+                  RuleResult, OwnDiagnostics),
+    assemble_rule_ids(RuleIds, Rows, ApplicationContext, Relations,
                       RestRules, RestDiagnostics),
     append_rule_result(RuleResult, RestRules, Rules),
     append(OwnDiagnostics, RestDiagnostics, Diagnostics).
 
-assemble_rule(RuleId, Rows, Relations, RuleResult, Diagnostics) :-
-    findall(Relation,
+assemble_rule(RuleId, Rows, ApplicationContext, Relations,
+              RuleResult, Diagnostics) :-
+    findall(Application,
             member(call(ref(kernel(head)),
-                        [ref(RuleId), ref(Relation)]), Rows),
-            HeadRelations0),
-    sort(HeadRelations0, HeadRelations),
-    (   HeadRelations = [HeadRelation],
-        memberchk(relation(ref(HeadRelation), HeadArity, _), Relations)
-    ->  assemble_arguments(head, RuleId, none, HeadArity, Rows,
-                           HeadArguments, HeadDiagnostics),
-        assemble_body(RuleId, Rows, Relations, Body, BodyDiagnostics),
+                        [ref(RuleId), ref(Application)]), Rows),
+            HeadApplications0),
+    sort(HeadApplications0, HeadApplications),
+    (   HeadApplications = [HeadApplication]
+    ->  assemble_application(
+            head, RuleId, none, HeadApplication,
+            ApplicationContext, Relations, HeadCall, HeadDiagnostics),
+        assemble_body(RuleId, Rows, ApplicationContext, Relations,
+                      Body, BodyDiagnostics),
         append(HeadDiagnostics, BodyDiagnostics, Diagnostics),
         (   Diagnostics == []
-        ->  RuleResult = rule(
-                             call(ref(HeadRelation), HeadArguments),
-                             Body)
+        ->  RuleResult = rule(HeadCall, Body)
         ;   RuleResult = none
         )
-    ;   HeadRelations = [HeadRelation]
-    ->  RuleResult = none,
-        Diagnostics =
-            [diagnostic(assemble, none,
-                        generated_head_undeclared_relation(
-                            RuleId, HeadRelation))]
     ;   RuleResult = none,
         Diagnostics =
             [diagnostic(assemble, none,
                         conflicting_generated_heads(
-                            RuleId, HeadRelations))]
+                            RuleId, HeadApplications))]
     ).
 
 append_rule_result(none, Rules, Rules).
@@ -144,15 +142,7 @@ orphan_fragment_diagnostics(Rows, Diagnostics) :-
               \+ memberchk(RuleId, HeadIds)
             ),
             RuleDiagnostics),
-    generated_body_goal_pairs(Rows, BodyGoals),
-    generated_body_argument_pairs(Rows, BodyArgumentGoals),
-    findall(diagnostic(assemble, none,
-                       orphan_generated_body_arguments(RuleId, GoalIndex)),
-            ( member(RuleId-GoalIndex, BodyArgumentGoals),
-              \+ memberchk(RuleId-GoalIndex, BodyGoals)
-            ),
-            BodyDiagnostics),
-    append(RuleDiagnostics, BodyDiagnostics, Diagnostics).
+    Diagnostics = RuleDiagnostics.
 
 generated_head_ids(Rows, HeadIds) :-
     findall(RuleId,
@@ -167,27 +157,10 @@ generated_fragment_ids(Rows, FragmentIds) :-
     sort(FragmentIds0, FragmentIds).
 
 generated_fragment_id(Rows, RuleId) :-
-    member(call(ref(kernel(head_arg)), [ref(RuleId) | _]), Rows).
-generated_fragment_id(Rows, RuleId) :-
     member(call(ref(kernel(body)), [ref(RuleId) | _]), Rows).
-generated_fragment_id(Rows, RuleId) :-
-    member(call(ref(kernel(body_arg)), [ref(RuleId) | _]), Rows).
 
-generated_body_goal_pairs(Rows, Pairs) :-
-    findall(RuleId-GoalIndex,
-            member(call(ref(kernel(body)),
-                        [ref(RuleId), const(GoalIndex) | _]), Rows),
-            Pairs0),
-    sort(Pairs0, Pairs).
-
-generated_body_argument_pairs(Rows, Pairs) :-
-    findall(RuleId-GoalIndex,
-            member(call(ref(kernel(body_arg)),
-                        [ref(RuleId), const(GoalIndex) | _]), Rows),
-            Pairs0),
-    sort(Pairs0, Pairs).
-
-assemble_body(RuleId, Rows, Relations, Body, Diagnostics) :-
+assemble_body(RuleId, Rows, ApplicationContext, Relations,
+              Body, Diagnostics) :-
     findall(GoalIndex,
             member(call(ref(kernel(body)),
                         [ref(RuleId), const(GoalIndex), _, _]), Rows),
@@ -196,7 +169,8 @@ assemble_body(RuleId, Rows, Relations, Body, Diagnostics) :-
     length(GoalIndices, GoalCount),
     expected_positions(GoalCount, ExpectedIndices),
     (   GoalIndices == ExpectedIndices
-    ->  assemble_goals(GoalIndices, RuleId, Rows, Relations,
+    ->  assemble_goals(GoalIndices, RuleId, Rows, ApplicationContext,
+                       Relations,
                        Body, Diagnostics)
     ;   Body = [],
         Diagnostics =
@@ -205,42 +179,37 @@ assemble_body(RuleId, Rows, Relations, Body, Diagnostics) :-
                             RuleId, GoalIndices))]
     ).
 
-assemble_goals([], _, _, _, [], []).
-assemble_goals([GoalIndex | GoalIndices], RuleId, Rows, Relations,
+assemble_goals([], _, _, _, _, [], []).
+assemble_goals([GoalIndex | GoalIndices], RuleId, Rows,
+               ApplicationContext, Relations,
                Goals, Diagnostics) :-
-    findall(goal(Polarity, Relation),
+    findall(goal(Polarity, Application),
             member(call(ref(kernel(body)),
                         [ ref(RuleId), const(GoalIndex),
-                          const(Polarity), ref(Relation)
+                          const(Polarity), ref(Application)
                         ]), Rows),
             GoalHeaders0),
     sort(GoalHeaders0, GoalHeaders),
-    assemble_goal_header(RuleId, GoalIndex, GoalHeaders, Rows, Relations,
+    assemble_goal_header(RuleId, GoalIndex, GoalHeaders,
+                         ApplicationContext, Relations,
                          GoalResult, OwnDiagnostics),
-    assemble_goals(GoalIndices, RuleId, Rows, Relations,
+    assemble_goals(GoalIndices, RuleId, Rows, ApplicationContext, Relations,
                    RestGoals, RestDiagnostics),
     append_goal_result(GoalResult, RestGoals, Goals),
     append(OwnDiagnostics, RestDiagnostics, Diagnostics).
 
-assemble_goal_header(RuleId, GoalIndex, [goal(Polarity0, Relation)],
-                     Rows, Relations, GoalResult, Diagnostics) :-
+assemble_goal_header(RuleId, GoalIndex, [goal(Polarity0, Application)],
+                     ApplicationContext, Relations,
+                     GoalResult, Diagnostics) :-
     !,
-    (   generated_polarity(Polarity0, Polarity),
-        memberchk(relation(ref(Relation), Arity, _), Relations)
-    ->  assemble_arguments(body, RuleId, GoalIndex, Arity, Rows,
-                           Arguments, Diagnostics),
+    (   generated_polarity(Polarity0, Polarity)
+    ->  assemble_application(
+            body, RuleId, GoalIndex, Application,
+            ApplicationContext, Relations, Call, Diagnostics),
         (   Diagnostics == []
-        ->  GoalResult = checked_goal(
-                                Polarity,
-                                call(ref(Relation), Arguments))
+        ->  GoalResult = checked_goal(Polarity, Call)
         ;   GoalResult = none
         )
-    ;   generated_polarity(Polarity0, _)
-    ->  GoalResult = none,
-        Diagnostics =
-            [diagnostic(assemble, none,
-                        generated_body_undeclared_relation(
-                            RuleId, GoalIndex, Relation))]
     ;   GoalResult = none,
         Diagnostics =
             [diagnostic(assemble, none,
@@ -255,83 +224,166 @@ assemble_goal_header(RuleId, GoalIndex, GoalHeaders, _, _, none,
 append_goal_result(none, Goals, Goals).
 append_goal_result(Goal, Goals, [Goal | Goals]).
 
-assemble_arguments(Part, RuleId, GoalIndex, Arity, Rows,
+assemble_application(Part, RuleId, GoalIndex, Application,
+                     ApplicationContext, Relations, Call, Diagnostics) :-
+    application_callables(ApplicationContext, Application, Callables),
+    (   Callables = [Relation],
+        memberchk(relation(ref(Relation), Arity, _), Relations)
+    ->  assemble_arguments(
+            Application, RuleId, Arity, ApplicationContext,
+            Arguments, Diagnostics),
+        (   Diagnostics == []
+        ->  Call = call(ref(Relation), Arguments)
+        ;   Call = none
+        )
+    ;   Callables = [Relation]
+    ->  Call = none,
+        undeclared_application_diagnostic(
+            Part, RuleId, GoalIndex, Relation, Diagnostics)
+    ;   Call = none,
+        Diagnostics =
+            [diagnostic(
+                 assemble, none,
+                 generated_application_callable(
+                     Part, RuleId, GoalIndex, Application, Callables))]
+    ).
+
+undeclared_application_diagnostic(
+    head, RuleId, _, Relation,
+    [diagnostic(assemble, none,
+                generated_head_undeclared_relation(RuleId, Relation))]).
+undeclared_application_diagnostic(
+    body, RuleId, GoalIndex, Relation,
+    [diagnostic(assemble, none,
+                generated_body_undeclared_relation(
+                    RuleId, GoalIndex, Relation))]).
+
+assemble_arguments(Application, RuleId, Arity, ApplicationContext,
                    Arguments, Diagnostics) :-
-    argument_rows(Part, RuleId, GoalIndex, Rows, ArgumentRows),
+    argument_rows(Application, ApplicationContext, ArgumentRows),
     findall(Position,
-            member(argument(Position, _, _), ArgumentRows),
+            member(argument(Position, _), ArgumentRows),
             Positions0),
     sort(Positions0, Positions),
     expected_positions(Arity, ExpectedPositions),
     (   Positions == ExpectedPositions
     ->  assemble_argument_positions(ExpectedPositions, RuleId,
-                                     ArgumentRows,
+                                     ArgumentRows, ApplicationContext,
                                      Arguments, Diagnostics)
     ;   Arguments = [],
         Diagnostics =
             [diagnostic(assemble, none,
                         generated_argument_positions(
-                            Part, RuleId, GoalIndex,
+                            application, RuleId, Application,
                             expected(ExpectedPositions),
                             observed(Positions)))]
     ).
 
-argument_rows(head, RuleId, _, Rows, ArgumentRows) :-
-    findall(argument(Position, Kind, Value),
-            member(call(ref(kernel(head_arg)),
-                        [ ref(RuleId), const(Position),
-                          const(Kind), Value
-                        ]), Rows),
-            ArgumentRows).
-argument_rows(body, RuleId, GoalIndex, Rows, ArgumentRows) :-
-    findall(argument(Position, Kind, Value),
-            member(call(ref(kernel(body_arg)),
-                        [ ref(RuleId), const(GoalIndex), const(Position),
-                          const(Kind), Value
-                        ]), Rows),
+argument_rows(Application, application_context(Rows, _, _, _),
+              ArgumentRows) :-
+    findall(argument(Position, Value),
+            member(call(ref(kernel(':')),
+                        [ ref(Application), _, Value, const(Position) ]),
+                   Rows),
             ArgumentRows).
 
-assemble_argument_positions([], _, _, [], []).
+assemble_argument_positions([], _, _, _, [], []).
 assemble_argument_positions([Position | Positions], RuleId, Rows,
+                            ApplicationContext,
                             Arguments, Diagnostics) :-
-    findall(kind_value(Kind, Value),
-            member(argument(Position, Kind, Value), Rows),
+    findall(Value,
+            member(argument(Position, Value), Rows),
             Values0),
     sort(Values0, Values),
-    generated_argument_result(RuleId, Position, Values,
+    generated_argument_result(RuleId, Position, Values, ApplicationContext,
                               ArgumentResult, OwnDiagnostics),
-    assemble_argument_positions(Positions, RuleId, Rows,
+    assemble_argument_positions(Positions, RuleId, Rows, ApplicationContext,
                                 RestArguments, RestDiagnostics),
     append_argument_result(ArgumentResult, RestArguments, Arguments),
     append(OwnDiagnostics, RestDiagnostics, Diagnostics).
 
-generated_argument_result(RuleId, _, [kind_value(Kind0, const(Name))],
-                          var(generated(RuleId, Name)), []) :-
-    generated_kind(Kind0, variable),
-    (atom(Name); string(Name)),
-    !.
-generated_argument_result(_, _, [kind_value(Kind0, Value)], Value, []) :-
-    generated_kind(Kind0, constant),
-    Value = const(_),
-    !.
-generated_argument_result(_, _, [kind_value(Kind0, Value)], Value, []) :-
-    generated_kind(Kind0, reference),
-    Value = ref(_),
-    !.
-generated_argument_result(RuleId, Position, Values, none,
+generated_argument_result(RuleId, Position, [ref(Node)],
+                          ApplicationContext, Result, Diagnostics) :-
+    !,
+    generated_node_result(
+        RuleId, Position, Node, ApplicationContext, Result, Diagnostics).
+generated_argument_result(RuleId, Position, Values, _, none,
                           [diagnostic(assemble, none,
                                       invalid_generated_argument(
                                           RuleId, Position, Values))]).
 
+generated_node_result(RuleId, Position, Node, ApplicationContext,
+                      Result, Diagnostics) :-
+    variable_node_rows(ApplicationContext, Node, Variables),
+    literal_node_rows(ApplicationContext, Node, Literals),
+    generated_node_rows_result(
+        RuleId, Position, Node, Variables, Literals, Result, Diagnostics).
+
+generated_node_rows_result(
+    RuleId, _, _, [variable(RuleId, Name)], [],
+    var(generated(RuleId, Name)), []) :-
+    (atom(Name); string(Name)),
+    !.
+generated_node_rows_result(_, _, _, [], [literal(_, Value)], Value, []) :-
+    Value = const(_),
+    !.
+generated_node_rows_result(_, _, Node, [], [], ref(Node), []) :-
+    !.
+generated_node_rows_result(
+    RuleId, Position, Node, Variables, Literals, none,
+    [diagnostic(assemble, none,
+                invalid_generated_value_node(
+                    RuleId, Position, Node, Variables, Literals))]).
+
+generated_application_context(
+    Rows,
+    application_context(Rows, ApplyRelations, LiteralRelations,
+                        VariableRelations)) :-
+    named_relation_targets(Rows, 'Apply', ApplyRelations),
+    named_relation_targets(Rows, 'Literal', LiteralRelations),
+    named_relation_targets(Rows, 'Variable', VariableRelations).
+
+named_relation_targets(Rows, Name, Relations) :-
+    findall(Relation,
+            member(call(ref(kernel(':')),
+                        [ref(_), const(Name), ref(Relation), const(_)]),
+                   Rows),
+            Relations0),
+    sort(Relations0, Relations).
+
+application_callables(
+    application_context(Rows, ApplyRelations, _, _), Application,
+    Callables) :-
+    findall(Callable,
+            ( member(Apply, ApplyRelations),
+              member(call(ref(Apply),
+                          [ref(Application), ref(Callable)]), Rows)
+            ),
+            Callables0),
+    sort(Callables0, Callables).
+
+variable_node_rows(
+    application_context(Rows, _, _, VariableRelations), Node, Variables) :-
+    findall(variable(Scope, Name),
+            ( member(Variable, VariableRelations),
+              member(call(ref(Variable),
+                          [ref(Node), ref(Scope), const(Name)]), Rows)
+            ),
+            Variables0),
+    sort(Variables0, Variables).
+
+literal_node_rows(
+    application_context(Rows, _, LiteralRelations, _), Node, Literals) :-
+    findall(literal(Primitive, Value),
+            ( member(Literal, LiteralRelations),
+              member(call(ref(Literal),
+                          [ref(Node), ref(Primitive), Value]), Rows)
+            ),
+            Literals0),
+    sort(Literals0, Literals).
+
 append_argument_result(none, Arguments, Arguments).
 append_argument_result(Argument, Arguments, [Argument | Arguments]).
-
-generated_kind(variable, variable).
-generated_kind("variable", variable).
-generated_kind(constant, constant).
-generated_kind("constant", constant).
-generated_kind(reference, reference).
-generated_kind("reference", reference).
 
 generated_polarity(positive, positive).
 generated_polarity("positive", positive).

@@ -21,6 +21,11 @@ tree-sitter-parse path:
 # Step 1 compiler-front build gate.
 build: tree-sitter-test
 
+# Compile the representative type-program fixture cold and warm. Structural
+# budgets use inference, closure-round, and row counts; wall time is reported.
+compiler-perf:
+    swipl -q -s "{{ v7 }}/bench/0_compiler_performance.pl" -- "{{ v7 }}/test/fixtures/2_partial.dl7"
+
 # Validate exact closure counts on tiny chain and ring graphs.
 runtime-shootout-smoke:
     bash "{{ v7 }}/labs/18_runtime_shootout/4_run.sh" smoke 4

@@ -48,6 +48,32 @@ test(malformed_form_returns_one_positioned_diagnostic) :-
                          position(2, 2, 1))
             ]).
 
+test(tree_sitter_query_literal_preserves_exact_inner_text) :-
+    Text = "(cst ?path { (identifier) @name (#eq? @name \"}\") })",
+    read_dl7(query_source, Text, Forms, SourceRows, Diagnostics),
+    Forms = [node(_, form([
+                 node(_, atom(cst)),
+                 node(_, variable(_, path)),
+                 node(_, literal(tree_sitter_query(Query)))
+             ]))],
+    Query == " (identifier) @name (#eq? @name \"}\") ",
+    length(SourceRows, 4),
+    Diagnostics == [],
+    !.
+
+test(unterminated_tree_sitter_query_is_positioned) :-
+    read_dl7(query_source, "{ (identifier)", Forms, SourceRows,
+             Diagnostics),
+    Observed = reader_result(Forms, SourceRows, Diagnostics),
+    Observed ==
+        reader_result(
+            [], [],
+            [ diagnostic(reader, query_source,
+                         reader_node(query_source, 0),
+                         unterminated_query,
+                         position(14, 1, 15))
+            ]).
+
 test(infix_colon_rotates_to_the_canonical_prefix_tree_at_every_depth) :-
     Text = "(User: (* (id: int) (name: text)))\n((Key \"account\" Options): int)\n",
     dl7_text_unit(infix_colon, infix_colon_source, Text, Unit, Diagnostics),

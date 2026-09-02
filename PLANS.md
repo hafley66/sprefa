@@ -100,6 +100,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `docs` plans/2026-07-18-db-seam-migration.md:464 — src/db.rs grows past 1500 lines under this plan; it is already in scripts/filesize-allow.txt, but a future split into src/db/ requires extending rusqlite_seam in .dl/no-new-rusqlite.dl
 - `docs` plans/2026-07-25-analysis-engine-bakeoff-labs.md:119 — scale matrix committed to labs/bakeoff/MATRIX.md (tool × Q1–Q10 × C0–C3 × wall/RSS/LOC/cold-start)
 - `docs` plans/2026-08-18-typescript-shaped-interface-bounds.md:203 — Document interface applications, exact arguments, and wildcard arguments in the DL6 syntax reference.
+- `emitter` plans/2026-09-02-dl7-relational-emitter-foundation.md:121 — Implement the first DBSP relational-plan emitter over logical and layout rows.
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:148 — item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:150 — item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract
 - `feature` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:103 — agent_edit carries line/span columns so touched-region x AST-span joins work (guarded-MATCH vs guarded-FILE)
@@ -197,8 +198,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:197 — Arc A bounded rule: verify a directive using an operator_atom or quoted functor ('use_module'(...)) still matches, add a test case if the corpus lacks one
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:198 — Arc B name-gate: confirm old itself is always admitted (it contains its own stem) and its module name still parses
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:199 — Arc C parallel drain: assert edit_stage order equals sorted rel order in a unit test before relying on the byte-identical receipt
-- `refactor` plans/2026-09-01-dl7-application-edge-kernel.md:148 — Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol.
-- `refactor` plans/2026-09-01-dl7-application-edge-kernel.md:149 — Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges.
+- `planning` plans/2026-09-02-dl7-relational-emitter-foundation.md:120 — Define target layout rows and representation_bridge derivation without target names in comptime predicates.
+- `refactor` plans/2026-09-01-dl7-application-edge-kernel.md:148 — Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges.
 - `refactor` plans/2026-09-01-dl7-callable-relations.md:170 — Reify call sites so slot normalization and partial completion move from 0_lowerer.pl into prelude rules.
 - `refactor` plans/2026-09-01-dl7-reified-call-sites.md:86 — Reify every call site and move named, punned, omitted, and defaulted slot policy from 0_lowerer.pl into prelude rules.
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
@@ -408,13 +409,14 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-08-25-move-rule-perf.PLAN.md:199 `perf` — Arc C parallel drain: assert edit_stage order equals sorted rel order in a unit test before relying on the byte-identical receipt
 - plans/2026-08-27-leaky-types-review.PLAN.md:58 `triage` — leaky-types review rows #3 DfNodeKind, #16 FlatFact, #2 ExtractLang need a design pass with Chris (per-lang impl shape) before any lane picks them up
 - plans/2026-08-27-leaky-types-review.PLAN.md:60 `triage` — tasks.rs trait set (Reach/Cascade/Reconcile/GraphStore/GraphStorePlan) has zero references in the repo; confirm delete-vs-privatize
-- plans/2026-09-01-dl7-application-edge-kernel.md:148 `refactor` — Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol.
-- plans/2026-09-01-dl7-application-edge-kernel.md:149 `refactor` — Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges.
+- plans/2026-09-01-dl7-application-edge-kernel.md:148 `refactor` — Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges.
 - plans/2026-09-01-dl7-callable-relations.md:169 `feature` — Normalize explicit, punned, omitted, and defaulted argument slots.
 - plans/2026-09-01-dl7-callable-relations.md:170 `refactor` — Reify call sites so slot normalization and partial completion move from 0_lowerer.pl into prelude rules.
 - plans/2026-09-01-dl7-callable-relations.md:171 `feature` — Generate callable sum alternatives and userland match coverage.
 - plans/2026-09-01-dl7-callable-relations.md:172 `feature` — Convert final userland compiler-error rows into positioned diagnostics.
 - plans/2026-09-01-dl7-reified-call-sites.md:86 `refactor` — Reify every call site and move named, punned, omitted, and defaulted slot policy from 0_lowerer.pl into prelude rules.
+- plans/2026-09-02-dl7-relational-emitter-foundation.md:120 `planning` — Define target layout rows and representation_bridge derivation without target names in comptime predicates.
+- plans/2026-09-02-dl7-relational-emitter-foundation.md:121 `emitter` — Implement the first DBSP relational-plan emitter over logical and layout rows.
 <!-- END: plans-by-plan -->
 
 ## By code file

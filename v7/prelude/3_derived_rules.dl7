@@ -1,3 +1,31 @@
+(<- (HeadCall ?Rule ?Call)
+    (nil ?Empty)
+    (cons ?Rule ?Empty ?Arguments)
+    (intern HeadCall ?Arguments ?Call))
+
+(<- (BodyCall ?Rule ?Goal ?Call)
+    (nil ?Empty)
+    (cons ?Goal ?Empty ?GoalArguments)
+    (cons ?Rule ?GoalArguments ?Arguments)
+    (intern BodyCall ?Arguments ?Call))
+
+(<- (node ?Call)
+    (Apply ?Call ?Callable))
+
+; A generated relation edge names one variable scoped to that generated rule.
+; The interned identity uses [scope, position, name].
+(<- (Variable ?Variable ?Scope ?Name)
+    (head ?Scope ?HeadCall)
+    (: ?Scope ?Name ?Target ?Position)
+    (nil ?Empty)
+    (cons ?Name ?Empty ?NameArguments)
+    (cons ?Position ?NameArguments ?PositionArguments)
+    (cons ?Scope ?PositionArguments ?Arguments)
+    (intern Variable ?Arguments ?Variable))
+
+(<- (node ?Variable)
+    (Variable ?Variable ?Scope ?Name))
+
 (<- (contains ?List ?Value)
     (cons ?Value ?Tail ?List))
 
@@ -153,24 +181,39 @@
 (<- (def ?Result ?Arity)
     (history_v1_arity ?Result ?Arity))
 
-(<- (head ?Result ?Result)
-    (HistoryV1 ?Source ?Options ?Result))
+(<- (head ?Result ?HeadCall)
+    (HistoryV1 ?Source ?Options ?Result)
+    (HeadCall ?Result ?HeadCall))
 
-(<- (head_arg ?Result ?Position "variable" ?Name)
+(<- (Apply ?HeadCall ?Result)
+    (HistoryV1 ?Source ?Options ?Result)
+    (HeadCall ?Result ?HeadCall))
+
+(<- (: ?HeadCall ?Name ?Variable ?Position)
     (history_v1_edge ?Source ?Options ?Result
-                     ?Name ?Target ?Position))
+                     ?Name ?Target ?Position)
+    (HeadCall ?Result ?HeadCall)
+    (Variable ?Variable ?Result ?Name))
 
-(<- (body ?Result 0 "positive" ?Source)
-    (HistoryV1 ?Source ?Options ?Result))
+(<- (body ?Result 0 "positive" ?BodyCall)
+    (HistoryV1 ?Source ?Options ?Result)
+    (BodyCall ?Result 0 ?BodyCall))
 
-(<- (body_arg ?Result 0 ?Position "variable" ?Name)
+(<- (Apply ?BodyCall ?Source)
+    (HistoryV1 ?Source ?Options ?Result)
+    (BodyCall ?Result 0 ?BodyCall))
+
+(<- (: ?BodyCall ?Name ?Variable ?Position)
     (history_v1_edge ?Source ?Options ?Result
-                     ?Name ?Target ?Position))
+                     ?Name ?Target ?Position)
+    (BodyCall ?Result 0 ?BodyCall)
+    (Variable ?Variable ?Result ?Name))
 
 ; A partial callable removes captured source slots, densely reindexes the
 ; remaining edges, and emits a forwarding relation through the public
 ; generated-program carrier.
 (<- (curry_call ?Call ?Source ?Result ?ReturnIndex)
+    (PartialCall ?Call)
     (Apply ?Call ?Source)
     (edge_snapshot Curry ?ReturnName ?ReturnType 2)
     (edge_snapshot ?Call ?ReturnName ?Result ?ReturnIndex))
@@ -187,19 +230,8 @@
     (edge_snapshot ?Call ?Name ?Value ?SourceIndex)
     (not (curry_result_slot ?Call ?SourceIndex)))
 
-(<- (literal_node ?Literal)
-    (Literal ?Literal ?Primitive ?Raw))
-
-(<- (curry_bound ?Result ?SourceIndex "constant" ?Raw)
-    (curry_supplied ?Result ?SourceIndex ?Literal)
-    (Literal ?Literal ?Primitive ?Raw))
-
-(<- (curry_bound ?Result ?SourceIndex "reference" ?Target)
-    (curry_supplied ?Result ?SourceIndex ?Target)
-    (not (literal_node ?Target)))
-
 (<- (curry_is_bound ?Result ?SourceIndex)
-    (curry_bound ?Result ?SourceIndex ?Kind ?Value))
+    (curry_supplied ?Result ?SourceIndex ?Value))
 
 (<- (curry_unbound ?Source ?Result ?Name ?Target ?SourceIndex)
     (curry_specialization ?Source ?Result)
@@ -226,20 +258,6 @@
     (curry_unbound ?Source ?Result ?Name ?Target ?SourceIndex)
     (curry_rank ?Result ?SourceIndex ?ResultIndex))
 
-; Each generated callable variable has a stable identity within that callable.
-; The list passed to intern is [scope, position, name].
-(<- (Variable ?Variable ?Result ?Name)
-    (curry_edge ?Source ?Result ?Name ?Target
-                ?SourceIndex ?ResultIndex)
-    (nil ?Empty)
-    (cons ?Name ?Empty ?NameArguments)
-    (cons ?ResultIndex ?NameArguments ?PositionArguments)
-    (cons ?Result ?PositionArguments ?Arguments)
-    (intern Variable ?Arguments ?Variable))
-
-(<- (node ?Variable)
-    (Variable ?Variable ?Scope ?Name))
-
 (<- (node ?Result)
     (curry_specialization ?Source ?Result))
 
@@ -257,19 +275,36 @@
 (<- (def ?Result ?Arity)
     (curry_arity ?Result ?Arity))
 
-(<- (head ?Result ?Result)
-    (curry_specialization ?Source ?Result))
+(<- (head ?Result ?HeadCall)
+    (curry_specialization ?Source ?Result)
+    (HeadCall ?Result ?HeadCall))
 
-(<- (head_arg ?Result ?ResultIndex "variable" ?Name)
+(<- (Apply ?HeadCall ?Result)
+    (curry_specialization ?Source ?Result)
+    (HeadCall ?Result ?HeadCall))
+
+(<- (: ?HeadCall ?Name ?Variable ?ResultIndex)
     (curry_edge ?Source ?Result ?Name ?Target
-                ?SourceIndex ?ResultIndex))
+                ?SourceIndex ?ResultIndex)
+    (HeadCall ?Result ?HeadCall)
+    (Variable ?Variable ?Result ?Name))
 
-(<- (body ?Result 0 "positive" ?Source)
-    (curry_specialization ?Source ?Result))
+(<- (body ?Result 0 "positive" ?BodyCall)
+    (curry_specialization ?Source ?Result)
+    (BodyCall ?Result 0 ?BodyCall))
 
-(<- (body_arg ?Result 0 ?SourceIndex ?Kind ?Value)
-    (curry_bound ?Result ?SourceIndex ?Kind ?Value))
+(<- (Apply ?BodyCall ?Source)
+    (curry_specialization ?Source ?Result)
+    (BodyCall ?Result 0 ?BodyCall))
 
-(<- (body_arg ?Result 0 ?SourceIndex "variable" ?Name)
+(<- (: ?BodyCall ?Name ?Value ?SourceIndex)
+    (curry_specialization ?Source ?Result)
+    (curry_supplied ?Result ?SourceIndex ?Value)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex)
+    (BodyCall ?Result 0 ?BodyCall))
+
+(<- (: ?BodyCall ?Name ?Variable ?SourceIndex)
     (curry_edge ?Source ?Result ?Name ?Target
-                ?SourceIndex ?ResultIndex))
+                ?SourceIndex ?ResultIndex)
+    (BodyCall ?Result 0 ?BodyCall)
+    (Variable ?Variable ?Result ?Name))
