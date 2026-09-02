@@ -22,7 +22,6 @@
 :- dynamic evaluation_lower/3.
 :- dynamic evaluation_request/2.
 :- dynamic native_relation/4.
-:- dynamic native_clause/2.
 
 :- table proves/2.
 
@@ -99,7 +98,8 @@ evaluate_stratum_after_aggregates(
     install_seeds(StratumSeeds, EvaluationId),
     install_lower_rows(NewLowerRows, EvaluationId),
     ensure_native_tables(EvaluationId),
-    collect_native_closure(EvaluationId, CompletedRows),
+    current_stratum_relations(PlainRules, StratumSeeds, Relations),
+    collect_native_closure(EvaluationId, Relations, LowerRows, CompletedRows),
     verify_native_closure(EvaluationId, CompletedRows),
     NextLevel is Level + 1,
     evaluate_strata(NextLevel, MaxStratum, EvaluationId,
@@ -218,24 +218,28 @@ validate_functional_rows(Relations, Rows, Diagnostics) :-
     must_be(ground, Relations),
     must_be(ground, Rows),
     sort(Rows, SortedRows),
-    relation_key_diagnostics(Relations, SortedRows, Diagnostics0),
+    rows_by_relation(SortedRows, RowGroups),
+    relation_key_diagnostics(Relations, RowGroups, Diagnostics0),
     sort(Diagnostics0, Diagnostics).
 
-relation_key_diagnostics([], _, []).
-relation_key_diagnostics([relation(Relation, _, KeySets) | Relations], Rows,
-                         Diagnostics) :-
-    relation_rows(Relation, Rows, RelationRows),
-    key_sets_diagnostics(KeySets, Relation, RelationRows, OwnDiagnostics),
-    relation_key_diagnostics(Relations, Rows, RestDiagnostics),
-    append(OwnDiagnostics, RestDiagnostics, Diagnostics).
+rows_by_relation(Rows, RowGroups) :-
+    maplist(row_relation_pair, Rows, RowPairs),
+    keysort(RowPairs, SortedPairs),
+    group_pairs_by_key(SortedPairs, RowGroups).
 
-relation_rows(_, [], []).
-relation_rows(Relation, [call(Relation, Arguments) | Rows],
-              [call(Relation, Arguments) | RelationRows]) :-
-    !,
-    relation_rows(Relation, Rows, RelationRows).
-relation_rows(Relation, [_ | Rows], RelationRows) :-
-    relation_rows(Relation, Rows, RelationRows).
+row_relation_pair(Row, Relation-Row) :-
+    Row = call(Relation, _).
+
+relation_key_diagnostics([], _, []).
+relation_key_diagnostics([relation(Relation, _, KeySets) | Relations], Groups,
+                         Diagnostics) :-
+    (   memberchk(Relation-GroupedRows, Groups)
+    ->  RelationRows = GroupedRows
+    ;   RelationRows = []
+    ),
+    key_sets_diagnostics(KeySets, Relation, RelationRows, OwnDiagnostics),
+    relation_key_diagnostics(Relations, Groups, RestDiagnostics),
+    append(OwnDiagnostics, RestDiagnostics, Diagnostics).
 
 key_sets_diagnostics([], _, _, []).
 key_sets_diagnostics([Positions | KeySets], Relation, Rows, Diagnostics) :-
@@ -441,14 +445,12 @@ install_lower_rows([], _).
 install_lower_rows([Row | Rows], EvaluationId) :-
     Row = call(Relation, _),
     assertz(evaluation_lower(EvaluationId, Relation, Row)),
-    install_native_row(EvaluationId, Row),
     install_lower_rows(Rows, EvaluationId).
 
 install_native_rule(EvaluationId, Head, Body) :-
     native_call(EvaluationId, Head, NativeHead),
     native_body(EvaluationId, Body, NativeBody),
-    assertz((NativeHead :- NativeBody), Reference),
-    assertz(native_clause(EvaluationId, Reference)).
+    assertz((NativeHead :- NativeBody)).
 
 native_body(_, [], true).
 native_body(EvaluationId, [Goal | Goals], (NativeGoal, NativeGoals)) :-
@@ -483,8 +485,7 @@ native_positive_goal(EvaluationId, Call, NativeGoal) :-
 
 install_native_row(EvaluationId, Call) :-
     native_call(EvaluationId, Call, NativeCall),
-    assertz(NativeCall, Reference),
-    assertz(native_clause(EvaluationId, Reference)).
+    assertz(NativeCall).
 
 native_call(EvaluationId, call(Relation, Arguments), NativeCall) :-
     length(Arguments, Arity),
@@ -512,9 +513,18 @@ collect_closure(EvaluationId, Closure) :-
     append(Calls, Requests, Rows),
     sort(Rows, Closure).
 
-collect_native_closure(EvaluationId, Closure) :-
+current_stratum_relations(Rules, Seeds, Relations) :-
+    findall(Relation,
+            ( member(rule(call(Relation, _), _), Rules)
+            ; member(call(Relation, _), Seeds)
+            ),
+            Relations0),
+    sort(Relations0, Relations).
+
+collect_native_closure(EvaluationId, Relations, LowerRows, Closure) :-
     findall(call(Relation, Arguments),
-            ( native_relation(EvaluationId, Relation, Arity, Functor),
+            ( member(Relation, Relations),
+              native_relation(EvaluationId, Relation, Arity, Functor),
               length(Arguments, Arity),
               compound_name_arguments(NativeCall, Functor, Arguments),
               call(NativeCall)
@@ -522,7 +532,7 @@ collect_native_closure(EvaluationId, Closure) :-
             DerivedCalls),
     Calls = [call(ref(kernel(nil)), [const([])]) | DerivedCalls],
     findall(Request, evaluation_request(EvaluationId, Request), Requests),
-    append(Calls, Requests, Rows),
+    append([LowerRows, Calls, Requests], Rows),
     sort(Rows, Closure).
 
 verify_native_closure(EvaluationId, NativeRows) :-
@@ -540,9 +550,6 @@ compare_evaluator_rows(ReferenceRows, NativeRows) :-
     throw(error(native_evaluator_mismatch(Missing, Extra), _)).
 
 clear_evaluation(EvaluationId) :-
-    findall(Reference, retract(native_clause(EvaluationId, Reference)),
-            NativeReferences),
-    maplist(erase, NativeReferences),
     findall(Functor/Arity,
             retract(native_relation(EvaluationId, _, Arity, Functor)),
             NativePredicates),
