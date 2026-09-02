@@ -156,6 +156,10 @@ Implementation receipts on 2026-09-02:
   4,629 ms and warm compilation to 14 ms while retaining seven snapshot rounds
   and 6,774 compiler rows. The gate now caps cold wall time at 7,000 ms, cold
   inferences at 40,000,000, and warm wall time at 100 ms.
+- Current-stratum evaluation, indexed expansion rows, grouped key validation,
+  and checked-graph caching reduced the fixture again to 1,212 ms cold and
+  13 ms warm. Current gates are 2,000 ms cold, 15,000,000 cold inferences, and
+  50 ms warm.
 
 ## Staffing
 
