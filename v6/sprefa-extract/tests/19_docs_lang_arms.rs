@@ -26,6 +26,7 @@ fn doc_rows(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                 span,
                 kind,
                 name: Some(name),
+                ..
             } => Some(((span.start, span.end), (kind.clone(), name.clone()))),
             _ => None,
         })
@@ -113,6 +114,7 @@ fn kotlin_docs_self_graded() {
                 span,
                 kind,
                 name: Some(name),
+                ..
             } => Some(((span.start, span.end), (kind.clone(), name.clone()))),
             _ => None,
         })

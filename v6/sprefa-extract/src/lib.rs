@@ -42,6 +42,7 @@ pub mod seams;
 pub mod shape;
 pub mod source;
 pub mod trace;
+pub mod tsi;
 pub mod types;
 pub mod wire;
 

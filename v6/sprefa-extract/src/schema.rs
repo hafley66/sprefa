@@ -53,6 +53,12 @@ RECORD SHAPES
   record=file_unresolved  src_path=<string>  module=<string>  reason=<slug>
   record=package_edge  src_manifest=<string>  dst_manifest=<string>  kind=<slug>
   record=file  path=<string>  digest=<hex>  bytes=<u32>  lines=<u32>
+  record=protocol  version=<u32>
+  record=run       run=<u32> mode=syntax|semantic tool=<slug> version=<string> scope=[<digest>...]
+  record=fact      fact=<u32> relation=<ns.name> args=[<arg>...]
+  record=witness   fact=<u32> run=<u32> method=<slug>
+  record=coverage  run=<u32> relation=<ns.name> coverage=partial|complete
+  record=diagnostic run=<u32> relation=<ns.name> detail=<string>
   record=size_skip  path=<string>  bytes=<u64>  limit=<u64>  reason=<over_max_bytes>
   record=scip_metadata  version=<i32>  tool_name=<string>  tool_version=<string>  tool_arguments=[<string>]  project_root=<string>  text_document_encoding=<i32>
   record=scip_document  path=<string>  language=<string>  position_encoding=<i32>  text=<string|null>
@@ -290,6 +296,25 @@ PACKAGE EDGES (--package-deps)
 FILE FACT (--file-fact)
   Prepends one `file` row to the normal stream, carrying the content digest,
   byte count and line count. It rides the same read as extraction.
+
+TSI ENVELOPE (--witness)
+  Off by default, and with it off the stream is byte-identical to what it has
+  always been: no `fact` key appears on any row.
+  On, the stream opens with `protocol` then `run` (mode=syntax, tool=extract,
+  version = this binary's, scope = the digest of the file read). Every row the
+  per-file flatten mints then carries a `fact` ordinal, one `witness` row per
+  numbered row follows with method=parse, and one `coverage` row per family
+  present closes the stream at coverage=partial. A parse enumerates no relation
+  exhaustively, so a syntax run never claims complete and emits no diagnostic.
+  Coverage relations are named `extract.<family>`: extract.cst, extract.type,
+  extract.call, extract.df, extract.data.
+  NOT numbered yet: `unresolved` and `macro_site`, both also minted by the
+  project-mode resolve path, which this flag does not cover.
+  --witness conflicts with the whole-project and single-purpose modes
+  (--resolve, --deps, --package-deps, --scip-facts, --scip-deps, --bench,
+  --ast-pattern, --file-fact) and with --family cfg: their rows come from
+  other flattens, and the protocol row must be the first row of a witnessed
+  stream with every later row numbered.
 
 SIZE CEILING (--max-bytes)
   A single input over the ceiling is NOT parsed. It emits one size_skip row

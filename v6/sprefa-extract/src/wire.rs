@@ -23,6 +23,7 @@ pub use crate::schema::SCHEMA;
 pub use crate::scip_rows::{flatten_scip, scip_file_edges};
 use crate::shape::{content_id_of, Strings};
 use crate::source::ExtractOutput;
+use crate::tsi::types::{CoverageOut, Method, RunOut, WitnessOut, PROTOCOL_VERSION};
 use crate::types::{CfgF, DataF};
 pub use crate::types::{FlatFact, SpanOut};
 
@@ -35,7 +36,7 @@ pub use crate::types::{FlatFact, SpanOut};
 /// each row once wants `flatten_each`, which hands the row over and drops it.
 pub fn flatten(out: &ExtractOutput) -> Vec<FlatFact> {
     let mut facts = Vec::new();
-    let outcome: Result<(), std::convert::Infallible> = flatten_each(out, &mut |fact| {
+    let outcome: Result<(), std::convert::Infallible> = flatten_each(out, None, &mut |fact| {
         facts.push(fact);
         Ok(())
     });
@@ -46,37 +47,91 @@ pub fn flatten(out: &ExtractOutput) -> Vec<FlatFact> {
 
 /// One flat fact at a time, in the exact order `flatten` returns them. Fallible
 /// because the consumer is a writer: an `io::Error` must stop the walk.
+/// `witness` = `None` is the wire as it has always been, byte for byte;
+/// `Some(run)` wraps the same rows in the TSI envelope.
 pub fn flatten_each<E>(
     out: &ExtractOutput,
+    witness: Option<&RunOut>,
     push: &mut impl FnMut(FlatFact) -> Result<(), E>,
 ) -> Result<(), E> {
     let span = tracing::debug_span!("flatten", facts = tracing::field::Empty);
     let _entered = span.enter();
+    if let Some(run) = witness {
+        push(FlatFact::Protocol {
+            version: PROTOCOL_VERSION,
+        })?;
+        push(FlatFact::Run(run.clone()))?;
+    }
     let mut facts = 0u64;
-    let push = &mut |fact| {
-        facts += 1;
-        push(fact)
+    let mut witnesses: Vec<WitnessOut> = Vec::new();
+    let outcome = {
+        let run = witness.map(|run| run.run);
+        let mut numbered = 0u32;
+        let push = &mut |mut fact: FlatFact| {
+            facts += 1;
+            if let Some(run) = run {
+                if let Some(slot) = fact.fact_slot() {
+                    numbered += 1;
+                    *slot = Some(numbered);
+                    witnesses.push(WitnessOut {
+                        fact: numbered,
+                        run,
+                        method: Method::Parse,
+                    });
+                }
+            }
+            push(fact)
+        };
+        (|| {
+            if let Some(bundle) = &out.cst {
+                flatten_cst(bundle, &out.strings, push)?;
+            }
+            if let Some(bundle) = &out.types {
+                flatten_type(bundle, &out.strings, push)?;
+            }
+            if let Some(bundle) = &out.call {
+                flatten_call(bundle, &out.strings, push)?;
+            }
+            if let Some(bundle) = &out.df {
+                flatten_df(bundle, &out.strings, push)?;
+            }
+            if let Some(bundle) = &out.data {
+                flatten_data(bundle, &out.strings, push)?;
+            }
+            Ok(())
+        })()
     };
-    let outcome = (|| {
-        if let Some(bundle) = &out.cst {
-            flatten_cst(bundle, &out.strings, push)?;
-        }
-        if let Some(bundle) = &out.types {
-            flatten_type(bundle, &out.strings, push)?;
-        }
-        if let Some(bundle) = &out.call {
-            flatten_call(bundle, &out.strings, push)?;
-        }
-        if let Some(bundle) = &out.df {
-            flatten_df(bundle, &out.strings, push)?;
-        }
-        if let Some(bundle) = &out.data {
-            flatten_data(bundle, &out.strings, push)?;
-        }
-        Ok(())
-    })();
     span.record("facts", facts);
-    outcome
+    outcome?;
+    if let Some(run) = witness {
+        for row in witnesses {
+            push(FlatFact::Witness(row))?;
+        }
+        for relation in covered_relations(out) {
+            push(FlatFact::Coverage(CoverageOut {
+                run: run.run,
+                relation: relation.to_string(),
+                complete: false,
+            }))?;
+        }
+    }
+    Ok(())
+}
+
+/// The relations a syntax run touched, in walk order. A parse enumerates no
+/// relation exhaustively, so every row it produces here is `partial`.
+fn covered_relations(out: &ExtractOutput) -> Vec<&'static str> {
+    let present = [
+        (out.cst.is_some(), "extract.cst"),
+        (out.types.is_some(), "extract.type"),
+        (out.call.is_some(), "extract.call"),
+        (out.df.is_some(), "extract.df"),
+        (out.data.is_some(), "extract.data"),
+    ];
+    present
+        .into_iter()
+        .filter_map(|(seen, relation)| seen.then_some(relation))
+        .collect()
 }
 
 /// Object keys sorted, so the wire does not inherit whichever map `serde_json`
@@ -108,6 +163,7 @@ fn flatten_data<E>(
     let format = bundle.aux.format;
     for doc in &bundle.aux.docs {
         push(FlatFact::DataDocOut {
+            fact: None,
             family: DataF::TAG,
             ordinal: doc.ordinal,
             span: SpanOut::new(doc.span.start, doc.span.end()),
@@ -117,6 +173,7 @@ fn flatten_data<E>(
     }
     for row in &bundle.aux.values {
         push(FlatFact::DataValueOut {
+            fact: None,
             family: DataF::TAG,
             ordinal: row.doc,
             path: strings.lookup(row.path).to_string(),
@@ -149,6 +206,7 @@ fn flatten_cst<E>(
 ) -> Result<(), E> {
     for node in &bundle.nodes {
         push(FlatFact::Node {
+            fact: None,
             family: CstF::TAG,
             span: SpanOut::new(node.span.start, node.span.end()),
             kind: strings.lookup(node.kind).to_string(),
@@ -164,6 +222,7 @@ fn flatten_cst<E>(
         // A cst edge is a tree child link: the parent/child roles already
         // separate two nodes that share a span, so no endpoint kinds.
         push(FlatFact::Edge {
+            fact: None,
             family: CstF::TAG,
             kind: kind.to_string(),
             from: SpanOut::new(from.span.start, from.span.end()),
@@ -186,6 +245,7 @@ fn flatten_type<E>(
 ) -> Result<(), E> {
     for node in &bundle.nodes {
         push(FlatFact::Node {
+            fact: None,
             family: TypeF::TAG,
             span: SpanOut::new(node.span.start, node.span.end()),
             kind: node.kind.as_str().to_string(),
@@ -194,6 +254,7 @@ fn flatten_type<E>(
     }
     for sig in &bundle.aux.sigs {
         push(FlatFact::Sig {
+            fact: None,
             family: TypeF::TAG,
             owner: SpanOut::new(sig.owner.start, sig.owner.end()),
             owner_start: sig.owner.start,
@@ -205,6 +266,7 @@ fn flatten_type<E>(
     }
     for c in &bundle.aux.consts {
         push(FlatFact::Const {
+            fact: None,
             family: TypeF::TAG,
             owner: SpanOut::new(c.owner.start, c.owner.end()),
             field: c.field.map(|id| strings.lookup(id).to_string()),
@@ -215,6 +277,7 @@ fn flatten_type<E>(
     for doc in &bundle.aux.docs {
         let owner = SpanOut::new(doc.owner.start, doc.owner.end());
         push(FlatFact::Doc {
+            fact: None,
             family: TypeF::TAG,
             owner,
             parent: doc.parent.map(|id| strings.lookup(id).to_string()),
@@ -222,6 +285,7 @@ fn flatten_type<E>(
         })?;
         for tag in &doc.tags {
             push(FlatFact::DocTagOut {
+                fact: None,
                 family: TypeF::TAG,
                 owner,
                 tag: strings.lookup(tag.tag).to_string(),
@@ -232,6 +296,7 @@ fn flatten_type<E>(
     }
     for node in &bundle.aux.doc_nodes {
         push(FlatFact::DocNodeOut {
+            fact: None,
             family: TypeF::TAG,
             span: SpanOut::new(node.span.start, node.span.end()),
             kind: node.kind.as_str().to_string(),
@@ -261,6 +326,7 @@ fn flatten_call<E>(
             continue;
         }
         push(FlatFact::Node {
+            fact: None,
             family: CallF::TAG,
             span: SpanOut::new(node.span.start, node.span.end()),
             kind: node.kind.as_str().to_string(),
@@ -269,6 +335,7 @@ fn flatten_call<E>(
     }
     for site in &bundle.aux.sites {
         push(FlatFact::Site {
+            fact: None,
             family: CallF::TAG,
             span: SpanOut::new(site.span.start, site.span.end()),
             callee: strings.lookup(site.callee).to_string(),
@@ -277,6 +344,7 @@ fn flatten_call<E>(
     }
     for spec in &bundle.aux.specifiers {
         push(FlatFact::Specifier {
+            fact: None,
             family: CallF::TAG,
             span: SpanOut::new(spec.span.start, spec.span.end()),
             name: strings.lookup(spec.name).to_string(),
@@ -287,6 +355,7 @@ fn flatten_call<E>(
     }
     for owner in &bundle.aux.method_owners {
         push(FlatFact::MethodOwnerOut {
+            fact: None,
             family: CallF::TAG,
             owner: SpanOut::new(owner.span.start, owner.span.end()),
             self_type: owner.self_type.map(|id| strings.lookup(id).to_string()),
@@ -295,6 +364,7 @@ fn flatten_call<E>(
     }
     for scope in &bundle.aux.cfg_scopes {
         push(FlatFact::CfgScopeOut {
+            fact: None,
             family: CallF::TAG,
             span: SpanOut::new(scope.span.start, scope.span.end()),
             cfg: strings.lookup(scope.cfg).to_string(),
@@ -302,6 +372,7 @@ fn flatten_call<E>(
     }
     for call in &bundle.aux.test_only_calls {
         push(FlatFact::TestOnlyCallOut {
+            fact: None,
             family: CallF::TAG,
             callee: strings.lookup(call.callee).to_string(),
             cfg: strings.lookup(call.cfg).to_string(),
@@ -317,6 +388,7 @@ fn flatten_call<E>(
     }
     for reference in &bundle.aux.refs {
         push(FlatFact::Reference {
+            fact: None,
             family: CallF::TAG,
             span: SpanOut::new(reference.span.start, reference.span.end()),
             functor: strings.lookup(reference.functor).to_string(),
@@ -358,6 +430,7 @@ pub fn flatten_cfg_each<E>(
 ) -> Result<(), E> {
     for node in &bundle.nodes {
         push(FlatFact::Node {
+            fact: None,
             family: CfgF::TAG,
             span: SpanOut::new(node.span.start, node.span.end()),
             kind: node.kind.as_str().to_string(),
@@ -368,6 +441,7 @@ pub fn flatten_cfg_each<E>(
         let from = bundle.node(edge.src);
         let to = bundle.node(edge.dst);
         push(FlatFact::Edge {
+            fact: None,
             family: CfgF::TAG,
             kind: edge.kind.as_str().to_string(),
             from: SpanOut::new(from.span.start, from.span.end()),
@@ -470,6 +544,7 @@ fn flatten_df<E>(
 ) -> Result<(), E> {
     for node in &bundle.nodes {
         push(FlatFact::Node {
+            fact: None,
             family: DfF::TAG,
             span: SpanOut::new(node.span.start, node.span.end()),
             kind: node.kind.as_str().to_string(),
@@ -480,6 +555,7 @@ fn flatten_df<E>(
         let from = bundle.node(edge.src);
         let to = bundle.node(edge.dst);
         push(FlatFact::Edge {
+            fact: None,
             family: DfF::TAG,
             kind: edge.kind.as_str().to_string(),
             from: SpanOut::new(from.span.start, from.span.end()),
@@ -491,6 +567,7 @@ fn flatten_df<E>(
     for param in &bundle.aux.params {
         let node = bundle.node(param.node);
         push(FlatFact::DfParam {
+            fact: None,
             family: DfF::TAG,
             span: SpanOut::new(node.span.start, node.span.end()),
             pos: param.pos,
@@ -500,6 +577,7 @@ fn flatten_df<E>(
         let call = bundle.node(arg.call);
         let value = bundle.node(arg.arg);
         push(FlatFact::DfArg {
+            fact: None,
             family: DfF::TAG,
             call: SpanOut::new(call.span.start, call.span.end()),
             pos: arg.pos,
@@ -510,6 +588,7 @@ fn flatten_df<E>(
         let owner = bundle.node(field.owner);
         let value = bundle.node(field.value);
         push(FlatFact::DfField {
+            fact: None,
             family: DfF::TAG,
             owner: SpanOut::new(owner.span.start, owner.span.end()),
             name: field.name.clone(),
@@ -519,6 +598,7 @@ fn flatten_df<E>(
     for lit in &bundle.aux.lits {
         let node = bundle.node(lit.node);
         push(FlatFact::DfLit {
+            fact: None,
             family: DfF::TAG,
             node: SpanOut::new(node.span.start, node.span.end()),
             kind: lit.kind.to_string(),
@@ -527,6 +607,7 @@ fn flatten_df<E>(
     }
     for loop_row in &bundle.aux.loops {
         push(FlatFact::DfLoop {
+            fact: None,
             family: DfF::TAG,
             span: SpanOut::new(loop_row.span.start, loop_row.span.end()),
             var: loop_row.var.clone(),
@@ -536,6 +617,7 @@ fn flatten_df<E>(
     for nest in &bundle.aux.nests {
         let call = bundle.node(nest.call);
         push(FlatFact::DfNest {
+            fact: None,
             family: DfF::TAG,
             call: SpanOut::new(call.span.start, call.span.end()),
             loop_span: SpanOut::new(nest.loop_span.start, nest.loop_span.end()),
@@ -545,6 +627,7 @@ fn flatten_df<E>(
     }
     for allocates in &bundle.aux.allocates {
         push(FlatFact::DfAllocates {
+            fact: None,
             family: DfF::TAG,
             owner: SpanOut::new(allocates.owner.start, allocates.owner.end()),
         })?;
