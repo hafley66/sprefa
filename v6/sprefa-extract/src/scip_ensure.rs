@@ -315,8 +315,27 @@ pub fn ensure_index_for_set(
     budget: IndexBudget,
     set: Option<&IndexSet>,
 ) -> EnsureReport {
+    ensure_index_picked(root, cache_dir, budget, set, None)
+}
+
+/// `ensure_index_for_set` under an indexer pick. `None` is that function
+/// exactly. `Some(lang)` runs only that roster row and keeps its index in
+/// `pick_cache_dir`, and reuse is scoped there: a partial index must never
+/// answer an ask that asked for the whole root.
+pub fn ensure_index_picked(
+    root: &Path,
+    cache_dir: &Path,
+    budget: IndexBudget,
+    set: Option<&IndexSet>,
+    pick: IndexerPick,
+) -> EnsureReport {
+    let cache_dir = &pick_cache_dir(cache_dir, pick);
     let want = set.map(IndexSet::digest);
-    if let Some(path) = index_path_for_set(root, cache_dir, want) {
+    let reuse = match pick {
+        None => index_path_for_set(root, cache_dir, want),
+        Some(_) => picked_index_path(cache_dir, want),
+    };
+    if let Some(path) = reuse {
         return EnsureReport {
             index: Some(path),
             reused: true,
@@ -324,7 +343,7 @@ pub fn ensure_index_for_set(
             skips: Vec::new(),
         };
     }
-    let detected = detect(root);
+    let detected = detect_picked(root, pick);
     let mut ran = Vec::new();
     let mut skips = Vec::new();
     if detected.is_empty() {
@@ -662,6 +681,40 @@ pub fn detect(root: &Path) -> Vec<&'static Indexer> {
         .collect()
 }
 
+/// Which roster rows an ask may run. `None` is v5's form: every row whose
+/// markers match the root. `Some(lang)` names ONE row and ignores markers,
+/// because marker detection is any-of and a polyglot root matches several: a
+/// repo holding both `go.mod` and `package.json` starts scip-go AND
+/// scip-typescript, and the caller who wants only one has no way to say so.
+pub type IndexerPick<'a> = Option<&'a str>;
+
+/// Every `lang` in the roster, in roster order, for a caller validating a pick.
+pub fn indexer_langs() -> Vec<&'static str> {
+    INDEXERS.iter().map(|indexer| indexer.lang).collect()
+}
+
+/// `detect` under a pick. An unmatched pick yields an empty roster, which the
+/// caller reports as `NoMarkers`; validating the NAME is the caller's job
+/// (`indexer_langs`), so a typo is an error and never a silent empty answer.
+pub fn detect_picked(root: &Path, pick: IndexerPick) -> Vec<&'static Indexer> {
+    match pick {
+        None => detect(root),
+        Some(lang) => INDEXERS
+            .iter()
+            .filter(|indexer| indexer.lang == lang)
+            .collect(),
+    }
+}
+
+/// Where a picked ask keeps its index. A pick builds a DELIBERATE partial, so
+/// it never lands on the shared `index.scip` an unpicked ask would later reuse.
+pub fn pick_cache_dir(cache_dir: &Path, pick: IndexerPick) -> PathBuf {
+    match pick {
+        None => cache_dir.to_path_buf(),
+        Some(lang) => cache_dir.join(format!("indexer-{}", lang.replace('/', "-"))),
+    }
+}
+
 /// First PATH entry holding an executable named `bin` (v5 `which`, verbatim
 /// shape: a best-effort probe, not a shell-out).
 pub fn which(bin: &str) -> Option<PathBuf> {
@@ -734,6 +787,21 @@ pub fn index_path_for_set(root: &Path, cache_dir: &Path, want: Option<&str>) -> 
             .and_then(|meta| meta.modified())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
     })
+}
+
+/// Reuse for a PICKED ask: the pick-scoped cache dir only. The root-level
+/// `index.scip` locations `index_path_for_set` probes are whole-root indexes
+/// built under no pick, and answering a picked ask with one would hand back
+/// the very indexer the pick excluded.
+fn picked_index_path(cache_dir: &Path, want: Option<&str>) -> Option<PathBuf> {
+    let candidate = cache_dir.join("index.scip");
+    if !candidate.is_file() {
+        return None;
+    }
+    match want {
+        None => Some(candidate),
+        Some(want) => (recorded_digest(&candidate).as_deref() == Some(want)).then_some(candidate),
+    }
 }
 
 /// The v5 cache location for a root: `<root>/.dl/.state`.
