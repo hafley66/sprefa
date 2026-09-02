@@ -198,6 +198,20 @@
     (curry_unbound ?Source ?Result ?Name ?Target ?SourceIndex)
     (curry_rank ?Result ?SourceIndex ?ResultIndex))
 
+; Each generated callable variable has a stable identity within that callable.
+; The list passed to intern is [scope, position, name].
+(<- (Variable ?Variable ?Result ?Name)
+    (curry_edge ?Source ?Result ?Name ?Target
+                ?SourceIndex ?ResultIndex)
+    (nil ?Empty)
+    (cons ?Name ?Empty ?NameArguments)
+    (cons ?ResultIndex ?NameArguments ?PositionArguments)
+    (cons ?Result ?PositionArguments ?Arguments)
+    (intern Variable ?Arguments ?Variable))
+
+(<- (node ?Variable)
+    (Variable ?Variable ?Scope ?Name))
+
 (<- (node ?Result)
     (curry_specialization ?Source ?Result))
 

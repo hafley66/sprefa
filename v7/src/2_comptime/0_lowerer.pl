@@ -188,11 +188,14 @@ partial_bind_rules(
         scoped_reservation(
             Owner, 'Curry', Reservations, [],
             reservation(_, 'Curry', target(Curry), product)),
+        scoped_reservation(
+            Owner, 'Literal', Reservations, [],
+            reservation(_, 'Literal', target(Literal), product)),
         partial_bound_rows(Bound, BoundRows),
         callable_slots(Callable0, Arity, Environment, AllSlots),
         exclude_slot(ReturnIndex, AllSlots, InputSlots),
         Call = call(Owner, BindNodeId),
-        partial_call_edge_rules(Owner, Call, InputSlots, Bound,
+        partial_call_edge_rules(Owner, Call, Literal, InputSlots, Bound,
                                 CallEdgeRules)
     ->  Partial = application(Curry, [Callable, BoundRows]),
         CallNodeRule = rule(
@@ -246,16 +249,46 @@ partial_bound_rows([bound(Index, Value) | Bound],
 partial_bound_kind(ref(_), "reference").
 partial_bound_kind(const(_), "constant").
 
-partial_call_edge_rules(_, _, _, [], []).
+partial_call_edge_rules(_, _, _, _, [], []).
 partial_call_edge_rules(
-    Owner, Call, InputSlots, [bound(Index, Value) | Bound],
-    [Rule | Rules]) :-
+    Owner, Call, Literal, InputSlots, [bound(Index, Value) | Bound],
+    Rules) :-
     memberchk(slot(Index, Label), InputSlots),
-    Rule = rule(
-               call(name(Owner, ':'),
-                    [ref(Call), const(Label), Value, const(Index)]),
-               []),
-    partial_call_edge_rules(Owner, Call, InputSlots, Bound, Rules).
+    partial_call_value_rules(
+        Owner, Literal, Value, EdgeValue, ValueRules),
+    EdgeRule = rule(
+                   call(name(Owner, ':'),
+                        [ ref(Call), const(Label), EdgeValue,
+                          const(Index)
+                        ]),
+                   []),
+    partial_call_edge_rules(
+        Owner, Call, Literal, InputSlots, Bound, RestRules),
+    append(ValueRules, [EdgeRule | RestRules], Rules).
+
+partial_call_value_rules(_, _, ref(Target), ref(Target), []).
+partial_call_value_rules(
+    Owner, Literal, const(Value), ref(LiteralNode),
+    [NodeRule, LiteralRule]) :-
+    compiler_literal_type(Value, Primitive),
+    LiteralNode = application(Literal, [Primitive, Value]),
+    NodeRule = rule(
+                   call(name(Owner, node), [ref(LiteralNode)]),
+                   []),
+    LiteralRule = rule(
+                      call(name(Owner, 'Literal'),
+                           [ ref(LiteralNode), ref(Primitive),
+                             const(Value)
+                           ]),
+                      []).
+
+compiler_literal_type(Value, primitive(int)) :-
+    integer(Value),
+    !.
+compiler_literal_type(Value, primitive(text)) :-
+    string(Value),
+    !.
+compiler_literal_type(_, primitive(any)).
 
 partial_bound_rules(_, _, [], []).
 partial_bound_rules(Owner, Partial,

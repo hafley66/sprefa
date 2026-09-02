@@ -760,6 +760,12 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
     named_owner(Rows1, 'Pair', Pair),
     named_owner(Rows1, 'PairUser', PairUser),
     named_owner(Rows1, 'Apply', Apply),
+    named_owner(Rows1, 'Literal', Literal),
+    named_owner(Rows1, 'Variable', Variable),
+    named_owner(Rows1, 'MixedResult', MixedResult),
+    named_owner(Rows1, 'Remaining', Remaining),
+    named_owner(Rows1, 'Mixed', Mixed),
+    named_owner(Rows1, 'MixedUserText', MixedUserText),
     named_owner(Rows1, 'CallableFactory', CallableFactory),
     named_owner(Rows1, 'ReturnedPair', ReturnedPair),
     named_owner(Rows1, 'ReturnedResult', ReturnedResult),
@@ -777,6 +783,8 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
     memberchk(relation(ref(TripleUserOrder), 2, _), Relations),
     memberchk(call(ref(PairUser),
                    [ref(Order), ref(PairResult)]), Seeds),
+    memberchk(call(ref(MixedUserText),
+                   [ref(Remaining), ref(MixedResult)]), Seeds),
     memberchk(call(ref(TripleUserOrder),
                    [ref(Region), ref(TripleResult)]), Seeds),
     memberchk(rule(call(ref(PairUser), ForwardArguments),
@@ -819,6 +827,16 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
     ->  PairUserGraphParity = true
     ;   PairUserGraphParity = false
     ),
+    (   mixed_application_graph(
+            Rows1, Apply, Literal, User, Mixed, MixedUserText,
+            LiteralNode),
+        generated_variable_node(
+            Rows1, Variable, PairUser, right, VariableNode),
+        sort([User, LiteralNode, VariableNode], DistinctValueNodes),
+        length(DistinctValueNodes, 3)
+    ->  ValueNodeParity = true
+    ;   ValueNodeParity = false
+    ),
     residual_partial_terms(Runtime1, ResidualPartials),
     equality(Rows1, Rows2, RowsRepeat),
     equality(Runtime1, Runtime2, RuntimeRepeat),
@@ -837,7 +855,8 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
                    application_graph(
                        calls(ApplicationCallCount),
                        pair_user_occurrences(PairUserCallCount),
-                       parity(PairUserGraphParity)),
+                       parity(PairUserGraphParity),
+                       value_nodes(ValueNodeParity)),
                    repeat(rows(RowsRepeat), runtime(RuntimeRepeat)),
                    residual_partial_terms(ResidualPartials)),
     Observed == returned_callable(
@@ -848,7 +867,8 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
                         callable(true), partial(true), value(true)),
                     chained(arity(3), arity(2), return(true)),
                     application_graph(
-                        calls(4), pair_user_occurrences(2), parity(true)),
+                        calls(5), pair_user_occurrences(2), parity(true),
+                        value_nodes(true)),
                     repeat(rows(true), runtime(true)),
                     residual_partial_terms(0)).
 
@@ -861,6 +881,32 @@ pair_user_application_graph(Rows, Apply, User, Pair, PairUser, Call) :-
     memberchk(call(ref(kernel(':')),
                    [ref(Call), const(return), ref(PairUser), const(2)]),
               Rows).
+
+mixed_application_graph(
+    Rows, Apply, Literal, User, Mixed, MixedUserText, LiteralNode) :-
+    memberchk(call(ref(Apply), [ref(Call), ref(Mixed)]), Rows),
+    memberchk(call(ref(kernel(':')),
+                   [ref(Call), const(reference), ref(User), const(0)]),
+              Rows),
+    memberchk(call(ref(kernel(':')),
+                   [ref(Call), const(literal), ref(LiteralNode), const(1)]),
+              Rows),
+    memberchk(call(ref(kernel(':')),
+                   [ ref(Call), const(return), ref(MixedUserText),
+                     const(3)
+                   ]),
+              Rows),
+    memberchk(call(ref(Literal),
+                   [ ref(LiteralNode), ref(primitive(text)), const("User")
+                   ]),
+              Rows),
+    memberchk(call(ref(kernel(node)), [ref(LiteralNode)]), Rows).
+
+generated_variable_node(Rows, Variable, Scope, Name, VariableNode) :-
+    memberchk(call(ref(Variable),
+                   [ref(VariableNode), ref(Scope), const(Name)]),
+              Rows),
+    memberchk(call(ref(kernel(node)), [ref(VariableNode)]), Rows).
 
 test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
     Path = 'v7/test/fixtures/5_curry.dl7',
