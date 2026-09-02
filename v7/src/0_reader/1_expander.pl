@@ -51,15 +51,12 @@ continue_nodes(Nodes, AvailableRows,
     ).
 
 expand_node(Node0, AvailableRows, Result) :-
-    expand_node_children(Node0, AvailableRows, ChildResult),
-    (   ChildResult = ok(Node, ChildRows, ChildExpansions)
-    ->  append(AvailableRows, ChildRows, RowsForRewrite),
-        node_tree(Node, Tree),
-        rewrite_fixpoint(Node, Tree, RowsForRewrite, 1, [Tree], [],
-                         RewriteResult),
-        combine_node_results(ChildRows, ChildExpansions,
-                             RewriteResult, Result)
-    ;   Result = ChildResult
+    node_tree(Node0, Tree),
+    (   once(dl7_syntax_rewrite(Tree, MacroIdentity, Replacement))
+    ->  ensure_rewrite(MacroIdentity, Replacement),
+        apply_rewrite(Node0, Replacement, MacroIdentity, AvailableRows,
+                      1, [Tree], [], Result)
+    ;   expand_node_children(Node0, AvailableRows, Result)
     ).
 
 expand_node_children(node(NodeId, form(Children)), AvailableRows, Result) :-
@@ -71,13 +68,6 @@ expand_node_children(node(NodeId, form(Children)), AvailableRows, Result) :-
     ;   Result = ChildrenResult
     ).
 expand_node_children(Node, _, ok(Node, [], [])).
-
-combine_node_results(_, _, error(Diagnostic), error(Diagnostic)).
-combine_node_results(ChildRows, ChildExpansions,
-                     ok(Node, RewriteRows, RewriteExpansions),
-                     ok(Node, GeneratedRows, ExpansionRows)) :-
-    append(ChildRows, RewriteRows, GeneratedRows),
-    append(ChildExpansions, RewriteExpansions, ExpansionRows).
 
 rewrite_fixpoint(Node, Tree, AvailableRows, Wave, Seen, MacroTrace, Result) :-
     (   once(dl7_syntax_rewrite(Tree, MacroIdentity, Replacement))
