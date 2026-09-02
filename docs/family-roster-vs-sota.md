@@ -65,9 +65,20 @@ The widening that carries all eight is the engine shape written out:
 src_path  src_start  src_end  dst_path  dst_start  dst_end  kind
 ```
 
-It is a strict superset. `call`, `module` and `type` project down to today's
-four columns by span-to-name, so the 18 committed `RATCHET.tsv` floors keep
-scoring unchanged.
+It is a superset as a relation, NOT as a score. `score` (`tests/bench/mod.rs:821`)
+is a set intersection over `BTreeSet<String>` and `load_tsv` (`:777`) dedups the
+file on load, so multiplicity is already discarded today:
+
+| oracle file | lines | set elements | collapsed |
+|---|---|---|---|
+| `ts5.oracle.call.tsv` | 84,958 | 59,356 | 25,602 (30.1%) |
+| every other `*.call.tsv` in that dir | - | - | 0 |
+
+The 18 floors are preserved ONLY if scoring continues to project to the 4-tuple
+and dedup before intersecting. Scoring in the widened space changes both
+denominators and moves every `ts5` call row immediately. The projection is
+therefore part of the format contract, named per case beside `Projection::Raw`,
+never left implicit.
 
 ## Why five families cannot use the bench format
 
