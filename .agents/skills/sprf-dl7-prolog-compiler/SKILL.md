@@ -20,6 +20,9 @@ Read:
 - [references/2_cst_extract_pipeline.md](references/2_cst_extract_pipeline.md)
   before connecting DL7 to Tree-sitter, ast-grep, `sprefa-extract`, external
   schema ingestion, or the DBSP application emitter.
+- [references/3_relational_execution_ir.md](references/3_relational_execution_ir.md)
+  before changing compile-time versus runtime extraction, the logical-to-
+  physical plan boundary, SQLite DBSP lowering, or target runtime artifacts.
 
 ## Working rule
 
