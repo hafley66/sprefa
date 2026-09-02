@@ -1,0 +1,10 @@
+repo	lang	stage	reason	detail
+typescript-go	go	oracle	timed_out	scip-typescript: exceeded the 900s budget; process group killed
+donnemartin/system-design-primer	python	eligibility	too_few_source_files	26 files with ['.py'], floor 50
+psf/requests	python	eligibility	too_few_source_files	37 files with ['.py'], floor 50
+openai/whisper	python	eligibility	too_few_source_files	20 files with ['.py'], floor 50
+firecrawl/firecrawl	ts	eligibility	no_project_marker	none of ['tsconfig.json', 'package.json'] at the root
+jhipster/generator-jhipster	ts	oracle	failed	scip-typescript: scip indexer failed: 
+wandb/openui	ts	eligibility	no_project_marker	none of ['tsconfig.json', 'package.json'] at the root
+typescript-go	go	oracle	timed_out	scip-typescript: exceeded the 900s budget; process group killed
+embassy-rs/embassy	rust	eligibility	no_project_marker	none of ['Cargo.toml'] at the root

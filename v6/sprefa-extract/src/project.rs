@@ -589,6 +589,10 @@ pub struct ScipFamilyRequest<'a> {
     /// The repo id for a document with no ancestor `.git`, in the `repo`
     /// column. Defaults to the root's basename.
     pub slug: Option<&'a str>,
+    /// Run ONE named roster row instead of every row whose markers match.
+    /// `None` is the marker-detected set. A polyglot root matches several rows
+    /// and runs them all, so a caller who wants one indexer says which.
+    pub indexer: crate::scip_ensure::IndexerPick<'a>,
 }
 
 /// The `scip` FAMILY: REAL SCIP INDEX DATA.
@@ -610,7 +614,13 @@ pub fn scip_family(request: &ScipFamilyRequest) -> Result<Vec<FlatFact>, Project
         Some(dir) => dir.to_path_buf(),
         None => crate::scip_ensure::default_cache_dir(request.root),
     };
-    let report = crate::scip_ensure::ensure_index(request.root, &cache, request.budget);
+    let report = crate::scip_ensure::ensure_index_picked(
+        request.root,
+        &cache,
+        request.budget,
+        None,
+        request.indexer,
+    );
     let mut facts: Vec<FlatFact> = report
         .skips
         .iter()

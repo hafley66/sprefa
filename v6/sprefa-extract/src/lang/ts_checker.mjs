@@ -40,7 +40,9 @@ function loadTypeScript(root) {
             // try the next candidate
         }
     }
-    throw new Error(`no typescript package reachable from ${root}`);
+    throw new Error(
+        `no typescript package reachable from ${root}: the checker tier cannot run, every answer falls back to the syntax leg`,
+    );
 }
 
 /// UTF-16 code-unit offset -> UTF-8 byte offset. An all-ASCII file converts by

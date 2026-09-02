@@ -39,7 +39,7 @@ use help::{
     TS_CHECKER_LONG,
     SCIP_BUILD_LONG,
     SCIP_CACHE_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG,
-    SCIP_TIMEOUT_LONG,
+    INDEXER_LONG, SCIP_TIMEOUT_LONG,
 };
 
 #[path = "../0_query.rs"]
@@ -217,6 +217,11 @@ struct Cli {
     #[arg(long, value_name = "SECS", long_help = SCIP_TIMEOUT_LONG)]
     scip_timeout: Option<u64>,
 
+    /// Run ONE named SCIP indexer under `--family scip` instead of every one
+    /// the root's marker files match.
+    #[arg(long, value_name = "LANG", long_help = INDEXER_LONG)]
+    indexer: Option<String>,
+
     /// Print the JSONL output contract to stdout and exit (no extraction).
     #[arg(long)]
     schema: bool,
@@ -285,9 +290,19 @@ fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     if cli.paths.len() != 1 {
         return Err("--family scip takes exactly one ROOT directory".into());
     }
+    if let Some(lang) = cli.indexer.as_deref() {
+        if !sprefa_extract::indexer_langs().contains(&lang) {
+            return Err(format!(
+                "--indexer {lang}: not a roster language. One of: {}",
+                sprefa_extract::indexer_langs().join(", ")
+            )
+            .into());
+        }
+    }
     let request = ScipFamilyRequest {
         root: &cli.paths[0],
         cache_dir: cli.scip_cache.as_deref(),
+        indexer: cli.indexer.as_deref(),
         budget: match cli.scip_timeout {
             Some(secs) if secs > 0 => IndexBudget { secs },
             Some(_) => return Err("--scip-timeout must be a positive number of seconds".into()),

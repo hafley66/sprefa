@@ -289,10 +289,25 @@ fn into_refs(rows: Vec<WireRow>) -> Vec<TsCheckerRef> {
         .collect()
 }
 
+/// project.rs turns an `Err` here into a silent `None`, and trace.rs:256
+/// leaves stderr empty unless `RUST_LOG` is set (failure-modes 108).
+#[cfg(feature = "ts-checker")]
+pub fn answer(root: &Path, files: &[(String, PathBuf)]) -> Result<TsCheckerAnswers, TsCheckerError> {
+    let result = answer_inner(root, files);
+    if let Err(ref error) = result {
+        // @eprintln-ok: the tier's one unfiltered failure line.
+        eprintln!(
+            "ts checker tier did not run for {}: {error}; every answer below is the syntax leg alone",
+            root.display()
+        );
+    }
+    result
+}
+
 /// The wall cap, the process group and the file-backed stdout all come from
 /// `run_capped`: the same discipline every scip indexer spawn runs under.
 #[cfg(feature = "ts-checker")]
-pub fn answer(root: &Path, files: &[(String, PathBuf)]) -> Result<TsCheckerAnswers, TsCheckerError> {
+fn answer_inner(root: &Path, files: &[(String, PathBuf)]) -> Result<TsCheckerAnswers, TsCheckerError> {
     use crate::scip_ensure::{run_capped, Capped};
 
     let nanos = std::time::SystemTime::now()

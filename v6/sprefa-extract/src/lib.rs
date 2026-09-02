@@ -98,7 +98,8 @@ pub use scip::{
     Staging,
 };
 pub use scip_ensure::{
-    default_cache_dir, detect, ensure_index, ensure_index_for_set, external_cache_dir,
+    default_cache_dir, detect, detect_picked, ensure_index, ensure_index_for_set,
+    ensure_index_picked, external_cache_dir, indexer_langs, pick_cache_dir, IndexerPick,
     fresh_index_for_set, index_path, index_path_for_set, record_index_set, root_key, EnsureReport,
     IndexBudget, IndexSet, Indexer, IndexerSkip, SkipReason, INDEXERS,
 };
