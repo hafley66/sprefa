@@ -27,7 +27,7 @@ sprefa-rust-runtime-host = { path = "../../../sprefa-v6/0_runtime/1_rust_runtime
 # Git pathspec file feeds and blob identities are owned by the standalone
 # source mechanics crate. HostPlanData remains the emitted shell-shaped ABI.
 soopy = { path = "../../../hafley-rs/crates/soopy" }
-hafley-observe = { path = "../../../hafley-rs/crates/hafley-observe" }
+hafley-observe = { git = "https://github.com/hafley66/hafley-rs", rev = "ea016d41ced5d337fa26830279286cdeccee2084" }
 # The line diff behind `changed_line`. Measured against `git diff -U0` over 1200
 # generated file pairs: see the commit body's candidate table.
 imara-diff = "0.2"
