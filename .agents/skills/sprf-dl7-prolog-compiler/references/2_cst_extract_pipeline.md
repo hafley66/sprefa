@@ -149,6 +149,13 @@ arguments, TypeScript optional or readonly edges, Rust associated-type
 bindings, or resolved callable type expressions. Those rows require the TSI
 semantic adapter above the existing syntax and checker-resolution facts.
 
+This establishes the two-mode baseline. Current per-language extraction is the
+syntax mode: cheap common rows and heuristic edges. The current `--ts-checker`
+and `--rust-checker` flags replace selected resolution answers, but they do not
+yet constitute semantic mode because they do not enumerate the complete TSI
+graph. Semantic mode must emit native-checker facts plus per-relation complete
+coverage rows as defined in the TSI reference.
+
 The current wire is an output seam. `FlatFact` derives `Serialize` and has no
 `Deserialize` implementation. A repository search found zero JSON decoders for
 `FlatFact`, zero fact-ingest CLI paths, and no adapter from foreign FlatFact

@@ -5,10 +5,11 @@
 1. Protocol position
 2. Identity and graph kernel
 3. Shared and language-native semantics
-4. Example extraction
-5. Queries, projections, and losses
-6. Connection to the compiler clocks
-7. Open decisions
+4. Syntax and semantic extraction modes
+5. Example extraction
+6. Queries, projections, and losses
+7. Connection to the compiler clocks
+8. Open decisions
 
 ## 1. Protocol position
 
@@ -140,7 +141,65 @@ projection can additionally consume ownership and explicit implementation
 facts. A TypeScript projection can additionally consume mapped and conditional
 operator facts.
 
-## 4. Example extraction
+## 4. Syntax and semantic extraction modes
+
+TSI defines two production modes over one common fact vocabulary. Language
+adapters implement each mode independently.
+
+```text
+syntax mode
+  parser, CST, names, local shapes, heuristic resolution
+  low startup cost
+  candidate witnesses
+  partial relation coverage
+
+semantic mode
+  native compiler or checker
+  resolved symbols, instantiated types, native operators, conformance
+  semantic witnesses
+  complete relation coverage
+```
+
+Facts have canonical IDs derived from relation and arguments. Production runs
+and witnesses retain how each fact was obtained:
+
+```text
+extract.run(RunId, Mode, Tool, Version, Scope)
+extract.fact(FactId, Relation, Arguments)
+extract.witness(FactId, RunId, Method)
+extract.coverage(RunId, Relation, Coverage)
+```
+
+`Mode` is `syntax` or `semantic`. `Coverage` is `partial` or `complete`.
+Semantic mode emits every fact reachable from the selected source declarations
+and occurrences under the protocol version. Recursive graphs retain cycles by
+ID. Conditional, mapped, associated, ownership, lifetime, and other native
+operators remain namespaced facts, preserving native meaning in the stream.
+
+A semantic adapter can advertise `complete` for a relation only after it has
+enumerated every reachable row for that relation. Unsupported protocol
+coverage produces an explicit diagnostic and remains `partial`.
+
+The accepted view is stratified:
+
+```text
+accepted(?Fact) <-
+    extract.witness(?Fact, ?Run, ?Method),
+    extract.run(?Run, semantic, ?Tool, ?Version, ?Scope).
+
+accepted(?Fact) <-
+    extract.fact(?Fact, ?Relation, ?Arguments),
+    extract.witness(?Fact, ?SyntaxRun, ?Method),
+    extract.run(?SyntaxRun, syntax, ?Tool, ?Version, ?Scope),
+    not semantic_complete(?Scope, ?Relation).
+```
+
+This supports progressive IDE operation. Syntax facts arrive first. Semantic
+facts and complete-coverage rows later retract unsupported guesses and publish
+the checker-backed relation set. Batch compilation can require semantic
+coverage for selected relations before closing comptime.
+
+## 5. Example extraction
 
 TypeScript source:
 
@@ -180,7 +239,7 @@ The result node represents one canonical closed type. Rules may project
 its substituted edges without erasing the constructor, argument, source, or
 TypeScript-specific facts.
 
-## 5. Queries, projections, and losses
+## 6. Queries, projections, and losses
 
 DL7 rules consume the protocol as ordinary relations.
 
@@ -215,7 +274,7 @@ Examples of reportable changes include:
 This allows target compatibility to be queried before rendering. Loss policy
 can reject, warn, preserve as an extension, or accept a declared widening.
 
-## 6. Connection to the compiler clocks
+## 7. Connection to the compiler clocks
 
 ```text
 COMPILE CLOCK
@@ -251,7 +310,7 @@ language options, dependency identities, and extractor version. Runtime
 reflection uses the same fact vocabulary when a host can supply it, with facts
 arriving on runtime ticks.
 
-## 7. Open decisions
+## 8. Open decisions
 
 1. Protocol serialization: DL7 fact stream, a binary columnar form, or both.
 2. Stable cross-repository identity: SCIP symbol strings directly, or an
