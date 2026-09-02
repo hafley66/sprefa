@@ -265,7 +265,7 @@ rust_checker_ra.rs, new `tsi` walk (rust-checker feature):
   hir::Type::as_builtin -> tsi.primitive(Id, class)
 ```
 
-Prolog, `v7/src/0_reader/6_extract_loader.pl`:
+Prolog, `v7/src/2_comptime/0c_extract_loader.pl` (the reader performs no binding, `0_reader/README.md:1-8`, so the loader sits beside `0b_filesystem_grapher.pl`):
 
 ```prolog
 %% load_tsi_stream(+JsonlPath, -Rows, -Diagnostics) is det.
@@ -312,7 +312,7 @@ run per `(scope, relation)`.
 ## 9. Arcs
 
 Every arc is one PR from `origin/main`, native opus lane, disjoint files.
-Briefs: `plans/2026-09-02-tsi-A1-envelope.BRIEF.md`, `plans/2026-09-02-tsi-A3-ingest.BRIEF.md`, `plans/2026-09-02-tsi-A2-multi-witness.BRIEF.md`, `plans/2026-09-02-tsi-A4-syntax-rows.BRIEF.md`, `plans/2026-09-02-tsi-A5-ts-semantic.BRIEF.md`, `plans/2026-09-02-tsi-A6-rust-semantic.BRIEF.md`.
+Briefs: `plans/2026-09-02-tsi-A1-envelope.BRIEF.md`, `plans/2026-09-02-tsi-A3-ingest.BRIEF.md`, `plans/2026-09-02-tsi-A2-multi-witness.BRIEF.md`, `plans/2026-09-02-tsi-A4-syntax-rows.BRIEF.md`, `plans/2026-09-02-tsi-A5-ts-semantic.BRIEF.md`, `plans/2026-09-02-tsi-A6-rust-semantic.BRIEF.md`, `plans/2026-09-02-tsi-A7-v7-loader.BRIEF.md` (dispatch gated on Chris), `plans/2026-09-02-tsi-A8-intersection.BRIEF.md`.
 Order: A1, then A3, then A2 (each shares `extract.rs` with the one before); A4 after A3 (`TsiSink`); A5 after A2 and A4; A6 after A5 (shares the `project.rs` hook and `src/tsi/semantic.rs`); A7 any time after A3 (fixture streams hand-written to the wire spec); A8 last.
 Gate for every extract arc:
 
@@ -331,7 +331,7 @@ The diff line prints nothing on every arc.
 | A4 syntax-mode TSI rows (ts and rust; go and kotlin follow) | `src/types.rs` (`TypeFAux.tsi`), `src/lang/ts.rs`, `src/lang/rust_type_edges.rs`, `src/wire.rs`, `tests/99_syntax_tsi_rows.rs` | `tsi.product/sum/edge/parameter/input/output`, `ts.optional/readonly`, `rust.impl` from explicit clauses; `coverage=partial` rows | probe fixture `.ts`: `tsi.edge(_, User, id, T, 0)` with `ts.readonly`; `tsi.edge(_, User, name, string, 1)` with `ts.optional` |
 | A5 TS semantic mode | `src/lang/ts_checker.mjs`, `src/lang/ts_checker.rs`, `src/tsi/semantic.rs`, `src/project.rs` (one hook), `tests/101_ts_semantic_tsi.rs` | `tsi` arm per section 7; `ts.mapped`, `ts.conditional`; `tsi.called/argument` for `User<number>`; `tsi.has_type`; complete rows | criterion 6 rows on the probe fixture; `Partial<User<number>>` yields two optional edges the syntax tier lacks |
 | A6 Rust semantic mode | `src/lang/rust_checker_ra.rs`, `src/lang/rust_checker.rs`, `src/project.rs` (one hook), `tests/102_rust_semantic_tsi.rs`, `tests/fixtures/tsi/rust_probe/` | `tsi` walk per section 7; `rust.trait/impl/assoc/lifetime/ownership`; complete rows | criterion 7 rows on the probe fixture; `type Output = Vec<T>` yields `rust.assoc` |
-| A7 v7 adapter | `v7/src/0_reader/6_extract_loader.pl`, `v7/prelude/5_tsi_primitives.dl7`, `v7/test/4_extract_loader.test.pl` | `accepted/1`; TSI kernel into product nodes and `:/4`; namespaced rows as comptime relations | plunit: syntax stream alone imports `User`; adding the semantic stream with `complete` for `tsi.edge` retracts the syntax edges; `Conforms` proves over the imported struct |
+| A7 v7 adapter | `v7/src/2_comptime/0c_extract_loader.pl`, `v7/prelude/5_tsi_primitives.dl7`, `v7/test/4_extract_loader.test.pl` | `accepted/1`; TSI kernel into product nodes and `:/4`; namespaced rows as comptime relations | plunit: syntax stream alone imports `User`; adding the semantic stream with `complete` for `tsi.edge` retracts the syntax edges; `Conforms` proves over the imported struct |
 | A8 shared fixture and bench | `tests/fixtures/tsi/{probe.ts,probe.rs}`, `tests/100_tsi_intersection.rs`, `tests/bench/mod.rs` (`Case.mode`), `plans/extract-bench-2026-08-29/RATCHET.tsv` | criterion 8 test; bench mode axis | the `tsi.*` row set of both streams, after canonical renumbering, is equal; `ts.*` and `rust.*` sets are disjoint and non-empty |
 
 Forbidden for every lane: `v6/tsv2/**`, `v6/prolog/**`, `emit_ts.pl`, the
