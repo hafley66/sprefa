@@ -173,6 +173,46 @@ compilation from about 534ms and 5.46M inferences to 664ms and 6.48M
 inferences. The row-list aggregate evaluator retains tuple-level set semantics
 at lower cost for this workload.
 
+### Rechecking ground evaluator inputs
+
+Removing the three `must_be(ground, ...)` checks from the compiler-owned
+`evaluate_stratified/5` path saved only 63 inferences across seven compiler
+rounds and produced no repeatable wall-time reduction. SWI's groundness check
+is implemented below ordinary Prolog inference accounting and is not a useful
+target for this fixture. The explicit evaluator contract remains in place.
+
+### Evaluator substage CPU
+
+Temporary `call_time/2` probes over all seven compiler rounds measured each
+evaluation as follows:
+
+```text
+level-zero closure collection    13-17 ms
+strict-stratum aggregates         6-8 ms total
+native rule and row installation  7-9 ms total
+stratum planning                  about 1 ms
+recursive-set discovery           4-6 ms on a new rule graph, near zero hit
+```
+
+The first stratum owns most row derivation. Later aggregate strata repeatedly
+query the completed lower-row set, so an aggregate index must persist across
+strata to avoid rebuilding the same 6,000-row structure several times.
+
+### Persistent aggregate relation index
+
+One association index now lives for the duration of an evaluator snapshot.
+After each stratum, its already-sorted current rows are grouped by relation and
+merged into the index. Aggregate goals select one relation group before tuple
+matching. The complete ordered row list remains the closure and correctness
+oracle.
+
+Passing current-stratum rows directly to the index matters. Subtracting the
+complete lower closure first produced 488-493ms cold and 5,820,900 inferences.
+Current rows already exclude lower-stratum relation outputs; only a small set
+of kernel `nil` and `intern` rows repeats. Letting the per-relation
+`ord_union/3` deduplicate those rows produced three cold runs of 466-472ms and
+exactly 5,301,140 inferences. Output remained 6,774 rows over seven rounds.
+
 ## 5. Requirements for the next evaluator
 
 A useful row-delta implementation needs both:
@@ -289,8 +329,9 @@ owner                         -> edge count
 ```
 
 The initial check fell from about 77ms to about 29-43ms on the representative
-fixture. The current cold checkpoint varies around 520-540ms with 5,462,404
-inferences, 6,774 rows, and seven rounds.
+fixture. After adding the persistent aggregate relation index, the current
+cold checkpoint varies around 466-472ms with 5,301,140 inferences, 6,774 rows,
+and seven rounds.
 
 ### Precise generated-program slice cache
 
@@ -341,6 +382,14 @@ DL7_TRACE=steps swipl -q -g \
 The checkpoint gate must retain exact row and round counts. Tighten wall and
 inference budgets only after a measured implementation lands.
 
-Current normal-mode gates are 750ms cold wall, 7,000,000 cold inferences,
+The command harness may return a live session when a benchmark exceeds its
+wait window. Returning a session does not terminate SWI. Poll that session to
+completion or interrupt it before running another benchmark. A forgotten
+`0_compiler_performance.pl` process remained active for 68 minutes and made
+later wall measurements unusable while leaving deterministic inference counts
+near their normal value. Check for surviving benchmark processes when wall
+time changes without a comparable inference-count change.
+
+Current normal-mode gates are 600ms cold wall, 6,000,000 cold inferences,
 50ms warm wall, and 50,000 warm inferences. The generic reference oracle is a
 semantic check and intentionally exceeds normal-mode performance budgets.

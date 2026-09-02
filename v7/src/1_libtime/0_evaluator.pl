@@ -7,7 +7,12 @@
           ]).
 
 :- use_module(library(error), [must_be/2]).
-:- use_module(library(assoc), [get_assoc/3, list_to_assoc/2]).
+:- use_module(library(assoc),
+              [ empty_assoc/1,
+                get_assoc/3,
+                list_to_assoc/2,
+                put_assoc/4
+              ]).
 :- use_module(library(gensym), [gensym/2]).
 :- use_module(library(lists), [max_list/2]).
 :- use_module(library(ordsets), [ord_subtract/3, ord_union/3]).
@@ -60,9 +65,10 @@ evaluate_after_stratify([], Strata, Rules, Seeds, Closure, Diagnostics) :-
         MaxStratum, Strata, Rules, Seeds, StratumPlans),
     gensym(dl7_evaluation_, EvaluationId),
     cached_recursive_relation_set(Rules, RecursiveRelations),
+    empty_assoc(EmptyRowIndex),
     setup_call_cleanup(
         install_recursive_relations(RecursiveRelations, EvaluationId),
-        evaluate_strata(StratumPlans, EvaluationId, [], [],
+        evaluate_strata(StratumPlans, EvaluationId, [], [], EmptyRowIndex,
                         Closure, Diagnostics),
         clear_evaluation(EvaluationId)).
 evaluate_after_stratify(Diagnostics, _, _, _, [], Diagnostics).
@@ -143,22 +149,25 @@ max_stratum(Strata, MaxStratum) :-
     findall(Level, member(stratum(_, Level), Strata), Levels),
     max_list(Levels, MaxStratum).
 
-evaluate_strata([], _, Closure, _, Closure, []).
+evaluate_strata([], _, Closure, _, _, Closure, []).
 evaluate_strata(
                 [stratum_plan(PlainRules, AggregateRules, CurrentSeeds)
                  | StratumPlans], EvaluationId,
-                LowerRows, InstalledLowerRows,
+                LowerRows, InstalledLowerRows, LowerRowIndex,
                 Closure, Diagnostics) :-
-    derive_aggregate_rule_rows(LowerRows, AggregateRules,
-                               AggregateSeeds, AggregateDiagnostics),
+    derive_indexed_aggregate_rule_rows(
+        LowerRowIndex, AggregateRules,
+        AggregateSeeds, AggregateDiagnostics),
     evaluate_stratum_after_aggregates(
         AggregateDiagnostics, AggregateSeeds,
         StratumPlans, EvaluationId, LowerRows, InstalledLowerRows,
+        LowerRowIndex,
         PlainRules, CurrentSeeds, Closure, Diagnostics).
 
 evaluate_stratum_after_aggregates(
     [], AggregateSeeds,
     StratumPlans, EvaluationId, LowerRows, InstalledLowerRows,
+    LowerRowIndex,
     PlainRules, CurrentSeeds, Closure, Diagnostics) :-
     !,
     append(CurrentSeeds, AggregateSeeds, Seeds0),
@@ -168,13 +177,16 @@ evaluate_stratum_after_aggregates(
     install_seeds(StratumSeeds, EvaluationId),
     install_lower_rows(NewLowerRows, EvaluationId),
     current_stratum_relations(PlainRules, StratumSeeds, Relations),
-    collect_native_closure(EvaluationId, Relations, LowerRows, CompletedRows),
+    collect_native_closure(
+        EvaluationId, Relations, LowerRows, CompletedRows, CurrentRows),
+    add_rows_to_relation_index(
+        CurrentRows, LowerRowIndex, CompletedRowIndex),
     verify_native_closure(EvaluationId, CompletedRows),
     evaluate_strata(StratumPlans, EvaluationId,
-                    CompletedRows, LowerRows,
+                    CompletedRows, LowerRows, CompletedRowIndex,
                     Closure, Diagnostics).
 evaluate_stratum_after_aggregates(
-    Diagnostics, _, _, _, _, _, _, _, _,
+    Diagnostics, _, _, _, _, _, _, _, _, _,
     [], Diagnostics).
 
 rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
@@ -201,6 +213,66 @@ derive_aggregate_rule_rows(CompletedRows, [Rule | Rules], Rows, Diagnostics) :-
     sort(Rows0, Rows),
     append(OwnDiagnostics, RestDiagnostics, Diagnostics0),
     sort(Diagnostics0, Diagnostics).
+
+derive_indexed_aggregate_rule_rows(_, [], [], []).
+derive_indexed_aggregate_rule_rows(
+    RowIndex, [Rule | Rules], Rows, Diagnostics) :-
+    derive_indexed_aggregate_rows(
+        RowIndex, Rule, OwnRows, OwnDiagnostics),
+    derive_indexed_aggregate_rule_rows(
+        RowIndex, Rules, RestRows, RestDiagnostics),
+    append(OwnRows, RestRows, Rows0),
+    sort(Rows0, Rows),
+    append(OwnDiagnostics, RestDiagnostics, Diagnostics0),
+    sort(Diagnostics0, Diagnostics).
+
+derive_indexed_aggregate_rows(RowIndex, Rule, Rows, Diagnostics) :-
+    Rule = rule(call(_, HeadArguments), _),
+    aggregate_arguments(HeadArguments, Aggregates),
+    length(Aggregates, AggregateCount),
+    derive_checked_indexed_aggregate(
+        AggregateCount, RowIndex, Rule, Rows, Diagnostics).
+
+derive_checked_indexed_aggregate(1, RowIndex, Rule, Rows, Diagnostics) :-
+    !,
+    findall(Head,
+            indexed_aggregate_rule_proof(RowIndex, Rule, Head),
+            ProofHeads),
+    (   ground(ProofHeads)
+    ->  aggregate_proofs(ProofHeads, Proofs0),
+        msort(Proofs0, Proofs),
+        grouped_aggregate_rows(Proofs, Rows0),
+        sort(Rows0, Rows),
+        Diagnostics = []
+    ;   Rows = [],
+        Diagnostics = [diagnostic(evaluate, none,
+                                  non_ground_aggregate_proof)]
+    ).
+derive_checked_indexed_aggregate(
+    AggregateCount, _, _, [],
+    [diagnostic(evaluate, none,
+                malformed_aggregate_head(AggregateCount))]).
+
+indexed_aggregate_rule_proof(RowIndex, Rule, Head) :-
+    instantiate_rule(Rule, Head, Body),
+    indexed_completed_body_holds(Body, RowIndex).
+
+indexed_completed_body_holds([], _).
+indexed_completed_body_holds(
+    [checked_goal(positive, Call) | Goals], RowIndex) :-
+    Call = call(Relation, _),
+    get_assoc(Relation, RowIndex, Rows),
+    member(Call, Rows),
+    indexed_completed_body_holds(Goals, RowIndex).
+indexed_completed_body_holds(
+    [checked_goal(negative, Call) | Goals], RowIndex) :-
+    ground(Call),
+    Call = call(Relation, _),
+    (   get_assoc(Relation, RowIndex, Rows)
+    ->  \+ memberchk(Call, Rows)
+    ;   true
+    ),
+    indexed_completed_body_holds(Goals, RowIndex).
 
 %% derive_aggregate_rows(+CompletedRows, +Rule, -Rows, -Diagnostics) is det.
 %
@@ -294,6 +366,20 @@ rows_by_relation(Rows, RowGroups) :-
     maplist(row_relation_pair, Rows, RowPairs),
     keysort(RowPairs, SortedPairs),
     group_pairs_by_key(SortedPairs, RowGroups).
+
+add_rows_to_relation_index(Rows, Index0, Index) :-
+    rows_by_relation(Rows, RowGroups),
+    add_row_groups_to_relation_index(RowGroups, Index0, Index).
+
+add_row_groups_to_relation_index([], Index, Index).
+add_row_groups_to_relation_index(
+    [Relation-Rows | Groups], Index0, Index) :-
+    (   get_assoc(Relation, Index0, ExistingRows)
+    ->  ord_union(ExistingRows, Rows, IndexedRows)
+    ;   IndexedRows = Rows
+    ),
+    put_assoc(Relation, Index0, IndexedRows, Index1),
+    add_row_groups_to_relation_index(Groups, Index1, Index).
 
 row_relation_pair(Row, Relation-Row) :-
     Row = call(Relation, _).
@@ -626,7 +712,8 @@ current_stratum_relations(Rules, Seeds, Relations) :-
             Relations0),
     sort(Relations0, Relations).
 
-collect_native_closure(EvaluationId, Relations, LowerRows, Closure) :-
+collect_native_closure(
+    EvaluationId, Relations, LowerRows, Closure, CurrentRows) :-
     findall(call(Relation, Arguments),
             ( member(Relation, Relations),
               native_relation(EvaluationId, Relation, Arity, Functor),
