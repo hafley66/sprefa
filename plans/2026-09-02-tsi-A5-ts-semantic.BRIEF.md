@@ -37,12 +37,12 @@ Per wanted file, walk every declaration (`ts.isInterfaceDeclaration`, `isClassDe
 
 | ts API | rows |
 |---|---|
-| `checker.getDeclaredTypeOfSymbol(sym)` (declarations) / `checker.getTypeAtLocation(node)` (occurrences) | `tsi.type(T)`, `tsi.denotes(S, T)`, `tsi.origin(T, ts, nameSpan)` at the declaring name |
+| `checker.getDeclaredTypeOfSymbol(sym)` (declarations) / `checker.getTypeAtLocation(node)` (occurrences) | `tsi.symbol(S)`, `tsi.type(T)`, `tsi.denotes(S, T)`, `tsi.origin(T, ts, nameSpan)` at the declaring name. A symbol id is declared by `tsi.symbol` (registry row; `--ingest` rejects an undeclared one). An ALIAS mints no type id of its own: `tsi.symbol(S)` plus `tsi.denotes(S, TargetT)` only |
 | `type.flags & ts.TypeFlags.Object` and `objectFlags & (Class|Interface|Anonymous|Mapped)` | `tsi.product(T)`; interface adds `ts.interface(T)`; `Mapped` adds `ts.mapped(T, keyParamT, constraintT, templateT)` from `type.typeParameter`, `constraintType`, `templateType` |
 | `type.flags & Union` | `tsi.sum(T)`; one `tsi.edge(E, T, "", memberT, pos)` per `type.types` member, pos = order in `types` |
 | `type.flags & (String|Number|Boolean|BigInt|Symbol|Void|Undefined|Null|Never|Unknown|Any|StringLiteral|NumberLiteral|BooleanLiteral)` | `tsi.primitive(T, <class atom>)` where the atom is the flag name in lowercase; literal types carry the atom of their widened class |
 | `checker.getPropertiesOfType(type)` | `tsi.edge(E, T, propName, propT, pos)`, pos = declaration order (`prop.declarations[0].pos` sort); `ts.optional(E)` if `prop.flags & SymbolFlags.Optional`; `ts.readonly(E)` if `checker.isReadonlySymbol(prop)` or the declaration has a `readonly` modifier |
-| `type.typeParameters` / `sig.typeParameters` | `tsi.type(P)`, `tsi.parameter(P, T, pos, invariant)`, `tsi.origin(P, ts, span)`; a constraint adds `tsi.edge(E, P, "bound", constraintT, 0)` |
+| `type.typeParameters` / `sig.typeParameters` | `tsi.type(P)`, `tsi.parameter(P, T, pos, unspecified)`, `tsi.origin(P, ts, span)`; a constraint adds `tsi.edge(E, P, "bound", constraintT, 0)` |
 | `checker.getSignaturesOfType(type, ts.SignatureKind.Call)` and `Construct` | `tsi.callable(T)` once if any signature; per signature index k: `tsi.input(T, k*1000+i, paramT)` per parameter i, `tsi.output(T, k, returnT)`. State the k*1000 packing in a comment; a signature with over 1000 parameters is a named stop |
 | `objectFlags & ObjectFlags.Reference` with `checker.getTypeArguments(type)` non-empty | `tsi.called(T, targetT, L)`, `tsi.argument(L, i, argT)`; `targetT` = id of `type.target` |
 | `type.flags & Conditional` | `ts.conditional(T, checkT, extendsT, trueT, falseT)` from `type.root.node` via `checker.getTypeFromTypeNode` |
@@ -51,7 +51,7 @@ Per wanted file, walk every declaration (`ts.isInterfaceDeclaration`, `isClassDe
 
 Every type id an edge, argument, input, output or has_type row names MUST also have a `tsi.type` row: after the walk, a second pass emits `tsi.type` for every id in the Map that lacks one (types reached only as targets: `string`, a lib type, a dependency type). Lib and dependency types get `tsi.origin` with the declaring file's path as text if it is outside the corpus; that is still a row, never a missing id. `--ingest` on the stream is the receipt.
 
-Coverage claims (per whole run, not per file): `complete` for `tsi.type, tsi.denotes, tsi.has_type, tsi.origin, tsi.product, tsi.sum, tsi.callable, tsi.primitive, tsi.edge, tsi.parameter, tsi.called, tsi.argument, tsi.input, tsi.output, ts.interface, ts.optional, ts.readonly, ts.mapped, ts.conditional`. `partial` with a diagnostic string for `tsi.conforms` ("declared heritage only; structural conformance not enumerated"), `tsi.subtype`, `tsi.assignable`, `tsi.equivalent` ("not enumerated"). Variance is always the atom `invariant`; `tsi.parameter` is still `complete` (every parameter is enumerated; the variance column is a fixed value, say so in the schema paragraph).
+Coverage claims (per whole run, not per file): `complete` for `tsi.type, tsi.denotes, tsi.has_type, tsi.origin, tsi.product, tsi.sum, tsi.callable, tsi.primitive, tsi.edge, tsi.parameter, tsi.called, tsi.argument, tsi.input, tsi.output, ts.interface, ts.optional, ts.readonly, ts.mapped, ts.conditional`. `partial` with a diagnostic string for `tsi.conforms` ("declared heritage only; structural conformance not enumerated"), `tsi.subtype`, `tsi.assignable`, `tsi.equivalent` ("not enumerated"). Variance is the atom `unspecified` (tsc exposes none); `tsi.parameter` is still `complete` (every parameter is enumerated; the column is a declared unknown, never a claimed `invariant`).
 
 ## Tests, `tests/101_ts_semantic_tsi.rs`
 
@@ -64,7 +64,7 @@ Coverage claims (per whole run, not per file): `complete` for `tsi.type, tsi.den
 | generic argument | the `User<number>` occurrence: `tsi.called(R, User, L)`, `tsi.argument(L, 0, N)`, `tsi.primitive(N, number)`, and a `tsi.has_type(span, R)` at the occurrence |
 | mapped | `type Q = Partial<User<number>>`: `ts.mapped(Q, ...)`, and `getPropertiesOfType(Q)` yields two edges both `ts.optional`; the syntax run's `tsi.edge` rows owned by Q are zero and its `coverage partial` for `tsi.edge` is still present on the syntax run |
 | callable | `map`: `tsi.callable`, `tsi.input(map, 0, F)` where F is itself `tsi.callable` with `tsi.input(F, 0, T)` and `tsi.output(F, 0, U)`; `tsi.output(map, 0, U)` |
-| conforms | `tsi.conforms(User, Mapper, declared)`; `coverage partial` for `tsi.conforms` with one `diagnostic` row naming it |
+| conforms | `tsi.conforms(User, Mapper, declared)`; `tsi.parameter(T, User, 0, unspecified)`; `coverage partial` for `tsi.conforms` with one `diagnostic` row naming it |
 | complete claims | `coverage complete` for exactly the relation set above, on the semantic run only |
 | recursion | a second fixture `tests/fixtures/tsi/recursive.ts` with `interface Node<T> { value: T; next: Node<T> }`: the `next` edge's target id equals `Node`'s own id; the walk terminates (10s cap) |
 | every id declared | every `{"id"}` in the stream has a `tsi.type` or edge/list minting row; `extract --ingest` on the stream returns rc=0 |

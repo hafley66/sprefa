@@ -47,7 +47,7 @@ impl fmt::Display for IngestError {
             } => write!(out, "line {line}: {relation}: {detail}"),
             IngestError::Dangling { line, id } => write!(
                 out,
-                "line {line}: id {id} is declared by no tsi.type, tsi.edge or tsi.called row"
+                "line {line}: id {id} is declared by no tsi.type, tsi.symbol, tsi.value, tsi.edge, rust.impl or tsi.called row"
             ),
             IngestError::Coverage { run, relation } => write!(
                 out,
@@ -118,13 +118,14 @@ fn decode(lines: impl Iterator<Item = String>) -> Result<(Vec<FlatFact>, Vec<usi
     Ok((rows, line_of))
 }
 
-/// Step 2. Declaring positions are `tsi.type` 0, `tsi.edge` 0 and `tsi.called`
-/// 2, so a recursive type closes through ids and the check is one pass.
+/// Step 2. Declaring positions are `tsi.type` 0, `tsi.symbol` 0, `tsi.value` 0,
+/// `tsi.edge` 0, `rust.impl` 0 and `tsi.called` 2, so a recursive type closes through ids and
+/// the check is one pass.
 fn id_closure(rows: &[FlatFact], line_of: &[usize]) -> Result<(), IngestError> {
     let mut declared: BTreeSet<u32> = BTreeSet::new();
     for fact in facts(rows) {
         let position = match fact.relation.as_str() {
-            "tsi.type" | "tsi.edge" => 0,
+            "tsi.type" | "tsi.symbol" | "tsi.value" | "tsi.edge" | "rust.impl" => 0,
             "tsi.called" => 2,
             _ => continue,
         };

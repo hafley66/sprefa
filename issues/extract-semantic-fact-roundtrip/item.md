@@ -179,3 +179,16 @@ Mode contract:
 Current implementation receipt: `FlatFact` is a closed output-only enum deriving `Serialize`. The reverse door needs decoding, protocol versioning, validation, canonical re-emission, open namespaced semantic rows, and DL7 relation import.
 
 The longer design references currently live on branch `perf/v7-cold-compile` in commits `a99d7c3bf`, `5b98ea5e8`, `430d69fc7`, `6187a6ede`, and `368a1eebd`; they are absent from `main` as of this note. This card and note are the self-contained implementation contract.
+
+### 2026-09-02T23:05:00Z · @claude-299
+
+Vocabulary additions, user-approved 2026-09-02 ("yes go do the things"), in `v6/sprefa-extract/src/tsi/registry.rs`:
+
+```text
+tsi.symbol(SymbolId)                                   declares a symbol id (the subject of tsi.denotes; rust.impl position 0 declares its own)
+tsi.value(ValueId, TypeId)                             declares a value entity; tsi.argument stays type-only
+tsi.value_argument(ArgumentListId, Position, ValueId)  a value in argument position
+tsi.scip_symbol(SymbolId, Text)                        optional bridge to SCIP symbol text; identity stays run-local
+```
+
+Variance: the atom is `unspecified` where no checker exposes one; `invariant` is never claimed by default. An alias mints no type id: `tsi.symbol` plus `tsi.denotes(Alias, Target)`. `--ingest` declaring positions: `tsi.type` 0, `tsi.symbol` 0, `tsi.value` 0, `tsi.edge` 0, `rust.impl` 0, `tsi.called` 2.
