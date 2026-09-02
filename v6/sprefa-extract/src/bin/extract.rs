@@ -23,12 +23,13 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use clap::Parser;
 
 use sprefa_extract::{
-    cfg_bundle, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact,
+    cfg_bundle, content_id_of, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact,
     flatten_cfg_each, flatten_each, package_edges_jsonl, query_patterns, resolve_project_jsonl,
     scip_facts_jsonl, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
     size_skip_fact, source_for, AstPatternQuery, FamilyMask, FlatFact, IndexBudget, ResolveArms,
     ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, DEFAULT_MAX_BYTES, SCHEMA,
 };
+use sprefa_extract::tsi::{Mode, RunOut};
 
 #[path = "extract/help.rs"]
 mod help;
@@ -175,6 +176,17 @@ struct Cli {
     /// Prepend one `file` record: path, content digest, byte count, line count.
     #[arg(long, conflicts_with_all = ["resolve", "scip_facts", "ast_pattern"], long_help = FILE_FACT_LONG)]
     file_fact: bool,
+
+    /// Wrap the per-file stream in the TSI envelope: protocol, run, per-row
+    /// `fact` ordinals, one witness per row, partial coverage per family.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "bench", "resolve", "ast_pattern", "deps", "package_deps",
+            "scip_facts", "scip_deps", "file_fact",
+        ],
+    )]
+    witness: bool,
 
     /// Byte ceiling for one input; over it emits `size_skip` and exits 0. 0 = none.
     #[arg(long = "max-bytes", value_name = "BYTES", long_help = MAX_BYTES_LONG)]
@@ -497,10 +509,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .family
         .as_deref()
         .is_some_and(|families| families.iter().any(|family| family.trim() == "cfg"));
+    // The cfg plane is derived AFTER the flatten, so its rows would land past
+    // the coverage rows and outside the numbering.
+    if cli.witness && cfg {
+        return Err("--witness does not cover --family cfg: the cfg plane is derived \
+                    after the flatten, so its rows carry no fact ordinal"
+            .into());
+    }
     if cli.bench {
         bench(&path_str, &content, mask, cfg)?;
     } else {
-        stream(&path_str, &content, mask, cfg)?;
+        stream(&path_str, &content, mask, cfg, cli.witness)?;
     }
     Ok(())
 }
@@ -674,6 +693,7 @@ fn stream(
     content: &[u8],
     mask: FamilyMask,
     cfg: bool,
+    witness: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // ONE BufWriter held for the whole run: a per-row println! goes through
     // LineWriter, which flushes on every newline and turns 2M-row streams
@@ -686,8 +706,17 @@ fn stream(
         serde_json::to_writer(&mut out, &fact)?;
         out.write_all(b"\n")
     };
+    // One run per invocation, scoped to the digest of the bytes just read: two
+    // runs over the same file are comparable without re-reading it.
+    let run = witness.then(|| RunOut {
+        run: 0,
+        mode: Mode::Syntax,
+        tool: "extract".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        scope: vec![content_id_of(content).to_string()],
+    });
     if let Some(bundle) = dispatch(path, content, mask) {
-        flatten_each(&bundle, &mut write)?;
+        flatten_each(&bundle, run.as_ref(), &mut write)?;
         // The cfg plane rides the SAME parse: it is derived from `bundle.cst`.
         if cfg {
             if let Some(cfg_bundle) = cfg_bundle(path, &bundle, content) {
@@ -715,7 +744,7 @@ fn bench(
     let extract = t.elapsed();
     let t = Instant::now();
     let mut facts = 0usize;
-    let counted: Result<(), std::convert::Infallible> = flatten_each(&out, &mut |_| {
+    let counted: Result<(), std::convert::Infallible> = flatten_each(&out, None, &mut |_| {
         facts += 1;
         Ok(())
     });

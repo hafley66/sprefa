@@ -115,6 +115,7 @@ fn cfg_edges(path: &str, source: &str) -> BTreeSet<String> {
             from_kind,
             to,
             to_kind,
+            ..
         } = fact
         {
             set.insert(format!(

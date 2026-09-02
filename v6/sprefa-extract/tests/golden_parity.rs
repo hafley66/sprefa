@@ -185,6 +185,7 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                 span,
                 kind,
                 name: Some(name),
+                ..
             } => Some(((span.start, span.end), (kind.clone(), name.clone()))),
             _ => None,
         })
@@ -237,6 +238,7 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                 span,
                 kind,
                 name,
+                ..
             } => match family {
                 FamilyTag::Type => {
                     set.insert(format!(

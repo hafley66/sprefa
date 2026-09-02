@@ -2792,7 +2792,7 @@ pub trait Rename: Source + Sync + Send {
 // ════════════════════════════════════════════════════════════════════════════
 
 /// A span on the wire: inclusive-exclusive byte offsets into the file.
-#[derive(Copy, Clone, Debug, Serialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct SpanOut {
     pub start: u32,
     pub end: u32,
@@ -2806,10 +2806,23 @@ impl SpanOut {
 
 /// One flat fact. The `record` tag discriminates the shape; `family` carries the
 /// plane. Serialized as JSONL (`{"record":"node",...}` etc.).
-#[derive(Serialize, Debug)]
+/// A foreign producer spelling this wire is only usable if the rows decode
+/// back, so `Deserialize` is as much of the contract as `Serialize`.
+#[derive(Serialize, serde::Deserialize, Debug)]
 #[serde(tag = "record", rename_all = "lowercase")]
 pub enum FlatFact {
+    /// The stream's own version. First row of every witnessed stream.
+    Protocol {
+        version: u32,
+    },
+    Run(crate::tsi::types::RunOut),
+    Fact(crate::tsi::types::FactOut),
+    Witness(crate::tsi::types::WitnessOut),
+    Coverage(crate::tsi::types::CoverageOut),
+    Diagnostic(crate::tsi::types::DiagnosticOut),
     Node {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         span: SpanOut,
         kind: String,
@@ -2818,6 +2831,8 @@ pub enum FlatFact {
     /// `from_kind`/`to_kind` spell the endpoints' node kinds, so a consumer
     /// keyed on the wire alone carries the whole `(span, kind)` node identity.
     Edge {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         kind: String,
         from: SpanOut,
@@ -2831,6 +2846,8 @@ pub enum FlatFact {
     /// position. The receiver/self is omitted from the position count.
     #[serde(rename = "param")]
     DfParam {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         span: SpanOut,
         pos: u32,
@@ -2839,6 +2856,8 @@ pub enum FlatFact {
     /// node. Method receivers use slot `-1`.
     #[serde(rename = "arg")]
     DfArg {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         call: SpanOut,
         pos: i64,
@@ -2849,6 +2868,8 @@ pub enum FlatFact {
     /// functional-update base.
     #[serde(rename = "df_field")]
     DfField {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         owner: SpanOut,
         name: String,
@@ -2858,6 +2879,8 @@ pub enum FlatFact {
     /// (cooked literal or raw source slice).
     #[serde(rename = "df_lit")]
     DfLit {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         node: SpanOut,
         kind: String,
@@ -2867,6 +2890,8 @@ pub enum FlatFact {
     /// as written. `var`/`collection` are null where the form names neither.
     #[serde(rename = "df_loop")]
     DfLoop {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         span: SpanOut,
         var: Option<String>,
@@ -2876,6 +2901,8 @@ pub enum FlatFact {
     /// in the nest (1 = outermost).
     #[serde(rename = "df_nest")]
     DfNest {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         call: SpanOut,
         #[serde(rename = "loop")]
@@ -2886,9 +2913,16 @@ pub enum FlatFact {
     /// DfF allocating callable: the fn/method/closure whose body builds a
     /// collection. Rust only.
     #[serde(rename = "df_allocates")]
-    DfAllocates { family: FamilyTag, owner: SpanOut },
+    DfAllocates {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
+        family: FamilyTag,
+        owner: SpanOut,
+    },
     /// TypeF arrow-type sig: owner = callable span, slot = param/ret, pos, ty.
     Sig {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         owner: SpanOut,
         owner_start: u32,
@@ -2899,6 +2933,8 @@ pub enum FlatFact {
     },
     /// CallF call site (phase-1 unresolved): span, callee as written, optional path.
     Site {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         span: SpanOut,
         callee: String,
@@ -2906,6 +2942,8 @@ pub enum FlatFact {
     },
     /// TypeF const value: owner, optional field path, text, kind = lit|template.
     Const {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         owner: SpanOut,
         field: Option<String>,
@@ -2915,6 +2953,8 @@ pub enum FlatFact {
     /// TypeF doc block: the owning entity's span, its impl owner when it has
     /// one, and the cleaned text.
     Doc {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         owner: SpanOut,
         parent: Option<String>,
@@ -2923,6 +2963,8 @@ pub enum FlatFact {
     /// TypeF doc tag: one structured tag off the block at `owner`.
     #[serde(rename = "doc_tag")]
     DocTagOut {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         owner: SpanOut,
         tag: String,
@@ -2933,6 +2975,8 @@ pub enum FlatFact {
     /// `doc` is the whole document as a json VALUE, the column `decode/2` reads.
     #[serde(rename = "data_doc")]
     DataDocOut {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         ordinal: u32,
         span: SpanOut,
@@ -2943,6 +2987,8 @@ pub enum FlatFact {
     /// path. `text` is null for objects and arrays.
     #[serde(rename = "data_value")]
     DataValueOut {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         ordinal: u32,
         path: String,
@@ -2953,6 +2999,8 @@ pub enum FlatFact {
     /// TypeF doc structure row: one heading or fenced code block of a document.
     #[serde(rename = "doc_node")]
     DocNodeOut {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         span: SpanOut,
         kind: String,
@@ -2963,6 +3011,8 @@ pub enum FlatFact {
     /// v6-ONLY rows (no v5 oracle facet) — the parity golden reports them,
     /// never asserts them.
     Specifier {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         span: SpanOut,
         name: String,
@@ -2978,6 +3028,8 @@ pub enum FlatFact {
     /// joined to it by `owner`. v6-ONLY, no v5 oracle facet.
     #[serde(rename = "method_owner")]
     MethodOwnerOut {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         owner: SpanOut,
         self_type: Option<String>,
@@ -2988,6 +3040,8 @@ pub enum FlatFact {
     /// to its def node by `span`. v6-ONLY, no v5 oracle facet.
     #[serde(rename = "cfg_scope")]
     CfgScopeOut {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         span: SpanOut,
         cfg: String,
@@ -2996,6 +3050,8 @@ pub enum FlatFact {
     /// ONLY. No span: it is a per-file set row, not a per-occurrence one.
     #[serde(rename = "test_only_call")]
     TestOnlyCallOut {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         callee: String,
         cfg: String,
@@ -3014,6 +3070,8 @@ pub enum FlatFact {
     /// reference set (a data term in argument position is a reference nowhere
     /// else emits one).
     Reference {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         family: FamilyTag,
         span: SpanOut,
         /// The interned `functor/arity` key, e.g. `relplan/5`.
@@ -3414,6 +3472,38 @@ pub enum FlatFact {
         bytes: u32,
         lines: u32,
     },
+}
+
+impl FlatFact {
+    /// The row's `fact` ordinal slot, for the arms `flatten_each` numbers. The
+    /// envelope rows and the whole-project rows carry none and answer `None`.
+    pub fn fact_slot(&mut self) -> Option<&mut Option<u32>> {
+        match self {
+            FlatFact::Node { fact, .. }
+            | FlatFact::Edge { fact, .. }
+            | FlatFact::DfParam { fact, .. }
+            | FlatFact::DfArg { fact, .. }
+            | FlatFact::DfField { fact, .. }
+            | FlatFact::DfLit { fact, .. }
+            | FlatFact::DfLoop { fact, .. }
+            | FlatFact::DfNest { fact, .. }
+            | FlatFact::DfAllocates { fact, .. }
+            | FlatFact::Sig { fact, .. }
+            | FlatFact::Site { fact, .. }
+            | FlatFact::Const { fact, .. }
+            | FlatFact::Doc { fact, .. }
+            | FlatFact::DocTagOut { fact, .. }
+            | FlatFact::DataDocOut { fact, .. }
+            | FlatFact::DataValueOut { fact, .. }
+            | FlatFact::DocNodeOut { fact, .. }
+            | FlatFact::Specifier { fact, .. }
+            | FlatFact::MethodOwnerOut { fact, .. }
+            | FlatFact::CfgScopeOut { fact, .. }
+            | FlatFact::TestOnlyCallOut { fact, .. }
+            | FlatFact::Reference { fact, .. } => Some(fact),
+            _ => None,
+        }
+    }
 }
 
 // flatten / flatten_jsonl live in wire.rs (the logic, not the types).
