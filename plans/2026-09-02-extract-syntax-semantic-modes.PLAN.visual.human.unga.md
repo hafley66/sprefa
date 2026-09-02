@@ -69,7 +69,7 @@ ingest -> v7
 | DL7 imports accepted rows, semantic replaces syntax | A7 | syntax edges leave `accepted/1` when a complete run lands |
 
 The issue's `## Decisions` note (2026-09-02, origin/main `15e95de83`) is the
-contract. A1 and A3 start first, in parallel.
+contract. A1 goes first; A3 branches from A1's merge (both touch `extract.rs`).
 
 ## 4. What each mode can say
 
