@@ -14,9 +14,10 @@ several times:
   argument graph inside the semantic identity.
 
 The relevant producers and consumers are
-`v7/src/2_comptime/0_lowerer.pl:190-240`,
-`v7/prelude/3_derived_rules.dl7:171-233`, and
-`v7/src/2_comptime/1a_generated_program_assembler.pl:270-335`.
+`v7/src/2_comptime/0_lowerer.pl:181-233`,
+`v7/src/2_comptime/2_compiler.pl:220,330,820-829`,
+`v7/prelude/3_derived_rules.dl7:173-275`, and
+`v7/src/2_comptime/1a_generated_program_assembler.pl:148-288`.
 
 The application graph should use the existing edge relation. A call occurrence
 is a node, `Apply/2` connects it to its callable, and its outgoing `:/4` edges
@@ -53,6 +54,11 @@ carry supplied and derived tuple values at callable positions.
    source lowerer still emits call edges exhausted the 16-round source-refreeze
    limit. The next migration must move call-edge production across that phase
    boundary before replacing the carriers.
+9. Ground call-owned `:/4` fact heads are promoted into the frozen edge set at
+   the start of the same compiler round. Generated type edges continue through
+   the ordinary end-of-round freeze. `curry_specialization/2` and
+   `curry_bound/4` are now DL7-derived views over `Apply/2`, frozen call edges,
+   callable signature edges, and `Literal/3`.
 
 ### Value-node checkpoint
 
@@ -80,6 +86,35 @@ unbox literals and erase compiler-only variable metadata.
 
 The first implementation changes only escaping-partial call edges and
 generated Curry variables. It adds no evaluator primitive and no macro syntax.
+
+### Round-boundary checkpoint
+
+The source lowerer now emits one application occurrence graph:
+
+```text
+Apply(Call, Callable)
+:(Call, supplied label, ValueNode, source position)
+:(Call, return label, Result, return position)
+```
+
+`source_application_edges/2` recognizes the ground call-owned edge fact heads
+and includes them in the next evaluation's initial `edge_snapshot/4` input.
+This supplies the complete source application graph without exposing generated
+type edges early.
+
+The DL7 prelude derives:
+
+- `curry_call/4` by binding the return label from the declared third edge of
+  `Curry` and joining it to a call occurrence;
+- `curry_specialization/2` from that call;
+- `curry_bound/4` from supplied call edges, using `Literal/3` to recover raw
+  constants and direct node targets for references;
+- the existing generated callable shape and forwarding rule from those views.
+
+Direct source lowering of the Curry fixture now emits three initial `Apply`
+rows and zero `curry_specialization` or `curry_bound` rows. The latter two
+relations remain compatibility views for `body_arg/5` until the generated-rule
+application migration removes that carrier.
 
 Rejected alternatives:
 
@@ -110,7 +145,6 @@ generated callable signature and forwarding rule
 fixed-arity Datalog
 ```
 
-<!-- todo(refactor): Make the application graph complete at the compiler-round boundary, derive Curry specialization and bound-slot views from it, then remove lowerer-authored curry_specialization and curry_bound rows. -->
 <!-- todo(refactor): Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol. -->
 <!-- todo(refactor): Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges. -->
 
@@ -133,11 +167,16 @@ The value-node checkpoint passes 38 of 38 SWI tests and the one tree-sitter
 corpus parse. Application edges now target direct relation references or
 boxed literals, and generated Curry variables have scoped interned nodes.
 
+The round-boundary checkpoint passes 39 of 39 SWI tests and the one tree-sitter
+corpus parse. The final full-suite Curry test consumed 16.766 seconds versus
+11.829 seconds at the value-node checkpoint, a local one-run increase of 4.937
+seconds. No evaluator primitive or CI configuration changed.
+
 ## Staffing
 
 - Implementation: Codex directly, high reasoning.
 - Worktree: `/private/tmp/sprefa-v7-value-nodes`.
-- Branch: `feature/v7-value-nodes`.
-- Base SHA: `01b83dad3cf60cd210ce7cdaf49083e26b76fe01`.
+- Branch: `feature/v7-round-boundary-application`.
+- Base SHA: `51953c3db794a08a16c6a3c61fd166af077c1db5`.
 - Suite budget: focused curry tests per checkpoint; complete V7 suite before
   push.
