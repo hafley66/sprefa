@@ -7,6 +7,7 @@
           ]).
 
 :- use_module(library(error), [must_be/2]).
+:- use_module(library(assoc), [get_assoc/3, list_to_assoc/2]).
 :- use_module(library(gensym), [gensym/2]).
 :- use_module(library(lists), [max_list/2]).
 :- use_module(library(ordsets), [ord_subtract/3, ord_union/3]).
@@ -23,6 +24,7 @@
 :- dynamic evaluation_request/2.
 :- dynamic evaluation_recursive/2.
 :- dynamic native_relation/4.
+:- dynamic cached_recursive_relations/2.
 
 :- table proves/2.
 
@@ -54,15 +56,67 @@ evaluate_stratified(Rules, Seeds, Strata, Closure, Diagnostics) :-
 evaluate_after_stratify([], Strata, Rules, Seeds, Closure, Diagnostics) :-
     !,
     max_stratum(Strata, MaxStratum),
+    evaluation_stratum_plans(
+        MaxStratum, Strata, Rules, Seeds, StratumPlans),
     gensym(dl7_evaluation_, EvaluationId),
-    recursive_relations(Rules, RecursiveRelations),
+    cached_recursive_relation_set(Rules, RecursiveRelations),
     setup_call_cleanup(
         install_recursive_relations(RecursiveRelations, EvaluationId),
-        evaluate_strata(0, MaxStratum, EvaluationId,
-                        Strata, Rules, Seeds, [], [],
+        evaluate_strata(StratumPlans, EvaluationId, [], [],
                         Closure, Diagnostics),
         clear_evaluation(EvaluationId)).
 evaluate_after_stratify(Diagnostics, _, _, _, [], Diagnostics).
+
+evaluation_stratum_plans(MaxStratum, Strata, Rules, Seeds, Plans) :-
+    maplist(rule_stratum_pair(Strata), Rules, RulePairs0),
+    keysort(RulePairs0, RulePairs),
+    group_pairs_by_key(RulePairs, RulesByLevel),
+    maplist(seed_stratum_pair(Strata), Seeds, SeedPairs0),
+    keysort(SeedPairs0, SeedPairs),
+    group_pairs_by_key(SeedPairs, SeedsByLevel),
+    stratum_plans(0, MaxStratum, RulesByLevel, SeedsByLevel, Plans).
+
+rule_stratum_pair(Strata, Rule, Level-Rule) :-
+    rule_at_level(Strata, Level, Rule).
+
+seed_stratum_pair(Strata, Seed, Level-Seed) :-
+    seed_at_level(Strata, Level, Seed).
+
+stratum_plans(Level, MaxStratum, _, _, []) :-
+    Level > MaxStratum,
+    !.
+stratum_plans(Level, MaxStratum, RulesByLevel, SeedsByLevel,
+              [stratum_plan(PlainRules, AggregateRules, Seeds) | Plans]) :-
+    grouped_level_rows(Level, RulesByLevel, Rules),
+    include(aggregate_rule, Rules, AggregateRules),
+    exclude(aggregate_rule, Rules, PlainRules),
+    grouped_level_rows(Level, SeedsByLevel, Seeds),
+    NextLevel is Level + 1,
+    stratum_plans(NextLevel, MaxStratum, RulesByLevel, SeedsByLevel, Plans).
+
+grouped_level_rows(Level, Groups, Rows) :-
+    (   memberchk(Level-Rows0, Groups)
+    ->  Rows = Rows0
+    ;   Rows = []
+    ).
+
+cached_recursive_relation_set(Rules, RecursiveRelations) :-
+    (   with_mutex(
+            dl7_evaluator_cache,
+            cached_recursive_relations(Rules, RecursiveRelations))
+    ->  true
+    ;   recursive_relations(Rules, RecursiveRelations0),
+        with_mutex(
+            dl7_evaluator_cache,
+            store_recursive_relations(Rules, RecursiveRelations0)),
+        RecursiveRelations = RecursiveRelations0
+    ).
+
+store_recursive_relations(Rules, RecursiveRelations) :-
+    (   cached_recursive_relations(Rules, _)
+    ->  true
+    ;   assertz(cached_recursive_relations(Rules, RecursiveRelations))
+    ).
 
 recursive_relations(Rules, RecursiveRelations) :-
     rule_dependencies(Rules, Dependencies),
@@ -89,28 +143,22 @@ max_stratum(Strata, MaxStratum) :-
     findall(Level, member(stratum(_, Level), Strata), Levels),
     max_list(Levels, MaxStratum).
 
-evaluate_strata(Level, MaxStratum, _, _, _, _, Closure, _, Closure, []) :-
-    Level > MaxStratum,
-    !.
-evaluate_strata(Level, MaxStratum, EvaluationId,
-                Strata, Rules, Seeds, LowerRows, InstalledLowerRows,
+evaluate_strata([], _, Closure, _, Closure, []).
+evaluate_strata(
+                [stratum_plan(PlainRules, AggregateRules, CurrentSeeds)
+                 | StratumPlans], EvaluationId,
+                LowerRows, InstalledLowerRows,
                 Closure, Diagnostics) :-
-    include(rule_at_level(Strata, Level), Rules, CurrentRules),
-    include(seed_at_level(Strata, Level), Seeds, CurrentSeeds),
-    include(aggregate_rule, CurrentRules, AggregateRules),
-    exclude(aggregate_rule, CurrentRules, PlainRules),
     derive_aggregate_rule_rows(LowerRows, AggregateRules,
                                AggregateSeeds, AggregateDiagnostics),
     evaluate_stratum_after_aggregates(
         AggregateDiagnostics, AggregateSeeds,
-        Level, MaxStratum, EvaluationId,
-        Strata, Rules, Seeds, LowerRows, InstalledLowerRows,
+        StratumPlans, EvaluationId, LowerRows, InstalledLowerRows,
         PlainRules, CurrentSeeds, Closure, Diagnostics).
 
 evaluate_stratum_after_aggregates(
     [], AggregateSeeds,
-    Level, MaxStratum, EvaluationId,
-    Strata, Rules, Seeds, LowerRows, InstalledLowerRows,
+    StratumPlans, EvaluationId, LowerRows, InstalledLowerRows,
     PlainRules, CurrentSeeds, Closure, Diagnostics) :-
     !,
     append(CurrentSeeds, AggregateSeeds, Seeds0),
@@ -122,12 +170,11 @@ evaluate_stratum_after_aggregates(
     current_stratum_relations(PlainRules, StratumSeeds, Relations),
     collect_native_closure(EvaluationId, Relations, LowerRows, CompletedRows),
     verify_native_closure(EvaluationId, CompletedRows),
-    NextLevel is Level + 1,
-    evaluate_strata(NextLevel, MaxStratum, EvaluationId,
-                    Strata, Rules, Seeds, CompletedRows, LowerRows,
+    evaluate_strata(StratumPlans, EvaluationId,
+                    CompletedRows, LowerRows,
                     Closure, Diagnostics).
 evaluate_stratum_after_aggregates(
-    Diagnostics, _, _, _, _, _, _, _, _, _, _, _, _,
+    Diagnostics, _, _, _, _, _, _, _, _,
     [], Diagnostics).
 
 rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
@@ -414,29 +461,48 @@ initial_levels([Relation | Relations],
     initial_levels(Relations, Levels).
 
 relax_to_fixpoint(Dependencies, Levels0, Levels) :-
-    relax_levels(Levels0, Dependencies, Levels1),
+    dependency_groups(Dependencies, DependencyGroups),
+    list_to_assoc(DependencyGroups, DependencyIndex),
+    relax_indexed_to_fixpoint(DependencyIndex, Levels0, Levels).
+
+dependency_groups(Dependencies, Groups) :-
+    maplist(dependency_head_pair, Dependencies, Pairs0),
+    keysort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Groups).
+
+dependency_head_pair(Dependency, Head-Dependency) :-
+    Dependency = dependency(Head, _, _, _, _).
+
+relax_indexed_to_fixpoint(DependencyIndex, Levels0, Levels) :-
+    maplist(level_pair, Levels0, LevelPairs),
+    list_to_assoc(LevelPairs, LevelIndex),
+    relax_levels(Levels0, LevelIndex, DependencyIndex, Levels1),
     (   Levels1 == Levels0
     ->  Levels = Levels1
-    ;   relax_to_fixpoint(Dependencies, Levels1, Levels)
+    ;   relax_indexed_to_fixpoint(DependencyIndex, Levels1, Levels)
     ).
 
-relax_levels(Levels0, Dependencies, Levels) :-
-    relax_levels(Levels0, Levels0, Dependencies, Levels).
+level_pair(level(Relation, Level), Relation-Level).
 
 relax_levels([], _, _, []).
-relax_levels([level(Relation, Current) | Levels0], AllLevels, Dependencies,
+relax_levels([level(Relation, Current) | Levels0], LevelIndex,
+             DependencyIndex,
              [level(Relation, Next) | Levels]) :-
-    dependency_requirements(Relation, Dependencies,
-                            AllLevels, Requirements0),
+    dependency_requirements(
+        Relation, DependencyIndex, LevelIndex, Requirements0),
     Requirements = [Current | Requirements0],
     max_list(Requirements, Next),
-    relax_levels(Levels0, AllLevels, Dependencies, Levels).
+    relax_levels(Levels0, LevelIndex, DependencyIndex, Levels).
 
-dependency_requirements(Relation, Dependencies, Levels, Requirements) :-
+dependency_requirements(Relation, DependencyIndex, LevelIndex,
+                        Requirements) :-
+    (   get_assoc(Relation, DependencyIndex, Dependencies)
+    ->  true
+    ;   Dependencies = []
+    ),
     findall(Required,
-            ( member(dependency(Relation, BodyRelation, _, Gap, _),
-                     Dependencies),
-              memberchk(level(BodyRelation, BodyLevel), Levels),
+            ( member(dependency(_, BodyRelation, _, Gap, _), Dependencies),
+              get_assoc(BodyRelation, LevelIndex, BodyLevel),
               Required is BodyLevel + Gap
             ),
             Requirements).

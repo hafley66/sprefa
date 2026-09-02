@@ -83,12 +83,12 @@ performance_failures(Cold, Warm, RoundCount,
 
 performance_failure(
     measurement(ColdWall, _, _, _, _, _, _), _, _, _, _,
-    cold_wall_budget(ColdWall, 2000)) :-
-    ColdWall > 2000.
+    cold_wall_budget(ColdWall, 750)) :-
+    ColdWall > 750.
 performance_failure(
     measurement(_, ColdInferences, _, _, _, _, _), _, _, _, _,
-    cold_inference_budget(ColdInferences, 15000000)) :-
-    ColdInferences > 15000000.
+    cold_inference_budget(ColdInferences, 7000000)) :-
+    ColdInferences > 7000000.
 performance_failure(
     _, measurement(WarmWall, _, _, _, _, _, _), _, _, _,
     warm_wall_budget(WarmWall, 50)) :-

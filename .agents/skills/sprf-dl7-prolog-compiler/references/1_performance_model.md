@@ -71,6 +71,7 @@ Performance history for the same fixture:
  1.12 s  reuse the environment-independent prelude during source refreeze
  0.90 s  preserve lower tables, omit dormant reference state, table cycles
  0.68 s  merge stratum closures, reuse complete source checks, prime checks
+ 0.52 s  bucket strata and index stratification, origins, binds, and names
 ```
 
 Two dominant defects were removed:
@@ -141,6 +142,19 @@ delta cold compiler          about 1.37 s
 The prototype asserted about 6,100 prior rows into SWI, interpreted every rule
 variant, then asserted the rows again for strict-stratum evaluation. Correct
 semi-naive algebra alone did not provide a faster execution substrate.
+
+### Call-subsumptive native tables
+
+Declaring the nine recursive native predicates with `as subsumptive` crashed
+SWI-Prolog 10.0.2 in `$tbl_wkl_add_answer/4` while evaluating the shared
+four-argument `:` relation for `2_partial.dl7`. Variant tables remain the
+verified mode for these generated predicates.
+
+### Per-stratum dynamic-clause compilation
+
+Calling `compile_predicates/1` after each stratum became immutable increased
+the representative cold wall time from about 533ms to 547ms. Compilation cost
+exceeded the remaining proof-time reduction for these short-lived predicates.
 
 ## 5. Requirements for the next evaluator
 
@@ -234,6 +248,49 @@ Generated-program assembly reads only its semantic input relations: kernel
 and `Variable` relations. This replaces repeated scans over unrelated compiler
 closure rows while preserving the public assembler input contract.
 
+### Indexed stratum planning and source checking
+
+The evaluator originally filtered every rule and every seed once for each of
+seven strata. Bucketing both lists once per snapshot reduced the representative
+cold compiler from about 671ms to 638ms. Positive-cycle discovery costs about
+4.6ms for a new rule graph and is cached by canonical rules.
+
+Stratification relaxation originally scanned every dependency for every
+relation and linearly searched the complete level vector. Grouped dependency
+constraints plus association indexes reduced isolated `stratify_rules/3` from
+about 44.7ms and 550,110 inferences to about 10.3ms and 113,355 inferences.
+
+The source checker now builds immutable association indexes for:
+
+```text
+source origin key             -> reader node
+(owner, bind name)            -> target
+child owner                   -> parent owner
+(owner, bind name) seen set   -> duplicate detection
+(owner, position) seen set    -> duplicate detection
+owner                         -> edge count
+```
+
+The initial check fell from about 77ms to about 29-43ms on the representative
+fixture. The current cold checkpoint varies around 520-540ms with 5,462,404
+inferences, 6,774 rows, and seven rounds.
+
+### Precise generated-program slice cache
+
+A prototype chased head/body applications to only their argument edges and
+literal/variable nodes, then cached assembly by that slice. Carrier rows kept
+changing through the final compiler tick, so no useful cache hit occurred.
+Repeated closure scans doubled assembly inferences from about 63,000 to
+137,000 per round without reducing its 4-6ms wall time. The single-pass
+semantic relation filter remains in use.
+
+### Direct HistoryV1 variable interning
+
+Replacing HistoryV1's `Variable/3` calls with direct canonical list and
+`intern/3` construction preserved 6,774 rows and 129 runtime rules but did not
+reduce the seven-round snapshot chain. The delayed edge or intern lies on a
+different dependency path, so the duplicated construction was removed.
+
 ## 6. Commands and gates
 
 Run the representative checkpoint:
@@ -266,3 +323,7 @@ DL7_TRACE=steps swipl -q -g \
 
 The checkpoint gate must retain exact row and round counts. Tighten wall and
 inference budgets only after a measured implementation lands.
+
+Current normal-mode gates are 750ms cold wall, 7,000,000 cold inferences,
+50ms warm wall, and 50,000 warm inferences. The generic reference oracle is a
+semantic check and intentionally exceeds normal-mode performance budgets.

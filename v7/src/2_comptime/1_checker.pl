@@ -5,6 +5,11 @@
           ]).
 
 :- use_module(library(error), [must_be/2]).
+:- use_module(library(assoc),
+              [ empty_assoc/1,
+                get_assoc/3,
+                put_assoc/4
+              ]).
 :- use_module('../1_libtime/0_evaluator', [stratify_rules/3]).
 :- use_module('0_lowerer', [kernel_relation/2]).
 
@@ -24,17 +29,19 @@ check_datalog(basement_program(root_graph(Nodes, PendingEdges),
     kernel_relation_rows(KernelRelations),
     append(SourceRelations, KernelRelations, AllRelations),
     sort(AllRelations, Relations),
-    bind_diagnostics(PendingEdges, Origins, BindDiags),
-    resolve_edges(PendingEdges, PendingEdges, Nodes, Origins, ColonEdges,
+    origin_index(Origins, OriginIndex),
+    edge_resolution_index(PendingEdges, EdgeIndex),
+    bind_diagnostics(PendingEdges, OriginIndex, BindDiags),
+    resolve_edges(PendingEdges, EdgeIndex, Nodes, OriginIndex, ColonEdges,
                   EdgeDiags),
-    resolve_seeds(Seeds0, 0, PendingEdges, Nodes, Relations, Origins,
+    resolve_seeds(Seeds0, 0, EdgeIndex, Nodes, Relations, OriginIndex,
                   Seeds, SeedDiags),
-    resolve_rules(Rules0, 0, PendingEdges, Nodes, Relations, Origins,
+    resolve_rules(Rules0, 0, EdgeIndex, Nodes, Relations, OriginIndex,
                   Rules, RuleDiags),
     append([BindDiags, EdgeDiags, SeedDiags, RuleDiags], Diags),
     (   Diags == []
     ->  stratify_rules(Rules, DerivedStrata, StrataDiagnostics),
-        locate_strata_diagnostics(StrataDiagnostics, Rules, Origins,
+        locate_strata_diagnostics(StrataDiagnostics, Rules, OriginIndex,
                                   LocatedStrataDiagnostics),
         finish_checked(LocatedStrataDiagnostics, DerivedStrata,
                        Nodes, ColonEdges,
@@ -197,39 +204,48 @@ aggregate_cycle_origin(_, _, _, none).
 
 %% Bind checks: one unique name per owner and dense zero-based indices.
 bind_diagnostics(Edges, Origins, Diags) :-
-    duplicate_bind_diagnostics(Edges, Origins, [], Diags0),
-    duplicate_index_diagnostics(Edges, Origins, [], Diags1),
-    dense_index_diagnostics(Edges, Edges, Origins, Diags2),
+    empty_assoc(EmptyBindIndex),
+    duplicate_bind_diagnostics(Edges, Origins, EmptyBindIndex, Diags0),
+    empty_assoc(EmptyPositionIndex),
+    duplicate_index_diagnostics(
+        Edges, Origins, EmptyPositionIndex, Diags1),
+    owner_edge_counts(Edges, OwnerCounts),
+    dense_index_diagnostics(Edges, OwnerCounts, Origins, Diags2),
     append([Diags0, Diags1, Diags2], Diags).
 
 duplicate_bind_diagnostics([], _, _, []).
 duplicate_bind_diagnostics([pending_edge(Owner, Name, _, Index) | Rest],
                            Origins, Seen, Diags) :-
     edge_origin(Origins, Owner, Name, Index, NodeId),
-    (   memberchk(seen(Owner, Name), Seen)
+    Key = bind(Owner, Name),
+    (   get_assoc(Key, Seen, _)
     ->  Diags = [diagnostic(check, NodeId, duplicate_bind(Owner, Name))
-                 | RestDiags]
-    ;   Diags = RestDiags
+                 | RestDiags],
+        NextSeen = Seen
+    ;   Diags = RestDiags,
+        put_assoc(Key, Seen, true, NextSeen)
     ),
-    duplicate_bind_diagnostics(Rest, Origins, [seen(Owner, Name) | Seen],
+    duplicate_bind_diagnostics(Rest, Origins, NextSeen,
                                RestDiags).
 
 duplicate_index_diagnostics([], _, _, []).
 duplicate_index_diagnostics([pending_edge(Owner, Name, _, Index) | Rest],
                             Origins, Seen, Diags) :-
     edge_origin(Origins, Owner, Name, Index, NodeId),
-    (   memberchk(seen(Owner, Index), Seen)
+    Key = position(Owner, Index),
+    (   get_assoc(Key, Seen, _)
     ->  Diags = [diagnostic(check, NodeId,
-                            duplicate_bind_index(Owner, Index)) | RestDiags]
-    ;   Diags = RestDiags
+                            duplicate_bind_index(Owner, Index)) | RestDiags],
+        NextSeen = Seen
+    ;   Diags = RestDiags,
+        put_assoc(Key, Seen, true, NextSeen)
     ),
-    duplicate_index_diagnostics(Rest, Origins,
-                                [seen(Owner, Index) | Seen], RestDiags).
+    duplicate_index_diagnostics(Rest, Origins, NextSeen, RestDiags).
 
 dense_index_diagnostics([], _, _, []).
-dense_index_diagnostics([pending_edge(Owner, Name, _, Index) | Rest], All,
+dense_index_diagnostics([pending_edge(Owner, Name, _, Index) | Rest], Counts,
                         Origins, Diags) :-
-    count_owner_edges(All, Owner, Count),
+    get_assoc(Owner, Counts, Count),
     edge_origin(Origins, Owner, Name, Index, NodeId),
     (   (   Index < 0
         ;   Index >= Count
@@ -238,15 +254,20 @@ dense_index_diagnostics([pending_edge(Owner, Name, _, Index) | Rest], All,
                  | RestDiags]
     ;   Diags = RestDiags
     ),
-    dense_index_diagnostics(Rest, All, Origins, RestDiags).
+    dense_index_diagnostics(Rest, Counts, Origins, RestDiags).
 
-count_owner_edges([], _, 0).
-count_owner_edges([pending_edge(Owner, _, _, _) | Rest], Owner, Count) :-
-    !,
-    count_owner_edges(Rest, Owner, RestCount),
-    Count is RestCount + 1.
-count_owner_edges([_|Rest], Owner, Count) :-
-    count_owner_edges(Rest, Owner, Count).
+owner_edge_counts(Edges, Counts) :-
+    empty_assoc(Empty),
+    owner_edge_counts(Edges, Empty, Counts).
+
+owner_edge_counts([], Counts, Counts).
+owner_edge_counts([pending_edge(Owner, _, _, _) | Edges], Counts0, Counts) :-
+    (   get_assoc(Owner, Counts0, Current)
+    ->  Next is Current + 1
+    ;   Next = 1
+    ),
+    put_assoc(Owner, Counts0, Next, Counts1),
+    owner_edge_counts(Edges, Counts1, Counts).
 
 %% Pending edges become canonical ':'(Owner, Name, Target, Index) edges.
 resolve_edges([], _, _, _, [], []).
@@ -280,7 +301,7 @@ resolve_target(name(Owner, Name), Edges, Nodes, Visited, Resolved) :-
 % owner; a module owner resolves the four pinned primitive names.
 resolve_name(Owner, Name, Edges, Nodes, Visited, Resolved) :-
     \+ memberchk(Owner, Visited),
-    (   memberchk(pending_edge(Owner, Name, Target, _), Edges)
+    (   indexed_edge_target(Edges, Owner, Name, Target)
     ->  resolve_target(Target, Edges, Nodes, [Owner | Visited], Resolved)
     ;   parent_owner(Owner, Edges, Parent),
         resolve_name(Parent, Name, Edges, Nodes, [Owner | Visited], Resolved)
@@ -293,7 +314,43 @@ resolve_name(Owner, Name, Edges, Nodes, Visited, Resolved) :-
     ).
 
 parent_owner(Owner, Edges, Parent) :-
+    Edges = edge_index(_, Parents),
+    !,
+    get_assoc(Owner, Parents, Parent).
+parent_owner(Owner, Edges, Parent) :-
     memberchk(pending_edge(Parent, _, target(Owner), _), Edges).
+
+indexed_edge_target(edge_index(Bindings, _), Owner, Name, Target) :-
+    !,
+    get_assoc(bind(Owner, Name), Bindings, Target).
+indexed_edge_target(Edges, Owner, Name, Target) :-
+    memberchk(pending_edge(Owner, Name, Target, _), Edges).
+
+edge_resolution_index(Edges, edge_index(Bindings, Parents)) :-
+    empty_assoc(EmptyBindings),
+    empty_assoc(EmptyParents),
+    index_resolution_edges(
+        Edges, EmptyBindings, Bindings, EmptyParents, Parents).
+
+index_resolution_edges([], Bindings, Bindings, Parents, Parents).
+index_resolution_edges(
+    [pending_edge(Owner, Name, Target, _) | Edges],
+    Bindings0, Bindings, Parents0, Parents) :-
+    put_first_assoc(bind(Owner, Name), Target, Bindings0, Bindings1),
+    index_parent_target(Target, Owner, Parents0, Parents1),
+    index_resolution_edges(
+        Edges, Bindings1, Bindings, Parents1, Parents).
+
+index_parent_target(target(Child), Parent, Parents0, Parents) :-
+    !,
+    put_first_assoc(Child, Parent, Parents0, Parents).
+index_parent_target(_, _, Parents, Parents).
+
+put_first_assoc(Key, Value, Assoc0, Assoc) :-
+    (   get_assoc(Key, Assoc0, _)
+    ->  Assoc = Assoc0
+    ;   put_assoc(Key, Assoc0, Value, Assoc)
+    ).
 
 primitive_name(int).
 primitive_name(text).
@@ -704,21 +761,61 @@ relations_refs([relation(Target, Arity, KeySets) | Rest],
     relations_refs(Rest, Refs).
 
 edge_origin(Origins, Owner, Name, Index, NodeId) :-
+    Origins = origin_index(OriginIndex),
+    !,
+    (   get_assoc(edge(Owner, Name, Index), OriginIndex, Found)
+    ->  NodeId = Found
+    ;   NodeId = none
+    ).
+edge_origin(Origins, Owner, Name, Index, NodeId) :-
     memberchk(origin(edge(Owner, Name, Index), NodeId), Origins),
     !.
 edge_origin(_, _, _, _, none).
 
+seed_origin(Origins, SeedIndex, NodeId) :-
+    Origins = origin_index(OriginIndex),
+    !,
+    (   get_assoc(seed(SeedIndex), OriginIndex, Found)
+    ->  NodeId = Found
+    ;   NodeId = none
+    ).
 seed_origin(Origins, SeedIndex, NodeId) :-
     memberchk(origin(seed(SeedIndex), NodeId), Origins),
     !.
 seed_origin(_, _, none).
 
 rule_origin(Origins, RuleIndex, NodeId) :-
+    Origins = origin_index(OriginIndex),
+    !,
+    (   get_assoc(rule(RuleIndex), OriginIndex, Found)
+    ->  NodeId = Found
+    ;   NodeId = none
+    ).
+rule_origin(Origins, RuleIndex, NodeId) :-
     memberchk(origin(rule(RuleIndex), NodeId), Origins),
     !.
 rule_origin(_, _, none).
 
 goal_origin(Origins, RuleIndex, GoalIndex, NodeId) :-
+    Origins = origin_index(OriginIndex),
+    !,
+    (   get_assoc(goal(RuleIndex, GoalIndex), OriginIndex, Found)
+    ->  NodeId = Found
+    ;   NodeId = none
+    ).
+goal_origin(Origins, RuleIndex, GoalIndex, NodeId) :-
     memberchk(origin(goal(RuleIndex, GoalIndex), NodeId), Origins),
     !.
 goal_origin(_, _, _, none).
+
+origin_index(Origins, origin_index(Index)) :-
+    empty_assoc(Empty),
+    index_origins(Origins, Empty, Index).
+
+index_origins([], Index, Index).
+index_origins([origin(Key, NodeId) | Origins], Index0, Index) :-
+    (   get_assoc(Key, Index0, _)
+    ->  Index1 = Index0
+    ;   put_assoc(Key, Index0, NodeId, Index1)
+    ),
+    index_origins(Origins, Index1, Index).

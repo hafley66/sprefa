@@ -54,6 +54,9 @@ The checker derives relation strata before evaluation.
   answers can be retained while higher strata are installed and evaluated.
 - Only relations on positive dependency cycles require SLG tabling. Acyclic
   relations execute as ordinary indexed Prolog predicates.
+- Rule and seed ownership by stratum can be bucketed before evaluation. This
+  changes list traversal only; each strict stratum still receives the same
+  immutable completed-lower snapshot.
 
 For `2_partial.dl7`, the final checked runtime program has this distribution:
 
@@ -68,6 +71,11 @@ level 6   2 relations    3 rules
 ```
 
 Nine of its runtime relations are on positive dependency cycles.
+
+The least stratum assignment solves weighted dependency constraints of the
+form `level(head) >= level(body) + gap`, where positive edges have gap zero
+and negative or aggregate edges have gap one. Grouping constraints by head and
+indexing the previous level vector preserves the relaxation fixpoint.
 
 ## 3. Demand relations
 
