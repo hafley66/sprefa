@@ -170,6 +170,34 @@
 ; A partial callable removes captured source slots, densely reindexes the
 ; remaining edges, and emits a forwarding relation through the public
 ; generated-program carrier.
+(<- (curry_call ?Call ?Source ?Result ?ReturnIndex)
+    (Apply ?Call ?Source)
+    (edge_snapshot Curry ?ReturnName ?ReturnType 2)
+    (edge_snapshot ?Call ?ReturnName ?Result ?ReturnIndex))
+
+(<- (curry_result_slot ?Call ?ReturnIndex)
+    (curry_call ?Call ?Source ?Result ?ReturnIndex))
+
+(<- (curry_specialization ?Source ?Result)
+    (curry_call ?Call ?Source ?Result ?ReturnIndex))
+
+(<- (curry_supplied ?Result ?SourceIndex ?Value)
+    (curry_call ?Call ?Source ?Result ?ReturnIndex)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex)
+    (edge_snapshot ?Call ?Name ?Value ?SourceIndex)
+    (not (curry_result_slot ?Call ?SourceIndex)))
+
+(<- (literal_node ?Literal)
+    (Literal ?Literal ?Primitive ?Raw))
+
+(<- (curry_bound ?Result ?SourceIndex "constant" ?Raw)
+    (curry_supplied ?Result ?SourceIndex ?Literal)
+    (Literal ?Literal ?Primitive ?Raw))
+
+(<- (curry_bound ?Result ?SourceIndex "reference" ?Target)
+    (curry_supplied ?Result ?SourceIndex ?Target)
+    (not (literal_node ?Target)))
+
 (<- (curry_is_bound ?Result ?SourceIndex)
     (curry_bound ?Result ?SourceIndex ?Kind ?Value))
 
