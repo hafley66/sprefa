@@ -1,0 +1,11 @@
+# Rows withdrawn from SCORES.tsv. Never compare these against a SCORES.tsv row.
+# Withdrawn 2026-09-02: the ts tuning corpus was the whole TypeScript-5.9 root,
+# 19,944 files of which 18,715 are tests/cases compiler fixtures, isolated files
+# with near-zero cross-file calls, then subsampled to 4,858 by fit_to_argv.
+# Subsampling is asymmetric: the oracle indexes the whole root and is filtered to
+# the subsample, while our resolution universe IS the subsample, so recall is
+# biased down. The tuning corpus is now src/ minus src/lib, 600 files, matching
+# v6/sprefa-extract/tests/bench/mod.rs wants().
+repo	lang	corpus_class	family	tier	oracle	measure_id	recall	precision	matched	contradicted	unjudged	ours	oracle_rows	files	wall_ms	sha
+TypeScript-5.9	ts	tuning	call	syntax	scip	ts.call.syntax.scip	1.61	28.24	2549	720	5757	9026	158187	4858	1418	7e133bea121a+subsampled
+TypeScript-5.9	ts	tuning	call	checker	scip	ts.call.checker.scip	1.78	29.12	2821	482	6384	9687	158187	4858	4668	7e133bea121a+subsampled

@@ -14,8 +14,6 @@ vitejs/vite	ts	heldout	call	syntax	scip	ts.call.syntax.scip	15.62	25.77	1514	393
 vitejs/vite	ts	heldout	call	checker	scip	ts.call.checker.scip	15.62	25.77	1514	393	3968	5875	9691	555	321	f40efefbb363
 trpc/trpc	ts	heldout	call	syntax	scip	ts.call.syntax.scip	8.61	11.07	714	453	5283	6450	8296	864	285	4f5315219f94
 trpc/trpc	ts	heldout	call	checker	scip	ts.call.checker.scip	8.61	11.07	714	453	5283	6450	8296	864	312	4f5315219f94
-TypeScript-5.9	ts	tuning	call	syntax	scip	ts.call.syntax.scip	1.61	28.24	2549	720	5757	9026	158187	4858	1418	7e133bea121a+subsampled
-TypeScript-5.9	ts	tuning	call	checker	scip	ts.call.checker.scip	1.78	29.12	2821	482	6384	9687	158187	4858	4668	7e133bea121a+subsampled
 web-infra-dev/rspack	rust	heldout	call	syntax	scip	rust.call.syntax.scip	19.90	57.59	18651	6104	7633	32388	93732	1365	12962	e153112169a7
 web-infra-dev/rspack	rust	heldout	call	checker	scip	rust.call.checker.scip	25.89	74.24	24269	687	7735	32691	93732	1365	74001	e153112169a7
 BigPizzaV3/CodexPlusPlus	rust	heldout	call	syntax	scip	rust.call.syntax.scip	35.38	77.75	6354	741	1077	8172	17960	117	336	d6b85e36aeb3
@@ -25,3 +23,5 @@ rust-lang/rust-clippy	rust	heldout	call	checker	scip	rust.call.checker.scip	41.2
 rust-analyzer	rust	tuning	call	syntax	scip	rust.call.syntax.scip	26.01	74.97	40452	4574	8935	53961	155515	1481	1915	af4111f0bf85
 rust-analyzer	rust	tuning	call	checker	scip	rust.call.checker.scip	33.13	79.08	51526	1261	12372	65159	155515	1481	13147	af4111f0bf85
 typescript-go	go	tuning	call	syntax	scip	go.call.syntax.scip	35.27	80.42	74617	9907	8264	92788	211564	4871	4805	89d5d5b2849a+subsampled
+TypeScript-5.9	ts	tuning	call	syntax	scip	ts.call.syntax.scip	17.67	28.96	19912	1762	47084	68758	112706	600	1906	7e133bea121a
+TypeScript-5.9	ts	tuning	call	checker	scip	ts.call.checker.scip	17.67	28.96	19912	1762	47084	68758	112706	600	1615	7e133bea121a

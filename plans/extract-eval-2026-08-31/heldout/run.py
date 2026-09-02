@@ -80,13 +80,17 @@ SKIP_DIRS = {
 
 class Lang:
     def __init__(self, key, exts, markers, checker, tuning_root, gh_language,
-                 scip_indexer):
+                 scip_indexer, tuning_include=(), tuning_exclude=()):
         self.key = key
         self.exts = exts
         self.markers = markers
         self.checker = checker
         self.tuning_root = tuning_root
         self.gh_language = gh_language
+        # Repo-relative path prefixes, mirroring v6/sprefa-extract/tests/bench
+        # /mod.rs wants(); tuning only, held-out repos are drawn whole.
+        self.tuning_include = tuple(tuning_include)
+        self.tuning_exclude = tuple(tuning_exclude)
         # The scip_ensure.rs roster name, which is not this key: our "ts" is
         # the roster's "typescript". Marker detection is any-of and a polyglot
         # root matches several rows, so the oracle names the one it wants
@@ -98,12 +102,23 @@ class Lang:
     def tiers(self):
         return ["syntax", "checker"] if self.checker else ["syntax"]
 
+    def in_tuning_corpus(self, rel_path):
+        parts = rel_path.split(os.sep)
+        if self.tuning_include and not any(
+            parts[:len(prefix)] == list(prefix) for prefix in self.tuning_include
+        ):
+            return False
+        return not any(
+            parts[:len(prefix)] == list(prefix) for prefix in self.tuning_exclude
+        )
+
 
 LANGS = {
     "ts": Lang(
         "ts", {".ts", ".tsx", ".mts", ".cts"}, ["tsconfig.json", "package.json"],
         "--ts-checker", "/Users/chrishafley/projects/TypeScript-5.9", "typescript",
         "typescript",
+        tuning_include=[("src",)], tuning_exclude=[("src", "lib")],
     ),
     "go": Lang(
         "go", {".go"}, ["go.mod"],
@@ -230,15 +245,19 @@ def seeded_order(names, seed):
 
 # ── file sets ────────────────────────────────────────────────────────────────
 
-def source_files(root, lang):
+def source_files(root, lang, tuning_corpus=False):
     found = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
         for name in filenames:
             if name.endswith(".d.ts"):
                 continue
-            if os.path.splitext(name)[1] in lang.exts:
-                found.append(os.path.join(dirpath, name))
+            if os.path.splitext(name)[1] not in lang.exts:
+                continue
+            path = os.path.join(dirpath, name)
+            if tuning_corpus and not lang.in_tuning_corpus(os.path.relpath(path, root)):
+                continue
+            found.append(path)
     return sorted(found)
 
 
@@ -405,7 +424,7 @@ def already_scored(repo, lang):
 def measure(repo, lang, root, corpus_class, sha):
     """One repo, both tiers. Returns the number of score rows written."""
     root = str(Path(root).resolve())
-    files = source_files(root, lang)
+    files = source_files(root, lang, tuning_corpus=(corpus_class == "tuning"))
     if len(files) < MIN_SOURCE_FILES:
         record_skip(repo, lang.key, "eligibility", "too_few_source_files",
                     f"{len(files)} files with {sorted(lang.exts)}, floor {MIN_SOURCE_FILES}")
