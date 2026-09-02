@@ -37,7 +37,8 @@
               ]).
 :- use_module('1c_compiler_cacher',
               [ with_prelude_cache/5,
-                with_compilation_cache/5
+                with_compilation_cache/5,
+                with_rule_check_cache/7
               ]).
 
 %% compile_dl7(+Path, -CompilerRows, -RuntimeProgram, -Diagnostics) is det.
@@ -357,8 +358,11 @@ finish_evaluation([], Context, CompilerFacts, GeneratedProgram,
                   Compiled, Diagnostics) :-
     !,
     GeneratedProgram = generated_program(GeneratedRelations, _, _, _),
-    final_checked_program(Context, CompilerFacts, GeneratedRelations,
-                          FinalChecked, FinalDiagnostics),
+    run_compile_step(
+        comptime, final_source_check,
+        final_checked_program(Context, CompilerFacts, GeneratedRelations,
+                              FinalChecked, FinalDiagnostics),
+        checked_program_metrics(FinalChecked)),
     continue_source_refreeze(
         FinalDiagnostics, Context, FinalChecked,
         CompilerFacts, GeneratedProgram, 1,
@@ -470,7 +474,10 @@ finish_final_check([], FinalChecked, CompilerFacts, GeneratedProgram,
     !,
     FinalChecked = checked_datalog(
                        _, datalog_program(Relations, _, _), _, _),
-    validate_functional_rows(Relations, CompilerFacts, KeyDiagnostics),
+    run_compile_step(
+        comptime, final_key_validation,
+        validate_functional_rows(Relations, CompilerFacts, KeyDiagnostics),
+        compiler_fact_metrics(CompilerFacts)),
     finish_key_validation(KeyDiagnostics, CompilerFacts, FinalChecked,
                           GeneratedProgram, Compiled, Diagnostics).
 finish_final_check(Diagnostics, _, _, _, [], Diagnostics).
@@ -482,16 +489,23 @@ finish_key_validation([], CompilerFacts,
                                       _, _),
                       GeneratedProgram, Compiled, Diagnostics) :-
     !,
-    type_graph_facts(CompilerFacts, TypeGraphFacts),
+    run_compile_step(
+        comptime, type_graph_projection,
+        type_graph_facts(CompilerFacts, TypeGraphFacts),
+        type_graph_metrics(TypeGraphFacts)),
     GeneratedProgram = generated_program(
                            GeneratedRelations, GeneratedRules, _, _),
     append(Relations, GeneratedRelations, RuntimeRelations0),
     sort(RuntimeRelations0, RuntimeRelations),
     append(Rules, GeneratedRules, RuntimeRules0),
     sort(RuntimeRules0, RuntimeRules),
-    check_resolved_rules(RuntimeRelations, RuntimeRules,
-                         RuntimeDepends, RuntimeStrata,
-                         RuntimeDiagnostics),
+    run_compile_step(
+        comptime, final_runtime_check,
+        with_rule_check_cache(
+            RuntimeRelations, RuntimeRules,
+            check_resolved_rules(RuntimeRelations, RuntimeRules),
+            RuntimeDepends, RuntimeStrata, RuntimeDiagnostics, _),
+        runtime_check_metrics(RuntimeRelations, RuntimeRules)),
     finish_runtime_program(
         RuntimeDiagnostics, Graph, RuntimeRelations, AuthoredSeeds,
         RuntimeRules, RuntimeDepends, RuntimeStrata,
@@ -510,6 +524,29 @@ finish_runtime_program([], Graph, Relations, Seeds, Rules,
                            CompilerFacts), []).
 finish_runtime_program(Diagnostics, _, _, _, _, _, _, _, _,
                        [], Diagnostics).
+
+checked_program_metrics(
+    checked_datalog(_, datalog_program(Relations, Seeds, Rules), _, _),
+    [ metric(relations, RelationCount),
+      metric(seeds, SeedCount),
+      metric(rules, RuleCount)
+    ]) :-
+    length(Relations, RelationCount),
+    length(Seeds, SeedCount),
+    length(Rules, RuleCount).
+
+compiler_fact_metrics(Facts, [metric(rows, Count)]) :-
+    length(Facts, Count).
+
+type_graph_metrics(Facts, [metric(rows, Count)]) :-
+    length(Facts, Count).
+
+runtime_check_metrics(Relations, Rules,
+                      [ metric(relations, RelationCount),
+                        metric(rules, RuleCount)
+                      ]) :-
+    length(Relations, RelationCount),
+    length(Rules, RuleCount).
 
 %% final_checked_program(+Context, +CompilerFacts, +GeneratedRelations,
 %%                       -Checked, -Diagnostics) is det.
@@ -741,8 +778,13 @@ evaluate_compiler_rounds(AuthoredRules, BaseRelations, BaseSeeds, FrozenEdges,
     sort(Relations0, Relations),
     append(AuthoredRules, FrozenGeneratedRules, Rules0),
     sort(Rules0, Rules),
-    check_resolved_rules(Relations, Rules, Depends, Strata,
-                         ProgramDiagnostics),
+    run_compile_step(
+        comptime, check_round(Round),
+        with_rule_check_cache(
+            Relations, Rules,
+            check_resolved_rules(Relations, Rules),
+            Depends, Strata, ProgramDiagnostics, CheckHit),
+        cache_compile_metrics(CheckHit)),
     compiler_round_seeds(BaseSeeds, FrozenEdges, FrozenRequests, RoundSeeds),
     run_compile_step(
         comptime, evaluate_round(Round),
