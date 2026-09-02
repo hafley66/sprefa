@@ -167,7 +167,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-08-23-relational-history-annotations.md:416 — Implement the history(Source) derived constructor using canonical source key and member rows.
 - `feature` plans/2026-08-23-relational-history-annotations.md:417 — Add atomic commit-boundary history capture with per-identity versions, ticks, recorded time, put/delete operations, and replay safety.
 - `feature` plans/2026-08-23-relational-history-annotations.md:418 — Prove one composite-key history timeline through Prolog, TS plus SQLite, Rust plus SQLite, typegen, and catalog artifacts.
-- `feature` plans/2026-09-01-dl7-application-edge-kernel.md:87 — Box compiler variables and primitive literals as value nodes so generated argument carriers no longer store a separate kind string.
+- `feature` plans/2026-09-01-dl7-application-edge-kernel.md:114 — Box compiler variables and primitive literals as value nodes so generated argument carriers no longer store a separate kind string.
 - `feature` plans/2026-09-01-dl7-callable-relations.md:169 — Normalize explicit, punned, omitted, and defaulted argument slots.
 - `feature` plans/2026-09-01-dl7-callable-relations.md:171 — Generate callable sum alternatives and userland match coverage.
 - `feature` plans/2026-09-01-dl7-callable-relations.md:172 — Convert final userland compiler-error rows into positioned diagnostics.
@@ -198,9 +198,9 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:197 — Arc A bounded rule: verify a directive using an operator_atom or quoted functor ('use_module'(...)) still matches, add a test case if the corpus lacks one
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:198 — Arc B name-gate: confirm old itself is always admitted (it contains its own stem) and its module name still parses
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:199 — Arc C parallel drain: assert edit_stage order equals sorted rel order in a unit test before relying on the byte-identical receipt
-- `refactor` plans/2026-09-01-dl7-application-edge-kernel.md:86 — Make the application graph complete at the compiler-round boundary, derive Curry specialization and bound-slot views from it, then remove lowerer-authored curry_specialization and curry_bound rows.
-- `refactor` plans/2026-09-01-dl7-application-edge-kernel.md:88 — Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol.
-- `refactor` plans/2026-09-01-dl7-application-edge-kernel.md:89 — Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges.
+- `refactor` plans/2026-09-01-dl7-application-edge-kernel.md:113 — Make the application graph complete at the compiler-round boundary, derive Curry specialization and bound-slot views from it, then remove lowerer-authored curry_specialization and curry_bound rows.
+- `refactor` plans/2026-09-01-dl7-application-edge-kernel.md:115 — Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol.
+- `refactor` plans/2026-09-01-dl7-application-edge-kernel.md:116 — Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges.
 - `refactor` plans/2026-09-01-dl7-callable-relations.md:170 — Reify call sites so slot normalization and partial completion move from 0_lowerer.pl into prelude rules.
 - `refactor` plans/2026-09-01-dl7-reified-call-sites.md:86 — Reify every call site and move named, punned, omitted, and defaulted slot policy from 0_lowerer.pl into prelude rules.
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
@@ -410,10 +410,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-08-25-move-rule-perf.PLAN.md:199 `perf` — Arc C parallel drain: assert edit_stage order equals sorted rel order in a unit test before relying on the byte-identical receipt
 - plans/2026-08-27-leaky-types-review.PLAN.md:58 `triage` — leaky-types review rows #3 DfNodeKind, #16 FlatFact, #2 ExtractLang need a design pass with Chris (per-lang impl shape) before any lane picks them up
 - plans/2026-08-27-leaky-types-review.PLAN.md:60 `triage` — tasks.rs trait set (Reach/Cascade/Reconcile/GraphStore/GraphStorePlan) has zero references in the repo; confirm delete-vs-privatize
-- plans/2026-09-01-dl7-application-edge-kernel.md:86 `refactor` — Make the application graph complete at the compiler-round boundary, derive Curry specialization and bound-slot views from it, then remove lowerer-authored curry_specialization and curry_bound rows.
-- plans/2026-09-01-dl7-application-edge-kernel.md:87 `feature` — Box compiler variables and primitive literals as value nodes so generated argument carriers no longer store a separate kind string.
-- plans/2026-09-01-dl7-application-edge-kernel.md:88 `refactor` — Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol.
-- plans/2026-09-01-dl7-application-edge-kernel.md:89 `refactor` — Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges.
+- plans/2026-09-01-dl7-application-edge-kernel.md:113 `refactor` — Make the application graph complete at the compiler-round boundary, derive Curry specialization and bound-slot views from it, then remove lowerer-authored curry_specialization and curry_bound rows.
+- plans/2026-09-01-dl7-application-edge-kernel.md:114 `feature` — Box compiler variables and primitive literals as value nodes so generated argument carriers no longer store a separate kind string.
+- plans/2026-09-01-dl7-application-edge-kernel.md:115 `refactor` — Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol.
+- plans/2026-09-01-dl7-application-edge-kernel.md:116 `refactor` — Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges.
 - plans/2026-09-01-dl7-callable-relations.md:169 `feature` — Normalize explicit, punned, omitted, and defaulted argument slots.
 - plans/2026-09-01-dl7-callable-relations.md:170 `refactor` — Reify call sites so slot normalization and partial completion move from 0_lowerer.pl into prelude rules.
 - plans/2026-09-01-dl7-callable-relations.md:171 `feature` — Generate callable sum alternatives and userland match coverage.
