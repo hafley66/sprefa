@@ -21,6 +21,7 @@
 :- dynamic evaluation_seed/3.
 :- dynamic evaluation_lower/3.
 :- dynamic evaluation_request/2.
+:- dynamic evaluation_recursive/2.
 :- dynamic native_relation/4.
 
 :- table proves/2.
@@ -54,13 +55,34 @@ evaluate_after_stratify([], Strata, Rules, Seeds, Closure, Diagnostics) :-
     !,
     max_stratum(Strata, MaxStratum),
     gensym(dl7_evaluation_, EvaluationId),
+    recursive_relations(Rules, RecursiveRelations),
     setup_call_cleanup(
-        true,
+        install_recursive_relations(RecursiveRelations, EvaluationId),
         evaluate_strata(0, MaxStratum, EvaluationId,
                         Strata, Rules, Seeds, [], [],
                         Closure, Diagnostics),
         clear_evaluation(EvaluationId)).
 evaluate_after_stratify(Diagnostics, _, _, _, [], Diagnostics).
+
+recursive_relations(Rules, RecursiveRelations) :-
+    rule_dependencies(Rules, Dependencies),
+    rule_relations(Rules, Relations),
+    findall(Head-Body,
+            member(dependency(Head, Body, positive, 0, _), Dependencies),
+            PositiveEdges),
+    vertices_edges_to_ugraph(Relations, PositiveEdges, Graph),
+    transitive_closure(Graph, Closure),
+    findall(Relation,
+            ( member(Relation, Relations),
+              neighbors(Relation, Closure, Reachable),
+              memberchk(Relation, Reachable)
+            ),
+            RecursiveRelations).
+
+install_recursive_relations([], _).
+install_recursive_relations([Relation | Relations], EvaluationId) :-
+    assertz(evaluation_recursive(EvaluationId, Relation)),
+    install_recursive_relations(Relations, EvaluationId).
 
 max_stratum([], 0).
 max_stratum(Strata, MaxStratum) :-
@@ -97,7 +119,6 @@ evaluate_stratum_after_aggregates(
     install_rules(PlainRules, EvaluationId),
     install_seeds(StratumSeeds, EvaluationId),
     install_lower_rows(NewLowerRows, EvaluationId),
-    ensure_native_tables(EvaluationId),
     current_stratum_relations(PlainRules, StratumSeeds, Relations),
     collect_native_closure(EvaluationId, Relations, LowerRows, CompletedRows),
     verify_native_closure(EvaluationId, CompletedRows),
@@ -430,22 +451,40 @@ install_rules([], _).
 install_rules([Rule | Rules], EvaluationId) :-
     instantiate_rule(Rule, Head, Body),
     Head = call(Relation, _),
-    assertz(evaluation_rule(EvaluationId, Relation, Head, Body)),
+    install_reference_rule(EvaluationId, Relation, Head, Body),
     install_native_rule(EvaluationId, Head, Body),
     install_rules(Rules, EvaluationId).
+
+install_reference_rule(EvaluationId, Relation, Head, Body) :-
+    (   reference_evaluator_enabled
+    ->  assertz(evaluation_rule(EvaluationId, Relation, Head, Body))
+    ;   true
+    ).
 
 install_seeds([], _).
 install_seeds([Seed | Seeds], EvaluationId) :-
     Seed = call(Relation, _),
-    assertz(evaluation_seed(EvaluationId, Relation, Seed)),
+    install_reference_seed(EvaluationId, Relation, Seed),
     install_native_row(EvaluationId, Seed),
     install_seeds(Seeds, EvaluationId).
 
-install_lower_rows([], _).
-install_lower_rows([Row | Rows], EvaluationId) :-
+install_reference_seed(EvaluationId, Relation, Seed) :-
+    (   reference_evaluator_enabled
+    ->  assertz(evaluation_seed(EvaluationId, Relation, Seed))
+    ;   true
+    ).
+
+install_lower_rows(Rows, EvaluationId) :-
+    (   reference_evaluator_enabled
+    ->  install_reference_lower_rows(Rows, EvaluationId)
+    ;   true
+    ).
+
+install_reference_lower_rows([], _).
+install_reference_lower_rows([Row | Rows], EvaluationId) :-
     Row = call(Relation, _),
     assertz(evaluation_lower(EvaluationId, Relation, Row)),
-    install_lower_rows(Rows, EvaluationId).
+    install_reference_lower_rows(Rows, EvaluationId).
 
 install_native_rule(EvaluationId, Head, Body) :-
     native_call(EvaluationId, Head, NativeHead),
@@ -461,9 +500,9 @@ native_goal(EvaluationId, checked_goal(positive, Call), NativeGoal) :-
     native_positive_goal(EvaluationId, Call, NativeGoal).
 native_goal(EvaluationId, checked_goal(negative, Call),
             ( ground(Call),
-              Call = call(Relation, _),
-              \+ evaluation_lower(EvaluationId, Relation, Call)
-            )).
+              \+ NativeCall
+            )) :-
+    native_call(EvaluationId, Call, NativeCall).
 
 native_positive_goal(_, call(ref(kernel(nil)), [const([])]), true) :- !.
 native_positive_goal(_, call(ref(kernel(cons)), [Head, Tail, List]),
@@ -497,15 +536,15 @@ native_relation_identity(EvaluationId, Relation, Arity, Functor) :-
     ->  Functor = ExistingFunctor
     ;   gensym(dl7_native_relation_, Functor),
         assertz(native_relation(EvaluationId, Relation, Arity, Functor)),
-        dynamic(Functor/Arity)
+        dynamic(Functor/Arity),
+        table_recursive_relation(EvaluationId, Relation, Functor, Arity)
     ).
 
-ensure_native_tables(EvaluationId) :-
-    forall(native_relation(EvaluationId, _, Arity, Functor),
-           ( functor(Goal, Functor, Arity),
-             abolish_table_subgoals(dl7_evaluator:Goal),
-             table(Functor/Arity)
-           )).
+table_recursive_relation(EvaluationId, Relation, Functor, Arity) :-
+    (   evaluation_recursive(EvaluationId, Relation)
+    ->  table(Functor/Arity)
+    ;   true
+    ).
 
 collect_closure(EvaluationId, Closure) :-
     findall(Call, proves(EvaluationId, Call), Calls),
@@ -536,12 +575,15 @@ collect_native_closure(EvaluationId, Relations, LowerRows, Closure) :-
     sort(Rows, Closure).
 
 verify_native_closure(EvaluationId, NativeRows) :-
-    (   getenv('DL7_VERIFY_EVALUATOR', '1')
+    (   reference_evaluator_enabled
     ->  abolish_table_subgoals(dl7_evaluator:proves(EvaluationId, _)),
         collect_closure(EvaluationId, ReferenceRows),
         compare_evaluator_rows(ReferenceRows, NativeRows)
     ;   true
     ).
+
+reference_evaluator_enabled :-
+    getenv('DL7_VERIFY_EVALUATOR', '1').
 
 compare_evaluator_rows(Rows, Rows) :- !.
 compare_evaluator_rows(ReferenceRows, NativeRows) :-
@@ -556,6 +598,7 @@ clear_evaluation(EvaluationId) :-
     maplist(clear_native_predicate, NativePredicates),
     abolish_table_subgoals(dl7_evaluator:proves(EvaluationId, _)),
     retractall(evaluation_request(EvaluationId, _)),
+    retractall(evaluation_recursive(EvaluationId, _)),
     retractall(evaluation_rule(EvaluationId, _, _, _)),
     retractall(evaluation_seed(EvaluationId, _, _)),
     retractall(evaluation_lower(EvaluationId, _, _)).

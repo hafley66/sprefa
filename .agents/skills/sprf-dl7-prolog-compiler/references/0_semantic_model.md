@@ -50,6 +50,10 @@ The checker derives relation strata before evaluation.
   stratum.
 - Aggregate rows are derived from complete lower proofs, then installed as
   seeds for their owning stratum.
+- Native predicates for completed lower strata remain immutable. Their table
+  answers can be retained while higher strata are installed and evaluated.
+- Only relations on positive dependency cycles require SLG tabling. Acyclic
+  relations execute as ordinary indexed Prolog predicates.
 
 For `2_partial.dl7`, the final checked runtime program has this distribution:
 
@@ -62,6 +66,8 @@ level 4   3 relations    3 rules
 level 5   5 relations   30 rules
 level 6   2 relations    3 rules
 ```
+
+Nine of its runtime relations are on positive dependency cycles.
 
 ## 3. Demand relations
 

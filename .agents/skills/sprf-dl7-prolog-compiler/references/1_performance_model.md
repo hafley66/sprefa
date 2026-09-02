@@ -69,6 +69,7 @@ Performance history for the same fixture:
  1.70 s  indexed source expansion
  1.20 s  repeated rule-check caching and indexed validation
  1.12 s  reuse the environment-independent prelude during source refreeze
+ 0.90 s  preserve lower tables, omit dormant reference state, table cycles
 ```
 
 Two dominant defects were removed:
@@ -176,6 +177,26 @@ before cold inferences        10,740,881
 after cold inferences         10,531,346
 exact rows                    6,774
 exact rounds                  7
+```
+
+### Native table lifetime and scope
+
+The first native evaluator tabled every relation, then abolished every
+completed lower table before each higher stratum. Each relation receives all
+of its clauses in exactly one stratum. Retaining completed lower tables reduced
+the representative cold inference count from 10,531,346 to 8,772,458.
+
+The generic reference evaluator now installs its dynamic rules, seeds, and
+lower rows only when `DL7_VERIFY_EVALUATOR=1`. Native negative goals call the
+already-completed lower native predicate. Restricting tabling to the nine
+relations on positive dependency cycles produced this checkpoint:
+
+```text
+cold wall               about 895 ms
+cold inferences          8,628,977
+warm wall                    6 ms
+exact rows                   6,774
+exact rounds                     7
 ```
 
 ## 6. Commands and gates
