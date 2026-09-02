@@ -7,6 +7,8 @@
             lower_units_with_exporter_deferred/5,
             lower_units_with_exporter_and_environment/6,
             lower_units_with_exporter_and_environment_deferred/6,
+            lower_units_with_lowered_exporter_and_environment/8,
+            lower_units_with_lowered_exporter_and_environment_deferred/8,
             merge_module_basements/4,
             install_module_aliases/6
           ]).
@@ -175,6 +177,28 @@ lower_units_with_exporter_and_environment_deferred(
     lower_importers_after_exporter_environment_deferred(
         ExporterDiagnostics, ExporterOwner,
         ExporterBasement, ExporterOrigins, ImporterUnits,
+        GeneratedEnvironment,
+        ModuleBasements, ModuleOrigins, Diagnostics).
+
+%% lower_units_with_lowered_exporter_and_environment(
+%%     +ExporterOwner, +ExporterBasement, +ExporterOrigins, +Importers,
+%%     +GeneratedEnvironment, -Basements, -Origins, -Diagnostics) is det.
+%
+% Reuse an environment-independent exporter lowering while strictly lowering
+% importers against both that exporter and the generated environment.
+lower_units_with_lowered_exporter_and_environment(
+    ExporterOwner, ExporterBasement, ExporterOrigins, ImporterUnits,
+    GeneratedEnvironment, ModuleBasements, ModuleOrigins, Diagnostics) :-
+    lower_importers_after_exporter_environment(
+        [], ExporterOwner, ExporterBasement, ExporterOrigins, ImporterUnits,
+        GeneratedEnvironment,
+        ModuleBasements, ModuleOrigins, Diagnostics).
+
+lower_units_with_lowered_exporter_and_environment_deferred(
+    ExporterOwner, ExporterBasement, ExporterOrigins, ImporterUnits,
+    GeneratedEnvironment, ModuleBasements, ModuleOrigins, Diagnostics) :-
+    lower_importers_after_exporter_environment_deferred(
+        [], ExporterOwner, ExporterBasement, ExporterOrigins, ImporterUnits,
         GeneratedEnvironment,
         ModuleBasements, ModuleOrigins, Diagnostics).
 

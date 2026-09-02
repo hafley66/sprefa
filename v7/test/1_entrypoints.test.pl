@@ -10,7 +10,11 @@
                 compile_unit/3,
                 type_prelude_paths/1
               ]).
-:- use_module('../src/2_comptime/0_lowerer', [lower_datalog/4]).
+:- use_module('../src/2_comptime/0_lowerer',
+              [ lower_datalog/4,
+                lower_datalog/5,
+                lower_datalog_deferred/5
+              ]).
 :- use_module('../src/2_comptime/0a_module_lowerer',
               [ lower_units/4,
                 lower_units_with_exporter_deferred/5,
@@ -132,6 +136,23 @@ test(split_prelude_loads_all_existing_type_algebra_declarations) :-
     Observed = prelude_load([], _),
     compound(Snapshot),
     !.
+
+test(prelude_lowering_is_environment_independent) :-
+    dl7_compiler:load_type_prelude(Unit, ReaderDiagnostics),
+    Environment = expression_environment([], [], []),
+    lower_datalog_deferred(
+        Unit, Environment,
+        DeferredBasement, DeferredOrigins, DeferredDiagnostics),
+    lower_datalog(
+        Unit, Environment,
+        StrictBasement, StrictOrigins, StrictDiagnostics),
+    equality(DeferredBasement, StrictBasement, BasementsEqual),
+    equality(DeferredOrigins, StrictOrigins, OriginsEqual),
+    Observed = prelude_lowering(
+                   ReaderDiagnostics,
+                   DeferredDiagnostics, StrictDiagnostics,
+                   BasementsEqual, OriginsEqual),
+    Observed == prelude_lowering([], [], [], true, true).
 
 file_exists(Path, true) :-
     exists_file(Path),

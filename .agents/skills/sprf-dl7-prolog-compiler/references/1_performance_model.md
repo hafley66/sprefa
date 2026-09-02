@@ -68,6 +68,7 @@ Performance history for the same fixture:
  2.56 s  query only the current stratum
  1.70 s  indexed source expansion
  1.20 s  repeated rule-check caching and indexed validation
+ 1.12 s  reuse the environment-independent prelude during source refreeze
 ```
 
 Two dominant defects were removed:
@@ -162,6 +163,21 @@ negation and aggregation       -> recompute affected strict strata against a
 The full evaluator remains the correctness oracle. Compare complete closures
 and diagnostics before banking a performance result.
 
+### Prelude refreeze reuse
+
+The initial prelude basement and origins are retained in `compile_context`.
+Final source refreeze reuses those rows and strictly relowers importer units
+against the prelude plus generated environment.
+
+```text
+before final source check     about 145 ms
+after final source check      about 118 ms
+before cold inferences        10,740,881
+after cold inferences         10,531,346
+exact rows                    6,774
+exact rounds                  7
+```
+
 ## 6. Commands and gates
 
 Run the representative checkpoint:
@@ -194,4 +210,3 @@ DL7_TRACE=steps swipl -q -g \
 
 The checkpoint gate must retain exact row and round counts. Tighten wall and
 inference budgets only after a measured implementation lands.
-

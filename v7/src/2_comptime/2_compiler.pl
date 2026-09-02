@@ -19,8 +19,8 @@
                 lower_units_with_environment/5,
                 lower_units_with_environment_deferred/5,
                 lower_units_with_exporter_deferred/5,
-                lower_units_with_exporter_and_environment/6,
-                lower_units_with_exporter_and_environment_deferred/6,
+                lower_units_with_lowered_exporter_and_environment/8,
+                lower_units_with_lowered_exporter_and_environment_deferred/8,
                 merge_module_basements/4
               ]).
 :- use_module('0b_filesystem_grapher', [install_project_graph/6]).
@@ -242,7 +242,8 @@ compile_units_traced(Units, Compiled, Diagnostics) :-
         lower_compiler_units(Units, ModuleBasements, ModuleOrigins,
                              LowerDiagnostics),
         _),
-    Context = compile_context(Units, none),
+    Context = compile_context(
+                  Units, none, ModuleBasements, ModuleOrigins),
     compile_after_unit_lower(LowerDiagnostics, Context,
                              ModuleBasements, ModuleOrigins,
                              Compiled, Diagnostics),
@@ -257,7 +258,8 @@ compile_project_units(Project, Units, Compiled, Diagnostics) :-
     install_project_after_lower(
         LowerDiagnostics, Project, ModuleBasements0, ModuleOrigins0,
         ModuleBasements, ModuleOrigins, ProjectDiagnostics),
-    Context = compile_context(Units, project(Project)),
+    Context = compile_context(
+                  Units, project(Project), ModuleBasements0, ModuleOrigins0),
     compile_after_unit_lower(ProjectDiagnostics, Context,
                              ModuleBasements, ModuleOrigins,
                              Compiled, Diagnostics),
@@ -330,10 +332,13 @@ evaluate_checked(
     append(BaseEdges, SourceApplicationEdges, InitialEdges0),
     sort(InitialEdges0, InitialEdges),
     intern_rows(BaseSeeds, InitialRequests),
-    Context = compile_context(Units, ProjectContext),
+    Context = compile_context(
+                  Units, ProjectContext, ModuleBasements, ModuleOrigins),
     derived_bind_slots(Rules, DerivedBindSlots),
     EvaluationContext = compile_context(
-                            Units, ProjectContext, DerivedBindSlots),
+                            Units, ProjectContext,
+                            ModuleBasements, ModuleOrigins,
+                            DerivedBindSlots),
     evaluate_compiler_rounds(Rules, Relations, BaseSeeds, InitialEdges,
                              InitialRequests, [], [], 1,
                              CompilerFacts, GeneratedProgram,
@@ -559,9 +564,12 @@ final_checked_program(Context, CompilerFacts, GeneratedRelations,
                       Checked, Diagnostics) :-
     generated_expression_environment(
         CompilerFacts, GeneratedRelations, DerivedBindSlots, Environment),
-    Context = compile_context(Units, ProjectContext, DerivedBindSlots),
-    lower_final_units(Units, Environment,
-                      ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
+    Context = compile_context(
+                  Units, ProjectContext,
+                  InitialBasements, InitialOrigins, DerivedBindSlots),
+    lower_final_units(
+        Units, InitialBasements, InitialOrigins, Environment,
+        ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
     freeze_after_final_lower(
         LowerDiagnostics, Environment,
         ModuleBasements0, ModuleOrigins0,
@@ -578,9 +586,11 @@ deferred_checked_program(Context, CompilerFacts, GeneratedRelations,
                          Checked, Diagnostics) :-
     generated_expression_environment(
         CompilerFacts, GeneratedRelations, DerivedBindSlots, Environment),
-    Context = compile_context(Units, ProjectContext, DerivedBindSlots),
+    Context = compile_context(
+                  Units, ProjectContext,
+                  InitialBasements, InitialOrigins, DerivedBindSlots),
     lower_deferred_final_units(
-        Units, Environment,
+        Units, InitialBasements, InitialOrigins, Environment,
         ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
     freeze_after_final_lower(
         LowerDiagnostics, Environment,
@@ -594,29 +604,45 @@ deferred_checked_program(Context, CompilerFacts, GeneratedRelations,
                           ModuleBasements, ModuleOrigins,
                           GeneratedRelations, Checked, Diagnostics).
 
-lower_final_units(Units, Environment,
+lower_final_units(Units, InitialBasements, InitialOrigins, Environment,
                   ModuleBasements, ModuleOrigins, Diagnostics) :-
     (   select(PreludeUnit, Units, ImporterUnits),
-        unit_has_origin(PreludeUnit, prelude)
-    ->  lower_units_with_exporter_and_environment(
-            PreludeUnit, ImporterUnits, Environment,
+        unit_has_origin(PreludeUnit, prelude),
+        unit_module_lowering(
+            PreludeUnit, InitialBasements, InitialOrigins,
+            PreludeOwner, PreludeBasement, PreludeOrigins)
+    ->  lower_units_with_lowered_exporter_and_environment(
+            PreludeOwner, PreludeBasement, PreludeOrigins,
+            ImporterUnits, Environment,
             ModuleBasements, ModuleOrigins, Diagnostics)
     ;   lower_units_with_environment(
             Units, Environment,
             ModuleBasements, ModuleOrigins, Diagnostics)
     ).
 
-lower_deferred_final_units(Units, Environment,
-                           ModuleBasements, ModuleOrigins, Diagnostics) :-
+lower_deferred_final_units(
+    Units, InitialBasements, InitialOrigins, Environment,
+    ModuleBasements, ModuleOrigins, Diagnostics) :-
     (   select(PreludeUnit, Units, ImporterUnits),
-        unit_has_origin(PreludeUnit, prelude)
-    ->  lower_units_with_exporter_and_environment_deferred(
-            PreludeUnit, ImporterUnits, Environment,
+        unit_has_origin(PreludeUnit, prelude),
+        unit_module_lowering(
+            PreludeUnit, InitialBasements, InitialOrigins,
+            PreludeOwner, PreludeBasement, PreludeOrigins)
+    ->  lower_units_with_lowered_exporter_and_environment_deferred(
+            PreludeOwner, PreludeBasement, PreludeOrigins,
+            ImporterUnits, Environment,
             ModuleBasements, ModuleOrigins, Diagnostics)
     ;   lower_units_with_environment_deferred(
             Units, Environment,
             ModuleBasements, ModuleOrigins, Diagnostics)
     ).
+
+unit_module_lowering(
+    dl7_unit(Origin, _, _, _, _), ModuleBasements, ModuleOrigins,
+    Owner, Basement, Origins) :-
+    Owner = module(Origin),
+    memberchk(module_basement(Owner, Basement), ModuleBasements),
+    memberchk(module_origins(Owner, Origins), ModuleOrigins).
 
 freeze_after_final_lower(
     [], Environment, Basements0, Origins,

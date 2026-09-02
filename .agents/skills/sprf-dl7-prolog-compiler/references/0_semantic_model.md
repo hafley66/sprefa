@@ -120,6 +120,14 @@ The refreeze is semantic work. Reusing an earlier basement is valid only for a
 unit whose lowering result is proven independent of the generated expression
 environment.
 
+The split prelude currently satisfies that condition. Its deferred lowering
+under an empty environment is term-identical to strict lowering, and strict
+lowering remains term-identical under the final generated environment for
+`2_partial.dl7`. Local declarations are prepended to imported reservations,
+so local callable names resolve first. The test
+`prelude_lowering_is_environment_independent` preserves the deferred-versus-
+strict invariant across the complete prelude.
+
 ## 6. Invariants for evaluator changes
 
 Keep these checks available:
@@ -136,4 +144,3 @@ cold and warm outputs identical
 `DL7_VERIFY_EVALUATOR=1` compares the native evaluator with the retained generic
 reference evaluator per stratum. Any future delta evaluator should have a
 separate full-snapshot comparison mode and exercise all compiler rounds.
-
