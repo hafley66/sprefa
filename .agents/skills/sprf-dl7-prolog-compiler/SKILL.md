@@ -23,6 +23,10 @@ Read:
 - [references/3_relational_execution_ir.md](references/3_relational_execution_ir.md)
   before changing compile-time versus runtime extraction, the logical-to-
   physical plan boundary, SQLite DBSP lowering, or target runtime artifacts.
+- [references/4_polyglot_type_fact_protocol.md](references/4_polyglot_type_fact_protocol.md)
+  before changing source-language semantic extraction, stable type identity,
+  cross-language type queries, language-native type extensions, or lossy
+  schema and target projections.
 
 ## Working rule
 

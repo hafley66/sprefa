@@ -51,8 +51,12 @@ DBSP emitter      monomorphic reactive program artifact from checked logic
 
 The extractor remains pure, per-file, parallel, and cacheable. OpenAPI and
 JSON Schema vocabulary belongs in DL7 derivation rules after generic JSON or
-YAML facts have been extracted. Format decoding may normalize source syntax,
-but type interpretation and generated application logic remain compiler data.
+YAML facts have been extracted. Their type vocabulary is an ingress and egress
+projection over the semantic type graph. Native source-language compiler facts
+retain nominal identity, generics, conformance, conditional or mapped types,
+ownership, and other semantics outside those schema vocabularies. Format
+decoding may normalize source syntax, but type interpretation and generated
+application logic remain compiler data.
 
 The V7 compiler already emits a target-neutral logical program containing
 relations, keys, seeds, rules, dependencies, strata, calls, arguments, and
@@ -83,13 +87,13 @@ through the existing extractor language abstraction.
 
 ```text
 DL7 source -------------------> Tree-sitter DL7 -------------------+
-external source code ---------> language Tree-sitter --------------|
+external source code ---------> syntax + native semantic adapter --|
 OpenAPI / JSON Schema --------> JSON or YAML extractor ------------|
                                                                     v
                                                          sprefa-extract facts
                                                                     |
                                                                     v
-                                                          DL7 compiler inputs
+                                                symbol + semantic type facts
                                                                     |
                                              userland comptime/type rules
                                                                     |
