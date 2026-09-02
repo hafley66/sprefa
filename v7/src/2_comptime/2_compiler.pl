@@ -10,7 +10,7 @@
 :- use_module('../0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../0_reader/4_module_loader', [load_dl7_project/4]).
 :- use_module('../1_libtime/0_evaluator',
-              [ evaluate/4,
+              [ evaluate_stratified/5,
                 validate_functional_rows/3
               ]).
 :- use_module('0a_module_lowerer',
@@ -746,6 +746,7 @@ evaluate_compiler_rounds(AuthoredRules, BaseRelations, BaseSeeds, FrozenEdges,
     run_compile_step(
         comptime, evaluate_round(Round),
         evaluate_compiler_program(ProgramDiagnostics, Rules, RoundSeeds,
+                                  Strata,
                                   RoundClosure0, EvaluationDiagnostics),
         compiler_round_metrics(
             Rules, RoundSeeds, FrozenEdges, FrozenRequests,
@@ -759,10 +760,11 @@ evaluate_compiler_rounds(AuthoredRules, BaseRelations, BaseSeeds, FrozenEdges,
                              Depends, Strata, Round, RoundClosure,
                              Closure, GeneratedProgram, Diagnostics).
 
-evaluate_compiler_program([], Rules, Seeds, Closure, Diagnostics) :-
+evaluate_compiler_program([], Rules, Seeds, Strata,
+                          Closure, Diagnostics) :-
     !,
-    evaluate(Rules, Seeds, Closure, Diagnostics).
-evaluate_compiler_program(Diagnostics, _, _, [], Diagnostics).
+    evaluate_stratified(Rules, Seeds, Strata, Closure, Diagnostics).
+evaluate_compiler_program(Diagnostics, _, _, _, [], Diagnostics).
 
 basement_compile_metrics(
     basement_program(root_graph(Nodes, Edges),

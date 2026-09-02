@@ -1,6 +1,7 @@
 :- module(dl7_evaluator,
           [ derive_aggregate_rows/4,
             evaluate/4,
+            evaluate_stratified/5,
             stratify_rules/3,
             validate_functional_rows/3
           ]).
@@ -8,13 +9,14 @@
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(gensym), [gensym/2]).
 :- use_module(library(lists), [max_list/2]).
+:- use_module(library(ordsets), [ord_subtract/3]).
 :- use_module(library(ugraphs),
               [ neighbors/3,
                 transitive_closure/2,
                 vertices_edges_to_ugraph/3
               ]).
 
-:- dynamic evaluation_rule/3.
+:- dynamic evaluation_rule/4.
 :- dynamic evaluation_seed/3.
 :- dynamic evaluation_lower/3.
 :- dynamic evaluation_request/2.
@@ -34,11 +36,28 @@ evaluate(Rules, Seeds, Closure, Diagnostics) :-
     evaluate_after_stratify(StrataDiagnostics, Strata, Rules, Seeds,
                             Closure, Diagnostics).
 
+%% evaluate_stratified(+Rules, +Seeds, +Strata,
+%%                     -Closure, -Diagnostics) is det.
+%
+% Evaluate rules whose checker-owned strata are already available. Compiler
+% rounds use this entry point so rule graph closure is computed once.
+evaluate_stratified(Rules, Seeds, Strata, Closure, Diagnostics) :-
+    must_be(ground, Rules),
+    must_be(ground, Seeds),
+    must_be(ground, Strata),
+    evaluate_after_stratify([], Strata, Rules, Seeds,
+                            Closure, Diagnostics).
+
 evaluate_after_stratify([], Strata, Rules, Seeds, Closure, Diagnostics) :-
     !,
     max_stratum(Strata, MaxStratum),
-    evaluate_strata(0, MaxStratum, Strata, Rules, Seeds, [],
-                    Closure, Diagnostics).
+    gensym(dl7_evaluation_, EvaluationId),
+    setup_call_cleanup(
+        true,
+        evaluate_strata(0, MaxStratum, EvaluationId,
+                        Strata, Rules, Seeds, [], [],
+                        Closure, Diagnostics),
+        clear_evaluation(EvaluationId)).
 evaluate_after_stratify(Diagnostics, _, _, _, [], Diagnostics).
 
 max_stratum([], 0).
@@ -46,48 +65,48 @@ max_stratum(Strata, MaxStratum) :-
     findall(Level, member(stratum(_, Level), Strata), Levels),
     max_list(Levels, MaxStratum).
 
-evaluate_strata(Level, MaxStratum, _, _, _, Closure, Closure, []) :-
+evaluate_strata(Level, MaxStratum, _, _, _, _, Closure, _, Closure, []) :-
     Level > MaxStratum,
     !.
-evaluate_strata(Level, MaxStratum, Strata, Rules, Seeds, LowerRows,
+evaluate_strata(Level, MaxStratum, EvaluationId,
+                Strata, Rules, Seeds, LowerRows, InstalledLowerRows,
                 Closure, Diagnostics) :-
     include(rule_at_level(Strata, Level), Rules, CurrentRules),
     include(seed_at_level(Strata, Level), Seeds, CurrentSeeds),
     include(aggregate_rule, CurrentRules, AggregateRules),
-    include(rule_through_level(Strata, Level), Rules, AvailableRules),
-    exclude(aggregate_rule, AvailableRules, PlainRules),
+    exclude(aggregate_rule, CurrentRules, PlainRules),
     derive_aggregate_rule_rows(LowerRows, AggregateRules,
                                AggregateSeeds, AggregateDiagnostics),
     evaluate_stratum_after_aggregates(
         AggregateDiagnostics, AggregateSeeds,
-        Level, MaxStratum, Strata, Rules, Seeds, LowerRows,
+        Level, MaxStratum, EvaluationId,
+        Strata, Rules, Seeds, LowerRows, InstalledLowerRows,
         PlainRules, CurrentSeeds, Closure, Diagnostics).
 
 evaluate_stratum_after_aggregates(
     [], AggregateSeeds,
-    Level, MaxStratum, Strata, Rules, Seeds, LowerRows,
+    Level, MaxStratum, EvaluationId,
+    Strata, Rules, Seeds, LowerRows, InstalledLowerRows,
     PlainRules, CurrentSeeds, Closure, Diagnostics) :-
     !,
     append(CurrentSeeds, AggregateSeeds, Seeds0),
     sort(Seeds0, StratumSeeds),
-    gensym(dl7_evaluation_, EvaluationId),
-    setup_call_cleanup(
-        install_evaluation(EvaluationId, PlainRules, StratumSeeds, LowerRows,
-                           ClauseReferences),
-        collect_closure(EvaluationId, CompletedRows),
-        clear_evaluation(EvaluationId, ClauseReferences)),
+    ord_subtract(LowerRows, InstalledLowerRows, NewLowerRows),
+    install_rules(PlainRules, EvaluationId),
+    install_seeds(StratumSeeds, EvaluationId),
+    install_lower_rows(NewLowerRows, EvaluationId),
+    abolish_table_subgoals(dl7_evaluator:proves(EvaluationId, _)),
+    collect_closure(EvaluationId, CompletedRows),
     NextLevel is Level + 1,
-    evaluate_strata(NextLevel, MaxStratum, Strata, Rules, Seeds,
-                    CompletedRows, Closure, Diagnostics).
+    evaluate_strata(NextLevel, MaxStratum, EvaluationId,
+                    Strata, Rules, Seeds, CompletedRows, LowerRows,
+                    Closure, Diagnostics).
 evaluate_stratum_after_aggregates(
-    Diagnostics, _, _, _, _, _, _, _, _, _, [], Diagnostics).
+    Diagnostics, _, _, _, _, _, _, _, _, _, _, _, _,
+    [], Diagnostics).
 
 rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
     memberchk(stratum(Relation, Level), Strata).
-
-rule_through_level(Strata, Level, rule(call(Relation, _), _)) :-
-    memberchk(stratum(Relation, RuleLevel), Strata),
-    RuleLevel =< Level.
 
 seed_at_level(Strata, Level, call(Relation, _)) :-
     relation_level(Strata, Relation, Level).
@@ -392,29 +411,24 @@ strata_for_relations([Relation | Relations], Levels,
     memberchk(level(Relation, Level), Levels),
     strata_for_relations(Relations, Levels, Strata).
 
-install_evaluation(EvaluationId, Rules, Seeds, LowerRows, ClauseReferences) :-
-    install_rules(Rules, EvaluationId, RuleReferences),
-    install_seeds(Seeds, EvaluationId, SeedReferences),
-    install_lower_rows(LowerRows, EvaluationId, LowerReferences),
-    append([RuleReferences, SeedReferences, LowerReferences], ClauseReferences).
+install_rules([], _).
+install_rules([Rule | Rules], EvaluationId) :-
+    instantiate_rule(Rule, Head, Body),
+    Head = call(Relation, _),
+    assertz(evaluation_rule(EvaluationId, Relation, Head, Body)),
+    install_rules(Rules, EvaluationId).
 
-install_rules([], _, []).
-install_rules([Rule | Rules], EvaluationId, [Reference | References]) :-
-    Rule = rule(call(Relation, _), _),
-    assertz(evaluation_rule(EvaluationId, Relation, Rule), Reference),
-    install_rules(Rules, EvaluationId, References).
-
-install_seeds([], _, []).
-install_seeds([Seed | Seeds], EvaluationId, [Reference | References]) :-
+install_seeds([], _).
+install_seeds([Seed | Seeds], EvaluationId) :-
     Seed = call(Relation, _),
-    assertz(evaluation_seed(EvaluationId, Relation, Seed), Reference),
-    install_seeds(Seeds, EvaluationId, References).
+    assertz(evaluation_seed(EvaluationId, Relation, Seed)),
+    install_seeds(Seeds, EvaluationId).
 
-install_lower_rows([], _, []).
-install_lower_rows([Row | Rows], EvaluationId, [Reference | References]) :-
+install_lower_rows([], _).
+install_lower_rows([Row | Rows], EvaluationId) :-
     Row = call(Relation, _),
-    assertz(evaluation_lower(EvaluationId, Relation, Row), Reference),
-    install_lower_rows(Rows, EvaluationId, References).
+    assertz(evaluation_lower(EvaluationId, Relation, Row)),
+    install_lower_rows(Rows, EvaluationId).
 
 collect_closure(EvaluationId, Closure) :-
     findall(Call, proves(EvaluationId, Call), Calls),
@@ -422,10 +436,12 @@ collect_closure(EvaluationId, Closure) :-
     append(Calls, Requests, Rows),
     sort(Rows, Closure).
 
-clear_evaluation(EvaluationId, ClauseReferences) :-
+clear_evaluation(EvaluationId) :-
     abolish_table_subgoals(dl7_evaluator:proves(EvaluationId, _)),
     retractall(evaluation_request(EvaluationId, _)),
-    maplist(erase, ClauseReferences).
+    retractall(evaluation_rule(EvaluationId, _, _, _)),
+    retractall(evaluation_seed(EvaluationId, _, _)),
+    retractall(evaluation_lower(EvaluationId, _, _)).
 
 proves(EvaluationId, Call) :-
     Call = call(Relation, _),
@@ -436,8 +452,7 @@ proves(EvaluationId, Call) :-
 proves(_, call(ref(kernel(nil)), [const([])])).
 proves(EvaluationId, Head) :-
     Head = call(Relation, _),
-    evaluation_rule(EvaluationId, Relation, Rule),
-    instantiate_rule(Rule, Head, Body),
+    evaluation_rule(EvaluationId, Relation, Head, Body),
     proves_body(Body, EvaluationId).
 proves(_, call(ref(kernel(cons)), [Head, Tail, List])) :-
     cons_relation(Head, Tail, List).
