@@ -759,6 +759,7 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
     named_owner(Rows1, 'PairResult', PairResult),
     named_owner(Rows1, 'Pair', Pair),
     named_owner(Rows1, 'PairUser', PairUser),
+    named_owner(Rows1, 'Apply', Apply),
     named_owner(Rows1, 'CallableFactory', CallableFactory),
     named_owner(Rows1, 'ReturnedPair', ReturnedPair),
     named_owner(Rows1, 'ReturnedResult', ReturnedResult),
@@ -796,6 +797,28 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
                         call(ref(TripleUser),
                              [ref(Order) | TripleUserOrderArguments]))]),
               Rules),
+    findall(Call,
+            member(call(ref(Apply), [ref(Call), ref(_)]), Rows1),
+            ApplicationCalls0),
+    sort(ApplicationCalls0, ApplicationCalls),
+    length(ApplicationCalls, ApplicationCallCount),
+    findall(Call,
+            ( member(call(ref(Apply), [ref(Call), ref(Pair)]), Rows1),
+              member(call(ref(kernel(':')),
+                          [ ref(Call), const(return), ref(PairUser),
+                            const(2)
+                          ]),
+                     Rows1)
+            ),
+            PairUserCalls0),
+    sort(PairUserCalls0, PairUserCalls),
+    length(PairUserCalls, PairUserCallCount),
+    (   maplist(pair_user_application_graph(
+                    Rows1, Apply, User, Pair, PairUser),
+                PairUserCalls)
+    ->  PairUserGraphParity = true
+    ;   PairUserGraphParity = false
+    ),
     residual_partial_terms(Runtime1, ResidualPartials),
     equality(Rows1, Rows2, RowsRepeat),
     equality(Runtime1, Runtime2, RuntimeRepeat),
@@ -811,6 +834,10 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
                        callable(ReturnedCallable),
                        partial(ReturnedPartial), value(ReturnedValue)),
                    chained(arity(3), arity(2), return(TripleReturn)),
+                   application_graph(
+                       calls(ApplicationCallCount),
+                       pair_user_occurrences(PairUserCallCount),
+                       parity(PairUserGraphParity)),
                    repeat(rows(RowsRepeat), runtime(RuntimeRepeat)),
                    residual_partial_terms(ResidualPartials)),
     Observed == returned_callable(
@@ -820,8 +847,20 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
                         factory(CallableFactory),
                         callable(true), partial(true), value(true)),
                     chained(arity(3), arity(2), return(true)),
+                    application_graph(
+                        calls(4), pair_user_occurrences(2), parity(true)),
                     repeat(rows(true), runtime(true)),
                     residual_partial_terms(0)).
+
+pair_user_application_graph(Rows, Apply, User, Pair, PairUser, Call) :-
+    memberchk(call(ref(kernel(node)), [ref(Call)]), Rows),
+    memberchk(call(ref(Apply), [ref(Call), ref(Pair)]), Rows),
+    memberchk(call(ref(kernel(':')),
+                   [ref(Call), const(left), ref(User), const(0)]),
+              Rows),
+    memberchk(call(ref(kernel(':')),
+                   [ref(Call), const(return), ref(PairUser), const(2)]),
+              Rows).
 
 test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
     Path = 'v7/test/fixtures/5_curry.dl7',

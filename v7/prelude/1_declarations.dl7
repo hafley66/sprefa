@@ -123,6 +123,12 @@
       (: source_index int)
       (: result_index int)))
 
+; A call occurrence points at its callable. Supplied arguments and the result
+; use ordinary :/4 edges owned by the call node.
+(: Apply
+   (* (: call type)
+      (: callable type)))
+
 ; Curry identities are canonical callable specializations. The compiler
 ; supplies only specialization and captured-slot facts; the remaining shape
 ; and forwarding program are derived in userland.
