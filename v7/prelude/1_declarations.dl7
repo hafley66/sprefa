@@ -3,6 +3,11 @@
    (* (: list any)
       (: value any)))
 
+; Structured representation is a capability relation over an ordinary type
+; node. Storage targets decide how a capable node is represented.
+(: json
+   (* (: node type)))
+
 (: closed_names
    (* (: list any)))
 

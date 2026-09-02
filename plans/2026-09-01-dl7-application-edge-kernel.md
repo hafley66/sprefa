@@ -145,7 +145,6 @@ generated callable signature and forwarding rule
 fixed-arity Datalog
 ```
 
-<!-- todo(refactor): Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol. -->
 <!-- todo(refactor): Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges. -->
 
 ## Verification
@@ -172,11 +171,24 @@ corpus parse. The final full-suite Curry test consumed 16.766 seconds versus
 11.829 seconds at the value-node checkpoint, a local one-run increase of 4.937
 seconds. No evaluator primitive or CI configuration changed.
 
+The generated-rule checkpoint represents generated heads and goals with
+`HeadCall`, `BodyCall`, `Apply`, and ordinary `:` edges. `head_arg/4` and
+`body_arg/5` have been removed. The complete V7 SWI suite passed 39 of 39 tests
+at that checkpoint.
+
+The compiler trace and cache checkpoint adds phase and fixpoint-step metrics,
+content-keyed prelude and complete-compile caches, and relation-indexed
+temporary evaluator facts. The complete V7 SWI suite passes 41 of 41 tests in
+59.5 seconds; the Tree-sitter corpus passes 1 of 1 tests. A cold Partial fixture
+compile measured 12.882 seconds, with 10.363 seconds in comptime. The repeated
+content-cache compile measured 45 milliseconds inside the cache step before
+removing an unrelated explicit post-compile garbage collection.
+
 ## Staffing
 
 - Implementation: Codex directly, high reasoning.
 - Worktree: `/private/tmp/sprefa-v7-value-nodes`.
-- Branch: `feature/v7-round-boundary-application`.
-- Base SHA: `51953c3db794a08a16c6a3c61fd166af077c1db5`.
+- Branch: `feature/v7-generated-application-nodes`.
+- Base SHA: `28c889b0cc88678aa3383ef7f7cf7be71718d373`.
 - Suite budget: focused curry tests per checkpoint; complete V7 suite before
   push.

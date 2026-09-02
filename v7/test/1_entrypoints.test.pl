@@ -23,7 +23,10 @@
               ]).
 :- use_module('../src/2_comptime/1a_generated_program_assembler',
               [assemble_generated_program/5]).
-:- use_module('../src/3_emit/0_artifact_emitter', [emit_compiled/4]).
+:- use_module('../src/3_emit/0_logical_program_reifier',
+              [logical_program_rows/2]).
+:- use_module('../src/3_emit/1_artifact_emitter',
+              [emit_compiled/4, compiler_view/2]).
 :- use_module('../src/1_libtime/0_evaluator',
               [ evaluate/4,
                 stratify_rules/3,
@@ -976,6 +979,8 @@ test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
         ExpectedRows0),
     sort(ExpectedRows0, ExpectedRows),
     length(CompilerRows, RowCount),
+    compiler_view(Compiled, compiler_view(_, _, LogicalRows, _)),
+    length(LogicalRows, LogicalRowCount),
     Observed = emitter_protocol(
                    compile(Diagnostics),
                    dl7(Dl7Diagnostics, Dl7Artifact),
@@ -987,9 +992,38 @@ test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
                         artifact("specializations", CurryArtifact,
                                  ExpectedRows)
                     ])),
-                    prolog([], compiler_rows(RowCount)),
+                    prolog([], compiler_rows(RowCount, LogicalRowCount)),
                     datalog([], artifact(monomorphic_datalog,
                                          RuntimeProgram))).
+
+test(checked_program_reifies_as_target_neutral_rows) :-
+    compile_dl7('v7/test/fixtures/4_generated_call.dl7',
+                _CompilerRows, RuntimeProgram, []),
+    logical_program_rows(RuntimeProgram, Rows1),
+    logical_program_rows(RuntimeProgram, Rows2),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(Relations, Seeds, Rules),
+                         Dependencies, Strata),
+    include(is_program_relation, Rows1, RelationRows),
+    include(is_program_seed, Rows1, SeedRows),
+    include(is_program_rule, Rows1, RuleRows),
+    include(is_program_dependency, Rows1, DependencyRows),
+    include(is_program_stratum, Rows1, StratumRows),
+    length(Relations, RelationCount),
+    length(Seeds, SeedCount),
+    length(Rules, RuleCount),
+    length(Dependencies, DependencyCount),
+    length(Strata, StratumCount),
+    maplist(length_is(RelationCount), [RelationRows, StratumRows]),
+    length(SeedRows, SeedCount),
+    length(RuleRows, RuleCount),
+    length(DependencyRows, DependencyCount),
+    length(StratumRows, StratumCount),
+    Rows1 == Rows2,
+    memberchk(program_rule(rule_id(0), call_id(rule(0), head)), Rows1),
+    memberchk(program_apply(call_id(rule(0), head), _), Rows1),
+    memberchk(program_argument(call_id(rule(0), head), 0, _), Rows1),
+    !.
 
 test(userland_type_algebra_proves_contracts_and_constructs_products) :-
     compile_dl7('v7/test/fixtures/3_type_algebra.dl7',
@@ -1016,6 +1050,20 @@ test(userland_type_algebra_proves_contracts_and_constructs_products) :-
                              invalid(hash, relation_type, 0)),
                         history(contract(user_contract),
                                 runtime_row([7, "Ada", 1])))),
+    !.
+
+test(json_is_an_ordinary_type_capability) :-
+    compile_dl7('v7/test/fixtures/3_type_algebra.dl7',
+                Rows, Runtime, Diagnostics),
+    named_owner(Rows, json, Json),
+    named_owner(Rows, 'User', User),
+    Runtime = checked_datalog(
+                  _, datalog_program(Relations, Seeds, _), _, _),
+    memberchk(relation(ref(Json), 1, []), Relations),
+    memberchk(call(ref(Json), [ref(User)]), Seeds),
+    memberchk(call(ref(Json), [ref(User)]), Rows),
+    \+ sub_term(primitive(json), Rows),
+    Diagnostics == [],
     !.
 
 test(final_closure_rejects_declared_functional_key_conflicts) :-
@@ -1858,9 +1906,19 @@ named_owner(Rows, Name, Owner) :-
            Rows),
     !.
 
-compiler_row_count(compiler_view(_, CompilerRows, _),
-                   compiler_rows(Count)) :-
-    length(CompilerRows, Count).
+compiler_row_count(compiler_view(_, CompilerRows, LogicalRows, _),
+                   compiler_rows(CompilerCount, LogicalCount)) :-
+    length(CompilerRows, CompilerCount),
+    length(LogicalRows, LogicalCount).
+
+is_program_relation(program_relation(_, _)).
+is_program_seed(program_seed(_, _)).
+is_program_rule(program_rule(_, _)).
+is_program_dependency(program_dependency(_, _, _)).
+is_program_stratum(program_stratum(_, _)).
+
+length_is(Expected, List) :-
+    length(List, Expected).
 
 relation_pairs(Rows, Relation, Owner, Pairs) :-
     findall(Earlier-Later,

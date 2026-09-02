@@ -15,6 +15,7 @@
       (: active int)))
 
 (User 7 "Ada" 1)
+(json User)
 
 (: MissingName
    (* (: id int)))
