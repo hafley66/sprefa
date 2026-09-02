@@ -4,6 +4,7 @@
           [ with_prelude_cache/5,
             with_compilation_cache/5,
             with_rule_check_cache/7,
+            prime_rule_check_cache/5,
             clear_compiler_caches/0
           ]).
 
@@ -86,6 +87,12 @@ store_rule_check(Relations, Rules, Depends, Strata, Diagnostics) :-
     ;   assertz(cached_rule_check(Relations, Rules,
                                  Depends, Strata, Diagnostics))
     ).
+
+prime_rule_check_cache(Relations, Rules, Depends, Strata, Diagnostics) :-
+    must_cache_ground(rule_check, Depends-Strata, Diagnostics),
+    with_mutex(
+        dl7_compiler_cache,
+        store_rule_check(Relations, Rules, Depends, Strata, Diagnostics)).
 
 must_cache_ground(Kind, Value, Diagnostics) :-
     (   ground(Value-Diagnostics)

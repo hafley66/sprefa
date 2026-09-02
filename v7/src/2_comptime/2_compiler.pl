@@ -38,7 +38,8 @@
 :- use_module('1c_compiler_cacher',
               [ with_prelude_cache/5,
                 with_compilation_cache/5,
-                with_rule_check_cache/7
+                with_rule_check_cache/7,
+                prime_rule_check_cache/5
               ]).
 
 %% compile_dl7(+Path, -CompilerRows, -RuntimeProgram, -Diagnostics) is det.
@@ -311,19 +312,30 @@ compile_after_lower(Diagnostics, _, _, _, [], Diagnostics).
 
 compile_after_check([], Context, Checked, Compiled, Diagnostics) :-
     !,
+    prime_checked_rule_cache(Checked),
     run_compile_phase(
         comptime,
         evaluate_checked(Context, Checked, Compiled, Diagnostics),
         _).
 compile_after_check(Diagnostics, _, _, [], Diagnostics).
 
+prime_checked_rule_cache(
+    checked_datalog(
+        _, datalog_program(Relations, _, Rules), Depends, Strata)) :-
+    sort(Relations, SortedRelations),
+    sort(Rules, SortedRules),
+    prime_rule_check_cache(
+        SortedRelations, SortedRules, Depends, Strata, []).
+
 evaluate_checked(
     Context,
-    checked_datalog(Graph,
-                    datalog_program(Relations, AuthoredSeeds, Rules),
-                    _, _),
+    InitialChecked,
     Compiled,
     Diagnostics) :-
+    InitialChecked = checked_datalog(
+                         Graph,
+                         datalog_program(Relations, AuthoredSeeds, Rules),
+                         _, _),
     graph_seeds(Graph, GraphSeeds),
     append(GraphSeeds, AuthoredSeeds, BaseSeeds0),
     sort(BaseSeeds0, BaseSeeds),
@@ -338,7 +350,7 @@ evaluate_checked(
     EvaluationContext = compile_context(
                             Units, ProjectContext,
                             ModuleBasements, ModuleOrigins,
-                            DerivedBindSlots),
+                            DerivedBindSlots, InitialChecked),
     evaluate_compiler_rounds(Rules, Relations, BaseSeeds, InitialEdges,
                              InitialRequests, [], [], 1,
                              CompilerFacts, GeneratedProgram,
@@ -566,21 +578,28 @@ final_checked_program(Context, CompilerFacts, GeneratedRelations,
         CompilerFacts, GeneratedRelations, DerivedBindSlots, Environment),
     Context = compile_context(
                   Units, ProjectContext,
-                  InitialBasements, InitialOrigins, DerivedBindSlots),
-    lower_final_units(
-        Units, InitialBasements, InitialOrigins, Environment,
-        ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
-    freeze_after_final_lower(
-        LowerDiagnostics, Environment,
-        ModuleBasements0, ModuleOrigins0,
-        ModuleBasements1, ModuleOrigins1, FreezeDiagnostics),
-    install_final_project_graph(
-        FreezeDiagnostics, ProjectContext,
-        ModuleBasements1, ModuleOrigins1,
-        ModuleBasements, ModuleOrigins, ProjectDiagnostics),
-    check_final_basements(ProjectDiagnostics,
-                          ModuleBasements, ModuleOrigins,
-                          GeneratedRelations, Checked, Diagnostics).
+                  InitialBasements, InitialOrigins, DerivedBindSlots,
+                  InitialChecked),
+    (   source_lowering_complete(
+            Units, InitialBasements, InitialOrigins)
+    ->  add_generated_checked_relations(
+            InitialChecked, GeneratedRelations, Checked),
+        Diagnostics = []
+    ;   lower_final_units(
+            Units, InitialBasements, InitialOrigins, Environment,
+            ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
+        freeze_after_final_lower(
+            LowerDiagnostics, Environment,
+            ModuleBasements0, ModuleOrigins0,
+            ModuleBasements1, ModuleOrigins1, FreezeDiagnostics),
+        install_final_project_graph(
+            FreezeDiagnostics, ProjectContext,
+            ModuleBasements1, ModuleOrigins1,
+            ModuleBasements, ModuleOrigins, ProjectDiagnostics),
+        check_final_basements(ProjectDiagnostics,
+                              ModuleBasements, ModuleOrigins,
+                              GeneratedRelations, Checked, Diagnostics)
+    ).
 
 deferred_checked_program(Context, CompilerFacts, GeneratedRelations,
                          Checked, Diagnostics) :-
@@ -588,7 +607,7 @@ deferred_checked_program(Context, CompilerFacts, GeneratedRelations,
         CompilerFacts, GeneratedRelations, DerivedBindSlots, Environment),
     Context = compile_context(
                   Units, ProjectContext,
-                  InitialBasements, InitialOrigins, DerivedBindSlots),
+                  InitialBasements, InitialOrigins, DerivedBindSlots, _),
     lower_deferred_final_units(
         Units, InitialBasements, InitialOrigins, Environment,
         ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
@@ -603,6 +622,24 @@ deferred_checked_program(Context, CompilerFacts, GeneratedRelations,
     check_final_basements(ProjectDiagnostics,
                           ModuleBasements, ModuleOrigins,
                           GeneratedRelations, Checked, Diagnostics).
+
+source_lowering_complete(Units, InitialBasements, InitialOrigins) :-
+    EmptyGeneratedEnvironment = expression_environment([], [], []),
+    lower_final_units(
+        Units, InitialBasements, InitialOrigins, EmptyGeneratedEnvironment,
+        StrictBasements, StrictOrigins, Diagnostics),
+    Diagnostics == [],
+    StrictBasements == InitialBasements,
+    StrictOrigins == InitialOrigins.
+
+add_generated_checked_relations(
+    checked_datalog(
+        Graph, datalog_program(Relations0, Seeds, Rules), Depends, Strata),
+    GeneratedRelations,
+    checked_datalog(
+        Graph, datalog_program(Relations, Seeds, Rules), Depends, Strata)) :-
+    append(Relations0, GeneratedRelations, Relations1),
+    sort(Relations1, Relations).
 
 lower_final_units(Units, InitialBasements, InitialOrigins, Environment,
                   ModuleBasements, ModuleOrigins, Diagnostics) :-

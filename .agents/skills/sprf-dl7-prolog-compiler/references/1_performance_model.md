@@ -70,6 +70,7 @@ Performance history for the same fixture:
  1.20 s  repeated rule-check caching and indexed validation
  1.12 s  reuse the environment-independent prelude during source refreeze
  0.90 s  preserve lower tables, omit dormant reference state, table cycles
+ 0.68 s  merge stratum closures, reuse complete source checks, prime checks
 ```
 
 Two dominant defects were removed:
@@ -198,6 +199,40 @@ warm wall                    6 ms
 exact rows                   6,774
 exact rounds                     7
 ```
+
+### Ordered stratum closure
+
+Each stratum previously appended its current rows to the complete lower
+closure and sorted all rows again. Lower rows are already an ordered set.
+Sorting only current rows and applying `ord_union/3` reduced the representative
+cold wall time from about 875ms to about 826ms. Prolog inference count rose
+because ordered-set merge is visible Prolog recursion; wall time is the metric
+for this allocation and sorting change.
+
+### Complete source and rule-check reuse
+
+A strict authored-environment probe now distinguishes complete bootstrap
+lowerings from source that genuinely waits for generated callables. The
+complete case reuses the initial checked source and appends generated relation
+declarations. `2_partial.dl7` final source checking fell from about 115ms to
+4ms.
+
+The initial checked program also primes the resolved-rule cache after its
+relation and rule lists are canonicalized. Round 1 now reuses the initial
+dependency and stratum proof instead of spending another 49ms and 608,406
+inferences.
+
+```text
+cold wall               about 682 ms
+cold inferences          6,913,124
+exact rows                   6,774
+exact rounds                     7
+```
+
+Generated-program assembly reads only its semantic input relations: kernel
+`def`, `head`, `body`, and `:` rows plus rows of the bound `Apply`, `Literal`,
+and `Variable` relations. This replaces repeated scans over unrelated compiler
+closure rows while preserving the public assembler input contract.
 
 ## 6. Commands and gates
 

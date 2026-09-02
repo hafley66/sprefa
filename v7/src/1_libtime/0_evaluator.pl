@@ -9,7 +9,7 @@
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(gensym), [gensym/2]).
 :- use_module(library(lists), [max_list/2]).
-:- use_module(library(ordsets), [ord_subtract/3]).
+:- use_module(library(ordsets), [ord_subtract/3, ord_union/3]).
 :- use_module(library(pairs), [group_pairs_by_key/2]).
 :- use_module(library(ugraphs),
               [ neighbors/3,
@@ -571,8 +571,9 @@ collect_native_closure(EvaluationId, Relations, LowerRows, Closure) :-
             DerivedCalls),
     Calls = [call(ref(kernel(nil)), [const([])]) | DerivedCalls],
     findall(Request, evaluation_request(EvaluationId, Request), Requests),
-    append([LowerRows, Calls, Requests], Rows),
-    sort(Rows, Closure).
+    append(Calls, Requests, CurrentRows0),
+    sort(CurrentRows0, CurrentRows),
+    ord_union(LowerRows, CurrentRows, Closure).
 
 verify_native_closure(EvaluationId, NativeRows) :-
     (   reference_evaluator_enabled

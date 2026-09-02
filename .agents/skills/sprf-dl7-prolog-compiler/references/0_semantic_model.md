@@ -134,6 +134,13 @@ so local callable names resolve first. The test
 `prelude_lowering_is_environment_independent` preserves the deferred-versus-
 strict invariant across the complete prelude.
 
+The compiler can also reuse the complete initial checked program when a strict
+probe under authored declarations reproduces the initial module basements and
+origins exactly. Generated relation declarations are appended to the checked
+relation set. Generated rules still pass through the final resolved-rule
+checker. A source unit with an unknown generated call fails the probe and uses
+the complete refreeze path.
+
 ## 6. Invariants for evaluator changes
 
 Keep these checks available:

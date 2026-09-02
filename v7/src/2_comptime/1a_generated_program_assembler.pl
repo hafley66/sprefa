@@ -17,13 +17,14 @@ assemble_generated_program(CompilerRows, BaseRelations,
                            Diagnostics) :-
     must_be(ground, CompilerRows),
     must_be(ground, BaseRelations),
-    assemble_definitions(CompilerRows, Relations0, DefinitionDiagnostics),
+    generated_program_rows(CompilerRows, ProgramRows),
+    assemble_definitions(ProgramRows, Relations0, DefinitionDiagnostics),
     generated_relation_collision_diagnostics(Relations0, BaseRelations,
                                              CollisionDiagnostics),
     append(BaseRelations, Relations0, AllRelations0),
     sort(AllRelations0, AllRelations),
-    assemble_rules(CompilerRows, AllRelations, Rules0, RuleDiagnostics),
-    orphan_fragment_diagnostics(CompilerRows, OrphanDiagnostics),
+    assemble_rules(ProgramRows, AllRelations, Rules0, RuleDiagnostics),
+    orphan_fragment_diagnostics(ProgramRows, OrphanDiagnostics),
     append([DefinitionDiagnostics, CollisionDiagnostics,
             RuleDiagnostics, OrphanDiagnostics], Diagnostics0),
     sort(Diagnostics0, Diagnostics),
@@ -33,6 +34,21 @@ assemble_generated_program(CompilerRows, BaseRelations,
     ;   GeneratedRelations = [],
         GeneratedRules = []
     ).
+
+generated_program_rows(Rows, ProgramRows) :-
+    named_relation_targets(Rows, 'Apply', ApplyRelations),
+    named_relation_targets(Rows, 'Literal', LiteralRelations),
+    named_relation_targets(Rows, 'Variable', VariableRelations),
+    append([ApplyRelations, LiteralRelations, VariableRelations], Relations0),
+    sort(Relations0, Relations),
+    include(generated_program_row(Relations), Rows, ProgramRows).
+
+generated_program_row(_, call(ref(kernel(def)), _)).
+generated_program_row(_, call(ref(kernel(head)), _)).
+generated_program_row(_, call(ref(kernel(body)), _)).
+generated_program_row(_, call(ref(kernel(':')), _)).
+generated_program_row(Relations, call(ref(Relation), _)) :-
+    memberchk(Relation, Relations).
 
 assemble_definitions(Rows, Relations, Diagnostics) :-
     findall(Relation,
