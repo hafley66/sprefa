@@ -355,43 +355,31 @@ impl RustSource {
     }
 }
 
-/// The dst leg of one candidate: same-file TypeF entity first (its span joined
-/// through the `DefIndex` for the blob), else a unique corpus site, else None
-/// (text stays text — the zero leg). Name-only resolution, per the 4a ADDENDUM
-/// site-key discipline. Mirror of the ts arm's `resolve_type_dst` (the post-4d
-/// dedup sweep owns unifying the per-lang copies).
+/// A candidate is interned AS WRITTEN (`hir::Struct`) and every index keys on a
+/// bare declaration name, so the trailing segment is the key.
+fn type_probe_key(name: &str, kind: TypeEdgeKind) -> (Option<&str>, &str) {
+    // A Variant candidate's `to` is v5's synthetic `Enum::Variant` text, not a
+    // path: text dsts stay text.
+    match name.rsplit_once("::") {
+        Some((qualifier, trailing)) if kind != TypeEdgeKind::Variant => (Some(qualifier), trailing),
+        _ => (None, name),
+    }
+}
+
+/// The SYNTAX dst leg of one candidate: same-file entity, else a unique corpus
+/// site, else None. The checker tier answers ahead of it, at the caller.
 #[allow(clippy::too_many_arguments)]
 fn resolve_type_dst(
     types: &FamilyBundle<TypeF>,
     strings: &Strings,
     index: Option<&DefIndex>,
     modules: Option<&crate::lang::rust_modules::RustModuleIndex>,
-    checker: Option<&crate::lang::rust_checker::RustCheckerIndex>,
     paths: Option<&PathIndex>,
     own_path: Option<&str>,
     name: &str,
     kind: TypeEdgeKind,
 ) -> Option<(ContentId, Span, ResolutionOrigin)> {
-    // A candidate is interned AS WRITTEN (`hir::Struct`), and every index here
-    // keys on a bare declaration name, so the trailing segment is the key. A
-    // Variant candidate's `to` is v5's synthetic `Enum::Variant` text, not a
-    // path: text dsts stay text.
-    let (qualifier, trailing) = match name.rsplit_once("::") {
-        Some((qualifier, trailing)) if kind != TypeEdgeKind::Variant => (Some(qualifier), trailing),
-        _ => (None, name),
-    };
-    // The CHECKER tier answers first: a name one file resolves two ways is the
-    // only shape it declines, and the name-match legs below then run.
-    match checker
-        .zip(own_path)
-        .and_then(|(checker, from)| checker.type_at(from, trailing))
-    {
-        Some(CheckerAnswer::Corpus(blob, span)) => {
-            return Some((blob, span, ResolutionOrigin::Checker))
-        }
-        Some(CheckerAnswer::External) => return None,
-        None => {}
-    }
+    let (qualifier, trailing) = type_probe_key(name, kind);
     if let Some(found) = name_match_type_dst(types, strings, index, modules, own_path, name) {
         return Some(found);
     }
@@ -531,18 +519,57 @@ impl Resolve<TypeF> for RustSource {
             else {
                 continue;
             };
-            let (dst_blob, dst_span, origin) = resolve_type_dst(
-                types,
-                &output.strings,
-                index,
-                modules,
-                checker,
-                paths,
-                own_path.as_deref(),
-                output.strings.lookup(candidate.to),
-                candidate.kind,
-            )
-            .unwrap_or((ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved));
+            let referenced = output.strings.lookup(candidate.to);
+            let zero = (ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved);
+            let name_match = || {
+                resolve_type_dst(
+                    types,
+                    &output.strings,
+                    index,
+                    modules,
+                    paths,
+                    own_path.as_deref(),
+                    referenced,
+                    candidate.kind,
+                )
+            };
+            // The CHECKER tier answers first: a name one file resolves two ways
+            // is the only shape it declines, and the name-match leg then runs.
+            let checked = checker.zip(own_path.as_deref()).and_then(|(checker, from)| {
+                checker.type_at(from, type_probe_key(referenced, candidate.kind).1)
+            });
+            if let Some(CheckerAnswer::Corpus(blob, span)) = checked {
+                let edge = ProjectEdge::new(
+                    NodeRef(src_ix as u32),
+                    blob.clone(),
+                    span,
+                    candidate.kind,
+                    ResolutionOrigin::Checker,
+                );
+                match cx.witness.then(name_match).flatten() {
+                    Some((leg_blob, leg_span, leg)) if leg_blob == blob && leg_span == span => {
+                        edges.push(edge.witnessed_by(leg));
+                    }
+                    Some((leg_blob, leg_span, leg)) => {
+                        edges.push(edge);
+                        edges.push(ProjectEdge::new(
+                            NodeRef(src_ix as u32),
+                            leg_blob,
+                            leg_span,
+                            candidate.kind,
+                            leg,
+                        ));
+                    }
+                    None => edges.push(edge),
+                }
+                continue;
+            }
+            // No corpus declaration IS this type, so no name-match leg may
+            // invent one; the zero leg carries the row instead.
+            let (dst_blob, dst_span, origin) = match checked {
+                Some(CheckerAnswer::External) => zero,
+                _ => name_match().unwrap_or(zero),
+            };
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
                 dst_blob,
@@ -1145,6 +1172,30 @@ impl Resolve<CallF> for RustSource {
                 !modules.is_some_and(|m| m.is_collapsed(blob, span) || m.is_alias(blob, span))
             };
             let name_t = name_t.filter(|(blob, span, _, _)| callable(blob, *span));
+            // The syntax tier's whole answer for this site: the name match and
+            // scip folded the way they fold when no checker runs.
+            let syntax_t = |name_t: Option<(ContentId, Span, CallEdgeKind, ResolutionOrigin)>| {
+                let scip_t = scip
+                    .as_ref()
+                    .and_then(|(index, joined, doc_ix)| {
+                        scip_call_target(index, joined, *doc_ix, site, callee, def_index)
+                    })
+                    .filter(|target| callable(&target.0, target.1));
+                // Agreement is judged at (blob, name): the name-match binds the
+                // call FACET while scip can name the type facet.
+                match (name_t, scip_t) {
+                    (Some((blob, span, _, origin)), Some(s)) if blob == s.0 && callee == s.2 => {
+                        Some(((blob, span), CallEdgeKind::NameResolve, origin))
+                    }
+                    (_, Some(s)) => Some((
+                        (s.0, s.1),
+                        CallEdgeKind::ScipOverride,
+                        ResolutionOrigin::Scip,
+                    )),
+                    (Some((blob, span, kind, origin)), None) => Some(((blob, span), kind, origin)),
+                    (None, None) => None,
+                }
+            };
             // The CHECKER tier: rust-analyzer's own answer for this site wins
             // over both the name match and scip, and only where it has one.
             match checker
@@ -1156,6 +1207,11 @@ impl Resolve<CallF> for RustSource {
                 })
             {
                 Some(CheckerAnswer::Corpus(dst_blob, dst_span)) => {
+                    // Off `witness` the syntax fold's scip leg never runs here.
+                    let leg = cx.witness.then(|| syntax_t(name_t)).flatten();
+                    let agreed = leg.as_ref().and_then(|((blob, span), _, origin)| {
+                        (*blob == dst_blob && *span == dst_span).then_some(*origin)
+                    });
                     push_call_edge(
                         &mut edges,
                         call,
@@ -1166,7 +1222,14 @@ impl Resolve<CallF> for RustSource {
                         dst_span,
                         CallEdgeKind::CheckerResolve,
                         ResolutionOrigin::Checker,
+                        agreed,
                     );
+                    if let (None, Some(((blob, span), kind, origin))) = (agreed, leg) {
+                        push_call_edge(
+                            &mut edges, call, &named, caller, site.span, blob, span, kind, origin,
+                            None,
+                        );
+                    }
                     continue;
                 }
                 // No corpus definition IS this callee, so no name-match leg
@@ -1174,30 +1237,11 @@ impl Resolve<CallF> for RustSource {
                 Some(CheckerAnswer::External) => continue,
                 None => {}
             }
-            let scip_t = scip
-                .as_ref()
-                .and_then(|(index, joined, doc_ix)| {
-                    scip_call_target(index, joined, *doc_ix, site, callee, def_index)
-                })
-                .filter(|target| callable(&target.0, target.1));
-            // Agreement is judged at (blob, name): the name-match binds the
-            // call FACET while scip can name the type facet — one definition,
-            // two facet coordinates (the ORACLE entry's "the models differ by
-            // construction").
-            let ((dst_blob, dst_span), kind, origin) = match (name_t, scip_t) {
-                (Some((blob, span, _, origin)), Some(s)) if blob == s.0 && callee == s.2 => {
-                    ((blob, span), CallEdgeKind::NameResolve, origin)
-                }
-                (_, Some(s)) => (
-                    (s.0, s.1),
-                    CallEdgeKind::ScipOverride,
-                    ResolutionOrigin::Scip,
-                ),
-                (Some((blob, span, kind, origin)), None) => ((blob, span), kind, origin),
-                (None, None) => continue,
+            let Some(((dst_blob, dst_span), kind, origin)) = syntax_t(name_t) else {
+                continue;
             };
             push_call_edge(
-                &mut edges, call, &named, caller, site.span, dst_blob, dst_span, kind, origin,
+                &mut edges, call, &named, caller, site.span, dst_blob, dst_span, kind, origin, None,
             );
         }
         edges
@@ -1217,22 +1261,30 @@ fn push_call_edge(
     dst_span: Span,
     kind: CallEdgeKind,
     origin: ResolutionOrigin,
+    // A second leg that reached this same target, under `--witness`.
+    agreed: Option<ResolutionOrigin>,
 ) {
+    let witness = |edge: ProjectEdge<CallF>| match agreed {
+        Some(extra) => edge.witnessed_by(extra),
+        None => edge,
+    };
     if call.node(caller).name.is_none() {
         if let Some(enclosing) = enclosing_named_def(named, site) {
             edges.push(
-                ProjectEdge::new(
+                witness(ProjectEdge::new(
                     enclosing,
                     dst_blob.clone(),
                     dst_span,
                     CallEdgeKind::NameResolve,
                     origin,
-                )
+                ))
                 .with_call_site(site),
             );
         }
     }
-    edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind, origin).with_call_site(site));
+    edges.push(
+        witness(ProjectEdge::new(caller, dst_blob, dst_span, kind, origin)).with_call_site(site),
+    );
 }
 
 /// One `unresolved` row per site the `Resolve<CallF>` pass dropped. The reason

@@ -178,12 +178,12 @@ struct Cli {
     #[arg(long, conflicts_with_all = ["resolve", "scip_facts", "ast_pattern"], long_help = FILE_FACT_LONG)]
     file_fact: bool,
 
-    /// Wrap the per-file stream in the TSI envelope: protocol, run, per-row
-    /// `fact` ordinals, one witness per row, partial coverage per family.
+    /// Wrap the stream in the TSI envelope: protocol, one run per tier, per-row
+    /// `fact` ordinals, one witness per resolver leg, coverage per family.
     #[arg(
         long,
         conflicts_with_all = [
-            "bench", "resolve", "ast_pattern", "deps", "package_deps",
+            "bench", "ast_pattern", "deps", "package_deps",
             "scip_facts", "scip_deps", "file_fact",
         ],
     )]
@@ -557,6 +557,7 @@ fn scip_request(cli: &Cli) -> Result<ResolveRequest<'_>, String> {
         occurrence_text: cli.occurrence_text,
         rust_checker: cli.rust_checker.then(|| cli.project_root.as_deref()).flatten(),
         ts_checker: cli.ts_checker.then(|| cli.project_root.as_deref()).flatten(),
+        witness: cli.witness,
     })
 }
 

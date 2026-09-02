@@ -929,6 +929,7 @@ fn request<'a>(files: &'a [PathBuf], corpus: &'a Corpus, tier: Tier) -> ResolveR
         occurrence_text: false,
         rust_checker: (checker && corpus.lang == "rust").then_some(corpus.root.as_path()),
         ts_checker: (checker && corpus.lang == "ts5").then_some(corpus.root.as_path()),
+        witness: false,
     }
 }
 

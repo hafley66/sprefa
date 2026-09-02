@@ -78,6 +78,7 @@ fn library_doc_ref_count() -> usize {
         reader: None,
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
+        witness: false,
     };
     cx.indexes
         .def_index

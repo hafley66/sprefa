@@ -68,6 +68,7 @@ fn the_document_join_reads_each_document_once_per_project() {
         reader: Some(reader),
         digest: ProjectDigest::default(),
         indexes,
+        witness: false,
     };
 
     for (_, output) in &extracted {

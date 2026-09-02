@@ -88,6 +88,7 @@ fn resolve_probes(paths: &[std::path::PathBuf]) -> u64 {
         occurrence_text: false,
         rust_checker: None,
         ts_checker: None,
+        witness: false,
     })
     .expect("the corpus resolves");
     assert!(

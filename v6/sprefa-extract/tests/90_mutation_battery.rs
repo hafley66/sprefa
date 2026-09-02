@@ -127,6 +127,7 @@ fn resolve(dir: &Path, rels: &[&str]) -> Rows {
         occurrence_text: false,
         rust_checker: None,
         ts_checker: None,
+        witness: false,
     })
     .expect("the mutated corpus resolves");
     let mut rows = Rows::default();

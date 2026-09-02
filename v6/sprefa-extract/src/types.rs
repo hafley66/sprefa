@@ -1574,6 +1574,28 @@ impl ResolutionOrigin {
             ResolutionOrigin::Unresolved => "unresolved",
         }
     }
+
+    /// The envelope's own word for this leg. The two vocabularies are one list
+    /// by construction, so a leg added here has a seat there.
+    pub fn method(self) -> crate::tsi::types::Method {
+        use crate::tsi::types::Method;
+        match self {
+            ResolutionOrigin::SameFile => Method::SameFile,
+            ResolutionOrigin::CorpusUnique => Method::CorpusUnique,
+            ResolutionOrigin::ModulePlane => Method::ModulePlane,
+            ResolutionOrigin::Checker => Method::Checker,
+            ResolutionOrigin::AliasChain => Method::AliasChain,
+            ResolutionOrigin::Param => Method::Param,
+            ResolutionOrigin::Receiver => Method::Receiver,
+            ResolutionOrigin::SelfType => Method::SelfType,
+            ResolutionOrigin::IfaceImpl => Method::IfaceImpl,
+            ResolutionOrigin::Decorator => Method::Decorator,
+            ResolutionOrigin::Subscript => Method::Subscript,
+            ResolutionOrigin::ReturnCall => Method::ReturnCall,
+            ResolutionOrigin::Scip => Method::Scip,
+            ResolutionOrigin::Unresolved => Method::Unresolved,
+        }
+    }
 }
 
 /// A project-phase edge: `dst` lives in ANOTHER blob (resolved across the file
@@ -1593,6 +1615,9 @@ pub struct ProjectEdge<F: Family> {
     /// Which resolver leg answered. Constructor-required: a leg that cannot
     /// name itself is a leg nothing can count.
     pub origin: ResolutionOrigin,
+    /// Every leg that named this target. EMPTY means `origin` alone, so an
+    /// edge nobody asked to witness allocates nothing here.
+    pub witnesses: Vec<ResolutionOrigin>,
     /// The phase-1 call site that produced this edge, when the edge is a
     /// resolved CallF row. TypeF and legacy resolver rows leave this empty.
     pub call_site: Option<Span>,
@@ -1613,6 +1638,7 @@ impl<F: Family> ProjectEdge<F> {
             dst_span,
             kind,
             origin,
+            witnesses: Vec::new(),
             call_site: None,
             _f: PhantomData,
         }
@@ -1621,6 +1647,27 @@ impl<F: Family> ProjectEdge<F> {
     pub fn with_call_site(mut self, call_site: Span) -> Self {
         self.call_site = Some(call_site);
         self
+    }
+
+    /// A second leg that reached the same target. Idempotent: a leg already in
+    /// the list is one witness, never two rows on one fact.
+    pub fn witnessed_by(mut self, extra: ResolutionOrigin) -> Self {
+        if self.witnesses.is_empty() {
+            self.witnesses.push(self.origin);
+        }
+        if !self.witnesses.contains(&extra) {
+            self.witnesses.push(extra);
+        }
+        self
+    }
+
+    /// Every leg that named this target, `origin` first. Allocates, so the
+    /// witness path is the only caller.
+    pub fn legs(&self) -> Vec<ResolutionOrigin> {
+        match self.witnesses.is_empty() {
+            true => vec![self.origin],
+            false => self.witnesses.clone(),
+        }
     }
 }
 
@@ -1712,6 +1759,9 @@ pub struct ProjectCx<'a> {
     /// GoIndex). Opaque here; each language module owns its concrete index type
     /// behind a OnceLock. Spec: `_2_traits.rs`:46-51 (field) + :59-61 (IndexBag).
     pub indexes: IndexBag,
+    /// Off, a leg that answers after the checker never runs. On, every leg runs
+    /// and lands on the edge's `witnesses`, or on an edge of its own.
+    pub witness: bool,
 }
 
 /// The blob of the output currently being resolved. Thread-local rather than a
@@ -3121,6 +3171,8 @@ pub enum FlatFact {
     /// line-oriented consumers can decode the record without span joins.
     #[serde(rename = "resolved_edge")]
     ResolvedEdge {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         caller_path: String,
         caller_name: Option<String>,
         callee_path: String,
@@ -3139,6 +3191,8 @@ pub enum FlatFact {
     /// to.
     #[serde(rename = "resolved_type_edge")]
     ResolvedTypeEdge {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        fact: Option<u32>,
         owner_path: String,
         owner_name: Option<String>,
         owner_start: u32,
@@ -3500,6 +3554,8 @@ impl FlatFact {
             | FlatFact::MethodOwnerOut { fact, .. }
             | FlatFact::CfgScopeOut { fact, .. }
             | FlatFact::TestOnlyCallOut { fact, .. }
+            | FlatFact::ResolvedEdge { fact, .. }
+            | FlatFact::ResolvedTypeEdge { fact, .. }
             | FlatFact::Reference { fact, .. } => Some(fact),
             _ => None,
         }

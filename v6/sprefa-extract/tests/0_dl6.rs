@@ -143,6 +143,7 @@ fn dl6_call_and_type_resolution() {
         reader: None,
         digest: ProjectDigest::default(),
         indexes,
+        witness: false,
     };
 
     let edges = Resolve::<CallF>::resolve(&DlSource, &caller_out, &cx);
