@@ -156,6 +156,23 @@ Calling `compile_predicates/1` after each stratum became immutable increased
 the representative cold wall time from about 533ms to 547ms. Compilation cost
 exceeded the remaining proof-time reduction for these short-lived predicates.
 
+### Per-aggregate relation indexes
+
+Building an association index over the 6,000-plus completed lower rows before
+each aggregate stratum increased cold compilation from about 534ms to 705ms
+and from 5.46M to 6.98M inferences. Aggregate proof scans are smaller than the
+cost of rebuilding five full indexes per evaluator snapshot.
+
+### Native aggregate proofs
+
+Calling native Prolog predicates for aggregate bodies exposed duplicate proof
+paths for the same tuple. Datalog aggregates consume a set of tuples, so raw
+Prolog proof counts changed the result from 2 to 4. Wrapping each native call
+with `distinct/2` restored the exact 6,774-row closure, but increased cold
+compilation from about 534ms and 5.46M inferences to 664ms and 6.48M
+inferences. The row-list aggregate evaluator retains tuple-level set semantics
+at lower cost for this workload.
+
 ## 5. Requirements for the next evaluator
 
 A useful row-delta implementation needs both:
