@@ -21,6 +21,8 @@
 :- dynamic evaluation_seed/3.
 :- dynamic evaluation_lower/3.
 :- dynamic evaluation_request/2.
+:- dynamic native_relation/4.
+:- dynamic native_clause/2.
 
 :- table proves/2.
 
@@ -96,8 +98,9 @@ evaluate_stratum_after_aggregates(
     install_rules(PlainRules, EvaluationId),
     install_seeds(StratumSeeds, EvaluationId),
     install_lower_rows(NewLowerRows, EvaluationId),
-    abolish_table_subgoals(dl7_evaluator:proves(EvaluationId, _)),
-    collect_closure(EvaluationId, CompletedRows),
+    ensure_native_tables(EvaluationId),
+    collect_native_closure(EvaluationId, CompletedRows),
+    verify_native_closure(EvaluationId, CompletedRows),
     NextLevel is Level + 1,
     evaluate_strata(NextLevel, MaxStratum, EvaluationId,
                     Strata, Rules, Seeds, CompletedRows, LowerRows,
@@ -424,19 +427,84 @@ install_rules([Rule | Rules], EvaluationId) :-
     instantiate_rule(Rule, Head, Body),
     Head = call(Relation, _),
     assertz(evaluation_rule(EvaluationId, Relation, Head, Body)),
+    install_native_rule(EvaluationId, Head, Body),
     install_rules(Rules, EvaluationId).
 
 install_seeds([], _).
 install_seeds([Seed | Seeds], EvaluationId) :-
     Seed = call(Relation, _),
     assertz(evaluation_seed(EvaluationId, Relation, Seed)),
+    install_native_row(EvaluationId, Seed),
     install_seeds(Seeds, EvaluationId).
 
 install_lower_rows([], _).
 install_lower_rows([Row | Rows], EvaluationId) :-
     Row = call(Relation, _),
     assertz(evaluation_lower(EvaluationId, Relation, Row)),
+    install_native_row(EvaluationId, Row),
     install_lower_rows(Rows, EvaluationId).
+
+install_native_rule(EvaluationId, Head, Body) :-
+    native_call(EvaluationId, Head, NativeHead),
+    native_body(EvaluationId, Body, NativeBody),
+    assertz((NativeHead :- NativeBody), Reference),
+    assertz(native_clause(EvaluationId, Reference)).
+
+native_body(_, [], true).
+native_body(EvaluationId, [Goal | Goals], (NativeGoal, NativeGoals)) :-
+    native_goal(EvaluationId, Goal, NativeGoal),
+    native_body(EvaluationId, Goals, NativeGoals).
+
+native_goal(EvaluationId, checked_goal(positive, Call), NativeGoal) :-
+    native_positive_goal(EvaluationId, Call, NativeGoal).
+native_goal(EvaluationId, checked_goal(negative, Call),
+            ( ground(Call),
+              Call = call(Relation, _),
+              \+ evaluation_lower(EvaluationId, Relation, Call)
+            )).
+
+native_positive_goal(_, call(ref(kernel(nil)), [const([])]), true) :- !.
+native_positive_goal(_, call(ref(kernel(cons)), [Head, Tail, List]),
+                     cons_relation(Head, Tail, List)) :-
+    !.
+native_positive_goal(EvaluationId,
+                     call(ref(kernel(intern)),
+                          [Constructor, Arguments, Result]),
+                     ( ground(Constructor),
+                       ground(Arguments),
+                       intern_value(Constructor, Arguments, Result),
+                       record_evaluation_request(EvaluationId, Request)
+                     )) :-
+    !,
+    Request = call(ref(kernel(intern)),
+                   [Constructor, Arguments, Result]).
+native_positive_goal(EvaluationId, Call, NativeGoal) :-
+    native_call(EvaluationId, Call, NativeGoal).
+
+install_native_row(EvaluationId, Call) :-
+    native_call(EvaluationId, Call, NativeCall),
+    assertz(NativeCall, Reference),
+    assertz(native_clause(EvaluationId, Reference)).
+
+native_call(EvaluationId, call(Relation, Arguments), NativeCall) :-
+    length(Arguments, Arity),
+    native_relation_identity(EvaluationId, Relation, Arity, Functor),
+    compound_name_arguments(NativeCall, Functor, Arguments).
+
+native_relation_identity(EvaluationId, Relation, Arity, Functor) :-
+    (   native_relation(EvaluationId, Relation, Arity, ExistingFunctor)
+    ->  Functor = ExistingFunctor
+    ;   gensym(dl7_native_relation_, Functor),
+        assertz(native_relation(EvaluationId, Relation, Arity, Functor)),
+        dynamic(Functor/Arity)
+    ).
+
+ensure_native_tables(EvaluationId) :-
+    forall(native_relation(EvaluationId, _, Arity, Functor),
+           ( functor(Goal, Functor, Arity),
+             abolish_table_subgoals(dl7_evaluator:Goal),
+             table(Functor/Arity)
+           )).
 
 collect_closure(EvaluationId, Closure) :-
     findall(Call, proves(EvaluationId, Call), Calls),
@@ -444,12 +512,51 @@ collect_closure(EvaluationId, Closure) :-
     append(Calls, Requests, Rows),
     sort(Rows, Closure).
 
+collect_native_closure(EvaluationId, Closure) :-
+    findall(call(Relation, Arguments),
+            ( native_relation(EvaluationId, Relation, Arity, Functor),
+              length(Arguments, Arity),
+              compound_name_arguments(NativeCall, Functor, Arguments),
+              call(NativeCall)
+            ),
+            DerivedCalls),
+    Calls = [call(ref(kernel(nil)), [const([])]) | DerivedCalls],
+    findall(Request, evaluation_request(EvaluationId, Request), Requests),
+    append(Calls, Requests, Rows),
+    sort(Rows, Closure).
+
+verify_native_closure(EvaluationId, NativeRows) :-
+    (   getenv('DL7_VERIFY_EVALUATOR', '1')
+    ->  abolish_table_subgoals(dl7_evaluator:proves(EvaluationId, _)),
+        collect_closure(EvaluationId, ReferenceRows),
+        compare_evaluator_rows(ReferenceRows, NativeRows)
+    ;   true
+    ).
+
+compare_evaluator_rows(Rows, Rows) :- !.
+compare_evaluator_rows(ReferenceRows, NativeRows) :-
+    ord_subtract(ReferenceRows, NativeRows, Missing),
+    ord_subtract(NativeRows, ReferenceRows, Extra),
+    throw(error(native_evaluator_mismatch(Missing, Extra), _)).
+
 clear_evaluation(EvaluationId) :-
+    findall(Reference, retract(native_clause(EvaluationId, Reference)),
+            NativeReferences),
+    maplist(erase, NativeReferences),
+    findall(Functor/Arity,
+            retract(native_relation(EvaluationId, _, Arity, Functor)),
+            NativePredicates),
+    maplist(clear_native_predicate, NativePredicates),
     abolish_table_subgoals(dl7_evaluator:proves(EvaluationId, _)),
     retractall(evaluation_request(EvaluationId, _)),
     retractall(evaluation_rule(EvaluationId, _, _, _)),
     retractall(evaluation_seed(EvaluationId, _, _)),
     retractall(evaluation_lower(EvaluationId, _, _)).
+
+clear_native_predicate(Functor/Arity) :-
+    functor(Goal, Functor, Arity),
+    abolish_table_subgoals(dl7_evaluator:Goal),
+    abolish(Functor/Arity).
 
 proves(EvaluationId, Call) :-
     Call = call(Relation, _),
