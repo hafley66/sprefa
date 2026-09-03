@@ -14,7 +14,7 @@ use crate::family::{ImplOwner, TypeEdgeCandidate, TypeEdgeKind, TypeF};
 use crate::rows::FamilyBundle;
 use crate::shape::{Span, Strings};
 use crate::tsi::Arg;
-use crate::types::TsiNames;
+use crate::types::{span_arg, TsiNames};
 
 use super::rust::syn_span;
 use super::rust_type_refs::{collect_path_args, path_name, primary_type, type_refs};
@@ -402,6 +402,14 @@ fn tsi_item(
             );
             tsi_application(owner, &declared.ty, &scope, line_starts, strings, names, state);
         }
+        syn::Item::Const(declared) => {
+            let span = syn_span(line_starts, declared.ident.span());
+            tsi_has_type(span, &declared.ty, outer, line_starts, strings, names, state);
+        }
+        syn::Item::Static(declared) => {
+            let span = syn_span(line_starts, declared.ident.span());
+            tsi_has_type(span, &declared.ty, outer, line_starts, strings, names, state);
+        }
         syn::Item::Impl(block) => tsi_impl(block, outer, line_starts, strings, names, state),
         syn::Item::Fn(declared) => {
             tsi_callable(&declared.sig, outer, line_starts, strings, names, state);
@@ -415,6 +423,21 @@ fn tsi_item(
         }
         _ => {}
     }
+}
+
+/// A value occurrence and the type written at it. The occurrence is a range,
+/// never an id: naming the value's own symbol is the checker's row.
+fn tsi_has_type(
+    occurrence: Span,
+    ty: &Type,
+    scope: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) {
+    let target = tsi_type_id(ty, scope, line_starts, strings, names, state);
+    names.fact("tsi.has_type", vec![span_arg(occurrence), Arg::Id(target)]);
 }
 
 /// A declaration's own id, keyed on its bare name so a later written reference

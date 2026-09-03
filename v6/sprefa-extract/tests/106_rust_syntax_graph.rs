@@ -393,3 +393,38 @@ fn an_owner_reaches_its_methods() {
         "a callable no owner reaches"
     );
 }
+
+/// D5: a const and a static state the type written at their ident, and state
+/// nothing else: no id of their own, no edge, no callable.
+#[test]
+fn a_const_and_a_static_state_their_type() {
+    let probe = Probe::read();
+    let stated: BTreeMap<String, u32> = probe
+        .rows("tsi.has_type")
+        .into_iter()
+        .map(|fact| {
+            let (start, end) = as_span(&fact.args[0]).expect("an occurrence is a range");
+            (
+                probe.slice(start, end),
+                as_id(&fact.args[1]).expect("an occurrence names a type"),
+            )
+        })
+        .collect();
+    let occurrences: Vec<&str> = stated.keys().map(String::as_str).collect();
+    assert_eq!(occurrences, vec!["BANNER", "RETRY_LIMIT"]);
+
+    let limit = probe.offset_of("RETRY_LIMIT");
+    let banner = probe.offset_of("BANNER");
+    let ranges: BTreeSet<(u32, u32)> = probe
+        .rows("tsi.has_type")
+        .into_iter()
+        .filter_map(|fact| as_span(&fact.args[0]))
+        .collect();
+    assert_eq!(
+        ranges,
+        [(limit, limit + 11), (banner, banner + 6)]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(probe.origin_text(stated["BANNER"]), "str");
+}
