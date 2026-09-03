@@ -1,0 +1,11 @@
+rel edge(src: text, dst: text).
+rel path(src: text, dst: text).
+rel fan(src: text, total: int).
+
+edge("a", "b").
+
+path(A, B) <- edge(A, B).
+path(X, Z) <- edge(X, Y), not(blocked(Y)), path(Y, Z).
+fan(S, count(D)) <- edge(S, D).
+
+? path(X, Y).
