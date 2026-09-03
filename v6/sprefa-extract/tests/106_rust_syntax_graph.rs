@@ -348,3 +348,48 @@ fn a_variant_carries_its_payload() {
     assert_eq!(named["code"].1, 1);
     assert_eq!(probe.origin_text(named["reason"].0), "String");
 }
+
+/// D4: a method is reachable from the type that owns it, and from the trait
+/// that declares it, positioned by its index among the block's fns.
+#[test]
+fn an_owner_reaches_its_methods() {
+    let probe = Probe::read();
+    let trail = probe.id_of("tsi.product", "Trail");
+    let render_trait = probe.id_of("rust.trait", "Render");
+
+    let owned = probe.edges_of(trail);
+    for label in ["is_empty", "clear", "render"] {
+        assert!(
+            probe.carries("tsi.callable", owned[label].0),
+            "the `{label}` edge does not name a callable"
+        );
+    }
+    assert_eq!(owned["is_empty"].1, 0);
+    assert_eq!(owned["clear"].1, 1);
+    assert_eq!(owned["render"].1, 0, "a trait impl block counts on its own");
+
+    let declared = probe.edges_of(render_trait);
+    let contract: Vec<&str> = declared.keys().map(String::as_str).collect();
+    assert_eq!(contract, vec!["render"]);
+    assert_eq!(declared["render"].1, 0);
+    assert_ne!(
+        declared["render"].0, owned["render"].0,
+        "the declaration and the impl took one callable"
+    );
+
+    let reached: BTreeSet<u32> = probe
+        .rows("tsi.edge")
+        .into_iter()
+        .filter_map(|fact| as_id(&fact.args[3]))
+        .collect();
+    let callables: BTreeSet<u32> = probe
+        .rows("tsi.callable")
+        .into_iter()
+        .filter_map(|fact| as_id(&fact.args[0]))
+        .collect();
+    assert_eq!(callables.len(), 4, "the fixture declares four callables");
+    assert!(
+        callables.iter().all(|id| reached.contains(id)),
+        "a callable no owner reaches"
+    );
+}

@@ -375,10 +375,19 @@ fn tsi_item(
                 strings,
                 names,
             );
-            for member in &declared.items {
-                if let syn::TraitItem::Fn(method) = member {
+            for (position, method) in declared
+                .items
+                .iter()
+                .filter_map(|member| match member {
+                    syn::TraitItem::Fn(method) => Some(method),
+                    _ => None,
+                })
+                .enumerate()
+            {
+                let callable =
                     tsi_callable(&method.sig, &scope, line_starts, strings, names, state);
-                }
+                let label = method.sig.ident.to_string();
+                names.edge(owner, &label, callable, position as i64);
             }
         }
         syn::Item::Type(declared) => {
@@ -462,10 +471,20 @@ fn tsi_impl(
             );
         }
     }
-    for member in &block.items {
-        if let syn::ImplItem::Fn(method) = member {
-            tsi_callable(&method.sig, &scope, line_starts, strings, names, state);
-        }
+    // The self type owns the method, never the block: two blocks over one type
+    // reach it through one owner.
+    for (position, method) in block
+        .items
+        .iter()
+        .filter_map(|member| match member {
+            syn::ImplItem::Fn(method) => Some(method),
+            _ => None,
+        })
+        .enumerate()
+    {
+        let callable = tsi_callable(&method.sig, &scope, line_starts, strings, names, state);
+        let label = method.sig.ident.to_string();
+        names.edge(owner, &label, callable, position as i64);
     }
 }
 
@@ -532,6 +551,8 @@ fn tsi_fields(
     }
 }
 
+/// Hands back the callable's id, which is what an owning type's member edge
+/// names. A free fn is ownerless and the id reaches nothing else.
 fn tsi_callable(
     signature: &syn::Signature,
     outer: &TsiScope,
@@ -539,7 +560,7 @@ fn tsi_callable(
     strings: &mut Strings,
     names: &mut TsiNames,
     state: &mut TsiState,
-) {
+) -> u32 {
     let callable = names.anonymous(syn_span(line_starts, signature.ident.span()));
     names.fact("tsi.callable", vec![Arg::Id(callable)]);
     let scope = tsi_generics(
@@ -569,6 +590,7 @@ fn tsi_callable(
             vec![Arg::Id(callable), Arg::Int(0), Arg::Id(target)],
         );
     }
+    callable
 }
 
 /// The application a written `Name<Args>` states, wherever written: the callee
