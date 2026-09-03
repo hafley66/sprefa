@@ -82,7 +82,11 @@ func main() {
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 			packages.NeedImports | packages.NeedDeps | packages.NeedTypes |
 			packages.NeedTypesInfo | packages.NeedSyntax | packages.NeedModule,
-		Dir: req.Root,
+		// The test files are the corpus: typescript-go's generated fourslash
+		// suite is 4,365 of its 5,097 .go files, and without this they load
+		// as no package at all.
+		Tests: true,
+		Dir:   req.Root,
 	}
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
