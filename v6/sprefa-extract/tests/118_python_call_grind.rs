@@ -8,8 +8,10 @@
 //! - lambdas named `<lambdaN>` per scope, bound, passed, returned:
 //!   lambdas/call 0%, lambdas/parameter_call 50%, lambdas/chained_calls 50%,
 //!   lambdas/return_call 50%.
-//! - `name = f()` call-result bindings through the def's single return:
-//!   returns/call 50%, direct_calls/assigned_call 50%, dicts/return 50%.
+//! - call results as values (`x = f()`, `g(f())`, `{"a": f()}`, `return f()`)
+//!   through the def's single return: returns/call 50%,
+//!   direct_calls/assigned_call 50%, dicts/return 50%, args/param_call
+//!   66.67%, dicts/return_assign 50%, returns/return_complex 83.33%.
 //! - attribute values (`b = a.func`, `return self.func`, `self.x = self.f`):
 //!   classes/assigned_call 0%, classes/tuple_assignment 25%,
 //!   classes/return_call 50%, classes/return_call_direct 50%,

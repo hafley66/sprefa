@@ -4,7 +4,7 @@ args/call	args	2	0	2	2	100.00	100.00	100.00	100.00
 args/imported_assigned_call	args	2	0	1	1	50.00	100.00	50.00	100.00
 args/imported_call	args	2	0	1	1	50.00	100.00	50.00	100.00
 args/nested_call	args	3	0	3	3	100.00	100.00	100.00	100.00
-args/param_call	args	3	0	2	2	66.67	100.00	66.67	100.00
+args/param_call	args	3	0	3	3	100.00	100.00	100.00	100.00
 assignments/chained	assignments	2	0	2	2	100.00	100.00	100.00	100.00
 assignments/recursive_tuple	assignments	6	0	6	6	100.00	100.00	100.00	100.00
 assignments/starred	assignments	4	0	4	4	100.00	100.00	100.00	100.00
@@ -50,7 +50,7 @@ dicts/new_key_param	dicts	2	0	1	1	50.00	100.00	50.00	100.00
 dicts/param	dicts	2	0	2	2	100.00	100.00	100.00	100.00
 dicts/param_key	dicts	3	0	1	1	33.33	100.00	33.33	100.00
 dicts/return	dicts	2	0	2	2	100.00	100.00	100.00	100.00
-dicts/return_assign	dicts	2	0	1	1	50.00	100.00	50.00	100.00
+dicts/return_assign	dicts	2	0	2	2	100.00	100.00	100.00	100.00
 dicts/type_coercion	dicts	1	0	1	1	100.00	100.00	100.00	100.00
 dicts/update	dicts	1	0	1	1	100.00	100.00	100.00	100.00
 direct_calls/assigned_call	direct_calls	2	0	2	2	100.00	100.00	100.00	100.00
@@ -117,13 +117,13 @@ mro/two_parents_method_defined	mro	2	0	2	2	100.00	100.00	100.00	100.00
 returns/call	returns	2	0	2	2	100.00	100.00	100.00	100.00
 returns/imported_call	returns	2	0	1	1	50.00	100.00	50.00	100.00
 returns/nested_import_call	returns	2	0	1	1	50.00	100.00	50.00	100.00
-returns/return_complex	returns	6	0	5	5	83.33	100.00	83.33	100.00
-CATEGORY:args	args	6	0	11	11	78.57	100.00		
+returns/return_complex	returns	6	0	6	6	100.00	100.00	100.00	100.00
+CATEGORY:args	args	6	0	12	12	85.71	100.00		
 CATEGORY:assignments	assignments	4	0	15	15	100.00	100.00		
 CATEGORY:builtins	builtins	3	5	4	4	100.00	100.00		
 CATEGORY:classes	classes	22	0	48	48	100.00	100.00		
 CATEGORY:decorators	decorators	7	0	20	20	90.91	100.00		
-CATEGORY:dicts	dicts	12	0	14	14	73.68	100.00		
+CATEGORY:dicts	dicts	12	0	15	15	78.95	100.00		
 CATEGORY:direct_calls	direct_calls	4	0	9	9	90.00	100.00		
 CATEGORY:dynamic	dynamic	1	1	0	0	0.00	0.00		
 CATEGORY:exceptions	exceptions	3	0	3	3	100.00	100.00		
@@ -135,4 +135,4 @@ CATEGORY:kwargs	kwargs	3	0	9	9	90.00	100.00
 CATEGORY:lambdas	lambdas	5	0	12	12	85.71	100.00		
 CATEGORY:lists	lists	8	3	10	10	76.92	100.00		
 CATEGORY:mro	mro	7	1	14	14	100.00	100.00		
-CATEGORY:returns	returns	4	0	9	9	75.00	100.00		
+CATEGORY:returns	returns	4	0	10	10	83.33	100.00		

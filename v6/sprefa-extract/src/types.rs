@@ -870,10 +870,6 @@ pub struct CallFAux {
     pub py_returns: Vec<PyReturn>,
     pub py_sub_calls: Vec<PySubCall>,
     pub py_ret_calls: Vec<PyRetCall>,
-    /// `target = <call>(...)`: the name is bound to whatever the call's def
-    /// returns. A matching `PyBind` KILL row sits at the same span, so the
-    /// byte-order lookup treats the two as one rebinding.
-    pub py_call_binds: Vec<PyCallBind>,
     /// One row per decorated def, from the OUTERMOST decorator only: the
     /// decorator call site (`span`), its callee, and the decorated def name.
     /// A decorator whose def's single return names a same-file def rebinds the
@@ -883,8 +879,8 @@ pub struct CallFAux {
 
 /// A same-file value binding: `target = <value name>` (simple alias, chained
 /// assignment, tuple/starred unpack element; the value name is a bare
-/// identifier, a trailing attribute name, or a lambda's `<lambdaN>` def
-/// name), or a container element `target[key] = value` / a literal pair / a
+/// identifier, a trailing attribute name, a lambda `<lambdaN>@<def start>`,
+/// or a call result `<call>@<function-node start>`), or a container element `target[key] = value` / a literal pair / a
 /// list slot. `key` is the literal key path: unquoted string content, or
 /// `#` + decimal for an integer / list slot, nested levels joined by `\x1f`
 /// (`d["a"][0]` is `a\x1f#0`); None for a plain name binding. Emitted in file
@@ -904,7 +900,8 @@ pub struct PyBind {
 }
 
 /// One call argument that names a value (a bare identifier, a trailing
-/// attribute name, or a lambda's `<lambdaN>` def name): `f(g)` / `f(x=g)`,
+/// attribute name, a lambda or a call result, spelled as in `PyBind`):
+/// `f(g)` / `f(x=g)`,
 /// keyed by the call site's span. The param rule reads these; a decorator
 /// application emits one too (the decorated def is the decorator's slot-0
 /// argument).
@@ -936,9 +933,10 @@ pub struct PyDefault {
     pub value: NameId,
 }
 
-/// The def spanning `def` has exactly ONE return statement and its value is a
-/// bare identifier. Resolution checks the value against the corpus; a value
-/// naming no def (a param, say) simply resolves to nothing there.
+/// The def spanning `def` has exactly ONE return statement and its value
+/// names something (spelled as in `PyBind`). Resolution checks the value
+/// against the corpus; a value naming no def (a param, say) simply resolves
+/// to nothing there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PyReturn {
     pub def: Span,
@@ -954,16 +952,6 @@ pub struct PySubCall {
     pub span: Span,
     pub base: NameId,
     pub key: NameId,
-}
-
-/// `target = f(...)`: `target` is bound to what the def behind the call site
-/// at `site` (its function-node span) returns, through that def's single
-/// return.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PyCallBind {
-    pub span: Span,
-    pub target: NameId,
-    pub site: Span,
 }
 
 /// A call whose function is itself a call (`f()(...)`): the `CallSite` with
