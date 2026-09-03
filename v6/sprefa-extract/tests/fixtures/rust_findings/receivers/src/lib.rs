@@ -53,7 +53,7 @@ pub fn make_widget() -> Result<Widget, ()> {
 }
 
 pub fn unknown_recv() -> u32 {
-    let w = mystery().into();
+    let w = mystery().wrap().into();
     w.build()
 }
 

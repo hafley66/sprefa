@@ -185,6 +185,9 @@ struct ReceiverWalk<'a> {
     strings: &'a mut Strings,
     /// Same-file fn name -> declared return type (the one-hop table).
     rets: std::collections::HashMap<String, String>,
+    /// Same-file (impl self type, method) -> declared return type, `Self`
+    /// already replaced by the block's own type.
+    assoc_rets: std::collections::HashMap<(String, String), String>,
     /// (struct, field) -> type, same-file structs only.
     fields: std::collections::HashMap<(String, String), String>,
     /// Enclosing impl self types, outermost first.
@@ -222,14 +225,18 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for ReceiverWalk<'a> {
         let bound = match &local.pat {
             syn::Pat::Ident(pat) => Some((
                 pat.ident.to_string(),
-                self.one_hop_init(local.init.as_ref().map(|i| i.expr.as_ref()))
+                self.init_type(local.init.as_ref().map(|i| i.expr.as_ref()))
+                    .map(TypeBinding::Named)
                     .unwrap_or(TypeBinding::Unknown),
             )),
             syn::Pat::Type(pat) => match &*pat.pat {
                 syn::Pat::Ident(inner) => {
                     let binding = principal_ty(&pat.ty)
                         .map(TypeBinding::Named)
-                        .or_else(|| self.one_hop_init(local.init.as_ref().map(|i| i.expr.as_ref())))
+                        .or_else(|| {
+                            self.init_type(local.init.as_ref().map(|i| i.expr.as_ref()))
+                                .map(TypeBinding::Named)
+                        })
                         .unwrap_or(TypeBinding::Unknown);
                     Some((inner.ident.to_string(), binding))
                 }
@@ -276,25 +283,87 @@ impl<'a> ReceiverWalk<'a> {
         self.scopes.iter().rev().find_map(|frame| frame.get(name))
     }
 
-    /// `let x = f(..)`: the callee's same-file declared return type, one hop.
-    fn one_hop_init(&self, init: Option<&syn::Expr>) -> Option<TypeBinding> {
+    /// `let x = <init>`: the initializer's type where the parse can read it.
+    /// `f(..)` takes the same-file fn's declared return type; `T::f(..)` and
+    /// `Self::f(..)` take the same-file impl method's, or T itself when `f`
+    /// is `new` (the one constructor name whose `-> Self` needs no reading);
+    /// `recv.m(..)` takes the same-file method's return type through the
+    /// receiver's own type, so a chain types hop by hop.
+    fn init_type(&self, init: Option<&syn::Expr>) -> Option<String> {
         let mut current = init?;
         loop {
             match current {
                 syn::Expr::Paren(p) => current = &p.expr,
                 syn::Expr::Reference(r) => current = &r.expr,
                 syn::Expr::Try(t) => current = &t.expr,
+                syn::Expr::Await(a) => current = &a.base,
                 _ => break,
             }
         }
-        let syn::Expr::Call(c) = current else {
-            return None;
-        };
-        let syn::Expr::Path(p) = c.func.as_ref() else {
-            return None;
-        };
-        let name = p.path.segments.last()?.ident.to_string();
-        self.rets.get(&name).cloned().map(TypeBinding::Named)
+        match current {
+            syn::Expr::Call(c) => {
+                let syn::Expr::Path(p) = c.func.as_ref() else {
+                    return None;
+                };
+                let name = p.path.segments.last()?.ident.to_string();
+                let count = p.path.segments.len();
+                if count == 1 {
+                    return self.rets.get(&name).cloned();
+                }
+                let owner = p
+                    .path
+                    .segments
+                    .iter()
+                    .take(count - 1)
+                    .rev()
+                    .map(|segment| segment.ident.to_string())
+                    .find(|segment| segment.chars().next().is_some_and(char::is_uppercase))?;
+                let owner = self.resolve_self(&owner)?;
+                self.assoc_rets
+                    .get(&(owner.clone(), name.clone()))
+                    .cloned()
+                    .or_else(|| (name == "new").then_some(owner))
+            }
+            syn::Expr::MethodCall(m) => {
+                let receiver = self.expr_type(&m.receiver)?;
+                self.assoc_rets
+                    .get(&(receiver, m.method.to_string()))
+                    .cloned()
+            }
+            other => self.expr_type(other),
+        }
+    }
+
+    /// A value expression's type, for the init chain: a bound name, `self`,
+    /// a same-file struct field, or a nested initializer shape.
+    fn expr_type(&self, expr: &syn::Expr) -> Option<String> {
+        match expr {
+            syn::Expr::Path(p) if p.path.segments.len() == 1 => {
+                let ident = p.path.segments[0].ident.to_string();
+                if ident == "self" {
+                    return self.impl_stack.last().cloned();
+                }
+                match self.lookup(&ident) {
+                    Some(TypeBinding::Named(ty)) => self.resolve_self(ty),
+                    _ => None,
+                }
+            }
+            syn::Expr::Field(f) => {
+                let base = self.expr_type(&f.base)?;
+                let syn::Member::Named(ident) = &f.member else {
+                    return None;
+                };
+                self.fields
+                    .get(&(base, ident.to_string()))
+                    .cloned()
+                    .and_then(|ty| self.resolve_self(&ty))
+            }
+            syn::Expr::Call(_) | syn::Expr::MethodCall(_) | syn::Expr::Paren(_)
+            | syn::Expr::Reference(_) | syn::Expr::Try(_) | syn::Expr::Await(_) => {
+                self.init_type(Some(expr))
+            }
+            _ => None,
+        }
     }
 
     fn receiver_outcome(&mut self, expr: &syn::Expr) -> ReceiverOutcome {
@@ -343,7 +412,14 @@ impl<'a> ReceiverWalk<'a> {
                         None => ReceiverOutcome::Inferred,
                     };
                 }
-                _ => return ReceiverOutcome::Inferred,
+                // A call-result receiver (`T::new().m()`, `a.b().m()`) types
+                // through the same-file return tables, else stays inferred.
+                other => {
+                    return match self.expr_type(other) {
+                        Some(ty) => ReceiverOutcome::Named(self.strings.intern(&ty)),
+                        None => ReceiverOutcome::Inferred,
+                    };
+                }
             }
         }
     }
@@ -409,6 +485,7 @@ impl<'a> ReceiverWalk<'a> {
 fn tables(
     items: &[syn::Item],
     rets: &mut std::collections::HashMap<String, String>,
+    assoc_rets: &mut std::collections::HashMap<(String, String), String>,
     fields: &mut std::collections::HashMap<(String, String), String>,
 ) {
     for item in items {
@@ -429,7 +506,10 @@ fn tables(
                         // `fn new() -> Self` returns the block's own type.
                         if let Some(ty) = output_ty(&f.sig) {
                             let ty = if ty == "Self" { self_type.clone() } else { ty };
-                            rets.entry(name).or_insert(ty);
+                            rets.entry(name.clone()).or_insert(ty.clone());
+                            assoc_rets
+                                .entry((self_type.clone(), name))
+                                .or_insert(ty);
                         }
                     }
                 }
@@ -450,7 +530,7 @@ fn tables(
             }
             syn::Item::Mod(m) => {
                 if let Some((_, inner)) = &m.content {
-                    tables(inner, rets, fields);
+                    tables(inner, rets, assoc_rets, fields);
                 }
             }
             _ => {}
@@ -466,12 +546,14 @@ pub(crate) fn collect_receivers(
     sink: &mut FamilyBundle<CallF>,
 ) {
     let mut rets = Default::default();
+    let mut assoc_rets = Default::default();
     let mut fields = Default::default();
-    tables(&parsed.items, &mut rets, &mut fields);
+    tables(&parsed.items, &mut rets, &mut assoc_rets, &mut fields);
     let mut walk = ReceiverWalk {
         line_starts,
         strings,
         rets,
+        assoc_rets,
         fields,
         impl_stack: Vec::new(),
         scopes: Vec::new(),
