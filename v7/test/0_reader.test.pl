@@ -3,6 +3,7 @@
 :- use_module('../src/0_reader/0_parser', [read_dl7/5]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
 :- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
+:- use_module('../src/2_comptime/2_compiler', [compile_unit/3]).
 
 test(standalone_fixture_has_canonical_reader_snapshot) :-
     load_dl7('v7/test/fixtures/0_minimal.dl7',
@@ -73,6 +74,36 @@ test(unterminated_tree_sitter_query_is_positioned) :-
                          unterminated_query,
                          position(14, 1, 15))
             ]).
+
+test(dotted_atom_keeps_its_written_text) :-
+    read_dl7(dotted, "(: User.T (* ))", Forms, SourceRows, Diagnostics),
+    Forms = [node(_, form([node(_, atom(':')), node(_, atom(Head)), _]))],
+    Head == 'User.T',
+    length(SourceRows, 5),
+    Diagnostics == [].
+
+test(leading_trailing_and_doubled_dots_are_rejected_by_name) :-
+    findall(Detail,
+            ( member(Text, [".a", "a.", "a..b"]),
+              read_dl7(dotted, Text, [], [],
+                       [diagnostic(reader, dotted, reader_node(dotted, 0),
+                                   Detail, position(0, 1, 1))])
+            ),
+            Details),
+    Details == [ malformed_dotted_atom('.a'),
+                 malformed_dotted_atom('a.'),
+                 malformed_dotted_atom('a..b')
+               ].
+
+test(dotted_reference_resolves_along_owner_edges) :-
+    Text = "(: Outer (* (: Inner (* (: value int)))))\n(: Cell (* (: kept Outer.Inner)))\n",
+    dl7_text_unit(dotted_path, dotted_path_source, Text, Unit, ReadDiagnostics),
+    ReadDiagnostics == [],
+    compile_unit(Unit, Compiled, CompileDiagnostics),
+    CompileDiagnostics == [],
+    Compiled = compiled_unit(_, checked_datalog(root_graph(_, Edges), _, _, _), _),
+    memberchk(':'(_, kept, ref(Target), _), Edges),
+    memberchk(':'(Target, value, _, _), Edges).
 
 test(infix_colon_rotates_to_the_canonical_prefix_tree_at_every_depth) :-
     Text = "(User: (* (id: int) (name: text)))\n((Key \"account\" Options): int)\n",

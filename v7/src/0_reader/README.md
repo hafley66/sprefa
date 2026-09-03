@@ -44,7 +44,8 @@ The one reader entry point is:
 read_dl7(+Path, +Text, -Forms, -SourceRows, -Diagnostics).
 ```
 
-It accepts atoms matching `[A-Za-z_][A-Za-z0-9_-]*`, the symbolic atoms `:`,
+It accepts atoms matching `[A-Za-z_][A-Za-z0-9_-]*` with `.` admitted between
+segments (`User.T`; never first, last or doubled), the symbolic atoms `:`,
 `*`, `+`, `->`, and `<-`, `?Name` logic variables, decimal integers, strings,
 `'Name` symbol literals, parenthesized forms, whitespace, and `;` line
 comments. Strings decode `\n`,

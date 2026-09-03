@@ -273,6 +273,11 @@ finish_token(Path, NodeId, Start, End, Index, TokenCodes, Codes, Variables,
         source_row(NodeId, Path, Start, End, Source),
         Result = ok(node(NodeId, atom(Name)), [Source], Codes, End,
                     Index, Variables)
+    ;   dotted_token(TokenCodes)
+    ->  atom_codes(Token, TokenCodes),
+        reader_diagnostic(Path, NodeId, malformed_dotted_atom(Token), Start,
+                          Diagnostic),
+        Result = error(Diagnostic)
     ;   atom_codes(Token, TokenCodes),
         reader_diagnostic(Path, NodeId, invalid_atom(Token), Start,
                           Diagnostic),
@@ -302,7 +307,23 @@ valid_atom_codes(Codes) :- valid_identifier_codes(Codes).
 
 valid_identifier_codes([First | Rest]) :-
     ( ascii_alpha(First) ; First =:= 0'_ ),
-    maplist(identifier_rest_code, Rest).
+    identifier_rest_codes(Rest).
+
+% A dot joins segments: never first, never last, never doubled.
+identifier_rest_codes([]).
+identifier_rest_codes([0'. | Rest]) :-
+    !,
+    Rest = [Next | _],
+    Next =\= 0'.,
+    identifier_rest_codes(Rest).
+identifier_rest_codes([Code | Rest]) :-
+    identifier_rest_code(Code),
+    identifier_rest_codes(Rest).
+
+dotted_token(Codes) :-
+    memberchk(0'., Codes),
+    Codes = [First | _],
+    ( ascii_alpha(First) ; First =:= 0'_ ; First =:= 0'. ).
 
 identifier_rest_code(Code) :-
     ( ascii_alpha(Code) ; decimal_digit(Code) ),

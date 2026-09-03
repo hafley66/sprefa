@@ -277,11 +277,16 @@ resolve_target(name(Owner, Name), Edges, Nodes, Visited, Resolved) :-
 %% resolve_name(+Owner, +Name, +Edges, +Nodes, +Visited, -Resolved) is semidet.
 %
 % Local owner edge first, then the reverse binding edge to the containing
-% owner; a module owner resolves the four pinned primitive names.
+% owner; a module owner resolves the four pinned primitive names. A dotted
+% name with no edge of its own spelling is a path: the head resolves as a
+% name, every later segment as an edge of the node before it.
 resolve_name(Owner, Name, Edges, Nodes, Visited, Resolved) :-
     \+ memberchk(Owner, Visited),
     (   memberchk(pending_edge(Owner, Name, Target, _), Edges)
     ->  resolve_target(Target, Edges, Nodes, [Owner | Visited], Resolved)
+    ;   dotted_segments(Name, Head, Segments)
+    ->  resolve_name(Owner, Head, Edges, Nodes, Visited, HeadResolved),
+        resolve_path(Segments, HeadResolved, Edges, Nodes, Resolved)
     ;   parent_owner(Owner, Edges, Parent),
         resolve_name(Parent, Name, Edges, Nodes, [Owner | Visited], Resolved)
     ;   memberchk(module(Owner), Nodes),
@@ -294,6 +299,18 @@ resolve_name(Owner, Name, Edges, Nodes, Visited, Resolved) :-
 
 parent_owner(Owner, Edges, Parent) :-
     memberchk(pending_edge(Parent, _, target(Owner), _), Edges).
+
+dotted_segments(Name, Head, Segments) :-
+    atom(Name),
+    atomic_list_concat([Head, Segment | Rest], '.', Name),
+    Head \== '',
+    Segments = [Segment | Rest].
+
+resolve_path([], Resolved, _, _, Resolved).
+resolve_path([Segment | Segments], ref(Node), Edges, Nodes, Resolved) :-
+    memberchk(pending_edge(Node, Segment, Target, _), Edges),
+    resolve_target(Target, Edges, Nodes, [Node], Stepped),
+    resolve_path(Segments, Stepped, Edges, Nodes, Resolved).
 
 primitive_name(int).
 primitive_name(text).
