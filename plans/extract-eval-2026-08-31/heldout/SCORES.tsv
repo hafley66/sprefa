@@ -16,12 +16,12 @@ typescript-go	go	tuning	call	syntax	scip	go.call.syntax.scip	97.12	78.35	72703	1
 trpc/trpc	ts	heldout	call	syntax	scip	ts.call.syntax.scip	44.70	9.74	628	275	5547	6450	1405	8296	864	836	4f5315219f94	
 trpc/trpc	ts	heldout	call	checker	scip	ts.call.checker.scip	44.70	9.74	628	275	5547	6450	1405	8296	864	6322	4f5315219f94	tier.tsc: the driver failed: Node.js v20.20.2
 TypeScript-5.9	ts	tuning	call	syntax	scip	ts.call.syntax.scip	61.97	28.58	19651	1364	47743	68758	31711	112706	600	2909	7e133bea121a	
-rust-analyzer	rust	tuning	call	syntax	scip	rust.call.syntax.scip	66.38	67.02	34570	7167	9847	51584	52081	149045	873	1998	af4111f0bf85	
-rust-analyzer	rust	tuning	call	checker	scip	rust.call.checker.scip	90.06	67.64	46902	7376	15061	69339	52081	149045	873	2909	af4111f0bf85	tier.rust-analyzer: the rust checker tier needs --features rust-checker; falling back to the syntax leg
-web-infra-dev/rspack	rust	heldout	call	syntax	scip	rust.call.syntax.scip	63.29	49.89	16204	6798	9476	32478	25604	94058	1367	14580	e6fa681c9a27	
 TypeScript-5.9	ts	tuning	call	checker	scip	ts.call.checker.scip	68.61	29.41	21757	1296	50914	73967	31711	112706	600	23297	7e133bea121a	
-web-infra-dev/rspack	rust	heldout	call	checker	scip	rust.call.checker.scip	63.29	49.89	16204	6798	9476	32478	25604	94058	1367	12910	e6fa681c9a27	tier.rust-analyzer: the rust checker tier needs --features rust-checker; falling back to the syntax leg
-BigPizzaV3/CodexPlusPlus	rust	heldout	call	syntax	scip	rust.call.syntax.scip	86.79	71.30	6006	1132	1285	8423	6920	18647	121	1367	f70ec61a4a0a	
-BigPizzaV3/CodexPlusPlus	rust	heldout	call	checker	scip	rust.call.checker.scip	86.79	71.30	6006	1132	1285	8423	6920	18647	121	503	f70ec61a4a0a	tier.rust-analyzer: the rust checker tier needs --features rust-checker; falling back to the syntax leg
-rust-lang/rust-clippy	rust	heldout	call	syntax	scip	rust.call.syntax.scip	91.64	45.03	7038	2132	6460	15630	7680	18579	2345	1427	a11da7171d91	
-rust-lang/rust-clippy	rust	heldout	call	checker	scip	rust.call.checker.scip	91.64	45.03	7038	2132	6460	15630	7680	18579	2345	1375	a11da7171d91	tier.rust-analyzer: the rust checker tier needs --features rust-checker; falling back to the syntax leg
+rust-analyzer	rust	tuning	call	syntax	scip	rust.call.syntax.scip	66.38	67.02	34570	7167	9847	51584	52081	149045	873	1344	af4111f0bf85	
+rust-analyzer	rust	tuning	call	checker	scip	rust.call.checker.scip	90.06	71.24	46905	4986	13949	65840	52081	149045	873	18264	af4111f0bf85	tier.rust-analyzer: /Users/chrishafley/projects/rust-analyzer/crates/proc-macro-srv/proc-macro-test/imp/src/lib.rs: owns no module in the loaded crate graph (cfg-gated, or outside every crate root) | 
+web-infra-dev/rspack	rust	heldout	call	syntax	scip	rust.call.syntax.scip	63.29	49.89	16204	6798	9476	32478	25604	94058	1367	13935	e6fa681c9a27	
+web-infra-dev/rspack	rust	heldout	call	checker	scip	rust.call.checker.scip	83.74	64.14	21441	3177	8810	33428	25604	94058	1367	98909	e6fa681c9a27	tier.rust-analyzer: /private/tmp/heldout-checkouts/web-infra-dev_rspack/crates/rspack_core/src/debug_info.rs: owns no module in the loaded crate graph (cfg-gated, or outside every crate root) | tier.r
+BigPizzaV3/CodexPlusPlus	rust	heldout	call	syntax	scip	rust.call.syntax.scip	86.79	71.30	6006	1132	1285	8423	6920	18647	121	396	f70ec61a4a0a	
+BigPizzaV3/CodexPlusPlus	rust	heldout	call	checker	scip	rust.call.checker.scip	89.36	81.84	6184	602	770	7556	6920	18647	121	13071	f70ec61a4a0a	tier.rust-analyzer: /private/tmp/heldout-checkouts/BigPizzaV3_CodexPlusPlus/crates/codex-plus-core/src/windows_integration.rs: owns no module in the loaded crate graph (cfg-gated, or outside every cra
+rust-lang/rust-clippy	rust	heldout	call	syntax	scip	rust.call.syntax.scip	91.64	45.03	7038	2132	6460	15630	7680	18579	2345	1354	a11da7171d91	
+rust-lang/rust-clippy	rust	heldout	call	checker	scip	rust.call.checker.scip	92.32	46.21	7090	1940	6314	15344	7680	18579	2345	9523	a11da7171d91	tier.rust-analyzer: /private/tmp/heldout-checkouts/rust-lang_rust-clippy/clippy_dev/src/deprecate_lint.rs: owns no module in the loaded crate graph (cfg-gated, or outside every crate root) | tier.rust

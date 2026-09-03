@@ -8,6 +8,7 @@ Hand-written beside the generated sections. Every number is from `SCORES.tsv`, `
 | ts.call.syntax.scip, TypeScript-5.9 | 1.61 | 61.97 | 88.20 (tsc oracle) |
 | ts.call.checker.scip, TypeScript-5.9 | 1.78 | 68.61 | 95.02 (tsc oracle) |
 | rust.call.syntax.scip, rust-analyzer | 26.01 | 66.38 | (RATCHET has no scip row) |
+| rust.call.checker.scip, rust-analyzer | 33.13 | 90.06 | (RATCHET has no scip row) |
 
 Two changes moved the ts control, both in `run.py`: the callee filter (`is_callable_symbol`, `().` descriptor) and the file scope (the tuning run now walks `src/**` minus `src/lib` the way `tests/bench/mod.rs` `wants` does; the whole-repo walk sampled 4,864 files of which 600 were under `src/`, and read 5.37 after the filter alone).
 
@@ -36,9 +37,18 @@ Caller-name rows read `oracle=transformES2018 ours=visitFunctionExpression`, `or
 
 The driver's stderr (`$TMPDIR/sprefa-ts-checker-*/indexer.stderr.log`) reads `RangeError: Maximum call stack size exceeded` at `typescript.js:60064 getNameOfSymbolAsWritten` (trpc) and `:121490 pipelineEmitWithHintWorker` (TypeScript-5.9 tests/cases). The ledger only keeps the last stderr line (`scip_ensure.rs:642` `stderr_tail`). Site: `src/lang/ts_checker.mjs` (the driver) and the spawn at `src/lang/ts_checker.rs:410` `run_capped(&["node", script, request], ...)`; a `--stack-size` on the node argv is the shape, and neither file is this lane's. Recorded here, not fixed.
 
-### 4.4 rust checker rows carry a decline: the binary was built without `rust-checker`
+### 4.4 rust checker rows: real answers with per-file partial declines
 
-Every `rust.call.checker.scip` row reads `tier.rust-analyzer: the rust checker tier needs --features rust-checker; falling back to the syntax leg`. The row is the syntax leg run with `--witness --project-root`; on rust-analyzer that alone reads 90.06 against 66.38 for the plain syntax run (the project root unlocks the workspace module plane), on rspack, CodexPlusPlus and clippy the two rows are byte-equal. A `--features cli,ts-checker,rust-checker` build was started in the lane (cold, ra_ap crates) and did not land inside the lane's window; rerun `run.py tuning --lang rust` and `run.py heldout --lang rust` with that binary to replace these rows.
+The first pass ran a binary built without `rust-checker`; every checker row carried `tier.rust-analyzer: the rust checker tier needs --features rust-checker; falling back to the syntax leg` and equalled its syntax row on rspack, CodexPlusPlus and clippy (rust-analyzer alone read 90.06 against 66.38, the `--project-root` module plane). The `--features cli,ts-checker,rust-checker` release build landed (cold, 510 units, one attempt) and the rust rows were replaced:
+
+| run | syntax | checker (feature off) | checker (rust-analyzer) | decline now |
+|---|---|---|---|---|
+| rust-analyzer (control) | 66.38 / 67.02 | 90.06 / 67.64 | 90.06 / 71.24 | `crates/proc-macro-srv/proc-macro-test/imp/src/lib.rs: owns no module in the loaded crate graph` |
+| rspack | 63.29 / 49.89 | 63.29 / 49.89 | 83.74 / 64.14 | `crates/rspack_core/src/debug_info.rs: owns no module ...` |
+| CodexPlusPlus | 86.79 / 71.30 | 86.79 / 71.30 | 89.36 / 81.84 | `crates/codex-plus-core/src/windows_integration.rs: owns no module ...` |
+| rust-clippy | 91.64 / 45.03 | 91.64 / 45.03 | 92.32 / 46.21 | `clippy_dev/src/deprecate_lint.rs: owns no module ...` |
+
+The surviving decline text is a per-file partial (cfg-gated files, or files outside every crate root), one `tier.rust-analyzer` diagnostic per such file, truncated to 200 chars in the ledger column. Checker wall on rspack: 98.9 s for 1,367 files (`wall_ms` column), over the 10-second law and filed as a cost row, not a budget.
 
 ### 4.5 Cache and reuse notes
 
