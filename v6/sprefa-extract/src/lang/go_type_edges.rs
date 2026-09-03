@@ -9,7 +9,7 @@ use crate::family::TypeF;
 use crate::rows::FamilyBundle;
 use crate::shape::{Span, Strings};
 use crate::tsi::Arg;
-use crate::types::TsiNames;
+use crate::types::{span_arg, TsiNames};
 
 use super::go::{go_node_span, go_text};
 
@@ -104,6 +104,24 @@ fn tsi_declaration(
             tsi_callable(node, name_node, outer, src, strings, names, state);
         }
         "method_declaration" => tsi_method(node, outer, src, strings, names, state),
+        "const_declaration" | "var_declaration" => {
+            let mut specs = node.walk();
+            for spec in node.children(&mut specs) {
+                if !matches!(spec.kind(), "const_spec" | "var_spec") {
+                    continue;
+                }
+                let Some(ty) = spec.child_by_field_name("type") else {
+                    continue;
+                };
+                let target = tsi_type_id(ty, outer, src, strings, names, state);
+                for name_node in field_children(spec, "name") {
+                    names.fact(
+                        "tsi.has_type",
+                        vec![span_arg(go_node_span(name_node)), Arg::Id(target)],
+                    );
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -528,6 +546,9 @@ fn tsi_type_id(
     if let Some(&id) = scope.get(text) {
         return id;
     }
+    if let Some(class) = PRIMITIVE_CLASSES.iter().find(|class| **class == text) {
+        return tsi_primitive_id(class, names, state);
+    }
     let id = names.named(strings, text, origin_span(node));
     if node.kind() == "generic_type" {
         tsi_application(id, node, scope, src, strings, names, state);
@@ -574,6 +595,23 @@ fn tsi_application(
         );
         position += 1;
     }
+}
+
+/// A primitive is declared by the language, so it carries a class rather than
+/// an origin: no range in this file declares it.
+fn tsi_primitive_id(class: &'static str, names: &mut TsiNames, state: &mut TsiState) -> u32 {
+    if let Some(&id) = state.classes.get(class) {
+        return id;
+    }
+    let id = names.bare_id();
+    names.fact("tsi.type", vec![Arg::Id(id)]);
+    names.fact(
+        "tsi.primitive",
+        vec![Arg::Id(id), Arg::Atom(class.to_string())],
+    );
+    names.name(id, class);
+    state.classes.insert(class, id);
+    id
 }
 
 fn strip_type(node: Node) -> Node {
