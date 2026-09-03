@@ -66,9 +66,8 @@
 (: () (* ))
 
 ; Go builtins. `error` and `any` are an interface and an alias in the
-; universe scope, so they are not primitives.
-(: int (* ))
-
+; universe scope; `int` is the checker's pinned primitive, so neither
+; is declared here and the loader reports the class as absent.
 (: int8 (* ))
 
 (: int16 (* ))

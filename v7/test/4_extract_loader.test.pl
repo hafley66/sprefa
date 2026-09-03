@@ -215,7 +215,7 @@ test(go_stream_binds_every_builtin_class_in_the_prelude) :-
             member(diagnostic(_, _, tsi_primitive_class_absent(Class)),
                    Diagnostics),
             Absent),
-    Absent == [].
+    Absent == [int].
 
 test(a_loaded_product_proves_conformance_to_an_authored_contract) :-
     compile_dl7_project(
