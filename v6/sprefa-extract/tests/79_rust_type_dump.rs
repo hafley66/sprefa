@@ -16,9 +16,18 @@ fn dump_rust_type_rows() {
         panic!("set RUST_TYPE_DUMP=<path>");
     };
     let corpus = bench::corpus("rust");
-    assert!(corpus.root.is_dir(), "corpus root {} missing", corpus.root.display());
+    assert!(
+        corpus.root.is_dir(),
+        "corpus root {} missing",
+        corpus.root.display()
+    );
     let measurement = bench::run("rust", bench::Tier::Checker);
-    let body: Vec<&str> = measurement.forms.type_edges.iter().map(String::as_str).collect();
+    let body: Vec<&str> = measurement
+        .forms
+        .type_edges
+        .iter()
+        .map(String::as_str)
+        .collect();
     std::fs::write(&out, body.join("\n") + "\n").unwrap();
     println!("wrote {} rows to {out}", body.len());
     if let Ok(calls) = std::env::var("RUST_CALL_DUMP") {
@@ -50,18 +59,29 @@ fn dump_shape_census() {
         panic!("set SHAPE_CENSUS=<path>");
     };
     let corpus = bench::corpus("rust");
-    assert!(corpus.root.is_dir(), "corpus root {} missing", corpus.root.display());
+    assert!(
+        corpus.root.is_dir(),
+        "corpus root {} missing",
+        corpus.root.display()
+    );
     let files = bench::enumerate(&corpus);
     let root = corpus.root.to_str().unwrap().to_string();
     let mut rows: BTreeSet<String> = BTreeSet::new();
     for path in &files {
-        let Ok(text) = std::fs::read_to_string(path) else { continue };
-        let Ok(parsed) = syn::parse_file(&text) else { continue };
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(parsed) = syn::parse_file(&text) else {
+            continue;
+        };
         let rel = path
             .strip_prefix(&corpus.root)
             .map(|rel| rel.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.to_string_lossy().to_string());
-        let mut walk = Census { rel, rows: &mut rows };
+        let mut walk = Census {
+            rel,
+            rows: &mut rows,
+        };
         for item in &parsed.items {
             walk.item(item);
         }
@@ -83,8 +103,7 @@ impl Census<'_> {
         }
         self.rows.insert(format!(
             "{}\t{owner}\t{dst}\t{root}\t{leaf}\t{}",
-            self.rel,
-            qualified as u8
+            self.rel, qualified as u8
         ));
     }
 
@@ -269,7 +288,9 @@ impl Census<'_> {
                 self.ty(&owner, &alias.ty, "alias-rhs", "head");
             }
             syn::Item::Impl(imp) => {
-                let Some(owner) = self_ty_head(&imp.self_ty) else { return };
+                let Some(owner) = self_ty_head(&imp.self_ty) else {
+                    return;
+                };
                 self.ty(&owner, &imp.self_ty, "impl-self-ty", "head");
                 self.generics(&owner, &imp.generics);
                 if let Some((_, path, _)) = &imp.trait_ {

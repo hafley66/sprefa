@@ -31,13 +31,21 @@ fn fixture(name: &str) -> PathBuf {
 
 /// The resolved call rows of one resolve over the whole fixture dir.
 fn rows(extra: &[&str]) -> Vec<(String, Option<String>, String, Option<String>)> {
-    let mut paths = vec![fixture("macros.rs"), fixture("user.rs"), fixture("decoys.rs")];
+    let mut paths = vec![
+        fixture("macros.rs"),
+        fixture("user.rs"),
+        fixture("decoys.rs"),
+    ];
     for name in extra {
         paths.push(fixture(name));
     }
     let facts = resolve_project(&ResolveRequest {
         paths: &paths,
-        arms: ResolveArms { call: true, types: false, flow: false },
+        arms: ResolveArms {
+            call: true,
+            types: false,
+            flow: false,
+        },
         scip: Default::default(),
         project_root: None,
         scip_records: Default::default(),

@@ -26,9 +26,8 @@ use super::astgrep::{AstGrepParser, CstProjector};
 use super::ts_resolve::{ImportedName, ResolvedImport, TsModuleIndex};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
-    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
-    SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
-    ResolutionOrigin,
+    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, ResolutionOrigin, SigSlot,
+    Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range_cached, definition_of, join_documents, site_occurrence};
@@ -3918,11 +3917,7 @@ fn resolve_type_dst(
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match sites {
-        [only] => Some((
-            only.blob.clone(),
-            only.span,
-            ResolutionOrigin::CorpusUnique,
-        )),
+        [only] => Some((only.blob.clone(), only.span, ResolutionOrigin::CorpusUnique)),
         _ => None,
     }
 }
@@ -3959,9 +3954,7 @@ impl Resolve<TypeF> for TsSource {
             let zero = || (ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved);
             let name_match = || {
                 modules
-                    .and_then(|(modules, path)| {
-                        module_target(modules, path, referenced, None).ok()
-                    })
+                    .and_then(|(modules, path)| module_target(modules, path, referenced, None).ok())
                     .flatten()
                     .map(|found| {
                         (
@@ -4676,8 +4669,9 @@ impl Resolve<CallF> for TsSource {
                         .map(|(blob, span)| (blob, span, ResolutionOrigin::Receiver))
                         .or_else(name_match)
                 }
-                (None, None) if receiver.is_some() => recv_t
-                    .map(|(blob, span)| (blob, span, ResolutionOrigin::Receiver)),
+                (None, None) if receiver.is_some() => {
+                    recv_t.map(|(blob, span)| (blob, span, ResolutionOrigin::Receiver))
+                }
                 (None, None) => name_match(),
             };
             let own_kind = match (&import_t, &seat_t) {
@@ -4705,26 +4699,25 @@ impl Resolve<CallF> for TsSource {
             };
             // The CHECKER tier: the compiler's own answer for this site wins
             // over the name match, the receiver leg and scip alike.
-            let final_t = match checker
-                .and_then(|(index, path)| index.call_at(path, site.span, callee))
-            {
-                Some(TsCheckerAnswer::Corpus(blob, span)) => {
-                    // The syntax legs already ran; witnessing keeps their answer
-                    // instead of dropping it on the floor.
-                    if cx.witness {
-                        displaced[ix] = syntax_t;
+            let final_t =
+                match checker.and_then(|(index, path)| index.call_at(path, site.span, callee)) {
+                    Some(TsCheckerAnswer::Corpus(blob, span)) => {
+                        // The syntax legs already ran; witnessing keeps their answer
+                        // instead of dropping it on the floor.
+                        if cx.witness {
+                            displaced[ix] = syntax_t;
+                        }
+                        Some((
+                            (blob, span),
+                            CallEdgeKind::CheckerResolve,
+                            ResolutionOrigin::Checker,
+                        ))
                     }
-                    Some((
-                        (blob, span),
-                        CallEdgeKind::CheckerResolve,
-                        ResolutionOrigin::Checker,
-                    ))
-                }
-                // No corpus definition IS this callee, so no name-match leg
-                // may invent one.
-                Some(TsCheckerAnswer::External) => None,
-                None => syntax_t,
-            };
+                    // No corpus definition IS this callee, so no name-match leg
+                    // may invent one.
+                    Some(TsCheckerAnswer::External) => None,
+                    None => syntax_t,
+                };
             // The one-hop return-type inference: a `const x = f()` init call
             // that just resolved hands its declared return type to the var, in
             // source order, keyed by the covering def.

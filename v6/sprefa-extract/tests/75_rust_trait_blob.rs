@@ -75,5 +75,9 @@ fn trait_edge_targets_the_callers_own_declaration() {
         edges.contains(&("g".into(), "b.rs".into())),
         "b.rs's call must target b.rs's area, got {edges:?}"
     );
-    assert_eq!(edges.len(), 2, "no other call edges expected, got {edges:?}");
+    assert_eq!(
+        edges.len(),
+        2,
+        "no other call edges expected, got {edges:?}"
+    );
 }

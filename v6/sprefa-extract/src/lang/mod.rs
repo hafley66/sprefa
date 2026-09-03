@@ -27,18 +27,20 @@ pub mod rust;
 pub mod rust_checker;
 #[cfg(feature = "rust-checker")]
 mod rust_checker_ra;
+pub mod rust_docs;
 pub mod rust_mbe;
 pub mod rust_modules;
 pub mod rust_receivers;
 pub mod rust_rehome;
 pub mod rust_rename;
-pub mod rust_docs;
 pub mod rust_scip_macros;
 pub mod rust_type_edges;
 pub mod rust_type_refs;
+#[path = "2_source_query.rs"]
+pub mod source_query;
 pub mod ts;
-pub mod ts_paths;
 pub mod ts_checker;
+pub mod ts_paths;
 pub mod ts_receivers;
 pub mod ts_rehome;
 pub mod ts_rename;
@@ -65,6 +67,10 @@ pub use markdown::MarkdownSource;
 pub use prolog::PrologSource;
 pub use python::PythonSource;
 pub use rust::RustSource;
+pub use source_query::{
+    query_source, query_tree_sitter, SourceQuery, SourceQueryError, SourceQueryOutput,
+    TreeSitterQuery, TreeSitterQueryMatch,
+};
 pub use ts::{
     ts_specifiers, CallProjector, DfProjector, OxcParser, TsSource, TsSpecifier, TypeProjector,
 };

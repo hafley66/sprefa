@@ -553,7 +553,10 @@ fn the_complete_claims_are_exactly_the_enumerated_relations() {
         .filter(|((run, _), complete)| *run == semantic && **complete)
         .map(|((_, relation), _)| relation.as_str())
         .collect();
-    assert_eq!(complete, COMPLETE.iter().copied().collect::<BTreeSet<&str>>());
+    assert_eq!(
+        complete,
+        COMPLETE.iter().copied().collect::<BTreeSet<&str>>()
+    );
 
     let partial: BTreeSet<&str> = coverage
         .iter()
@@ -581,7 +584,9 @@ fn the_complete_claims_are_exactly_the_enumerated_relations() {
         assert!(emitted.contains(relation), "{relation} claims an empty set");
     }
     assert!(
-        !coverage.iter().any(|((run, _), complete)| *run == 0 && *complete),
+        !coverage
+            .iter()
+            .any(|((run, _), complete)| *run == 0 && *complete),
         "the syntax run enumerates nothing"
     );
 }
@@ -596,7 +601,11 @@ fn a_recursive_type_closes_through_its_own_id() {
     assert!(walk.carries("ts.interface", node));
 
     let next = walk.edge(node, "next");
-    assert_eq!(as_id(&next.args[3]), Some(node), "the edge closes the cycle");
+    assert_eq!(
+        as_id(&next.args[3]),
+        Some(node),
+        "the edge closes the cycle"
+    );
     assert_eq!(as_int(&next.args[4]), Some(1));
     let value = walk.edge(node, "value");
     assert!(walk

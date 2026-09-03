@@ -1,6 +1,12 @@
 # DL7 programmable source intelligence vision
 
-Status: vision and boundary map. This document authorizes no new kernel form.
+Status: active implementation driver and boundary map. This document authorizes
+no new kernel form.
+
+This file is the authoritative driver for this arc. Every implementation commit
+must update the affected task state, architectural description, and verification
+receipt here. A code change without its corresponding document change is
+incomplete.
 
 ## End-goal table of contents
 
@@ -248,6 +254,23 @@ same logical operation
 
 ## Source intelligence
 
+### Host query facade
+
+[`v6/sprefa-extract/src/lang/2_source_query.rs`](../v6/sprefa-extract/src/lang/2_source_query.rs)
+provides one `query_source(path, content, query)` library entrypoint. Its input
+sum has three arms:
+
+```text
+SourceQuery
+  ├── TreeSitter(TreeSitterQuery)
+  ├── AstPatterns(list(AstPatternQuery))
+  └── AstRule(AstRuleRequest)
+```
+
+The output sum retains the corresponding existing result type. This boundary
+selects and runs an engine. Normalization into shared source occurrence, match,
+and capture facts follows the review gate below.
+
 ### Tree-sitter path
 
 DL7 preserves the native tree-sitter query as an S-expression value. The host
@@ -445,10 +468,12 @@ language adapters. They add no kernel form or source-specific schema.
    <!-- todo(feature): Compiler-time section: implement the grounded-operation loop, stable operation identity, one-dispatch-per-generation, observation injection, convergence, diagnostics, tracing, and measured transport selection. -->
 
 3. **Source intelligence**
-   1. Put the existing tree-sitter query runner, ast-grep pattern runner, and
-      composed `AstRule` runner behind one Rust host facade.
-   2. Preserve tree-sitter's native S-expression query value without translating
-      it into the ast-grep rule algebra.
+   1. **Complete:** Put the existing tree-sitter query runner, ast-grep
+      pattern runner, and composed `AstRule` runner behind one Rust host facade.
+      Preserve each engine's current result shape in a distinct output variant;
+      canonical match facts remain behind task 4's review gate.
+   2. **Complete:** Preserve tree-sitter's native S-expression query value
+      without translating it into the ast-grep rule algebra.
    3. Design the ordinary DL7 product and sum values corresponding to the
       existing `AstRule` tree, then review their names before implementation.
    4. Approve canonical source-occurrence, match, and capture facts.
@@ -550,6 +575,7 @@ language adapters. They add no kernel form or source-specific schema.
       effect runner.
    5. Update this inventory and `PLANS.md` whenever a slice closes or a decision
       changes its branch.
+   6. Update this document in the same commit as every implementation slice.
 
    <!-- todo(feature): Delivery and verification section: land boundary-sized slices with deterministic receipts, focused tests, full V7 gates, dispatch and parse counts, fixpoint metrics, wall time, and peak memory. -->
 
@@ -590,14 +616,20 @@ Each delivery slice must prove one boundary with a deterministic fixture:
 13. A changed source document produces a named drift result containing the
     source and generated-document identities.
 
-This vision-only edit adds, changes, and removes zero CI coverage.
+Current implementation receipts:
+
+- `cargo test --manifest-path v6/sprefa-extract/Cargo.toml --test 30_ast_rule`:
+  6 passed. The added test dispatches all three facade arms and checks their
+  distinct result variants.
+- `cargo test --manifest-path v6/sprefa-extract/Cargo.toml --test 9_query_cli`:
+  8 passed. Existing tree-sitter CLI output, predicates, grammars, errors, and
+  Git blob reads remain covered.
+
+The current slice adds one focused facade test and changes no full-suite gate.
 
 ## Staffing
 
-- Current slice: direct documentation edit in the existing checkout.
-- Base SHA: whatever commit contains this document when reviewed.
-- Worktree: none for the vision document.
-- Suite budget: zero implementation suites; run only the plans-index generator
-  required by the repository's plan convention.
-- Future implementation: one reviewed slice per delivery-sequence item, with a
-  dedicated worktree and model selected after the corresponding decision gate.
+- Current branch: `feature/dl7-source-intelligence`.
+- Baseline vision commit: `3f89ac108`.
+- Current slice: host query facade, followed by the match-fact design review.
+- Implementation proceeds one reviewed boundary per delivery-sequence item.

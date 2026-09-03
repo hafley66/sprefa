@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use ra_ap_hir::{
-    Adt, AssocItem, Crate, Field, Function, GenericDef, HirDisplay, Impl, ModuleDef, PathResolution,
-    Semantics, Type, attach_db,
+    attach_db, Adt, AssocItem, Crate, Field, Function, GenericDef, HirDisplay, Impl, ModuleDef,
+    PathResolution, Semantics, Type,
 };
 use ra_ap_ide::{AnalysisHost, NavigationTarget, RootDatabase, TryToNav};
-use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
+use ra_ap_load_cargo::{load_workspace_at, LoadCargoConfig, ProcMacroServerChoice};
 use ra_ap_project_model::{CargoConfig, RustLibSource};
-use ra_ap_syntax::{AstNode, ast};
+use ra_ap_syntax::{ast, AstNode};
 
 use super::rust_checker::{CheckerAnswers, CheckerError, CheckerRef, OffsetMap};
 use crate::tsi::{Arg, CoverageClaim, FactOut};
@@ -66,7 +66,9 @@ pub fn answer(
     // envelope reads it: a leaf type's origin names the file declaring it.
     let mut path_of: HashMap<ra_ap_ide::FileId, String> = HashMap::new();
     for (vfs_id, vfs_path) in vfs.iter() {
-        let Some(absolute) = vfs_path.as_path() else { continue };
+        let Some(absolute) = vfs_path.as_path() else {
+            continue;
+        };
         let text = absolute.to_string();
         let key = std::fs::canonicalize(&text).unwrap_or_else(|_| PathBuf::from(&text));
         let file_id = ra_ap_ide::FileId::from_raw(vfs_id.index());
@@ -81,7 +83,10 @@ pub fn answer(
     let host = AnalysisHost::with_database(db);
     let db = host.raw_database();
     let walk_started = Instant::now();
-    let mut answers = CheckerAnswers { load, ..CheckerAnswers::default() };
+    let mut answers = CheckerAnswers {
+        load,
+        ..CheckerAnswers::default()
+    };
 
     // The next-solver interner reads a THREAD-attached db; without this every
     // resolve panics in hir_ty's `next_solver/interner.rs`.
@@ -90,7 +95,11 @@ pub fn answer(
         by_file_id
             .iter()
             .map(|(file_id, path)| {
-                let text = sema.parse_guess_edition(*file_id).syntax().text().to_string();
+                let text = sema
+                    .parse_guess_edition(*file_id)
+                    .syntax()
+                    .text()
+                    .to_string();
                 WalkFile {
                     path: (*path).to_string(),
                     file_id: *file_id,
@@ -109,7 +118,10 @@ pub fn answer(
     // A salsa handle shares the storage and carries a thread-local query stack,
     // so it is Send and NOT Sync: each chunk owns a moved clone, never a borrow.
     let pool = crate::project::extract_pool();
-    let chunk_size = walk_files.len().div_ceil(pool.current_num_threads().max(1)).max(1);
+    let chunk_size = walk_files
+        .len()
+        .div_ceil(pool.current_num_threads().max(1))
+        .max(1);
     let chunks: Vec<(RootDatabase, &[WalkFile])> = walk_files
         .chunks(chunk_size)
         .map(|chunk| (db.clone(), chunk))
@@ -167,7 +179,10 @@ fn walk_file(
     file: &WalkFile,
 ) -> FileAnswers {
     let source = sema.parse_guess_edition(file.file_id);
-    let mut out = FileAnswers { path: file.path.clone(), ..FileAnswers::default() };
+    let mut out = FileAnswers {
+        path: file.path.clone(),
+        ..FileAnswers::default()
+    };
     for node in source.syntax().descendants() {
         if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
             out.method_sites += 1;

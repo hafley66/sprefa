@@ -225,12 +225,7 @@ fn bound_candidate(
 
 /// One candidate per named reference under a path's GENERIC ARGUMENTS, the
 /// `collect_path_args` recursion a field type already gets through `type_refs`.
-fn arg_candidates(
-    owner: Span,
-    path: &Path,
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<TypeF>,
-) {
+fn arg_candidates(owner: Span, path: &Path, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
     let mut args = Vec::new();
     collect_path_args(path, &mut args);
     args.sort();

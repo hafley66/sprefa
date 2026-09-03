@@ -1,6 +1,7 @@
 use sprefa_extract::{
-    content_id_of, decode_ast_rule_yaml, query_ast_rule, query_patterns, AstCaptureFact,
-    AstPatternQuery, AstRule, AstRuleError, AstRuleRequest, NamedAstRule, StopBy,
+    content_id_of, decode_ast_rule_yaml, query_ast_rule, query_patterns, query_source,
+    AstCaptureFact, AstPatternQuery, AstRule, AstRuleError, AstRuleRequest, NamedAstRule,
+    SourceQuery, SourceQueryOutput, StopBy, TreeSitterQuery,
 };
 
 fn request(rule: AstRule) -> AstRuleRequest {
@@ -173,4 +174,55 @@ fn pattern_query_preserves_contextual_selector_and_requested_captures() {
             },
         ]
     );
+}
+
+#[test]
+fn source_query_facade_preserves_each_engine_result_shape() {
+    let source = b"fn main() { println!(\"hello\"); }";
+
+    let tree_sitter = query_source(
+        "main.rs",
+        source,
+        &SourceQuery::TreeSitter(TreeSitterQuery {
+            language: "rust".into(),
+            query: "(function_item name: (identifier) @name) @item".into(),
+        }),
+    )
+    .expect("tree-sitter query");
+    let SourceQueryOutput::TreeSitter(tree_sitter) = tree_sitter else {
+        panic!("tree-sitter output variant")
+    };
+    assert_eq!(
+        serde_json::to_string(&tree_sitter).unwrap(),
+        r#"[{"end_line":1,"item":"fn main() { println!(\"hello\"); }","line":1,"name":"main"}]"#
+    );
+
+    let patterns = query_source(
+        "main.rs",
+        source,
+        &SourceQuery::AstPatterns(vec![AstPatternQuery {
+            id: "print_message".into(),
+            pattern: "println!($MESSAGE)".into(),
+            selector: None,
+            captures: vec!["MESSAGE".into()],
+        }]),
+    )
+    .expect("ast-grep pattern query");
+    let SourceQueryOutput::AstPatterns(patterns) = patterns else {
+        panic!("ast-grep pattern output variant")
+    };
+    assert_eq!(patterns[0].query, "print_message");
+    assert_eq!(patterns[0].text, "\"hello\"");
+
+    let rule = query_source(
+        "main.rs",
+        source,
+        &SourceQuery::AstRule(request(AstRule::Pattern("println!($MESSAGE)".into()))),
+    )
+    .expect("composed ast-grep rule");
+    let SourceQueryOutput::AstRule(rule) = rule else {
+        panic!("composed ast-grep output variant")
+    };
+    assert_eq!(rule[0].query, "rule");
+    assert_eq!(rule[0].captures[0].name, "MESSAGE");
 }

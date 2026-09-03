@@ -38,8 +38,8 @@ use crate::scip_decode::load_index;
 use crate::scip_ensure::{run_capped, Capped};
 use crate::shape::Span;
 use crate::types::{
-    DefMap, OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, SymbolId,
-    ScipSource,
+    DefMap, OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, ScipSource,
+    SymbolId,
 };
 
 /// One budgeted indexer attempt, translated to the seam's error vocabulary.

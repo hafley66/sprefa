@@ -225,13 +225,7 @@ mod sink {
             row.facts += facts;
         }
 
-        fn fold_phase(
-            &self,
-            lang: String,
-            phase: Phase,
-            busy: Duration,
-            counts: (u64, u64, u64),
-        ) {
+        fn fold_phase(&self, lang: String, phase: Phase, busy: Duration, counts: (u64, u64, u64)) {
             let mut phases = self.phases.lock().expect("summary phases");
             let row = phases.entry((lang, phase)).or_default();
             row.micros += busy.as_micros();
@@ -531,12 +525,10 @@ mod sink {
             // `parse` and `family` predate the phase axis, so they feed both
             // tables: the family one keeps its shape, the phase one is complete.
             match counts.name {
-                "parse" => self.state.fold_phase(
-                    counts.lang.clone(),
-                    Phase::Parse,
-                    counts.busy,
-                    (1, 0, 0),
-                ),
+                "parse" => {
+                    self.state
+                        .fold_phase(counts.lang.clone(), Phase::Parse, counts.busy, (1, 0, 0))
+                }
                 "family" => self.state.fold_phase(
                     counts.lang.clone(),
                     Phase::Family,

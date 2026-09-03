@@ -445,9 +445,7 @@ fn an_associated_type_is_declared_by_a_trait_and_answered_by_an_impl() {
     let mut implemented: Vec<&FactOut> = walk
         .rows_of("rust.impl")
         .into_iter()
-        .filter(|fact| {
-            as_id(&fact.args[1]) == Some(user) && as_id(&fact.args[2]) == Some(mapper)
-        })
+        .filter(|fact| as_id(&fact.args[1]) == Some(user) && as_id(&fact.args[2]) == Some(mapper))
         .collect();
     assert_eq!(implemented.len(), 1, "the fixture writes one impl");
     implemented.remove(0);
@@ -533,12 +531,7 @@ fn a_sum_carries_one_product_per_variant() {
     let mut variants: Vec<(i64, String)> = walk
         .edges_of(shape)
         .into_iter()
-        .filter_map(|fact| {
-            Some((
-                as_int(&fact.args[4])?,
-                as_text(&fact.args[2])?.to_string(),
-            ))
-        })
+        .filter_map(|fact| Some((as_int(&fact.args[4])?, as_text(&fact.args[2])?.to_string())))
         .collect();
     variants.sort();
     assert_eq!(
@@ -598,7 +591,10 @@ fn the_complete_claims_are_exactly_the_enumerated_relations() {
         .filter(|((run, _), complete)| *run == semantic && **complete)
         .map(|((_, relation), _)| relation.as_str())
         .collect();
-    assert_eq!(complete, COMPLETE.iter().copied().collect::<BTreeSet<&str>>());
+    assert_eq!(
+        complete,
+        COMPLETE.iter().copied().collect::<BTreeSet<&str>>()
+    );
 
     let partial: BTreeSet<&str> = coverage
         .iter()
@@ -626,7 +622,9 @@ fn the_complete_claims_are_exactly_the_enumerated_relations() {
         assert!(emitted.contains(relation), "{relation} claims an empty set");
     }
     assert!(
-        !coverage.iter().any(|((run, _), complete)| *run == 0 && *complete),
+        !coverage
+            .iter()
+            .any(|((run, _), complete)| *run == 0 && *complete),
         "the syntax run enumerates nothing"
     );
 }

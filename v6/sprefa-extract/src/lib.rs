@@ -68,17 +68,18 @@ pub use family::{
     flow_edges, CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF,
     DfFAux, DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, Family, FlowEdge, FlowEdgeKind,
     FlowF, MethodOwner, ProjectEdge, ResolutionOrigin, SigSlot, Specifier, SpecifierKind,
-    TypeEdgeCandidate,
-    TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
+    TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
     build_paths, compiled_spellings, decode_ast_rule_yaml, dl6_db_path, open_dl6_readonly,
-    open_readonly, query_ast_rule, query_ast_rule_with_content, query_patterns, rehome_for,
-    rehomes, rename_for, renames, respell, source_for, sources, ts_specifiers, AstCaptureFact,
-    AstPatternQuery, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch, AstRuleMutationProposal,
-    AstRuleRequest, AstgrepSource, BuildPaths, DataSource, DlSource, ExtractLang, FactError,
-    FactMatcher, FactSet, GoSource, KotlinSource, MarkdownSource, NamedAstRule, PrologSource,
-    PythonSource, RustSource, StopBy, TsResolver, TsSource, TsSpecifier, DL6_DB_RELATIVE_PATH,
+    open_readonly, query_ast_rule, query_ast_rule_with_content, query_patterns, query_source,
+    query_tree_sitter, rehome_for, rehomes, rename_for, renames, respell, source_for, sources,
+    ts_specifiers, AstCaptureFact, AstPatternQuery, AstRule, AstRuleCapture, AstRuleError,
+    AstRuleMatch, AstRuleMutationProposal, AstRuleRequest, AstgrepSource, BuildPaths, DataSource,
+    DlSource, ExtractLang, FactError, FactMatcher, FactSet, GoSource, KotlinSource, MarkdownSource,
+    NamedAstRule, PrologSource, PythonSource, RustSource, SourceQuery, SourceQueryError,
+    SourceQueryOutput, StopBy, TreeSitterQuery, TreeSitterQueryMatch, TsResolver, TsSource,
+    TsSpecifier, DL6_DB_RELATIVE_PATH,
 };
 pub use manifests::{
     fold_package_edges, package_edges, package_edges_jsonl, Manifest, ManifestKind,

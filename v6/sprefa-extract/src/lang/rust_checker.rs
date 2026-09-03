@@ -312,7 +312,9 @@ impl OffsetMap {
                 line_starts.push(offset as u32 + 1);
                 wide.push(Vec::new());
             } else if byte >= 0x80 {
-                wide.last_mut().expect("a line entry per line start").push(offset as u32);
+                wide.last_mut()
+                    .expect("a line entry per line start")
+                    .push(offset as u32);
             }
         }
         OffsetMap { line_starts, wide }
