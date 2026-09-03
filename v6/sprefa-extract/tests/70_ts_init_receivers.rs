@@ -128,7 +128,9 @@ fn a_nested_arrow_reads_the_outer_const_binding() {
         "the closure row names the frame: {edges:?}"
     );
     assert!(
-        writers.iter().any(|(caller, _, _)| caller == "emitInClosure"),
+        writers
+            .iter()
+            .any(|(caller, _, _)| caller == "emitInClosure"),
         "the mirror names the enclosing fn: {edges:?}"
     );
 }

@@ -30,9 +30,9 @@ use super::astgrep::{AstGrepParser, CstProjector};
 use super::go_modules::{is_exported, GoModuleIndex};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
-    DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, ReceiverBinding, ReceiverOutcome, SigSlot,
-    Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
-    ResolutionOrigin,
+    DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, ReceiverBinding, ReceiverOutcome,
+    ResolutionOrigin, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
+    TypeEntityKind, TypeF, TypeSig,
 };
 use crate::project::ResolveDrop;
 use crate::rows::{Edge, FamilyBundle, Node};
@@ -2839,11 +2839,7 @@ fn resolve_type_dst(
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match type_decl_sites(sites, modules, paths).as_slice() {
-        [only] => Some((
-            only.blob.clone(),
-            only.span,
-            ResolutionOrigin::CorpusUnique,
-        )),
+        [only] => Some((only.blob.clone(), only.span, ResolutionOrigin::CorpusUnique)),
         _ => None,
     }
 }
@@ -3146,11 +3142,7 @@ impl GoFileFactsStore {
 
 /// Publish one file's facts computed from the module plane's shared parse.
 /// `blob` is `None` for a path outside the supplied corpus.
-pub(crate) fn go_publish_file_facts(
-    path: &str,
-    blob: Option<&ContentId>,
-    facts: Arc<GoFileFacts>,
-) {
+pub(crate) fn go_publish_file_facts(path: &str, blob: Option<&ContentId>, facts: Arc<GoFileFacts>) {
     go_file_facts_store().publish(path, blob, facts);
 }
 
@@ -3212,10 +3204,7 @@ fn go_parse_file_facts(path: &str) -> GoFileFacts {
 
 /// The file facts off an already-parsed tree, so the module plane's shared
 /// parse serves the resolve arms without a second parse.
-pub(crate) fn go_file_facts_of_source(
-    tree: &tree_sitter::Tree,
-    src: &str,
-) -> GoFileFacts {
+pub(crate) fn go_file_facts_of_source(tree: &tree_sitter::Tree, src: &str) -> GoFileFacts {
     let mut facts = GoFileFacts::default();
     let src = src.as_bytes();
     go_collect_file_facts(tree.root_node(), src, &mut facts);
@@ -3970,7 +3959,8 @@ fn go_field_type_of(ty: &GoTypeId, field: &str, paths: &PathIndex) -> Option<(Go
     if let Some(hit) = fields.get(&(ty.1.clone(), field.to_string())) {
         return Some(hit.clone());
     }
-    let mut seen: std::collections::HashSet<GoTypeId> = std::collections::HashSet::from([ty.clone()]);
+    let mut seen: std::collections::HashSet<GoTypeId> =
+        std::collections::HashSet::from([ty.clone()]);
     let mut frontier = vec![ty.clone()];
     for _ in 0..GO_EMBED_DEPTH {
         let mut next = Vec::new();
@@ -4294,12 +4284,7 @@ impl Resolve<CallF> for GoSource {
                                 })
                                 .or_else(|| {
                                     go_call_name_match(
-                                        output,
-                                        def_index,
-                                        callee,
-                                        own_path,
-                                        modules,
-                                        paths,
+                                        output, def_index, callee, own_path, modules, paths,
                                     )
                                     .map(|(blob, span)| {
                                         (

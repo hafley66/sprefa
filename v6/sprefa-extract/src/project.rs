@@ -478,11 +478,7 @@ struct SyntaxTsi {
 
 /// Rides the stream for every language whose checker tier did not answer:
 /// beside a loaded tier the two id spaces name two types with one number.
-fn syntax_tsi_rows(
-    request: &ResolveRequest,
-    inputs: &[ProjectInput],
-    cx: &ProjectCx,
-) -> SyntaxTsi {
+fn syntax_tsi_rows(request: &ResolveRequest, inputs: &[ProjectInput], cx: &ProjectCx) -> SyntaxTsi {
     let mut out = SyntaxTsi {
         rows: Vec::new(),
         next_id: 0,
@@ -502,11 +498,8 @@ fn syntax_tsi_rows(
         let Some(bundle) = input.output.types.as_ref() else {
             continue;
         };
-        let (rows, next) = crate::wire::tsi_rows_rebased(
-            &bundle.aux.tsi,
-            &input.blob.to_string(),
-            out.next_id,
-        );
+        let (rows, next) =
+            crate::wire::tsi_rows_rebased(&bundle.aux.tsi, &input.blob.to_string(), out.next_id);
         out.rows.extend(rows);
         out.next_id = next;
     }
@@ -622,18 +615,20 @@ fn envelope(input: Envelope) -> Vec<FlatFact> {
             if let Some(row) = trail.next() {
                 let mut legs = row.legs;
                 legs.sort();
-                witnesses.extend(legs.into_iter().map(|leg| WitnessOut {
-                    fact: numbered,
-                    // A checker leg is the semantic run's answer; every other
-                    // leg is the parse's.
-                    run: match leg {
-                        ResolutionOrigin::Checker => semantic
-                            .iter()
-                            .find(|(lang, _)| *lang == row.lang)
-                            .map_or(SYNTAX_RUN, |(_, run)| run.run),
-                        _ => SYNTAX_RUN,
-                    },
-                    method: leg.method(),
+                witnesses.extend(legs.into_iter().map(|leg| {
+                    WitnessOut {
+                        fact: numbered,
+                        // A checker leg is the semantic run's answer; every other
+                        // leg is the parse's.
+                        run: match leg {
+                            ResolutionOrigin::Checker => semantic
+                                .iter()
+                                .find(|(lang, _)| *lang == row.lang)
+                                .map_or(SYNTAX_RUN, |(_, run)| run.run),
+                            _ => SYNTAX_RUN,
+                        },
+                        method: leg.method(),
+                    }
                 }));
             }
         }
@@ -708,8 +703,8 @@ fn load_rust_checker(
         .iter()
         .filter(|input| input.path.ends_with(".rs"))
         .map(|input| {
-            let absolute = std::fs::canonicalize(&input.path)
-                .unwrap_or_else(|_| PathBuf::from(&input.path));
+            let absolute =
+                std::fs::canonicalize(&input.path).unwrap_or_else(|_| PathBuf::from(&input.path));
             (input.path.clone(), absolute)
         })
         .collect();
@@ -1487,7 +1482,10 @@ fn resolve_call_edges(
     let leg = crate::trace::phase_span(arm.name, crate::trace::Phase::ResolveLeg);
     let _legging = leg.enter();
     let edges = resolve(output, cx);
-    let asked = output.call.as_ref().map_or(0, |bundle| bundle.aux.sites.len());
+    let asked = output
+        .call
+        .as_ref()
+        .map_or(0, |bundle| bundle.aux.sites.len());
     crate::trace::record_phase(&leg, 0, edges.len() as u64, asked as u64);
     edges
 }
@@ -1509,7 +1507,10 @@ fn resolve_type_edges(
     let leg = crate::trace::phase_span(arm.name, crate::trace::Phase::ResolveLeg);
     let _legging = leg.enter();
     let edges = resolve(output, cx);
-    let asked = output.types.as_ref().map_or(0, |bundle| bundle.aux.candidates.len());
+    let asked = output
+        .types
+        .as_ref()
+        .map_or(0, |bundle| bundle.aux.candidates.len());
     crate::trace::record_phase(&leg, 0, edges.len() as u64, asked as u64);
     edges
 }
@@ -1709,7 +1710,10 @@ fn type_owner(
         TypePlane::Nodes => match types.nodes.get(src.0 as usize) {
             Some(node) => Some((node.span, name_at(names, &input.output, node.span))),
             None => {
-                let owner = types.aux.impl_owners.get(src.0 as usize - types.nodes.len())?;
+                let owner = types
+                    .aux
+                    .impl_owners
+                    .get(src.0 as usize - types.nodes.len())?;
                 let name = input.output.strings.lookup(owner.name).to_string();
                 Some((owner.span, Some(name)))
             }

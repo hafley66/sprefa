@@ -70,7 +70,8 @@ fn witnessed_syntax_args() -> Vec<&'static str> {
 #[test]
 fn the_flag_off_stream_is_the_committed_golden() {
     let golden = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/resolve/2_resolved_edges.jsonl"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/resolve/2_resolved_edges.jsonl"),
     )
     .expect("the golden is committed");
     let produced = lines(SYNTAX_ARGS, None).join("\n") + "\n";
@@ -117,7 +118,9 @@ fn one_witness_per_leg_on_a_syntax_run() {
         "one leg per row on a syntax-only run"
     );
     for edge in &edges {
-        let ordinal = edge["fact"].as_u64().expect("every resolved row is numbered");
+        let ordinal = edge["fact"]
+            .as_u64()
+            .expect("every resolved row is numbered");
         let mine: Vec<&&Value> = witnesses
             .iter()
             .filter(|witness| witness["fact"].as_u64() == Some(ordinal))
@@ -164,8 +167,11 @@ fn the_witnessed_stream_survives_the_reverse_door() {
     let scratch = std::env::temp_dir().join("sprefa_a2_resolve_witness");
     std::fs::create_dir_all(&scratch).expect("scratch dir");
     let raw = scratch.join("stream.jsonl");
-    std::fs::write(&raw, lines(&witnessed_syntax_args(), None).join("\n") + "\n")
-        .expect("write the stream");
+    std::fs::write(
+        &raw,
+        lines(&witnessed_syntax_args(), None).join("\n") + "\n",
+    )
+    .expect("write the stream");
     let once = lines(&["--ingest", raw.to_str().expect("utf8 path")], None);
     let canonical = scratch.join("once.jsonl");
     std::fs::write(&canonical, once.join("\n") + "\n").expect("write the canonical form");
@@ -243,8 +249,15 @@ fn a_loaded_checker_mints_its_own_run() {
     // families partially; the checker WALK is a claim of its own and rides run 1.
     for row in of_record(&facts, "coverage") {
         let relation = row["relation"].as_str().unwrap_or_default();
-        let expected = if relation.starts_with("extract.") { 0 } else { 1 };
-        assert_eq!(row["run"], expected, "{relation} is covered by the wrong run");
+        let expected = if relation.starts_with("extract.") {
+            0
+        } else {
+            1
+        };
+        assert_eq!(
+            row["run"], expected,
+            "{relation} is covered by the wrong run"
+        );
     }
 }
 
@@ -273,10 +286,7 @@ fn the_checker_and_a_syntax_leg_witness_one_fact() {
     mine.sort();
     assert_eq!(
         mine,
-        vec![
-            (0, "module_plane".to_string()),
-            (1, "checker".to_string()),
-        ],
+        vec![(0, "module_plane".to_string()), (1, "checker".to_string()),],
         "the import binding rides the syntax run, the checker its own"
     );
 }
@@ -324,14 +334,8 @@ fn a_disagreeing_leg_is_a_fact_of_its_own() {
     assert_eq!(
         sited,
         vec![
-            (
-                "checker".to_string(),
-                "disagree.ts".to_string()
-            ),
-            (
-                "module_plane".to_string(),
-                "disagree_callee.ts".to_string()
-            ),
+            ("checker".to_string(), "disagree.ts".to_string()),
+            ("module_plane".to_string(), "disagree_callee.ts".to_string()),
         ],
         "one site, two definitions, two rows; a hosts.rs consumer reads each \
          row's own resolution_origin"

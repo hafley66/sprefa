@@ -1,6 +1,7 @@
 use sprefa_extract::{
-    content_id_of, decode_ast_rule_yaml, query_ast_rule, query_patterns, AstCaptureFact,
-    AstPatternQuery, AstRule, AstRuleError, AstRuleRequest, NamedAstRule, StopBy,
+    content_id_of, decode_ast_rule_yaml, query_ast_rule, query_patterns, query_source,
+    query_source_facts, AstCaptureFact, AstPatternQuery, AstRule, AstRuleError, AstRuleRequest,
+    NamedAstRule, SourceQuery, SourceQueryOutput, StopBy, TreeSitterQuery,
 };
 
 fn request(rule: AstRule) -> AstRuleRequest {
@@ -173,4 +174,135 @@ fn pattern_query_preserves_contextual_selector_and_requested_captures() {
             },
         ]
     );
+}
+
+#[test]
+fn source_query_facade_preserves_each_engine_result_shape() {
+    let source = b"fn main() { println!(\"hello\"); }";
+
+    let tree_sitter = query_source(
+        "main.rs",
+        source,
+        &SourceQuery::TreeSitter(TreeSitterQuery {
+            language: "rust".into(),
+            query: "(function_item name: (identifier) @name) @item".into(),
+        }),
+    )
+    .expect("tree-sitter query");
+    let SourceQueryOutput::TreeSitter(tree_sitter) = tree_sitter else {
+        panic!("tree-sitter output variant")
+    };
+    assert_eq!(
+        serde_json::to_string(&tree_sitter).unwrap(),
+        r#"[{"end_line":1,"item":"fn main() { println!(\"hello\"); }","line":1,"name":"main"}]"#
+    );
+
+    let patterns = query_source(
+        "main.rs",
+        source,
+        &SourceQuery::AstPatterns(vec![AstPatternQuery {
+            id: "print_message".into(),
+            pattern: "println!($MESSAGE)".into(),
+            selector: None,
+            captures: vec!["MESSAGE".into()],
+        }]),
+    )
+    .expect("ast-grep pattern query");
+    let SourceQueryOutput::AstPatterns(patterns) = patterns else {
+        panic!("ast-grep pattern output variant")
+    };
+    assert_eq!(patterns[0].query, "print_message");
+    assert_eq!(patterns[0].text, "\"hello\"");
+
+    let rule = query_source(
+        "main.rs",
+        source,
+        &SourceQuery::AstRule(request(AstRule::Pattern("println!($MESSAGE)".into()))),
+    )
+    .expect("composed ast-grep rule");
+    let SourceQueryOutput::AstRule(rule) = rule else {
+        panic!("composed ast-grep output variant")
+    };
+    assert_eq!(rule[0].query, "rule");
+    assert_eq!(rule[0].captures[0].name, "MESSAGE");
+}
+
+#[test]
+fn soopy_source_to_common_query_facts_is_one_content_addressed_graph() {
+    let fixture_root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/source_facts");
+    let mut directory = soopy::DirectoryRoot::open(&fixture_root).unwrap();
+    let snapshot = directory
+        .snapshot(&soopy::FileQuery {
+            patterns: vec![soopy::Pattern("0_subject.rs".into())],
+        })
+        .unwrap();
+    assert_eq!(snapshot.files.len(), 1);
+    let entry = snapshot.files[0].clone();
+    let action_source = soopy::ActionSource::Directory {
+        file: entry.file.clone(),
+    };
+    let requests = [soopy::FileReadRequest {
+        file: entry.file.clone(),
+        expected: Some(entry.content.clone()),
+    }];
+    let queries = [
+        SourceQuery::TreeSitter(TreeSitterQuery {
+            language: "rust".into(),
+            query: "(function_item name: (identifier) @name) @function".into(),
+        }),
+        SourceQuery::AstPatterns(vec![AstPatternQuery {
+            id: "print_message".into(),
+            pattern: "println!($MESSAGE)".into(),
+            selector: None,
+            captures: vec!["MESSAGE".into()],
+        }]),
+        SourceQuery::AstRule(AstRuleRequest {
+            id: "replace_print".into(),
+            rule: AstRule::Pattern("println!($MESSAGE)".into()),
+            utils: Vec::new(),
+            fix: Some("eprintln!($MESSAGE)".into()),
+        }),
+    ];
+    let mut rendered = String::new();
+    directory
+        .read_each(&requests, |read| {
+            let graphs = queries
+                .iter()
+                .map(|query| {
+                    query_source_facts(
+                        &action_source,
+                        read.content,
+                        read.file.path.0.as_ref(),
+                        read.bytes,
+                        query,
+                    )
+                    .unwrap()
+                })
+                .collect::<Vec<_>>();
+            let mut value = serde_json::to_value(&graphs).unwrap();
+            for graph in value.as_array_mut().unwrap() {
+                graph["source"]["directory"] = "<directory>".into();
+            }
+            rendered = serde_json::to_string_pretty(&value).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    assert_eq!(
+        rendered,
+        include_str!("fixtures/source_facts/1_expected.json").trim_end()
+    );
+
+    let wrong_content = soopy::ContentId::blake3(b"different bytes");
+    let bytes = std::fs::read(fixture_root.join("0_subject.rs")).unwrap();
+    let error = query_source_facts(
+        &action_source,
+        &wrong_content,
+        entry.file.path.0.as_ref(),
+        &bytes,
+        &queries[0],
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("observed blake3:"));
 }

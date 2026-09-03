@@ -89,7 +89,11 @@ fn call_edges(facts: &[Value]) -> Vec<(String, String, String, String)> {
             let callee_path = fact["callee_path"].as_str().unwrap_or_default();
             (
                 fact["caller_name"].as_str().unwrap_or_default().to_string(),
-                callee_path.rsplit('/').next().unwrap_or_default().to_string(),
+                callee_path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
                 fact["callee_name"].as_str().unwrap_or_default().to_string(),
                 fact["kind"].as_str().unwrap_or_default().to_string(),
             )
@@ -200,9 +204,9 @@ fn the_checker_never_names_the_same_named_method_of_another_type() {
         "the checker names Panel::render for the Panel receiver, got {edges:?}"
     );
     assert!(
-        !edges
-            .iter()
-            .any(|(caller, path, name, _)| caller == "drive" && path == "panel.ts" && name == "render"),
+        !edges.iter().any(|(caller, path, name, _)| caller == "drive"
+            && path == "panel.ts"
+            && name == "render"),
         "Panel::render shares the name and nothing else, got {edges:?}"
     );
 }

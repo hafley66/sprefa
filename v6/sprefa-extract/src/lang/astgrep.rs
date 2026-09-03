@@ -31,7 +31,7 @@ pub type SgRoot = AstGrep<StrDoc<ExtractLang>>;
 /// One generic ast-grep pattern and the single-node captures the caller wants
 /// flattened. Query identity belongs to the caller's program; the extractor
 /// only parses, matches, and returns byte-addressed facts.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AstPatternQuery {
     pub id: String,
     pub pattern: String,

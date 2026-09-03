@@ -1,0 +1,97 @@
+; generated from v6/sprefa-extract/tests/fixtures/tsi/rust_probe/src/lib.rs
+(: Mapper
+   (*))
+
+(: Mapper_T
+   (*))
+
+(: map
+   (*))
+
+(: Self
+   (*))
+
+(: User
+   (* (: id User_T)
+      (: name Option)))
+
+(: User_T
+   (*))
+
+(: Option
+   (*))
+
+(: User_Mapper_impl
+   (*))
+
+(: User_Mapper_impl_T
+   (*))
+
+(: map_11
+   (*))
+
+(: View
+   (* (: text str)
+      (: owned Box)
+      (: shared std)))
+
+(: str
+   (*))
+
+(: Box
+   (*))
+
+(: std
+   (*))
+
+(: Shape
+   (+ (: Circle Shape_Circle)
+      (: Square Shape_Square)))
+
+(: Shape_Circle
+   (*))
+
+(: Shape_Square
+   (*))
+
+(: rust_trait (* (: node type)))
+(rust_trait Mapper)
+
+(: tsi_callable (* (: node type)))
+(tsi_callable map)
+(tsi_callable map_11)
+
+(: tsi_input
+   (* (: callable type)
+      (: position int)
+      (: target type)))
+(tsi_input map 0 Mapper_T)
+(tsi_input map_11 0 User_Mapper_impl_T)
+
+(: tsi_output
+   (* (: callable type)
+      (: position int)
+      (: target type)))
+(tsi_output map 0 Self)
+(tsi_output map_11 0 Self)
+
+(: tsi_parameter
+   (* (: parameter type)
+      (: owner type)
+      (: position int)
+      (: variance text)))
+(tsi_parameter Mapper_T Mapper 0 "unspecified")
+(tsi_parameter User_T User 0 "unspecified")
+(tsi_parameter User_Mapper_impl_T User_Mapper_impl 0 "unspecified")
+
+(: rust_impl
+   (* (: implementation type)
+      (: self type)
+      (: trait type)))
+(rust_impl User_Mapper_impl User Mapper)
+
+(: tsi_conforms
+   (* (: source type)
+      (: target type)
+      (: mode text)))
+(tsi_conforms User Mapper "syntax")

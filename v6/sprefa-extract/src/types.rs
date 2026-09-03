@@ -3357,7 +3357,10 @@ pub enum FlatFact {
     /// Computed here because it needs the moniker grammar's `[`/`]`/`#`
     /// separators, which a single-separator string split cannot all honor.
     #[serde(rename = "scip_name")]
-    ScipNameRow { symbol: String, name: String },
+    ScipNameRow {
+        symbol: String,
+        name: String,
+    },
     /// v5 `scip_ref(file, symbol, def_file, repo)`: a non-definition occurrence
     /// of a symbol this index also defines.
     #[serde(rename = "scip_ref")]
@@ -3378,7 +3381,10 @@ pub enum FlatFact {
     /// v5 `scip_fn_edge(caller, callee)`: the function-level call graph, the
     /// caller being the innermost enclosing callable definition.
     #[serde(rename = "scip_fn_edge")]
-    ScipFnEdgeRow { caller: String, callee: String },
+    ScipFnEdgeRow {
+        caller: String,
+        callee: String,
+    },
     /// v5 `scip_callee_type(sym, type)`: the receiver type parsed out of a
     /// method moniker's `impl#[T]` / `for#[T]` segment.
     #[serde(rename = "scip_callee_type")]

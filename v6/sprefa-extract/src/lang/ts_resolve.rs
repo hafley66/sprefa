@@ -313,8 +313,9 @@ pub(crate) fn ts_module_facts_from_parsed(parsed: &oxc_parser::ParserReturn<'_>)
 
 /// The extract pass's handoff slot: dispatch parses, the module plane
 /// consumes on the same worker thread. Single entry, consumed on read.
-static TS_MODULE_FACTS_HANDOFF: std::sync::Mutex<Option<(String, crate::shape::ContentId, ModuleFacts)>> =
-    std::sync::Mutex::new(None);
+static TS_MODULE_FACTS_HANDOFF: std::sync::Mutex<
+    Option<(String, crate::shape::ContentId, ModuleFacts)>,
+> = std::sync::Mutex::new(None);
 
 /// Stash the module facts computed off the extract parse. The next
 /// `module_facts` call for the same content on this thread consumes it.
@@ -333,10 +334,11 @@ fn take_ts_module_facts(path: &str, content: &[u8]) -> Option<ModuleFacts> {
     let mut slot = TS_MODULE_FACTS_HANDOFF
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
-    slot.take().filter(|(stashed_path, id, _)| {
-        stashed_path == path && *id == crate::shape::content_id_of(content)
-    })
-    .map(|(_, _, facts)| facts)
+    slot.take()
+        .filter(|(stashed_path, id, _)| {
+            stashed_path == path && *id == crate::shape::content_id_of(content)
+        })
+        .map(|(_, _, facts)| facts)
 }
 
 /// TypeScript's own module forms, absent from the ECMAScript `ModuleRecord`.

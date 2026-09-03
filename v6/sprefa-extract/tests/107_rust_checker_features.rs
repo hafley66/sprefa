@@ -79,7 +79,11 @@ impl Walk {
             .collect();
         let source = std::fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(supplied))
             .expect("the supplied file is readable");
-        Self { rows, facts, source }
+        Self {
+            rows,
+            facts,
+            source,
+        }
     }
 
     fn semantic_run(&self) -> u32 {
@@ -207,7 +211,10 @@ fn a_file_outside_every_crate_root_is_named() {
     let semantic = walk.semantic_run();
     let filed = walk.tier_diagnostics();
     assert_eq!(filed.len(), 1, "one unmodulated file, one row: {filed:?}");
-    assert_eq!(filed[0].0, semantic, "the tier loaded, so it is not a decline");
+    assert_eq!(
+        filed[0].0, semantic,
+        "the tier loaded, so it is not a decline"
+    );
     assert_eq!(filed[0].1, TIER);
     assert!(
         filed[0].2.contains("orphan.rs"),
@@ -227,6 +234,9 @@ fn a_file_outside_every_crate_root_is_named() {
 fn a_walked_file_files_no_diagnostic() {
     let walk = Walk::read(LIB);
     let filed = walk.tier_diagnostics();
-    assert!(filed.is_empty(), "a walked file is not tier news: {filed:?}");
+    assert!(
+        filed.is_empty(),
+        "a walked file is not tier news: {filed:?}"
+    );
     assert!(!walk.facts.is_empty(), "the walk reached the fixture");
 }

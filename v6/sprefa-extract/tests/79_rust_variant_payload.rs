@@ -93,8 +93,9 @@ fn variant_payload_types_are_enum_edges() {
 fn variant_payload_generic_argument_is_named() {
     let rows = type_edges();
     assert!(
-        rows.iter()
-            .any(|(owner, target, stem)| owner == "Shape" && target == "Wrapped" && stem == "shapes"),
+        rows.iter().any(|(owner, target, stem)| owner == "Shape"
+            && target == "Wrapped"
+            && stem == "shapes"),
         "`Many(Wrapped<Point>)` names Wrapped: {rows:?}"
     );
 }

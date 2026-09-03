@@ -160,7 +160,12 @@ pub fn flatten_scip_records(
             }
         }
         for info in &document.symbols {
-            out.extend(symbol_rows(index, info, Some(&document.relative_path), records));
+            out.extend(symbol_rows(
+                index,
+                info,
+                Some(&document.relative_path),
+                records,
+            ));
         }
     }
     // External symbols belong to no document: they are what the corpus

@@ -116,6 +116,10 @@ fn a_module_level_arrow_mirrors_to_the_module() {
 fn a_named_caller_mirrors_nothing() {
     let edges = resolved_edges();
     let at_587: Vec<_> = edges.iter().filter(|(_, _, site)| *site == 587).collect();
-    assert_eq!(at_587.len(), 1, "one row at the named-caller site: {edges:?}");
+    assert_eq!(
+        at_587.len(),
+        1,
+        "one row at the named-caller site: {edges:?}"
+    );
     assert_eq!(at_587[0].0, "outer", "all edges: {edges:?}");
 }
