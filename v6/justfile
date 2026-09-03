@@ -76,6 +76,10 @@ scip-families:
 
 # extract ratchet (LOCAL-ONLY, never in CI): one process per (lang, tier) leg, so rss_mb is that pair's peak alone.
 # Floors: plans/extract-bench-2026-08-29/RATCHET.tsv (lang, family, tier, oracle; 0.10pt) + RATCHET.cost.tsv (lang, tool, tier; +15%/+10%).
+# Every table from a ledger; writes plans/extract-bench-2026-08-29/SCOREBOARD.md.
+extract-scoreboard:
+    python3 {{ v6 }}/../plans/extract-bench-2026-08-29/scoreboard.py --out {{ v6 }}/../plans/extract-bench-2026-08-29/SCOREBOARD.md
+
 extract-ratchet:
     #!/usr/bin/env bash
     set -euo pipefail
