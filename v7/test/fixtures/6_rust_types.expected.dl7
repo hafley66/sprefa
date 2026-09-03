@@ -21,10 +21,10 @@
 (: Option
    (*))
 
-(: impl
+(: User_Mapper_impl
    (*))
 
-(: impl_T
+(: User_Mapper_impl_T
    (*))
 
 (: map_11
@@ -66,7 +66,7 @@
       (: position int)
       (: target type)))
 (tsi_input map 0 Mapper_T)
-(tsi_input map_11 0 impl_T)
+(tsi_input map_11 0 User_Mapper_impl_T)
 
 (: tsi_output
    (* (: callable type)
@@ -82,13 +82,13 @@
       (: variance text)))
 (tsi_parameter Mapper_T Mapper 0 "unspecified")
 (tsi_parameter User_T User 0 "unspecified")
-(tsi_parameter impl_T impl 0 "unspecified")
+(tsi_parameter User_Mapper_impl_T User_Mapper_impl 0 "unspecified")
 
 (: rust_impl
    (* (: implementation type)
       (: self type)
       (: trait type)))
-(rust_impl impl User Mapper)
+(rust_impl User_Mapper_impl User Mapper)
 
 (: tsi_conforms
    (* (: source type)

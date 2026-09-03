@@ -70,7 +70,6 @@
 {"record":"fact","fact":68,"relation":"tsi.name","args":[{"id":4},{"text":"User"}]}
 {"record":"fact","fact":69,"relation":"tsi.name","args":[{"id":5},{"text":"T"}]}
 {"record":"fact","fact":70,"relation":"tsi.name","args":[{"id":7},{"text":"Option"}]}
-{"record":"fact","fact":71,"relation":"tsi.name","args":[{"id":9},{"text":"impl"}]}
 {"record":"fact","fact":72,"relation":"tsi.name","args":[{"id":10},{"text":"T"}]}
 {"record":"fact","fact":73,"relation":"tsi.name","args":[{"id":11},{"text":"map"}]}
 {"record":"fact","fact":74,"relation":"tsi.name","args":[{"id":12},{"text":"View"}]}
@@ -150,7 +149,6 @@
 {"record":"witness","fact":68,"run":0,"method":"parse"}
 {"record":"witness","fact":69,"run":0,"method":"parse"}
 {"record":"witness","fact":70,"run":0,"method":"parse"}
-{"record":"witness","fact":71,"run":0,"method":"parse"}
 {"record":"witness","fact":72,"run":0,"method":"parse"}
 {"record":"witness","fact":73,"run":0,"method":"parse"}
 {"record":"witness","fact":74,"run":0,"method":"parse"}

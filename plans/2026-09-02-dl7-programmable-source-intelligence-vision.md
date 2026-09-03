@@ -489,9 +489,12 @@ Named Rust types are direct DL7 declarations. There is no `rust_types` alias
 product, language prefix, or opaque wire-id name. A local name repeated in one
 file is qualified by its known owner when TSI carries that edge, such as
 `Mapper_T`, `User_T`, and `Shape_Circle`. Remaining collisions receive their
-wire id as a suffix. Syntax TSI currently leaves some nested generic
-applications and associated types opaque; semantic TSI supplies the additional
-application and associated-type rows needed for that later projection.
+wire id as a suffix. Rust impl blocks have no source name, so their graph edges
+derive names such as `User_Mapper_impl`; anonymous products use their owning
+edge when present. The Rust unit spelling `()` maps to the DL7 name `unit`.
+Syntax TSI currently leaves some nested generic applications and associated
+types opaque; semantic TSI supplies the additional application and
+associated-type rows needed for that later projection.
 
 [`v7/src/3_emit/3_rust_type_region_mainer.pl`](../v7/src/3_emit/3_rust_type_region_mainer.pl)
 composes the complete syntax-tier path. It runs Extract once, loads the mixed

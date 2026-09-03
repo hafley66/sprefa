@@ -61,11 +61,46 @@ type_name_result(Rows, Id, Result) :-
                    Rows),
             Written0),
     sort(Written0, WrittenNames),
-    (   WrittenNames = [Written],
-        identifier_text(Written, Name)
+    (   WrittenNames = [Written]
+    ->  source_name_identifier(Written, NameResult),
+        name_result(NameResult, Id, Result)
+    ;   derived_type_name(Rows, Id, Name)
     ->  Result = ok(Name, Id)
     ;   Result = error(missing_or_invalid_name)
     ).
+
+source_name_identifier("()", ok(unit)) :- !.
+source_name_identifier(Written, ok(Name)) :-
+    identifier_text(Written, Name),
+    !.
+source_name_identifier(Written, error(invalid_name(Written))).
+
+name_result(ok(Name), Start, ok(Name, Start)).
+name_result(error(Detail), _, error(Detail)).
+
+derived_type_name(Rows, Id, Name) :-
+    member(extract_fact(_, 'rust.impl',
+                        [id(Id), id(Self), id(Trait)]), Rows),
+    wire_name(Rows, Self, SelfName),
+    wire_name(Rows, Trait, TraitName),
+    !,
+    format(atom(Name), '~w_~w_impl', [SelfName, TraitName]).
+derived_type_name(Rows, Id, Name) :-
+    member(extract_fact(_, 'tsi.edge',
+                        [id(_), id(Owner), text(Label), id(Id), int(_)]),
+           Rows),
+    wire_name(Rows, Owner, OwnerName),
+    identifier_text(Label, LabelName),
+    !,
+    format(atom(Name), '~w_~w', [OwnerName, LabelName]).
+derived_type_name(Rows, Id, Name) :-
+    memberchk(extract_fact(_, 'tsi.product', [id(Id)]), Rows),
+    format(atom(Name), 'anonymous_product_~d', [Id]).
+
+wire_name(Rows, Id, Name) :-
+    member(extract_fact(_, 'tsi.name', [id(Id), text(Written)]), Rows),
+    source_name_identifier(Written, ok(Name)),
+    !.
 
 identifier_text(Text, Identifier) :-
     string_codes(Text, Codes),
