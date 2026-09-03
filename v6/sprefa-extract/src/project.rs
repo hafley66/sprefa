@@ -27,6 +27,8 @@ use std::sync::{Arc, LazyLock};
 use rayon::prelude::*;
 
 use crate::lang::go_modules::{GoModuleFacts, GoModuleIndex};
+use crate::lang::kotlin_modules::{kt_module_facts, KtModuleFacts, KtModuleIndex};
+use crate::lang::python::{py_module_facts, PyModuleFacts, PyModuleIndex};
 use crate::lang::rust_modules::{RustModuleFacts, RustModuleIndex};
 use crate::lang::ts_resolve::{ModuleFacts, TsModuleIndex};
 use crate::lang::{
@@ -219,6 +221,10 @@ pub(crate) struct ProjectInput {
     rust_module: Option<RustModuleFacts>,
     /// The go module plane's own facts, same discipline as `module`.
     go_module: Option<GoModuleFacts>,
+    /// The python module plane's own facts, same discipline as `module`.
+    py_module: Option<PyModuleFacts>,
+    /// The kotlin module plane's own facts, same discipline as `module`.
+    kt_module: Option<KtModuleFacts>,
 }
 
 /// Run the requested arms over the whole supplied file set and return the flat
@@ -335,6 +341,24 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         .set(GoModuleIndex::build(go_module_files))
         .ok()
         .expect("fresh project module plane (go)");
+    let py_module_files: Vec<(String, PyModuleFacts)> = inputs
+        .iter()
+        .filter_map(|input| Some((input.path.clone(), input.py_module.clone()?)))
+        .collect();
+    cx.indexes
+        .py_modules
+        .set(PyModuleIndex::build(py_module_files))
+        .ok()
+        .expect("fresh project module plane (python)");
+    let kt_module_files: Vec<(String, KtModuleFacts)> = inputs
+        .iter()
+        .filter_map(|input| Some((input.path.clone(), input.kt_module.clone()?)))
+        .collect();
+    cx.indexes
+        .kt_modules
+        .set(KtModuleIndex::build(kt_module_files))
+        .ok()
+        .expect("fresh project module plane (kotlin)");
 
     let mut declines: Vec<TierDecline> = Vec::new();
     if let Some(checker_root) = request.rust_checker {
@@ -1086,6 +1110,16 @@ fn go_module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<GoModu
     wanted.then(|| crate::lang::go_modules::go_module_facts(path, content))?
 }
 
+/// The python module plane's own facts, same discipline as `module_facts_of`.
+fn py_module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<PyModuleFacts> {
+    wanted.then(|| py_module_facts(path, content))?
+}
+
+/// The kotlin module plane's own facts, same discipline as `module_facts_of`.
+fn kt_module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<KtModuleFacts> {
+    wanted.then(|| kt_module_facts(path, content))?
+}
+
 /// Extraction thread budget. One worker is held back below the clamp so the
 /// machine stays usable while a corpus extracts.
 fn extract_thread_cap() -> usize {
@@ -1151,6 +1185,8 @@ fn read_inputs_plain(paths: &[PathBuf], modules: bool) -> Result<Vec<ProjectInpu
                 let module = module_facts_of(&path, &content, modules);
                 let rust_module = rust_module_facts_of(&path, &content, modules);
                 let go_module = go_module_facts_of(&path, &content, modules);
+                let py_module = py_module_facts_of(&path, &content, modules);
+                let kt_module = kt_module_facts_of(&path, &content, modules);
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(&content),
                     path,
@@ -1158,6 +1194,8 @@ fn read_inputs_plain(paths: &[PathBuf], modules: bool) -> Result<Vec<ProjectInpu
                     module,
                     rust_module,
                     go_module,
+                    py_module,
+                    kt_module,
                 }))
             })
             .collect()
@@ -1201,6 +1239,8 @@ fn read_inputs_batched(
                 let module = module_facts_of(&path, content, modules);
                 let rust_module = rust_module_facts_of(&path, content, modules);
                 let go_module = go_module_facts_of(&path, content, modules);
+                let py_module = py_module_facts_of(&path, content, modules);
+                let kt_module = kt_module_facts_of(&path, content, modules);
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(content),
                     path,
@@ -1208,6 +1248,8 @@ fn read_inputs_batched(
                     module,
                     rust_module,
                     go_module,
+                    py_module,
+                    kt_module,
                 }))
             })
             .collect()
@@ -1679,7 +1721,40 @@ fn import_facts(input: &ProjectInput, cx: &ProjectCx) -> Vec<FlatFact> {
                 hops: 0,
             })
     });
-    ts_rows.chain(rust_rows).chain(go_rows).collect()
+    let py_rows = cx.indexes.py_modules.get().into_iter().flat_map(|modules| {
+        modules
+            .bindings(&input.path)
+            .into_iter()
+            .map(|row| FlatFact::ResolvedImportRow {
+                src_path: input.path.clone(),
+                name: row.name,
+                local: row.local,
+                target_path: row.target_path,
+                target_name: row.target_name,
+                kind: row.kind.as_str().to_string(),
+                hops: row.hops,
+            })
+    });
+    let kt_rows = cx.indexes.kt_modules.get().into_iter().flat_map(|modules| {
+        modules
+            .bindings(&input.path)
+            .into_iter()
+            .map(|row| FlatFact::ResolvedImportRow {
+                src_path: input.path.clone(),
+                name: row.name,
+                local: row.local,
+                target_path: row.target_path,
+                target_name: row.target_name,
+                kind: row.kind.as_str().to_string(),
+                hops: row.hops,
+            })
+    });
+    ts_rows
+        .chain(rust_rows)
+        .chain(go_rows)
+        .chain(py_rows)
+        .chain(kt_rows)
+        .collect()
 }
 
 /// The `unresolved` rows for one input: the sites its `call` arm dropped. The
