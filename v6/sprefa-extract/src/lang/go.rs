@@ -168,9 +168,7 @@ fn walk_go_entities(
                     {
                         push_go_doc(sink, strings, span, None, &text);
                     }
-                    if spec.kind() == "type_spec" {
-                        go_edge_candidates(spec, span, src, strings, sink);
-                    }
+                    go_edge_candidates(spec, span, src, strings, sink);
                 }
             }
             "function_declaration" => {
@@ -394,13 +392,31 @@ fn go_edge_candidates(
         }
         "interface_type" => {
             let mut c = ty.walk();
-            for elem in ty.children(&mut c).filter(|n| n.kind() == "type_elem") {
-                for to in go_type_refs(elem, src, &params) {
-                    push_candidate(sink, strings, owner, &to, TypeEdgeKind::Impl);
+            for elem in ty.children(&mut c) {
+                match elem.kind() {
+                    "type_elem" => {
+                        for to in go_type_refs(elem, src, &params) {
+                            push_candidate(sink, strings, owner, &to, TypeEdgeKind::Impl);
+                        }
+                    }
+                    // A method spec's name is a field_identifier, so the walk
+                    // below collects its parameter and result types only.
+                    "method_elem" => {
+                        for to in go_type_refs(elem, src, &params) {
+                            push_candidate(sink, strings, owner, &to, TypeEdgeKind::Uses);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
-        _ => {}
+        // `type Handler func(Req) Resp`, `type List []Item`, `type Set map[Key]bool`,
+        // `type Node = ast.Node`: the underlying or aliased type's refs.
+        _ => {
+            for to in go_type_refs(ty, src, &params) {
+                push_candidate(sink, strings, owner, &to, TypeEdgeKind::Uses);
+            }
+        }
     }
 }
 
@@ -1487,6 +1503,13 @@ fn go_receiver_binding(
     }
 }
 
+/// An assignment target that is a bare, unbound, non-blank identifier.
+fn go_unbound_target(target: tree_sitter::Node, src: &[u8], scope: &TypeScope) -> Option<String> {
+    (target.kind() == "identifier")
+        .then(|| go_text(target, src).to_string())
+        .filter(|name| name != "_" && scope_lookup(scope, name).is_none())
+}
+
 /// Walk one callable body, threading a block-scoped `TypeScope`, recording a
 /// `(span, TypeBinding)` row per non-import selector call site.
 fn go_walk_receivers(
@@ -1642,6 +1665,63 @@ fn go_walk_receivers(
                         }
                         plan.binds.insert(go_node_span(*rhs).start, (top, bound));
                     }
+                }
+            }
+        }
+        // `x = f()` on a name this walk has not typed (a parameter of an
+        // untracked type, a package-level var, a name declared in a sibling
+        // block): the call's declared result types it exactly as `:=` does. A
+        // name already bound keeps its binding, so a typed `var x T` never
+        // degrades to Ambiguous on reassignment.
+        "assignment_statement" => {
+            let is_plain = node
+                .child_by_field_name("operator")
+                .is_some_and(|op| go_text(op, src) == "=");
+            if let (true, Some(left), Some(right)) = (
+                is_plain,
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) {
+                go_walk_receivers(left, src, scope, imports, field_types, out, plan, top);
+                go_walk_receivers(right, src, scope, imports, field_types, out, plan, top);
+                let mut lc = left.walk();
+                let targets: Vec<tree_sitter::Node> = left.children(&mut lc).collect();
+                let mut rc = right.walk();
+                let rhss: Vec<tree_sitter::Node> = right.children(&mut rc).collect();
+                if targets.len() == rhss.len() {
+                    for (target, rhs) in targets.iter().zip(rhss.iter()) {
+                        let Some(name) = go_unbound_target(*target, src, scope) else {
+                            continue;
+                        };
+                        if rhs.kind() != "call_expression" {
+                            continue;
+                        }
+                        let binding = go_binding_of_rhs(*rhs, src, scope, imports, field_types)
+                            .unwrap_or(TypeBinding::Inferred);
+                        scope_insert(scope, name.clone(), binding);
+                        plan.binds.insert(go_node_span(*rhs).start, (top, vec![name]));
+                    }
+                } else if let [rhs] = rhss.as_slice() {
+                    if rhs.kind() == "call_expression" {
+                        let bound: Vec<String> = targets
+                            .iter()
+                            .map(|target| {
+                                go_unbound_target(*target, src, scope)
+                                    .unwrap_or_else(|| "_".to_string())
+                            })
+                            .collect();
+                        for name in bound.iter().filter(|name| *name != "_") {
+                            scope_insert(scope, name.clone(), TypeBinding::Inferred);
+                        }
+                        if bound.iter().any(|name| name != "_") {
+                            plan.binds.insert(go_node_span(*rhs).start, (top, bound));
+                        }
+                    }
+                }
+            } else {
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    go_walk_receivers(child, src, scope, imports, field_types, out, plan, top);
                 }
             }
         }

@@ -100,6 +100,10 @@ pub enum Projection {
     Raw,
     GoMethod,
     GoImpl,
+    /// The go module oracle loads packages without their test files, so ours
+    /// keeps only rows whose src_path the oracle also saw (the same scope flag
+    /// the two go call projections apply).
+    GoScope,
     RustCorpus,
 }
 
@@ -206,7 +210,7 @@ pub fn cases() -> &'static [Case] {
         Case { lang: "ts5", family: "module", tier: Tier::Checker, oracle: "madge", projection: Projection::Raw },
         Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "oracle-vta-bare", projection: Projection::GoImpl },
         Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "codeql2", projection: Projection::GoMethod },
-        Case { lang: "go", family: "module", tier: Tier::Syntax, oracle: "oracle", projection: Projection::Raw },
+        Case { lang: "go", family: "module", tier: Tier::Syntax, oracle: "oracle", projection: Projection::GoScope },
         Case { lang: "go", family: "type", tier: Tier::Syntax, oracle: "oracle-typedecl", projection: Projection::Raw },
         Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "oracle", projection: Projection::RustCorpus },
         Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "scip_override", projection: Projection::RustCorpus },
@@ -744,6 +748,17 @@ pub fn project(
             ours: ours.clone(),
             oracle: oracle.clone(),
         },
+        Projection::GoScope => {
+            let scope = src_paths(oracle);
+            Sides {
+                ours: ours
+                    .iter()
+                    .filter(|row| scope.contains(row.split('\t').next().unwrap_or("")))
+                    .cloned()
+                    .collect(),
+                oracle: oracle.clone(),
+            }
+        }
         Projection::GoMethod | Projection::GoImpl => Sides {
             ours: go_project(
                 ours,
