@@ -12,8 +12,8 @@ rust	call	syntax	scip_override	79.36	45.85	1b2464c9b
 rust	call	checker	codeql	84.28	83.64	f58cc6666
 rust	call	checker	oracle	93.66	51.82	41333391a
 rust	call	checker	scip_override	77.09	36.98	41333391a
-rust	type	syntax	oracle-typedecl	59.25	92.31	41333391a
-rust	type	checker	oracle-typedecl	64.93	98.26	f58cc6666
+rust	type	syntax	oracle-typedecl	76.99	93.29	646e65374
+rust	type	checker	oracle-typedecl	84.19	98.36	646e65374
 ts5	call	syntax	codeql2	92.07	71.16	41333391a
 ts5	call	syntax	oracle	88.20	76.14	41333391a
 ts5	call	checker	codeql2	97.33	70.37	41333391a
