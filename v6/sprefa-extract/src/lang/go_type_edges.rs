@@ -123,7 +123,15 @@ fn tsi_type_spec(
         return;
     };
     let owner = names.named(strings, go_text(name_node, src), go_node_span(name_node));
-    let scope = outer.clone();
+    let scope = tsi_generics(
+        owner,
+        spec.child_by_field_name("type_parameters"),
+        outer,
+        src,
+        strings,
+        names,
+        state,
+    );
     match ty.kind() {
         "struct_type" => {
             names.fact("tsi.product", vec![Arg::Id(owner)]);
@@ -159,9 +167,82 @@ fn tsi_type_alias(
     let symbol = names.bare_id();
     names.fact("tsi.symbol", vec![Arg::Id(symbol)]);
     names.name(symbol, go_text(name_node, src));
-    let scope = outer.clone();
+    let scope = tsi_generics(
+        symbol,
+        spec.child_by_field_name("type_parameters"),
+        outer,
+        src,
+        strings,
+        names,
+        state,
+    );
     let target = tsi_type_id(ty, &scope, src, strings, names, state);
     names.fact("tsi.denotes", vec![Arg::Id(symbol), Arg::Id(target)]);
+}
+
+/// One `tsi.parameter` per declared name (`[K, V any]` declares two sharing
+/// one constraint) plus a `bound` edge per constraint term; hands back the scope.
+fn tsi_generics(
+    owner: u32,
+    list: Option<Node>,
+    outer: &TsiScope,
+    src: &[u8],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) -> TsiScope {
+    let mut scope = outer.clone();
+    let Some(list) = list else {
+        return scope;
+    };
+    let mut position = 0i64;
+    let mut cursor = list.walk();
+    for declared in list
+        .children(&mut cursor)
+        .filter(|node| node.kind() == "type_parameter_declaration")
+    {
+        let terms = declared
+            .child_by_field_name("type")
+            .map(|constraint| constraint_terms(constraint, src))
+            .unwrap_or_default();
+        for name_node in field_children(declared, "name") {
+            let id = names.anonymous(go_node_span(name_node));
+            let written = go_text(name_node, src);
+            names.name(id, written);
+            names.fact(
+                "tsi.parameter",
+                vec![
+                    Arg::Id(id),
+                    Arg::Id(owner),
+                    Arg::Int(position),
+                    Arg::Atom("unspecified".to_string()),
+                ],
+            );
+            for (rank, term) in terms.iter().enumerate() {
+                let target = tsi_type_id(*term, &scope, src, strings, names, state);
+                names.edge(id, "bound", target, rank as i64);
+            }
+            scope.insert(written.to_string(), id);
+            position += 1;
+        }
+    }
+    scope
+}
+
+/// The terms of a constraint, `any` dropped: it bounds nothing.
+fn constraint_terms<'tree>(constraint: Node<'tree>, src: &[u8]) -> Vec<Node<'tree>> {
+    let mut terms = Vec::new();
+    let mut cursor = constraint.walk();
+    for child in constraint.named_children(&mut cursor) {
+        if child.kind() == "type_elem" {
+            let mut inner = child.walk();
+            terms.extend(child.named_children(&mut inner));
+        } else {
+            terms.push(child);
+        }
+    }
+    terms.retain(|term| go_text(*term, src) != "any");
+    terms
 }
 
 /// A named field is an edge under its name; an embedded field is an edge
@@ -354,7 +435,15 @@ fn tsi_callable(
     let callable = names.anonymous(go_node_span(name_node));
     names.name(callable, go_text(name_node, src));
     names.fact("tsi.callable", vec![Arg::Id(callable)]);
-    let scope = outer.clone();
+    let scope = tsi_generics(
+        callable,
+        node.child_by_field_name("type_parameters"),
+        outer,
+        src,
+        strings,
+        names,
+        state,
+    );
     tsi_signature(callable, node, &scope, src, strings, names, state);
     callable
 }
@@ -440,7 +529,51 @@ fn tsi_type_id(
         return id;
     }
     let id = names.named(strings, text, origin_span(node));
+    if node.kind() == "generic_type" {
+        tsi_application(id, node, scope, src, strings, names, state);
+    }
     id
+}
+
+/// The application a written `Name[Args]` states, wherever written: the
+/// callee is the name with its arguments dropped, once per written text.
+fn tsi_application(
+    result: u32,
+    node: Node,
+    scope: &TsiScope,
+    src: &[u8],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) {
+    let (Some(head), Some(arguments)) = (
+        node.child_by_field_name("type"),
+        node.child_by_field_name("type_arguments"),
+    ) else {
+        return;
+    };
+    if !state.called.insert(result) {
+        return;
+    }
+    let callee = tsi_type_id(head, scope, src, strings, names, state);
+    let list = names.bare_id();
+    names.fact(
+        "tsi.called",
+        vec![Arg::Id(result), Arg::Id(callee), Arg::Id(list)],
+    );
+    let mut position = 0i64;
+    let mut cursor = arguments.walk();
+    for elem in arguments.named_children(&mut cursor) {
+        let Some(argument) = elem.named_child(0) else {
+            continue;
+        };
+        let target = tsi_type_id(argument, scope, src, strings, names, state);
+        names.fact(
+            "tsi.argument",
+            vec![Arg::Id(list), Arg::Int(position), Arg::Id(target)],
+        );
+        position += 1;
+    }
 }
 
 fn strip_type(node: Node) -> Node {
