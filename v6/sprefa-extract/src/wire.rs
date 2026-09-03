@@ -364,6 +364,9 @@ fn flatten_type<E>(
             kind: node.kind.as_str().to_string(),
             name: strings.lookup(node.name).to_string(),
             parent: node.parent.map(|id| strings.lookup(id).to_string()),
+            target: node.target.map(|id| strings.lookup(id).to_string()),
+            title: node.title.map(|id| strings.lookup(id).to_string()),
+            body: node.body.map(|body| SpanOut::new(body.start, body.end())),
         })?;
     }
     Ok(())

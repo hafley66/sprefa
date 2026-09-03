@@ -370,14 +370,17 @@ pub struct DocTag {
     pub text: NameId,
 }
 
-/// One structural node of a document: a heading or a fenced code block.
-/// `name` is the heading title or fence language; `parent` the enclosing heading.
+/// A heading, code block, link or image; `name` = title, fence language, link
+/// text or image description; `target`/`title` for links, `body` for fences.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocNode {
     pub span: Span,
     pub kind: DocNodeKind,
     pub name: NameId,
     pub parent: Option<NameId>,
+    pub target: Option<NameId>,
+    pub title: Option<NameId>,
+    pub body: Option<Span>,
 }
 
 /// The kind of a document structure node.
@@ -385,6 +388,8 @@ pub struct DocNode {
 pub enum DocNodeKind {
     Heading,
     CodeBlock,
+    Link,
+    Image,
 }
 
 impl DocNodeKind {
@@ -392,6 +397,8 @@ impl DocNodeKind {
         match self {
             DocNodeKind::Heading => "heading",
             DocNodeKind::CodeBlock => "code_block",
+            DocNodeKind::Link => "link",
+            DocNodeKind::Image => "image",
         }
     }
 }
@@ -3171,7 +3178,8 @@ pub enum FlatFact {
         text: Option<String>,
         span: SpanOut,
     },
-    /// TypeF doc structure row: one heading or fenced code block of a document.
+    /// TypeF doc structure row: heading, code block, link or image. `target`
+    /// and `title` ride link and image rows, `body` a code_block with content.
     #[serde(rename = "doc_node")]
     DocNodeOut {
         #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -3181,6 +3189,12 @@ pub enum FlatFact {
         kind: String,
         name: String,
         parent: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        target: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        body: Option<SpanOut>,
     },
     /// CallF module specifier (phase-1, as written): span, bound name, kind.
     /// v6-ONLY rows (no v5 oracle facet) — the parity golden reports them,

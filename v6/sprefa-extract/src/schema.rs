@@ -39,7 +39,7 @@ RECORD SHAPES
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
   record=doc    family=type                owner={start,end}  parent=<string|null>  text=<string>
   record=doc_tag  family=type              owner={start,end}  tag=<string>  arg=<string|null>  text=<string>
-  record=doc_node  family=type             span={start,end}   kind=<heading|code_block>  name=<string>  parent=<string|null>
+  record=doc_node  family=type             span={start,end}   kind=<heading|code_block|link|image>  name=<string>  parent=<string|null>  target=<string, link/image>  title=<string, link/image with a title>  body={start,end, code_block with content}
   record=data_doc  family=data            ordinal=<u32>  span={start,end}  format=<json|jsonl|yaml|toml>  doc=<json value>
   record=data_value  family=data          ordinal=<u32>  path=<dotted>  kind=<object|array|string|number|boolean|null>  text=<string|null>  span={start,end}
   record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>  imported=<string|null>
@@ -201,7 +201,13 @@ KIND VOCABULARIES (the `kind` field)
                     self_type | iface_impl | decorator | subscript |
                     return_call | scip | unresolved. `kind` says what the edge
                     means; this says who produced it.
-  doc_node kind            heading | code_block
+  doc_node kind            heading | code_block | link | image
+                    `name` is the heading title, the fence info language (empty
+                    for an indented block or a bare fence), the link text or
+                    the image description. Reference links resolve through the
+                    document's `[label]: url` definitions; an undefined label
+                    mints no row. Autolinks carry the bracketed text as both
+                    name and target.
 
 CONTROL FLOW (--family cfg)
   Intra-procedural only, and DERIVED from the cst family rather than projected
