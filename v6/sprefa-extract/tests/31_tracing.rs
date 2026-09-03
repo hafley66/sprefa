@@ -252,8 +252,8 @@ fn phase_calls_per_file_are_pinned() {
         }
     }
     let table = phases_of("tests/fixtures/go_residual/callers.go");
-    let (_, chain_calls, _) = phase_row(&table, "go", "chain")
-        .unwrap_or_else(|| panic!("no go chain row in\n{table}"));
+    let (_, chain_calls, _) =
+        phase_row(&table, "go", "chain").unwrap_or_else(|| panic!("no go chain row in\n{table}"));
     assert_eq!(
         chain_calls, GO_RESIDUAL_CHAIN_SITES,
         "the go chain walk entered {chain_calls} sites\n{table}"
@@ -264,7 +264,11 @@ fn phase_calls_per_file_are_pinned() {
 fn the_phase_table_names_only_phases_that_ran() {
     let table = phases_of("tests/fixtures/rust/sample.rs");
     for phase in ["hash", "parse", "family", "tsi_syntax", "write"] {
-        let lang = if matches!(phase, "write") { "-" } else { "rust" };
+        let lang = if matches!(phase, "write") {
+            "-"
+        } else {
+            "rust"
+        };
         assert!(
             phase_row(&table, lang, phase).is_some(),
             "no {lang}/{phase} row in\n{table}"
@@ -315,5 +319,9 @@ fn the_default_run_creates_no_file_under_home() {
         .output()
         .expect("run extract");
     assert!(output.status.success(), "extract failed: {output:?}");
-    assert!(!home.exists(), "a default run wrote under {}", home.display());
+    assert!(
+        !home.exists(),
+        "a default run wrote under {}",
+        home.display()
+    );
 }

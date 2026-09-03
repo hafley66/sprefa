@@ -21,24 +21,30 @@ pub mod kotlin;
 pub mod kotlin_rehome;
 pub mod kotlin_rename;
 pub mod markdown;
+#[path = "4_owned_region.rs"]
+pub mod owned_region;
 pub mod prolog;
 pub mod python;
 pub mod rust;
 pub mod rust_checker;
 #[cfg(feature = "rust-checker")]
 mod rust_checker_ra;
+pub mod rust_docs;
 pub mod rust_mbe;
 pub mod rust_modules;
 pub mod rust_receivers;
 pub mod rust_rehome;
 pub mod rust_rename;
-pub mod rust_docs;
 pub mod rust_scip_macros;
 pub mod rust_type_edges;
 pub mod rust_type_refs;
+#[path = "3_source_facts.rs"]
+pub mod source_facts;
+#[path = "2_source_query.rs"]
+pub mod source_query;
 pub mod ts;
-pub mod ts_paths;
 pub mod ts_checker;
+pub mod ts_paths;
 pub mod ts_receivers;
 pub mod ts_rehome;
 pub mod ts_rename;
@@ -62,9 +68,23 @@ pub use fact::{
 pub use go::GoSource;
 pub use kotlin::KotlinSource;
 pub use markdown::MarkdownSource;
+pub use owned_region::{
+    find_owned_region, owned_region_markers, propose_owned_region, OwnedRegion, OwnedRegionError,
+    OwnedRegionProposal,
+};
 pub use prolog::PrologSource;
 pub use python::PythonSource;
 pub use rust::RustSource;
+pub use source_facts::{
+    query_source_facts, ByteRange, GitBlobFact, SourceCaptureFact, SourceMatchFact, SourcePlace,
+    SourceQueryFact, SourceQueryFacts, SourceReplacementFact, SourceRevisionFact,
+    SOURCE_FACT_PROTOCOL,
+};
+pub use source_query::{
+    query_source, query_tree_sitter, query_tree_sitter_spans, SourceQuery, SourceQueryError,
+    SourceQueryOutput, TreeSitterQuery, TreeSitterQueryMatch, TreeSitterSpannedCapture,
+    TreeSitterSpannedMatch,
+};
 pub use ts::{
     ts_specifiers, CallProjector, DfProjector, OxcParser, TsSource, TsSpecifier, TypeProjector,
 };

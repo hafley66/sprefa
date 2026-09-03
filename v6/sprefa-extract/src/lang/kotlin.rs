@@ -39,12 +39,11 @@ use std::collections::BTreeSet;
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
-    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
-    TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
-    ResolutionOrigin,
+    DfParam, DocFact, DocTag, ProjectEdge, ResolutionOrigin, SigSlot, Specifier, SpecifierKind,
+    TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{DefIndex, Parser, Project, Resolve, corpus_defs, covering_def, def_named};
+use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
@@ -1799,11 +1798,7 @@ fn resolve_type_dst(
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match sites {
-        [only] => Some((
-            only.blob.clone(),
-            only.span,
-            ResolutionOrigin::CorpusUnique,
-        )),
+        [only] => Some((only.blob.clone(), only.span, ResolutionOrigin::CorpusUnique)),
         _ => None,
     }
 }

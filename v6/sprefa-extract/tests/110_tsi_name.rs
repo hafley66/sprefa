@@ -127,7 +127,11 @@ fn every_named_id_spells_its_origin(fixture: &str) {
         let id = as_id(&fact.args[0]).expect("tsi.type arg 0 is an id");
         match (names.get(&id), origins.get(&id), classes.get(&id)) {
             (Some(name), _, Some(class)) => {
-                let written = if class == "unit" { "()" } else { class.as_str() };
+                let written = if class == "unit" {
+                    "()"
+                } else {
+                    class.as_str()
+                };
                 assert_eq!(name, written, "{fixture}: primitive {id} names its class");
             }
             (Some(name), Some(origin), None) => {
@@ -166,10 +170,25 @@ fn rust_names_are_the_written_words() {
     let mut spelled: Vec<&str> = names.values().map(String::as_str).collect();
     spelled.sort_unstable();
     for wanted in [
-        "Step", "Trail", "Error", "Result<u64, Error>", "std::fmt::Result", "Vec<Option<T>>",
-        "&mut fmt::Formatter", "Step::Idle", "u32", "bool", "str", "()", "T", "render",
+        "Step",
+        "Trail",
+        "Error",
+        "Result<u64, Error>",
+        "std::fmt::Result",
+        "Vec<Option<T>>",
+        "&mut fmt::Formatter",
+        "Step::Idle",
+        "u32",
+        "bool",
+        "str",
+        "()",
+        "T",
+        "render",
         "is_empty",
     ] {
-        assert!(spelled.contains(&wanted), "{wanted} absent from {spelled:?}");
+        assert!(
+            spelled.contains(&wanted),
+            "{wanted} absent from {spelled:?}"
+        );
     }
 }

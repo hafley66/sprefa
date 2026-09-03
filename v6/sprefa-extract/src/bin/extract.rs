@@ -39,10 +39,8 @@ mod help;
 use help::{
     BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, MAX_BYTES_LONG,
     OCCURRENCE_TEXT_LONG, PACKAGE_DEPS_LONG, PATH_LONG, PROJECT_ROOT_LONG, RUST_CHECKER_LONG,
-    TS_CHECKER_LONG,
-    SCIP_BUILD_LONG,
-    SCIP_CACHE_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG,
-    SCIP_TIMEOUT_LONG,
+    SCIP_BUILD_LONG, SCIP_CACHE_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG,
+    SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG, TS_CHECKER_LONG,
 };
 
 #[path = "../0_query.rs"]
@@ -53,6 +51,9 @@ mod source_move;
 
 #[path = "../2_move_text.rs"]
 mod move_text;
+
+#[path = "../3_region_writer.rs"]
+mod region_writer;
 
 #[path = "../0_rename.rs"]
 mod source_rename;
@@ -485,6 +486,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
+    if std::env::args().nth(1).as_deref() == Some("region") {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        match region_writer::run(argv) {
+            Ok(0) => {}
+            Ok(exit) => std::process::exit(exit),
+            Err(error) => {
+                eprintln!("{}", error.message);
+                std::process::exit(error.exit);
+            }
+        }
+        return Ok(());
+    }
     let cli = Cli::parse();
 
     // `--scip-timeout` must reach the library's `ScipMode::Build` path, whose
@@ -604,9 +617,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The cfg plane is derived AFTER the flatten, so its rows would land past
     // the coverage rows and outside the numbering.
     if cli.witness && cfg {
-        return Err("--witness does not cover --family cfg: the cfg plane is derived \
+        return Err(
+            "--witness does not cover --family cfg: the cfg plane is derived \
                     after the flatten, so its rows carry no fact ordinal"
-            .into());
+                .into(),
+        );
     }
     if cli.bench {
         bench(&path_str, &content, mask, cfg)?;
@@ -629,8 +644,14 @@ fn scip_request(cli: &Cli) -> Result<ResolveRequest<'_>, String> {
             None => ScipRecords::all(),
         },
         occurrence_text: cli.occurrence_text,
-        rust_checker: cli.rust_checker.then(|| cli.project_root.as_deref()).flatten(),
-        ts_checker: cli.ts_checker.then(|| cli.project_root.as_deref()).flatten(),
+        rust_checker: cli
+            .rust_checker
+            .then(|| cli.project_root.as_deref())
+            .flatten(),
+        ts_checker: cli
+            .ts_checker
+            .then(|| cli.project_root.as_deref())
+            .flatten(),
         witness: cli.witness,
     })
 }

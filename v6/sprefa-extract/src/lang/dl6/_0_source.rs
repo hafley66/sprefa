@@ -9,9 +9,9 @@
 use std::collections::BTreeSet;
 
 use crate::family::{
-    CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, Family, ProjectEdge, SigSlot,
-    Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
-    ResolutionOrigin,
+    CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, Family, ProjectEdge,
+    ResolutionOrigin, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
+    TypeEntityKind, TypeF, TypeSig,
 };
 use crate::lang::extract_lang::ExtractLang;
 use crate::rows::{Edge, FamilyBundle, Node};

@@ -10,7 +10,12 @@ use std::path::Path;
 
 use sprefa_extract::FlatFact;
 
-fn edge(caller_path: &str, caller_name: Option<&str>, callee_path: &str, callee_name: Option<&str>) -> FlatFact {
+fn edge(
+    caller_path: &str,
+    caller_name: Option<&str>,
+    callee_path: &str,
+    callee_name: Option<&str>,
+) -> FlatFact {
     FlatFact::ResolvedEdge {
         fact: None,
         caller_path: caller_path.to_string(),
@@ -24,7 +29,12 @@ fn edge(caller_path: &str, caller_name: Option<&str>, callee_path: &str, callee_
     }
 }
 
-fn type_edge(owner_path: &str, owner_name: Option<&str>, target_path: &str, target_name: Option<&str>) -> FlatFact {
+fn type_edge(
+    owner_path: &str,
+    owner_name: Option<&str>,
+    target_path: &str,
+    target_name: Option<&str>,
+) -> FlatFact {
     FlatFact::ResolvedTypeEdge {
         fact: None,
         owner_path: owner_path.to_string(),
@@ -116,7 +126,10 @@ fn normal_form_rows_match_the_python_column_layout() {
 fn rust_normal_form_agrees_with_normalize_py_over_the_go_corpus() {
     let corpus = bench::corpus("go");
     if !corpus.root.is_dir() {
-        println!("parity: absent (corpus root {} missing), skipped", corpus.root.display());
+        println!(
+            "parity: absent (corpus root {} missing), skipped",
+            corpus.root.display()
+        );
         return;
     }
     let files = bench::enumerate(&corpus);

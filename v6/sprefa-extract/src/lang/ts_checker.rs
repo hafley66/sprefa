@@ -128,11 +128,13 @@ impl TsCheckerIndex {
             coverage: answers
                 .coverage
                 .into_iter()
-                .map(|(relation, complete, diagnostic)| crate::tsi::CoverageClaim {
-                    relation,
-                    complete,
-                    diagnostic,
-                })
+                .map(
+                    |(relation, complete, diagnostic)| crate::tsi::CoverageClaim {
+                        relation,
+                        complete,
+                        diagnostic,
+                    },
+                )
                 .collect(),
             ..TsCheckerIndex::default()
         };
@@ -348,14 +350,16 @@ enum WireLine {
 #[cfg(feature = "ts-checker")]
 fn into_refs(rows: Vec<WireRow>) -> Vec<TsCheckerRef> {
     rows.into_iter()
-        .map(|(start, end, name, dst_path, dst_name, dst_offset)| TsCheckerRef {
-            start,
-            end,
-            name,
-            dst_path,
-            dst_name,
-            dst_offset,
-        })
+        .map(
+            |(start, end, name, dst_path, dst_name, dst_offset)| TsCheckerRef {
+                start,
+                end,
+                name,
+                dst_path,
+                dst_name,
+                dst_offset,
+            },
+        )
         .collect()
 }
 
@@ -395,7 +399,8 @@ pub fn answer(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.subsec_nanos())
         .unwrap_or_default();
-    let dir = std::env::temp_dir().join(format!("sprefa-ts-checker-{}-{nanos}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("sprefa-ts-checker-{}-{nanos}", std::process::id()));
     let stage = |detail: String| TsCheckerError::NoDriver(detail);
     std::fs::create_dir_all(&dir).map_err(|err| stage(err.to_string()))?;
     let script = dir.join("ts_checker.mjs");
@@ -426,7 +431,9 @@ pub fn answer(
                 for row in file.tsi {
                     answers.tsi.push(into_fact(row)?);
                 }
-                answers.calls.insert(file.path.clone(), into_refs(file.calls));
+                answers
+                    .calls
+                    .insert(file.path.clone(), into_refs(file.calls));
                 answers.types.insert(file.path, into_refs(file.types));
             }
             Ok(WireLine::Stats(WireStats { stats, coverage })) => {

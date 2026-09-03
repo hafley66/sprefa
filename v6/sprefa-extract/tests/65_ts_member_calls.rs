@@ -97,7 +97,10 @@ fn a_const_annotation_binds_the_class_member() {
         .into_iter()
         .find(|e| e.1 == "load")
         .expect("r.load() on a `const r: RingRepo` must resolve");
-    assert!(load.2.ends_with("classes.ts"), "load bound outside classes.ts");
+    assert!(
+        load.2.ends_with("classes.ts"),
+        "load bound outside classes.ts"
+    );
 }
 
 #[test]
@@ -107,7 +110,10 @@ fn this_inside_a_class_binds_the_own_method() {
         .into_iter()
         .find(|e| e.1 == "load")
         .expect("this.load() inside ThisUser must resolve");
-    assert!(load.2.ends_with("callers.ts"), "load bound outside callers.ts");
+    assert!(
+        load.2.ends_with("callers.ts"),
+        "load bound outside callers.ts"
+    );
 }
 
 #[test]
@@ -117,7 +123,10 @@ fn a_new_expression_receiver_binds_the_constructed_class_member() {
         .into_iter()
         .find(|e| e.1 == "load")
         .expect("new RingRepo().load() must resolve");
-    assert!(load.2.ends_with("classes.ts"), "load bound outside classes.ts");
+    assert!(
+        load.2.ends_with("classes.ts"),
+        "load bound outside classes.ts"
+    );
 }
 
 #[test]
@@ -127,7 +136,10 @@ fn a_static_receiver_binds_the_static_member() {
         .into_iter()
         .find(|e| e.1 == "unload")
         .expect("RingRepo.unload() must resolve");
-    assert!(unload.2.ends_with("classes.ts"), "unload bound outside classes.ts");
+    assert!(
+        unload.2.ends_with("classes.ts"),
+        "unload bound outside classes.ts"
+    );
 }
 
 #[test]
@@ -137,12 +149,18 @@ fn a_class_field_receiver_binds_the_field_type_member() {
         .into_iter()
         .find(|e| e.1 == "load")
         .expect("holder.repo.load() must resolve through the field's type");
-    assert!(load.2.ends_with("classes.ts"), "load bound outside classes.ts");
+    assert!(
+        load.2.ends_with("classes.ts"),
+        "load bound outside classes.ts"
+    );
     let ping = edges_of_caller(&edges, "fromThisField")
         .into_iter()
         .find(|e| e.1 == "ping")
         .expect("holder.other.ping() must resolve through the field's type");
-    assert!(ping.2.ends_with("classes.ts"), "ping bound outside classes.ts");
+    assert!(
+        ping.2.ends_with("classes.ts"),
+        "ping bound outside classes.ts"
+    );
 }
 
 #[test]
@@ -152,7 +170,10 @@ fn an_interface_receiver_binds_the_interface_member() {
         .into_iter()
         .find(|e| e.1 == "ping")
         .expect("r.ping() on a RepoIface param must resolve");
-    assert!(ping.2.ends_with("classes.ts"), "ping bound outside classes.ts");
+    assert!(
+        ping.2.ends_with("classes.ts"),
+        "ping bound outside classes.ts"
+    );
 }
 
 #[test]
@@ -172,7 +193,10 @@ fn a_class_extends_hop_binds_the_inherited_member() {
         .into_iter()
         .find(|e| e.1 == "ping")
         .expect("r.ping() on ExtRepo must resolve through the one-hop base");
-    assert!(ping.2.ends_with("classes.ts"), "ping bound outside classes.ts");
+    assert!(
+        ping.2.ends_with("classes.ts"),
+        "ping bound outside classes.ts"
+    );
 }
 
 #[test]
@@ -182,23 +206,24 @@ fn a_const_from_a_call_binds_through_the_declared_return_type() {
         .into_iter()
         .find(|e| e.1 == "load")
         .expect("const r = makeRing(); r.load() must resolve through the one hop");
-    assert!(load.2.ends_with("classes.ts"), "load bound outside classes.ts");
+    assert!(
+        load.2.ends_with("classes.ts"),
+        "load bound outside classes.ts"
+    );
 }
 
 #[test]
 fn a_union_receiver_stays_ambiguous() {
     let edges = resolved_edges();
     assert!(
-        !edges
-            .iter()
-            .any(|e| e.0 == "fromUnion" && e.1 == "load"),
+        !edges.iter().any(|e| e.0 == "fromUnion" && e.1 == "load"),
         "a.load() on a union receiver must stay ambiguous: {edges:?}"
     );
     let unresolved = unresolved_rows();
     assert!(
-        unresolved
-            .iter()
-            .any(|(path, reason, detail)| { path.ends_with("callers.ts") && reason == "ambiguous" && detail == "load" }),
+        unresolved.iter().any(|(path, reason, detail)| {
+            path.ends_with("callers.ts") && reason == "ambiguous" && detail == "load"
+        }),
         "a.load() must drop with reason ambiguous: {unresolved:?}"
     );
 }

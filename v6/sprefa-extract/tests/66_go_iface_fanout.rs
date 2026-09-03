@@ -100,10 +100,7 @@ fn two_implementers_fan_out_per_site() {
         .collect();
     assert_eq!(
         fanout_targets,
-        BTreeSet::from([
-            format!("{site}->M"),
-            format!("{n_site}->N"),
-        ]),
+        BTreeSet::from([format!("{site}->M"), format!("{n_site}->N"),]),
         "one fan-out edge per implementer per site: {edges:?}"
     );
 }
@@ -152,5 +149,8 @@ fn over_the_cap_emits_fanout_cap_and_no_fanout() {
         .filter(|(reason, _)| reason == "fanout_cap")
         .collect();
     assert_eq!(caps.len(), 1, "one cap row: {caps:?}");
-    assert!(caps[0].1.contains("65"), "detail carries the count: {caps:?}");
+    assert!(
+        caps[0].1.contains("65"),
+        "detail carries the count: {caps:?}"
+    );
 }

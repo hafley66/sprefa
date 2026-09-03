@@ -103,10 +103,7 @@ fn ts_barrel_import_edge_says_module_plane() {
         &format!("{TS_DIR}/widgets.ts"),
         &format!("{TS_DIR}/other.ts"),
     ]);
-    assert_eq!(
-        origins(&edges, Some("run"), "normalize"),
-        ["module_plane"]
-    );
+    assert_eq!(origins(&edges, Some("run"), "normalize"), ["module_plane"]);
 }
 
 /// `UseDot` calls a bare `Widget()`: two corpus packages export the name and
@@ -127,10 +124,7 @@ fn go_dot_import_edge_says_module_plane() {
     let mut args = vec!["--family", "call"];
     args.extend(files.iter().map(String::as_str));
     let edges = call_edges(&args);
-    assert_eq!(
-        origins(&edges, Some("UseDot"), "Widget"),
-        ["module_plane"]
-    );
+    assert_eq!(origins(&edges, Some("UseDot"), "Widget"), ["module_plane"]);
 }
 
 /// A bare call to a def in the same file: the same-file leg answers before the
