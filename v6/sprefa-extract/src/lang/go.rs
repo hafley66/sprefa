@@ -64,23 +64,35 @@ pub(crate) fn go_parse(content: &str) -> Option<tree_sitter::Tree> {
 /// The single-entry handoff: `dispatch` parses and stores, the module plane
 /// consumes on the same worker thread.
 pub(crate) fn go_parse_shared(content: &str) -> Option<std::sync::Arc<tree_sitter::Tree>> {
+    go_parse_shared_keyed(content).map(|(_, tree)| tree)
+}
+
+/// The shared parse plus the content id its cache key was taken from: a later
+/// pass over the same bytes takes the id from here, never a second full hash.
+pub(crate) fn go_parse_shared_keyed(
+    content: &str,
+) -> Option<(ContentId, std::sync::Arc<tree_sitter::Tree>)> {
     use crate::shape::content_id_of;
     thread_local! {
         static LAST: std::cell::RefCell<Option<(crate::shape::ContentId, std::sync::Arc<tree_sitter::Tree>)>> =
             const { std::cell::RefCell::new(None) };
     }
-    let id = content_id_of(content.as_bytes());
+    let id = {
+        let span = trace::family_span("go", "content-id");
+        let _entered = span.enter();
+        content_id_of(content.as_bytes())
+    };
     if let Some((_, tree)) = LAST.with(|slot| {
         slot.borrow()
             .as_ref()
             .filter(|(cached, _)| cached == &id)
             .cloned()
     }) {
-        return Some(tree);
+        return Some((id, tree));
     }
     let tree = std::sync::Arc::new(go_parse(content)?);
-    LAST.with(|slot| *slot.borrow_mut() = Some((id, tree.clone())));
-    Some(tree)
+    LAST.with(|slot| *slot.borrow_mut() = Some((id.clone(), tree.clone())));
+    Some((id, tree))
 }
 
 /// UTF-8 text of a tree-sitter node. Port of v5 `go_text`.
@@ -666,6 +678,7 @@ fn go_receiver_type(method: tree_sitter::Node, src: &[u8]) -> Option<String> {
 fn project_call(
     root: tree_sitter::Node,
     src: &[u8],
+    blob: ContentId,
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
 ) {
@@ -676,7 +689,7 @@ fn project_call(
     let imports = go_import_bindings(sink, strings);
     go_walk_call_sites(root, src, strings, sink, &imports);
     let field_types = go_field_types(root, src);
-    go_collect_receivers(root, src, strings, sink, &imports, &field_types);
+    go_collect_receivers(root, src, blob, strings, sink, &imports, &field_types);
 }
 
 /// Qualifier -> import path, per the `go_module_specifiers` table above: a
@@ -1733,6 +1746,7 @@ fn go_walk_type_switch(
 fn go_collect_receivers(
     root: tree_sitter::Node,
     src: &[u8],
+    blob: ContentId,
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
     imports: &HashMap<String, String>,
@@ -1779,7 +1793,7 @@ fn go_collect_receivers(
         }
     }
     go_bind_plan_store(
-        crate::content_id_of(src),
+        blob,
         GoBindPlan {
             binds: plan.binds,
             inferred_recv: plan.inferred_recv,
@@ -2655,12 +2669,12 @@ impl Source for GoSource {
         let mut df = None;
         if mask.types || mask.call || mask.df {
             if let Ok(src) = std::str::from_utf8(content) {
-                let tree = {
+                let parsed = {
                     let span = trace::parse_span("go", "tree-sitter");
                     let _entered = span.enter();
-                    go_parse_shared(src)
+                    go_parse_shared_keyed(src)
                 };
-                if let Some(tree) = tree {
+                if let Some((blob, tree)) = parsed {
                     let root = tree.root_node();
                     let src_bytes = src.as_bytes();
                     if mask.types {
@@ -2675,7 +2689,7 @@ impl Source for GoSource {
                         let span = trace::family_span("go", "call");
                         let _entered = span.enter();
                         let mut bundle = FamilyBundle::<CallF>::default();
-                        project_call(root, src_bytes, &mut strings, &mut bundle);
+                        project_call(root, src_bytes, blob, &mut strings, &mut bundle);
                         trace::record_bundle(&span, &bundle, bundle.aux.sites.len());
                         call = Some(bundle);
                     }
