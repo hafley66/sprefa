@@ -1,7 +1,7 @@
 //! The checker tier's loader: `cargo metadata` into a salsa db, then
 //! rust-analyzer's own resolution over every supplied file. Seam: `rust_checker`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -204,12 +204,14 @@ impl SiteSpan {
     }
 }
 
-/// The four rust-analyzer calls one file's walk pays for, priced apart.
+/// The four rust-analyzer calls one file's walk pays for, priced apart, and the
+/// nav answers already in hand.
 struct SiteSpans {
     method: SiteSpan,
     call_path: SiteSpan,
     type_path: SiteSpan,
     nav: SiteSpan,
+    navs: RefCell<HashMap<ModuleDef, Option<NavigationTarget>>>,
 }
 
 impl SiteSpans {
@@ -219,7 +221,23 @@ impl SiteSpans {
             call_path: SiteSpan::new(Phase::CheckerCallPath),
             type_path: SiteSpan::new(Phase::CheckerTypePath),
             nav: SiteSpan::new(Phase::CheckerNav),
+            navs: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// One `try_to_nav` per DEFINITION, never per site: it reparses the file the
+    /// destination is declared in. `checker_nav`'s `calls` counts memo MISSES.
+    fn destination_of(
+        &self,
+        sema: &Semantics<'_, RootDatabase>,
+        def: ModuleDef,
+    ) -> Option<NavigationTarget> {
+        if let Some(known) = self.navs.borrow().get(&def) {
+            return known.clone();
+        }
+        let nav = self.nav.call(|| nav_of(sema, def));
+        self.navs.borrow_mut().insert(def, nav.clone());
+        nav
     }
 
     fn record(&self) {
@@ -228,6 +246,14 @@ impl SiteSpans {
         self.type_path.record();
         self.nav.record();
     }
+}
+
+/// A path under an `ast::PathType`, qualifiers included. An expression-position
+/// path is the syntax leg's; the call and record arms took the call-shaped ones.
+fn in_type_position(path: &ast::Path) -> bool {
+    path.syntax()
+        .ancestors()
+        .any(|node| ast::PathType::can_cast(node.kind()))
 }
 
 fn walk_file(
@@ -266,6 +292,9 @@ fn walk_file(
             continue;
         }
         if let Some(path) = ast::Path::cast(node) {
+            if !in_type_position(&path) {
+                continue;
+            }
             if let Some(reference) = type_ref(sema, destination, file, &spans, &path) {
                 out.types.push(reference);
             }
@@ -286,7 +315,7 @@ fn method_call_ref(
 ) -> Option<CheckerRef> {
     let name_ref = call.name_ref()?;
     let function = spans.method.call(|| sema.resolve_method_call(call))?;
-    let nav = spans.nav.call(|| nav_of(sema, ModuleDef::Function(function)))?;
+    let nav = spans.destination_of(sema, ModuleDef::Function(function))?;
     mint(destination, file, name_ref.syntax().text_range(), &nav)
 }
 
@@ -305,7 +334,7 @@ fn path_call_ref(
     if matches!(def, ModuleDef::Module(_) | ModuleDef::BuiltinType(_)) {
         return None;
     }
-    let nav = spans.nav.call(|| nav_of(sema, def))?;
+    let nav = spans.destination_of(sema, def)?;
     mint(destination, file, name_ref.syntax().text_range(), &nav)
 }
 
@@ -328,7 +357,7 @@ fn type_ref(
     ) {
         return None;
     }
-    let nav = spans.nav.call(|| nav_of(sema, def))?;
+    let nav = spans.destination_of(sema, def)?;
     mint(destination, file, name_ref.syntax().text_range(), &nav)
 }
 
