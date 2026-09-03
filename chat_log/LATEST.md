@@ -1,1 +1,1 @@
-20260902.0.sprefa-extract-tsi-syntax-semantic-modes-plan.md
+20260902.1.sprefa-tsi-eight-arcs-landed-trail-pending.md
