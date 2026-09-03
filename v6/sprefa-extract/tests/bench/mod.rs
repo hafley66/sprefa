@@ -174,6 +174,7 @@ fn oracle_files() -> &'static [OracleFile] {
         OracleFile { lang: "ts5", family: "call", oracle: "oracle", file: "ts5.oracle.call.tsv" },
         OracleFile { lang: "ts5", family: "call", oracle: "codeql2", file: "ts.codeql2.call.tsv" },
         OracleFile { lang: "ts5", family: "module", oracle: "madge", file: "ts.madge.module.tsv" },
+        OracleFile { lang: "ts5", family: "module", oracle: "depcruise", file: "ts.depcruise.module.tsv" },
         OracleFile { lang: "go", family: "call", oracle: "oracle-vta-bare", file: "go.oracle.call.vta.bare.tsv" },
         OracleFile { lang: "go", family: "call", oracle: "codeql2", file: "go.codeql2.call.tsv" },
         OracleFile { lang: "go", family: "module", oracle: "oracle", file: "go.oracle.module.tsv" },
@@ -205,9 +206,11 @@ pub fn cases() -> &'static [Case] {
         Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "oracle", projection: Projection::Raw },
         Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "codeql2", projection: Projection::Raw },
         Case { lang: "ts5", family: "module", tier: Tier::Syntax, oracle: "madge", projection: Projection::Raw },
+        Case { lang: "ts5", family: "module", tier: Tier::Syntax, oracle: "depcruise", projection: Projection::Raw },
         Case { lang: "ts5", family: "call", tier: Tier::Checker, oracle: "oracle", projection: Projection::Raw },
         Case { lang: "ts5", family: "call", tier: Tier::Checker, oracle: "codeql2", projection: Projection::Raw },
         Case { lang: "ts5", family: "module", tier: Tier::Checker, oracle: "madge", projection: Projection::Raw },
+        Case { lang: "ts5", family: "module", tier: Tier::Checker, oracle: "depcruise", projection: Projection::Raw },
         Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "oracle-vta-bare", projection: Projection::GoImpl },
         Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "codeql2", projection: Projection::GoMethod },
         Case { lang: "go", family: "module", tier: Tier::Syntax, oracle: "oracle", projection: Projection::GoScope },
@@ -421,9 +424,19 @@ pub fn normal_form(root: &Path, facts: &[FlatFact]) -> NormalForms {
                     .insert(resolution_origin.clone());
                 forms.type_edges.insert(row);
             }
+            // A module edge is the file the specifier names. A binding that
+            // walked past that file through a re-export chain (hops >= 2)
+            // seats a NAME, and the file it lands in is not one the source
+            // imports.
             FlatFact::ResolvedImportRow {
-                src_path, target_path, ..
+                src_path,
+                target_path,
+                hops,
+                ..
             } => {
+                if *hops > 1 {
+                    continue;
+                }
                 forms
                     .module
                     .insert(format!("{}\t\t{}\t", rel(root, src_path), rel(root, target_path)));

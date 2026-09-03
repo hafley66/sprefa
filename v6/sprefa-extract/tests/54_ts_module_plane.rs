@@ -67,11 +67,13 @@ fn edges(files: &[&str]) -> Vec<(String, String, String, String)> {
     rows
 }
 
-/// `(local, name, target stem, target_name, kind, hops)` per `resolved_import`.
+/// `(local, name, target stem, target_name, kind, hops)` per `resolved_import`
+/// BINDING row; the kind=module file edges (`113_ts_module_edges.rs`) bind no
+/// name and stay out.
 fn imports(files: &[&str]) -> Vec<(String, String, String, String, String, u64)> {
     let mut rows: Vec<(String, String, String, String, String, u64)> = run(files)
         .iter()
-        .filter(|row| row["record"] == "resolved_import")
+        .filter(|row| row["record"] == "resolved_import" && row["kind"] != "module")
         .map(|row| {
             (
                 text(row, "local"),
@@ -163,7 +165,7 @@ fn the_corpus_has_exactly_one_edge_per_written_binding() {
         .count();
     let import_count = rows
         .iter()
-        .filter(|row| row["record"] == "resolved_import")
+        .filter(|row| row["record"] == "resolved_import" && row["kind"] != "module")
         .count();
     assert_eq!((edge_count, import_count), (2, 2));
 }

@@ -189,7 +189,9 @@ KIND VOCABULARIES (the `kind` field)
   resolved_import kind     local (the target module declares the name) |
                     indirect (>=1 `export { x } from` hop) | star (>=1
                     `export *` hop) | namespace (a module object, not one
-                    declaration) | default (the module's default export).
+                    declaration) | default (the module's default export) |
+                    module (no binding: the file a specifier names, one row
+                    per specifier, hops=1).
                     Precedence when several apply: namespace, star, indirect,
                     default, local.
   resolved_type_edge kind  field | impl | variant | generic | uses | doc_ref
