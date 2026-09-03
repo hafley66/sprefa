@@ -34,15 +34,16 @@ const CST_ONLY: FamilyMask = FamilyMask {
 };
 
 /// The exact `doc_node` row set the fixture projects, hand-derived byte spans.
-/// The fence without a language carries an empty name.
+/// The fence without a language carries an empty name; `body` is the content
+/// between the fence lines.
 const EXPECTED_DOC_NODES: &[&str] = &[
     r#"{"record":"doc_node","family":"type","span":{"start":0,"end":9},"kind":"heading","name":"Engine","parent":null}"#,
     r#"{"record":"doc_node","family":"type","span":{"start":10,"end":19},"kind":"heading","name":"Start","parent":"Engine"}"#,
     r#"{"record":"doc_node","family":"type","span":{"start":20,"end":32},"kind":"heading","name":"Details","parent":"Start"}"#,
     r#"{"record":"doc_node","family":"type","span":{"start":33,"end":50},"kind":"heading","name":"Configuration","parent":"Engine"}"#,
     r#"{"record":"doc_node","family":"type","span":{"start":51,"end":60},"kind":"heading","name":"Point","parent":"Engine"}"#,
-    r#"{"record":"doc_node","family":"type","span":{"start":61,"end":88},"kind":"code_block","name":"rust","parent":"Point"}"#,
-    r#"{"record":"doc_node","family":"type","span":{"start":89,"end":109},"kind":"code_block","name":"","parent":"Point"}"#,
+    r#"{"record":"doc_node","family":"type","span":{"start":61,"end":88},"kind":"code_block","name":"rust","parent":"Point","body":{"start":69,"end":84}}"#,
+    r#"{"record":"doc_node","family":"type","span":{"start":89,"end":109},"kind":"code_block","name":"","parent":"Point","body":{"start":93,"end":105}}"#,
 ];
 
 /// The corpus: the markdown fixture plus the rust/ts fixtures that declare the
