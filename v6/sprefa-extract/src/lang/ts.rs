@@ -31,6 +31,7 @@ use crate::family::{
     ResolutionOrigin,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
+use crate::types::span_arg;
 use crate::scip::{byte_range_cached, definition_of, join_documents, site_occurrence};
 use crate::seams::{
     containing_def_site_in, corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite,
@@ -1143,34 +1144,35 @@ fn tsi_rows(
     let span = trace::phase_span("ts", trace::Phase::TsiSyntax);
     let _entered = span.enter();
     let mut names = TsiNames::new("ts");
+    let mut state = TsiState::default();
     for stmt in with_module_bodies(&program.body) {
         use ts::Statement as S;
         match stmt {
             S::ExportNamedDeclaration(export) => {
                 if let Some(decl) = &export.declaration {
-                    tsi_decl(decl, src, strings, &mut names);
+                    tsi_decl(decl, src, strings, &mut names, &mut state);
                 }
             }
             S::ExportDefaultDeclaration(export) => match &export.declaration {
                 ts::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-                    tsi_class(class, src, strings, &mut names)
+                    tsi_class(class, src, strings, &mut names, &mut state)
                 }
                 ts::ExportDefaultDeclarationKind::TSInterfaceDeclaration(interface) => {
-                    tsi_interface(interface, src, strings, &mut names)
+                    tsi_interface(interface, src, strings, &mut names, &mut state)
                 }
                 ts::ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
-                    tsi_function(func, src, strings, &mut names)
+                    tsi_function(func, src, strings, &mut names, &mut state)
                 }
                 _ => {}
             },
-            S::ClassDeclaration(class) => tsi_class(class, src, strings, &mut names),
+            S::ClassDeclaration(class) => tsi_class(class, src, strings, &mut names, &mut state),
             S::TSInterfaceDeclaration(interface) => {
-                tsi_interface(interface, src, strings, &mut names)
+                tsi_interface(interface, src, strings, &mut names, &mut state)
             }
-            S::TSTypeAliasDeclaration(alias) => tsi_alias(alias, src, strings, &mut names),
+            S::TSTypeAliasDeclaration(alias) => tsi_alias(alias, src, strings, &mut names, &mut state),
             S::TSEnumDeclaration(enum_decl) => tsi_enum(enum_decl, src, strings, &mut names),
-            S::FunctionDeclaration(func) => tsi_function(func, src, strings, &mut names),
-            S::VariableDeclaration(var) => tsi_var_fn(var, src, strings, &mut names),
+            S::FunctionDeclaration(func) => tsi_function(func, src, strings, &mut names, &mut state),
+            S::VariableDeclaration(var) => tsi_var_fn(var, src, strings, &mut names, &mut state),
             _ => {}
         }
     }
@@ -1178,33 +1180,261 @@ fn tsi_rows(
     trace::record_phase(&span, 0, sink.aux.tsi.len() as u64, 1);
 }
 
-fn tsi_decl(decl: &ts::Declaration, src: &str, strings: &mut Strings, names: &mut TsiNames) {
+fn tsi_decl(
+    decl: &ts::Declaration,
+    src: &str,
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) {
     match decl {
-        ts::Declaration::ClassDeclaration(class) => tsi_class(class, src, strings, names),
+        ts::Declaration::ClassDeclaration(class) => tsi_class(class, src, strings, names, state),
         ts::Declaration::TSInterfaceDeclaration(interface) => {
-            tsi_interface(interface, src, strings, names)
+            tsi_interface(interface, src, strings, names, state)
         }
-        ts::Declaration::TSTypeAliasDeclaration(alias) => tsi_alias(alias, src, strings, names),
+        ts::Declaration::TSTypeAliasDeclaration(alias) => tsi_alias(alias, src, strings, names, state),
         ts::Declaration::TSEnumDeclaration(enum_decl) => tsi_enum(enum_decl, src, strings, names),
-        ts::Declaration::FunctionDeclaration(func) => tsi_function(func, src, strings, names),
-        ts::Declaration::VariableDeclaration(var) => tsi_var_fn(var, src, strings, names),
+        ts::Declaration::FunctionDeclaration(func) => tsi_function(func, src, strings, names, state),
+        ts::Declaration::VariableDeclaration(var) => tsi_var_fn(var, src, strings, names, state),
         _ => {}
     }
 }
 
-/// A type parameter in scope wins over the file's written-text table, so the
-/// `T` of one declaration is never the `T` of another (identity rule 4).
-fn tsi_target(
-    names: &mut TsiNames,
-    strings: &mut Strings,
+/// Per-run memory: which application ids already stated their call, and the
+/// id each primitive class took.
+#[derive(Default)]
+struct TsiState {
+    called: BTreeSet<u32>,
+    classes: BTreeMap<&'static str, u32>,
+}
+
+/// The keyword types the v7 prelude declares for ts. `any` and `object` are
+/// absent there on purpose, so they stay named ids.
+fn tsi_keyword_class(ty: &ts::TSType) -> Option<&'static str> {
+    Some(match ty {
+        ts::TSType::TSStringKeyword(_) => "string",
+        ts::TSType::TSNumberKeyword(_) => "number",
+        ts::TSType::TSBooleanKeyword(_) => "boolean",
+        ts::TSType::TSBigIntKeyword(_) => "bigint",
+        ts::TSType::TSSymbolKeyword(_) => "symbol",
+        ts::TSType::TSVoidKeyword(_) => "void",
+        ts::TSType::TSUndefinedKeyword(_) => "undefined",
+        ts::TSType::TSNullKeyword(_) => "null",
+        ts::TSType::TSNeverKeyword(_) => "never",
+        ts::TSType::TSUnknownKeyword(_) => "unknown",
+        _ => return None,
+    })
+}
+
+/// A primitive is declared by the language, so it carries a class and a name
+/// rather than an origin: no range in this file declares it.
+fn tsi_primitive_id(class: &'static str, names: &mut TsiNames, state: &mut TsiState) -> u32 {
+    if let Some(&id) = state.classes.get(class) {
+        return id;
+    }
+    let id = names.bare_id();
+    names.fact("tsi.type", vec![Arg::Id(id)]);
+    names.fact(
+        "tsi.primitive",
+        vec![Arg::Id(id), Arg::Atom(class.to_string())],
+    );
+    names.name(id, class);
+    state.classes.insert(class, id);
+    id
+}
+
+/// The LAST segment of a reference names the written type; the rest qualifies
+/// it. Every other form spans its whole text.
+fn tsi_type_span(ty: &ts::TSType) -> oxc_span::Span {
+    match ty {
+        ts::TSType::TSTypeReference(reference) => tsi_type_name_span(&reference.type_name),
+        other => other.span(),
+    }
+}
+
+fn tsi_type_name_span(name: &ts::TSTypeName) -> oxc_span::Span {
+    match name {
+        ts::TSTypeName::QualifiedName(qualified) => qualified.right.span,
+        other => other.span(),
+    }
+}
+
+/// One id per written text, except a scoped type parameter (rule 4), a
+/// keyword primitive, and the structural forms (tuple, literal, union,
+/// function type), which take a fresh id per occurrence (rule 2). An array,
+/// indexed access, conditional, mapped, template literal, query, literal type
+/// or `this` states no shape and keeps one id per text.
+fn tsi_type_id(
+    ty: &ts::TSType,
     scope: &TsiScope,
     src: &str,
-    span: oxc_span::Span,
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
 ) -> u32 {
-    let text = tsi_text(src, span);
-    match scope.get(text) {
-        Some(&id) => id,
-        None => names.named(strings, text, to_span(span)),
+    let text = tsi_text(src, ty.span());
+    if let Some(&id) = scope.get(text) {
+        return id;
+    }
+    if let Some(class) = tsi_keyword_class(ty) {
+        return tsi_primitive_id(class, names, state);
+    }
+    match ty {
+        ts::TSType::TSParenthesizedType(inner) => {
+            tsi_type_id(&inner.type_annotation, scope, src, strings, names, state)
+        }
+        ts::TSType::TSTupleType(tuple) => {
+            let id = names.anonymous(to_span(tuple.span));
+            names.fact("tsi.product", vec![Arg::Id(id)]);
+            for (position, element) in tuple.element_types.iter().enumerate() {
+                let target = tsi_tuple_element_id(element, scope, src, strings, names, state);
+                names.edge(id, &position.to_string(), target, position as i64);
+            }
+            id
+        }
+        ts::TSType::TSUnionType(union) => {
+            let id = names.anonymous(to_span(union.span));
+            names.fact("tsi.sum", vec![Arg::Id(id)]);
+            for (position, member) in union.types.iter().enumerate() {
+                let target = tsi_type_id(member, scope, src, strings, names, state);
+                let label = tsi_text(src, member.span()).to_string();
+                names.edge(id, &label, target, position as i64);
+            }
+            id
+        }
+        ts::TSType::TSTypeLiteral(literal) => {
+            let id = names.anonymous(to_span(literal.span));
+            names.fact("tsi.product", vec![Arg::Id(id)]);
+            tsi_members(id, &literal.members, scope, src, strings, names, state);
+            id
+        }
+        ts::TSType::TSFunctionType(function) => {
+            let id = names.anonymous(to_span(function.span));
+            names.fact("tsi.callable", vec![Arg::Id(id)]);
+            tsi_signature(
+                id,
+                &function.type_parameters,
+                &function.params,
+                Some(&function.return_type),
+                scope,
+                src,
+                strings,
+                names,
+                state,
+            );
+            id
+        }
+        _ => {
+            let id = names.named(strings, text, to_span(tsi_type_span(ty)));
+            tsi_application(id, ty, scope, src, strings, names, state);
+            id
+        }
+    }
+}
+
+/// A tuple element is a type, an optional `T?` or a rest `...T[]`, or a
+/// labelled `name: T`; the label is dropped, the position is the edge.
+fn tsi_tuple_element_id(
+    element: &ts::TSTupleElement,
+    scope: &TsiScope,
+    src: &str,
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) -> u32 {
+    match element {
+        ts::TSTupleElement::TSOptionalType(optional) => {
+            tsi_type_id(&optional.type_annotation, scope, src, strings, names, state)
+        }
+        ts::TSTupleElement::TSRestType(rest) => {
+            tsi_type_id(&rest.type_annotation, scope, src, strings, names, state)
+        }
+        ts::TSTupleElement::TSNamedTupleMember(member) => {
+            tsi_tuple_element_id(&member.element_type, scope, src, strings, names, state)
+        }
+        other => tsi_type_id(other.to_ts_type(), scope, src, strings, names, state),
+    }
+}
+
+/// Every written `Name<Args>` states its call once (rule 3 by text): the
+/// result is the id of the full text, the callee the id of the name alone.
+fn tsi_application(
+    result: u32,
+    ty: &ts::TSType,
+    scope: &TsiScope,
+    src: &str,
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) {
+    let ts::TSType::TSTypeReference(reference) = ty else {
+        return;
+    };
+    let Some(arguments) = &reference.type_arguments else {
+        return;
+    };
+    if !state.called.insert(result) {
+        return;
+    }
+    let head = tsi_text(src, reference.type_name.span());
+    let callee = names.named(strings, head, to_span(tsi_type_name_span(&reference.type_name)));
+    let list = names.bare_id();
+    names.fact(
+        "tsi.called",
+        vec![Arg::Id(result), Arg::Id(callee), Arg::Id(list)],
+    );
+    for (position, argument) in arguments.params.iter().enumerate() {
+        let target = tsi_type_id(argument, scope, src, strings, names, state);
+        names.fact(
+            "tsi.argument",
+            vec![Arg::Id(list), Arg::Int(position as i64), Arg::Id(target)],
+        );
+    }
+}
+
+/// The members an interface body or a type literal declares: one edge per
+/// property, one callable per method signature.
+fn tsi_members(
+    owner: u32,
+    members: &[ts::TSSignature],
+    scope: &TsiScope,
+    src: &str,
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) {
+    let mut position = 0i64;
+    for member in members {
+        match member {
+            ts::TSSignature::TSPropertySignature(prop) => {
+                let (Some(label), Some(ann)) = (tsi_key_name(&prop.key), &prop.type_annotation)
+                else {
+                    continue;
+                };
+                let target =
+                    tsi_type_id(&ann.type_annotation, scope, src, strings, names, state);
+                let edge = names.edge(owner, &label, target, position);
+                position += 1;
+                if prop.optional {
+                    names.fact("ts.optional", vec![Arg::Id(edge)]);
+                }
+                if prop.readonly {
+                    names.fact("ts.readonly", vec![Arg::Id(edge)]);
+                }
+            }
+            ts::TSSignature::TSMethodSignature(method) => tsi_member_callable(
+                &method.key,
+                &method.type_parameters,
+                &method.params,
+                method.return_type.as_deref(),
+                scope,
+                src,
+                strings,
+                names,
+                state,
+            ),
+            _ => {}
+        }
     }
 }
 
@@ -1217,6 +1447,7 @@ fn tsi_params(
     src: &str,
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) -> TsiScope {
     let mut scope = outer.clone();
     let Some(decl) = type_parameters else {
@@ -1235,7 +1466,7 @@ fn tsi_params(
             ],
         );
         if let Some(constraint) = &param.constraint {
-            let target = tsi_target(names, strings, &scope, src, constraint.span());
+            let target = tsi_type_id(constraint, &scope, src, strings, names, state);
             names.edge(id, "bound", target, 0);
         }
         scope.insert(param.name.name.to_string(), id);
@@ -1270,18 +1501,19 @@ fn tsi_signature(
     callable: u32,
     type_parameters: &Option<oxc_allocator::Box<ts::TSTypeParameterDeclaration>>,
     params: &ts::FormalParameters,
-    return_type: &Option<oxc_allocator::Box<ts::TSTypeAnnotation>>,
+    return_type: Option<&ts::TSTypeAnnotation>,
     outer: &TsiScope,
     src: &str,
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
-    let scope = tsi_params(callable, type_parameters, outer, src, strings, names);
+    let scope = tsi_params(callable, type_parameters, outer, src, strings, names, state);
     for (position, param) in params.items.iter().enumerate() {
         let Some(ann) = &param.type_annotation else {
             continue;
         };
-        let target = tsi_target(names, strings, &scope, src, ann.type_annotation.span());
+        let target = tsi_type_id(&ann.type_annotation, &scope, src, strings, names, state);
         names.fact(
             "tsi.input",
             vec![
@@ -1292,7 +1524,7 @@ fn tsi_signature(
         );
     }
     if let Some(returned) = return_type {
-        let target = tsi_target(names, strings, &scope, src, returned.type_annotation.span());
+        let target = tsi_type_id(&returned.type_annotation, &scope, src, strings, names, state);
         names.fact(
             "tsi.output",
             vec![Arg::Id(callable), Arg::Int(0), Arg::Id(target)],
@@ -1306,11 +1538,12 @@ fn tsi_member_callable(
     key: &ts::PropertyKey,
     type_parameters: &Option<oxc_allocator::Box<ts::TSTypeParameterDeclaration>>,
     params: &ts::FormalParameters,
-    return_type: &Option<oxc_allocator::Box<ts::TSTypeAnnotation>>,
+    return_type: Option<&ts::TSTypeAnnotation>,
     outer: &TsiScope,
     src: &str,
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     let Some(name) = tsi_key_name(key) else {
         return;
@@ -1327,10 +1560,11 @@ fn tsi_member_callable(
         src,
         strings,
         names,
+        state,
     );
 }
 
-fn tsi_class(class: &ts::Class, src: &str, strings: &mut Strings, names: &mut TsiNames) {
+fn tsi_class(class: &ts::Class, src: &str, strings: &mut Strings, names: &mut TsiNames, state: &mut TsiState) {
     let Some(id) = &class.id else { return };
     let owner = names.named(strings, &id.name, to_span(id.span));
     names.fact("tsi.product", vec![Arg::Id(owner)]);
@@ -1341,6 +1575,7 @@ fn tsi_class(class: &ts::Class, src: &str, strings: &mut Strings, names: &mut Ts
         src,
         strings,
         names,
+        state,
     );
     if let Some(ts::Expression::Identifier(idr)) = &class.super_class {
         let target = names.named(strings, &idr.name, to_span(idr.span));
@@ -1361,7 +1596,7 @@ fn tsi_class(class: &ts::Class, src: &str, strings: &mut Strings, names: &mut Ts
                 else {
                     continue;
                 };
-                let target = tsi_target(names, strings, &scope, src, ann.type_annotation.span());
+                let target = tsi_type_id(&ann.type_annotation, &scope, src, strings, names, state);
                 let edge = names.edge(owner, &label, target, position);
                 position += 1;
                 if prop.optional {
@@ -1384,7 +1619,7 @@ fn tsi_class(class: &ts::Class, src: &str, strings: &mut Strings, names: &mut Ts
                         continue;
                     };
                     let target =
-                        tsi_target(names, strings, &scope, src, ann.type_annotation.span());
+                        tsi_type_id(&ann.type_annotation, &scope, src, strings, names, state);
                     let edge = names.edge(owner, &label, target, position);
                     position += 1;
                     if param.readonly {
@@ -1396,11 +1631,12 @@ fn tsi_class(class: &ts::Class, src: &str, strings: &mut Strings, names: &mut Ts
                 &method.key,
                 &method.value.type_parameters,
                 &method.value.params,
-                &method.value.return_type,
+                method.value.return_type.as_deref(),
                 &scope,
                 src,
                 strings,
                 names,
+                state,
             ),
             _ => {}
         }
@@ -1420,6 +1656,7 @@ fn tsi_interface(
     src: &str,
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     let owner = names.named(strings, &interface.id.name, to_span(interface.id.span));
     names.fact("tsi.product", vec![Arg::Id(owner)]);
@@ -1431,6 +1668,7 @@ fn tsi_interface(
         src,
         strings,
         names,
+        state,
     );
     for extended in &interface.extends {
         let span = extended.expression.span();
@@ -1438,37 +1676,7 @@ fn tsi_interface(
         let target = names.named(strings, &text, to_span(span));
         tsi_conforms(owner, target, names);
     }
-    let mut position = 0i64;
-    for member in &interface.body.body {
-        match member {
-            ts::TSSignature::TSPropertySignature(prop) => {
-                let (Some(label), Some(ann)) = (tsi_key_name(&prop.key), &prop.type_annotation)
-                else {
-                    continue;
-                };
-                let target = tsi_target(names, strings, &scope, src, ann.type_annotation.span());
-                let edge = names.edge(owner, &label, target, position);
-                position += 1;
-                if prop.optional {
-                    names.fact("ts.optional", vec![Arg::Id(edge)]);
-                }
-                if prop.readonly {
-                    names.fact("ts.readonly", vec![Arg::Id(edge)]);
-                }
-            }
-            ts::TSSignature::TSMethodSignature(method) => tsi_member_callable(
-                &method.key,
-                &method.type_parameters,
-                &method.params,
-                &method.return_type,
-                &scope,
-                src,
-                strings,
-                names,
-            ),
-            _ => {}
-        }
-    }
+    tsi_members(owner, &interface.body.body, &scope, src, strings, names, state);
 }
 
 fn tsi_alias(
@@ -1476,6 +1684,7 @@ fn tsi_alias(
     src: &str,
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     let owner = names.named(strings, &alias.id.name, to_span(alias.id.span));
     let scope = tsi_params(
@@ -1485,35 +1694,45 @@ fn tsi_alias(
         src,
         strings,
         names,
+        state,
     );
     match &alias.type_annotation {
         ts::TSType::TSUnionType(union) => {
             names.fact("tsi.sum", vec![Arg::Id(owner)]);
             for (position, member) in union.types.iter().enumerate() {
-                let target = tsi_target(names, strings, &scope, src, member.span());
+                let target = tsi_type_id(member, &scope, src, strings, names, state);
                 let label = tsi_text(src, member.span()).to_string();
                 names.edge(owner, &label, target, position as i64);
             }
         }
-        ts::TSType::TSTypeReference(reference) => {
+        ts::TSType::TSTypeReference(reference) if reference.type_arguments.is_some() => {
+            // The alias IS the application's result (rule 3 by text), so the
+            // call rides the alias id rather than the body text's own id.
+            state.called.insert(owner);
             let Some(arguments) = &reference.type_arguments else {
                 return;
             };
-            let callee = tsi_target(names, strings, &scope, src, reference.type_name.span());
+            let head = tsi_text(src, reference.type_name.span());
+            let callee =
+                names.named(strings, head, to_span(tsi_type_name_span(&reference.type_name)));
             let list = names.bare_id();
             names.fact(
                 "tsi.called",
                 vec![Arg::Id(owner), Arg::Id(callee), Arg::Id(list)],
             );
             for (position, argument) in arguments.params.iter().enumerate() {
-                let target = tsi_target(names, strings, &scope, src, argument.span());
+                let target = tsi_type_id(argument, &scope, src, strings, names, state);
                 names.fact(
                     "tsi.argument",
                     vec![Arg::Id(list), Arg::Int(position as i64), Arg::Id(target)],
                 );
             }
         }
-        _ => {}
+        ts::TSType::TSTypeReference(_) => {}
+        body => {
+            let target = tsi_type_id(body, &scope, src, strings, names, state);
+            names.fact("tsi.denotes", vec![Arg::Id(owner), Arg::Id(target)]);
+        }
     }
 }
 
@@ -1537,7 +1756,7 @@ fn tsi_enum(
     }
 }
 
-fn tsi_function(func: &ts::Function, src: &str, strings: &mut Strings, names: &mut TsiNames) {
+fn tsi_function(func: &ts::Function, src: &str, strings: &mut Strings, names: &mut TsiNames, state: &mut TsiState) {
     let Some(id) = &func.id else { return };
     let callable = names.anonymous(to_span(id.span));
     names.name(callable, &id.name);
@@ -1546,11 +1765,12 @@ fn tsi_function(func: &ts::Function, src: &str, strings: &mut Strings, names: &m
         callable,
         &func.type_parameters,
         &func.params,
-        &func.return_type,
+        func.return_type.as_deref(),
         &TsiScope::new(),
         src,
         strings,
         names,
+        state,
     );
 }
 
@@ -1561,11 +1781,20 @@ fn tsi_var_fn(
     src: &str,
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     for declarator in &var.declarations {
         let ts::BindingPattern::BindingIdentifier(ident) = &declarator.id else {
             continue;
         };
+        if let Some(ann) = &declarator.type_annotation {
+            let target =
+                tsi_type_id(&ann.type_annotation, &TsiScope::new(), src, strings, names, state);
+            names.fact(
+                "tsi.has_type",
+                vec![span_arg(to_span(ident.span)), Arg::Id(target)],
+            );
+        }
         let (type_parameters, params, return_type) = match &declarator.init {
             Some(ts::Expression::ArrowFunctionExpression(arrow)) => {
                 (&arrow.type_parameters, &arrow.params, &arrow.return_type)
@@ -1582,11 +1811,12 @@ fn tsi_var_fn(
             callable,
             type_parameters,
             params,
-            return_type,
+            return_type.as_deref(),
             &TsiScope::new(),
             src,
             strings,
             names,
+            state,
         );
     }
 }

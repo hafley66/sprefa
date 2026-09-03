@@ -113,7 +113,7 @@ Pins: `tests/110_tsi_name.rs`, plus the semantic lists in `tests/100`,
 | lang | syntax tier | checker tier | `tsi.name` | dl7 render | open |
 |---|---|---|---|---|---|
 | rust | `src/lang/rust_type_edges.rs`, PR #678 graph (calls, variants, methods, has_type, primitives) | rust-analyzer, `src/lang/rust_checker_ra.rs`, all cargo features, walk by supplied file, site-resolve spans | yes | PR #689 (codex-tsi) | `()` and dotted names, see forks; `rust_checker_def_map_over_sibling_targets` |
-| ts | `src/lang/ts.rs` `tsi_rows`; graph parity IN FLIGHT (`plans/2026-09-03-ts-syntax-type-graph.BRIEF.md`) | tsc, `src/lang/ts_checker.mjs` | yes | IN FLIGHT (emitter generalization) | ARCH `ts_syntax_type_graph_parity` |
+| ts | `src/lang/ts.rs` `tsi_type_id`: applications as calls, tuples/literals/unions/function types as anonymous shapes, keyword primitives, `has_type` for typed bindings (parity with rust) | tsc, `src/lang/ts_checker.mjs` | yes | IN FLIGHT (emitter generalization) | none on the syntax tier |
 | go | none; IN FLIGHT (`plans/2026-09-03-go-syntax-type-graph.BRIEF.md`, new `go_type_edges.rs`) | none | pending | IN FLIGHT | prelude has no Go primitive block; ARCH `go_syntax_type_graph` |
 
 Fixtures: `v6/sprefa-extract/tests/fixtures/tsi/` (`probe.ts`, `probe.rs`,
@@ -153,3 +153,4 @@ pins the rows both checker tiers share over the probe pair.
 | 2026-09-03 | `tsi.name` on every named id, both tiers, rust and ts | #688 |
 | 2026-09-03 | dl7 prints written rust names (codex-tsi) | #689 (open) |
 | 2026-09-03 | briefs: ts parity, go graph, dl7 takeover | #690, #691 |
+| 2026-09-03 | ts syntax type graph parity T1-T3, `tests/111_ts_syntax_graph.rs` | this PR |
