@@ -168,6 +168,13 @@ impl std::fmt::Display for ProjectError {
 
 impl std::error::Error for ProjectError {}
 
+/// Why a requested checker tier answered nothing. Off `--witness` the string is
+/// built and dropped, which is cheaper than a second code path.
+struct TierDecline {
+    tool: &'static str,
+    detail: String,
+}
+
 /// One numbered row's legs, and the language whose checker tier can own the
 /// semantic run a `Checker` leg is filed under.
 struct RowLegs {
@@ -329,23 +336,34 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         .ok()
         .expect("fresh project module plane (go)");
 
+    let mut declines: Vec<TierDecline> = Vec::new();
     if let Some(checker_root) = request.rust_checker {
-        if let Some(index) = load_rust_checker(checker_root, &inputs, &corpus, &cx) {
-            cx.indexes
+        match load_rust_checker(checker_root, &inputs, &corpus, &cx) {
+            Ok(index) => cx
+                .indexes
                 .rust_checker
                 .set(index)
                 .ok()
-                .expect("fresh project checker tier (rust)");
+                .expect("fresh project checker tier (rust)"),
+            Err(detail) => declines.push(TierDecline {
+                tool: "rust-analyzer",
+                detail,
+            }),
         }
     }
 
     if let Some(checker_root) = request.ts_checker {
-        if let Some(index) = load_ts_checker(checker_root, &inputs, &corpus, &cx) {
-            cx.indexes
+        match load_ts_checker(checker_root, &inputs, &corpus, &cx) {
+            Ok(index) => cx
+                .indexes
                 .ts_checker
                 .set(index)
                 .ok()
-                .expect("fresh project checker tier (ts)");
+                .expect("fresh project checker tier (ts)"),
+            Err(detail) => declines.push(TierDecline {
+                tool: "tsc",
+                detail,
+            }),
         }
     }
 
@@ -436,7 +454,13 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         facts.extend(flatten_flow(&flow_edges(&pairs, &resolved_calls)));
     }
     if request.witness {
-        return Ok(envelope(facts, trail, &inputs, &cx));
+        return Ok(envelope(Envelope {
+            facts,
+            trail,
+            inputs: &inputs,
+            cx: &cx,
+            declines,
+        }));
     }
     Ok(facts)
 }
@@ -474,15 +498,26 @@ fn semantic_runs(cx: &ProjectCx, inputs: &[ProjectInput]) -> Vec<(&'static str, 
         .collect()
 }
 
-/// The TSI envelope over a resolve: protocol, one run per tier that ran, a
-/// `fact` ordinal on every resolved row, one witness per leg, coverage.
-fn envelope(
+/// Everything the envelope files beside the rows it numbers.
+struct Envelope<'a> {
     facts: Vec<FlatFact>,
     trail: LegTrail,
-    inputs: &[ProjectInput],
-    cx: &ProjectCx,
-) -> Vec<FlatFact> {
+    inputs: &'a [ProjectInput],
+    cx: &'a ProjectCx<'a>,
+    declines: Vec<TierDecline>,
+}
+
+/// The TSI envelope over a resolve: protocol, one run per tier that ran, a
+/// `fact` ordinal on every resolved row, one witness per leg, coverage.
+fn envelope(input: Envelope) -> Vec<FlatFact> {
     const SYNTAX_RUN: u32 = 0;
+    let Envelope {
+        facts,
+        trail,
+        inputs,
+        cx,
+        declines,
+    } = input;
     let semantic = semantic_runs(cx, inputs);
     let mut rows: Vec<FlatFact> = vec![
         FlatFact::Protocol {
@@ -549,6 +584,15 @@ fn envelope(
             complete: false,
         }));
     }
+    // A tier that was asked and answered nothing says so in the stream: off
+    // `--witness` the reason reaches a `tracing` line and nowhere else.
+    for decline in declines {
+        rows.push(FlatFact::Diagnostic(crate::tsi::DiagnosticOut {
+            run: SYNTAX_RUN,
+            relation: format!("tier.{}", decline.tool),
+            detail: decline.detail,
+        }));
+    }
     rows
 }
 
@@ -556,14 +600,14 @@ fn envelope(
 /// exception to the 10-second law rather than the per-run ceiling.
 const CHECKER_BUDGET: std::time::Duration = std::time::Duration::from_secs(900);
 
-/// Every failure is one `tracing::info` line and a `None`: the syntax leg then
-/// answers every site exactly as it did before.
+/// Every failure returns its reason: the syntax leg answers every site as
+/// before, and under `--witness` the reason is a `diagnostic` record.
 fn load_rust_checker(
     root: &Path,
     inputs: &[ProjectInput],
     corpus: &[(String, ContentId)],
     cx: &ProjectCx,
-) -> Option<crate::lang::rust_checker::RustCheckerIndex> {
+) -> Result<crate::lang::rust_checker::RustCheckerIndex, String> {
     // A relative root reaches rust-analyzer as a relative `AbsPathBuf` and its
     // workspace discovery then finds only part of the crate graph.
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -581,7 +625,7 @@ fn load_rust_checker(
         Ok(answers) => answers,
         Err(err) => {
             tracing::warn!("rust checker tier off, syntax tier answers alone: {err}");
-            return None;
+            return Err(err.to_string());
         }
     };
     let index = crate::lang::rust_checker::RustCheckerIndex::build(
@@ -590,12 +634,17 @@ fn load_rust_checker(
         cx.indexes.def_index.get().expect("the def index is set"),
     );
     if index.files_answered == 0 {
+        let detail = format!(
+            "loaded a workspace containing NONE of the supplied files ({} unjoined) under {}; is --project-root the right Cargo workspace?",
+            index.unjoined,
+            root.display()
+        );
         tracing::warn!(
             root = %root.display(),
             unjoined = index.unjoined,
             "rust checker tier loaded a workspace containing NONE of the supplied files; every answer falls to syntax — is --project-root the right Cargo workspace?"
         );
-        return None;
+        return Err(detail);
     }
     tracing::info!(
         load_ms = index.load.as_millis() as u64,
@@ -608,17 +657,16 @@ fn load_rust_checker(
         method_unresolved = index.method_unresolved,
         "rust checker tier loaded"
     );
-    Some(index)
+    Ok(index)
 }
 
-/// The ts twin of `load_rust_checker`. Every failure is one `tracing::info`
-/// line and a `None`; the syntax leg then answers every site as before.
+/// The ts twin of `load_rust_checker`, same decline discipline.
 fn load_ts_checker(
     root: &Path,
     inputs: &[ProjectInput],
     corpus: &[(String, ContentId)],
     cx: &ProjectCx,
-) -> Option<crate::lang::ts_checker::TsCheckerIndex> {
+) -> Result<crate::lang::ts_checker::TsCheckerIndex, String> {
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let files: Vec<(String, PathBuf)> = inputs
         .iter()
@@ -635,13 +683,13 @@ fn load_ts_checker(
         })
         .collect();
     if files.is_empty() {
-        return None;
+        return Err("no .ts, .tsx, .mts or .cts path in the supplied file set".to_string());
     }
     let answers = match crate::lang::ts_checker::answer(&root, &files, cx.witness) {
         Ok(answers) => answers,
         Err(err) => {
             tracing::info!("ts checker tier off: {err}");
-            return None;
+            return Err(err.to_string());
         }
     };
     let index = crate::lang::ts_checker::TsCheckerIndex::build(
@@ -657,7 +705,7 @@ fn load_ts_checker(
         external = index.external,
         "ts checker tier loaded"
     );
-    Some(index)
+    Ok(index)
 }
 
 /// Load the SCIP index the request names and flatten it to raw index facts:
