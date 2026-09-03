@@ -412,6 +412,14 @@ The first golden must exercise one real repository source through Soopy, both
 query engines through Extract, source-fact loading into DL7, a semantic join,
 and a replacement projected back to Soopy's expected-content mutation shape.
 
+[`v7/src/2_comptime/0d_source_fact_loader.pl`](../v7/src/2_comptime/0d_source_fact_loader.pl)
+now performs the source-fact loading half. It reads one or more protocol-1 JSON
+arrays, expands compact ranges into structural `content_span` and `located`
+identities, sorts equal rows from separate query engines into one fact, and
+installs fourteen ordinary relations under `module(source_intelligence)`. JSON
+objects become sorted typed terms before entering parse and query identities,
+so JSON object key order cannot mint a second logical query.
+
 The first useful end-to-end generator extends that foundation:
 
 ```text
@@ -437,7 +445,7 @@ Soopy so an edit after analysis refuses the replacement. The golden uses a
 representative Rust product with nested products, a sum, a generic, a trait,
 and an implementation rather than one fixture per construct.
 
-<!-- todo(feature): Implement and measure the approved source/content/span/located-occurrence fact boundary through Soopy, Extract, and DL7 using one representative golden, then use it to refresh one owned DL7 marker region from an extracted Rust type graph. -->
+<!-- todo(feature): Complete the source/content/span/located-occurrence vertical by feeding loaded observations through the compiler loop, joining syntax and semantic rows, and refreshing one owned DL7 marker region from an extracted Rust type graph through Soopy. -->
 
 ### Live Markdown documents
 
@@ -612,28 +620,31 @@ language adapters. They add no kernel form or source-specific schema.
       composed-rule engines onto one source graph while retaining engine,
       grammar, complete query specification, branch, pattern, match order,
       capture order, and replacement provenance.
-   6. Feed those facts through the compiler-observation loop.
-   7. Join one ast-grep capture to one compiler-confirmed symbol, type, and
+   6. **Complete:** Load prepared normalized source envelopes into a shared DL7
+      module as deduplicated source, content, span, occurrence, parse, query,
+      match, capture, and replacement relations.
+   7. Feed freshly returned facts through the compiler-observation loop.
+   8. Join one ast-grep capture to one compiler-confirmed symbol, type, and
       module through content identity and byte span.
-   8. Carry ast-grep replacement proposals to output time without applying
+   9. Carry ast-grep replacement proposals to output time without applying
       them during compiler time.
-   9. Add batching so several queries share one source read and parse.
-   10. Project Markdown headings, lists, task items, links, code blocks, and
+   10. Add batching so several queries share one source read and parse.
+   11. Project Markdown headings, lists, task items, links, code blocks, and
        source spans into stable document facts.
-   11. Express project document patterns as ordinary DL7 rules over those
+   12. Express project document patterns as ordinary DL7 rules over those
        facts.
-   12. Derive live task rows from authored Markdown and compare them with the
+   13. Derive live task rows from authored Markdown and compare them with the
        existing `gen-plans-index.dl` behavior.
-   13. Render one generated Markdown document from the derived rows.
-   14. Carry source path, source content identity, producing rule, and optional
+   14. Render one generated Markdown document from the derived rows.
+   15. Carry source path, source content identity, producing rule, and optional
        repository URL into the generated artifact's provenance.
-   15. Add a check mode that reports generated-document drift without writing.
-   16. Approve ownership and synchronization policy before adding any reverse
+   16. Add a check mode that reports generated-document drift without writing.
+   17. Approve ownership and synchronization policy before adding any reverse
        update from generated output to authored Markdown.
-   17. Extract one representative Rust type graph, render deterministic DL7
+   18. Extract one representative Rust type graph, render deterministic DL7
        declarations, and refresh only its owned marker region through Soopy.
 
-   <!-- todo(feature): Source-intelligence section: host both code-query engines, project semantic Markdown facts, approve and emit common occurrence/match/capture facts, join syntax captures to semantic identities, derive live task rows, render provenance-carrying Markdown, stage fixes, and batch source parsing. -->
+   <!-- todo(feature): Source-intelligence section: connect loaded source facts to the compiler observation loop, project semantic Markdown facts, join syntax captures to semantic identities, derive live task rows, render provenance-carrying Markdown, stage fixes, and batch source parsing. -->
 
 4. **Common type graph**
    1. Keep the current TSI intersection as the source-neutral ingestion
@@ -780,8 +791,14 @@ Current implementation receipts:
   --features cli`: 8 passed in 1.23 s test time. The command rebuilt the CLI
   feature graph and took 16.88 s wall time; this is compilation rather than
   query execution. The existing query output contract remains unchanged.
+- `swipl -q -g "load_test_files([]),run_tests,halt" -t halt
+  v7/test/5_source_fact_loader.test.pl`: 1 representative golden passed in
+  0.015 s test time and 0.07 s command wall time. Three query engines sharing
+  one Rust file load as 31 deduplicated rows: one source, one content, six
+  content spans, six located occurrences, four matches, six captures, three
+  query identities, and one replacement proposal.
 
-The current slice adds one focused facade test and changes no full-suite gate.
+The current slice adds one V7 source-fact golden and changes no full-suite gate.
 
 ## Staffing
 
