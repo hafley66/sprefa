@@ -6,9 +6,9 @@ go	call	syntax	codeql2	98.97	90.79	cf46c15cc
 go	call	syntax	oracle-vta-bare	85.40	81.60	cf46c15cc
 go	module	syntax	oracle	100.00	100.00	cf46c15cc
 go	type	syntax	oracle-typedecl	85.64	97.22	cf46c15cc
-rust	call	syntax	codeql	64.96	76.17	41333391a
-rust	call	syntax	oracle	75.66	49.78	41333391a
-rust	call	syntax	scip_override	78.89	45.25	41333391a
+rust	call	syntax	codeql	65.27	77.15	1b2464c9b
+rust	call	syntax	oracle	76.19	50.56	1b2464c9b
+rust	call	syntax	scip_override	79.36	45.85	1b2464c9b
 rust	call	checker	codeql	84.28	83.64	f58cc6666
 rust	call	checker	oracle	93.66	51.82	41333391a
 rust	call	checker	scip_override	77.09	36.98	41333391a

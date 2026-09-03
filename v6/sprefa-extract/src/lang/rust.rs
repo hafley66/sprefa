@@ -2036,9 +2036,16 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for CallCollector<'a> {
                 syn::visit::visit_expr(self, expr);
             }
             // `Foo { x: 1 }`: struct literal constructor; callee is the type path's
-            // trailing segment.
+            // trailing segment. `Enum::Variant { .. }` (an uppercase segment
+            // before the last) is a value literal no call oracle scores as a
+            // call, so no site is minted for it.
             syn::Expr::Struct(struct_expr) => {
-                if let Some(segment) = struct_expr.path.segments.last() {
+                if let Some(segment) = struct_expr
+                    .path
+                    .segments
+                    .last()
+                    .filter(|_| !is_variant_literal_path(&struct_expr.path))
+                {
                     let path_str = path_string(&struct_expr.path);
                     self.sites.push(CollectedSite {
                         span: syn_span(self.line_starts, struct_expr.path.span()),
@@ -2052,6 +2059,19 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for CallCollector<'a> {
             _ => syn::visit::visit_expr(self, expr),
         }
     }
+}
+
+/// `Enum::Variant { .. }` / `Self::Variant { .. }`: the segment before the
+/// last is uppercase-leading, so the literal names a variant, never a struct.
+fn is_variant_literal_path(path: &syn::Path) -> bool {
+    let count = path.segments.len();
+    count >= 2
+        && path.segments[count - 2]
+            .ident
+            .to_string()
+            .chars()
+            .next()
+            .is_some_and(char::is_uppercase)
 }
 
 /// Render a syn::Path as `a::b::c`. Port of v5 `path_string`.
