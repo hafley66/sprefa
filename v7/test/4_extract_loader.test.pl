@@ -203,6 +203,20 @@ test(a_malformed_tsi_record_is_still_malformed) :-
               Diagnostics),
     \+ memberchk(extract_fact(9001, _, _), Rows).
 
+% U4: every Go builtin the syntax tier names binds to a prelude class.
+test(go_stream_binds_every_builtin_class_in_the_prelude) :-
+    compile_dl7_project(
+        'v7/test/fixtures/tsi_project',
+        [ 'v7/test/fixtures/tsi_project/0_contract.dl7',
+          tsi_streams(['v7/test/fixtures/tsi/7_go_graph.jsonl'])
+        ],
+        _, _, Diagnostics),
+    findall(Class,
+            member(diagnostic(_, _, tsi_primitive_class_absent(Class)),
+                   Diagnostics),
+            Absent),
+    Absent == [].
+
 test(a_loaded_product_proves_conformance_to_an_authored_contract) :-
     compile_dl7_project(
         'v7/test/fixtures/tsi_project',
