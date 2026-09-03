@@ -38,6 +38,7 @@ const COMPLETE: &[&str] = &[
     "tsi.has_type",
     "tsi.input",
     "tsi.origin",
+    "tsi.name",
     "tsi.output",
     "tsi.parameter",
     "tsi.primitive",

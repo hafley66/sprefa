@@ -403,6 +403,7 @@ const ENUMERATED: &[&str] = &[
     "tsi.type",
     "tsi.denotes",
     "tsi.origin",
+    "tsi.name",
     "tsi.product",
     "tsi.sum",
     "tsi.callable",
@@ -558,6 +559,9 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
         let id = self.fresh();
         self.nominal.insert(def, id);
         self.row("tsi.type", vec![Arg::Id(id)]);
+        if let Some(name) = def.name(self.db) {
+            self.name(id, name.as_str());
+        }
         let krate = def.module(self.db).map(|module| module.krate(self.db));
         let origin = self.origin_at(nav_of(self.sema, def), krate);
         self.row(
@@ -576,9 +580,16 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
             return (*id, false);
         }
         let id = self.fresh();
+        let rendered = key.1.clone();
         self.structural.insert(key, id);
         self.row("tsi.type", vec![Arg::Id(id)]);
+        self.name(id, &rendered);
         (id, true)
+    }
+
+    /// `tsi.name`: the spelling a consumer prints for a type or a symbol.
+    fn name(&mut self, id: u32, text: &str) {
+        self.row("tsi.name", vec![Arg::Id(id), Arg::Text(text.to_string())]);
     }
 
     /// A declaration is a symbol and a type at once, and `tsi.denotes` is the
@@ -589,6 +600,9 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
         if fresh {
             let symbol = self.fresh();
             self.row("tsi.symbol", vec![Arg::Id(symbol)]);
+            if let Some(name) = def.name(self.db) {
+                self.name(symbol, name.as_str());
+            }
             self.row("tsi.denotes", vec![Arg::Id(symbol), Arg::Id(id)]);
         }
         (id, fresh)

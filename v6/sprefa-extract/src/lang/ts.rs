@@ -1224,6 +1224,7 @@ fn tsi_params(
     };
     for (position, param) in decl.params.iter().enumerate() {
         let id = names.anonymous(to_span(param.name.span));
+        names.name(id, &param.name.name);
         names.fact(
             "tsi.parameter",
             vec![
@@ -1311,10 +1312,11 @@ fn tsi_member_callable(
     strings: &mut Strings,
     names: &mut TsiNames,
 ) {
-    if tsi_key_name(key).is_none() {
+    let Some(name) = tsi_key_name(key) else {
         return;
-    }
+    };
     let callable = names.anonymous(to_span(key.span()));
+    names.name(callable, &name);
     names.fact("tsi.callable", vec![Arg::Id(callable)]);
     tsi_signature(
         callable,
@@ -1538,6 +1540,7 @@ fn tsi_enum(
 fn tsi_function(func: &ts::Function, src: &str, strings: &mut Strings, names: &mut TsiNames) {
     let Some(id) = &func.id else { return };
     let callable = names.anonymous(to_span(id.span));
+    names.name(callable, &id.name);
     names.fact("tsi.callable", vec![Arg::Id(callable)]);
     tsi_signature(
         callable,
@@ -1573,6 +1576,7 @@ fn tsi_var_fn(
             _ => continue,
         };
         let callable = names.anonymous(to_span(ident.span));
+        names.name(callable, &ident.name);
         names.fact("tsi.callable", vec![Arg::Id(callable)]);
         tsi_signature(
             callable,

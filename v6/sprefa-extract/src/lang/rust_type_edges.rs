@@ -535,6 +535,7 @@ fn tsi_generics(
             continue;
         };
         let id = names.anonymous(syn_span(line_starts, declared.ident.span()));
+        names.name(id, &declared.ident.to_string());
         names.fact(
             "tsi.parameter",
             vec![
@@ -593,6 +594,7 @@ fn tsi_callable(
     state: &mut TsiState,
 ) -> u32 {
     let callable = names.anonymous(syn_span(line_starts, signature.ident.span()));
+    names.name(callable, &signature.ident.to_string());
     names.fact("tsi.callable", vec![Arg::Id(callable)]);
     let scope = tsi_generics(
         callable,
@@ -710,6 +712,7 @@ fn tsi_primitive_id(class: &'static str, names: &mut TsiNames, state: &mut TsiSt
         "tsi.primitive",
         vec![Arg::Id(id), Arg::Atom(class.to_string())],
     );
+    names.name(id, if class == "unit" { "()" } else { class });
     state.classes.insert(class, id);
     id
 }

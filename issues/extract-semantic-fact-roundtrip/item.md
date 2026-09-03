@@ -130,6 +130,10 @@ The measured probe and architecture notes are recorded in:
 
 ## Decisions
 
+### 2026-09-03 · Chris, via claude-299
+
+`tsi.name(Id, Text)` joins the contract: the spelling a consumer prints for a type or symbol id, so a renderer never opens the file behind a `tsi.origin` span. Syntax tier: the written text the id is keyed on (`Vec<Option<T>>`, `std::fmt::Result`), the primitive class (`unit` prints `()`), the declared parameter or callable name; tuples and impl blocks stay nameless. Semantic tier: the definition name for nominal types and symbols, the checker's rendering for structural types. Rows: `src/tsi/registry.rs`, `src/types.rs` `TsiNames::name`, `tests/110_tsi_name.rs`.
+
 ### 2026-09-02T21:19:27Z · @codex
 
 TSI contract required by this card. The issue's original `extract.run/fact/witness/coverage` rows describe production provenance and completeness; the semantic payload uses these relations:

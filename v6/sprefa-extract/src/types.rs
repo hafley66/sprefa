@@ -446,7 +446,19 @@ impl TsiNames {
         }
         let id = self.anonymous(span);
         self.seen.insert(key, id);
+        self.name(id, text);
         id
+    }
+
+    /// `tsi.name` for an id that already exists: the spelling a consumer prints.
+    pub fn name(&mut self, id: u32, text: &str) {
+        self.sink.fact(
+            "tsi.name",
+            vec![
+                crate::tsi::Arg::Id(id),
+                crate::tsi::Arg::Text(text.to_string()),
+            ],
+        );
     }
 
     /// A fresh id with an origin and no name-table entry.
