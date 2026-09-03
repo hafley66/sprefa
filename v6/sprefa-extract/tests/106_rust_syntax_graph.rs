@@ -2,8 +2,8 @@
 //! about `tests/fixtures/tsi/probe_graph.rs` under `--witness --family type`.
 //!
 //! SABOTAGE RECEIPT (fail-pre-fix, whole file): on origin/main `46c39def5` the
-//! fixture is absent, so every case below reads an empty fact set. Per defect,
-//! the row the base sha lacks:
+//! fixture is absent; with it restored and `rust_type_edges.rs` at that sha,
+//! all 7 cases fail. Per defect, the row the base sha lacks:
 //!
 //! - D1: `std::fmt::Result` takes its origin span from `segments.first()`, so
 //!   the origin slice reads `std`, never `Result`.
@@ -465,4 +465,39 @@ fn a_builtin_carries_a_class_and_no_origin() {
         .collect();
     assert_eq!(returned.len(), 1);
     assert_eq!(probe.class(returned[0]), Some("unit".to_string()));
+}
+
+/// D7: `&self` takes no input slot, so the first written parameter stands at
+/// position 0, and the mode it is written in stays the checker's row.
+#[test]
+fn a_receiver_takes_no_input_slot() {
+    let probe = Probe::read();
+    let owned = probe.edges_of(probe.id_of("tsi.product", "Trail"));
+    let inputs = |callable: u32| -> Vec<(i64, u32)> {
+        let mut found: Vec<(i64, u32)> = probe
+            .rows("tsi.input")
+            .into_iter()
+            .filter(|fact| as_id(&fact.args[0]) == Some(callable))
+            .map(|fact| {
+                (
+                    as_int(&fact.args[1]).expect("an input carries a position"),
+                    as_id(&fact.args[2]).expect("an input names a type"),
+                )
+            })
+            .collect();
+        found.sort();
+        found
+    };
+
+    assert!(inputs(owned["is_empty"].0).is_empty());
+    assert!(inputs(owned["clear"].0).is_empty());
+
+    let written = inputs(owned["render"].0);
+    assert_eq!(written.len(), 1);
+    assert_eq!(written[0].0, 0, "the receiver shifted the written input");
+    assert_eq!(probe.origin_text(written[0].1), "Formatter");
+
+    for unstated in ["rust.ownership", "rust.lifetime", "rust.assoc"] {
+        assert!(probe.rows(unstated).is_empty(), "a parse claimed {unstated}");
+    }
 }

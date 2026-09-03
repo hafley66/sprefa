@@ -602,6 +602,8 @@ fn tsi_callable(
         strings,
         names,
     );
+    // `&self` takes no input slot: the mode it is written in is `rust.ownership`,
+    // which only the checker states.
     let mut position = 0i64;
     for input in &signature.inputs {
         let syn::FnArg::Typed(typed) = input else {
