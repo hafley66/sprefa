@@ -20,6 +20,13 @@
 //!   interface_method_spec_refs_its_param_and_result   FAILED  Visitor -> Item: []
 //!   reassignment_from_call_types_the_name             FAILED  one Tag edge: []
 //!   pair_reassignment_from_call_types_the_first_name  FAILED  one Tag edge: []
+//!
+//! Review receipt (PR #701, cf46c15cc): the `assignment_statement` arm and
+//! the `:=` arm collected `children()` unfiltered, so the `,` tokens sat in
+//! `targets` / `rhss`. `a, b = f()` bound `b` at result position 2, and
+//! `a, b := f(), g()` saw 2 names against 3 rhs nodes and bound nothing:
+//!   second_name_of_a_pair_reassignment_types_from_the_second_result  FAILED  one Total edge: []
+//!   paired_declare_types_each_name_from_its_own_call                  FAILED  one Total edge: []
 
 use std::process::Command;
 
@@ -135,4 +142,18 @@ fn compound_assignment_keeps_lhs_sites() {
     let edges = call_edges(&resolve());
     one_edge(&edges, "Compound", "Widget", "store.go");
     one_edge(&edges, "Compound", "Tag", "store.go");
+}
+
+#[test]
+fn second_name_of_a_pair_reassignment_types_from_the_second_result() {
+    let edges = call_edges(&resolve());
+    one_edge(&edges, "ReassignSecond", "Sell", "store.go");
+    one_edge(&edges, "ReassignSecond", "Total", "store.go");
+}
+
+#[test]
+fn paired_declare_types_each_name_from_its_own_call() {
+    let edges = call_edges(&resolve());
+    one_edge(&edges, "PairedDeclare", "Receipt", "store.go");
+    one_edge(&edges, "PairedDeclare", "Total", "store.go");
 }

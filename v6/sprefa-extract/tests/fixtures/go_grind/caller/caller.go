@@ -29,3 +29,22 @@ func ReassignPair(sh *store.Shop, shelf map[string]*store.Widget) string {
 func Compound(sh *store.Shop, counts map[string]int) {
 	counts[sh.Widget().Tag()] += 1
 }
+
+// A two-name reassignment: `receipt` types from the call's SECOND result,
+// so the position must skip the `,` token between the targets.
+func ReassignSecond(sh *store.Shop, shelf map[string]*store.Widget) int {
+	sold, ok := shelf["c"]
+	var receipt *store.Receipt
+	if !ok {
+		sold, receipt = sh.Sell("c")
+	}
+	_ = sold
+	return receipt.Total()
+}
+
+// A paired `:=` with one call per name: each name types from its own call.
+func PairedDeclare(sh *store.Shop) int {
+	sold, receipt := sh.Widget(), sh.Receipt()
+	_ = sold
+	return receipt.Total()
+}

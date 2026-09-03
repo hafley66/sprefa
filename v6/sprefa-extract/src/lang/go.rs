@@ -1635,7 +1635,8 @@ fn go_walk_receivers(
                     .filter(|n| n.kind() == "identifier")
                     .collect();
                 let mut rc = right.walk();
-                let rhss: Vec<tree_sitter::Node> = right.children(&mut rc).collect();
+                let rhss: Vec<tree_sitter::Node> =
+                    right.children(&mut rc).filter(|n| n.is_named()).collect();
                 if names.len() == rhss.len() {
                     for (name_node, rhs) in names.iter().zip(rhss.iter()) {
                         if let Some(binding) =
@@ -1685,9 +1686,11 @@ fn go_walk_receivers(
                 go_walk_receivers(left, src, scope, imports, field_types, out, plan, top);
                 go_walk_receivers(right, src, scope, imports, field_types, out, plan, top);
                 let mut lc = left.walk();
-                let targets: Vec<tree_sitter::Node> = left.children(&mut lc).collect();
+                let targets: Vec<tree_sitter::Node> =
+                    left.children(&mut lc).filter(|n| n.is_named()).collect();
                 let mut rc = right.walk();
-                let rhss: Vec<tree_sitter::Node> = right.children(&mut rc).collect();
+                let rhss: Vec<tree_sitter::Node> =
+                    right.children(&mut rc).filter(|n| n.is_named()).collect();
                 if targets.len() == rhss.len() {
                     for (target, rhs) in targets.iter().zip(rhss.iter()) {
                         let Some(name) = go_unbound_target(*target, src, scope) else {
