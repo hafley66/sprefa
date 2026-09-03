@@ -272,11 +272,19 @@ fn push_candidate(
 type TsiScope = BTreeMap<String, u32>;
 
 /// Per-file walk bookkeeping: the ids whose application rows are already
-/// written, so one written text states its call once.
+/// written, and the id each primitive class took.
 #[derive(Default)]
 struct TsiState {
     called: BTreeSet<u32>,
+    classes: BTreeMap<&'static str, u32>,
 }
+
+/// The type names rust declares itself, which the v7 prelude also declares.
+/// `unit` is the empty tuple's class and the one entry with no written name.
+const PRIMITIVE_CLASSES: &[&str] = &[
+    "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "f32", "f64", "bool",
+    "char", "str", "usize", "isize",
+];
 
 /// The rust twin of the ts pass, over the items `edge_candidates` walks.
 fn tsi_rows(
@@ -674,11 +682,33 @@ fn tsi_type_id(
     if let Some(&id) = scope.get(&text) {
         return id;
     }
+    if let Some(class) = PRIMITIVE_CLASSES.iter().find(|class| **class == text) {
+        return tsi_primitive_id(class, names, state);
+    }
     if let Type::Tuple(tuple) = strip_type(ty) {
+        if tuple.elems.is_empty() {
+            return tsi_primitive_id("unit", names, state);
+        }
         return tsi_tuple_id(tuple, scope, line_starts, strings, names, state);
     }
     let id = names.named(strings, &text, tsi_type_span(ty, line_starts));
     tsi_application(id, ty, scope, line_starts, strings, names, state);
+    id
+}
+
+/// A primitive is declared by the language, so it carries a class rather than
+/// an origin: no range in this file declares it.
+fn tsi_primitive_id(class: &'static str, names: &mut TsiNames, state: &mut TsiState) -> u32 {
+    if let Some(&id) = state.classes.get(class) {
+        return id;
+    }
+    let id = names.bare_id();
+    names.fact("tsi.type", vec![Arg::Id(id)]);
+    names.fact(
+        "tsi.primitive",
+        vec![Arg::Id(id), Arg::Atom(class.to_string())],
+    );
+    state.classes.insert(class, id);
     id
 }
 

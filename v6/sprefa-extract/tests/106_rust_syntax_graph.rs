@@ -428,3 +428,41 @@ fn a_const_and_a_static_state_their_type() {
     );
     assert_eq!(probe.origin_text(stated["BANNER"]), "str");
 }
+
+/// D6: a name the language declares carries a class and no origin, one id per
+/// class per file, and `String` is a library type rather than a class.
+#[test]
+fn a_builtin_carries_a_class_and_no_origin() {
+    let probe = Probe::read();
+    let mut classes: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+    for fact in probe.rows("tsi.primitive") {
+        let id = as_id(&fact.args[0]).expect("a class names a type");
+        let atom = as_atom(&fact.args[1]).expect("a class is an atom");
+        assert!(CLASSES.contains(&atom), "`{atom}` is not a declared class");
+        assert!(!probe.has_origin(id), "class `{atom}` claimed an origin");
+        assert!(probe.carries("tsi.type", id), "class `{atom}` declares no id");
+        classes.entry(atom.to_string()).or_default().push(id);
+    }
+    let named: Vec<&str> = classes.keys().map(String::as_str).collect();
+    assert_eq!(named, vec!["bool", "str", "u32", "u64", "unit"]);
+    for (atom, ids) in &classes {
+        assert_eq!(ids.len(), 1, "class `{atom}` took {} ids", ids.len());
+    }
+
+    let trail = probe.id_of("tsi.product", "Trail");
+    let label = as_id(&probe.edge(trail, "label").args[3]).expect("the field names a type");
+    let members = probe.edges_of(label);
+    assert_eq!(probe.class(members["1"].0), Some("u32".to_string()));
+    assert_eq!(probe.class(members["0"].0), None, "`String` is not a class");
+    assert_eq!(probe.origin_text(members["0"].0), "String");
+
+    let clear = probe.edges_of(trail)["clear"].0;
+    let returned: Vec<u32> = probe
+        .rows("tsi.output")
+        .into_iter()
+        .filter(|fact| as_id(&fact.args[0]) == Some(clear))
+        .filter_map(|fact| as_id(&fact.args[2]))
+        .collect();
+    assert_eq!(returned.len(), 1);
+    assert_eq!(probe.class(returned[0]), Some("unit".to_string()));
+}
