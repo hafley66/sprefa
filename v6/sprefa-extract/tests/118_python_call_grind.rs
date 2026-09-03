@@ -191,3 +191,18 @@ fn constructor_reaches_the_first_base_init() {
         "Leaf() -> Base.__init__ through Left: {pairs:?}"
     );
 }
+
+/// FAIL-FIRST receipt: at e08866c82 (#708) the param rule rescanned every
+/// site per bound-name callee with only a per-def cycle guard, factorial in
+/// the defs on the path: this ring of ten forwarding defs did not finish, and
+/// `click/core.py` hung past 15 s (rc=124, 0.36 s before #708).
+#[test]
+fn forwarding_ring_resolves_under_the_wall() {
+    let started = std::time::Instant::now();
+    let pairs = edges("tests/fixtures/py_call_grind/forward_ring.py");
+    let wall = started.elapsed();
+    assert!(wall.as_secs() < 10, "wall {wall:?}");
+    assert!(has(&pairs, "", "f0"), "{pairs:?}");
+    // f0(f1): f0's callback is f1, so f0 -> f1; deeper rings stay unique too.
+    assert!(has(&pairs, "f0", "f1"), "{pairs:?}");
+}

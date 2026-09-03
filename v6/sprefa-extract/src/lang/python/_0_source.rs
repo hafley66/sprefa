@@ -2869,6 +2869,11 @@ impl Resolve<CallF> for PythonSource {
             decor_binds: Vec::new(),
             decor_extras: Vec::new(),
             active: std::cell::RefCell::new(Vec::new()),
+            param_memo: std::cell::RefCell::new(std::collections::HashMap::new()),
+            param_scratch: std::cell::RefCell::new(std::collections::HashMap::new()),
+            callee_memo: std::cell::RefCell::new(std::collections::HashMap::new()),
+            callee_scratch: std::cell::RefCell::new(std::collections::HashMap::new()),
+            cuts: std::cell::Cell::new(0),
         };
         // A decorator whose def's single return names a same-file def rebinds
         // the decorated name to it (`func()` then calls the wrapper). A
@@ -2920,6 +2925,7 @@ impl Resolve<CallF> for PythonSource {
             let Some(caller) = covering_def(call, site.span) else {
                 continue;
             };
+            resolver.clear_scratch();
             let callee = output.strings.lookup(site.callee);
             let push = |edges: &mut Vec<ProjectEdge<CallF>>,
                         dst_blob: ContentId,
@@ -3034,9 +3040,28 @@ struct PyResolver<'a> {
     /// second edge on the same site.
     decor_extras: Vec<(Span, (ContentId, Span))>,
     /// Call-bind sites and param-rule defs on the active resolution path;
-    /// a re-entry on the same span is a cycle and resolves to nothing.
+    /// a re-entry on the same span is a cycle and resolves to nothing, and a
+    /// path deeper than `PY_RESOLVE_DEPTH` stops.
     active: std::cell::RefCell<Vec<Span>>,
+    /// Complete answers of `param_target` by (callee, site span) and of
+    /// `callee_def` by site span: the param rule scans every site and recurses
+    /// per bound-name callee, so without a memo the walk is factorial in the
+    /// defs on the path (click/core.py hung past 15 s, then overflowed a
+    /// worker stack). An answer computed under a cycle cut is complete only
+    /// for the top-level site being resolved: it lives in the scratch maps,
+    /// cleared per site, where an in-progress entry reads as nothing.
+    param_memo:
+        std::cell::RefCell<std::collections::HashMap<(String, Span), Option<(ContentId, Span)>>>,
+    param_scratch:
+        std::cell::RefCell<std::collections::HashMap<(String, Span), Option<(ContentId, Span)>>>,
+    callee_memo: std::cell::RefCell<std::collections::HashMap<Span, Option<(ContentId, Span)>>>,
+    callee_scratch: std::cell::RefCell<std::collections::HashMap<Span, Option<(ContentId, Span)>>>,
+    /// Bumped on every cycle cut (active-path re-entry, depth cap, scratch
+    /// read); an answer whose computation bumped it is not complete.
+    cuts: std::cell::Cell<u64>,
 }
+
+const PY_RESOLVE_DEPTH: usize = 12;
 
 /// What a name is bound to at a point: another value name, or the result of
 /// the call whose site (function-node span) is carried.
@@ -3167,7 +3192,10 @@ impl<'a> PyResolver<'a> {
     /// The def the call site at `site_span` (function-node span) resolves to,
     /// cycle-guarded on the site.
     fn call_site_def(&self, site_span: Span) -> Option<(ContentId, Span)> {
-        if self.active.borrow().contains(&site_span) {
+        if self.active.borrow().contains(&site_span)
+            || self.active.borrow().len() >= PY_RESOLVE_DEPTH
+        {
+            self.cut();
             return None;
         }
         let site = self.call.aux.sites.iter().find(|s| s.span == site_span)?;
@@ -3378,17 +3406,45 @@ impl<'a> PyResolver<'a> {
     /// to this def" scan: a parameter-bound callee, else the name itself or
     /// its binding chain.
     fn callee_def(&self, site: &CallSite) -> Option<(ContentId, Span)> {
+        if let Some(found) = self.callee_memo.borrow().get(&site.span) {
+            return found.clone();
+        }
+        if let Some(found) = self.callee_scratch.borrow().get(&site.span) {
+            self.cut();
+            return found.clone();
+        }
+        self.callee_scratch.borrow_mut().insert(site.span, None);
+        let cuts_before = self.cuts.get();
         let callee = self.output.strings.lookup(site.callee);
-        if callee.is_empty() {
-            return None;
+        let found = if callee.is_empty() {
+            None
+        } else if let Some(t) = self.param_target(callee, site.span) {
+            Some(t)
+        } else if self.shadowed(callee, site.span) {
+            None
+        } else {
+            self.name_target(callee, site.span, &mut Vec::new())
+        };
+        if self.cuts.get() == cuts_before {
+            self.callee_memo
+                .borrow_mut()
+                .insert(site.span, found.clone());
         }
-        if let Some(t) = self.param_target(callee, site.span) {
-            return Some(t);
-        }
-        if self.shadowed(callee, site.span) {
-            return None;
-        }
-        self.name_target(callee, site.span, &mut Vec::new())
+        self.callee_scratch
+            .borrow_mut()
+            .insert(site.span, found.clone());
+        found
+    }
+
+    /// One cycle cut on the active path.
+    fn cut(&self) {
+        self.cuts.set(self.cuts.get() + 1);
+    }
+
+    /// Drop the per-site scratch answers before resolving the next site.
+    fn clear_scratch(&self) {
+        self.param_scratch.borrow_mut().clear();
+        self.callee_scratch.borrow_mut().clear();
     }
 
     /// The param rule's inputs: `callee` names a parameter of an enclosing
@@ -3421,7 +3477,10 @@ impl<'a> PyResolver<'a> {
             else {
                 continue;
             };
-            if self.active.borrow().contains(&dspan) {
+            if self.active.borrow().contains(&dspan)
+                || self.active.borrow().len() >= PY_RESOLVE_DEPTH
+            {
+                self.cut();
                 return None;
             }
             self.active.borrow_mut().push(dspan);
@@ -3495,6 +3554,31 @@ impl<'a> PyResolver<'a> {
     /// default names one). Emit only on uniqueness; a parameter that exists
     /// but resolves nowhere is shadowed, silent.
     fn param_target(&self, callee: &str, site_span: Span) -> Option<(ContentId, Span)> {
+        let memo_key = (callee.to_string(), site_span);
+        if let Some(found) = self.param_memo.borrow().get(&memo_key) {
+            return found.clone();
+        }
+        if let Some(found) = self.param_scratch.borrow().get(&memo_key) {
+            self.cut();
+            return found.clone();
+        }
+        self.param_scratch
+            .borrow_mut()
+            .insert(memo_key.clone(), None);
+        let cuts_before = self.cuts.get();
+        let found = self.param_target_uncached(callee, site_span);
+        if self.cuts.get() == cuts_before {
+            self.param_memo
+                .borrow_mut()
+                .insert(memo_key.clone(), found.clone());
+        }
+        self.param_scratch
+            .borrow_mut()
+            .insert(memo_key, found.clone());
+        found
+    }
+
+    fn param_target_uncached(&self, callee: &str, site_span: Span) -> Option<(ContentId, Span)> {
         let args = self.param_args(callee, site_span)?;
         let mut targets: Vec<(ContentId, Span)> = Vec::new();
         for (value, at) in args {
