@@ -125,6 +125,7 @@ fn project_types(
     sink: &mut FamilyBundle<TypeF>,
 ) {
     walk_go_entities(root, src, strings, sink);
+    super::go_type_edges::tsi_rows(root, src, strings, sink);
 }
 
 /// Walk every type/function/method declaration, minting one entity node per decl

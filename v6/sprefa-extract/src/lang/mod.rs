@@ -34,6 +34,7 @@ pub mod rust_rehome;
 pub mod rust_rename;
 pub mod rust_docs;
 pub mod rust_scip_macros;
+pub mod go_type_edges;
 pub mod rust_type_edges;
 pub mod rust_type_refs;
 pub mod ts;

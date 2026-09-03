@@ -17,6 +17,7 @@ use sprefa_extract::FlatFact;
 
 const TS_PROBE: &str = "tests/fixtures/tsi/probe.ts";
 const RUST_PROBE: &str = "tests/fixtures/tsi/probe.rs";
+const GO_PROBE: &str = "tests/fixtures/tsi/probe_graph.go";
 
 fn extract(args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_extract"))
@@ -188,7 +189,7 @@ fn as_span(arg: &Arg) -> Option<(u32, u32)> {
 /// nowhere else. `golden_parity` is the same claim over the whole corpus.
 #[test]
 fn flag_off_emits_no_fact_row() {
-    for fixture in [TS_PROBE, RUST_PROBE] {
+    for fixture in [TS_PROBE, RUST_PROBE, GO_PROBE] {
         let stream = extract(&["--family", "type", fixture]);
         assert!(!stream.is_empty(), "{fixture} produced no rows");
         for line in stream.lines() {
