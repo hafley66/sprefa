@@ -1965,6 +1965,10 @@ pub struct IndexBag {
     pub rust_modules: std::sync::OnceLock<crate::lang::rust_modules::RustModuleIndex>,
     /// the go module plane, same discipline as `ts_modules`/`rust_modules`.
     pub go_modules: std::sync::OnceLock<crate::lang::go_modules::GoModuleIndex>,
+    /// the python module plane, same discipline as `ts_modules`.
+    pub py_modules: std::sync::OnceLock<crate::lang::python::PyModuleIndex>,
+    /// the kotlin module plane, same discipline as `ts_modules`.
+    pub kt_modules: std::sync::OnceLock<crate::lang::kotlin_modules::KtModuleIndex>,
     /// the rust CHECKER tier's answers, joined to corpus def coordinates. Unset
     /// without `--rust-checker`, and unset when the workspace load fell back.
     pub rust_checker: std::sync::OnceLock<crate::lang::rust_checker::RustCheckerIndex>,
