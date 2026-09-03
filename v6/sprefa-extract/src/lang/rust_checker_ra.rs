@@ -142,12 +142,13 @@ pub fn answer(
     if tsi {
         // Ids are run-local across the whole workspace, so the item walk owns
         // one counter and runs after the per-file resolve rather than beside it.
-        let (facts, coverage) = attach_db(db, || {
+        let (facts, coverage, unmodulated) = attach_db(db, || {
             let sema = Semantics::new(db);
             TsiWalk::new(db, &sema, &destination, &path_of).run(&walk_files)
         });
         answers.tsi = facts;
         answers.coverage = coverage;
+        answers.unmodulated = unmodulated;
     }
     answers.walk = walk_started.elapsed();
     Ok(answers)
@@ -371,12 +372,19 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
     }
 
     /// The declarations of every module a supplied file owns, then every impl
-    /// of every crate those modules belong to.
-    fn run(mut self, files: &[WalkFile]) -> (Vec<FactOut>, Vec<CoverageClaim>) {
+    /// of every crate those modules belong to. A file owning no module is
+    /// reported by path: the walk saw it and had nothing to enumerate.
+    fn run(mut self, files: &[WalkFile]) -> (Vec<FactOut>, Vec<CoverageClaim>, Vec<String>) {
         let mut modules: Vec<ra_ap_hir::Module> = Vec::new();
         let mut crates: Vec<Crate> = Vec::new();
+        let mut unmodulated: Vec<String> = Vec::new();
         for file in files {
-            for module in self.sema.file_to_module_defs(file.file_id) {
+            let owned: Vec<ra_ap_hir::Module> =
+                self.sema.file_to_module_defs(file.file_id).collect();
+            if owned.is_empty() {
+                unmodulated.push(file.path.clone());
+            }
+            for module in owned {
                 if !modules.contains(&module) {
                     modules.push(module);
                 }
@@ -398,7 +406,7 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
             }
         }
         let claims = claims(&self.facts);
-        (self.facts, claims)
+        (self.facts, claims, unmodulated)
     }
 
     fn row(&mut self, relation: &str, args: Vec<Arg>) {
