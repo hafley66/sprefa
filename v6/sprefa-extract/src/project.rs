@@ -454,15 +454,75 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         facts.extend(flatten_flow(&flow_edges(&pairs, &resolved_calls)));
     }
     if request.witness {
+        let syntax_tsi = syntax_tsi_rows(request, &inputs, &cx);
+        let relations = tsi_relations(&syntax_tsi.rows);
+        facts.extend(syntax_tsi.rows.into_iter().map(FlatFact::Fact));
         return Ok(envelope(Envelope {
             facts,
             trail,
             inputs: &inputs,
             cx: &cx,
             declines,
+            tsi_relations: relations,
+            tsi_ids: syntax_tsi.next_id,
         }));
     }
     Ok(facts)
+}
+
+/// The syntax tier's TSI rows for one resolve, and the first id free after them.
+struct SyntaxTsi {
+    rows: Vec<crate::tsi::FactOut>,
+    next_id: u32,
+}
+
+/// Rides the stream for every language whose checker tier did not answer:
+/// beside a loaded tier the two id spaces name two types with one number.
+fn syntax_tsi_rows(
+    request: &ResolveRequest,
+    inputs: &[ProjectInput],
+    cx: &ProjectCx,
+) -> SyntaxTsi {
+    let mut out = SyntaxTsi {
+        rows: Vec::new(),
+        next_id: 0,
+    };
+    if !request.arms.types {
+        return out;
+    }
+    for input in inputs {
+        let answered = match arm_for(&input.path).map_or("", |arm| arm.name) {
+            "ts" => cx.indexes.ts_checker.get().is_some(),
+            "rust" => cx.indexes.rust_checker.get().is_some(),
+            _ => false,
+        };
+        if answered {
+            continue;
+        }
+        let Some(bundle) = input.output.types.as_ref() else {
+            continue;
+        };
+        let (rows, next) = crate::wire::tsi_rows_rebased(
+            &bundle.aux.tsi,
+            &input.blob.to_string(),
+            out.next_id,
+        );
+        out.rows.extend(rows);
+        out.next_id = next;
+    }
+    out
+}
+
+/// Every relation the syntax tier's rows name, in walk order: the coverage rows
+/// the envelope files beside them.
+fn tsi_relations(rows: &[crate::tsi::FactOut]) -> Vec<String> {
+    let mut named: Vec<String> = Vec::new();
+    for row in rows {
+        if !named.contains(&row.relation) {
+            named.push(row.relation.clone());
+        }
+    }
+    named
 }
 
 /// The syntax run is always 0; a checker tier that LOADED takes the next id, so
@@ -505,6 +565,8 @@ struct Envelope<'a> {
     inputs: &'a [ProjectInput],
     cx: &'a ProjectCx<'a>,
     declines: Vec<TierDecline>,
+    tsi_relations: Vec<String>,
+    tsi_ids: u32,
 }
 
 /// The TSI envelope over a resolve: protocol, one run per tier that ran, a
@@ -517,6 +579,8 @@ fn envelope(input: Envelope) -> Vec<FlatFact> {
         inputs,
         cx,
         declines,
+        tsi_relations,
+        tsi_ids,
     } = input;
     let semantic = semantic_runs(cx, inputs);
     let mut rows: Vec<FlatFact> = vec![
@@ -536,6 +600,19 @@ fn envelope(input: Envelope) -> Vec<FlatFact> {
     let mut numbered = 0u32;
     let mut trail = trail.rows.into_iter();
     for mut fact in facts {
+        // A TSI `fact` row numbers itself in a required field and answers no
+        // resolve site, so it takes the counter without consuming a leg.
+        if let FlatFact::Fact(row) = &mut fact {
+            numbered += 1;
+            row.fact = numbered;
+            witnesses.push(WitnessOut {
+                fact: numbered,
+                run: SYNTAX_RUN,
+                method: crate::tsi::Method::Parse,
+            });
+            rows.push(fact);
+            continue;
+        }
         let ordinal = fact.fact_slot().map(|slot| {
             numbered += 1;
             *slot = Some(numbered);
@@ -565,22 +642,27 @@ fn envelope(input: Envelope) -> Vec<FlatFact> {
     rows.extend(witnesses.into_iter().map(FlatFact::Witness));
     // The tsc walk enumerates relations rather than answering sites, so its rows
     // arrive whole and take ordinals after the resolve's.
+    let mut ids = tsi_ids;
     if let Some((_, run)) = semantic.iter().find(|(lang, _)| *lang == "ts") {
         if let Some(index) = cx.indexes.ts_checker.get() {
-            crate::tsi::emit_semantic(run.run, index, &mut rows);
+            ids = crate::tsi::emit_semantic(run.run, index, ids, &mut rows);
         }
     }
     if let Some((_, run)) = semantic.iter().find(|(lang, _)| *lang == "rust") {
         if let Some(index) = cx.indexes.rust_checker.get() {
-            crate::tsi::emit_semantic(run.run, index, &mut rows);
+            crate::tsi::emit_semantic(run.run, index, ids, &mut rows);
         }
     }
     // A resolve enumerates no relation exhaustively, so both families are
     // partial; a checker WALK is the only leg that claims complete.
-    for relation in ["extract.call", "extract.type"] {
+    for relation in ["extract.call", "extract.type"]
+        .into_iter()
+        .map(str::to_string)
+        .chain(tsi_relations)
+    {
         rows.push(FlatFact::Coverage(CoverageOut {
             run: SYNTAX_RUN,
-            relation: relation.to_string(),
+            relation,
             complete: false,
         }));
     }
