@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use ra_ap_hir::{
     Adt, AssocItem, Crate, Field, Function, GenericDef, HirDisplay, Impl, ModuleDef, PathResolution,
-    Semantics, Type, attach_db,
+    Semantics, Trait, Type, attach_db,
 };
 use ra_ap_ide::{AnalysisHost, NavigationTarget, RootDatabase, TryToNav};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
@@ -325,11 +325,11 @@ const ENUMERATED: &[&str] = &[
 const SAMPLED: &[(&str, &str)] = &[
     (
         "tsi.edge",
-        "enumerated for workspace-declared owners; std and dependency types are leaves",
+        "enumerated for owners declared in the supplied files",
     ),
     (
         "tsi.conforms",
-        "declared impls only; blanket and auto traits not enumerated",
+        "declared impls of supplied types and traits; blanket and auto traits not enumerated",
     ),
     ("tsi.has_type", "occurrences not walked in this arc"),
     ("tsi.subtype", "not enumerated"),
@@ -371,12 +371,10 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
         }
     }
 
-    /// The declarations of every module a supplied file owns, then every impl
-    /// of every crate those modules belong to. A file owning no module is
-    /// reported by path: the walk saw it and had nothing to enumerate.
+    /// The declarations of every module a supplied file owns, then the impls of
+    /// those declarations alone: a crate's whole impl set prices the walk by it.
     fn run(mut self, files: &[WalkFile]) -> (Vec<FactOut>, Vec<CoverageClaim>, Vec<String>) {
         let mut modules: Vec<ra_ap_hir::Module> = Vec::new();
-        let mut crates: Vec<Crate> = Vec::new();
         let mut unmodulated: Vec<String> = Vec::new();
         for file in files {
             let owned: Vec<ra_ap_hir::Module> =
@@ -388,22 +386,40 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
                 if !modules.contains(&module) {
                     modules.push(module);
                 }
-                let krate = module.krate(self.db);
-                if !crates.contains(&krate) {
-                    crates.push(krate);
-                }
             }
         }
+        let mut adts: Vec<Adt> = Vec::new();
+        let mut traits: Vec<Trait> = Vec::new();
         for module in modules {
             let krate = module.krate(self.db);
             for def in module.declarations(self.db) {
+                match def {
+                    ModuleDef::Adt(item) => adts.push(item),
+                    ModuleDef::Trait(item) => traits.push(item),
+                    _ => {}
+                }
                 self.declaration(def, krate);
             }
         }
-        for krate in crates {
-            for item in Impl::all_in_crate(self.db, krate) {
-                self.implementation(item, krate);
+        let mut seen: HashSet<Impl> = HashSet::new();
+        let mut impls: Vec<Impl> = Vec::new();
+        for adt in adts {
+            for item in Impl::all_for_type(self.db, adt.ty(self.db)) {
+                if seen.insert(item) {
+                    impls.push(item);
+                }
             }
+        }
+        for contract in traits {
+            for item in Impl::all_for_trait(self.db, contract) {
+                if seen.insert(item) {
+                    impls.push(item);
+                }
+            }
+        }
+        for item in impls {
+            let krate = item.module(self.db).krate(self.db);
+            self.implementation(item, krate);
         }
         let claims = claims(&self.facts);
         (self.facts, claims, unmodulated)
