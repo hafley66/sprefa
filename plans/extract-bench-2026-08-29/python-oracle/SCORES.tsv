@@ -3,19 +3,19 @@ args/assigned_call	args	2	0	2	2	100.00	100.00	100.00	100.00
 args/call	args	2	0	2	2	100.00	100.00	100.00	100.00
 args/imported_assigned_call	args	2	0	1	1	50.00	100.00	50.00	100.00
 args/imported_call	args	2	0	1	1	50.00	100.00	50.00	100.00
-args/nested_call	args	3	0	1	1	33.33	100.00	33.33	100.00
+args/nested_call	args	3	0	3	3	100.00	100.00	100.00	100.00
 args/param_call	args	3	0	2	2	66.67	100.00	66.67	100.00
 assignments/chained	assignments	2	0	2	2	100.00	100.00	100.00	100.00
 assignments/recursive_tuple	assignments	6	0	6	6	100.00	100.00	100.00	100.00
 assignments/starred	assignments	4	0	4	4	100.00	100.00	100.00	100.00
 assignments/tuple	assignments	3	0	3	3	100.00	100.00	100.00	100.00
 builtins/functions	builtins	0	1	0	0	0.00	0.00	0.00	0.00
-builtins/map	builtins	4	1	1	1	25.00	100.00	25.00	100.00
+builtins/map	builtins	4	1	4	4	100.00	100.00	100.00	100.00
 builtins/types	builtins	0	3	0	0	0.00	0.00	0.00	0.00
-classes/assigned_call	classes	1	0	0	0	0.00	0.00	0.00	0.00
+classes/assigned_call	classes	1	0	1	1	100.00	100.00	100.00	100.00
 classes/assigned_self_call	classes	2	0	2	2	100.00	100.00	100.00	100.00
 classes/base_class_attr	classes	2	0	2	2	100.00	100.00	100.00	100.00
-classes/base_class_calls_child	classes	3	0	2	2	66.67	100.00	66.67	100.00
+classes/base_class_calls_child	classes	3	0	3	3	100.00	100.00	100.00	100.00
 classes/call	classes	1	0	1	1	100.00	100.00	100.00	100.00
 classes/direct_call	classes	2	0	2	2	100.00	100.00	100.00	100.00
 classes/imported_attr_access	classes	1	0	1	1	100.00	100.00	100.00	100.00
@@ -25,15 +25,15 @@ classes/imported_nested_attr_access	classes	1	0	1	1	100.00	100.00	100.00	100.00
 classes/instance	classes	2	0	2	2	100.00	100.00	100.00	100.00
 classes/nested_call	classes	2	0	2	2	100.00	100.00	100.00	100.00
 classes/nested_class_calls	classes	4	0	4	4	100.00	100.00	100.00	100.00
-classes/parameter_call	classes	3	0	1	1	33.33	100.00	33.33	100.00
-classes/return_call	classes	2	0	1	1	50.00	100.00	50.00	100.00
-classes/return_call_direct	classes	2	0	1	1	50.00	100.00	50.00	100.00
+classes/parameter_call	classes	3	0	3	3	100.00	100.00	100.00	100.00
+classes/return_call	classes	2	0	2	2	100.00	100.00	100.00	100.00
+classes/return_call_direct	classes	2	0	2	2	100.00	100.00	100.00	100.00
 classes/self_assign_func	classes	3	0	3	3	100.00	100.00	100.00	100.00
-classes/self_assignment	classes	3	0	2	2	66.67	100.00	66.67	100.00
+classes/self_assignment	classes	3	0	3	3	100.00	100.00	100.00	100.00
 classes/self_call	classes	4	0	4	4	100.00	100.00	100.00	100.00
 classes/static_method_call	classes	1	0	1	1	100.00	100.00	100.00	100.00
-classes/super_class_return	classes	2	0	1	1	50.00	100.00	50.00	100.00
-classes/tuple_assignment	classes	4	0	1	1	25.00	100.00	25.00	100.00
+classes/super_class_return	classes	2	0	2	2	100.00	100.00	100.00	100.00
+classes/tuple_assignment	classes	4	0	4	4	100.00	100.00	100.00	100.00
 decorators/assigned	decorators	2	0	2	2	100.00	100.00	100.00	100.00
 decorators/call	decorators	2	0	2	2	100.00	100.00	100.00	100.00
 decorators/nested	decorators	2	0	2	2	100.00	100.00	100.00	100.00
@@ -43,17 +43,17 @@ decorators/return	decorators	3	0	3	3	100.00	100.00	100.00	100.00
 decorators/return_different_func	decorators	4	0	4	4	100.00	100.00	100.00	100.00
 dicts/add_key	dicts	1	0	1	1	100.00	100.00	100.00	100.00
 dicts/assign	dicts	1	0	1	1	100.00	100.00	100.00	100.00
-dicts/call	dicts	2	0	0	0	0.00	0.00	0.00	0.00
+dicts/call	dicts	2	0	2	2	100.00	100.00	100.00	100.00
 dicts/ext_key	dicts	1	0	0	0	0.00	0.00	0.00	0.00
-dicts/nested	dicts	1	0	0	0	0.00	0.00	0.00	0.00
+dicts/nested	dicts	1	0	1	1	100.00	100.00	100.00	100.00
 dicts/new_key_param	dicts	2	0	1	1	50.00	100.00	50.00	100.00
-dicts/param	dicts	2	0	1	1	50.00	100.00	50.00	100.00
+dicts/param	dicts	2	0	2	2	100.00	100.00	100.00	100.00
 dicts/param_key	dicts	3	0	1	1	33.33	100.00	33.33	100.00
-dicts/return	dicts	2	0	1	1	50.00	100.00	50.00	100.00
+dicts/return	dicts	2	0	2	2	100.00	100.00	100.00	100.00
 dicts/return_assign	dicts	2	0	1	1	50.00	100.00	50.00	100.00
-dicts/type_coercion	dicts	1	0	0	0	0.00	0.00	0.00	0.00
-dicts/update	dicts	1	0	0	0	0.00	0.00	0.00	0.00
-direct_calls/assigned_call	direct_calls	2	0	1	1	50.00	100.00	50.00	100.00
+dicts/type_coercion	dicts	1	0	1	1	100.00	100.00	100.00	100.00
+dicts/update	dicts	1	0	1	1	100.00	100.00	100.00	100.00
+direct_calls/assigned_call	direct_calls	2	0	2	2	100.00	100.00	100.00	100.00
 direct_calls/imported_return_call	direct_calls	2	0	1	1	50.00	100.00	50.00	100.00
 direct_calls/return_call	direct_calls	3	0	3	3	100.00	100.00	100.00	100.00
 direct_calls/with_parameters	direct_calls	3	0	3	3	100.00	100.00	100.00	100.00
@@ -91,48 +91,48 @@ imports/submodule_import	imports	0	0	0	0	0.00	0.00	0.00	0.00
 imports/submodule_import_all	imports	2	0	2	2	100.00	100.00	100.00	100.00
 imports/submodule_import_as	imports	0	0	0	0	0.00	0.00	0.00	0.00
 imports/submodule_import_from	imports	2	0	2	2	100.00	100.00	100.00	100.00
-kwargs/assigned_call	kwargs	2	0	1	1	50.00	100.00	50.00	100.00
+kwargs/assigned_call	kwargs	2	0	2	2	100.00	100.00	100.00	100.00
 kwargs/call	kwargs	4	0	4	4	100.00	100.00	100.00	100.00
 kwargs/chained_call	kwargs	4	0	3	3	75.00	100.00	75.00	100.00
-lambdas/call	lambdas	1	0	0	0	0.00	0.00	0.00	0.00
-lambdas/calls_parameter	lambdas	3	0	0	0	0.00	0.00	0.00	0.00
-lambdas/chained_calls	lambdas	6	0	3	3	50.00	100.00	50.00	100.00
-lambdas/parameter_call	lambdas	2	0	1	1	50.00	100.00	50.00	100.00
-lambdas/return_call	lambdas	2	0	1	1	50.00	100.00	50.00	100.00
+lambdas/call	lambdas	1	0	1	1	100.00	100.00	100.00	100.00
+lambdas/calls_parameter	lambdas	3	0	1	1	33.33	100.00	33.33	100.00
+lambdas/chained_calls	lambdas	6	0	6	6	100.00	100.00	100.00	100.00
+lambdas/parameter_call	lambdas	2	0	2	2	100.00	100.00	100.00	100.00
+lambdas/return_call	lambdas	2	0	2	2	100.00	100.00	100.00	100.00
 lists/comprehension_if	lists	1	1	1	1	100.00	100.00	100.00	100.00
 lists/comprehension_val	lists	1	1	1	1	100.00	100.00	100.00	100.00
 lists/ext_index	lists	1	0	0	0	0.00	0.00	0.00	0.00
-lists/nested	lists	1	0	0	0	0.00	0.00	0.00	0.00
+lists/nested	lists	1	0	1	1	100.00	100.00	100.00	100.00
 lists/nested_comprehension	lists	2	1	2	2	100.00	100.00	100.00	100.00
 lists/param_index	lists	2	0	1	1	50.00	100.00	50.00	100.00
-lists/simple	lists	4	0	1	1	25.00	100.00	25.00	100.00
+lists/simple	lists	4	0	4	4	100.00	100.00	100.00	100.00
 lists/slice	lists	1	0	0	0	0.00	0.00	0.00	0.00
 mro/basic	mro	1	0	1	1	100.00	100.00	100.00	100.00
-mro/basic_init	mro	2	0	1	1	50.00	100.00	50.00	100.00
-mro/parents_same_superclass	mro	2	0	1	1	50.00	100.00	50.00	100.00
-mro/self_assignment	mro	3	0	2	2	66.67	100.00	66.67	100.00
+mro/basic_init	mro	2	0	2	2	100.00	100.00	100.00	100.00
+mro/parents_same_superclass	mro	2	0	2	2	100.00	100.00	100.00	100.00
+mro/self_assignment	mro	3	0	3	3	100.00	100.00	100.00	100.00
 mro/super_call	mro	2	1	2	2	100.00	100.00	100.00	100.00
-mro/two_parents	mro	2	0	1	1	50.00	100.00	50.00	100.00
+mro/two_parents	mro	2	0	2	2	100.00	100.00	100.00	100.00
 mro/two_parents_method_defined	mro	2	0	2	2	100.00	100.00	100.00	100.00
-returns/call	returns	2	0	1	1	50.00	100.00	50.00	100.00
+returns/call	returns	2	0	2	2	100.00	100.00	100.00	100.00
 returns/imported_call	returns	2	0	1	1	50.00	100.00	50.00	100.00
 returns/nested_import_call	returns	2	0	1	1	50.00	100.00	50.00	100.00
 returns/return_complex	returns	6	0	5	5	83.33	100.00	83.33	100.00
-CATEGORY:args	args	6	0	9	9	64.29	100.00		
+CATEGORY:args	args	6	0	11	11	78.57	100.00		
 CATEGORY:assignments	assignments	4	0	15	15	100.00	100.00		
-CATEGORY:builtins	builtins	3	5	1	1	25.00	100.00		
-CATEGORY:classes	classes	22	0	37	37	77.08	100.00		
+CATEGORY:builtins	builtins	3	5	4	4	100.00	100.00		
+CATEGORY:classes	classes	22	0	48	48	100.00	100.00		
 CATEGORY:decorators	decorators	7	0	20	20	90.91	100.00		
-CATEGORY:dicts	dicts	12	0	7	7	36.84	100.00		
-CATEGORY:direct_calls	direct_calls	4	0	8	8	80.00	100.00		
+CATEGORY:dicts	dicts	12	0	14	14	73.68	100.00		
+CATEGORY:direct_calls	direct_calls	4	0	9	9	90.00	100.00		
 CATEGORY:dynamic	dynamic	1	1	0	0	0.00	0.00		
 CATEGORY:exceptions	exceptions	3	0	3	3	100.00	100.00		
 CATEGORY:external	external	6	9	2	2	100.00	100.00		
 CATEGORY:functions	functions	4	0	4	4	100.00	100.00		
 CATEGORY:generators	generators	6	1	7	7	41.18	100.00		
 CATEGORY:imports	imports	14	0	14	14	100.00	100.00		
-CATEGORY:kwargs	kwargs	3	0	8	8	80.00	100.00		
-CATEGORY:lambdas	lambdas	5	0	5	5	35.71	100.00		
-CATEGORY:lists	lists	8	3	6	6	46.15	100.00		
-CATEGORY:mro	mro	7	1	10	10	71.43	100.00		
-CATEGORY:returns	returns	4	0	8	8	66.67	100.00		
+CATEGORY:kwargs	kwargs	3	0	9	9	90.00	100.00		
+CATEGORY:lambdas	lambdas	5	0	12	12	85.71	100.00		
+CATEGORY:lists	lists	8	3	10	10	76.92	100.00		
+CATEGORY:mro	mro	7	1	14	14	100.00	100.00		
+CATEGORY:returns	returns	4	0	9	9	75.00	100.00		
