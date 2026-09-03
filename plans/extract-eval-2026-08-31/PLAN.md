@@ -70,6 +70,13 @@ the recall gap.
 
 ## 3. Arc B — trace oracle (run-based, python first)
 
+Status 2026-09-03 (lane `grind-trace-oracle`): python pilot LANDED at
+`plans/extract-bench-2026-08-29/python-oracle/trace/` (`run.py`, `TRACE.tsv`,
+`RUNS.tsv`, `SCORES.tsv`, `REPORT.md`) and `pycg_score.py --oracle trace`;
+105 of 119 mains ran, 220 executed edges all agreeing with PyCG,
+recall-of-covered 87.27 vs static 86.86, 3-bucket 192/2/11. The pytest
+extension and go/rust remain open.
+
 Every oracle so far is a static tool; static-vs-static agreement cannot score
 the shapes both sides miss. A run IS the oracle for exactly the classes with
 written stops (OPEN-PROBLEMS row 2: dynamic 0%, builtins 25.00%, lambdas

@@ -1,0 +1,120 @@
+case	category	status	detail	edges	python
+args/assigned_call	args	ok		2	Python 3.14.6
+args/call	args	ok		2	Python 3.14.6
+args/imported_assigned_call	args	ok		2	Python 3.14.6
+args/imported_call	args	ok		2	Python 3.14.6
+args/nested_call	args	ok		3	Python 3.14.6
+args/param_call	args	ok		3	Python 3.14.6
+assignments/chained	assignments	ok		2	Python 3.14.6
+assignments/recursive_tuple	assignments	ok		6	Python 3.14.6
+assignments/starred	assignments	ok		4	Python 3.14.6
+assignments/tuple	assignments	ok		3	Python 3.14.6
+builtins/functions	builtins	ok		0	Python 3.14.6
+builtins/map	builtins	error	TypeError: 'function' object is not iterable at main.py:4	0	Python 3.14.6
+builtins/types	builtins	ok		0	Python 3.14.6
+classes/assigned_call	classes	ok		1	Python 3.14.6
+classes/assigned_self_call	classes	ok		2	Python 3.14.6
+classes/base_class_attr	classes	ok		2	Python 3.14.6
+classes/base_class_calls_child	classes	ok		3	Python 3.14.6
+classes/call	classes	ok		1	Python 3.14.6
+classes/direct_call	classes	ok		2	Python 3.14.6
+classes/imported_attr_access	classes	ok		1	Python 3.14.6
+classes/imported_call	classes	ok		2	Python 3.14.6
+classes/imported_call_without_init	classes	ok		1	Python 3.14.6
+classes/imported_nested_attr_access	classes	ok		1	Python 3.14.6
+classes/instance	classes	ok		2	Python 3.14.6
+classes/nested_call	classes	ok		2	Python 3.14.6
+classes/nested_class_calls	classes	ok		4	Python 3.14.6
+classes/parameter_call	classes	ok		3	Python 3.14.6
+classes/return_call	classes	ok		2	Python 3.14.6
+classes/return_call_direct	classes	ok		2	Python 3.14.6
+classes/self_assign_func	classes	ok		3	Python 3.14.6
+classes/self_assignment	classes	ok		3	Python 3.14.6
+classes/self_call	classes	ok		4	Python 3.14.6
+classes/static_method_call	classes	ok		1	Python 3.14.6
+classes/super_class_return	classes	ok		2	Python 3.14.6
+classes/tuple_assignment	classes	ok		4	Python 3.14.6
+decorators/assigned	decorators	ok		2	Python 3.14.6
+decorators/call	decorators	ok		2	Python 3.14.6
+decorators/nested	decorators	ok		2	Python 3.14.6
+decorators/nested_decorators	decorators	ok		5	Python 3.14.6
+decorators/param_call	decorators	ok		3	Python 3.14.6
+decorators/return	decorators	ok		3	Python 3.14.6
+decorators/return_different_func	decorators	ok		4	Python 3.14.6
+dicts/add_key	dicts	ok		1	Python 3.14.6
+dicts/assign	dicts	ok		1	Python 3.14.6
+dicts/call	dicts	ok		2	Python 3.14.6
+dicts/ext_key	dicts	ok		1	Python 3.14.6
+dicts/nested	dicts	ok		1	Python 3.14.6
+dicts/new_key_param	dicts	ok		2	Python 3.14.6
+dicts/param	dicts	ok		2	Python 3.14.6
+dicts/param_key	dicts	ok		3	Python 3.14.6
+dicts/return	dicts	ok		2	Python 3.14.6
+dicts/return_assign	dicts	ok		2	Python 3.14.6
+dicts/type_coercion	dicts	ok		1	Python 3.14.6
+dicts/update	dicts	ok		1	Python 3.14.6
+direct_calls/assigned_call	direct_calls	ok		2	Python 3.14.6
+direct_calls/imported_return_call	direct_calls	ok		2	Python 3.14.6
+direct_calls/return_call	direct_calls	ok		3	Python 3.14.6
+direct_calls/with_parameters	direct_calls	ok		3	Python 3.14.6
+dynamic/eval	dynamic	ok		1	Python 3.14.6
+exceptions/raise	exceptions	error	A:  at main.py:5	1	Python 3.14.6
+exceptions/raise_assigned	exceptions	error	A:  at main.py:6	1	Python 3.14.6
+exceptions/raise_attr	exceptions	error	B:  at main.py:6	1	Python 3.14.6
+external/attribute	external	error	ModuleNotFoundError: No module named 'ext' at main.py:1	0	Python 3.14.6
+external/attribute_assigned	external	error	ModuleNotFoundError: No module named 'ext' at main.py:1	0	Python 3.14.6
+external/cls_parent	external	error	ModuleNotFoundError: No module named 'ext' at main.py:1	0	Python 3.14.6
+external/function	external	error	ModuleNotFoundError: No module named 'ext' at main.py:1	0	Python 3.14.6
+external/function_asname	external	error	ModuleNotFoundError: No module named 'ext' at main.py:1	0	Python 3.14.6
+external/function_assigned	external	error	ModuleNotFoundError: No module named 'ext' at main.py:1	0	Python 3.14.6
+functions/assigned_call	functions	ok		1	Python 3.14.6
+functions/assigned_call_lit_param	functions	ok		1	Python 3.14.6
+functions/call	functions	ok		1	Python 3.14.6
+functions/imported_call	functions	ok		1	Python 3.14.6
+generators/iter_param	generators	ok		4	Python 3.14.6
+generators/iter_return	generators	ok		4	Python 3.14.6
+generators/iterable	generators	ok		3	Python 3.14.6
+generators/iterable_assigned	generators	ok		3	Python 3.14.6
+generators/no_iter	generators	ok		1	Python 3.14.6
+generators/yield	generators	ok		2	Python 3.14.6
+imports/chained_import	imports	ok		2	Python 3.14.6
+imports/import_all	imports	ok		2	Python 3.14.6
+imports/import_as	imports	ok		0	Python 3.14.6
+imports/import_from	imports	ok		1	Python 3.14.6
+imports/init_func_import	imports	ok		2	Python 3.14.6
+imports/init_import	imports	ok		1	Python 3.14.6
+imports/parent_import	imports	ok		0	Python 3.14.6
+imports/relative_import	imports	ok		0	Python 3.14.6
+imports/relative_import_with_name	imports	ok		2	Python 3.14.6
+imports/simple_import	imports	ok		0	Python 3.14.6
+imports/submodule_import	imports	ok		0	Python 3.14.6
+imports/submodule_import_all	imports	ok		2	Python 3.14.6
+imports/submodule_import_as	imports	ok		0	Python 3.14.6
+imports/submodule_import_from	imports	ok		2	Python 3.14.6
+kwargs/assigned_call	kwargs	ok		2	Python 3.14.6
+kwargs/call	kwargs	ok		4	Python 3.14.6
+kwargs/chained_call	kwargs	ok		3	Python 3.14.6
+lambdas/call	lambdas	ok		1	Python 3.14.6
+lambdas/calls_parameter	lambdas	ok		3	Python 3.14.6
+lambdas/chained_calls	lambdas	error	TypeError: <lambda>() missing 1 required positional argument: 'x' at main.py:9	2	Python 3.14.6
+lambdas/parameter_call	lambdas	error	TypeError: <lambda>() missing 1 required positional argument: 'x' at main.py:2	2	Python 3.14.6
+lambdas/return_call	lambdas	error	TypeError: func.<locals>.<lambda>() missing 1 required positional argument: 'x' at main.py:5	2	Python 3.14.6
+lists/comprehension_if	lists	ok		1	Python 3.14.6
+lists/comprehension_val	lists	ok		1	Python 3.14.6
+lists/ext_index	lists	ok		1	Python 3.14.6
+lists/nested	lists	ok		1	Python 3.14.6
+lists/nested_comprehension	lists	ok		2	Python 3.14.6
+lists/param_index	lists	ok		2	Python 3.14.6
+lists/simple	lists	ok		4	Python 3.14.6
+lists/slice	lists	ok		1	Python 3.14.6
+mro/basic	mro	ok		1	Python 3.14.6
+mro/basic_init	mro	ok		2	Python 3.14.6
+mro/parents_same_superclass	mro	ok		2	Python 3.14.6
+mro/self_assignment	mro	ok		3	Python 3.14.6
+mro/super_call	mro	ok		2	Python 3.14.6
+mro/two_parents	mro	ok		2	Python 3.14.6
+mro/two_parents_method_defined	mro	ok		2	Python 3.14.6
+returns/call	returns	ok		2	Python 3.14.6
+returns/imported_call	returns	ok		2	Python 3.14.6
+returns/nested_import_call	returns	ok		2	Python 3.14.6
+returns/return_complex	returns	error	TypeError: func4() missing 1 required positional argument: 'a' at main.py:16	2	Python 3.14.6
