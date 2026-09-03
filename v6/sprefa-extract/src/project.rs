@@ -249,6 +249,7 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
                 .documents
                 .iter()
                 .map(|doc| doc.relative_path.as_str())
+                .filter(|path| inside_project(path))
                 .collect();
             Some(
                 SourceTreeBlobSource::open_files(root, &files).map_err(|err| {
@@ -474,11 +475,24 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             facts.extend(type_facts(input, &targets, &cx, &mut trail));
         }
     }
+    // The SCIP index's `is_implementation` relationships: occurrences never
+    // carry the interface-to-implementor hop, so this is the only leg that can
+    // answer it, and it answers nothing without an index.
+    let conformances = if request.arms.types {
+        scip_conformances(&inputs, &cx, request.project_root)
+    } else {
+        Vec::new()
+    };
+    facts.extend(conformance_edges(&inputs, &conformances));
     if request.arms.flow {
         facts.extend(flatten_flow(&flow_edges(&pairs, &resolved_calls)));
     }
     if request.witness {
-        let syntax_tsi = syntax_tsi_rows(request, &inputs, &cx);
+        let mut syntax_tsi = syntax_tsi_rows(request, &inputs, &cx);
+        let (conforms, next_id) =
+            conformance_tsi_rows(&inputs, &conformances, syntax_tsi.next_id);
+        syntax_tsi.rows.extend(conforms);
+        syntax_tsi.next_id = next_id;
         let relations = tsi_relations(&syntax_tsi.rows);
         facts.extend(syntax_tsi.rows.into_iter().map(FlatFact::Fact));
         return Ok(envelope(Envelope {
@@ -1841,6 +1855,243 @@ fn type_facts(
             })
         })
         .collect()
+}
+
+/// Whether a SCIP document path is a coordinate inside the project root. A go
+/// index names build-cache documents by a relative path that climbs out of the
+/// root, and one such path failed the whole batched read.
+fn inside_project(path: &str) -> bool {
+    !Path::new(path).is_absolute()
+        && !Path::new(path)
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+}
+
+/// One implements pair the SCIP index carries, joined to the corpus.
+struct ScipConformance {
+    /// Position in `inputs` of the file that DEFINES the implementing type.
+    owner_input: usize,
+    owner_name: String,
+    owner_span: Span,
+    target_path: String,
+    target_name: String,
+    /// A pair of CALLABLE symbols is one method satisfying another, never one
+    /// type satisfying an interface; the two answer different questions and the
+    /// type-edge oracles carry only the second.
+    method: bool,
+}
+
+/// The implements graph the SCIP index carries, restricted to the corpus's own
+/// files. SCIP hangs `is_implementation` off the IMPLEMENTING symbol's
+/// per-document `SymbolInformation`, so the walk visits only the documents that
+/// join to an input and never scans the index's whole relationship set (1.7M
+/// rows on the TypeScript-5.9 index).
+///
+/// The TARGET may sit outside the supplied paths, unlike every parse-resolved
+/// type edge: an index is a whole-project artifact, and dropping the interface
+/// because this chunk does not name its file would leave the row unspellable
+/// from any chunking of the corpus.
+fn scip_conformances(
+    inputs: &[ProjectInput],
+    cx: &ProjectCx,
+    project_root: Option<&Path>,
+) -> Vec<ScipConformance> {
+    let (Some(index), Some(reader)) = (cx.indexes.scip_index.get(), cx.reader) else {
+        return Vec::new();
+    };
+    let joined = crate::scip::join_documents(index, reader);
+    let mut doc_of_blob: std::collections::HashMap<ContentId, usize> =
+        std::collections::HashMap::new();
+    for (doc_ix, entry) in joined.iter().enumerate() {
+        if let Some((blob, _)) = entry {
+            doc_of_blob.entry(blob.clone()).or_insert(doc_ix);
+        }
+    }
+    let mut input_of_doc: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
+    for (input_ix, input) in inputs.iter().enumerate() {
+        if let Some(&doc_ix) = doc_of_blob.get(&input.blob) {
+            input_of_doc.insert(doc_ix, input_ix);
+        }
+    }
+    let mut seen: std::collections::BTreeSet<(usize, String, u32, String, String)> =
+        std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for (doc_ix, document) in index.documents.iter().enumerate() {
+        let Some(&input_ix) = input_of_doc.get(&doc_ix) else {
+            continue;
+        };
+        let Some((_, content)) = joined[doc_ix].as_ref() else {
+            continue;
+        };
+        let lines = crate::scip::LineTable::build(content);
+        for info in &document.symbols {
+            if !info.relationships.iter().any(|rel| rel.is_implementation) {
+                continue;
+            }
+            let symbol = index.symbol(info.symbol);
+            if !crate::scip_v5_rels::usable_symbol(symbol) {
+                continue;
+            }
+            let Some(owner_name) = crate::scip_v5_rels::descriptor_name(symbol) else {
+                continue;
+            };
+            // A SymbolInformation rides the document that MENTIONS the symbol,
+            // so the row is filed only against the file that declares it.
+            let Some((def_doc_ix, range)) = crate::scip::definition_of(index, doc_ix, info.symbol)
+            else {
+                continue;
+            };
+            if def_doc_ix != doc_ix {
+                continue;
+            }
+            let Some(owner_span) =
+                crate::scip::byte_range_at(content, &lines, range, document.position_encoding)
+            else {
+                continue;
+            };
+            for related in info.relationships.iter().filter(|rel| rel.is_implementation) {
+                let target = index.symbol(related.symbol);
+                if !crate::scip_v5_rels::usable_symbol(target) {
+                    continue;
+                }
+                let Some(target_name) = crate::scip_v5_rels::descriptor_name(target) else {
+                    continue;
+                };
+                let Some((target_doc, _)) =
+                    crate::scip::definition_of(index, doc_ix, related.symbol)
+                else {
+                    continue;
+                };
+                let relative = index.documents[target_doc].relative_path.as_str();
+                let target_path = match (input_of_doc.get(&target_doc), project_root) {
+                    (Some(&ix), _) => inputs[ix].path.clone(),
+                    (None, Some(root)) => root.join(relative).to_string_lossy().into_owned(),
+                    (None, None) => relative.to_string(),
+                };
+                let key = (
+                    input_ix,
+                    owner_name.clone(),
+                    owner_span.start,
+                    target_path.clone(),
+                    target_name.clone(),
+                );
+                if !seen.insert(key) {
+                    continue;
+                }
+                out.push(ScipConformance {
+                    owner_input: input_ix,
+                    owner_name: owner_name.clone(),
+                    owner_span,
+                    target_path,
+                    target_name,
+                    method: crate::scip_v5_rels::is_callable_def(symbol)
+                        || crate::scip_v5_rels::is_callable_def(target),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The implements pairs as `resolved_type_edge` rows, the shape the type-edge
+/// oracles are scored against.
+fn conformance_edges(inputs: &[ProjectInput], rows: &[ScipConformance]) -> Vec<FlatFact> {
+    rows.iter()
+        .map(|row| FlatFact::ResolvedTypeEdge {
+            fact: None,
+            owner_path: inputs[row.owner_input].path.clone(),
+            owner_name: Some(row.owner_name.clone()),
+            owner_start: row.owner_span.start,
+            owner_end: row.owner_span.end(),
+            target_path: row.target_path.clone(),
+            target_name: Some(row.target_name.clone()),
+            kind: if row.method { "overrides" } else { "implements" }.to_string(),
+            resolution_origin: ResolutionOrigin::Scip.as_str().to_string(),
+        })
+        .collect()
+}
+
+/// The same pairs as `tsi.conforms`, one id space per input file: the rebase
+/// stamps every span it carries with that file's digest, so two files' rows
+/// cannot share an id and cannot borrow each other's coordinate.
+///
+/// The TARGET takes `tsi.type` and `tsi.name` and no `tsi.origin`: its
+/// declaration sits in another file, whose digest this rebase does not hold.
+fn conformance_tsi_rows(
+    inputs: &[ProjectInput],
+    rows: &[ScipConformance],
+    base: u32,
+) -> (Vec<crate::tsi::FactOut>, u32) {
+    use crate::tsi::Arg;
+    let mut out = Vec::new();
+    let mut next = base;
+    for (input_ix, input) in inputs.iter().enumerate() {
+        let mine: Vec<&ScipConformance> = rows
+            .iter()
+            .filter(|row| row.owner_input == input_ix && !row.method)
+            .collect();
+        if mine.is_empty() {
+            continue;
+        }
+        let lang = arm_for(&input.path).map_or("scip", |arm| arm.name);
+        let mut sink = crate::tsi::TsiSink::new(0, crate::tsi::Method::Parse);
+        let mut owners: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut targets: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        for row in mine {
+            let owner = match owners.get(&row.owner_name) {
+                Some(&id) => id,
+                None => {
+                    let id = sink.fresh_id();
+                    sink.fact("tsi.type", vec![Arg::Id(id)]);
+                    sink.fact(
+                        "tsi.name",
+                        vec![Arg::Id(id), Arg::Text(row.owner_name.clone())],
+                    );
+                    sink.fact(
+                        "tsi.origin",
+                        vec![
+                            Arg::Id(id),
+                            Arg::Atom(lang.to_string()),
+                            crate::types::span_arg(row.owner_span),
+                        ],
+                    );
+                    owners.insert(row.owner_name.clone(), id);
+                    id
+                }
+            };
+            let key = format!("{}\u{1}{}", row.target_path, row.target_name);
+            let target = match targets.get(&key) {
+                Some(&id) => id,
+                None => {
+                    let id = sink.fresh_id();
+                    sink.fact("tsi.type", vec![Arg::Id(id)]);
+                    sink.fact(
+                        "tsi.name",
+                        vec![Arg::Id(id), Arg::Text(row.target_name.clone())],
+                    );
+                    targets.insert(key, id);
+                    id
+                }
+            };
+            sink.fact(
+                "tsi.conforms",
+                vec![Arg::Id(owner), Arg::Id(target), Arg::Atom("scip".to_string())],
+            );
+        }
+        let facts: Vec<crate::tsi::FactOut> = sink
+            .rows()
+            .into_iter()
+            .filter_map(|row| match row {
+                FlatFact::Fact(fact) => Some(fact),
+                _ => None,
+            })
+            .collect();
+        let (rebased, after) = crate::wire::tsi_rows_rebased(&facts, &input.blob.to_string(), next);
+        out.extend(rebased);
+        next = after;
+    }
+    (out, next)
 }
 
 /// A closure def carries no name, and `resolve_at` types caller_name `text`
