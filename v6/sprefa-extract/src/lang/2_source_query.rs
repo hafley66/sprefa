@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use ast_grep_language::{LanguageExt, SupportLang};
+use serde::Serialize;
 use serde_json::Value;
 use tree_sitter::{
     Parser as TreeParser, Query, QueryCursor, QueryPredicate, QueryPredicateArg, StreamingIterator,
@@ -20,14 +21,15 @@ use super::{
 use crate::seams::ParseError;
 
 /// A tree-sitter query keeps the native S-expression and explicit grammar name.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TreeSitterQuery {
     pub language: String,
     pub query: String,
 }
 
 /// The source query algebras currently hosted by sprefa-extract.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "engine", content = "specification", rename_all = "snake_case")]
 pub enum SourceQuery {
     TreeSitter(TreeSitterQuery),
     AstPatterns(Vec<AstPatternQuery>),
@@ -37,6 +39,28 @@ pub enum SourceQuery {
 /// The existing tree-sitter CLI row: capture names map to captured text, with
 /// one-based `line` and `end_line` fields in the same top-level object.
 pub type TreeSitterQueryMatch = BTreeMap<String, Value>;
+
+/// One ordered tree-sitter capture with its exact half-open byte range.
+/// The legacy query CLI projects these rows back into its name-to-text map.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreeSitterSpannedCapture {
+    pub label: String,
+    pub text: String,
+    pub start: u32,
+    pub end: u32,
+}
+
+/// One tree-sitter match before the legacy map projection discards byte spans
+/// and repeated capture names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreeSitterSpannedMatch {
+    pub pattern: u32,
+    pub start: u32,
+    pub end: u32,
+    pub line: u32,
+    pub end_line: u32,
+    pub captures: Vec<TreeSitterSpannedCapture>,
+}
 
 /// Results remain engine-shaped until the common match-fact schema is reviewed.
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +75,7 @@ pub enum SourceQueryError {
     TreeSitter(String),
     AstPatterns(ParseError),
     AstRule(AstRuleError),
+    Projection(String),
 }
 
 impl std::fmt::Display for SourceQueryError {
@@ -59,6 +84,7 @@ impl std::fmt::Display for SourceQueryError {
             Self::TreeSitter(error) => formatter.write_str(error),
             Self::AstPatterns(error) => std::fmt::Display::fmt(error, formatter),
             Self::AstRule(error) => std::fmt::Display::fmt(error, formatter),
+            Self::Projection(error) => formatter.write_str(error),
         }
     }
 }
@@ -88,6 +114,28 @@ pub fn query_tree_sitter(
     content: &[u8],
     request: &TreeSitterQuery,
 ) -> Result<Vec<TreeSitterQueryMatch>, String> {
+    query_tree_sitter_spans(content, request).map(|matches| {
+        matches
+            .into_iter()
+            .map(|found| {
+                let mut row = BTreeMap::new();
+                for capture in found.captures {
+                    row.insert(capture.label, Value::String(capture.text));
+                }
+                row.insert("line".to_string(), Value::from(found.line));
+                row.insert("end_line".to_string(), Value::from(found.end_line));
+                row
+            })
+            .collect()
+    })
+}
+
+/// Run a native tree-sitter query while retaining the spans and ordering that
+/// the shared source-fact projection needs.
+pub fn query_tree_sitter_spans(
+    content: &[u8],
+    request: &TreeSitterQuery,
+) -> Result<Vec<TreeSitterSpannedMatch>, String> {
     let language = query_language(&request.language)?;
     let source = std::str::from_utf8(content)
         .map_err(|error| format!("query input is not valid UTF-8: {error}"))?;
@@ -106,7 +154,7 @@ pub fn query_tree_sitter(
         ))
     })?;
     validate_predicates(&query)?;
-    collect_matches(&query, tree.root_node(), source.as_bytes())
+    collect_spanned_matches(&query, tree.root_node(), source.as_bytes())
 }
 
 fn query_language(name: &str) -> Result<tree_sitter::Language, String> {
@@ -168,11 +216,11 @@ fn validate_eq_predicate(predicate: &QueryPredicate) -> Result<(), String> {
     }
 }
 
-fn collect_matches(
+fn collect_spanned_matches(
     query: &Query,
     root: tree_sitter::Node<'_>,
     source: &[u8],
-) -> Result<Vec<TreeSitterQueryMatch>, String> {
+) -> Result<Vec<TreeSitterSpannedMatch>, String> {
     let names = query.capture_names();
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, root, source);
@@ -181,8 +229,10 @@ fn collect_matches(
         if found.captures.is_empty() || !matches_predicates(query, found, source)? {
             continue;
         }
-        let mut captures = BTreeMap::new();
-        let mut line = i64::MAX;
+        let mut captures = Vec::with_capacity(found.captures.len());
+        let mut start = u32::MAX;
+        let mut end = 0;
+        let mut line = u32::MAX;
         let mut end_line = 1;
         for capture in found.captures {
             let node = capture.node;
@@ -190,16 +240,29 @@ fn collect_matches(
             let text = node
                 .utf8_text(source)
                 .map_err(|error| format!("query capture text: {error}"))?;
-            captures.insert(name.to_string(), Value::String(text.to_string()));
-            line = line.min(node.start_position().row as i64 + 1);
-            end_line = end_line.max(node.end_position().row as i64 + 1);
+            let capture_start = u32::try_from(node.start_byte())
+                .map_err(|_| "query capture start exceeds u32".to_string())?;
+            let capture_end = u32::try_from(node.end_byte())
+                .map_err(|_| "query capture end exceeds u32".to_string())?;
+            captures.push(TreeSitterSpannedCapture {
+                label: name.to_string(),
+                text: text.to_string(),
+                start: capture_start,
+                end: capture_end,
+            });
+            start = start.min(capture_start);
+            end = end.max(capture_end);
+            line = line.min(node.start_position().row as u32 + 1);
+            end_line = end_line.max(node.end_position().row as u32 + 1);
         }
-        captures.insert(
-            "line".to_string(),
-            Value::from(if line == i64::MAX { 1 } else { line }),
-        );
-        captures.insert("end_line".to_string(), Value::from(end_line));
-        rows.push(captures);
+        rows.push(TreeSitterSpannedMatch {
+            pattern: found.pattern_index as u32,
+            start: if start == u32::MAX { 0 } else { start },
+            end,
+            line: if line == u32::MAX { 1 } else { line },
+            end_line,
+            captures,
+        });
     }
     Ok(rows)
 }

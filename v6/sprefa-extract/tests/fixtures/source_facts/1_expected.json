@@ -1,0 +1,189 @@
+[
+  {
+    "protocol": 1,
+    "source": {
+      "kind": "directory",
+      "directory": "<directory>",
+      "path": "0_subject.rs"
+    },
+    "content": "blake3:142f929b0b63f663a552591e948463449bcceaf2b8dcf8d6cbafa5941ef4fab0",
+    "byte_length": 94,
+    "git_blobs": [],
+    "parse": {
+      "grammar": "rust",
+      "engine": "tree-sitter",
+      "version": "0.1.0",
+      "configuration": {}
+    },
+    "query": {
+      "engine": "tree_sitter",
+      "specification": {
+        "language": "rust",
+        "query": "(function_item name: (identifier) @name) @function"
+      }
+    },
+    "matches": [
+      {
+        "position": 0,
+        "branch": "query",
+        "pattern": 0,
+        "range": {
+          "start": 0,
+          "end": 58
+        },
+        "captures": [
+          {
+            "position": 0,
+            "label": "function",
+            "range": {
+              "start": 0,
+              "end": 58
+            }
+          },
+          {
+            "position": 1,
+            "label": "name",
+            "range": {
+              "start": 7,
+              "end": 12
+            }
+          }
+        ],
+        "replacement": null
+      },
+      {
+        "position": 1,
+        "branch": "query",
+        "pattern": 0,
+        "range": {
+          "start": 60,
+          "end": 93
+        },
+        "captures": [
+          {
+            "position": 0,
+            "label": "function",
+            "range": {
+              "start": 60,
+              "end": 93
+            }
+          },
+          {
+            "position": 1,
+            "label": "name",
+            "range": {
+              "start": 67,
+              "end": 73
+            }
+          }
+        ],
+        "replacement": null
+      }
+    ]
+  },
+  {
+    "protocol": 1,
+    "source": {
+      "kind": "directory",
+      "directory": "<directory>",
+      "path": "0_subject.rs"
+    },
+    "content": "blake3:142f929b0b63f663a552591e948463449bcceaf2b8dcf8d6cbafa5941ef4fab0",
+    "byte_length": 94,
+    "git_blobs": [],
+    "parse": {
+      "grammar": "rust",
+      "engine": "tree-sitter",
+      "version": "0.1.0",
+      "configuration": {}
+    },
+    "query": {
+      "engine": "ast_grep_patterns",
+      "specification": [
+        {
+          "id": "print_message",
+          "pattern": "println!($MESSAGE)",
+          "selector": null,
+          "captures": [
+            "MESSAGE"
+          ]
+        }
+      ]
+    },
+    "matches": [
+      {
+        "position": 0,
+        "branch": "print_message",
+        "pattern": 0,
+        "range": {
+          "start": 31,
+          "end": 55
+        },
+        "captures": [
+          {
+            "position": 0,
+            "label": "MESSAGE",
+            "range": {
+              "start": 40,
+              "end": 54
+            }
+          }
+        ],
+        "replacement": null
+      }
+    ]
+  },
+  {
+    "protocol": 1,
+    "source": {
+      "kind": "directory",
+      "directory": "<directory>",
+      "path": "0_subject.rs"
+    },
+    "content": "blake3:142f929b0b63f663a552591e948463449bcceaf2b8dcf8d6cbafa5941ef4fab0",
+    "byte_length": 94,
+    "git_blobs": [],
+    "parse": {
+      "grammar": "rust",
+      "engine": "tree-sitter",
+      "version": "0.1.0",
+      "configuration": {}
+    },
+    "query": {
+      "engine": "ast_grep_rule",
+      "specification": {
+        "id": "replace_print",
+        "rule": {
+          "pattern": "println!($MESSAGE)"
+        },
+        "utils": [],
+        "fix": "eprintln!($MESSAGE)"
+      }
+    },
+    "matches": [
+      {
+        "position": 0,
+        "branch": "replace_print",
+        "pattern": 0,
+        "range": {
+          "start": 31,
+          "end": 55
+        },
+        "captures": [
+          {
+            "position": 0,
+            "label": "MESSAGE",
+            "range": {
+              "start": 40,
+              "end": 54
+            }
+          }
+        ],
+        "replacement": {
+          "replacement": "eprintln!(\"hello {name}\")",
+          "producer": "replace_print"
+        }
+      }
+    ]
+  }
+]

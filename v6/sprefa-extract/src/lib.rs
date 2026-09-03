@@ -73,13 +73,16 @@ pub use family::{
 pub use lang::{
     build_paths, compiled_spellings, decode_ast_rule_yaml, dl6_db_path, open_dl6_readonly,
     open_readonly, query_ast_rule, query_ast_rule_with_content, query_patterns, query_source,
-    query_tree_sitter, rehome_for, rehomes, rename_for, renames, respell, source_for, sources,
-    ts_specifiers, AstCaptureFact, AstPatternQuery, AstRule, AstRuleCapture, AstRuleError,
-    AstRuleMatch, AstRuleMutationProposal, AstRuleRequest, AstgrepSource, BuildPaths, DataSource,
-    DlSource, ExtractLang, FactError, FactMatcher, FactSet, GoSource, KotlinSource, MarkdownSource,
-    NamedAstRule, PrologSource, PythonSource, RustSource, SourceQuery, SourceQueryError,
-    SourceQueryOutput, StopBy, TreeSitterQuery, TreeSitterQueryMatch, TsResolver, TsSource,
-    TsSpecifier, DL6_DB_RELATIVE_PATH,
+    query_source_facts, query_tree_sitter, query_tree_sitter_spans, rehome_for, rehomes,
+    rename_for, renames, respell, source_for, sources, ts_specifiers, AstCaptureFact,
+    AstPatternQuery, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch, AstRuleMutationProposal,
+    AstRuleRequest, AstgrepSource, BuildPaths, ByteRange, DataSource, DlSource, ExtractLang,
+    FactError, FactMatcher, FactSet, GitBlobFact, GoSource, KotlinSource, MarkdownSource,
+    NamedAstRule, PrologSource, PythonSource, RustSource, SourceCaptureFact, SourceMatchFact,
+    SourcePlace, SourceQuery, SourceQueryError, SourceQueryFact, SourceQueryFacts,
+    SourceQueryOutput, SourceReplacementFact, SourceRevisionFact, StopBy, TreeSitterQuery,
+    TreeSitterQueryMatch, TreeSitterSpannedCapture, TreeSitterSpannedMatch, TsResolver, TsSource,
+    TsSpecifier, DL6_DB_RELATIVE_PATH, SOURCE_FACT_PROTOCOL,
 };
 pub use manifests::{
     fold_package_edges, package_edges, package_edges_jsonl, Manifest, ManifestKind,

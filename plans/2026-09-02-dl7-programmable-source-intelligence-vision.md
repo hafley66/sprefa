@@ -402,15 +402,42 @@ responsibility for module or type semantics.
 ### Shared fact implementation boundary
 
 The source identity, match, and capture model above is approved for the first
-vertical slice. Rust and JSONL records may carry structural source and span
-values directly. DL7 interns repeated compound values during loading. A later
-storage emitter may replace those products with dense references.
+vertical slice. The host envelope carries source and canonical content once,
+then stores compact `{start, end}` ranges under each match and capture. The DL7
+loader expands each range into the structural
+`content_span(Content, Start, End)` value and interns repeats. A later storage
+emitter may replace those products with dense references.
 
 The first golden must exercise one real repository source through Soopy, both
 query engines through Extract, source-fact loading into DL7, a semantic join,
 and a replacement projected back to Soopy's expected-content mutation shape.
 
-<!-- todo(feature): Implement and measure the approved source/content/span/located-occurrence fact boundary through Soopy, Extract, and DL7 using one representative golden. -->
+The first useful end-to-end generator extends that foundation:
+
+```text
+Rust source
+    │ Soopy source + exact content
+    ▼
+Extract Rust semantic types
+    │ common TSI type graph
+    ▼
+DL7 generation rules
+    │ deterministic DL7 declarations
+    ▼
+owned marker region in a .dl7 file
+    │ content-span replacement proposal
+    ▼
+Soopy check, stage, and apply
+```
+
+Only the generated marker region is owned by this pipeline. Text outside that
+range is preserved byte for byte. Check mode renders and compares without
+writing. Apply mode carries the target's expected content identity through
+Soopy so an edit after analysis refuses the replacement. The golden uses a
+representative Rust product with nested products, a sum, a generic, a trait,
+and an implementation rather than one fixture per construct.
+
+<!-- todo(feature): Implement and measure the approved source/content/span/located-occurrence fact boundary through Soopy, Extract, and DL7 using one representative golden, then use it to refresh one owned DL7 marker region from an extracted Rust type graph. -->
 
 ### Live Markdown documents
 
@@ -581,8 +608,10 @@ language adapters. They add no kernel form or source-specific schema.
       existing `AstRule` tree, then review their names before implementation.
    4. **Complete:** Approve canonical source, content, content-span, located
       occurrence, match, and capture facts.
-   5. Normalize both query engines onto those facts while retaining engine and
-      query provenance.
+   5. **Complete:** Normalize the tree-sitter, ast-grep pattern, and ast-grep
+      composed-rule engines onto one source graph while retaining engine,
+      grammar, complete query specification, branch, pattern, match order,
+      capture order, and replacement provenance.
    6. Feed those facts through the compiler-observation loop.
    7. Join one ast-grep capture to one compiler-confirmed symbol, type, and
       module through content identity and byte span.
@@ -601,6 +630,8 @@ language adapters. They add no kernel form or source-specific schema.
    15. Add a check mode that reports generated-document drift without writing.
    16. Approve ownership and synchronization policy before adding any reverse
        update from generated output to authored Markdown.
+   17. Extract one representative Rust type graph, render deterministic DL7
+       declarations, and refresh only its owned marker region through Soopy.
 
    <!-- todo(feature): Source-intelligence section: host both code-query engines, project semantic Markdown facts, approve and emit common occurrence/match/capture facts, join syntax captures to semantic identities, derive live task rows, render provenance-carrying Markdown, stage fixes, and batch source parsing. -->
 
@@ -720,6 +751,10 @@ Each delivery slice must prove one boundary with a deterministic fixture:
 12. Equal authored Markdown produces byte-identical generated documents.
 13. A changed source document produces a named drift result containing the
     source and generated-document identities.
+14. A Rust type graph renders byte-identical DL7 declarations in two runs.
+15. Check mode reports a stale generated marker region without writing.
+16. Apply mode preserves every byte outside the marker region and refuses a
+    target whose content changed after rendering.
 
 Current implementation receipts:
 
@@ -734,6 +769,17 @@ Current implementation receipts:
   model separates `Source`, `Content`, `ContentSpan`, `LocatedOccurrence`, and
   `SyntaxNode`; canonical content uses BLAKE3 with Git OIDs retained as
   capability facts.
+- `cargo test --manifest-path v6/sprefa-extract/Cargo.toml --test 30_ast_rule
+  --no-default-features`: 7 passed in 0.02 s test time and 0.43 s warm command
+  wall time. Its representative golden reads one Rust file through Soopy and
+  projects native tree-sitter, ast-grep pattern, and composed ast-grep rule
+  results into one content-addressed source graph. The graph contains two
+  function matches, ordered captures, one structural pattern match, one fix
+  proposal, and a stale-content refusal.
+- `cargo test --manifest-path v6/sprefa-extract/Cargo.toml --test 9_query_cli
+  --features cli`: 8 passed in 1.23 s test time. The command rebuilt the CLI
+  feature graph and took 16.88 s wall time; this is compilation rather than
+  query execution. The existing query output contract remains unchanged.
 
 The current slice adds one focused facade test and changes no full-suite gate.
 
@@ -741,6 +787,6 @@ The current slice adds one focused facade test and changes no full-suite gate.
 
 - Current branch: `feature/dl7-source-intelligence`.
 - Baseline vision commit: `3f89ac108`.
-- Current slice: approved source facts followed by one Soopy to Extract to DL7
-  golden and measured source-query normalization.
+- Current slice: source-fact loading into DL7 followed by the semantic join and
+  Soopy mutation projection halves of the representative golden.
 - Implementation proceeds one reviewed boundary per delivery-sequence item.
