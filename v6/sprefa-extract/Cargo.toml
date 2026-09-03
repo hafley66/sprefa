@@ -230,6 +230,10 @@ rust-checker = [
 # The ts checker tier, `--features cli,ts-checker`. Off by default and out of
 # `cli`: it pulls no crate, but it makes every ts resolve able to spawn `node`.
 ts-checker = []
+# The go checker tier, `--features cli,go-checker`. Off by default and out of
+# `cli` for the same reason as its ts twin: it pulls no crate, and it makes
+# every go resolve able to spawn the `go` toolchain.
+go-checker = []
 
 [[bin]]
 name = "extract"

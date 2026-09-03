@@ -185,9 +185,7 @@ cargo build) and let it name the destination of every call and type reference th
 parse found. The caller, the site spans and the unresolved rows stay this
 binary's; only the destination changes hands.
 
-This is the RUST tier; --ts-checker is its ts twin. go stays on the syntax leg by
-design: its call and type shapes are name-matchable, rust's are not (a method
-call's destination needs the receiver's inferred type and the trait solver).
+This is the RUST tier; --ts-checker and --go-checker are its ts and go twins.
 
 Cost is index-build class, not per-run: the workspace load is seconds and holds
 the whole crate graph in memory for the run. A root with no Cargo.toml, or a
@@ -213,6 +211,29 @@ a name match may not invent a corpus edge over it.
 
 Needs a binary built with --features ts-checker, and node on PATH; without
 either the flag logs one fallback line and changes nothing.";
+
+pub const GO_CHECKER_LONG: &str = "\
+Load --project-root's go packages with go/packages (types, syntax and deps) and
+let go/types name the destination of every call and type reference the parse
+found. The caller, the site spans and the unresolved rows stay this binary's;
+only the destination changes hands.
+
+The checker is the machine's own `go` toolchain. The sidecar this binary carries
+is compiled ONCE per distinct driver source into ~/.cache/sprefa/go_checker and
+then run as one subprocess per resolve, in its own process group under the same
+wall cap every scip indexer runs under (SPREFA_SCIP_TIMEOUT_SECS, default 600s).
+
+An answer the checker gives OUTSIDE the corpus suppresses the name-match leg for
+that site: the compiler knowing the destination is the standard library or a
+dependency is knowledge, and a name match may not invent a corpus edge over it.
+
+Under --witness the tier also walks the loaded packages' declarations and emits
+the semantic tsi rows: tsi.type, tsi.name, tsi.origin, tsi.symbol, tsi.denotes,
+the shape rows, tsi.edge over struct fields, and tsi.conforms/tsi.subtype from
+types.Implements.
+
+Needs a binary built with --features go-checker, and go on PATH; without either
+the flag logs one fallback line and changes nothing.";
 
 pub const SCIP_FACTS_LONG: &str = "\
 Load a SCIP index (--scip-index or --scip-build) and stream EVERYTHING it

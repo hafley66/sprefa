@@ -16,6 +16,7 @@ pub mod dl6;
 pub mod extract_lang;
 pub mod fact;
 pub mod go;
+pub mod go_checker;
 pub mod go_modules;
 pub mod kotlin;
 pub mod kotlin_modules;

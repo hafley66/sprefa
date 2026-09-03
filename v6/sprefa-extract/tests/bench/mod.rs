@@ -200,7 +200,7 @@ pub fn oracle_path(lang: &str, family: &str, oracle: &str) -> PathBuf {
 
 /// The whole matrix, one place. Hand-listed, never a cartesian product: a
 /// (lang, family, tier, oracle) whose oracle tsv does not exist is not a case.
-/// go has no checker tier and no corpus has a scip-tier oracle yet.
+/// No corpus has a scip-tier oracle yet.
 pub fn cases() -> &'static [Case] {
     &[
         Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "oracle", projection: Projection::Raw },
@@ -215,6 +215,8 @@ pub fn cases() -> &'static [Case] {
         Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "codeql2", projection: Projection::GoMethod },
         Case { lang: "go", family: "module", tier: Tier::Syntax, oracle: "oracle", projection: Projection::GoScope },
         Case { lang: "go", family: "type", tier: Tier::Syntax, oracle: "oracle-typedecl", projection: Projection::Raw },
+        Case { lang: "go", family: "call", tier: Tier::Checker, oracle: "codeql2", projection: Projection::GoMethod },
+        Case { lang: "go", family: "type", tier: Tier::Checker, oracle: "oracle-typedecl", projection: Projection::Raw },
         Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "oracle", projection: Projection::RustCorpus },
         Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "scip_override", projection: Projection::RustCorpus },
         Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "codeql", projection: Projection::RustCorpus },
@@ -957,6 +959,7 @@ fn request<'a>(files: &'a [PathBuf], corpus: &'a Corpus, tier: Tier) -> ResolveR
         occurrence_text: false,
         rust_checker: (checker && corpus.lang == "rust").then_some(corpus.root.as_path()),
         ts_checker: (checker && corpus.lang == "ts5").then_some(corpus.root.as_path()),
+        go_checker: (checker && corpus.lang == "go").then_some(corpus.root.as_path()),
         witness: false,
     }
 }
@@ -988,7 +991,10 @@ pub fn run(lang: &str, tier: Tier) -> Run {
             cfg!(feature = "ts-checker"),
             "ratchet ts5 checker: built without the ts-checker feature; run `just extract-ratchet`",
         ),
-        ("go", Tier::Checker) => panic!("go has no checker tier"),
+        ("go", Tier::Checker) => assert!(
+            cfg!(feature = "go-checker"),
+            "ratchet go checker: built without the go-checker feature; run `just extract-ratchet`",
+        ),
         (other, Tier::Checker) => panic!("{other} has no checker tier"),
         (_, Tier::Scip) => panic!("the scip tier has no case yet"),
     }

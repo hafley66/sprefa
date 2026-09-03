@@ -117,6 +117,9 @@ pub struct ResolveRequest<'a> {
     /// The project root the ts CHECKER tier loads a `ts.Program` over. Its
     /// own field for the same reason `rust_checker` has one.
     pub ts_checker: Option<&'a Path>,
+    /// The project root the go CHECKER tier loads packages over. Its own field
+    /// for the same reason `rust_checker` has one.
+    pub go_checker: Option<&'a Path>,
     /// Wrap the answer in the TSI envelope: protocol, one run per tier that
     /// ran, `fact` ordinals, one witness per leg, partial coverage per family.
     pub witness: bool,
@@ -391,6 +394,21 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         }
     }
 
+    if let Some(checker_root) = request.go_checker {
+        match load_go_checker(checker_root, &inputs, &corpus, &cx) {
+            Ok(index) => cx
+                .indexes
+                .go_checker
+                .set(index)
+                .ok()
+                .expect("fresh project checker tier (go)"),
+            Err(detail) => declines.push(TierDecline {
+                tool: "go-types",
+                detail,
+            }),
+        }
+    }
+
     // One resolve per input, shared by the `call` arm and the `flow` join: the
     // N+1 law applied to work rather than to rows.
     let mut resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
@@ -405,7 +423,15 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
                         // instead of guessing it from span matches (a wrong
                         // guess when two files share a named span).
                         crate::types::set_own(Some(input.blob.clone()));
-                        let edges = resolve_call_edges(&input.path, &input.output, &cx);
+                        let mut edges = resolve_call_edges(&input.path, &input.output, &cx);
+                        if let Some(index) = cx.indexes.go_checker.get() {
+                            crate::lang::go_checker::apply_calls(
+                                index,
+                                &input.path,
+                                &input.output,
+                                &mut edges,
+                            );
+                        }
                         crate::types::set_own(None);
                         (input.blob.clone(), edges)
                     })
@@ -518,6 +544,7 @@ fn syntax_tsi_rows(
         let answered = match arm_for(&input.path).map_or("", |arm| arm.name) {
             "ts" => cx.indexes.ts_checker.get().is_some(),
             "rust" => cx.indexes.rust_checker.get().is_some(),
+            "go" => cx.indexes.go_checker.get().is_some(),
             _ => false,
         };
         if answered {
@@ -560,6 +587,7 @@ fn semantic_runs(cx: &ProjectCx, inputs: &[ProjectInput]) -> Vec<(&'static str, 
             cx.indexes.rust_checker.get().is_some(),
             "rust-analyzer",
         ),
+        ("go", cx.indexes.go_checker.get().is_some(), "go-types"),
     ];
     tiers
         .into_iter()
@@ -669,6 +697,11 @@ fn envelope(input: Envelope) -> Vec<FlatFact> {
     let mut ids = tsi_ids;
     if let Some((_, run)) = semantic.iter().find(|(lang, _)| *lang == "ts") {
         if let Some(index) = cx.indexes.ts_checker.get() {
+            ids = crate::tsi::emit_semantic(run.run, index, ids, &mut rows);
+        }
+    }
+    if let Some((_, run)) = semantic.iter().find(|(lang, _)| *lang == "go") {
+        if let Some(index) = cx.indexes.go_checker.get() {
             ids = crate::tsi::emit_semantic(run.run, index, ids, &mut rows);
         }
     }
@@ -827,6 +860,49 @@ fn load_ts_checker(
         unjoined = index.unjoined,
         external = index.external,
         "ts checker tier loaded"
+    );
+    Ok(index)
+}
+
+/// The go twin of `load_ts_checker`, same decline discipline.
+fn load_go_checker(
+    root: &Path,
+    inputs: &[ProjectInput],
+    corpus: &[(String, ContentId)],
+    cx: &ProjectCx,
+) -> Result<crate::lang::go_checker::GoCheckerIndex, String> {
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let files: Vec<(String, PathBuf)> = inputs
+        .iter()
+        .filter(|input| input.path.ends_with(".go"))
+        .map(|input| {
+            let absolute =
+                std::fs::canonicalize(&input.path).unwrap_or_else(|_| PathBuf::from(&input.path));
+            (input.path.clone(), absolute)
+        })
+        .collect();
+    if files.is_empty() {
+        return Err("no .go path in the supplied file set".to_string());
+    }
+    let answers = match crate::lang::go_checker::answer(&root, &files, cx.witness) {
+        Ok(answers) => answers,
+        Err(err) => {
+            tracing::info!("go checker tier off: {err}");
+            return Err(err.to_string());
+        }
+    };
+    let index = crate::lang::go_checker::GoCheckerIndex::build(
+        answers,
+        corpus,
+        cx.indexes.def_index.get().expect("the def index is set"),
+    );
+    tracing::info!(
+        load_ms = index.load.as_millis() as u64,
+        walk_ms = index.walk.as_millis() as u64,
+        files = index.files_answered,
+        unjoined = index.unjoined,
+        external = index.external,
+        "go checker tier loaded"
     );
     Ok(index)
 }
@@ -1048,6 +1124,7 @@ pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
         occurrence_text: false,
         rust_checker: None,
         ts_checker: None,
+        go_checker: None,
         witness: false,
     })
 }
@@ -1817,7 +1894,11 @@ fn type_facts(
         return Vec::new();
     };
     let plane = arm_for(&input.path).map_or(TypePlane::Nodes, |arm| arm.type_plane);
-    resolve_type_edges(&input.path, &input.output, cx)
+    let mut resolved = resolve_type_edges(&input.path, &input.output, cx);
+    if let Some(index) = cx.indexes.go_checker.get() {
+        crate::lang::go_checker::apply_types(index, &input.path, &input.output, &mut resolved);
+    }
+    resolved
         .iter()
         .filter_map(|edge| {
             let target = targets.input(&edge.dst_blob)?;
