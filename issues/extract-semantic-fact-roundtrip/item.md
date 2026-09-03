@@ -102,23 +102,23 @@ and re-emits it before DL7 ingestion.
 
 ## Acceptance criteria
 
-- [ ] The common fact stream has an explicit protocol version.
-- [ ] Fact rows can be decoded and validated as well as serialized.
-- [ ] A CLI or library reverse door accepts foreign-produced fact rows and
+- [x] The common fact stream has an explicit protocol version.
+- [x] Fact rows can be decoded and validated as well as serialized.
+- [x] A CLI or library reverse door accepts foreign-produced fact rows and
       emits the canonical ordering.
-- [ ] Syntax runs identify themselves and declare partial per-relation
+- [x] Syntax runs identify themselves and declare partial per-relation
       coverage.
-- [ ] Semantic runs identify themselves and declare complete per-relation
+- [x] Semantic runs identify themselves and declare complete per-relation
       coverage only where the native adapter enumerated every reachable row.
-- [ ] TypeScript semantic extraction emits generic parameters and arguments,
+- [x] TypeScript semantic extraction emits generic parameters and arguments,
       optionality, readonly edges, callable input/output types, and native
       conditional or mapped operators used by the fixture corpus.
-- [ ] Rust semantic extraction emits generic parameters and arguments,
+- [x] Rust semantic extraction emits generic parameters and arguments,
       trait implementations, associated types, callable input/output types,
       lifetimes, and ownership facts used by the fixture corpus.
-- [ ] Equivalent TypeScript and Rust fixtures produce shared TSI relations for
+- [x] Equivalent TypeScript and Rust fixtures produce shared TSI relations for
       their intersecting semantics and namespaced relations for native meaning.
-- [ ] DL7 imports accepted rows as comptime relations and can replace syntax
+- [x] DL7 imports accepted rows as comptime relations and can replace syntax
       candidates when semantic coverage becomes complete.
 
 ## Evidence
@@ -192,3 +192,7 @@ tsi.scip_symbol(SymbolId, Text)                        optional bridge to SCIP s
 ```
 
 Variance: the atom is `unspecified` where no checker exposes one; `invariant` is never claimed by default. An alias mints no type id: `tsi.symbol` plus `tsi.denotes(Alias, Target)`. `--ingest` declaring positions: `tsi.type` 0, `tsi.symbol` 0, `tsi.value` 0, `tsi.edge` 0, `rust.impl` 0, `tsi.called` 2.
+
+### 2026-09-03T00:20:00Z · @claude-299
+
+All nine criteria have landed receipts on origin/main: A1 #645 (1, 2), A3 #648/#651 (2, 3), A2 #652 (4, 9 read side), A4 #653 (4), A5 #657 (5, 6), A6 #659 (5, 7), A8 #661 (8), A7 #655 (9). ARCH.pl rows tsi_a1..tsi_a8. Open follow-ups: tsp.* registry rows (codex-tsi), tsi_contract_vs_trait_shape fork, extract_emit_throughput_budget.
