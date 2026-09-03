@@ -532,6 +532,14 @@ fn type_edge_resolve_parity_ts() {
                         cand.kind.as_str()
                     )
                 })
+                // v6 minds an impl block's bare self-type head as a `uses`
+                // row from the owner (the typedecl oracle keys the block on
+                // it); v5 never did, so the self row is graded nowhere.
+                .filter(|row| {
+                    let mut parts = row.split('\t').skip(1);
+                    let (owner, to, kind) = (parts.next(), parts.next(), parts.next());
+                    !(owner == to && kind == Some("uses"))
+                })
                 .collect();
             if edges.len() != candidates.len() {
                 v6.insert(format!(
@@ -591,6 +599,14 @@ fn type_edge_resolve_parity_go() {
                         cand.kind.as_str()
                     )
                 })
+                // v6 minds an impl block's bare self-type head as a `uses`
+                // row from the owner (the typedecl oracle keys the block on
+                // it); v5 never did, so the self row is graded nowhere.
+                .filter(|row| {
+                    let mut parts = row.split('\t').skip(1);
+                    let (owner, to, kind) = (parts.next(), parts.next(), parts.next());
+                    !(owner == to && kind == Some("uses"))
+                })
                 .collect();
             if edges.len() != candidates.len() {
                 v6.insert(format!(
@@ -646,6 +662,14 @@ fn type_edge_resolve_parity_python() {
                         out.strings.lookup(cand.to),
                         cand.kind.as_str()
                     )
+                })
+                // v6 minds an impl block's bare self-type head as a `uses`
+                // row from the owner (the typedecl oracle keys the block on
+                // it); v5 never did, so the self row is graded nowhere.
+                .filter(|row| {
+                    let mut parts = row.split('\t').skip(1);
+                    let (owner, to, kind) = (parts.next(), parts.next(), parts.next());
+                    !(owner == to && kind == Some("uses"))
                 })
                 .collect();
             if edges.len() != candidates.len() {
@@ -706,6 +730,14 @@ fn type_edge_resolve_parity_rust() {
                         out.strings.lookup(cand.to),
                         cand.kind.as_str()
                     )
+                })
+                // v6 minds an impl block's bare self-type head as a `uses`
+                // row from the owner (the typedecl oracle keys the block on
+                // it); v5 never did, so the self row is graded nowhere.
+                .filter(|row| {
+                    let mut parts = row.split('\t').skip(1);
+                    let (owner, to, kind) = (parts.next(), parts.next(), parts.next());
+                    !(owner == to && kind == Some("uses"))
                 })
                 .collect();
             if edges.len() != candidates.len() {

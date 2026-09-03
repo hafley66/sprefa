@@ -24,7 +24,7 @@ use syn::{
 use super::astgrep::{AstGrepParser, CstProjector};
 use super::rust_checker::CheckerAnswer;
 use super::rust_docs::doc_facts;
-use super::rust_type_edges::edge_candidates;
+use super::rust_type_edges::{edge_candidates, strip_type};
 use super::rust_type_refs::{primary_type, type_refs};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
@@ -120,6 +120,63 @@ fn project_types(
     // impl-owned candidate finds its in-file self-type entity regardless of
     // item order (v5's text-keyed pass has no order sensitivity; spans do).
     edge_candidates(parsed, line_starts, strings, sink);
+    impl_self_type_candidates(&parsed.items, line_starts, strings, sink);
+}
+
+/// `impl Foo` and `impl Bar for Foo` reference `Foo` from the owner `Foo`: the
+/// typedecl oracle walks every path under an impl and keys the block on its
+/// self type, so the head is a row of its own. Bare heads only, the owner rule
+/// `edge_candidates` applies (a qualified head is owned by its qualifier); the
+/// owner is the in-file entity, else the `ImplOwner` minted at the head span.
+fn impl_self_type_candidates(
+    items: &[syn::Item],
+    line_starts: &[u32],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    for item in items {
+        match item {
+            syn::Item::Impl(i) => {
+                let syn::Type::Path(self_path) = strip_type(&i.self_ty) else {
+                    continue;
+                };
+                if self_path.qself.is_some() || self_path.path.segments.len() != 1 {
+                    continue;
+                }
+                let Some(segment) = self_path.path.segments.first() else {
+                    continue;
+                };
+                let head = segment.ident.to_string();
+                let head_span = syn_span(line_starts, segment.ident.span());
+                let owner = sink
+                    .nodes
+                    .iter()
+                    .find(|node| node.name.map_or(false, |id| strings.lookup(id) == head))
+                    .map(|node| node.span)
+                    .or_else(|| {
+                        sink.aux
+                            .impl_owners
+                            .iter()
+                            .find(|owner| owner.span == head_span)
+                            .map(|owner| owner.span)
+                    });
+                let Some(owner) = owner else {
+                    continue;
+                };
+                sink.aux.candidates.push(TypeEdgeCandidate {
+                    owner,
+                    to: strings.intern(&head),
+                    kind: TypeEdgeKind::Uses,
+                });
+            }
+            syn::Item::Mod(m) => {
+                if let Some((_, inner)) = &m.content {
+                    impl_self_type_candidates(inner, line_starts, strings, sink);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// One declared entity per item, mirroring v5 `rust_item_entity`. A callable
@@ -533,10 +590,15 @@ impl Resolve<TypeF> for RustSource {
                     candidate.kind,
                 )
             };
-            // The CHECKER tier answers first: a name one file resolves two ways
-            // is the only shape it declines, and the name-match leg then runs.
+            // The CHECKER tier answers first; a name one file resolves two ways
+            // takes the answer nearest the owner.
             let checked = checker.zip(own_path.as_deref()).and_then(|(checker, from)| {
-                checker.type_at(from, type_probe_key(referenced, candidate.kind).1)
+                checker.type_at(
+                    from,
+                    type_probe_key(referenced, candidate.kind).1,
+                    referenced,
+                    candidate.owner,
+                )
             });
             if let Some(CheckerAnswer::Corpus(blob, span)) = checked {
                 let edge = ProjectEdge::new(
