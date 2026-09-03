@@ -281,14 +281,23 @@ resolve_target(name(Owner, Name), Edges, Nodes, Visited, Resolved) :-
 % name with no edge of its own spelling is a path: the head resolves as a
 % name, every later segment as an edge of the node before it.
 resolve_name(Owner, Name, Edges, Nodes, Visited, Resolved) :-
-    \+ memberchk(Owner, Visited),
-    (   memberchk(pending_edge(Owner, Name, Target, _), Edges)
-    ->  resolve_target(Target, Edges, Nodes, [Owner | Visited], Resolved)
-    ;   dotted_segments(Name, Head, Segments)
-    ->  resolve_name(Owner, Head, Edges, Nodes, Visited, HeadResolved),
+    (   resolve_spelled_name(Owner, Name, Edges, Nodes, Visited, Resolved)
+    ->  true
+    ;   dotted_segments(Name, Head, Segments),
+        resolve_spelled_name(Owner, Head, Edges, Nodes, Visited,
+                             HeadResolved),
         resolve_path(Segments, HeadResolved, Edges, Nodes, Resolved)
+    ).
+
+% Visited holds Owner-Name pairs: a cycle repeats a lookup, while an alias
+% chain through one owner (`(: B.type B)` read from inside B) does not.
+resolve_spelled_name(Owner, Name, Edges, Nodes, Visited, Resolved) :-
+    \+ memberchk(Owner-Name, Visited),
+    (   memberchk(pending_edge(Owner, Name, Target, _), Edges)
+    ->  resolve_target(Target, Edges, Nodes, [Owner-Name | Visited], Resolved)
     ;   parent_owner(Owner, Edges, Parent),
-        resolve_name(Parent, Name, Edges, Nodes, [Owner | Visited], Resolved)
+        resolve_spelled_name(Parent, Name, Edges, Nodes,
+                             [Owner-Name | Visited], Resolved)
     ;   memberchk(module(Owner), Nodes),
         kernel_relation(Name, _),
         Resolved = ref(kernel(Name))
@@ -309,7 +318,7 @@ dotted_segments(Name, Head, Segments) :-
 resolve_path([], Resolved, _, _, Resolved).
 resolve_path([Segment | Segments], ref(Node), Edges, Nodes, Resolved) :-
     memberchk(pending_edge(Node, Segment, Target, _), Edges),
-    resolve_target(Target, Edges, Nodes, [Node], Stepped),
+    resolve_target(Target, Edges, Nodes, [Node-Segment], Stepped),
     resolve_path(Segments, Stepped, Edges, Nodes, Resolved).
 
 primitive_name(int).
