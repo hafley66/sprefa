@@ -62,6 +62,10 @@ SCIP_BUDGET_SECS = 900
 RESOLVE_BUDGET_SECS = 600
 CLONE_BUDGET_SECS = 600
 MIN_SOURCE_FILES = 50
+# Set to keep every checkout and work dir (the oracle and ours jsonl plus the
+# extracted file list), so a scoring change re-reads them instead of
+# re-indexing. Default deletes, the disk floor is real.
+KEEP_WORK = os.environ.get("HELDOUT_KEEP_WORK") == "1"
 
 # One route for every language, so the oracle slot of the measure id is one
 # word and the lang slot already says which indexer ran.
@@ -88,7 +92,7 @@ SKIP_DIRS = {
 
 class Lang:
     def __init__(self, key, exts, markers, checker, tuning_root, gh_language,
-                 scip_indexer):
+                 scip_indexer, ratchet_scope):
         self.key = key
         self.exts = exts
         self.markers = markers
@@ -101,6 +105,11 @@ class Lang:
         # (failure-modes 107: typescript-go matched go AND typescript, and
         # scip-typescript ate the whole budget).
         self.scip_indexer = scip_indexer
+        # The file rule the tuning corpus is scored under in RATCHET.tsv
+        # (tests/bench/mod.rs `wants`), applied to repo-relative paths on the
+        # tuning run ONLY, so the control and the ratchet read the same file
+        # set. A held-out repo is scored whole.
+        self.ratchet_scope = ratchet_scope
 
     @property
     def tiers(self):
@@ -112,21 +121,25 @@ LANGS = {
         "ts", {".ts", ".tsx", ".mts", ".cts"}, ["tsconfig.json", "package.json"],
         "--ts-checker", "/Users/chrishafley/projects/TypeScript-5.9", "typescript",
         "typescript",
+        lambda rel: rel.startswith("src/") and not rel.startswith("src/lib/") and rel.endswith(".ts"),
     ),
     "go": Lang(
         "go", {".go"}, ["go.mod"],
         None, "/Users/chrishafley/projects/typescript-go", "go",
         "go",
+        lambda rel: rel.endswith(".go"),
     ),
     "rust": Lang(
         "rust", {".rs"}, ["Cargo.toml"],
         "--rust-checker", "/Users/chrishafley/projects/rust-analyzer", "rust",
         "rust",
+        lambda rel: rel.startswith("crates/") and "/src/" in rel and rel.endswith(".rs"),
     ),
     "python": Lang(
         "python", {".py"}, ["pyproject.toml", "setup.py", "setup.cfg"],
         None, None, "python",
         "python",
+        None,
     ),
 }
 
@@ -448,6 +461,8 @@ def measure(repo, lang, root, corpus_class, sha):
     """One repo, both tiers. Returns the number of score rows written."""
     root = str(Path(root).resolve())
     files = source_files(root, lang)
+    if corpus_class == "tuning" and lang.ratchet_scope:
+        files = [f for f in files if lang.ratchet_scope(relp(root, f))]
     if len(files) < MIN_SOURCE_FILES:
         record_skip(repo, lang.key, "eligibility", "too_few_source_files",
                     f"{len(files)} files with {sorted(lang.exts)}, floor {MIN_SOURCE_FILES}")
@@ -461,6 +476,7 @@ def measure(repo, lang, root, corpus_class, sha):
     corpus_files = {relp(root, f) for f in files}
     work = Path("/tmp/heldout-work") / repo.replace("/", "_")
     work.mkdir(parents=True, exist_ok=True)
+    (work / "files.txt").write_text("\n".join(files) + "\n")
 
     # Oracle first: a repo the indexer cannot handle costs nothing else.
     oracle_jsonl = work / "oracle.jsonl"
@@ -519,7 +535,8 @@ def measure(repo, lang, root, corpus_class, sha):
         if decline:
             print(f"  DECLINE {repo} {tier}: {decline}")
         written += 1
-    shutil.rmtree(work, ignore_errors=True)
+    if not KEEP_WORK:
+        shutil.rmtree(work, ignore_errors=True)
     return written
 
 
@@ -546,7 +563,8 @@ def clone_and_measure(repo, lang):
     finally:
         # A scored checkout is deleted immediately: 12 large repos left behind
         # is the disk the machine does not have.
-        shutil.rmtree(dest, ignore_errors=True)
+        if not KEEP_WORK:
+            shutil.rmtree(dest, ignore_errors=True)
 
 
 def cmd_run(args):
