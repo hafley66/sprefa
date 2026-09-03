@@ -12,6 +12,7 @@
 % The relation table of `v6/sprefa-extract/src/tsi/registry.rs`. A relation
 % absent here is a named stop, never a silent skip.
 tsi_relation('tsi.type', 1).
+tsi_relation('tsi.name', 2).
 tsi_relation('tsi.symbol', 1).
 tsi_relation('tsi.denotes', 2).
 tsi_relation('tsi.scip_symbol', 2).

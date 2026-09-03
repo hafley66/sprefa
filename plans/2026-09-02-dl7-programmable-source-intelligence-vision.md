@@ -464,17 +464,16 @@ The first Rust projection lives in
 [`v7/src/3_emit/2_rust_type_emitter.pl`](../v7/src/3_emit/2_rust_type_emitter.pl).
 It consumes the mixed JSONL produced directly by `extract --witness --family
 type`; the TSI loader now ignores accompanying base `node` and `sig` records
-instead of diagnosing them as malformed TSI. The emitted DL7 has this shape:
+instead of diagnosing them as malformed TSI. `tsi.name(Type, Text)` carries
+the source name directly. The emitter uses that name for every DL7 binding and
+every reference to it. The emitted DL7 has this shape:
 
 ```text
-rust_types
-  Mapper -> rust_type_0
-  User   -> rust_type_4
-  View   -> rust_type_12
-  Shape  -> rust_type_19
-
-rust_type_4 = product(id -> rust_type_5, name -> rust_type_7)
-rust_type_19 = sum(Circle -> rust_type_20, Square -> rust_type_22)
+Mapper = product()
+Mapper_T = product()
+User = product(id -> User_T, name -> Option)
+View = product(text -> str, owned -> Box, shared -> std)
+Shape = sum(Circle -> Shape_Circle, Square -> Shape_Square)
 
 rust_trait(type)
 tsi_callable(type)
@@ -486,11 +485,13 @@ rust_assoc(owner, name, target)
 tsi_conforms(source, target, mode)
 ```
 
-Wire IDs receive file-local generated names, while source spellings label only
-the `rust_types` product. This avoids collisions with authored declarations and
-retains graph identity. Syntax TSI currently leaves nested generic applications
-and associated types opaque; semantic TSI supplies the additional application
-and associated-type rows needed for that later projection.
+Named Rust types are direct DL7 declarations. There is no `rust_types` alias
+product, language prefix, or opaque wire-id name. A local name repeated in one
+file is qualified by its known owner when TSI carries that edge, such as
+`Mapper_T`, `User_T`, and `Shape_Circle`. Remaining collisions receive their
+wire id as a suffix. Syntax TSI currently leaves some nested generic
+applications and associated types opaque; semantic TSI supplies the additional
+application and associated-type rows needed for that later projection.
 
 [`v7/src/3_emit/3_rust_type_region_mainer.pl`](../v7/src/3_emit/3_rust_type_region_mainer.pl)
 composes the complete syntax-tier path. It runs Extract once, loads the mixed
@@ -573,6 +574,19 @@ permit them. Rust and Kotlin can emit declared implementation evidence. Every
 language keeps its own additional relations for ownership, associated types,
 type sets, variance, platform nullability, or other semantics outside the
 intersection.
+
+The Extract-to-TSI implementation boundary on 2026-09-03 is:
+
+| Language | Syntax tier | Semantic tier | Open boundary |
+| --- | --- | --- | --- |
+| Rust | Types, products, sums, ordered edges, primitives, callables, parameters, applications, conformance, traits, and implementations | rust-analyzer adds symbols, denotation, subtype and assignability facts, lifetimes, ownership, associated types, and semantic applications | Scoped names and anonymous tuple projection |
+| TypeScript | Shared TSI rows plus interfaces, optional edges, and readonly edges | tsc adds checker-resolved type relationships and rendered type names | Some call applications outside aliases, primitive coverage, and value `has_type` coverage |
+| Go | No TSI rows | No TSI rows | Common TSI adapter plus Go type-set and embedding facts |
+
+`tsi.name(Type, Text)` is the common spelling row for Rust and TypeScript.
+Syntax runs carry written names. Semantic runs carry checker-rendered names.
+The row remains separate from `tsi.symbol` and `tsi.denotes`: a symbol denotes
+a type, while either identity can have a source-facing name.
 
 <!-- todo(decision): Decide the user-authored DL7 vocabulary for choosing structural, nominal, or declared-plus-witness conformance before adding a checker rule. -->
 
@@ -710,10 +724,10 @@ language adapters. They add no kernel form or source-specific schema.
    17. Approve ownership and synchronization policy before adding any reverse
        update from generated output to authored Markdown.
    18. **Syntax vertical complete:** Extract one representative Rust type graph,
-       render deterministic compilable DL7 declarations, check one owned
-       marker region, refresh it through Soopy, check it as current, and compile
-       the resulting target. Semantic generic-application fidelity remains
-       open.
+       render deterministic compilable DL7 declarations under their source
+       names, check one owned marker region, refresh it through Soopy, check it
+       as current, and compile the resulting target. Semantic
+       generic-application fidelity remains open.
 
    <!-- todo(feature): Source-intelligence section: connect loaded source facts to the compiler observation loop, project semantic Markdown facts, join syntax captures to semantic identities, derive live task rows, render provenance-carrying Markdown, stage fixes, and batch source parsing. -->
 

@@ -1,103 +1,97 @@
 ; generated from v6/sprefa-extract/tests/fixtures/tsi/rust_probe/src/lib.rs
-(: rust_types
-   (* (: Mapper rust_type_0)
-      (: User rust_type_4)
-      (: View rust_type_12)
-      (: Shape rust_type_19)))
-
-(: rust_type_0
+(: Mapper
    (*))
 
-(: rust_type_1
+(: Mapper_T
    (*))
 
-(: rust_type_2
+(: map
    (*))
 
-(: rust_type_3
+(: Self
    (*))
 
-(: rust_type_4
-   (* (: id rust_type_5)
-      (: name rust_type_7)))
+(: User
+   (* (: id User_T)
+      (: name Option)))
 
-(: rust_type_5
+(: User_T
    (*))
 
-(: rust_type_7
+(: Option
    (*))
 
-(: rust_type_9
+(: impl
    (*))
 
-(: rust_type_10
+(: impl_T
    (*))
 
-(: rust_type_11
+(: map_11
    (*))
 
-(: rust_type_12
-   (* (: text rust_type_13)
-      (: owned rust_type_15)
-      (: shared rust_type_17)))
+(: View
+   (* (: text str)
+      (: owned Box)
+      (: shared std)))
 
-(: rust_type_13
+(: str
    (*))
 
-(: rust_type_15
+(: Box
    (*))
 
-(: rust_type_17
+(: std
    (*))
 
-(: rust_type_19
-   (+ (: Circle rust_type_20)
-      (: Square rust_type_22)))
+(: Shape
+   (+ (: Circle Shape_Circle)
+      (: Square Shape_Square)))
 
-(: rust_type_20
+(: Shape_Circle
    (*))
 
-(: rust_type_22
+(: Shape_Square
    (*))
 
 (: rust_trait (* (: node type)))
-(rust_trait rust_type_0)
+(rust_trait Mapper)
 
 (: tsi_callable (* (: node type)))
-(tsi_callable rust_type_2)
-(tsi_callable rust_type_11)
+(tsi_callable map)
+(tsi_callable map_11)
 
 (: tsi_input
    (* (: callable type)
       (: position int)
       (: target type)))
-(tsi_input rust_type_2 0 rust_type_1)
-(tsi_input rust_type_11 0 rust_type_10)
+(tsi_input map 0 Mapper_T)
+(tsi_input map_11 0 impl_T)
 
 (: tsi_output
    (* (: callable type)
       (: position int)
       (: target type)))
-(tsi_output rust_type_2 0 rust_type_3)
-(tsi_output rust_type_11 0 rust_type_3)
+(tsi_output map 0 Self)
+(tsi_output map_11 0 Self)
 
 (: tsi_parameter
    (* (: parameter type)
       (: owner type)
       (: position int)
       (: variance text)))
-(tsi_parameter rust_type_1 rust_type_0 0 "unspecified")
-(tsi_parameter rust_type_5 rust_type_4 0 "unspecified")
-(tsi_parameter rust_type_10 rust_type_9 0 "unspecified")
+(tsi_parameter Mapper_T Mapper 0 "unspecified")
+(tsi_parameter User_T User 0 "unspecified")
+(tsi_parameter impl_T impl 0 "unspecified")
 
 (: rust_impl
    (* (: implementation type)
       (: self type)
       (: trait type)))
-(rust_impl rust_type_9 rust_type_4 rust_type_0)
+(rust_impl impl User Mapper)
 
 (: tsi_conforms
    (* (: source type)
       (: target type)
       (: mode text)))
-(tsi_conforms rust_type_4 rust_type_0 "syntax")
+(tsi_conforms User Mapper "syntax")

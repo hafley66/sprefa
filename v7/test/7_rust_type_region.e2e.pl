@@ -41,7 +41,7 @@ run_e2e(TargetRoot, StateRoot) :-
     sub_string(Text, _, _, 0,
                "; sprefa:auto-end rust-types\n\n(: AuthoredAfter\n   (* (: name string)))\n"),
     \+ sub_string(Text, _, _, _, "stale_generated_type"),
-    sub_string(Text, _, _, _, "(: rust_types"),
+    sub_string(Text, _, _, _, "(: User"),
     sub_string(Text, _, _, _, "(: tsi_parameter"),
     sub_string(Text, _, _, _, "(: rust_impl"),
     compile_dl7(Target, _, _, []).
