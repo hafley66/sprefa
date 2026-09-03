@@ -54,7 +54,7 @@ pub fn flatten_each<E>(
     witness: Option<&RunOut>,
     push: &mut impl FnMut(FlatFact) -> Result<(), E>,
 ) -> Result<(), E> {
-    let span = tracing::debug_span!("flatten", facts = tracing::field::Empty);
+    let span = crate::trace::phase_span("-", crate::trace::Phase::Flatten);
     let _entered = span.enter();
     if let Some(run) = witness {
         push(FlatFact::Protocol {
@@ -117,7 +117,7 @@ pub fn flatten_each<E>(
             Ok(())
         })()
     };
-    span.record("facts", facts);
+    crate::trace::record_phase(&span, 0, facts, 1);
     outcome?;
     if let Some(run) = witness {
         for row in witnesses {

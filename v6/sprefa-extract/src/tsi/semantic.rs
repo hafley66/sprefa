@@ -23,6 +23,14 @@ pub trait SemanticRows {
 /// Append one run's rows to a stream that already numbered its own. Ordinals
 /// continue the stream's, so a witness names exactly one fact.
 pub fn emit_semantic(run: u32, rows: &dyn SemanticRows, out: &mut Vec<FlatFact>) {
+    let span = crate::trace::phase_span("-", crate::trace::Phase::TsiSemantic);
+    let _entered = span.enter();
+    crate::trace::record_phase(
+        &span,
+        0,
+        rows.facts().len() as u64,
+        rows.coverage().len() as u64,
+    );
     let base = highest_ordinal(out);
     let mut witnesses: Vec<FlatFact> = Vec::with_capacity(rows.facts().len());
     for (offset, fact) in rows.facts().iter().enumerate() {

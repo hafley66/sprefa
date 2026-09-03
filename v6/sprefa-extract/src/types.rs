@@ -60,7 +60,13 @@ impl Span {
 /// Hash file bytes to `ContentId::Blake3` through soopy's own constructor, so
 /// the corpus and soopy's enumeration cannot disagree on one file's identity.
 pub fn content_id_of(content: &[u8]) -> ContentId {
-    ContentId::blake3(content)
+    // The span sits on the hash and never on a caller: blake3 is linear in file
+    // size, and a duplicate pass added at ANY call site has to reach this count.
+    let span = crate::trace::phase_span("-", crate::trace::Phase::Hash);
+    let _entered = span.enter();
+    let id = ContentId::blake3(content);
+    crate::trace::record_phase(&span, content.len() as u64, 0, 1);
+    id
 }
 
 /// The no-blob sentinel: the dst leg of an edge with no corpus target.

@@ -278,12 +278,15 @@ fn tsi_rows(
     strings: &mut Strings,
     sink: &mut FamilyBundle<TypeF>,
 ) {
+    let span = crate::trace::phase_span("rust", crate::trace::Phase::TsiSyntax);
+    let _entered = span.enter();
     let mut names = TsiNames::new("rust");
     let outer = TsiScope::new();
     for item in &parsed.items {
         tsi_item(item, &outer, line_starts, strings, &mut names);
     }
     sink.aux.tsi = names.into_facts();
+    crate::trace::record_phase(&span, 0, sink.aux.tsi.len() as u64, 1);
 }
 
 fn tsi_item(

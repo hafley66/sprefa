@@ -95,28 +95,41 @@ fn resolve_without_family_is_byte_identical() {
 /// with the cfg pass never run and nothing in the summary naming it.
 #[test]
 fn bench_runs_the_cfg_pass_when_the_family_names_it() {
-    let bench = |args: &[&str]| -> String {
+    // The per-file bench numbers are a `tracing` event, so the assert reads the
+    // JSON door rather than a stderr line whose shape nothing pinned.
+    let bench = |args: &[&str]| -> serde_json::Value {
         let output = Command::new(env!("CARGO_BIN_EXE_extract"))
             .args(args)
+            // The bench event's target is the BIN crate, `extract`, never the
+            // library's `sprefa_extract`.
+            .env("RUST_LOG", "extract=info")
+            .env("HAFLEY_LOG_FORMAT", "json")
+            .env("DL_TRAIL", "0")
             .output()
             .expect("extract binary runs");
         assert!(output.status.success(), "{args:?} did not exit clean");
-        String::from_utf8_lossy(&output.stderr).to_string()
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        stderr
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|value| value["fields"]["message"] == "bench")
+            .unwrap_or_else(|| panic!("no bench event for {args:?} in: {stderr}"))
     };
 
     let with_cfg = bench(&["--bench", "--family", "cfg", CALLER]);
     assert!(
-        with_cfg.contains(" cfg "),
+        with_cfg["fields"]["cfg_us"].as_u64().unwrap() > 0,
         "the cfg pass was never timed: {with_cfg}"
     );
     assert!(
-        !with_cfg.contains("cfg=0"),
+        with_cfg["fields"]["cfg"].as_u64().unwrap() > 0,
         "the cfg pass produced no nodes: {with_cfg}"
     );
 
     let without_cfg = bench(&["--bench", "--family", "cst", CALLER]);
-    assert!(
-        !without_cfg.contains(" cfg "),
+    assert_eq!(
+        without_cfg["fields"]["cfg_us"].as_u64().unwrap(),
+        0,
         "a run that never named cfg timed it anyway: {without_cfg}"
     );
 }

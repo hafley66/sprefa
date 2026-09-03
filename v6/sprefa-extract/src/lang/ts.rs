@@ -1140,6 +1140,8 @@ fn tsi_rows(
     strings: &mut Strings,
     sink: &mut FamilyBundle<TypeF>,
 ) {
+    let span = trace::phase_span("ts", trace::Phase::TsiSyntax);
+    let _entered = span.enter();
     let mut names = TsiNames::new("ts");
     for stmt in with_module_bodies(&program.body) {
         use ts::Statement as S;
@@ -1173,6 +1175,7 @@ fn tsi_rows(
         }
     }
     sink.aux.tsi = names.into_facts();
+    trace::record_phase(&span, 0, sink.aux.tsi.len() as u64, 1);
 }
 
 fn tsi_decl(decl: &ts::Declaration, src: &str, strings: &mut Strings, names: &mut TsiNames) {

@@ -77,11 +77,7 @@ pub(crate) fn go_parse_shared_keyed(
         static LAST: std::cell::RefCell<Option<(crate::shape::ContentId, std::sync::Arc<tree_sitter::Tree>)>> =
             const { std::cell::RefCell::new(None) };
     }
-    let id = {
-        let span = trace::family_span("go", "content-id");
-        let _entered = span.enter();
-        content_id_of(content.as_bytes())
-    };
+    let id = content_id_of(content.as_bytes());
     if let Some((_, tree)) = LAST.with(|slot| {
         slot.borrow()
             .as_ref()
@@ -1043,6 +1039,22 @@ struct GoChain {
 /// included; deeper chains keep their current outcome.
 const GO_CHAIN_MAX_STEPS: usize = 8;
 
+/// The timed door on [`go_chain_of`]. Every top-level chain site enters here,
+/// so `calls` counts sites and never the recursion inside one.
+fn go_chain_entry(
+    expr: tree_sitter::Node,
+    src: &[u8],
+    scope: &TypeScope,
+    imports: &HashMap<String, String>,
+    steps: &mut Vec<GoChainStep>,
+) -> Option<GoChainBase> {
+    let span = trace::phase_span("go", trace::Phase::Chain);
+    let _entered = span.enter();
+    let base = go_chain_of(expr, src, scope, imports, steps);
+    trace::record_phase(&span, 0, steps.len() as u64, 1);
+    base
+}
+
 /// Decompose a chain operand into (base, hops). The hops are appended in
 /// source order; a call hop's own method name is one hop, the site's final
 /// callee is NOT a hop here. Returns None for anything the tier cannot type
@@ -1139,10 +1151,14 @@ fn go_bind_plan_of(blob: &ContentId) -> Option<Arc<GoBindPlan>> {
 }
 
 fn go_bind_plan_store(blob: ContentId, plan: GoBindPlan) {
+    let span = trace::phase_span("go", trace::Phase::BindPlan);
+    let _entered = span.enter();
+    let entries = plan.binds.len() + plan.inferred_recv.len() + plan.multihop.len();
     let mut guard = plan_cache()
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
     guard.insert(blob, Arc::new(plan));
+    trace::record_phase(&span, 0, entries as u64, 1);
 }
 
 /// A declared type, unwrapped one level. `Indexable` is a slice/array/map's
@@ -1388,7 +1404,7 @@ fn go_binding_of_rhs(
         }
         _ => go_operand_decl(rhs, src, scope, field_types).or_else(|| {
             let mut steps = Vec::new();
-            let base = go_chain_of(rhs, src, scope, imports, &mut steps)?;
+            let base = go_chain_entry(rhs, src, scope, imports, &mut steps)?;
             (!steps.is_empty() && steps.len() < GO_CHAIN_MAX_STEPS)
                 .then_some(TypeBinding::Chained(GoChain { base, steps }))
         }),
@@ -1522,7 +1538,7 @@ fn go_walk_receivers(
                     // record the chain plus one `Elem` hop for the use site.
                     None if idents.len() == 2 => {
                         let mut steps = Vec::new();
-                        if let Some(base) = go_chain_of(right, src, scope, imports, &mut steps) {
+                        if let Some(base) = go_chain_entry(right, src, scope, imports, &mut steps) {
                             steps.push(GoChainStep::Elem);
                             if steps.len() < GO_CHAIN_MAX_STEPS {
                                 scope_insert(
@@ -1661,7 +1677,7 @@ fn go_walk_receivers(
                                 None => {
                                     let mut steps = Vec::new();
                                     if let Some(base) =
-                                        go_chain_of(operand, src, scope, imports, &mut steps)
+                                        go_chain_entry(operand, src, scope, imports, &mut steps)
                                     {
                                         // A hopless `Var` base is the one-hop
                                         // leg's own job, and it already declined.
