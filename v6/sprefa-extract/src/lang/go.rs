@@ -77,7 +77,8 @@ pub(crate) fn go_parse_shared_keyed(
         static LAST: std::cell::RefCell<Option<(crate::shape::ContentId, std::sync::Arc<tree_sitter::Tree>)>> =
             const { std::cell::RefCell::new(None) };
     }
-    let id = content_id_of(content.as_bytes());
+    let id = crate::dispatch::extracting_blob(content.as_bytes())
+        .unwrap_or_else(|| content_id_of(content.as_bytes()));
     if let Some((_, tree)) = LAST.with(|slot| {
         slot.borrow()
             .as_ref()
