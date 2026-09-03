@@ -88,6 +88,12 @@ pub const REGISTRY: &[Relation] = &[
         name: "tsi.origin",
         args: &[Id, Atom, Span], // type, language, declaration range
     },
+    // The spelling a consumer prints for an id: the written text at the syntax
+    // tier, the checker's rendering at the semantic tier. Types and symbols both.
+    Relation {
+        name: "tsi.name",
+        args: &[Id, Text], // type or symbol, spelling
+    },
     Relation {
         name: "tsi.product",
         args: &[Id],

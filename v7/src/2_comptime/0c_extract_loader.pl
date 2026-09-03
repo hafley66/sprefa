@@ -133,28 +133,78 @@ decode_result(Dict, JsonlPath, LineNumber, Result) :-
         get_dict(record, Dict, RecordText),
         string(RecordText),
         atom_string(Record, RecordText)
-    ->  decode_stream_record(Record, Dict, JsonlPath, LineNumber, Result)
+    ->  decode_known_record(Record, Dict, JsonlPath, LineNumber, Result)
     ;   Result = error(diagnostic(extract, stream(JsonlPath),
                                   tsi_line(JsonlPath, LineNumber,
                                            no_record_key)))
     ).
 
-decode_stream_record(Record, Dict, JsonlPath, LineNumber, Result) :-
-    (   tsi_envelope_record(Record)
-    ->  decode_known_record(Record, Dict, JsonlPath, LineNumber, Result)
-    ;   Result = skip
-    ).
+%% foreign_record(?Record) is nondet.
+%  types.rs:2976 FlatFact less the TSI six; astgrep.rs:97; 1_ast_rule.rs:395.
+foreign_record(arg).
+foreign_record(ast_rule).
+foreign_record(capture).
+foreign_record(cfg_scope).
+foreign_record(const).
+foreign_record(data_doc).
+foreign_record(data_value).
+foreign_record(df_allocates).
+foreign_record(df_field).
+foreign_record(df_lit).
+foreign_record(df_loop).
+foreign_record(df_nest).
+foreign_record(doc).
+foreign_record(doc_node).
+foreign_record(doc_tag).
+foreign_record(edge).
+foreign_record(file).
+foreign_record(file_edge).
+foreign_record(file_unresolved).
+foreign_record(flow_edge).
+foreign_record(macro_site).
+foreign_record(method_owner).
+foreign_record(node).
+foreign_record(package_edge).
+foreign_record(param).
+foreign_record(projectedge).
+foreign_record(reference).
+foreign_record(resolved_edge).
+foreign_record(resolved_import).
+foreign_record(resolved_type_edge).
+foreign_record(scip_callee_type).
+foreign_record(scip_def).
+foreign_record(scip_diagnostic).
+foreign_record(scip_document).
+foreign_record(scip_documentation).
+foreign_record(scip_edge).
+foreign_record(scip_fn_edge).
+foreign_record(scip_impl).
+foreign_record(scip_index).
+foreign_record(scip_local).
+foreign_record(scip_metadata).
+foreign_record(scip_name).
+foreign_record(scip_occurrence).
+foreign_record(scip_occurrence_doc).
+foreign_record(scip_ref).
+foreign_record(scip_relationship).
+foreign_record(scip_signature).
+foreign_record(scip_signature_occurrence).
+foreign_record(scip_skip).
+foreign_record(scip_symbol).
+foreign_record(sig).
+foreign_record(site).
+foreign_record(size_skip).
+foreign_record(specifier).
+foreign_record(test_only_call).
+foreign_record(unresolved).
 
-tsi_envelope_record(protocol).
-tsi_envelope_record(run).
-tsi_envelope_record(fact).
-tsi_envelope_record(witness).
-tsi_envelope_record(coverage).
-tsi_envelope_record(diagnostic).
-
+% A TSI record whose body does not decode stays malformed; only a record name
+% outside decode_record/3 reaches the skip.
 decode_known_record(Record, Dict, JsonlPath, LineNumber, Result) :-
     (   decode_record(Record, Dict, Row)
     ->  Result = ok(Row)
+    ;   foreign_record(Record)
+    ->  Result = skip
     ;   Result = error(diagnostic(extract, stream(JsonlPath),
                                   tsi_line(JsonlPath, LineNumber,
                                            malformed_record(Record))))

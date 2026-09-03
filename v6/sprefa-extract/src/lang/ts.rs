@@ -1223,6 +1223,7 @@ fn tsi_params(
     };
     for (position, param) in decl.params.iter().enumerate() {
         let id = names.anonymous(to_span(param.name.span));
+        names.name(id, &param.name.name);
         names.fact(
             "tsi.parameter",
             vec![
@@ -1310,10 +1311,11 @@ fn tsi_member_callable(
     strings: &mut Strings,
     names: &mut TsiNames,
 ) {
-    if tsi_key_name(key).is_none() {
+    let Some(name) = tsi_key_name(key) else {
         return;
-    }
+    };
     let callable = names.anonymous(to_span(key.span()));
+    names.name(callable, &name);
     names.fact("tsi.callable", vec![Arg::Id(callable)]);
     tsi_signature(
         callable,
@@ -1537,6 +1539,7 @@ fn tsi_enum(
 fn tsi_function(func: &ts::Function, src: &str, strings: &mut Strings, names: &mut TsiNames) {
     let Some(id) = &func.id else { return };
     let callable = names.anonymous(to_span(id.span));
+    names.name(callable, &id.name);
     names.fact("tsi.callable", vec![Arg::Id(callable)]);
     tsi_signature(
         callable,
@@ -1572,6 +1575,7 @@ fn tsi_var_fn(
             _ => continue,
         };
         let callable = names.anonymous(to_span(ident.span));
+        names.name(callable, &ident.name);
         names.fact("tsi.callable", vec![Arg::Id(callable)]);
         tsi_signature(
             callable,
@@ -1694,10 +1698,9 @@ impl Project<CallF> for CallProjector<'_> {
         // function body. The rows live in the per-blob facts store (never in
         // the wired aux, so the phase-1 wire stays byte-identical); the
         // resolve leg joins them by `CallSite.span`.
-        ts_receivers::store_facts(
-            content_id_of(self.content.as_bytes()),
-            ts_receivers::collect(program),
-        );
+        let blob = crate::dispatch::extracting_blob(self.content.as_bytes())
+            .unwrap_or_else(|| content_id_of(self.content.as_bytes()));
+        ts_receivers::store_facts(blob, ts_receivers::collect(program));
     }
 }
 

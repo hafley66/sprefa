@@ -1,20 +1,23 @@
 //! The checker tier's loader: `cargo metadata` into a salsa db, then
 //! rust-analyzer's own resolution over every supplied file. Seam: `rust_checker`.
 
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use ra_ap_hir::{
     attach_db, Adt, AssocItem, Crate, Field, Function, GenericDef, HirDisplay, Impl, ModuleDef,
-    PathResolution, Semantics, Type,
+    PathResolution, Semantics, Trait, Type,
 };
 use ra_ap_ide::{AnalysisHost, NavigationTarget, RootDatabase, TryToNav};
 use ra_ap_load_cargo::{load_workspace_at, LoadCargoConfig, ProcMacroServerChoice};
-use ra_ap_project_model::{CargoConfig, RustLibSource};
+use ra_ap_project_model::{CargoConfig, CargoFeatures, RustLibSource};
 use ra_ap_syntax::{ast, AstNode};
+use tracing::Span;
 
 use super::rust_checker::{CheckerAnswers, CheckerError, CheckerRef, OffsetMap};
+use crate::trace::{phase_span, record_phase, Phase};
 use crate::tsi::{Arg, CoverageClaim, FactOut};
 
 /// One corpus file the walk visits: its supplied path, its ra file id, its
@@ -44,6 +47,9 @@ pub fn answer(
     let cargo_config = CargoConfig {
         sysroot: Some(RustLibSource::Discover),
         set_test: true,
+        // The default selects no feature, so a `cfg`-gated module stays out of
+        // the crate graph and every file it declares owns no module there.
+        features: CargoFeatures::All,
         ..CargoConfig::default()
     };
     let started = Instant::now();
@@ -151,12 +157,13 @@ pub fn answer(
     if tsi {
         // Ids are run-local across the whole workspace, so the item walk owns
         // one counter and runs after the per-file resolve rather than beside it.
-        let (facts, coverage) = attach_db(db, || {
+        let (facts, coverage, unmodulated) = attach_db(db, || {
             let sema = Semantics::new(db);
             TsiWalk::new(db, &sema, &destination, &path_of).run(&walk_files)
         });
         answers.tsi = facts;
         answers.coverage = coverage;
+        answers.unmodulated = unmodulated;
     }
     answers.walk = walk_started.elapsed();
     Ok(answers)
@@ -173,12 +180,101 @@ struct FileAnswers {
     method_unresolved: usize,
 }
 
+/// One resolution kind over one file: the phase row it folds into, how many
+/// rust-analyzer calls it made and how many of those answered.
+struct SiteSpan {
+    span: Span,
+    calls: Cell<u64>,
+    answered: Cell<u64>,
+}
+
+impl SiteSpan {
+    fn new(phase: Phase) -> SiteSpan {
+        SiteSpan {
+            span: phase_span("rust", phase),
+            calls: Cell::new(0),
+            answered: Cell::new(0),
+        }
+    }
+
+    /// Times exactly ONE rust-analyzer call. No guard here wraps another, so a
+    /// span's micros are never a sum containing a sibling's.
+    fn call<T>(&self, resolve: impl FnOnce() -> Option<T>) -> Option<T> {
+        self.calls.set(self.calls.get() + 1);
+        let answer = {
+            let _entered = self.span.enter();
+            resolve()
+        };
+        if answer.is_some() {
+            self.answered.set(self.answered.get() + 1);
+        }
+        answer
+    }
+
+    fn record(&self) {
+        record_phase(&self.span, 0, self.answered.get(), self.calls.get());
+    }
+}
+
+/// The four rust-analyzer calls one file's walk pays for, priced apart, and the
+/// nav answers already in hand.
+struct SiteSpans {
+    method: SiteSpan,
+    call_path: SiteSpan,
+    type_path: SiteSpan,
+    nav: SiteSpan,
+    navs: RefCell<HashMap<ModuleDef, Option<NavigationTarget>>>,
+}
+
+impl SiteSpans {
+    fn new() -> SiteSpans {
+        SiteSpans {
+            method: SiteSpan::new(Phase::CheckerMethod),
+            call_path: SiteSpan::new(Phase::CheckerCallPath),
+            type_path: SiteSpan::new(Phase::CheckerTypePath),
+            nav: SiteSpan::new(Phase::CheckerNav),
+            navs: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// One `try_to_nav` per DEFINITION, never per site: it reparses the file the
+    /// destination is declared in. `checker_nav`'s `calls` counts memo MISSES.
+    fn destination_of(
+        &self,
+        sema: &Semantics<'_, RootDatabase>,
+        def: ModuleDef,
+    ) -> Option<NavigationTarget> {
+        if let Some(known) = self.navs.borrow().get(&def) {
+            return known.clone();
+        }
+        let nav = self.nav.call(|| nav_of(sema, def));
+        self.navs.borrow_mut().insert(def, nav.clone());
+        nav
+    }
+
+    fn record(&self) {
+        self.method.record();
+        self.call_path.record();
+        self.type_path.record();
+        self.nav.record();
+    }
+}
+
+/// A path under an `ast::PathType`, qualifiers included. An expression-position
+/// path is the syntax leg's; the call and record arms took the call-shaped ones.
+fn in_type_position(path: &ast::Path) -> bool {
+    path.syntax()
+        .ancestors()
+        .any(|node| ast::PathType::can_cast(node.kind()))
+}
+
 fn walk_file(
     sema: &Semantics<'_, RootDatabase>,
     destination: &HashMap<ra_ap_ide::FileId, &WalkFile>,
     file: &WalkFile,
 ) -> FileAnswers {
     let source = sema.parse_guess_edition(file.file_id);
+    let spans = SiteSpans::new();
     let mut out = FileAnswers {
         path: file.path.clone(),
         ..FileAnswers::default()
@@ -186,7 +282,7 @@ fn walk_file(
     for node in source.syntax().descendants() {
         if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
             out.method_sites += 1;
-            match method_call_ref(sema, destination, file, &call) {
+            match method_call_ref(sema, destination, file, &spans, &call) {
                 Some(reference) => out.calls.push(reference),
                 None => out.method_unresolved += 1,
             }
@@ -195,7 +291,7 @@ fn walk_file(
         if let Some(call) = ast::CallExpr::cast(node.clone()) {
             if let Some(ast::Expr::PathExpr(path_expr)) = call.expr() {
                 if let Some(path) = path_expr.path() {
-                    if let Some(reference) = path_call_ref(sema, destination, file, &path) {
+                    if let Some(reference) = path_call_ref(sema, destination, file, &spans, &path) {
                         out.calls.push(reference);
                     }
                 }
@@ -204,18 +300,22 @@ fn walk_file(
         }
         if let Some(record) = ast::RecordExpr::cast(node.clone()) {
             if let Some(path) = record.path() {
-                if let Some(reference) = path_call_ref(sema, destination, file, &path) {
+                if let Some(reference) = path_call_ref(sema, destination, file, &spans, &path) {
                     out.calls.push(reference);
                 }
             }
             continue;
         }
         if let Some(path) = ast::Path::cast(node) {
-            if let Some(reference) = type_ref(sema, destination, file, &path) {
+            if !in_type_position(&path) {
+                continue;
+            }
+            if let Some(reference) = type_ref(sema, destination, file, &spans, &path) {
                 out.types.push(reference);
             }
         }
     }
+    spans.record();
     out
 }
 
@@ -225,11 +325,12 @@ fn method_call_ref(
     sema: &Semantics<'_, RootDatabase>,
     destination: &HashMap<ra_ap_ide::FileId, &WalkFile>,
     file: &WalkFile,
+    spans: &SiteSpans,
     call: &ast::MethodCallExpr,
 ) -> Option<CheckerRef> {
     let name_ref = call.name_ref()?;
-    let function = sema.resolve_method_call(call)?;
-    let nav = nav_of(sema, ModuleDef::Function(function))?;
+    let function = spans.method.call(|| sema.resolve_method_call(call))?;
+    let nav = spans.destination_of(sema, ModuleDef::Function(function))?;
     mint(destination, file, name_ref.syntax().text_range(), &nav)
 }
 
@@ -238,16 +339,17 @@ fn path_call_ref(
     sema: &Semantics<'_, RootDatabase>,
     destination: &HashMap<ra_ap_ide::FileId, &WalkFile>,
     file: &WalkFile,
+    spans: &SiteSpans,
     path: &ast::Path,
 ) -> Option<CheckerRef> {
     let name_ref = path.segment()?.name_ref()?;
-    let PathResolution::Def(def) = sema.resolve_path(path)? else {
+    let PathResolution::Def(def) = spans.call_path.call(|| sema.resolve_path(path))? else {
         return None;
     };
     if matches!(def, ModuleDef::Module(_) | ModuleDef::BuiltinType(_)) {
         return None;
     }
-    let nav = nav_of(sema, def)?;
+    let nav = spans.destination_of(sema, def)?;
     mint(destination, file, name_ref.syntax().text_range(), &nav)
 }
 
@@ -257,10 +359,11 @@ fn type_ref(
     sema: &Semantics<'_, RootDatabase>,
     destination: &HashMap<ra_ap_ide::FileId, &WalkFile>,
     file: &WalkFile,
+    spans: &SiteSpans,
     path: &ast::Path,
 ) -> Option<CheckerRef> {
     let name_ref = path.segment()?.name_ref()?;
-    let PathResolution::Def(def) = sema.resolve_path(path)? else {
+    let PathResolution::Def(def) = spans.type_path.call(|| sema.resolve_path(path))? else {
         return None;
     };
     if !matches!(
@@ -269,7 +372,7 @@ fn type_ref(
     ) {
         return None;
     }
-    let nav = nav_of(sema, def)?;
+    let nav = spans.destination_of(sema, def)?;
     mint(destination, file, name_ref.syntax().text_range(), &nav)
 }
 
@@ -315,6 +418,7 @@ const ENUMERATED: &[&str] = &[
     "tsi.type",
     "tsi.denotes",
     "tsi.origin",
+    "tsi.name",
     "tsi.product",
     "tsi.sum",
     "tsi.callable",
@@ -336,11 +440,11 @@ const ENUMERATED: &[&str] = &[
 const SAMPLED: &[(&str, &str)] = &[
     (
         "tsi.edge",
-        "enumerated for workspace-declared owners; std and dependency types are leaves",
+        "enumerated for owners declared in the supplied files",
     ),
     (
         "tsi.conforms",
-        "declared impls only; blanket and auto traits not enumerated",
+        "declared impls of supplied types and traits; blanket and auto traits not enumerated",
     ),
     ("tsi.has_type", "occurrences not walked in this arc"),
     ("tsi.subtype", "not enumerated"),
@@ -382,35 +486,58 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
         }
     }
 
-    /// The declarations of every module a supplied file owns, then every impl
-    /// of every crate those modules belong to.
-    fn run(mut self, files: &[WalkFile]) -> (Vec<FactOut>, Vec<CoverageClaim>) {
+    /// The declarations of every module a supplied file owns, then the impls of
+    /// those declarations alone: a crate's whole impl set prices the walk by it.
+    fn run(mut self, files: &[WalkFile]) -> (Vec<FactOut>, Vec<CoverageClaim>, Vec<String>) {
         let mut modules: Vec<ra_ap_hir::Module> = Vec::new();
-        let mut crates: Vec<Crate> = Vec::new();
+        let mut unmodulated: Vec<String> = Vec::new();
         for file in files {
-            for module in self.sema.file_to_module_defs(file.file_id) {
+            let owned: Vec<ra_ap_hir::Module> =
+                self.sema.file_to_module_defs(file.file_id).collect();
+            if owned.is_empty() {
+                unmodulated.push(file.path.clone());
+            }
+            for module in owned {
                 if !modules.contains(&module) {
                     modules.push(module);
                 }
-                let krate = module.krate(self.db);
-                if !crates.contains(&krate) {
-                    crates.push(krate);
-                }
             }
         }
+        let mut adts: Vec<Adt> = Vec::new();
+        let mut traits: Vec<Trait> = Vec::new();
         for module in modules {
             let krate = module.krate(self.db);
             for def in module.declarations(self.db) {
+                match def {
+                    ModuleDef::Adt(item) => adts.push(item),
+                    ModuleDef::Trait(item) => traits.push(item),
+                    _ => {}
+                }
                 self.declaration(def, krate);
             }
         }
-        for krate in crates {
-            for item in Impl::all_in_crate(self.db, krate) {
-                self.implementation(item, krate);
+        let mut seen: HashSet<Impl> = HashSet::new();
+        let mut impls: Vec<Impl> = Vec::new();
+        for adt in adts {
+            for item in Impl::all_for_type(self.db, adt.ty(self.db)) {
+                if seen.insert(item) {
+                    impls.push(item);
+                }
             }
         }
+        for contract in traits {
+            for item in Impl::all_for_trait(self.db, contract) {
+                if seen.insert(item) {
+                    impls.push(item);
+                }
+            }
+        }
+        for item in impls {
+            let krate = item.module(self.db).krate(self.db);
+            self.implementation(item, krate);
+        }
         let claims = claims(&self.facts);
-        (self.facts, claims)
+        (self.facts, claims, unmodulated)
     }
 
     fn row(&mut self, relation: &str, args: Vec<Arg>) {
@@ -447,6 +574,9 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
         let id = self.fresh();
         self.nominal.insert(def, id);
         self.row("tsi.type", vec![Arg::Id(id)]);
+        if let Some(name) = def.name(self.db) {
+            self.name(id, name.as_str());
+        }
         let krate = def.module(self.db).map(|module| module.krate(self.db));
         let origin = self.origin_at(nav_of(self.sema, def), krate);
         self.row(
@@ -465,9 +595,16 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
             return (*id, false);
         }
         let id = self.fresh();
+        let rendered = key.1.clone();
         self.structural.insert(key, id);
         self.row("tsi.type", vec![Arg::Id(id)]);
+        self.name(id, &rendered);
         (id, true)
+    }
+
+    /// `tsi.name`: the spelling a consumer prints for a type or a symbol.
+    fn name(&mut self, id: u32, text: &str) {
+        self.row("tsi.name", vec![Arg::Id(id), Arg::Text(text.to_string())]);
     }
 
     /// A declaration is a symbol and a type at once, and `tsi.denotes` is the
@@ -478,6 +615,9 @@ impl<'db, 'a> TsiWalk<'db, 'a> {
         if fresh {
             let symbol = self.fresh();
             self.row("tsi.symbol", vec![Arg::Id(symbol)]);
+            if let Some(name) = def.name(self.db) {
+                self.name(symbol, name.as_str());
+            }
             self.row("tsi.denotes", vec![Arg::Id(symbol), Arg::Id(id)]);
         }
         (id, fresh)

@@ -1,0 +1,27 @@
+{"record":"diagnostic","run":0,"relation":"fixture","detail":"lines 2-25 are real extract output: every row but the resolved_type_edge came from `extract --witness v6/sprefa-extract/tests/fixtures/tsi/probe.ts`, the resolved_type_edge from the same binary with `--witness --resolve --family type --project-root v6/sprefa-extract/tests/fixtures/tsi`; the last two lines are hand written"}
+{"record":"protocol","version":1}
+{"record":"run","run":0,"mode":"syntax","tool":"extract","version":"0.1.0","scope":["blake3:5bb3ce0722005ae43f3a40f0817fe3b0649672c779530978f6e3dd374b666195"]}
+{"record":"coverage","run":0,"relation":"tsi.type","coverage":"partial"}
+{"record":"coverage","run":0,"relation":"tsi.origin","coverage":"partial"}
+{"record":"coverage","run":0,"relation":"tsi.edge","coverage":"partial"}
+{"record":"fact","fact":231,"relation":"tsi.type","args":[{"id":0}]}
+{"record":"fact","fact":232,"relation":"tsi.origin","args":[{"id":0},{"atom":"ts"},{"span":["blake3:5bb3ce0722005ae43f3a40f0817fe3b0649672c779530978f6e3dd374b666195",171,177]}]}
+{"record":"fact","fact":233,"relation":"tsi.product","args":[{"id":0}]}
+{"record":"fact","fact":234,"relation":"ts.interface","args":[{"id":0}]}
+{"record":"fact","fact":238,"relation":"tsi.edge","args":[{"id":2},{"id":0},{"text":"seed"},{"id":1},{"int":0}]}
+{"record":"witness","fact":231,"run":0,"method":"parse"}
+{"record":"witness","fact":232,"run":0,"method":"parse"}
+{"record":"witness","fact":233,"run":0,"method":"parse"}
+{"record":"witness","fact":234,"run":0,"method":"parse"}
+{"record":"witness","fact":238,"run":0,"method":"parse"}
+{"record":"node","fact":1,"family":"cst","span":{"start":0,"end":542},"kind":"program","name":null}
+{"record":"node","fact":2,"family":"cst","span":{"start":0,"end":73},"kind":"comment","name":null}
+{"record":"edge","fact":114,"family":"cst","kind":"child","from":{"start":0,"end":542},"to":{"start":0,"end":73}}
+{"record":"edge","fact":115,"family":"cst","kind":"child","from":{"start":0,"end":542},"to":{"start":74,"end":152}}
+{"record":"sig","fact":230,"family":"type","owner":{"start":423,"end":495},"owner_start":423,"owner_end":495,"slot":"param","pos":0,"ty":"T"}
+{"record":"site","fact":274,"family":"call","span":{"start":474,"end":481},"callee":"project","callee_path":null}
+{"record":"param","fact":292,"family":"df","span":{"start":319,"end":324},"pos":0}
+{"record":"arg","fact":296,"family":"df","call":{"start":474,"end":490},"pos":0,"arg":{"start":482,"end":489}}
+{"record":"resolved_type_edge","fact":1,"owner_path":"v6/sprefa-extract/tests/fixtures/tsi/probe.ts","owner_name":"User","owner_start":204,"owner_end":497,"target_path":"v6/sprefa-extract/tests/fixtures/tsi/probe.ts","target_name":"Mapper","kind":"impl","resolution_origin":"same_file"}
+{"record":"frobnicate"}
+{"record":"fact","fact":9001,"args":[]}

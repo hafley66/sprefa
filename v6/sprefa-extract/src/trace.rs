@@ -22,6 +22,10 @@ pub enum Phase {
     Flatten,
     Write,
     ResolveLeg,
+    CheckerMethod,
+    CheckerCallPath,
+    CheckerTypePath,
+    CheckerNav,
 }
 
 impl Phase {
@@ -38,6 +42,10 @@ impl Phase {
             Phase::Flatten => "flatten",
             Phase::Write => "write",
             Phase::ResolveLeg => "resolve_leg",
+            Phase::CheckerMethod => "checker_method",
+            Phase::CheckerCallPath => "checker_call_path",
+            Phase::CheckerTypePath => "checker_type_path",
+            Phase::CheckerNav => "checker_nav",
         }
     }
 
@@ -54,6 +62,10 @@ impl Phase {
             "flatten" => Phase::Flatten,
             "write" => Phase::Write,
             "resolve_leg" => Phase::ResolveLeg,
+            "checker_method" => Phase::CheckerMethod,
+            "checker_call_path" => Phase::CheckerCallPath,
+            "checker_type_path" => Phase::CheckerTypePath,
+            "checker_nav" => Phase::CheckerNav,
             _ => return None,
         };
         Some(phase)

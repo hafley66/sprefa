@@ -47,6 +47,9 @@ pub struct CheckerAnswers {
     /// The per-file resolve walk over the loaded workspace.
     pub walk: Duration,
     pub files_answered: usize,
+    /// Supplied paths the loaded crate graph declares no module for: `cfg`-gated
+    /// out, or outside every crate root. Filled only by the item walk.
+    pub unmodulated: Vec<String>,
     /// Every `MethodCallExpr` the walk visited, and the count rust-analyzer
     /// declined to name a function for: the tier's own answer-coverage gap.
     pub method_sites: usize,
@@ -108,6 +111,8 @@ pub struct RustCheckerIndex {
     pub load: Duration,
     pub walk: Duration,
     pub files_answered: usize,
+    /// Supplied paths the walk found owning no module in the loaded graph.
+    pub unmodulated: Vec<String>,
     pub method_sites: usize,
     pub method_unresolved: usize,
 }
@@ -128,6 +133,7 @@ impl RustCheckerIndex {
             load: answers.load,
             walk: answers.walk,
             files_answered: answers.files_answered,
+            unmodulated: answers.unmodulated,
             method_sites: answers.method_sites,
             method_unresolved: answers.method_unresolved,
             tsi: stamp_digests(answers.tsi, corpus),

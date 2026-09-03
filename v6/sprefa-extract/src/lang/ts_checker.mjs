@@ -182,8 +182,9 @@ function calleeIdentifier(ts, expression) {
 
 /// Ids are run-local across the whole program, minted on first sight, so a type
 /// seen twice is one id and a recursive type closes through it.
-function tsiState() {
+function tsiState(checker) {
     return {
+        checker,
         next: 0,
         typeIds: new Map(),
         symbolIds: new Map(),
@@ -201,6 +202,7 @@ const TSI_COMPLETE = [
     "tsi.denotes",
     "tsi.has_type",
     "tsi.origin",
+    "tsi.name",
     "tsi.product",
     "tsi.sum",
     "tsi.callable",
@@ -287,6 +289,7 @@ function typeId(ts, state, tsi, type) {
     tsi.next += 1;
     tsi.typeIds.set(type, ownerTypeId);
     tsiRow(tsi, "tsi.type", { id: ownerTypeId });
+    tsiRow(tsi, "tsi.name", { id: ownerTypeId }, { text: tsi.checker.typeToString(type) });
     const declaration = typeDeclaration(type);
     if (declaration) {
         const named = declaration.name ?? declaration;
@@ -304,6 +307,7 @@ function symbolId(state, tsi, symbol) {
     tsi.next += 1;
     tsi.symbolIds.set(symbol, id);
     tsiRow(tsi, "tsi.symbol", { id });
+    tsiRow(tsi, "tsi.name", { id }, { text: symbol.name });
     const named = symbol.declarations?.[0]?.name;
     if (named) tsiRow(tsi, "tsi.origin", { id }, { atom: "ts" }, spanArg(state, named));
     return id;
@@ -722,7 +726,7 @@ function main() {
     }
 
     const walkStarted = Date.now();
-    const tsi = request.tsi === true ? tsiState() : undefined;
+    const tsi = request.tsi === true ? tsiState(checker) : undefined;
     const out = [];
     for (const file of answered) {
         out.push(JSON.stringify(answerFile(ts, checker, { file, wanted, byFileName, tsi })));

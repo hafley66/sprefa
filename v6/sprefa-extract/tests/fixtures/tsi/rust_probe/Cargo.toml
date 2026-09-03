@@ -10,3 +10,7 @@ publish = false
 
 [lib]
 path = "src/lib.rs"
+
+# A gated module the default `CargoFeatures` leaves out of the crate graph.
+[features]
+gated = []

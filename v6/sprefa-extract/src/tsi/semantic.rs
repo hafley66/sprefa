@@ -1,7 +1,7 @@
 //! The semantic tier's rows on the wire: a native checker enumerates whole
 //! relations, so its facts arrive as a block rather than one answer per site.
 
-use super::types::{CoverageOut, DiagnosticOut, FactOut, Method, WitnessOut};
+use super::types::{Arg, CoverageOut, DiagnosticOut, FactOut, Method, WitnessOut};
 use crate::types::FlatFact;
 
 /// `complete` claims every reachable row of the relation was emitted. A partial
@@ -21,8 +21,9 @@ pub trait SemanticRows {
 }
 
 /// Append one run's rows to a stream that already numbered its own. Ordinals
-/// continue the stream's, so a witness names exactly one fact.
-pub fn emit_semantic(run: u32, rows: &dyn SemanticRows, out: &mut Vec<FlatFact>) {
+/// continue the stream's, so a witness names exactly one fact. `ids` is the
+/// first id free in the stream; the returned one is free after these rows.
+pub fn emit_semantic(run: u32, rows: &dyn SemanticRows, ids: u32, out: &mut Vec<FlatFact>) -> u32 {
     let span = crate::trace::phase_span("-", crate::trace::Phase::TsiSemantic);
     let _entered = span.enter();
     crate::trace::record_phase(
@@ -32,11 +33,20 @@ pub fn emit_semantic(run: u32, rows: &dyn SemanticRows, out: &mut Vec<FlatFact>)
         rows.coverage().len() as u64,
     );
     let base = highest_ordinal(out);
+    let mut next_id = ids;
     let mut witnesses: Vec<FlatFact> = Vec::with_capacity(rows.facts().len());
     for (offset, fact) in rows.facts().iter().enumerate() {
         let ordinal = base + 1 + offset as u32;
         let mut fact = fact.clone();
         fact.fact = ordinal;
+        // Every tier numbers its own ids from 0, so two tiers in one stream
+        // would give one number to two types.
+        for arg in &mut fact.args {
+            if let Arg::Id(id) = arg {
+                *id += ids;
+                next_id = next_id.max(*id + 1);
+            }
+        }
         out.push(FlatFact::Fact(fact));
         witnesses.push(FlatFact::Witness(WitnessOut {
             fact: ordinal,
@@ -62,6 +72,7 @@ pub fn emit_semantic(run: u32, rows: &dyn SemanticRows, out: &mut Vec<FlatFact>)
             }));
         }
     }
+    next_id
 }
 
 /// The stream numbers a TSI `fact` row in a required field and every other row

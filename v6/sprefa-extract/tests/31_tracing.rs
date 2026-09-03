@@ -205,19 +205,20 @@ fn summary_rows_sort_by_micros_descending() {
 }
 
 /// Per lang: how many full content hashes and how many parses ONE file costs.
-/// go and ts hash twice (the extract cache key in `dispatch.rs`, then the door's
-/// own in `go.rs`/`ts.rs`); rust hashes once. failure-modes 107 owns the two.
-const HASHES_PER_FILE: [(&str, u64); 3] = [("go", 2), ("ts", 2), ("rust", 1)];
+/// Every lang hashes ONCE, the extract cache key in `dispatch.rs`; a door that
+/// needs the id reads it back. failure-modes 107 owns the count.
+const HASHES_PER_FILE: [(&str, u64); 3] = [("go", 1), ("ts", 1), ("rust", 1)];
 const PARSES_PER_FILE: u64 = 2;
 
 /// The chain phase's site count on `go_residual/callers.go`, hand-counted off
 /// the phase table and pinned so a chain walk that doubles is a FAIL.
 const GO_RESIDUAL_CHAIN_SITES: u64 = 10;
 
-// SABOTAGE RECEIPT: revert 2ce437427 (#664), which threads the dispatch content
-// id into the go door, and `go hash` reads 3 files per file against the 2 below.
-// A second blake3 over a file is linear in its size and no wall budget on a
-// loaded machine separates it from the machine.
+// SABOTAGE RECEIPT: drop the `extracting_blob` read at `go.rs:80` back to a bare
+// `content_id_of`, or the `EXTRACTING` set in `dispatch.rs:63` that feeds it, and
+// `go hash` reads 2 per file against the 1 below; the same at `ts.rs:1698` for ts.
+// A second blake3 is linear in file size and no wall budget on a loaded machine
+// separates it from the machine.
 #[test]
 fn phase_calls_per_file_are_pinned() {
     let corpus = [

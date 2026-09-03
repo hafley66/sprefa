@@ -2,7 +2,7 @@
 //! (field/variant/generic/impl/uses) that `Resolve<TypeF>` binds. Port of v5
 //! `edges_from`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use syn::punctuated::Punctuated;
 use syn::{
@@ -14,7 +14,7 @@ use crate::family::{ImplOwner, TypeEdgeCandidate, TypeEdgeKind, TypeF};
 use crate::rows::FamilyBundle;
 use crate::shape::{Span, Strings};
 use crate::tsi::Arg;
-use crate::types::TsiNames;
+use crate::types::{span_arg, TsiNames};
 
 use super::rust::syn_span;
 use super::rust_type_refs::{collect_path_args, path_name, primary_type, type_refs};
@@ -266,6 +266,21 @@ fn push_candidate(
 /// Type-parameter names in scope, innermost declaration last.
 type TsiScope = BTreeMap<String, u32>;
 
+/// Per-file walk bookkeeping: the ids whose application rows are already
+/// written, and the id each primitive class took.
+#[derive(Default)]
+struct TsiState {
+    called: BTreeSet<u32>,
+    classes: BTreeMap<&'static str, u32>,
+}
+
+/// The type names rust declares itself, which the v7 prelude also declares.
+/// `unit` is the empty tuple's class and the one entry with no written name.
+const PRIMITIVE_CLASSES: &[&str] = &[
+    "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "f32", "f64", "bool",
+    "char", "str", "usize", "isize",
+];
+
 /// The rust twin of the ts pass, over the items `edge_candidates` walks.
 fn tsi_rows(
     parsed: &syn::File,
@@ -277,8 +292,9 @@ fn tsi_rows(
     let _entered = span.enter();
     let mut names = TsiNames::new("rust");
     let outer = TsiScope::new();
+    let mut state = TsiState::default();
     for item in &parsed.items {
-        tsi_item(item, &outer, line_starts, strings, &mut names);
+        tsi_item(item, &outer, line_starts, strings, &mut names, &mut state);
     }
     sink.aux.tsi = names.into_facts();
     crate::trace::record_phase(&span, 0, sink.aux.tsi.len() as u64, 1);
@@ -290,6 +306,7 @@ fn tsi_item(
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     match item {
         syn::Item::Struct(declared) => {
@@ -303,7 +320,15 @@ fn tsi_item(
                 strings,
                 names,
             );
-            tsi_fields(owner, &declared.fields, &scope, line_starts, strings, names);
+            tsi_fields(
+                owner,
+                &declared.fields,
+                &scope,
+                line_starts,
+                strings,
+                names,
+                state,
+            );
         }
         syn::Item::Union(declared) => {
             let owner = tsi_declaration(&declared.ident, line_starts, strings, names);
@@ -317,12 +342,12 @@ fn tsi_item(
                 names,
             );
             let fields = Fields::Named(declared.fields.clone());
-            tsi_fields(owner, &fields, &scope, line_starts, strings, names);
+            tsi_fields(owner, &fields, &scope, line_starts, strings, names, state);
         }
         syn::Item::Enum(declared) => {
             let owner = tsi_declaration(&declared.ident, line_starts, strings, names);
             names.fact("tsi.sum", vec![Arg::Id(owner)]);
-            tsi_generics(
+            let scope = tsi_generics(
                 owner,
                 &declared.generics,
                 outer,
@@ -335,6 +360,19 @@ fn tsi_item(
                 let span = syn_span(line_starts, variant.ident.span());
                 let target = names.named(strings, &written, span);
                 names.edge(owner, &variant.ident.to_string(), target, position as i64);
+                // A unit variant carries nothing, so it states no shape.
+                if !matches!(variant.fields, Fields::Unit) {
+                    names.fact("tsi.product", vec![Arg::Id(target)]);
+                    tsi_fields(
+                        target,
+                        &variant.fields,
+                        &scope,
+                        line_starts,
+                        strings,
+                        names,
+                        state,
+                    );
+                }
             }
         }
         syn::Item::Trait(declared) => {
@@ -348,10 +386,19 @@ fn tsi_item(
                 strings,
                 names,
             );
-            for member in &declared.items {
-                if let syn::TraitItem::Fn(method) = member {
-                    tsi_callable(&method.sig, &scope, line_starts, strings, names);
-                }
+            for (position, method) in declared
+                .items
+                .iter()
+                .filter_map(|member| match member {
+                    syn::TraitItem::Fn(method) => Some(method),
+                    _ => None,
+                })
+                .enumerate()
+            {
+                let callable =
+                    tsi_callable(&method.sig, &scope, line_starts, strings, names, state);
+                let label = method.sig.ident.to_string();
+                names.edge(owner, &label, callable, position as i64);
             }
         }
         syn::Item::Type(declared) => {
@@ -364,19 +411,68 @@ fn tsi_item(
                 strings,
                 names,
             );
-            tsi_called(owner, &declared.ty, &scope, line_starts, strings, names);
+            tsi_application(
+                owner,
+                &declared.ty,
+                &scope,
+                line_starts,
+                strings,
+                names,
+                state,
+            );
         }
-        syn::Item::Impl(block) => tsi_impl(block, outer, line_starts, strings, names),
-        syn::Item::Fn(declared) => tsi_callable(&declared.sig, outer, line_starts, strings, names),
+        syn::Item::Const(declared) => {
+            let span = syn_span(line_starts, declared.ident.span());
+            tsi_has_type(
+                span,
+                &declared.ty,
+                outer,
+                line_starts,
+                strings,
+                names,
+                state,
+            );
+        }
+        syn::Item::Static(declared) => {
+            let span = syn_span(line_starts, declared.ident.span());
+            tsi_has_type(
+                span,
+                &declared.ty,
+                outer,
+                line_starts,
+                strings,
+                names,
+                state,
+            );
+        }
+        syn::Item::Impl(block) => tsi_impl(block, outer, line_starts, strings, names, state),
+        syn::Item::Fn(declared) => {
+            tsi_callable(&declared.sig, outer, line_starts, strings, names, state);
+        }
         syn::Item::Mod(module) => {
             if let Some((_, inner)) = &module.content {
                 for nested in inner {
-                    tsi_item(nested, outer, line_starts, strings, names);
+                    tsi_item(nested, outer, line_starts, strings, names, state);
                 }
             }
         }
         _ => {}
     }
+}
+
+/// A value occurrence and the type written at it. The occurrence is a range,
+/// never an id: naming the value's own symbol is the checker's row.
+fn tsi_has_type(
+    occurrence: Span,
+    ty: &Type,
+    scope: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) {
+    let target = tsi_type_id(ty, scope, line_starts, strings, names, state);
+    names.fact("tsi.has_type", vec![span_arg(occurrence), Arg::Id(target)]);
 }
 
 /// A declaration's own id, keyed on its bare name so a later written reference
@@ -399,6 +495,7 @@ fn tsi_impl(
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     let Some((self_span, self_name)) = self_ty_head(&block.self_ty, line_starts) else {
         return;
@@ -432,10 +529,20 @@ fn tsi_impl(
             );
         }
     }
-    for member in &block.items {
-        if let syn::ImplItem::Fn(method) = member {
-            tsi_callable(&method.sig, &scope, line_starts, strings, names);
-        }
+    // The self type owns the method, never the block: two blocks over one type
+    // reach it through one owner.
+    for (position, method) in block
+        .items
+        .iter()
+        .filter_map(|member| match member {
+            syn::ImplItem::Fn(method) => Some(method),
+            _ => None,
+        })
+        .enumerate()
+    {
+        let callable = tsi_callable(&method.sig, &scope, line_starts, strings, names, state);
+        let label = method.sig.ident.to_string();
+        names.edge(owner, &label, callable, position as i64);
     }
 }
 
@@ -455,6 +562,7 @@ fn tsi_generics(
             continue;
         };
         let id = names.anonymous(syn_span(line_starts, declared.ident.span()));
+        names.name(id, &declared.ident.to_string());
         names.fact(
             "tsi.parameter",
             vec![
@@ -490,25 +598,30 @@ fn tsi_fields(
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     for (position, field) in fields.iter().enumerate() {
         let label = match &field.ident {
             Some(ident) => ident.to_string(),
             None => position.to_string(),
         };
-        let target = tsi_type_id(&field.ty, scope, line_starts, strings, names);
+        let target = tsi_type_id(&field.ty, scope, line_starts, strings, names, state);
         names.edge(owner, &label, target, position as i64);
     }
 }
 
+/// Hands back the callable's id, which is what an owning type's member edge
+/// names. A free fn is ownerless and the id reaches nothing else.
 fn tsi_callable(
     signature: &syn::Signature,
     outer: &TsiScope,
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
-) {
+    state: &mut TsiState,
+) -> u32 {
     let callable = names.anonymous(syn_span(line_starts, signature.ident.span()));
+    names.name(callable, &signature.ident.to_string());
     names.fact("tsi.callable", vec![Arg::Id(callable)]);
     let scope = tsi_generics(
         callable,
@@ -518,12 +631,14 @@ fn tsi_callable(
         strings,
         names,
     );
+    // `&self` takes no input slot: the mode it is written in is `rust.ownership`,
+    // which only the checker states.
     let mut position = 0i64;
     for input in &signature.inputs {
         let syn::FnArg::Typed(typed) = input else {
             continue;
         };
-        let target = tsi_type_id(&typed.ty, &scope, line_starts, strings, names);
+        let target = tsi_type_id(&typed.ty, &scope, line_starts, strings, names, state);
         names.fact(
             "tsi.input",
             vec![Arg::Id(callable), Arg::Int(position), Arg::Id(target)],
@@ -531,22 +646,25 @@ fn tsi_callable(
         position += 1;
     }
     if let ReturnType::Type(_, returned) = &signature.output {
-        let target = tsi_type_id(returned, &scope, line_starts, strings, names);
+        let target = tsi_type_id(returned, &scope, line_starts, strings, names, state);
         names.fact(
             "tsi.output",
             vec![Arg::Id(callable), Arg::Int(0), Arg::Id(target)],
         );
     }
+    callable
 }
 
-/// A written `Name<Args>` alias body. Anything else emits no body row.
-fn tsi_called(
-    owner: u32,
+/// The application a written `Name<Args>` states, wherever written: the callee
+/// is that path with its arguments dropped. A lifetime argument takes no slot.
+fn tsi_application(
+    result: u32,
     ty: &Type,
     scope: &TsiScope,
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     let Type::Path(path) = strip_type(ty) else {
         return;
@@ -557,19 +675,22 @@ fn tsi_called(
     let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
         return;
     };
+    if !state.called.insert(result) {
+        return;
+    }
     let span = syn_span(line_starts, segment.ident.span());
     let callee = names.named(strings, &path_head_text(&path.path), span);
     let list = names.bare_id();
     names.fact(
         "tsi.called",
-        vec![Arg::Id(owner), Arg::Id(callee), Arg::Id(list)],
+        vec![Arg::Id(result), Arg::Id(callee), Arg::Id(list)],
     );
     let mut position = 0i64;
     for argument in &arguments.args {
         let GenericArgument::Type(written) = argument else {
             continue;
         };
-        let target = tsi_type_id(written, scope, line_starts, strings, names);
+        let target = tsi_type_id(written, scope, line_starts, strings, names, state);
         names.fact(
             "tsi.argument",
             vec![Arg::Id(list), Arg::Int(position), Arg::Id(target)],
@@ -578,30 +699,78 @@ fn tsi_called(
     }
 }
 
-/// A type parameter in scope wins over the file's written-text table, so the
-/// `T` of one declaration is never the `T` of another (identity rule 4).
+/// One id per written text, except a scoped type parameter (rule 4) and a
+/// tuple (rule 2). An array, slice, bare fn, `impl` or `dyn` states no shape.
 fn tsi_type_id(
     ty: &Type,
     scope: &TsiScope,
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) -> u32 {
     let text = type_text(ty);
-    match scope.get(&text) {
-        Some(&id) => id,
-        None => names.named(strings, &text, tsi_type_span(ty, line_starts)),
+    if let Some(&id) = scope.get(&text) {
+        return id;
     }
+    if let Some(class) = PRIMITIVE_CLASSES.iter().find(|class| **class == text) {
+        return tsi_primitive_id(class, names, state);
+    }
+    if let Type::Tuple(tuple) = strip_type(ty) {
+        if tuple.elems.is_empty() {
+            return tsi_primitive_id("unit", names, state);
+        }
+        return tsi_tuple_id(tuple, scope, line_starts, strings, names, state);
+    }
+    let id = names.named(strings, &text, tsi_type_span(ty, line_starts));
+    tsi_application(id, ty, scope, line_starts, strings, names, state);
+    id
 }
 
-/// The head identifier of a written type. `syn` is parsed without the printing
-/// feature, so no token stream is available to span the whole thing.
+/// A primitive is declared by the language, so it carries a class rather than
+/// an origin: no range in this file declares it.
+fn tsi_primitive_id(class: &'static str, names: &mut TsiNames, state: &mut TsiState) -> u32 {
+    if let Some(&id) = state.classes.get(class) {
+        return id;
+    }
+    let id = names.bare_id();
+    names.fact("tsi.type", vec![Arg::Id(id)]);
+    names.fact(
+        "tsi.primitive",
+        vec![Arg::Id(id), Arg::Atom(class.to_string())],
+    );
+    names.name(id, if class == "unit" { "()" } else { class });
+    state.classes.insert(class, id);
+    id
+}
+
+/// A tuple is structural, so its identity is its ordered edges (rule 2) rather
+/// than its text, and every occurrence takes a fresh id.
+fn tsi_tuple_id(
+    tuple: &syn::TypeTuple,
+    scope: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) -> u32 {
+    let id = names.anonymous(syn_span(line_starts, tuple.paren_token.span.join()));
+    names.fact("tsi.product", vec![Arg::Id(id)]);
+    for (position, element) in tuple.elems.iter().enumerate() {
+        let target = tsi_type_id(element, scope, line_starts, strings, names, state);
+        names.edge(id, &position.to_string(), target, position as i64);
+    }
+    id
+}
+
+/// The LAST path segment names a written type; the rest qualifies it. `syn` is
+/// parsed without printing, so no token stream spans the whole thing.
 fn tsi_type_span(ty: &Type, line_starts: &[u32]) -> Span {
     match strip_type(ty) {
         Type::Path(path) => path
             .path
             .segments
-            .first()
+            .last()
             .map(|segment| syn_span(line_starts, segment.ident.span()))
             .unwrap_or_else(Span::empty),
         Type::Array(inner) => tsi_type_span(&inner.elem, line_starts),

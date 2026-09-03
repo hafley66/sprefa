@@ -373,7 +373,7 @@ fn rust_trait_and_impl_without_the_associated_type() {
 }
 
 /// Identity rule 1 on the wire: one id per written text per file, one origin
-/// per id.
+/// per id, and a class in place of an origin where the language declares it.
 #[test]
 fn one_id_per_written_name() {
     for fixture in [TS_PROBE, RUST_PROBE] {
@@ -383,13 +383,21 @@ fn one_id_per_written_name() {
             .into_iter()
             .filter_map(|fact| as_id(&fact.args[0]))
             .collect();
+        let classed: BTreeSet<u32> = probe
+            .rows("tsi.primitive")
+            .into_iter()
+            .filter_map(|fact| as_id(&fact.args[0]))
+            .collect();
         let mut origins: BTreeMap<u32, usize> = BTreeMap::new();
         for fact in probe.rows("tsi.origin") {
             let id = as_id(&fact.args[0]).expect("an origin names a type");
             *origins.entry(id).or_default() += 1;
         }
         for id in &declared {
-            assert_eq!(origins.get(id), Some(&1), "{fixture}: id {id}");
+            // No range in this file declares a primitive, so it carries its
+            // class instead of an origin.
+            let wanted = if classed.contains(id) { None } else { Some(&1) };
+            assert_eq!(origins.get(id), wanted, "{fixture}: id {id}");
         }
     }
     let probe = Probe::read(TS_PROBE);
