@@ -23,7 +23,9 @@ pub use crate::schema::SCHEMA;
 pub use crate::scip_rows::{flatten_scip, scip_file_edges};
 use crate::shape::{content_id_of, Strings};
 use crate::source::ExtractOutput;
-use crate::tsi::types::{Arg as TsiArg, CoverageOut, Method, RunOut, WitnessOut, PROTOCOL_VERSION};
+use crate::tsi::types::{
+    Arg as TsiArg, CoverageOut, FactOut, Method, RunOut, WitnessOut, PROTOCOL_VERSION,
+};
 use crate::types::{CfgF, DataF};
 pub use crate::types::{FlatFact, SpanOut};
 
@@ -132,6 +134,33 @@ pub fn flatten_each<E>(
         }
     }
     Ok(())
+}
+
+/// The adapter leaves every span digest empty and numbers ids from 0 per file,
+/// so a stream over many files shifts each past `base`; returns the next free.
+pub(crate) fn tsi_rows_rebased(rows: &[FactOut], digest: &str, base: u32) -> (Vec<FactOut>, u32) {
+    let mut next = base;
+    let rebased = rows
+        .iter()
+        .map(|row| {
+            let mut row = row.clone();
+            for arg in &mut row.args {
+                match arg {
+                    TsiArg::Span(blob, _, _) => {
+                        blob.clear();
+                        blob.push_str(digest);
+                    }
+                    TsiArg::Id(id) => {
+                        *id += base;
+                        next = next.max(*id + 1);
+                    }
+                    _ => {}
+                }
+            }
+            row
+        })
+        .collect();
+    (rebased, next)
 }
 
 /// The relations a syntax run touched, in walk order. A parse enumerates no
@@ -291,17 +320,9 @@ fn flatten_type<E>(
             ty: strings.lookup(sig.ty).to_string(),
         })?;
     }
-    // The syntax tier's TSI rows ride the envelope only. The adapter left every
-    // span digest empty; the run's scope is where it is known.
+    // The syntax tier's TSI rows ride the envelope only.
     if let Some(digest) = digest {
-        for row in &bundle.aux.tsi {
-            let mut row = row.clone();
-            for arg in &mut row.args {
-                if let TsiArg::Span(blob, _, _) = arg {
-                    blob.clear();
-                    blob.push_str(digest);
-                }
-            }
+        for row in tsi_rows_rebased(&bundle.aux.tsi, digest, 0).0 {
             push(FlatFact::Fact(row))?;
         }
     }
