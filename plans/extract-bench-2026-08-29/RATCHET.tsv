@@ -2,10 +2,10 @@
 # oracle is the oracle's TOOL plus an optional variant joined by '-' (never a file name, never a dot); the tsv the id resolves to is oracle_files() in tests/bench/mod.rs.
 # recall = overlap/|oracle|, precision = overlap/|ours|, percent; check: 0.10 pt; cost lives beside this in RATCHET.cost.tsv; local-only (COMMON.md), never CI; bump: RATCHET_BUMP=1 improves floors, RATCHET_FORCE=1 rewrites.
 lang	family	tier	oracle	recall	precision	measured_at_sha
-go	call	syntax	codeql2	98.96	90.78	41333391a
-go	call	syntax	oracle-vta-bare	85.39	81.60	41333391a
-go	module	syntax	oracle	100.00	15.18	41333391a
-go	type	syntax	oracle-typedecl	73.37	97.04	41333391a
+go	call	syntax	codeql2	98.97	90.79	cf46c15cc
+go	call	syntax	oracle-vta-bare	85.40	81.60	cf46c15cc
+go	module	syntax	oracle	100.00	100.00	cf46c15cc
+go	type	syntax	oracle-typedecl	85.64	97.22	cf46c15cc
 rust	call	syntax	codeql	64.96	76.17	41333391a
 rust	call	syntax	oracle	75.66	49.78	41333391a
 rust	call	syntax	scip_override	78.89	45.25	41333391a
