@@ -1695,10 +1695,9 @@ impl Project<CallF> for CallProjector<'_> {
         // function body. The rows live in the per-blob facts store (never in
         // the wired aux, so the phase-1 wire stays byte-identical); the
         // resolve leg joins them by `CallSite.span`.
-        ts_receivers::store_facts(
-            content_id_of(self.content.as_bytes()),
-            ts_receivers::collect(program),
-        );
+        let blob = crate::dispatch::extracting_blob(self.content.as_bytes())
+            .unwrap_or_else(|| content_id_of(self.content.as_bytes()));
+        ts_receivers::store_facts(blob, ts_receivers::collect(program));
     }
 }
 
