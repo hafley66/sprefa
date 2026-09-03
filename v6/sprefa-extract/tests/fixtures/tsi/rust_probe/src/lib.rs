@@ -4,6 +4,8 @@
 #[cfg(feature = "gated")]
 pub mod gated;
 
+pub mod other;
+
 pub trait Mapper<T> {
     type Output;
 

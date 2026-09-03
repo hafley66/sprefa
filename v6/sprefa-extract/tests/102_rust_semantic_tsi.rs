@@ -482,7 +482,7 @@ fn an_associated_type_is_declared_by_a_trait_and_answered_by_an_impl() {
         walk.diagnostics()
             .get(&(semantic, "tsi.conforms".to_string()))
             .map(String::as_str),
-        Some("declared impls only; blanket and auto traits not enumerated")
+        Some("declared impls of supplied types and traits; blanket and auto traits not enumerated")
     );
 }
 
