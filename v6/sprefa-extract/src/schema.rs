@@ -194,7 +194,15 @@ KIND VOCABULARIES (the `kind` field)
                     per specifier, hops=1).
                     Precedence when several apply: namespace, star, indirect,
                     default, local.
-  resolved_type_edge kind  field | impl | variant | generic | uses | doc_ref
+  resolved_type_edge kind  field | impl | variant | generic | uses | doc_ref |
+                    implements (one type satisfies one interface/trait) |
+                    overrides (one CALLABLE satisfies another). The last two
+                    come only from a SCIP index's `is_implementation`
+                    relationships, carry resolution_origin=scip, and are the
+                    one type edge whose target may sit OUTSIDE the supplied
+                    paths: an index is a whole-project artifact, so binding
+                    the target to the chunk would make the row unspellable
+                    from any chunking of the corpus.
   resolution_origin        WHICH resolver leg answered, on resolved_edge and
                     resolved_type_edge alike: same_file | corpus_unique |
                     module_plane | checker | alias_chain | param | receiver |
@@ -233,6 +241,14 @@ SCIP FACTS MODE (--scip-facts)
   is an occurrence with definition true, a reference is one without, a local is
   a `local `-prefixed symbol, and an implements edge is a scip_relationship with
   is_implementation. Those filters and joins belong above this binary.
+
+  The one join a RESOLVE does read is `is_implementation`: under
+  `--resolve --family type` with `--project-root` and an index, every pair whose
+  implementing symbol is DEFINED in a supplied file becomes a resolved_type_edge
+  of kind implements or overrides, and every non-callable pair also becomes a
+  `tsi.conforms(Implementor, Interface, scip)` fact under `--witness`. Nothing
+  else in the index reaches the resolve's type plane, and occurrences alone
+  never carry the interface-to-implementor hop.
 
   The one thing not passed through is the scip.proto Symbol / Package /
   Descriptor message family, which is never serialized into an index: those

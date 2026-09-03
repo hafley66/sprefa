@@ -337,7 +337,7 @@ fn start_of(occurrence: &ScipOccurrence) -> (i32, i32) {
 /// A symbol usable in the def/ref graph: nonempty and not document-scoped.
 /// `local N` is reused per document, so joining on it across files would mint
 /// relationships between unrelated files.
-fn usable_symbol(symbol: &str) -> bool {
+pub(crate) fn usable_symbol(symbol: &str) -> bool {
     !symbol.is_empty() && !symbol.starts_with("local ")
 }
 
@@ -346,7 +346,7 @@ fn usable_symbol(symbol: &str) -> bool {
 /// PARAMETER descriptor (`…getPet().(id)`) also holds parens but ends with a
 /// bare `)`; excluding it is the fix for a body reference being attributed to
 /// the nearest parameter instead of its method.
-fn is_callable_def(symbol: &str) -> bool {
+pub(crate) fn is_callable_def(symbol: &str) -> bool {
     symbol.ends_with(").")
 }
 
@@ -383,7 +383,7 @@ fn receiver_type(symbol: &str) -> Option<String> {
 
 /// The trailing identifier run of a symbol: `… Foo#` -> `Foo`, `… bar().` ->
 /// `bar`. Ported from v5 `engine::scip_descriptor_name`.
-fn descriptor_name(symbol: &str) -> Option<String> {
+pub(crate) fn descriptor_name(symbol: &str) -> Option<String> {
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     let mut last: Option<(usize, usize)> = None;
     let mut run_start: Option<usize> = None;
