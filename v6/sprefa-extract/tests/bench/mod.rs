@@ -200,7 +200,7 @@ pub fn oracle_path(lang: &str, family: &str, oracle: &str) -> PathBuf {
 
 /// The whole matrix, one place. Hand-listed, never a cartesian product: a
 /// (lang, family, tier, oracle) whose oracle tsv does not exist is not a case.
-/// go has no checker tier and no corpus has a scip-tier oracle yet.
+/// No corpus has a scip-tier oracle yet.
 pub fn cases() -> &'static [Case] {
     &[
         Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "oracle", projection: Projection::Raw },
@@ -215,6 +215,8 @@ pub fn cases() -> &'static [Case] {
         Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "codeql2", projection: Projection::GoMethod },
         Case { lang: "go", family: "module", tier: Tier::Syntax, oracle: "oracle", projection: Projection::GoScope },
         Case { lang: "go", family: "type", tier: Tier::Syntax, oracle: "oracle-typedecl", projection: Projection::Raw },
+        Case { lang: "go", family: "call", tier: Tier::Checker, oracle: "codeql2", projection: Projection::GoMethod },
+        Case { lang: "go", family: "type", tier: Tier::Checker, oracle: "oracle-typedecl", projection: Projection::Raw },
         Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "oracle", projection: Projection::RustCorpus },
         Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "scip_override", projection: Projection::RustCorpus },
         Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "codeql", projection: Projection::RustCorpus },
@@ -957,6 +959,7 @@ fn request<'a>(files: &'a [PathBuf], corpus: &'a Corpus, tier: Tier) -> ResolveR
         occurrence_text: false,
         rust_checker: (checker && corpus.lang == "rust").then_some(corpus.root.as_path()),
         ts_checker: (checker && corpus.lang == "ts5").then_some(corpus.root.as_path()),
+        go_checker: (checker && corpus.lang == "go").then_some(corpus.root.as_path()),
         witness: false,
     }
 }
@@ -988,7 +991,10 @@ pub fn run(lang: &str, tier: Tier) -> Run {
             cfg!(feature = "ts-checker"),
             "ratchet ts5 checker: built without the ts-checker feature; run `just extract-ratchet`",
         ),
-        ("go", Tier::Checker) => panic!("go has no checker tier"),
+        ("go", Tier::Checker) => assert!(
+            cfg!(feature = "go-checker"),
+            "ratchet go checker: built without the go-checker feature; run `just extract-ratchet`",
+        ),
         (other, Tier::Checker) => panic!("{other} has no checker tier"),
         (_, Tier::Scip) => panic!("the scip tier has no case yet"),
     }
@@ -1248,6 +1254,15 @@ pub const RSS_TOLERANCE_PCT: f64 = 10.0;
 /// this far below it, outside the run-to-run band.
 pub const CEILING_TIGHTEN_MARGIN: f64 = 0.90;
 
+/// Whether any normal-form row carries the `checker` leg. The one question
+/// that separates a tier that ran from a tier that declined into the syntax leg.
+fn names_a_checker_row(forms: &NormalForms) -> bool {
+    [&forms.call_origins, &forms.type_origins]
+        .into_iter()
+        .flat_map(|origins| origins.values())
+        .any(|row| row.contains("checker"))
+}
+
 /// Rows per origin, over the corpus's own normal-form rows (before any oracle
 /// projection): a leg that starts answering 10x more moves a count here before
 /// it moves precision anywhere. A row carrying several origins counts under
@@ -1312,6 +1327,17 @@ pub fn ratchet(lang: &str, tier: Tier) {
 
     let measured = run(lang, tier);
     print_origin_table(&leg, &measured.forms);
+    // SABOTAGE RECEIPT (this branch, sha e0b93498f): the go sidecar marshalled
+    // a nil row slice to `null`, the wire decoder rejected the line, the tier
+    // declined, and this leg wrote go checker floors that were the syntax
+    // floors to the hundredth. A checker leg that named no checker row is a
+    // tier that did not run, never a tier that agreed with the name match.
+    if tier == Tier::Checker {
+        assert!(
+            names_a_checker_row(&measured.forms),
+            "ratchet {leg}: the checker tier answered NO row (origin table above);              it declined and this leg would write syntax numbers under checker floors"
+        );
+    }
     let sha = measured_at_sha();
     let mut floors = read_ratchet().unwrap_or_default();
     let mut ceilings = read_cost_ratchet().unwrap_or_default();

@@ -3,6 +3,7 @@
 # check: wall +15% / rss +10% (ceilings at the worst of repeated runs); bump: RATCHET_BUMP=1 tightens a ceiling only by a 10%+ margin, RATCHET_FORCE=1 rewrites.
 lang	tool	tier	files	wall_ms	rss_mb	pid	measured_at_sha
 go	sprefa	syntax	5097	2998	831	68923	41333391a
+go	sprefa	checker	5097	5800	898	71322	e0b93498f
 rust	sprefa	syntax	873	564	666	69937	41333391a
 rust	sprefa	checker	873	12269	4765	70299	41333391a
 ts5	sprefa	syntax	600	826	530	67326	41333391a

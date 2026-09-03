@@ -4,8 +4,10 @@
 lang	family	tier	oracle	recall	precision	measured_at_sha
 go	call	syntax	codeql2	98.97	90.79	cf46c15cc
 go	call	syntax	oracle-vta-bare	85.40	81.60	cf46c15cc
+go	call	checker	codeql2	99.00	90.86	e0b93498f
 go	module	syntax	oracle	100.00	100.00	cf46c15cc
 go	type	syntax	oracle-typedecl	85.64	97.22	cf46c15cc
+go	type	checker	oracle-typedecl	85.43	97.14	e0b93498f
 rust	call	syntax	codeql	65.27	77.15	1b2464c9b
 rust	call	syntax	oracle	76.19	50.56	1b2464c9b
 rust	call	syntax	scip_override	79.36	45.85	1b2464c9b

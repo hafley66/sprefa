@@ -38,6 +38,12 @@ fn ratchet_go_syntax() {
 
 #[test]
 #[ignore = "local corpora only; run via `just extract-ratchet`"]
+fn ratchet_go_checker() {
+    bench::ratchet("go", Tier::Checker);
+}
+
+#[test]
+#[ignore = "local corpora only; run via `just extract-ratchet`"]
 fn ratchet_rust_syntax() {
     bench::ratchet("rust", Tier::Syntax);
 }

@@ -84,11 +84,11 @@ extract-ratchet:
     #!/usr/bin/env bash
     set -euo pipefail
     cd {{ v6 }}/sprefa-extract
-    for leg in ts5_syntax ts5_checker go_syntax rust_syntax rust_checker; do
-      {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli,rust-checker,ts-checker --test ratchet_recall -- --exact --ignored --nocapture "ratchet_${leg}"
+    for leg in ts5_syntax ts5_checker go_syntax go_checker rust_syntax rust_checker; do
+      {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli,rust-checker,ts-checker,go-checker --test ratchet_recall -- --exact --ignored --nocapture "ratchet_${leg}"
     done
     # Same feature set as the legs above: a narrower one rebuilds the whole tree.
-    {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli,rust-checker,ts-checker --test bench_normal_form -- --exact --ignored --nocapture rust_normal_form_agrees_with_normalize_py_over_the_go_corpus
+    {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli,rust-checker,ts-checker,go-checker --test bench_normal_form -- --exact --ignored --nocapture rust_normal_form_agrees_with_normalize_py_over_the_go_corpus
 
 # architecture claims machine-check + atlas re-emit
 # budget: measured 0.9s, default 300s (ARCH_BUDGET_S)
