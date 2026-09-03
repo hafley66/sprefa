@@ -19,8 +19,8 @@ use std::collections::BTreeSet;
 
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
-    DfParam, DocFact, DocTag, ProjectEdge, PyBind, PyCallArg, PyCallBind, PyDecor, PyDefault,
-    PyParam, PyRetCall, PyReturn, PySubCall, ResolutionOrigin, SigSlot, Specifier, SpecifierKind,
+    DfParam, DocFact, DocTag, ProjectEdge, PyBind, PyCallArg, PyDecor, PyDefault, PyParam,
+    PyRetCall, PyReturn, PySubCall, ResolutionOrigin, SigSlot, Specifier, SpecifierKind,
     TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::lang::{AstGrepParser, CstProjector};
@@ -519,19 +519,26 @@ fn py_lambda_name(lambdas: &[(Span, String)], node: tree_sitter::Node) -> Option
         .map(|(_, name)| format!("{name}@{}", span.start))
 }
 
-/// The def start a lambda value spelling carries, None for any other name.
-fn py_lambda_value_start(name: &str) -> Option<u32> {
+/// The call-result value spelling: `<call>@<function-node start>`.
+fn py_call_value_name(func: tree_sitter::Node) -> String {
+    format!("<call>@{}", func.start_byte())
+}
+
+/// A value spelling that points at a span start (`<lambdaN>@start`,
+/// `<call>@start`): (head, start). None for a plain name.
+fn py_value_ref(name: &str) -> Option<(&str, u32)> {
     let (head, start) = name.rsplit_once('@')?;
-    if !head.starts_with("<lambda") {
+    if !head.starts_with('<') {
         return None;
     }
-    start.parse().ok()
+    Some((head, start.parse().ok()?))
 }
 
 /// The name a value expression carries into a bind, argument or return row:
 /// a bare identifier, the trailing name of an attribute (`a.func` names
 /// `func`, the same spelling a call through it resolves by), a minted
-/// lambda, or a parenthesized one of those. Anything else carries no name.
+/// lambda, a call result, or a parenthesized one of those. Anything else
+/// carries no name.
 fn py_value_name(
     node: tree_sitter::Node,
     src: &[u8],
@@ -543,6 +550,7 @@ fn py_value_name(
             .child_by_field_name("attribute")
             .map(|attr| py_text(attr, src).to_string()),
         "lambda" => py_lambda_name(lambdas, node),
+        "call" => node.child_by_field_name("function").map(py_call_value_name),
         "parenthesized_expression" => node
             .named_child(0)
             .and_then(|inner| py_value_name(inner, src, lambdas)),
@@ -843,9 +851,9 @@ fn py_shape_bind_pattern(
     }
 }
 
-/// One (target, key path) bound to a value node: the name row (or KILL), the
-/// call-result row for a `call` value, and one element row per slot of a
-/// container literal, nested literals extending the key path.
+/// One (target, key path) bound to a value node: the name row (or KILL), and
+/// one element row per slot of a container literal, nested literals
+/// extending the key path.
 fn py_bind_named(
     target: crate::shape::NameId,
     key: Option<String>,
@@ -863,15 +871,6 @@ fn py_bind_named(
         key: key.as_deref().map(|text| strings.intern(text)),
         value,
     });
-    if key.is_none() && rhs.kind() == "call" {
-        if let Some(func) = rhs.child_by_field_name("function") {
-            sink.aux.py_call_binds.push(PyCallBind {
-                span,
-                target,
-                site: node_span(func),
-            });
-        }
-    }
     py_bind_slots(target, key, rhs, span, src, strings, sink, lambdas);
 }
 
@@ -3016,7 +3015,7 @@ impl Resolve<CallF> for PythonSource {
 }
 
 /// The same-file dynamic-shape resolver: reads the python-only aux rows
-/// (`py_binds`, `py_call_binds`, `py_args`, `py_params`, `py_defaults`,
+/// (`py_binds`, `py_args`, `py_params`, `py_defaults`,
 /// `py_returns`, `py_sub_calls`, `py_ret_calls`) and answers the sites a bare
 /// callee name cannot. Every leg is unique-candidate or syntactic-only: a
 /// shape that cannot be resolved honestly resolves to nothing.
@@ -3055,9 +3054,9 @@ impl<'a> PyResolver<'a> {
     /// with span.start < at.start, else the last row overall (a def body can
     /// sit textually before the module-level binding that is live when the
     /// call runs). A KILL row (value None) clears the name at its own byte
-    /// order; a call-result row or an element row at the same span outranks
-    /// the container-level KILL beside it. `within` restricts the rows to one
-    /// def's span (a def-local binding).
+    /// order; an element row at the same span outranks the container-level
+    /// KILL beside it. `within` restricts the rows to one def's span (a
+    /// def-local binding).
     fn latest_bind(
         &self,
         target: &str,
@@ -3089,18 +3088,12 @@ impl<'a> PyResolver<'a> {
             .filter(|bind| inside(bind.span))
             .map(|bind| {
                 let rank = u8::from(bind.key.is_some());
-                (bind.span, rank, bind.value.map(PyBound::Name))
-            })
-            .chain(
-                self.call
-                    .aux
-                    .py_call_binds
-                    .iter()
-                    .filter(|_| key.is_none())
-                    .filter(|bind| strings.lookup(bind.target) == target)
-                    .filter(|bind| inside(bind.span))
-                    .map(|bind| (bind.span, 1u8, Some(PyBound::Call(bind.site)))),
-            );
+                (
+                    bind.span,
+                    rank,
+                    bind.value.map(|value| self.bound_of(value)),
+                )
+            });
         let mut latest_before: Option<(Span, u8, Option<PyBound>)> = None;
         let mut latest: Option<(Span, u8, Option<PyBound>)> = None;
         for row in rows {
@@ -3119,8 +3112,21 @@ impl<'a> PyResolver<'a> {
         latest_before.or(latest)?.2
     }
 
-    /// A name to a def: corpus name-match first, then the same-file binding
-    /// chain (cycle-guarded).
+    /// A value spelling as a binding: `<call>@start` is the result of the
+    /// site whose function node starts there; anything else is a name.
+    fn bound_of(&self, value: crate::shape::NameId) -> PyBound {
+        let text = self.output.strings.lookup(value);
+        if let Some(("<call>", start)) = py_value_ref(text) {
+            if let Some(site) = self.call.aux.sites.iter().find(|s| s.span.start == start) {
+                return PyBound::Call(site.span);
+            }
+        }
+        PyBound::Name(value)
+    }
+
+    /// A name to a def: a span-spelled value first (lambda def, call result),
+    /// then corpus name-match, then the same-file binding chain
+    /// (cycle-guarded).
     fn name_target(
         &self,
         name: &str,
@@ -3131,14 +3137,22 @@ impl<'a> PyResolver<'a> {
             return None;
         }
         seen.push(name.to_string());
-        if let Some(start) = py_lambda_value_start(name) {
-            let own = self.own.clone()?;
-            let node = self
-                .call
-                .nodes
-                .iter()
-                .find(|n| n.span.start == start && n.kind == CallKind::Lambda)?;
-            return Some((own, node.span));
+        match py_value_ref(name) {
+            Some(("<call>", start)) => {
+                let site = self.call.aux.sites.iter().find(|s| s.span.start == start)?;
+                let (blob, dspan) = self.call_site_def(site.span)?;
+                return self.returned_target(blob, dspan, site.span, at);
+            }
+            Some((_, start)) => {
+                let own = self.own.clone()?;
+                let node = self
+                    .call
+                    .nodes
+                    .iter()
+                    .find(|n| n.span.start == start && n.kind == CallKind::Lambda)?;
+                return Some((own, node.span));
+            }
+            None => {}
         }
         if let Some(t) = PythonSource::call_name_match(self.output, self.index, name) {
             return Some(t);
@@ -3476,12 +3490,6 @@ impl<'a> PyResolver<'a> {
             .py_binds
             .iter()
             .any(|b| b.key.is_none() && strings.lookup(b.target) == name)
-            || self
-                .call
-                .aux
-                .py_call_binds
-                .iter()
-                .any(|b| strings.lookup(b.target) == name)
             || self
                 .call
                 .aux
