@@ -1,0 +1,27 @@
+# one row per (repo, lang, family, tier, oracle). DATA ROWS ONLY: no rollup, no total, no median lives here.
+# recall = matched/oracle_rows, precision = matched/ours, percent; ours = matched + contradicted + unjudged.
+# oracle = the language's own SCIP indexer via `extract --family scip ROOT`; both sides scoped to the `files` extracted.
+repo	lang	corpus_class	family	tier	oracle	measure_id	recall	precision	matched	contradicted	unjudged	ours	oracle_rows	oracle_ref_rows	files	wall_ms	sha	tier_decline
+fatedier/frp	go	heldout	call	syntax	scip	go.call.syntax.scip	92.96	66.47	3114	456	1115	4685	3350	15352	351	415	832df8dff66d	
+mickael-kerjean/filestash	go	heldout	call	syntax	scip	go.call.syntax.scip	79.29	55.10	2332	627	1273	4232	2941	14212	369	813	d2d21a06c744	
+gitleaks/gitleaks	go	heldout	call	syntax	scip	go.call.syntax.scip	93.53	90.28	1589	47	124	1760	1699	5490	204	225	b58d3f102cf3	
+oraios/serena	python	heldout	call	syntax	scip	python.call.syntax.scip	52.57	41.12	2545	1312	2332	6189	4841	21473	439	606	801a388c2b7a	
+getredash/redash	python	heldout	call	syntax	scip	python.call.syntax.scip	61.66	63.45	2113	849	368	3330	3427	11538	292	272	8f6b15d30da4	
+ultralytics/yolov5	python	heldout	call	syntax	scip	python.call.syntax.scip	63.93	54.32	390	206	122	718	610	3373	52	163	35b48237aef6	
+umami-software/umami	ts	heldout	call	syntax	scip	ts.call.syntax.scip	96.24	59.10	3988	475	2285	6748	4144	15774	1044	557	ca661c705798	
+umami-software/umami	ts	heldout	call	checker	scip	ts.call.checker.scip	96.40	55.70	3995	533	2644	7172	4144	15774	1044	5574	ca661c705798	
+vitejs/vite	ts	heldout	call	syntax	scip	ts.call.syntax.scip	58.91	23.84	1408	356	4141	5905	2390	9699	557	517	07d65709f380	
+vitejs/vite	ts	heldout	call	checker	scip	ts.call.checker.scip	65.31	25.33	1561	262	4339	6162	2390	9699	557	19962	07d65709f380	
+typescript-go	go	tuning	call	syntax	scip	go.call.syntax.scip	97.12	78.35	72703	10715	9370	92788	74856	211558	4870	7871	89d5d5b2849a+subsampled	
+trpc/trpc	ts	heldout	call	syntax	scip	ts.call.syntax.scip	44.70	9.74	628	275	5547	6450	1405	8296	864	836	4f5315219f94	
+trpc/trpc	ts	heldout	call	checker	scip	ts.call.checker.scip	44.70	9.74	628	275	5547	6450	1405	8296	864	6322	4f5315219f94	tier.tsc: the driver failed: Node.js v20.20.2
+TypeScript-5.9	ts	tuning	call	syntax	scip	ts.call.syntax.scip	61.97	28.58	19651	1364	47743	68758	31711	112706	600	2909	7e133bea121a	
+TypeScript-5.9	ts	tuning	call	checker	scip	ts.call.checker.scip	68.61	29.41	21757	1296	50914	73967	31711	112706	600	23297	7e133bea121a	
+rust-analyzer	rust	tuning	call	syntax	scip	rust.call.syntax.scip	66.38	67.02	34570	7167	9847	51584	52081	149045	873	1344	af4111f0bf85	
+rust-analyzer	rust	tuning	call	checker	scip	rust.call.checker.scip	90.06	71.24	46905	4986	13949	65840	52081	149045	873	18264	af4111f0bf85	tier.rust-analyzer: /Users/chrishafley/projects/rust-analyzer/crates/proc-macro-srv/proc-macro-test/imp/src/lib.rs: owns no module in the loaded crate graph (cfg-gated, or outside every crate root) | 
+web-infra-dev/rspack	rust	heldout	call	syntax	scip	rust.call.syntax.scip	63.29	49.89	16204	6798	9476	32478	25604	94058	1367	13935	e6fa681c9a27	
+web-infra-dev/rspack	rust	heldout	call	checker	scip	rust.call.checker.scip	83.74	64.14	21441	3177	8810	33428	25604	94058	1367	98909	e6fa681c9a27	tier.rust-analyzer: /private/tmp/heldout-checkouts/web-infra-dev_rspack/crates/rspack_core/src/debug_info.rs: owns no module in the loaded crate graph (cfg-gated, or outside every crate root) | tier.r
+BigPizzaV3/CodexPlusPlus	rust	heldout	call	syntax	scip	rust.call.syntax.scip	86.79	71.30	6006	1132	1285	8423	6920	18647	121	396	f70ec61a4a0a	
+BigPizzaV3/CodexPlusPlus	rust	heldout	call	checker	scip	rust.call.checker.scip	89.36	81.84	6184	602	770	7556	6920	18647	121	13071	f70ec61a4a0a	tier.rust-analyzer: /private/tmp/heldout-checkouts/BigPizzaV3_CodexPlusPlus/crates/codex-plus-core/src/windows_integration.rs: owns no module in the loaded crate graph (cfg-gated, or outside every cra
+rust-lang/rust-clippy	rust	heldout	call	syntax	scip	rust.call.syntax.scip	91.64	45.03	7038	2132	6460	15630	7680	18579	2345	1354	a11da7171d91	
+rust-lang/rust-clippy	rust	heldout	call	checker	scip	rust.call.checker.scip	92.32	46.21	7090	1940	6314	15344	7680	18579	2345	9523	a11da7171d91	tier.rust-analyzer: /private/tmp/heldout-checkouts/rust-lang_rust-clippy/clippy_dev/src/deprecate_lint.rs: owns no module in the loaded crate graph (cfg-gated, or outside every crate root) | tier.rust

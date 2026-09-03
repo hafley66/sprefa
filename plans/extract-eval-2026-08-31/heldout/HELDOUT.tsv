@@ -1,0 +1,15 @@
+# the held-out draw scored by SCORES.reference-graph.tsv, in its original order;
+# `run.py heldout` re-scores exactly this set so the two ledgers compare row for row.
+repo	lang
+fatedier/frp	go
+mickael-kerjean/filestash	go
+gitleaks/gitleaks	go
+oraios/serena	python
+getredash/redash	python
+ultralytics/yolov5	python
+umami-software/umami	ts
+vitejs/vite	ts
+trpc/trpc	ts
+web-infra-dev/rspack	rust
+BigPizzaV3/CodexPlusPlus	rust
+rust-lang/rust-clippy	rust
