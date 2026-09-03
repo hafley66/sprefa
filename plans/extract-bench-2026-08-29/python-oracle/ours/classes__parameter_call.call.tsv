@@ -1,1 +1,3 @@
 classes/parameter_call/main.py		classes/parameter_call/main.py	func1
+classes/parameter_call/main.py	func1	classes/parameter_call/main.py	func2
+classes/parameter_call/main.py	func2	classes/parameter_call/main.py	func3

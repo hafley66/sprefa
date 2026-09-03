@@ -19,10 +19,9 @@ use std::collections::BTreeSet;
 
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
-    DfParam, DocFact, DocTag, ProjectEdge, PyBind, PyCallArg, PyDecor, PyDefault, PyParam,
-    PyRetCall, PyReturn, PySubCall, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
-    TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
-    ResolutionOrigin,
+    DfParam, DocFact, DocTag, ProjectEdge, PyBind, PyCallArg, PyCallBind, PyDecor, PyDefault,
+    PyParam, PyRetCall, PyReturn, PySubCall, ResolutionOrigin, SigSlot, Specifier, SpecifierKind,
+    TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::lang::{AstGrepParser, CstProjector};
 use crate::rows::{Edge, FamilyBundle, Node};
@@ -427,9 +426,10 @@ fn project_call(
     // Skipped in call_def wire rows; MODULE_CALLER answers a null caller_name,
     // the bench join's empty src_name for module-level rows.
     sink.nodes.push(Node::new(node_span(root), MODULE_CALLER));
-    py_walk_call_defs(root, src, strings, sink, None, false);
-    py_walk_call_sites(root, src, strings, sink);
-    py_walk_shapes(root, src, strings, sink);
+    let mut lambdas: Vec<(Span, String)> = Vec::new();
+    py_walk_call_defs(root, src, strings, sink, None, true, &mut 0, &mut lambdas);
+    py_walk_call_sites(root, src, strings, sink, &lambdas);
+    py_walk_shapes(root, src, strings, sink, &lambdas);
     py_module_specifiers(root, src, strings, sink);
 }
 
@@ -448,14 +448,20 @@ fn def_span(child: tree_sitter::Node) -> Span {
 }
 
 /// One CallF def node per Free function / Method / Lambda. `parent` is the
-/// enclosing class name (method vs free); `in_fn` gates lambda minting.
+/// enclosing class name (method vs free); `in_scope` gates lambda minting (a
+/// class body is not a scope that owns lambdas). A lambda is named
+/// `<lambdaN>` by `counter`, which restarts per module, def and lambda body
+/// (PyCG's per-scope numbering); `lambdas` collects (span, name) for the
+/// shape rows that bind or pass a lambda by value.
 fn py_walk_call_defs(
     node: tree_sitter::Node,
     src: &[u8],
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
     parent: Option<&str>,
-    in_fn: bool,
+    in_scope: bool,
+    counter: &mut u32,
+    lambdas: &mut Vec<(Span, String)>,
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -464,9 +470,9 @@ fn py_walk_call_defs(
             "class_definition" => {
                 let owner = target.child_by_field_name("name").map(|n| py_text(n, src));
                 // A class body is not a fn scope: a bare class-attribute lambda
-                // is skipped (in_fn reset), matching v5's enclosing == "".
+                // is skipped (in_scope reset), matching v5's enclosing == "".
                 if let Some(body) = target.child_by_field_name("body") {
-                    py_walk_call_defs(body, src, strings, sink, owner, false);
+                    py_walk_call_defs(body, src, strings, sink, owner, false, &mut 0, lambdas);
                 }
             }
             "function_definition" => {
@@ -480,19 +486,67 @@ fn py_walk_call_defs(
                     sink.nodes
                         .push(Node::new(span, kind).with_name(strings.intern(name)));
                     if let Some(body) = target.child_by_field_name("body") {
-                        py_walk_call_defs(body, src, strings, sink, None, true);
+                        py_walk_call_defs(body, src, strings, sink, None, true, &mut 0, lambdas);
                     }
                 }
             }
             // `is_named` keeps the `lambda` KEYWORD token (same node kind) from
             // double-minting.
-            "lambda" if in_fn && target.is_named() => {
+            "lambda" if in_scope && target.is_named() => {
                 let span = def_span(target);
-                sink.nodes.push(Node::new(span, CallKind::Lambda));
-                py_walk_call_defs(target, src, strings, sink, parent, true);
+                *counter += 1;
+                let name = format!("<lambda{counter}>");
+                sink.nodes
+                    .push(Node::new(span, CallKind::Lambda).with_name(strings.intern(&name)));
+                lambdas.push((span, name));
+                py_walk_call_defs(target, src, strings, sink, parent, true, &mut 0, lambdas);
             }
-            _ => py_walk_call_defs(target, src, strings, sink, parent, in_fn),
+            _ => py_walk_call_defs(
+                target, src, strings, sink, parent, in_scope, counter, lambdas,
+            ),
         }
+    }
+}
+
+/// The value spelling of a minted lambda: `<lambdaN>@<def start>`. The
+/// `<lambdaN>` def name repeats per scope, so a value row names the def by
+/// its span start and `py_lambda_value_span` reads it back.
+fn py_lambda_name(lambdas: &[(Span, String)], node: tree_sitter::Node) -> Option<String> {
+    let span = def_span(node);
+    lambdas
+        .iter()
+        .find(|(candidate, _)| *candidate == span)
+        .map(|(_, name)| format!("{name}@{}", span.start))
+}
+
+/// The def start a lambda value spelling carries, None for any other name.
+fn py_lambda_value_start(name: &str) -> Option<u32> {
+    let (head, start) = name.rsplit_once('@')?;
+    if !head.starts_with("<lambda") {
+        return None;
+    }
+    start.parse().ok()
+}
+
+/// The name a value expression carries into a bind, argument or return row:
+/// a bare identifier, the trailing name of an attribute (`a.func` names
+/// `func`, the same spelling a call through it resolves by), a minted
+/// lambda, or a parenthesized one of those. Anything else carries no name.
+fn py_value_name(
+    node: tree_sitter::Node,
+    src: &[u8],
+    lambdas: &[(Span, String)],
+) -> Option<String> {
+    match node.kind() {
+        "identifier" => Some(py_text(node, src).to_string()),
+        "attribute" => node
+            .child_by_field_name("attribute")
+            .map(|attr| py_text(attr, src).to_string()),
+        "lambda" => py_lambda_name(lambdas, node),
+        "parenthesized_expression" => node
+            .named_child(0)
+            .and_then(|inner| py_value_name(inner, src, lambdas)),
+        _ => None,
     }
 }
 
@@ -500,13 +554,14 @@ fn py_walk_call_defs(
 /// or trailing attribute name). The site span is the callee node's span. A
 /// `call`-or-`subscript` function has no name: the site is emitted with an
 /// empty callee and its shape row (`PyRetCall` / `PySubCall`) drives
-/// resolution. Every site's bare-identifier arguments land in `py_args`,
-/// keyed by the site span.
+/// resolution. Every site's named arguments land in `py_args`, keyed by the
+/// site span.
 fn py_walk_call_sites(
     node: tree_sitter::Node,
     src: &[u8],
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
+    lambdas: &[(Span, String)],
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -551,30 +606,47 @@ fn py_walk_call_sites(
                         _ => {}
                     }
                 }
-                py_collect_call_args(child, span, src, strings, sink);
+                py_collect_call_args(child, span, src, strings, sink, lambdas);
             }
         }
-        py_walk_call_sites(child, src, strings, sink);
+        py_walk_call_sites(child, src, strings, sink, lambdas);
     }
 }
 
-/// The (base, key) of a one-level literal subscript `base["a"]` / `base[0]`;
-/// None for a nested subscript, a computed key, or any other shape.
+/// Nested key-path levels of one `PyBind.key` / `PySubCall.key` are joined by
+/// this separator (a control byte no python key literal spells).
+const PY_KEY_SEP: &str = "\x1f";
+
+/// The key text of one literal subscript or dict-literal key: unquoted string
+/// content, or `#` + decimal for an integer (`d[1]` and `d["1"]` are two
+/// keys). None for a computed key.
+fn py_key_text(key: tree_sitter::Node, src: &[u8]) -> Option<String> {
+    match key.kind() {
+        "string" => Some(py_string_content(key, src)),
+        "integer" => Some(format!("#{}", py_text(key, src))),
+        _ => None,
+    }
+}
+
+/// The (base, key path) of a literal subscript chain over an identifier:
+/// `base["a"]`, `base[0]`, `base["a"][0]`. None for a computed key at any
+/// level or any other shape.
 fn py_literal_subscript(node: tree_sitter::Node, src: &[u8]) -> Option<(String, String)> {
-    let base = node.child_by_field_name("value")?;
-    if base.kind() != "identifier" {
+    let mut keys: Vec<String> = Vec::new();
+    let mut current = node;
+    while current.kind() == "subscript" {
+        let mut cursor = current.walk();
+        let key = current
+            .children_by_field_name("subscript", &mut cursor)
+            .next()?;
+        keys.push(py_key_text(key, src)?);
+        current = current.child_by_field_name("value")?;
+    }
+    if current.kind() != "identifier" {
         return None;
     }
-    let mut cursor = node.walk();
-    let key = node
-        .children_by_field_name("subscript", &mut cursor)
-        .next()?;
-    let key_text = match key.kind() {
-        "string" => Some(py_string_content(key, src)),
-        "integer" => Some(py_text(key, src).to_string()),
-        _ => None,
-    }?;
-    Some((py_text(base, src).to_string(), key_text))
+    keys.reverse();
+    Some((py_text(current, src).to_string(), keys.join(PY_KEY_SEP)))
 }
 
 /// The string content of a `"..."` literal (the `string_content` child).
@@ -587,14 +659,15 @@ fn py_string_content(node: tree_sitter::Node, src: &[u8]) -> String {
         .unwrap_or_default()
 }
 
-/// (pos, keyword name, identifier text) for every bare-identifier argument of
-/// one call, keyed by the call's site span.
+/// (pos, keyword name, value name) for every named-value argument of one
+/// call, keyed by the call's site span.
 fn py_collect_call_args(
     call: tree_sitter::Node,
     site: Span,
     src: &[u8],
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
+    lambdas: &[(Span, String)],
 ) {
     let Some(args) = call.child_by_field_name("arguments") else {
         return;
@@ -611,14 +684,14 @@ fn py_collect_call_args(
             }
             _ => (None, arg),
         };
-        if value.kind() != "identifier" {
+        let Some(name) = py_value_name(value, src, lambdas) else {
             continue;
-        }
+        };
         sink.aux.py_args.push(PyCallArg {
             site,
             pos: pos as i64,
             kw: kw.map(|text| strings.intern(text)),
-            value: strings.intern(&py_text(value, src)),
+            value: strings.intern(&name),
         });
     }
 }
@@ -636,6 +709,7 @@ fn py_walk_shapes(
     src: &[u8],
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
+    lambdas: &[(Span, String)],
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -643,17 +717,21 @@ fn py_walk_shapes(
             "expression_statement" => {
                 if let Some(inner) = child.named_child(0) {
                     if inner.kind() == "assignment" {
-                        py_collect_assignment(inner, src, strings, sink);
+                        py_collect_assignment(inner, src, strings, sink, lambdas);
                     }
                 }
             }
-            "assignment" => py_collect_assignment(child, src, strings, sink),
-            "function_definition" => py_collect_fn_shapes(child, src, strings, sink),
+            "assignment" => py_collect_assignment(child, src, strings, sink, lambdas),
+            "function_definition" => py_collect_fn_shapes(child, src, strings, sink, lambdas),
+            "lambda" if child.is_named() => {
+                py_collect_fn_shapes(child, src, strings, sink, lambdas)
+            }
+            "call" => py_collect_mutation(child, src, strings, sink, lambdas),
             "decorated_definition" => py_collect_decorators(child, src, strings, sink),
             "raise_statement" => py_collect_raise(child, src, strings, sink),
             _ => {}
         }
-        py_walk_shapes(child, src, strings, sink);
+        py_walk_shapes(child, src, strings, sink, lambdas);
     }
 }
 
@@ -665,6 +743,7 @@ fn py_collect_assignment(
     src: &[u8],
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
+    lambdas: &[(Span, String)],
 ) {
     let Some(left) = node.child_by_field_name("left") else {
         return;
@@ -672,21 +751,23 @@ fn py_collect_assignment(
     let mut value = node.child_by_field_name("right");
     while value.is_some_and(|v| v.kind() == "assignment") {
         let inner = value.unwrap();
-        py_collect_assignment(inner, src, strings, sink);
+        py_collect_assignment(inner, src, strings, sink, lambdas);
         value = inner.child_by_field_name("right");
     }
     let Some(value) = value else {
         return;
     };
     let span = node_span(node);
-    py_shape_bind_pattern(left, value, span, src, strings, sink);
+    py_shape_bind_pattern(left, value, span, src, strings, sink, lambdas);
 }
 
 /// Pair one assignment-target pattern with its value node: `identifier =
-/// identifier` mints a name binding; positional patterns pair element-wise
-/// (a splat takes the middle run as list slots); a `subscript` target mints an
-/// element binding. A non-identifier value is a KILL (value None) so an
-/// earlier binding for the same name cannot survive it.
+/// <value name>` mints a name binding (a `call` value adds the call-result
+/// row; a container literal adds one element binding per literal slot);
+/// positional patterns pair element-wise (a splat takes the middle run as
+/// list slots); a `subscript` target mints an element binding; a `self.<attr>`
+/// target binds the attribute name. A value carrying no name is a KILL
+/// (value None) so an earlier binding for the same name cannot survive it.
 fn py_shape_bind_pattern(
     left: tree_sitter::Node,
     rhs: tree_sitter::Node,
@@ -694,17 +775,22 @@ fn py_shape_bind_pattern(
     src: &[u8],
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
+    lambdas: &[(Span, String)],
 ) {
     match left.kind() {
         "identifier" => {
             let target = strings.intern(&py_text(left, src));
-            let value = py_bind_value(rhs, src).map(|text| strings.intern(&text));
-            sink.aux.py_binds.push(PyBind {
-                span,
-                target,
-                key: None,
-                value,
+            py_bind_named(target, None, rhs, span, src, strings, sink, lambdas);
+        }
+        "attribute" => {
+            let is_self = left.child_by_field_name("object").is_some_and(|object| {
+                object.kind() == "identifier" && py_text(object, src) == "self"
             });
+            let Some(attr) = left.child_by_field_name("attribute").filter(|_| is_self) else {
+                return;
+            };
+            let target = strings.intern(&py_text(attr, src));
+            py_bind_named(target, None, rhs, span, src, strings, sink, lambdas);
         }
         "pattern_list" | "tuple_pattern" | "list_pattern" => {
             let elements = py_sequence_elements(rhs);
@@ -727,12 +813,12 @@ fn py_shape_bind_pattern(
                             continue;
                         };
                         if let (Some(base), Some(text)) =
-                            (name.as_ref(), py_bind_value(element, src))
+                            (name.as_ref(), py_value_name(element, src, lambdas))
                         {
                             sink.aux.py_binds.push(PyBind {
                                 span,
                                 target: strings.intern(base),
-                                key: Some(strings.intern(&slot.to_string())),
+                                key: Some(strings.intern(&format!("#{slot}"))),
                                 value: Some(strings.intern(&text)),
                             });
                         }
@@ -744,32 +830,98 @@ fn py_shape_bind_pattern(
                     break;
                 };
                 index += 1;
-                py_bind_one(*item, element, span, src, strings, sink);
+                py_bind_one(*item, element, span, src, strings, sink, lambdas);
             }
         }
         "subscript" => {
             if let Some((base, key)) = py_literal_subscript(left, src) {
                 let target = strings.intern(&base);
-                let value = py_bind_value(rhs, src).map(|text| strings.intern(&text));
-                sink.aux.py_binds.push(PyBind {
-                    span,
-                    target,
-                    key: Some(strings.intern(&key)),
-                    value,
-                });
+                py_bind_named(target, Some(key), rhs, span, src, strings, sink, lambdas);
             }
         }
         _ => {}
     }
 }
 
-/// The identifier text a binding's value carries, when it is a bare
-/// identifier at all (anything else kills the binding).
-fn py_bind_value(node: tree_sitter::Node, src: &[u8]) -> Option<String> {
-    if node.kind() == "identifier" {
-        Some(py_text(node, src).to_string())
-    } else {
-        None
+/// One (target, key path) bound to a value node: the name row (or KILL), the
+/// call-result row for a `call` value, and one element row per slot of a
+/// container literal, nested literals extending the key path.
+fn py_bind_named(
+    target: crate::shape::NameId,
+    key: Option<String>,
+    rhs: tree_sitter::Node,
+    span: Span,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+    lambdas: &[(Span, String)],
+) {
+    let value = py_value_name(rhs, src, lambdas).map(|text| strings.intern(&text));
+    sink.aux.py_binds.push(PyBind {
+        span,
+        target,
+        key: key.as_deref().map(|text| strings.intern(text)),
+        value,
+    });
+    if key.is_none() && rhs.kind() == "call" {
+        if let Some(func) = rhs.child_by_field_name("function") {
+            sink.aux.py_call_binds.push(PyCallBind {
+                span,
+                target,
+                site: node_span(func),
+            });
+        }
+    }
+    py_bind_slots(target, key, rhs, span, src, strings, sink, lambdas);
+}
+
+/// One element row per slot of a container literal, nested literals
+/// extending the key path under `key`.
+fn py_bind_slots(
+    target: crate::shape::NameId,
+    key: Option<String>,
+    rhs: tree_sitter::Node,
+    span: Span,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+    lambdas: &[(Span, String)],
+) {
+    let slots: Vec<(String, tree_sitter::Node)> = match rhs.kind() {
+        "dictionary" => {
+            let mut cursor = rhs.walk();
+            rhs.named_children(&mut cursor)
+                .filter(|pair| pair.kind() == "pair")
+                .filter_map(|pair| {
+                    let key = py_key_text(pair.child_by_field_name("key")?, src)?;
+                    Some((key, pair.child_by_field_name("value")?))
+                })
+                .collect()
+        }
+        "list" | "tuple" => {
+            let mut cursor = rhs.walk();
+            rhs.named_children(&mut cursor)
+                .enumerate()
+                .map(|(slot, element)| (format!("#{slot}"), element))
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    for (slot, element) in slots {
+        let path = match &key {
+            Some(prefix) => format!("{prefix}{PY_KEY_SEP}{slot}"),
+            None => slot,
+        };
+        py_bind_named(
+            target,
+            Some(path),
+            element,
+            span,
+            src,
+            strings,
+            sink,
+            lambdas,
+        );
     }
 }
 
@@ -805,8 +957,8 @@ fn py_element_at<'t>(seq: &'t PySeq, index: usize) -> Option<tree_sitter::Node<'
     }
 }
 
-/// One positional element pair (pattern item, value expression): an identifier
-/// alias or a nested pattern; a non-identifier value kills the name.
+/// One positional element pair (pattern item, value expression): a named
+/// value or a nested pattern; a value carrying no name kills the name.
 fn py_bind_one(
     item: tree_sitter::Node,
     value: tree_sitter::Node,
@@ -814,32 +966,28 @@ fn py_bind_one(
     src: &[u8],
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
+    lambdas: &[(Span, String)],
 ) {
     match item.kind() {
         "identifier" => {
             let target = strings.intern(&py_text(item, src));
-            let value = py_bind_value(value, src).map(|text| strings.intern(&text));
-            sink.aux.py_binds.push(PyBind {
-                span,
-                target,
-                key: None,
-                value,
-            });
+            py_bind_named(target, None, value, span, src, strings, sink, lambdas);
         }
         "tuple_pattern" | "list_pattern" => {
-            py_shape_bind_pattern(item, value, span, src, strings, sink)
+            py_shape_bind_pattern(item, value, span, src, strings, sink, lambdas)
         }
         _ => {}
     }
 }
 
 /// Params (slot positions, receiver skipped), bare-identifier defaults, and
-/// the single-bare-identifier return shape of one function def.
+/// the single-named-value return shape of one function def.
 fn py_collect_fn_shapes(
     node: tree_sitter::Node,
     src: &[u8],
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
+    lambdas: &[(Span, String)],
 ) {
     let def = node_span(node);
     if let Some(params) = node.child_by_field_name("parameters") {
@@ -879,15 +1027,82 @@ fn py_collect_fn_shapes(
             pos += 1;
         }
     }
-    if let Some(body) = node.child_by_field_name("body") {
-        if py_count_returns(body) == 1 {
-            if let Some(value) = py_single_return(body, src) {
-                sink.aux.py_returns.push(PyReturn {
-                    def,
-                    value: strings.intern(&value),
-                });
-            }
-        }
+    let Some(body) = node.child_by_field_name("body") else {
+        return;
+    };
+    // A lambda's body IS its return.
+    let returned = if node.kind() == "lambda" {
+        py_value_name(body, src, lambdas)
+    } else if py_count_returns(body) == 1 {
+        py_single_return(body, src, lambdas)
+    } else {
+        None
+    };
+    if let Some(value) = returned {
+        sink.aux.py_returns.push(PyReturn {
+            def,
+            value: strings.intern(&value),
+        });
+    }
+}
+
+/// Methods that rewrite a container in place. `update` with a dict literal
+/// binds the literal's slots on the receiver; every other one KILLs the
+/// receiver's element bindings (a container-level KILL row, key None).
+const PY_MUTATORS: &[&str] = &[
+    "update",
+    "append",
+    "insert",
+    "extend",
+    "pop",
+    "popitem",
+    "clear",
+    "setdefault",
+    "remove",
+    "sort",
+    "reverse",
+];
+
+/// `name.<mutator>(...)`: the receiver's element bindings after this call.
+fn py_collect_mutation(
+    call: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+    lambdas: &[(Span, String)],
+) {
+    let Some(func) = call.child_by_field_name("function") else {
+        return;
+    };
+    if func.kind() != "attribute" {
+        return;
+    }
+    let (Some(object), Some(attr)) = (
+        func.child_by_field_name("object"),
+        func.child_by_field_name("attribute"),
+    ) else {
+        return;
+    };
+    if object.kind() != "identifier" || !PY_MUTATORS.contains(&py_text(attr, src)) {
+        return;
+    }
+    let target = strings.intern(&py_text(object, src));
+    let span = node_span(call);
+    sink.aux.py_binds.push(PyBind {
+        span,
+        target,
+        key: None,
+        value: None,
+    });
+    if py_text(attr, src) != "update" {
+        return;
+    }
+    let Some(args) = call.child_by_field_name("arguments") else {
+        return;
+    };
+    let literal = args.named_child(0).filter(|arg| arg.kind() == "dictionary");
+    if let Some(literal) = literal {
+        py_bind_slots(target, None, literal, span, src, strings, sink, lambdas);
     }
 }
 
@@ -912,12 +1127,15 @@ fn py_count_returns(node: tree_sitter::Node) -> usize {
     count
 }
 
-/// The identifier value of a body's single `return`, when it is a bare
-/// identifier.
-fn py_single_return(node: tree_sitter::Node, src: &[u8]) -> Option<String> {
+/// The value name of a body's single `return`, when it carries one.
+fn py_single_return(
+    node: tree_sitter::Node,
+    src: &[u8],
+    lambdas: &[(Span, String)],
+) -> Option<String> {
     if node.kind() == "return_statement" {
         let value = node.named_child(0)?;
-        return (value.kind() == "identifier").then(|| py_text(value, src).to_string());
+        return py_value_name(value, src, lambdas);
     }
     if matches!(
         node.kind(),
@@ -928,7 +1146,7 @@ fn py_single_return(node: tree_sitter::Node, src: &[u8]) -> Option<String> {
     let mut cursor = node.walk();
     let kids: Vec<tree_sitter::Node> = node.named_children(&mut cursor).collect();
     kids.into_iter()
-        .find_map(|child| py_single_return(child, src))
+        .find_map(|child| py_single_return(child, src, lambdas))
 }
 
 /// Decorator applications: every decorator expression emits a call site (the
@@ -2412,11 +2630,7 @@ fn resolve_type_dst(
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match sites {
-        [only] => Some((
-            only.blob.clone(),
-            only.span,
-            ResolutionOrigin::CorpusUnique,
-        )),
+        [only] => Some((only.blob.clone(), only.span, ResolutionOrigin::CorpusUnique)),
         _ => None,
     }
 }
@@ -2518,32 +2732,15 @@ fn init_of_class(
     index: &DefIndex,
     callee: &str,
 ) -> Option<(ContentId, Span)> {
-    let strings = &output.strings;
     // Same file: a TypeF class def named `callee`, and a Method call def named
-    // `__init__` whose span sits inside the class span.
+    // `__init__` whose span sits inside the class span, else the first base
+    // class (left to right, depth first) that carries one.
     if let Some(types) = &output.types {
-        let class_span = types
-            .nodes
-            .iter()
-            .find(|n| n.name.map_or(false, |id| strings.lookup(id) == callee))
-            .map(|n| n.span);
-        if let Some(class_span) = class_span {
-            if let Some(init) = output.call.as_ref().and_then(|call| {
-                call.nodes.iter().find(|n| {
-                    n.name.map_or(false, |id| strings.lookup(id) == "__init__")
-                        && n.span.start >= class_span.start
-                        && n.span.end() <= class_span.end()
-                })
-            }) {
-                let span = init.span;
-                if let Some(site) = corpus_defs(index, "__init__")
-                    .iter()
-                    .find(|s| s.span == span)
-                {
-                    return Some((site.blob.clone(), site.span));
-                }
-            }
-            return None;
+        if types.nodes.iter().any(|n| {
+            n.name
+                .map_or(false, |id| output.strings.lookup(id) == callee)
+        }) {
+            return same_file_init(output, index, callee, &mut Vec::new());
         }
     }
     // Cross-file: corpus TypeF defs named `callee`; the `__init__` call def in
@@ -2577,6 +2774,47 @@ fn init_of_class(
     hits.iter()
         .find(|(b, _)| b == *blob)
         .map(|(b, s)| (b.clone(), *s))
+}
+
+/// The `__init__` call def a same-file class named `class_name` constructs
+/// with: its own, else its bases' in declaration order (cycle-guarded).
+fn same_file_init(
+    output: &ExtractOutput,
+    index: &DefIndex,
+    class_name: &str,
+    seen: &mut Vec<String>,
+) -> Option<(ContentId, Span)> {
+    if seen.iter().any(|s| s == class_name) {
+        return None;
+    }
+    seen.push(class_name.to_string());
+    let strings = &output.strings;
+    let types = output.types.as_ref()?;
+    let class_span = types
+        .nodes
+        .iter()
+        .find(|n| n.name.map_or(false, |id| strings.lookup(id) == class_name))
+        .map(|n| n.span)?;
+    let init = output.call.as_ref().and_then(|call| {
+        call.nodes.iter().find(|n| {
+            n.name.map_or(false, |id| strings.lookup(id) == "__init__")
+                && n.span.start >= class_span.start
+                && n.span.end() <= class_span.end()
+        })
+    });
+    if let Some(init) = init {
+        let span = init.span;
+        return corpus_defs(index, "__init__")
+            .iter()
+            .find(|s| s.span == span)
+            .map(|site| (site.blob.clone(), site.span));
+    }
+    types
+        .aux
+        .candidates
+        .iter()
+        .filter(|c| c.owner == class_span && c.kind == TypeEdgeKind::Impl)
+        .find_map(|c| same_file_init(output, index, strings.lookup(c.to), seen))
 }
 
 fn scip_call_target<'a>(
@@ -2630,6 +2868,7 @@ impl Resolve<CallF> for PythonSource {
             own: own.clone(),
             decor_binds: Vec::new(),
             decor_extras: Vec::new(),
+            active: std::cell::RefCell::new(Vec::new()),
         };
         // A decorator whose def's single return names a same-file def rebinds
         // the decorated name to it (`func()` then calls the wrapper). A
@@ -2698,6 +2937,7 @@ impl Resolve<CallF> for PythonSource {
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });
+            let scip_hit = scip_t.is_some();
             if let Some((dst_blob, dst_span, _)) = scip_t {
                 push(
                     &mut edges,
@@ -2731,6 +2971,31 @@ impl Resolve<CallF> for PythonSource {
                     );
                 }
             }
+            // A calling builtin (`map(f, xs)`) with no def of its own in the
+            // corpus: each named argument that reaches a def is called.
+            if !scip_hit
+                && PY_CALLING_BUILTINS.contains(&callee)
+                && PythonSource::call_name_match(output, def_index, callee).is_none()
+            {
+                let mut targets: Vec<(ContentId, Span)> = Vec::new();
+                for arg in call.aux.py_args.iter().filter(|a| a.site == site.span) {
+                    let value = output.strings.lookup(arg.value);
+                    if let Some(t) = resolver.name_target(value, site.span, &mut Vec::new()) {
+                        if !targets.contains(&t) {
+                            targets.push(t);
+                        }
+                    }
+                }
+                for (dst_blob, dst_span) in targets {
+                    push(
+                        &mut edges,
+                        dst_blob,
+                        dst_span,
+                        CallEdgeKind::NameResolve,
+                        ResolutionOrigin::Param,
+                    );
+                }
+            }
             // The applied decorator of a `@factory()` site: a second edge.
             if let Some((_, t)) = resolver
                 .decor_extras
@@ -2751,10 +3016,10 @@ impl Resolve<CallF> for PythonSource {
 }
 
 /// The same-file dynamic-shape resolver: reads the python-only aux rows
-/// (`py_binds`, `py_args`, `py_params`, `py_defaults`, `py_returns`,
-/// `py_sub_calls`, `py_ret_calls`) and answers the sites a bare callee name
-/// cannot. Every leg is unique-candidate or syntactic-only: a shape that
-/// cannot be resolved honestly resolves to nothing.
+/// (`py_binds`, `py_call_binds`, `py_args`, `py_params`, `py_defaults`,
+/// `py_returns`, `py_sub_calls`, `py_ret_calls`) and answers the sites a bare
+/// callee name cannot. Every leg is unique-candidate or syntactic-only: a
+/// shape that cannot be resolved honestly resolves to nothing.
 struct PyResolver<'a> {
     output: &'a ExtractOutput,
     index: &'a DefIndex,
@@ -2768,21 +3033,44 @@ struct PyResolver<'a> {
     /// `@factory()` sites: the applied decorator's (blob, span), emitted as a
     /// second edge on the same site.
     decor_extras: Vec<(Span, (ContentId, Span))>,
+    /// Call-bind sites and param-rule defs on the active resolution path;
+    /// a re-entry on the same span is a cycle and resolves to nothing.
+    active: std::cell::RefCell<Vec<Span>>,
 }
+
+/// What a name is bound to at a point: another value name, or the result of
+/// the call whose site (function-node span) is carried.
+#[derive(Clone, Copy, Debug)]
+enum PyBound {
+    Name(crate::shape::NameId),
+    Call(Span),
+}
+
+/// The builtins that call the callable they are handed: every named
+/// argument of such a site is a callee of the site's caller.
+const PY_CALLING_BUILTINS: &[&str] = &["map", "filter"];
 
 impl<'a> PyResolver<'a> {
     /// The active binding for (`target`, `key`): the LAST row in file order
     /// with span.start < at.start, else the last row overall (a def body can
     /// sit textually before the module-level binding that is live when the
     /// call runs). A KILL row (value None) clears the name at its own byte
-    /// order.
+    /// order; a call-result row or an element row at the same span outranks
+    /// the container-level KILL beside it. `within` restricts the rows to one
+    /// def's span (a def-local binding).
     fn latest_bind(
         &self,
         target: &str,
         key: Option<&str>,
         at: Span,
-    ) -> Option<crate::shape::NameId> {
+        within: Option<Span>,
+    ) -> Option<PyBound> {
         let strings = &self.output.strings;
+        let inside = |span: Span| {
+            within.map_or(true, |def| {
+                span.start >= def.start && span.end() <= def.end()
+            })
+        };
         let rows = self
             .call
             .aux
@@ -2793,27 +3081,45 @@ impl<'a> PyResolver<'a> {
             .filter(|bind| match (&bind.key, key) {
                 (None, None) => true,
                 (Some(k), Some(want)) => strings.lookup(*k) == want,
+                // A container-level KILL (the name rebound, or mutated in
+                // place) clears every element binding before it.
+                (None, Some(_)) => bind.value.is_none(),
                 _ => false,
-            });
-        let mut latest_before: Option<&PyBind> = None;
-        let mut latest: Option<&PyBind> = None;
-        for bind in rows {
-            if bind.span.start < at.start {
+            })
+            .filter(|bind| inside(bind.span))
+            .map(|bind| {
+                let rank = u8::from(bind.key.is_some());
+                (bind.span, rank, bind.value.map(PyBound::Name))
+            })
+            .chain(
+                self.call
+                    .aux
+                    .py_call_binds
+                    .iter()
+                    .filter(|_| key.is_none())
+                    .filter(|bind| strings.lookup(bind.target) == target)
+                    .filter(|bind| inside(bind.span))
+                    .map(|bind| (bind.span, 1u8, Some(PyBound::Call(bind.site)))),
+            );
+        let mut latest_before: Option<(Span, u8, Option<PyBound>)> = None;
+        let mut latest: Option<(Span, u8, Option<PyBound>)> = None;
+        for row in rows {
+            let order = (row.0.start, row.1);
+            if row.0.start < at.start {
                 match latest_before {
-                    Some(prev) if prev.span.start >= bind.span.start => {}
-                    _ => latest_before = Some(bind),
+                    Some(prev) if (prev.0.start, prev.1) >= order => {}
+                    _ => latest_before = Some(row),
                 }
             }
             match latest {
-                Some(prev) if prev.span.start >= bind.span.start => {}
-                _ => latest = Some(bind),
+                Some(prev) if (prev.0.start, prev.1) >= order => {}
+                _ => latest = Some(row),
             }
         }
-        let bind = latest_before.or(latest)?;
-        bind.value
+        latest_before.or(latest)?.2
     }
 
-    /// A name to a def: corpus name-match first, then the same-file alias
+    /// A name to a def: corpus name-match first, then the same-file binding
     /// chain (cycle-guarded).
     fn name_target(
         &self,
@@ -2825,15 +3131,158 @@ impl<'a> PyResolver<'a> {
             return None;
         }
         seen.push(name.to_string());
+        if let Some(start) = py_lambda_value_start(name) {
+            let own = self.own.clone()?;
+            let node = self
+                .call
+                .nodes
+                .iter()
+                .find(|n| n.span.start == start && n.kind == CallKind::Lambda)?;
+            return Some((own, node.span));
+        }
         if let Some(t) = PythonSource::call_name_match(self.output, self.index, name) {
             return Some(t);
         }
-        let value = self.latest_bind(name, None, at)?;
-        self.name_target(self.output.strings.lookup(value), at, seen)
+        let bound = self.latest_bind(name, None, at, None)?;
+        self.bound_target(bound, at, seen)
     }
 
-    /// One resolved site, by shape: wrapper bind -> corpus name-match ->
-    /// param -> alias, else subscript element, else return-of-call. A callee
+    /// One binding to a def: a value name resolves as a name; a call result
+    /// resolves through the call's def and its single return.
+    fn bound_target(
+        &self,
+        bound: PyBound,
+        at: Span,
+        seen: &mut Vec<String>,
+    ) -> Option<(ContentId, Span)> {
+        match bound {
+            PyBound::Name(value) => self.name_target(self.output.strings.lookup(value), at, seen),
+            PyBound::Call(site_span) => {
+                let (blob, dspan) = self.call_site_def(site_span)?;
+                self.returned_target(blob, dspan, site_span, at)
+            }
+        }
+    }
+
+    /// The def the call site at `site_span` (function-node span) resolves to,
+    /// cycle-guarded on the site.
+    fn call_site_def(&self, site_span: Span) -> Option<(ContentId, Span)> {
+        if self.active.borrow().contains(&site_span) {
+            return None;
+        }
+        let site = self.call.aux.sites.iter().find(|s| s.span == site_span)?;
+        self.active.borrow_mut().push(site_span);
+        let found = self.resolve_site(site, &mut Vec::new());
+        self.active.borrow_mut().pop();
+        found.map(|(blob, span, _)| (blob, span))
+    }
+
+    /// What the same-file def at `dspan` hands back through its single
+    /// return: a def-local binding of the returned name first, then the name
+    /// itself, then the argument the call at `inner` passed for a returned
+    /// parameter.
+    fn returned_target(
+        &self,
+        blob: ContentId,
+        dspan: Span,
+        inner: Span,
+        at: Span,
+    ) -> Option<(ContentId, Span)> {
+        if Some(&blob) != self.own.as_ref() {
+            return None;
+        }
+        let strings = &self.output.strings;
+        let ret = self.call.aux.py_returns.iter().find(|r| r.def == dspan)?;
+        let value = strings.lookup(ret.value);
+        if let Some(local) = self.latest_bind(
+            value,
+            None,
+            Span {
+                start: dspan.end(),
+                len: 0,
+            },
+            Some(dspan),
+        ) {
+            if let Some(t) = self.bound_target(local, at, &mut vec![value.to_string()]) {
+                return Some(t);
+            }
+        }
+        if let Some(t) = self.name_target(value, at, &mut Vec::new()) {
+            return Some(t);
+        }
+        let p = self
+            .call
+            .aux
+            .py_params
+            .iter()
+            .find(|p| p.def == dspan && strings.lookup(p.name) == value)?;
+        let arg = self
+            .call
+            .aux
+            .py_args
+            .iter()
+            .find(|a| a.site == inner && a.kw.is_none() && a.pos == p.pos as i64)?;
+        self.name_target(strings.lookup(arg.value), at, &mut Vec::new())
+    }
+
+    /// The element binding `base[key]` at a point: a keyed row on the base;
+    /// else the base as an alias of another container, a parameter of the
+    /// enclosing def whose slot every same-file call fills with one container
+    /// name, or a call result whose def returns a container it bound locally.
+    fn element_bound(
+        &self,
+        base: &str,
+        key: &str,
+        at: Span,
+        seen: &mut Vec<String>,
+    ) -> Option<PyBound> {
+        if seen.iter().any(|s| s == base) {
+            return None;
+        }
+        seen.push(base.to_string());
+        if let Some(bound) = self.latest_bind(base, Some(key), at, None) {
+            return Some(bound);
+        }
+        if let Some(args) = self.param_args(base, at) {
+            let mut found: Vec<PyBound> = Vec::new();
+            for (name, arg_at) in args {
+                if let Some(bound) = self.element_bound(&name, key, arg_at, seen) {
+                    if !found.iter().any(|prev| py_bound_eq(*prev, bound)) {
+                        found.push(bound);
+                    }
+                }
+            }
+            return match found.as_slice() {
+                [one] => Some(*one),
+                _ => None,
+            };
+        }
+        match self.latest_bind(base, None, at, None)? {
+            PyBound::Name(alias) => {
+                self.element_bound(self.output.strings.lookup(alias), key, at, seen)
+            }
+            PyBound::Call(site_span) => {
+                let (blob, dspan) = self.call_site_def(site_span)?;
+                if Some(&blob) != self.own.as_ref() {
+                    return None;
+                }
+                let ret = self.call.aux.py_returns.iter().find(|r| r.def == dspan)?;
+                let value = self.output.strings.lookup(ret.value);
+                self.latest_bind(
+                    value,
+                    Some(key),
+                    Span {
+                        start: dspan.end(),
+                        len: 0,
+                    },
+                    Some(dspan),
+                )
+            }
+        }
+    }
+
+    /// One resolved site, by shape: wrapper bind -> param -> corpus name-match
+    /// -> alias, else subscript element, else return-of-call. A callee
     /// shadowed by an enclosing def's parameter never falls through to the
     /// module-level alias: the parameter is what that name means there.
     fn resolve_site(
@@ -2873,9 +3322,9 @@ impl<'a> PyResolver<'a> {
         {
             let base = strings.lookup(sub.base);
             let key = strings.lookup(sub.key);
-            let value = self.latest_bind(base, Some(key), site.span)?;
+            let bound = self.element_bound(base, key, site.span, &mut Vec::new())?;
             return self
-                .name_target(strings.lookup(value), site.span, &mut Vec::new())
+                .bound_target(bound, site.span, &mut Vec::new())
                 .map(|(blob, span)| (blob, span, ResolutionOrigin::Subscript));
         }
         if let Some(rc) = self
@@ -2908,15 +3357,11 @@ impl<'a> PyResolver<'a> {
         self.name_target(value, decor.span, &mut vec![callee.to_string()])
     }
 
-    /// The alias value for `name`, resolved as a name (one hop; deeper chains
-    /// go through `name_target`).
+    /// The binding for `name`, resolved as a value (one hop; deeper chains go
+    /// through `name_target`).
     fn alias_target(&self, name: &str, at: Span) -> Option<(ContentId, Span)> {
-        let value = self.latest_bind(name, None, at)?;
-        self.name_target(
-            self.output.strings.lookup(value),
-            at,
-            &mut vec![name.to_string()],
-        )
+        let bound = self.latest_bind(name, None, at, None)?;
+        self.bound_target(bound, at, &mut vec![name.to_string()])
     }
 
     /// `callee` names a parameter of an enclosing def (tightest cover first).
@@ -2929,11 +3374,30 @@ impl<'a> PyResolver<'a> {
         })
     }
 
-    /// The param rule: `callee` names a parameter of an enclosing def
-    /// (tightest cover first), and EVERY call to that def in this file passes
-    /// the same single named function in that slot; otherwise the parameter's
-    /// bare-identifier default. Emit only on uniqueness.
-    fn param_target(&self, callee: &str, site_span: Span) -> Option<(ContentId, Span)> {
+    /// The def a call site's callee names, for the param rule's "every call
+    /// to this def" scan: a parameter-bound callee, else the name itself or
+    /// its binding chain.
+    fn callee_def(&self, site: &CallSite) -> Option<(ContentId, Span)> {
+        let callee = self.output.strings.lookup(site.callee);
+        if callee.is_empty() {
+            return None;
+        }
+        if let Some(t) = self.param_target(callee, site.span) {
+            return Some(t);
+        }
+        if self.shadowed(callee, site.span) {
+            return None;
+        }
+        self.name_target(callee, site.span, &mut Vec::new())
+    }
+
+    /// The param rule's inputs: `callee` names a parameter of an enclosing
+    /// def (tightest cover first), and the answer is every (argument name,
+    /// site) that same-file calls to that def pass in the slot, through the
+    /// def's own name or a callee bound to it; when no call fills the slot,
+    /// the parameter's bare-identifier default. None when `callee` is no
+    /// parameter, or the def is already on the active path (a cycle).
+    fn param_args(&self, callee: &str, site_span: Span) -> Option<Vec<(String, Span)>> {
         let strings = &self.output.strings;
         let call = self.call;
         let mut enclosing: Vec<(Span, String)> = call
@@ -2957,9 +3421,22 @@ impl<'a> PyResolver<'a> {
             else {
                 continue;
             };
-            let mut targets: Vec<(ContentId, Span)> = Vec::new();
+            if self.active.borrow().contains(&dspan) {
+                return None;
+            }
+            self.active.borrow_mut().push(dspan);
+            let mut args: Vec<(String, Span)> = Vec::new();
             for s in &call.aux.sites {
-                if s.span == site_span || strings.lookup(s.callee) != dname {
+                if s.span == site_span {
+                    continue;
+                }
+                let site_callee = strings.lookup(s.callee);
+                let calls_def = site_callee == dname
+                    || (self.is_bound_name(site_callee)
+                        && self.callee_def(s).is_some_and(|(blob, span)| {
+                            Some(&blob) == self.own.as_ref() && span == dspan
+                        }));
+                if !calls_def {
                     continue;
                 }
                 for arg in &call.aux.py_args {
@@ -2968,68 +3445,88 @@ impl<'a> PyResolver<'a> {
                     }
                     let kw_hit = arg.kw.is_some_and(|kw| strings.lookup(kw) == callee);
                     let pos_hit = arg.kw.is_none() && arg.pos == param.pos as i64;
-                    if !(kw_hit || pos_hit) {
-                        continue;
-                    }
-                    let value = strings.lookup(arg.value);
-                    if let Some(t) = self.name_target(value, s.span, &mut Vec::new()) {
-                        if !targets.contains(&t) {
-                            targets.push(t);
-                        }
+                    if kw_hit || pos_hit {
+                        args.push((strings.lookup(arg.value).to_string(), s.span));
                     }
                 }
             }
-            if targets.len() == 1 {
-                return targets.pop();
+            self.active.borrow_mut().pop();
+            if args.is_empty() {
+                if let Some(default) = call
+                    .aux
+                    .py_defaults
+                    .iter()
+                    .find(|d| d.def == dspan && strings.lookup(d.name) == callee)
+                {
+                    args.push((strings.lookup(default.value).to_string(), site_span));
+                }
             }
-            if !targets.is_empty() {
-                return None;
-            }
-            // No call site passes the slot: a bare-identifier default may
-            // bind it.
-            if let Some(default) = call
-                .aux
-                .py_defaults
-                .iter()
-                .find(|d| d.def == dspan && strings.lookup(d.name) == callee)
-            {
-                return self.name_target(strings.lookup(default.value), site_span, &mut Vec::new());
-            }
-            // The parameter exists but resolves nowhere: shadowed, silent.
-            return None;
+            return Some(args);
         }
         None
     }
 
+    /// Whether `name` is a binding target or a parameter anywhere in the file
+    /// (the only callee spellings that can reach a def by a name other than
+    /// its own).
+    fn is_bound_name(&self, name: &str) -> bool {
+        let strings = &self.output.strings;
+        self.call
+            .aux
+            .py_binds
+            .iter()
+            .any(|b| b.key.is_none() && strings.lookup(b.target) == name)
+            || self
+                .call
+                .aux
+                .py_call_binds
+                .iter()
+                .any(|b| strings.lookup(b.target) == name)
+            || self
+                .call
+                .aux
+                .py_params
+                .iter()
+                .any(|p| strings.lookup(p.name) == name)
+    }
+
+    /// The param rule: every same-file call to the enclosing def passes the
+    /// same single named function in `callee`'s slot (or nothing does and the
+    /// default names one). Emit only on uniqueness; a parameter that exists
+    /// but resolves nowhere is shadowed, silent.
+    fn param_target(&self, callee: &str, site_span: Span) -> Option<(ContentId, Span)> {
+        let args = self.param_args(callee, site_span)?;
+        let mut targets: Vec<(ContentId, Span)> = Vec::new();
+        for (value, at) in args {
+            // The argument may itself be a parameter of the calling def.
+            let found = self
+                .param_target(&value, at)
+                .or_else(|| self.name_target(&value, at, &mut Vec::new()));
+            if let Some(t) = found {
+                if !targets.contains(&t) {
+                    targets.push(t);
+                }
+            }
+        }
+        match targets.as_slice() {
+            [_] => targets.pop(),
+            _ => None,
+        }
+    }
+
     /// The return-of-call rule: the inner call resolves to a def whose single
-    /// return is a bare identifier. The value may name a same-file def, a
-    /// binding local to that def, or a parameter of that def whose slot the
-    /// inner call passed (unique arg).
+    /// return names a value; see `returned_target`.
     fn retcall_target(&self, rc: &PyRetCall, visited: &mut Vec<Span>) -> Option<(ContentId, Span)> {
         let inner_site = self.call.aux.sites.iter().find(|s| s.span == rc.inner)?;
         let (blob, dspan, _) = self.resolve_site(inner_site, visited)?;
-        if Some(&blob) != self.own.as_ref() {
-            return None;
-        }
-        let strings = &self.output.strings;
-        let ret = self.call.aux.py_returns.iter().find(|r| r.def == dspan)?;
-        let value = strings.lookup(ret.value);
-        if let Some(t) = self.name_target(value, rc.span, &mut Vec::new()) {
-            return Some(t);
-        }
-        // `return <param>`: the outer call receives the argument it passed.
-        let p = self
-            .call
-            .aux
-            .py_params
-            .iter()
-            .find(|p| p.def == dspan && strings.lookup(p.name) == value)?;
-        let arg = self
-            .call
-            .aux
-            .py_args
-            .iter()
-            .find(|a| a.site == rc.inner && a.kw.is_none() && a.pos == p.pos as i64)?;
-        self.name_target(strings.lookup(arg.value), rc.span, &mut Vec::new())
+        self.returned_target(blob, dspan, rc.inner, rc.span)
+    }
+}
+
+fn py_bound_eq(a: PyBound, b: PyBound) -> bool {
+    match (a, b) {
+        (PyBound::Name(x), PyBound::Name(y)) => x == y,
+        (PyBound::Call(x), PyBound::Call(y)) => x == y,
+        _ => false,
     }
 }

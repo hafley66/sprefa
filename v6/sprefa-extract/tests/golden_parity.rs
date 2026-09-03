@@ -249,6 +249,10 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                 }
                 FamilyTag::Call => {
                     if !interface_spec_spans.contains(&(span.start, span.end)) {
+                        // v6 names a python lambda `<lambdaN>` (the PyCG
+                        // oracle's callee spelling); v5 left it nameless, so
+                        // the row is graded on kind + line.
+                        let name = name.filter(|n| !n.starts_with("<lambda"));
                         set.insert(format!(
                             "call_def\t{kind}\t{}\t{}",
                             name.as_deref().unwrap_or(""),
