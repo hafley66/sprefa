@@ -15,6 +15,9 @@ pub struct CheckerRef {
     pub start: u32,
     pub end: u32,
     pub name: String,
+    /// The path as WRITTEN, segments joined by `::` and no generic arguments:
+    /// the spelling a `TypeEdgeCandidate` carries. Empty on the call plane.
+    pub written: String,
     /// Empty when the checker resolved the reference OUTSIDE the resolve
     /// universe: std, a dependency, a file this run was not handed.
     pub dst_path: String,
@@ -85,6 +88,7 @@ struct Bound {
     start: u32,
     end: u32,
     name: String,
+    written: String,
     answer: CheckerAnswer,
 }
 
@@ -93,9 +97,10 @@ struct Bound {
 #[derive(Default)]
 pub struct RustCheckerIndex {
     calls: HashMap<String, Vec<Bound>>,
-    /// A TypeF candidate carries no reference span, so the type plane keys on
-    /// (file, name); a name one file resolves two ways binds nothing.
-    types: HashMap<String, HashMap<String, Option<CheckerAnswer>>>,
+    /// A TypeF candidate carries an OWNER span and no reference span, so a
+    /// name one file resolves two ways is answered by the reference nearest
+    /// the owner. Sorted by start, as `calls` is.
+    types: HashMap<String, Vec<Bound>>,
     /// The walk's rows, span digests already substituted for the supplied paths
     /// the walk wrote.
     tsi: Vec<crate::tsi::FactOut>,
@@ -105,8 +110,8 @@ pub struct RustCheckerIndex {
     pub unjoined: usize,
     /// References the checker resolved outside the corpus.
     pub external: usize,
-    /// Type names one file resolved two ways: an answer the tier HAS and the
-    /// (file, name) key cannot carry.
+    /// Type names one file resolved two ways: the owner-distance pick stands
+    /// in for the reference span the candidate does not carry.
     pub type_ambiguous: usize,
     pub load: Duration,
     pub walk: Duration,
@@ -150,6 +155,7 @@ impl RustCheckerIndex {
                             start: reference.start,
                             end: reference.end,
                             name: reference.name,
+                            written: reference.written,
                             answer,
                         });
                     }
@@ -160,26 +166,36 @@ impl RustCheckerIndex {
             index.calls.insert(path, bounds);
         }
         for (path, refs) in answers.types {
-            let mut by_name: HashMap<String, Option<CheckerAnswer>> = HashMap::new();
+            let mut bounds: Vec<Bound> = Vec::with_capacity(refs.len());
+            let mut first_answer: HashMap<String, (CheckerAnswer, bool)> = HashMap::new();
             for reference in refs {
                 let Some(answer) = answer_of(&reference, TYPE_FACETS, &blob_of, defs) else {
                     index.unjoined += 1;
                     continue;
                 };
                 index.external += (answer == CheckerAnswer::External) as usize;
-                match by_name.entry(reference.name) {
+                match first_answer.entry(reference.name.clone()) {
                     std::collections::hash_map::Entry::Vacant(slot) => {
-                        slot.insert(Some(answer));
+                        slot.insert((answer.clone(), false));
                     }
                     std::collections::hash_map::Entry::Occupied(mut slot) => {
-                        if slot.get().as_ref() != Some(&answer) {
-                            index.type_ambiguous += slot.get().is_some() as usize;
-                            slot.insert(None);
+                        let (first, counted) = slot.get_mut();
+                        if *first != answer && !*counted {
+                            index.type_ambiguous += 1;
+                            *counted = true;
                         }
                     }
                 }
+                bounds.push(Bound {
+                    start: reference.start,
+                    end: reference.end,
+                    name: reference.name,
+                    written: reference.written,
+                    answer,
+                });
             }
-            index.types.insert(path, by_name);
+            bounds.sort_by_key(|bound| (bound.start, bound.end));
+            index.types.insert(path, bounds);
         }
         index
     }
@@ -196,8 +212,37 @@ impl RustCheckerIndex {
             .map(|bound| bound.answer.clone())
     }
 
-    pub fn type_at(&self, path: &str, name: &str) -> Option<CheckerAnswer> {
-        self.types.get(path)?.get(name)?.clone()
+    /// The answer for a candidate spelled `written` (trailing name `name`) in
+    /// `path`. Every reference of the name agreeing is the common case. Two
+    /// answers narrow first to the references spelled exactly as the candidate
+    /// (`decoys::Config` against `Config`), then to the one nearest `owner`: a
+    /// candidate's references sit in its owner's header (fields, bounds, the
+    /// impl line), so the nearest is the owner's own.
+    pub fn type_at(
+        &self,
+        path: &str,
+        name: &str,
+        written: &str,
+        owner: Span,
+    ) -> Option<CheckerAnswer> {
+        let bounds = self.types.get(path)?;
+        let mut named = bounds.iter().filter(|bound| bound.name == name);
+        let first = named.next()?;
+        if named.all(|bound| bound.answer == first.answer) {
+            return Some(first.answer.clone());
+        }
+        let spelled: Vec<&Bound> = bounds
+            .iter()
+            .filter(|bound| bound.name == name && bound.written == written)
+            .collect();
+        let pool: Vec<&Bound> = if spelled.is_empty() {
+            bounds.iter().filter(|bound| bound.name == name).collect()
+        } else {
+            spelled
+        };
+        pool.into_iter()
+            .min_by_key(|bound| bound.start.abs_diff(owner.start))
+            .map(|bound| bound.answer.clone())
     }
 
     pub fn semantic_rows(&self) -> &[crate::tsi::FactOut] {

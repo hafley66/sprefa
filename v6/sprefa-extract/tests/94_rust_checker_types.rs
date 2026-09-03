@@ -142,27 +142,22 @@ fn the_checker_answers_under_a_name_the_reference_never_spells() {
     );
 }
 
-/// The type plane keys the tier's answers on (file, name) because a
-/// `TypeEdgeCandidate` carries no reference span. `Mixed` names two `Config`
-/// types in one file, so both answers collapse and the name-match legs bind.
-/// Counted as `type_ambiguous` on the index.
+/// `Mixed` names two `Config` types in one file. A `TypeEdgeCandidate`
+/// carries no reference span, so the tier narrows by the candidate's own
+/// spelling and the owner's distance (`115_rust_type_grind.rs` pins the
+/// per-spelling answers); counted as `type_ambiguous` on the index. Both
+/// declarations still reach an edge.
 #[test]
-fn a_name_one_file_resolves_two_ways_falls_back_to_the_syntax_leg() {
+fn a_name_one_file_resolves_two_ways_still_binds_both_declarations() {
     let edges = type_edges(&run(true));
-    assert!(
-        !edges.iter().any(|(owner, _, name, origin)| owner == "Mixed"
-            && name == "Config"
-            && origin == "checker"),
-        "the collapsed name reaches no checker edge, got {edges:?}"
-    );
-    assert_eq!(
-        edges
-            .iter()
-            .filter(|(owner, _, name, origin)| owner == "Mixed"
-                && name == "Config"
-                && origin == "module_plane")
-            .count(),
-        2,
-        "both spellings still bind through the module plane, got {edges:?}"
-    );
+    for file in ["widget.rs", "decoys.rs"] {
+        assert!(
+            edges
+                .iter()
+                .any(|(owner, target, name, _)| owner == "Mixed"
+                    && name == "Config"
+                    && target == file),
+            "Mixed -> {file} Config binds, got {edges:?}"
+        );
+    }
 }

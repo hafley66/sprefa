@@ -358,7 +358,14 @@ fn type_ref(
         return None;
     }
     let nav = spans.destination_of(sema, def)?;
-    mint(destination, file, name_ref.syntax().text_range(), &nav)
+    let mut reference = mint(destination, file, name_ref.syntax().text_range(), &nav)?;
+    reference.written = path
+        .segments()
+        .filter_map(|segment| segment.name_ref())
+        .map(|name| name.text().to_string())
+        .collect::<Vec<String>>()
+        .join("::");
+    Some(reference)
 }
 
 fn nav_of(sema: &Semantics<'_, RootDatabase>, def: ModuleDef) -> Option<NavigationTarget> {
@@ -391,6 +398,7 @@ fn mint(
         start: file.offsets.to_span_offset(start),
         end: file.offsets.to_span_offset(end),
         name: file.text.get(start as usize..end as usize)?.to_string(),
+        written: String::new(),
         dst_path,
         dst_name: nav.name.as_str().to_string(),
         dst_offset,
