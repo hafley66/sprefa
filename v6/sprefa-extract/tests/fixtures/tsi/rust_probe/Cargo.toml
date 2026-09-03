@@ -1,0 +1,12 @@
+# `[workspace]` with no members: `cargo metadata` resolves the package
+# standalone, so the fixture pulls no dependency and joins no outer workspace.
+[workspace]
+
+[package]
+name = "tsi_rust_probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"

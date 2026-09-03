@@ -1,17 +1,21 @@
 //! The checker tier's loader: `cargo metadata` into a salsa db, then
 //! rust-analyzer's own resolution over every supplied file. Seam: `rust_checker`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use ra_ap_hir::{ModuleDef, PathResolution, Semantics, attach_db};
+use ra_ap_hir::{
+    Adt, AssocItem, Crate, Field, Function, GenericDef, HirDisplay, Impl, ModuleDef, PathResolution,
+    Semantics, Type, attach_db,
+};
 use ra_ap_ide::{AnalysisHost, NavigationTarget, RootDatabase, TryToNav};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
 use ra_ap_project_model::{CargoConfig, RustLibSource};
 use ra_ap_syntax::{AstNode, ast};
 
 use super::rust_checker::{CheckerAnswers, CheckerError, CheckerRef, OffsetMap};
+use crate::tsi::{Arg, CoverageClaim, FactOut};
 
 /// One corpus file the walk visits: its supplied path, its ra file id, its
 /// text and the byte -> parse-plane offset map over that text.
@@ -26,6 +30,7 @@ pub fn answer(
     root: &Path,
     files: &[(String, PathBuf)],
     budget: Duration,
+    tsi: bool,
 ) -> Result<CheckerAnswers, CheckerError> {
     let load_config = LoadCargoConfig {
         load_out_dirs_from_check: false,
@@ -57,12 +62,19 @@ pub fn answer(
         })
         .collect();
     let mut by_file_id: HashMap<ra_ap_ide::FileId, &str> = HashMap::new();
+    // One string per workspace file, so it is built only for a run whose
+    // envelope reads it: a leaf type's origin names the file declaring it.
+    let mut path_of: HashMap<ra_ap_ide::FileId, String> = HashMap::new();
     for (vfs_id, vfs_path) in vfs.iter() {
         let Some(absolute) = vfs_path.as_path() else { continue };
-        let key = PathBuf::from(absolute.to_string());
-        let key = std::fs::canonicalize(&key).unwrap_or(key);
+        let text = absolute.to_string();
+        let key = std::fs::canonicalize(&text).unwrap_or_else(|_| PathBuf::from(&text));
+        let file_id = ra_ap_ide::FileId::from_raw(vfs_id.index());
         if let Some(supplied) = wanted.get(&key) {
-            by_file_id.insert(ra_ap_ide::FileId::from_raw(vfs_id.index()), supplied);
+            by_file_id.insert(file_id, supplied);
+        }
+        if tsi {
+            path_of.insert(file_id, text);
         }
     }
 
@@ -123,6 +135,16 @@ pub fn answer(
         answers.method_unresolved += answered.method_unresolved;
         answers.calls.insert(answered.path.clone(), answered.calls);
         answers.types.insert(answered.path, answered.types);
+    }
+    if tsi {
+        // Ids are run-local across the whole workspace, so the item walk owns
+        // one counter and runs after the per-file resolve rather than beside it.
+        let (facts, coverage) = attach_db(db, || {
+            let sema = Semantics::new(db);
+            TsiWalk::new(db, &sema, &destination, &path_of).run(&walk_files)
+        });
+        answers.tsi = facts;
+        answers.coverage = coverage;
     }
     answers.walk = walk_started.elapsed();
     Ok(answers)
@@ -270,4 +292,525 @@ fn mint(
         dst_name: nav.name.as_str().to_string(),
         dst_offset,
     })
+}
+
+/// Every relation the item walk enumerates to exhaustion. A claim is emitted
+/// only where the walk produced a row: `complete` over nothing says too much.
+const ENUMERATED: &[&str] = &[
+    "tsi.type",
+    "tsi.denotes",
+    "tsi.origin",
+    "tsi.product",
+    "tsi.sum",
+    "tsi.callable",
+    "tsi.primitive",
+    "tsi.parameter",
+    "tsi.called",
+    "tsi.argument",
+    "tsi.input",
+    "tsi.output",
+    "rust.trait",
+    "rust.impl",
+    "rust.assoc",
+    "rust.lifetime",
+    "rust.ownership",
+];
+
+/// Every relation the walk samples rather than enumerates, with the sentence a
+/// partial claim carries beside it.
+const SAMPLED: &[(&str, &str)] = &[
+    (
+        "tsi.edge",
+        "enumerated for workspace-declared owners; std and dependency types are leaves",
+    ),
+    (
+        "tsi.conforms",
+        "declared impls only; blanket and auto traits not enumerated",
+    ),
+    ("tsi.has_type", "occurrences not walked in this arc"),
+    ("tsi.subtype", "not enumerated"),
+    ("tsi.assignable", "not enumerated"),
+    ("tsi.equivalent", "not enumerated"),
+];
+
+/// Run-local identity over one workspace walk. Rule 1 has two halves: a
+/// declaration is its `ModuleDef`, a structure is its rendering inside a crate.
+struct TsiWalk<'db, 'a> {
+    db: &'db RootDatabase,
+    sema: &'a Semantics<'db, RootDatabase>,
+    destination: &'a HashMap<ra_ap_ide::FileId, &'a WalkFile>,
+    path_of: &'a HashMap<ra_ap_ide::FileId, String>,
+    next: u32,
+    nominal: HashMap<ModuleDef, u32>,
+    structural: HashMap<(Crate, String), u32>,
+    described: HashSet<u32>,
+    facts: Vec<FactOut>,
+}
+
+impl<'db, 'a> TsiWalk<'db, 'a> {
+    fn new(
+        db: &'db RootDatabase,
+        sema: &'a Semantics<'db, RootDatabase>,
+        destination: &'a HashMap<ra_ap_ide::FileId, &'a WalkFile>,
+        path_of: &'a HashMap<ra_ap_ide::FileId, String>,
+    ) -> Self {
+        TsiWalk {
+            db,
+            sema,
+            destination,
+            path_of,
+            next: 0,
+            nominal: HashMap::new(),
+            structural: HashMap::new(),
+            described: HashSet::new(),
+            facts: Vec::new(),
+        }
+    }
+
+    /// The declarations of every module a supplied file owns, then every impl
+    /// of every crate those modules belong to.
+    fn run(mut self, files: &[WalkFile]) -> (Vec<FactOut>, Vec<CoverageClaim>) {
+        let mut modules: Vec<ra_ap_hir::Module> = Vec::new();
+        let mut crates: Vec<Crate> = Vec::new();
+        for file in files {
+            for module in self.sema.file_to_module_defs(file.file_id) {
+                if !modules.contains(&module) {
+                    modules.push(module);
+                }
+                let krate = module.krate(self.db);
+                if !crates.contains(&krate) {
+                    crates.push(krate);
+                }
+            }
+        }
+        for module in modules {
+            let krate = module.krate(self.db);
+            for def in module.declarations(self.db) {
+                self.declaration(def, krate);
+            }
+        }
+        for krate in crates {
+            for item in Impl::all_in_crate(self.db, krate) {
+                self.implementation(item, krate);
+            }
+        }
+        let claims = claims(&self.facts);
+        (self.facts, claims)
+    }
+
+    fn row(&mut self, relation: &str, args: Vec<Arg>) {
+        debug_assert!(
+            crate::tsi::registry::check(relation, &args).is_ok(),
+            "{relation}: {:?}",
+            crate::tsi::registry::check(relation, &args)
+        );
+        self.facts.push(FactOut {
+            fact: 0,
+            relation: relation.to_string(),
+            args,
+        });
+    }
+
+    fn fresh(&mut self) -> u32 {
+        let id = self.next;
+        self.next += 1;
+        id
+    }
+
+    /// True the first time an id is handed out for description, so a type
+    /// reached twice carries one shape.
+    fn first_visit(&mut self, id: u32) -> bool {
+        self.described.insert(id)
+    }
+
+    /// Rule 1's nominal half. The `tsi.type` and `tsi.origin` rows are minted
+    /// with the id, so every id an argument names is declared by construction.
+    fn nominal(&mut self, def: ModuleDef) -> u32 {
+        if let Some(id) = self.nominal.get(&def) {
+            return *id;
+        }
+        let id = self.fresh();
+        self.nominal.insert(def, id);
+        self.row("tsi.type", vec![Arg::Id(id)]);
+        let krate = def.module(self.db).map(|module| module.krate(self.db));
+        let origin = self.origin_at(nav_of(self.sema, def), krate);
+        self.row(
+            "tsi.origin",
+            vec![Arg::Id(id), Arg::Atom("rust".to_string()), origin],
+        );
+        id
+    }
+
+    /// Rule 1's structural half: two types that render alike inside one crate
+    /// are one type, and the rendering is the only string the id costs.
+    fn rendered(&mut self, ty: &Type<'db>, krate: Crate) -> (u32, bool) {
+        let target = krate.to_display_target(self.db);
+        let key = (krate, ty.display(self.db, target).to_string());
+        if let Some(id) = self.structural.get(&key) {
+            return (*id, false);
+        }
+        let id = self.fresh();
+        self.structural.insert(key, id);
+        self.row("tsi.type", vec![Arg::Id(id)]);
+        (id, true)
+    }
+
+    /// A declaration is a symbol and a type at once, and `tsi.denotes` is the
+    /// join a consumer follows from one to the other.
+    fn declared(&mut self, def: ModuleDef) -> (u32, bool) {
+        let id = self.nominal(def);
+        let fresh = self.first_visit(id);
+        if fresh {
+            let symbol = self.fresh();
+            self.row("tsi.symbol", vec![Arg::Id(symbol)]);
+            self.row("tsi.denotes", vec![Arg::Id(symbol), Arg::Id(id)]);
+        }
+        (id, fresh)
+    }
+
+    /// A corpus declaration origins at its own name in the parse plane's offset
+    /// unit; one outside the supplied files keeps its file's byte range.
+    fn origin_at(&mut self, nav: Option<NavigationTarget>, krate: Option<Crate>) -> Arg {
+        let fallback = || {
+            let name = krate
+                .and_then(|krate| krate.display_name(self.db))
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| "rust".to_string());
+            Arg::Span(name, 0, 0)
+        };
+        let Some(nav) = nav else { return fallback() };
+        let range = nav.focus_range.unwrap_or(nav.full_range);
+        let start = u32::from(range.start());
+        let end = u32::from(range.end());
+        if let Some(target) = self.destination.get(&nav.file_id) {
+            return Arg::Span(
+                target.path.clone(),
+                target.offsets.to_span_offset(start),
+                target.offsets.to_span_offset(end),
+            );
+        }
+        match self.path_of.get(&nav.file_id) {
+            Some(path) => Arg::Span(path.clone(), start, end),
+            None => fallback(),
+        }
+    }
+
+    fn declaration(&mut self, def: ModuleDef, krate: Crate) {
+        match def {
+            ModuleDef::Adt(Adt::Struct(item)) => {
+                let (id, fresh) = self.declared(def);
+                if !fresh {
+                    return;
+                }
+                self.generics(id, GenericDef::from(item), krate);
+                self.row("tsi.product", vec![Arg::Id(id)]);
+                self.fields(id, item.fields(self.db), krate);
+            }
+            ModuleDef::Adt(Adt::Union(item)) => {
+                let (id, fresh) = self.declared(def);
+                if !fresh {
+                    return;
+                }
+                self.generics(id, GenericDef::from(item), krate);
+                self.row("tsi.product", vec![Arg::Id(id)]);
+                self.fields(id, item.fields(self.db), krate);
+            }
+            ModuleDef::Adt(Adt::Enum(item)) => {
+                let (id, fresh) = self.declared(def);
+                if !fresh {
+                    return;
+                }
+                self.generics(id, GenericDef::from(item), krate);
+                self.row("tsi.sum", vec![Arg::Id(id)]);
+                for (position, variant) in item.variants(self.db).into_iter().enumerate() {
+                    let owned = self.nominal(ModuleDef::EnumVariant(variant));
+                    if self.first_visit(owned) {
+                        self.row("tsi.product", vec![Arg::Id(owned)]);
+                        self.fields(owned, variant.fields(self.db), krate);
+                    }
+                    let edge = self.fresh();
+                    let label = variant.name(self.db).as_str().to_string();
+                    self.row(
+                        "tsi.edge",
+                        vec![
+                            Arg::Id(edge),
+                            Arg::Id(id),
+                            Arg::Text(label),
+                            Arg::Id(owned),
+                            Arg::Int(position as i64),
+                        ],
+                    );
+                }
+            }
+            ModuleDef::Trait(item) => {
+                let (id, fresh) = self.declared(def);
+                if !fresh {
+                    return;
+                }
+                self.generics(id, GenericDef::from(item), krate);
+                self.row("rust.trait", vec![Arg::Id(id)]);
+                for assoc in item.items(self.db) {
+                    self.assoc_item(id, assoc, krate);
+                }
+            }
+            ModuleDef::Function(item) => self.callable(item, krate),
+            _ => {}
+        }
+    }
+
+    /// A trait's own associated type has no right-hand side, so its target is
+    /// the alias declaration itself: an opaque id that still origins at a name.
+    fn assoc_item(&mut self, owner: u32, assoc: AssocItem, krate: Crate) {
+        match assoc {
+            AssocItem::TypeAlias(alias) => {
+                let target = if alias.has_type(self.db) {
+                    self.type_id(&alias.ty(self.db), krate)
+                } else {
+                    self.nominal(ModuleDef::TypeAlias(alias))
+                };
+                let name = alias.name(self.db).as_str().to_string();
+                self.row(
+                    "rust.assoc",
+                    vec![Arg::Id(owner), Arg::Text(name), Arg::Id(target)],
+                );
+            }
+            AssocItem::Function(item) => self.callable(item, krate),
+            AssocItem::Const(_) => {}
+        }
+    }
+
+    fn implementation(&mut self, item: Impl, krate: Crate) {
+        let Some(contract) = item.trait_(self.db) else {
+            return;
+        };
+        let Some(adt) = item.self_ty(self.db).as_adt() else {
+            return;
+        };
+        let owner = self.nominal(ModuleDef::Adt(adt));
+        let contract = self.nominal(ModuleDef::Trait(contract));
+        let id = self.fresh();
+        self.row(
+            "rust.impl",
+            vec![Arg::Id(id), Arg::Id(owner), Arg::Id(contract)],
+        );
+        self.row(
+            "tsi.conforms",
+            vec![
+                Arg::Id(owner),
+                Arg::Id(contract),
+                Arg::Atom("declared".to_string()),
+            ],
+        );
+        for assoc in item.items(self.db) {
+            self.assoc_item(owner, assoc, krate);
+        }
+    }
+
+    fn callable(&mut self, item: Function, krate: Crate) {
+        let (id, fresh) = self.declared(ModuleDef::Function(item));
+        if !fresh {
+            return;
+        }
+        self.generics(id, GenericDef::from(item), krate);
+        self.row("tsi.callable", vec![Arg::Id(id)]);
+        for (position, param) in item.params_without_self(self.db).into_iter().enumerate() {
+            let param = self.type_id(param.ty(), krate);
+            self.row(
+                "tsi.input",
+                vec![Arg::Id(id), Arg::Int(position as i64), Arg::Id(param)],
+            );
+        }
+        let produced = self.type_id(&item.ret_type(self.db), krate);
+        self.row(
+            "tsi.output",
+            vec![Arg::Id(id), Arg::Int(0), Arg::Id(produced)],
+        );
+    }
+
+    /// Each field is one edge plus the word its type spells about who owns the
+    /// bytes behind it; a borrow and a smart pointer both target their pointee.
+    fn fields(&mut self, owner: u32, fields: Vec<Field>, krate: Crate) {
+        for field in fields {
+            let declared = field.ty(self.db);
+            let (ownership, target) = ownership_of(self.db, &declared);
+            let target = self.type_id(&target, krate);
+            let edge = self.fresh();
+            let label = field.name(self.db).as_str().to_string();
+            self.row(
+                "tsi.edge",
+                vec![
+                    Arg::Id(edge),
+                    Arg::Id(owner),
+                    Arg::Text(label),
+                    Arg::Id(target),
+                    Arg::Int(field.index() as i64),
+                ],
+            );
+            self.row(
+                "rust.ownership",
+                vec![Arg::Id(edge), Arg::Atom(ownership.to_string())],
+            );
+        }
+    }
+
+    /// rust-analyzer exposes no variance for a type parameter, so the position
+    /// carries `unspecified` rather than a word the compiler never said.
+    fn generics(&mut self, owner: u32, def: GenericDef, krate: Crate) {
+        let declared: Vec<ra_ap_hir::TypeParam> = def
+            .type_or_const_params(self.db)
+            .into_iter()
+            .filter_map(|param| param.as_type_param(self.db))
+            .filter(|param| !param.is_implicit(self.db))
+            .collect();
+        for (position, param) in declared.into_iter().enumerate() {
+            let (id, fresh) = self.rendered(&param.ty(self.db), krate);
+            // Two owners writing the same parameter name render alike and are one
+            // id, so the bounds ride the id rather than the owner that reached it.
+            if fresh {
+                let nav = param.try_to_nav(self.sema).map(|nav| nav.call_site);
+                let origin = self.origin_at(nav, Some(krate));
+                self.row(
+                    "tsi.origin",
+                    vec![Arg::Id(id), Arg::Atom("rust".to_string()), origin],
+                );
+                for (rank, bound) in param.trait_bounds(self.db).into_iter().enumerate() {
+                    let bound = self.nominal(ModuleDef::Trait(bound));
+                    let edge = self.fresh();
+                    self.row(
+                        "tsi.edge",
+                        vec![
+                            Arg::Id(edge),
+                            Arg::Id(id),
+                            Arg::Text("bound".to_string()),
+                            Arg::Id(bound),
+                            Arg::Int(rank as i64),
+                        ],
+                    );
+                }
+            }
+            self.row(
+                "tsi.parameter",
+                vec![
+                    Arg::Id(id),
+                    Arg::Id(owner),
+                    Arg::Int(position as i64),
+                    Arg::Atom("unspecified".to_string()),
+                ],
+            );
+        }
+        for param in def.lifetime_params(self.db) {
+            let name = param.name(self.db);
+            let name = name.as_str().trim_start_matches('\'').to_string();
+            self.row("rust.lifetime", vec![Arg::Id(owner), Arg::Atom(name)]);
+        }
+    }
+
+    /// The id for one type. A bare declaration takes rule 1's nominal id; an
+    /// application takes its rendering's, and declares its parts beside it.
+    fn type_id(&mut self, ty: &Type<'db>, krate: Crate) -> u32 {
+        if let Some(builtin) = ty.as_builtin() {
+            let id = self.nominal(ModuleDef::BuiltinType(builtin));
+            if self.first_visit(id) {
+                let name = builtin.name().as_str().to_string();
+                self.row("tsi.primitive", vec![Arg::Id(id), Arg::Atom(name)]);
+            }
+            return id;
+        }
+        let arguments: Vec<Type<'db>> = ty.type_arguments().collect();
+        if let Some(adt) = ty.as_adt() {
+            if arguments.is_empty() {
+                return self.nominal(ModuleDef::Adt(adt));
+            }
+            let (id, fresh) = self.rendered(ty, krate);
+            if fresh {
+                let nav = nav_of(self.sema, ModuleDef::Adt(adt));
+                let origin = self.origin_at(nav, Some(krate));
+                self.row(
+                    "tsi.origin",
+                    vec![Arg::Id(id), Arg::Atom("rust".to_string()), origin],
+                );
+                let constructor = self.nominal(ModuleDef::Adt(adt));
+                let list = self.fresh();
+                self.row(
+                    "tsi.called",
+                    vec![Arg::Id(id), Arg::Id(constructor), Arg::Id(list)],
+                );
+                for (position, argument) in arguments.iter().enumerate() {
+                    let argument = self.type_id(argument, krate);
+                    self.row(
+                        "tsi.argument",
+                        vec![Arg::Id(list), Arg::Int(position as i64), Arg::Id(argument)],
+                    );
+                }
+            }
+            return id;
+        }
+        let (id, fresh) = self.rendered(ty, krate);
+        if !fresh {
+            return id;
+        }
+        let origin = self.origin_at(None, Some(krate));
+        self.row(
+            "tsi.origin",
+            vec![Arg::Id(id), Arg::Atom("rust".to_string()), origin],
+        );
+        if let Some(callable) = ty.as_callable(self.db) {
+            self.row("tsi.callable", vec![Arg::Id(id)]);
+            for (position, param) in callable.params().into_iter().enumerate() {
+                let param = self.type_id(param.ty(), krate);
+                self.row(
+                    "tsi.input",
+                    vec![Arg::Id(id), Arg::Int(position as i64), Arg::Id(param)],
+                );
+            }
+            let produced = self.type_id(&callable.return_type(), krate);
+            self.row(
+                "tsi.output",
+                vec![Arg::Id(id), Arg::Int(0), Arg::Id(produced)],
+            );
+        }
+        id
+    }
+}
+
+/// The word a field's type spells about who owns the bytes behind it, and the
+/// type the edge then targets: a wrapper is the word, never a node of its own.
+fn ownership_of<'db>(db: &'db RootDatabase, ty: &Type<'db>) -> (&'static str, Type<'db>) {
+    if ty.is_reference() {
+        let word = if ty.is_mutable_reference() {
+            "exclusive"
+        } else {
+            "shared"
+        };
+        return (word, ty.strip_reference());
+    }
+    if let Some(adt) = ty.as_adt() {
+        let word = match adt.name(db).as_str() {
+            "Box" => "owned",
+            "Rc" | "Arc" => "shared",
+            _ => return ("owned", ty.clone()),
+        };
+        if let Some(inner) = ty.type_arguments().next() {
+            return (word, inner);
+        }
+    }
+    ("owned", ty.clone())
+}
+
+fn claims(facts: &[FactOut]) -> Vec<CoverageClaim> {
+    let emitted: HashSet<&str> = facts.iter().map(|fact| fact.relation.as_str()).collect();
+    ENUMERATED
+        .iter()
+        .filter(|relation| emitted.contains(*relation))
+        .map(|relation| CoverageClaim {
+            relation: (*relation).to_string(),
+            complete: true,
+            diagnostic: None,
+        })
+        .chain(SAMPLED.iter().map(|(relation, detail)| CoverageClaim {
+            relation: (*relation).to_string(),
+            complete: false,
+            diagnostic: Some((*detail).to_string()),
+        }))
+        .collect()
 }
