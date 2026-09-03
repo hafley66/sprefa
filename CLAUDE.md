@@ -295,10 +295,13 @@ list` shows your own lane name.
   `v6/dl/dataflow/report_extract.dl6` is intra-procedural and its wrapper
   names host `files` with no linked executor. `ModuleF` is collapsed at
   `types.rs` (grep `ModuleF`), deferred by user 2026-08-16.
-- **`sprefa-extract` has no markdown extractor.** `.dl6` landed (PR #241:
-  `tree-sitter-dl6` crate + `src/lang/dl6/`), but `source_for` still returns
-  `None` for `.md`, so a `.dl6` rail cannot read a `.md` file today.
-  Roster: `v6/sprefa-extract/src/lang/mod.rs` `sources()`.
+- **`sprefa-extract` reads markdown.** `MarkdownSource` (`.md`, `.markdown`)
+  and `DataSource` (json/jsonl/yaml/toml) sit in the roster
+  (`v6/sprefa-extract/src/lang/mod.rs` `sources()`); `doc_node` rows carry
+  heading, code_block (fence language, body span), link (target, title) and
+  image (PR #707). XML is the one doc format with no source. The earlier
+  "`source_for` returns `None` for `.md`" line was stale (verified 2026-09-03,
+  `tests/snapshot.rs` asserts `source_for("x.md").name() == "markdown"`).
 - **Awaiting user word:** prolog folder names/numbering; flash-prolog worktree
   fate; bop-run idle-exit vs rail receipts; push + tag (gated on
   `release_gate_v620`, `rulings.pl:532`). String split/substr primitive is
