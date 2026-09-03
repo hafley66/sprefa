@@ -71,12 +71,12 @@ fn py_parse(content: &str) -> Option<tree_sitter::Tree> {
 }
 
 /// UTF-8 text of a tree-sitter node. Port of v5 `py_text`.
-fn py_text<'a>(node: tree_sitter::Node, src: &'a [u8]) -> &'a str {
+pub(super) fn py_text<'a>(node: tree_sitter::Node, src: &'a [u8]) -> &'a str {
     node.utf8_text(src).unwrap_or("")
 }
 
 /// The byte span of a tree-sitter node `[start_byte, end_byte)`.
-fn node_span(node: tree_sitter::Node) -> crate::shape::Span {
+pub(super) fn node_span(node: tree_sitter::Node) -> crate::shape::Span {
     crate::shape::Span {
         start: node.start_byte() as u32,
         len: (node.end_byte() - node.start_byte()) as u32,
@@ -107,6 +107,7 @@ fn project_types(
         push_py_doc(sink, strings, module_span, None, &text);
     }
     walk_py_entities(root, src, strings, sink, None);
+    super::_1_type_edges::tsi_rows(root, src, strings, sink);
 }
 
 /// One entity per class/function/method; `class_owner` is the enclosing class's
