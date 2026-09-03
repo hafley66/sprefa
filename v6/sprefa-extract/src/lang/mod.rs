@@ -21,6 +21,8 @@ pub mod kotlin;
 pub mod kotlin_rehome;
 pub mod kotlin_rename;
 pub mod markdown;
+#[path = "4_owned_region.rs"]
+pub mod owned_region;
 pub mod prolog;
 pub mod python;
 pub mod rust;
@@ -66,6 +68,10 @@ pub use fact::{
 pub use go::GoSource;
 pub use kotlin::KotlinSource;
 pub use markdown::MarkdownSource;
+pub use owned_region::{
+    find_owned_region, owned_region_markers, propose_owned_region, OwnedRegion, OwnedRegionError,
+    OwnedRegionProposal,
+};
 pub use prolog::PrologSource;
 pub use python::PythonSource;
 pub use rust::RustSource;
