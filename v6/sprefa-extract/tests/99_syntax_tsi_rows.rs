@@ -216,10 +216,10 @@ fn ts_product_carries_named_positioned_fields() {
     assert!(!probe.carries("ts.optional", id_edge_id));
 
     let name_edge = probe.edge(user, "name");
-    assert_eq!(
-        probe.origin_text(as_id(&name_edge.args[3]).unwrap()),
-        "string"
-    );
+    // `string` is a keyword primitive: a class, never an origin range.
+    let string = as_id(&name_edge.args[3]).unwrap();
+    assert!(probe.carries("tsi.primitive", string));
+    assert!(!probe.carries("tsi.origin", string));
     assert_eq!(as_int(&name_edge.args[4]), Some(1));
     let name_edge_id = as_id(&name_edge.args[0]).expect("an edge declares its own id");
     assert!(probe.carries("ts.optional", name_edge_id));
@@ -312,9 +312,13 @@ fn ts_written_generic_argument_is_a_call_not_a_shape() {
         .collect();
     assert_eq!(arguments.len(), 1);
     assert_eq!(as_int(&arguments[0].args[1]), Some(0));
-    assert_eq!(
-        probe.origin_text(as_id(&arguments[0].args[2]).unwrap()),
-        "User<number>"
+    // The origin of a written application spans its head (rust D1 parity);
+    // the argument is itself a call on `User`.
+    let argument = as_id(&arguments[0].args[2]).unwrap();
+    assert_eq!(probe.origin_text(argument), "User");
+    assert!(
+        called.iter().any(|fact| as_id(&fact.args[0]) == Some(argument)),
+        "`User<number>` states its own call"
     );
 
     let owned = probe
