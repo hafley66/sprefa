@@ -991,7 +991,7 @@ task(tsi_a6_rust_semantic, done, [tsi_a5_ts_semantic]). % LANDED 2026-09-02 (PR 
 task(tsi_a8_intersection, done, [tsi_a6_rust_semantic]). % LANDED 2026-09-02 (PR #661): tests/100_tsi_intersection.rs 5, shared tsi.* projection equal across probe.ts and rust_probe (13 rows), 10 ts asymmetries pinned. Criterion 8 of issues/extract-semantic-fact-roundtrip.
 task(tsi_contract_vs_trait_shape, unbuilt, [tsi_a8_intersection]). % FORK for Chris (from A8): ts interface projects as tsi.product, rust trait as rust.trait only; rust symbols carry no tsi.origin (A6) so they project unnamed while ts symbols (A5 deviation 8) do.
 task(tsi_typespec_rows, unbuilt, [tsi_a3_registry_ingest]). % codex-tsi session: tsp.* REGISTRY rows plus an --ingest-accepted fixture; research plans/2026-09-02-typespec-tsi-fact-parity.md on perf/v7-cold-compile.
-task(extract_emit_throughput_budget, unbuilt, []). % tests/45_emit_throughput.rs 5.5s wall budget measured 5.9-6.9s on origin/main 8e050ed82 under lane load (A2, A4 lanes, 3/3 red); needs three idle-machine measurements; not in CI-KNOWN-RED.md.
+task(extract_emit_throughput_budget, unbuilt, []). % BISECTED 2026-09-03: first bad commit 7bfc8d4a4 (#567, go multi-hop receiver chains) puts go_chain_of on the per-file emission path; 4a0b91362 passes 3/3 and 15e95de83 fails 3/3 on the same machine (docs/failure-modes.md 107). Fix lane fix/emit-throughput-567, brief plans/2026-09-03-emit-throughput-fix.BRIEF.md.
 
 roadmap :-
     findall(Name-Needs, task(Name, _, Needs), Pairs),
