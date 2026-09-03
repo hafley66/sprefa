@@ -171,8 +171,10 @@ DL7 facts
    languages behind one source-intelligence capability.
 4. Ast-grep supplies structural composition. Tree-sitter supplies exact CST
    selection with its native S-expression query language.
-5. Source matches join semantic facts through immutable source identity and
-   half-open byte spans. Textual names remain display or fallback data.
+5. Source identity has three independent axes: a revision-qualified source
+   place, immutable content, and a half-open range in that content. Syntax
+   facts use content spans. Semantic facts and mutations use located
+   occurrences that pair a source place with a content span.
 6. Read-like compiler effects return observations to the compiler fixpoint.
    Write-like effects remain staged until output time.
 7. The common type graph carries language intersections. Language-specific
@@ -291,51 +293,124 @@ The host converts those values into the existing `AstRule` model and executes
 the ast-grep library. Fixes remain proposals carrying expected content identity
 and spans, suitable for Soopy's staging boundary.
 
-### Semantic join
+### Source identity and semantic join
+
+The source model keeps location, bytes, range, parser interpretation, and
+semantic occurrence as separate values:
+
+```text
+Repository + Revision + Path
+              │
+              ▼
+           Source
+              │ source_content
+              ▼
+           Content
+              │ [start, end)
+              ▼
+        ContentSpan
+              │
+       Source + ContentSpan
+              ▼
+      LocatedOccurrence
+```
+
+Their logical relations are:
+
+```text
+source(Source, Repository, Revision, Path)
+content(Content, ByteLength)
+source_content(Source, Content)
+content_span(Span, Content, Start, End)
+located(Occurrence, Source, Span)
+
+parse(Parse, Content, Grammar, ParserVersion, Configuration)
+syntax_node(Node, Parse, Kind, Span)
+
+source_query(Query, Engine, Specification)
+source_match(Match, Query, Parse, Span)
+source_capture(Match, Position, Label, Span)
+
+tsi_has_type(Occurrence, Type)
+tsi_refers_to(Occurrence, Symbol)
+source_replacement(Edit, Occurrence, Replacement, Producer)
+```
+
+`ContentSpan` is reusable for work whose answer depends only on bytes, grammar,
+parser version, and parser configuration. `LocatedOccurrence` is required for
+module resolution and other semantics that can differ when identical bytes
+appear at different repository paths. A replacement obtains all of Soopy's
+precondition data from the occurrence: `Source` selects the file,
+`ContentSpan.Content` is the expected content identity, and the span supplies
+the byte range.
+
+The model follows the evidence accumulated by the older implementations:
+
+- V4's `WhereBytes` hashed text, repository, revision, file, and range into one
+  located-text identity.
+- V5 added repository/path attribution and syntax-kind salting after identical
+  content at different paths and distinct syntax nodes at one range collided.
+- V6 Extract separated the file-local `Span` from node identity
+  `(family, span, kind)`, while its TSI wire promoted spans to
+  `(content, start, end)`.
+- V6's storage census measured 7,345,805 fact references to 2,073,233 distinct
+  spans over 1,048 files. Its selected SQLite layout gave facts a dense
+  `file_span_id`, but that surrogate remains an emitter decision.
+- Soopy already provides `SourceRef`, `SourceEntry`, `SourceSpan`, and mutations
+  guarded by an expected `ContentId`.
+
+Canonical `Content` identity uses BLAKE3 over bytes. Git object identity is an
+additive capability fact:
+
+```text
+git_blob(Content, Repository, ObjectId)
+```
+
+This gives Extract and every non-Git source one content key while retaining the
+Git OID required for object reads. Soopy currently represents `GitBlob` and
+`Blake3` as distinct `ContentId` variants, so the bridge must emit the BLAKE3
+identity and a `git_blob` fact when both are known.
+
+The storage emitter may intern the logical product without exposing its dense
+key to compiler rules:
+
+```text
+located(Source, content_span(Content, Start, End))
+                         │
+                         ▼
+file_span(file_span_id, rev_file_id, start, end)
+rev_file(rev_file_id, Source, Content)
+```
+
+Text is derived from `(Content, Start, End)`. Capture rows do not repeat it.
+Line and column coordinates are derived presentation data.
 
 ```text
 syntax match
-  (content, start, end, capture)
+  (query, parse, content span, capture)
              │
-             │ join by source occurrence
+             │ pair with source placement
              ▼
 semantic facts
-  (symbol, type, module, call target, origin)
+  (located occurrence, symbol, type, module, call target, origin)
 ```
 
 This supports questions such as "the ast-grep pattern occurs and the captured
 callee resolves to a symbol exported by this module" without giving ast-grep
 responsibility for module or type semantics.
 
-### Pending shared fact review
+### Shared fact implementation boundary
 
-The current proposal uses the existing TSI span value
-`(content identity, byte start, byte end)` directly as the source-location key:
+The source identity, match, and capture model above is approved for the first
+vertical slice. Rust and JSONL records may carry structural source and span
+values directly. DL7 interns repeated compound values during loading. A later
+storage emitter may replace those products with dense references.
 
-```text
-source.file(Content, Path, Language)
-source.query(Query, Engine)
-source.match(Match, Query, Span)
-source.capture(Match, Position, Label, Span, Text)
-source.replacement(Match, Span, Replacement)
-```
+The first golden must exercise one real repository source through Soopy, both
+query engines through Extract, source-fact loading into DL7, a semantic join,
+and a replacement projected back to Soopy's expected-content mutation shape.
 
-`Query` is interned from the complete engine-specific query value. `Match` is
-interned from the exact engine result. `Position` preserves repeated and ordered
-captures. A replacement remains data until output time. The semantic join uses
-the same `Span` value directly:
-
-```text
-source.capture(Match, Position, Label, Span, Text)
-tsi.has_type(Span, Type)
-```
-
-This proposal adds no separate occurrence identity. Reifying an occurrence node
-would duplicate the content and byte coordinates already carried by `Span`.
-Names, arities, identity rules, and direct-span versus reified-occurrence shape
-remain pending review.
-
-<!-- todo(decision): Approve the canonical match, capture, and source-occurrence relations before wiring either query engine into DL7. -->
+<!-- todo(feature): Implement and measure the approved source/content/span/located-occurrence fact boundary through Soopy, Extract, and DL7 using one representative golden. -->
 
 ### Live Markdown documents
 
@@ -504,7 +579,8 @@ language adapters. They add no kernel form or source-specific schema.
       without translating it into the ast-grep rule algebra.
    3. Design the ordinary DL7 product and sum values corresponding to the
       existing `AstRule` tree, then review their names before implementation.
-   4. Approve canonical source-occurrence, match, and capture facts.
+   4. **Complete:** Approve canonical source, content, content-span, located
+      occurrence, match, and capture facts.
    5. Normalize both query engines onto those facts while retaining engine and
       query provenance.
    6. Feed those facts through the compiler-observation loop.
@@ -612,7 +688,8 @@ language adapters. They add no kernel form or source-specific schema.
 1. Freeze this vision as the boundary map.
 2. Demonstrate the current ast-grep and tree-sitter engines through one
    host-side interface, retaining their current output shapes.
-3. Define and review canonical source occurrence, match, and capture facts.
+3. **Complete:** Define and review canonical source occurrence, match, and
+   capture facts.
 4. Prototype one grounded compiler observation without changing the parser or
    evaluator kernel.
 5. Review the prototype and decide whether the existing call/value machinery
@@ -652,6 +729,11 @@ Current implementation receipts:
 - `cargo test --manifest-path v6/sprefa-extract/Cargo.toml --test 9_query_cli`:
   8 passed. Existing tree-sitter CLI output, predicates, grammars, errors, and
   Git blob reads remain covered.
+- Source identity review: V4, V5, V6 Extract, the V6 file-span storage census,
+  and Soopy's current source and mutation types were compared. The approved
+  model separates `Source`, `Content`, `ContentSpan`, `LocatedOccurrence`, and
+  `SyntaxNode`; canonical content uses BLAKE3 with Git OIDs retained as
+  capability facts.
 
 The current slice adds one focused facade test and changes no full-suite gate.
 
@@ -659,5 +741,6 @@ The current slice adds one focused facade test and changes no full-suite gate.
 
 - Current branch: `feature/dl7-source-intelligence`.
 - Baseline vision commit: `3f89ac108`.
-- Current slice: host query facade, followed by the match-fact design review.
+- Current slice: approved source facts followed by one Soopy to Extract to DL7
+  golden and measured source-query normalization.
 - Implementation proceeds one reviewed boundary per delivery-sequence item.
