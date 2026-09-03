@@ -69,7 +69,7 @@ pub(crate) fn kt_text<'a>(node: tree_sitter::Node, src: &'a [u8]) -> &'a str {
 }
 
 /// The byte span of a tree-sitter node `[start_byte, end_byte)`.
-fn node_span(node: tree_sitter::Node) -> Span {
+pub(super) fn node_span(node: tree_sitter::Node) -> Span {
     Span {
         start: node.start_byte() as u32,
         len: (node.end_byte() - node.start_byte()) as u32,
@@ -117,6 +117,7 @@ fn project_types(
     sink: &mut FamilyBundle<TypeF>,
 ) {
     walk_kotlin_entities(root, src, strings, sink);
+    super::kotlin_type_edges::tsi_rows(root, src, strings, sink);
 }
 
 /// Walk every declaration, minting one entity node per class/object/fun decl.
