@@ -307,6 +307,34 @@ This supports questions such as "the ast-grep pattern occurs and the captured
 callee resolves to a symbol exported by this module" without giving ast-grep
 responsibility for module or type semantics.
 
+### Pending shared fact review
+
+The current proposal uses the existing TSI span value
+`(content identity, byte start, byte end)` directly as the source-location key:
+
+```text
+source.file(Content, Path, Language)
+source.query(Query, Engine)
+source.match(Match, Query, Span)
+source.capture(Match, Position, Label, Span, Text)
+source.replacement(Match, Span, Replacement)
+```
+
+`Query` is interned from the complete engine-specific query value. `Match` is
+interned from the exact engine result. `Position` preserves repeated and ordered
+captures. A replacement remains data until output time. The semantic join uses
+the same `Span` value directly:
+
+```text
+source.capture(Match, Position, Label, Span, Text)
+tsi.has_type(Span, Type)
+```
+
+This proposal adds no separate occurrence identity. Reifying an occurrence node
+would duplicate the content and byte coordinates already carried by `Span`.
+Names, arities, identity rules, and direct-span versus reified-occurrence shape
+remain pending review.
+
 <!-- todo(decision): Approve the canonical match, capture, and source-occurrence relations before wiring either query engine into DL7. -->
 
 ### Live Markdown documents
