@@ -86,24 +86,26 @@ fn run_measured(args: &[&str]) -> (u64, usize) {
     (rss, lines)
 }
 
-/// `--bench` reports the flattened fact count on stderr. Streaming the rows
-/// must not change how many there are, so the streamed stdout line count and
-/// this number are asserted equal.
+/// `--bench` reports the flattened fact count as the `rows` column of the phase
+/// table's flatten row. Streaming the rows must not change how many there are,
+/// so the streamed stdout line count and this number are asserted equal.
 fn bench_facts(args: &[&str]) -> usize {
     let out = Command::new(EXTRACT)
         .arg("--bench")
         .args(args)
+        .env("DL_TRAIL", "0")
         .output()
         .expect("spawn extract --bench");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let marker = stderr
-        .rsplit_once("facts=")
-        .unwrap_or_else(|| panic!("no facts= in:\n{stderr}"))
-        .1;
-    marker
-        .trim_end_matches(|c: char| !c.is_ascii_digit())
-        .parse()
-        .expect("facts= is a number")
+    stderr
+        .lines()
+        .find_map(|line| {
+            let columns: Vec<&str> = line.split_whitespace().collect();
+            (columns.len() == 7 && columns[0] == "-" && columns[1] == "flatten")
+                .then(|| columns[4].parse().ok())
+                .flatten()
+        })
+        .unwrap_or_else(|| panic!("no flatten phase row in:\n{stderr}"))
 }
 
 fn assert_bounded(path: &Path, family: &str, rss_per_input_byte: u64) {

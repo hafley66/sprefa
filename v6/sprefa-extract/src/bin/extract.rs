@@ -23,6 +23,7 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use clap::Parser;
 
 use sprefa_extract::schema::schema_text;
+use sprefa_extract::trail::Trail;
 use sprefa_extract::tsi::{ingest, Mode, RunOut};
 use sprefa_extract::{
     cfg_bundle, content_id_of, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact,
@@ -64,7 +65,7 @@ mod source_rename;
     long_about = LONG_ABOUT,
 )]
 struct Cli {
-    #[arg(required_unless_present_any = ["schema", "ingest"], value_name = "PATH", long_help = PATH_LONG)]
+    #[arg(required_unless_present_any = ["schema", "ingest", "trail"], value_name = "PATH", long_help = PATH_LONG)]
     paths: Vec<PathBuf>,
 
     #[arg(long, value_delimiter = ',', long_help = FAMILY_LONG)]
@@ -246,6 +247,20 @@ struct Cli {
     /// Print the JSONL output contract to stdout and exit (no extraction).
     #[arg(long)]
     schema: bool,
+
+    /// Print the last N runs of the on-disk trail and exit (no extraction).
+    #[arg(
+        long,
+        value_name = "N",
+        num_args = 0..=1,
+        default_missing_value = "5",
+        conflicts_with_all = [
+            "paths", "family", "bench", "resolve", "ast_pattern", "deps",
+            "package_deps", "scip_facts", "scip_deps", "file_fact", "witness",
+            "ingest", "schema", "scip_build", "scip_index",
+        ],
+    )]
+    trail: Option<usize>,
 }
 
 /// The two `--family` names that select a whole-project MODE rather than a
@@ -364,8 +379,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     if let Some(state) = summary {
         state.print();
+        write_trail(&state);
     }
     outcome
+}
+
+/// The run row and its phase rows, once, after the summary rendered. A trail is
+/// instrumentation: every stop is a warn and the run's own outcome is unchanged.
+fn write_trail(state: &sprefa_extract::trace::SummaryState) {
+    if matches!(std::env::var("DL_TRAIL").as_deref(), Ok("0")) {
+        return;
+    }
+    let argv: Vec<String> = std::env::args().collect();
+    let snapshot = state.snapshot();
+    match Trail::open().and_then(|trail| trail.write(&snapshot, &argv, git_sha().as_deref())) {
+        Ok(id) => tracing::debug!(run = id, "trail row written"),
+        Err(error) => tracing::warn!(%error, "the run trail was not written"),
+    }
+}
+
+/// The checkout's HEAD, when the run happened inside one. `None` never stops a
+/// trail write: a run outside a repository is still a run worth recording.
+fn git_sha() -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|sha| !sha.is_empty())
+}
+
+/// `--trail [N]`: the canned report off `~/.agent/dl6.db`, newest run first.
+fn print_trail(runs: usize) -> Result<(), Box<dyn std::error::Error>> {
+    let reports = Trail::open()?.recent(runs)?;
+    if reports.is_empty() {
+        emit("no runs")?;
+        return Ok(());
+    }
+    for report in reports {
+        emit(&format!(
+            "run {} {} wall {}ms load {:.2} -> {:.2} argv {}",
+            report.id,
+            report.started,
+            report.wall_ms,
+            report.load_start,
+            report.load_end,
+            report.argv,
+        ))?;
+        for (lang, phase, files, calls, rows, bytes, micros) in report.phases {
+            emit(&format!(
+                "  {lang:<10} {phase:<14} files {files:>6} calls {calls:>8} \
+                 rows {rows:>10} bytes {bytes:>12} us {micros:>12}"
+            ))?;
+        }
+    }
+    Ok(())
 }
 
 /// True when the error chain carries an io::BrokenPipe.
@@ -430,6 +500,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if cli.schema {
         print_schema();
         return Ok(());
+    }
+
+    if let Some(runs) = cli.trail {
+        return print_trail(runs);
     }
 
     if !cli.ingest.is_empty() {
@@ -717,12 +791,19 @@ fn stream(
     // ONE BufWriter held for the whole run: a per-row println! goes through
     // LineWriter, which flushes on every newline and turns 2M-row streams
     // into 2M write syscalls.
+    let writing = sprefa_extract::trace::phase_span("-", sprefa_extract::trace::Phase::Write);
+    let _entered = writing.enter();
     let stdout = std::io::stdout();
-    let mut out = std::io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+    let mut out = CountingWriter {
+        inner: std::io::BufWriter::with_capacity(256 * 1024, stdout.lock()),
+        bytes: 0,
+    };
+    let mut lines = 0u64;
     // Each row is written and dropped: collecting them first held a second copy
     // of the whole stream, which on a 13 MB bundle is 800 MB of the 1,094 MB peak.
     let mut write = |fact: FlatFact| -> Result<(), std::io::Error> {
         serde_json::to_writer(&mut out, &fact)?;
+        lines += 1;
         out.write_all(b"\n")
     };
     // One run per invocation, scoped to the digest of the bytes just read: two
@@ -744,7 +825,35 @@ fn stream(
         }
     }
     out.flush()?;
+    sprefa_extract::trace::record_phase(&writing, out.bytes, lines, 1);
     Ok(())
+}
+
+/// The byte count the trail records, taken off the stream rather than re-derived:
+/// serde writes straight into the BufWriter and never hands back a length.
+struct CountingWriter<W: Write> {
+    inner: W,
+    bytes: u64,
+}
+
+impl<W: Write> Write for CountingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        self.bytes += written as u64;
+        Ok(written)
+    }
+
+    /// Forwarded rather than left to the default loop, so the BufWriter under
+    /// this keeps its one-memcpy path on a 2M-row stream.
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.inner.write_all(buf)?;
+        self.bytes += buf.len() as u64;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 fn bench(
@@ -778,21 +887,24 @@ fn bench(
     } else {
         (0, None)
     };
-    eprintln!(
-        "{}: extract {:?} serial {:?}{} (cst={} type={} call={} df={} data={} cfg={} facts={})",
-        src.name(),
-        extract,
-        serial,
-        cfg_elapsed.map_or(String::new(), |elapsed| format!(" cfg {elapsed:?}")),
-        out.cst.as_ref().map_or(0, |b| b.nodes.len()),
-        out.types.as_ref().map_or(0, |b| b.nodes.len()),
-        out.call.as_ref().map_or(0, |b| b.nodes.len()),
-        out.df.as_ref().map_or(0, |b| b.nodes.len()),
-        out.data
+    tracing::info!(
+        lang = src.name(),
+        extract_us = extract.as_micros() as u64,
+        serial_us = serial.as_micros() as u64,
+        // 0 says the cfg pass never ran: a run that did not name cfg cannot be
+        // told from one that named it and timed nothing.
+        cfg_us = cfg_elapsed.map_or(0, |elapsed| elapsed.as_micros() as u64),
+        cst = out.cst.as_ref().map_or(0, |b| b.nodes.len()),
+        types = out.types.as_ref().map_or(0, |b| b.nodes.len()),
+        call = out.call.as_ref().map_or(0, |b| b.nodes.len()),
+        df = out.df.as_ref().map_or(0, |b| b.nodes.len()),
+        data = out
+            .data
             .as_ref()
             .map_or(0, |b| b.aux.docs.len() + b.aux.values.len()),
-        cfg_nodes,
+        cfg = cfg_nodes,
         facts,
+        "bench"
     );
     Ok(())
 }

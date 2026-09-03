@@ -195,6 +195,9 @@ quick_cache = "0.7"
 # one process linking both installs one subscriber that sees both crates.
 tracing = "0.1"
 hafley-observe = { path = "../../../hafley-rs/crates/hafley-observe", optional = true }
+# getloadavg beside every timing, so a wall number reports the machine it was
+# taken on. Already unified in this lock through soopy -> rustix -> errno.
+libc = { version = "0.2", optional = true }
 
 # clap is BIN-only: gated behind `cli` so `cargo tree --lib` stays free of it.
 # The bin adds only clap; the lib never touches it.
@@ -211,7 +214,7 @@ features = ["env-filter", "json"]
 optional = true
 
 [features]
-cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe", "mimalloc"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe", "dep:libc", "mimalloc"]
 # Optional global allocator; measured in plans/extract-bench-2026-08-29/SPEED.REPORT.md.
 mimalloc = ["dep:mimalloc"]
 # The rust checker tier, `--features cli,rust-checker`. Off by default and out
@@ -241,6 +244,9 @@ required-features = ["cli"]
 # types) and `sysinfo` (a whole process/CPU/NIC survey for one field).
 [dev-dependencies]
 libc = "0.2"
+# The trail test reads back the two tables the bin wrote. Same pin and features
+# as the dependency above, so cargo unifies one SQLite into the test binary.
+rusqlite = { version = "0.40", features = ["bundled", "trace"] }
 
 # cargo-dist builds with this profile; mirrors the root workspace's.
 [profile.dist]

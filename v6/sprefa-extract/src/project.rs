@@ -1337,7 +1337,12 @@ fn resolve_call_edges(
     };
     let span = tracing::debug_span!("resolve_arm", lang = arm.name, family = "call");
     let _entered = span.enter();
-    resolve(output, cx)
+    let leg = crate::trace::phase_span(arm.name, crate::trace::Phase::ResolveLeg);
+    let _legging = leg.enter();
+    let edges = resolve(output, cx);
+    let asked = output.call.as_ref().map_or(0, |bundle| bundle.aux.sites.len());
+    crate::trace::record_phase(&leg, 0, edges.len() as u64, asked as u64);
+    edges
 }
 
 fn resolve_type_edges(
@@ -1354,7 +1359,12 @@ fn resolve_type_edges(
     };
     let span = tracing::debug_span!("resolve_arm", lang = arm.name, family = "type");
     let _entered = span.enter();
-    resolve(output, cx)
+    let leg = crate::trace::phase_span(arm.name, crate::trace::Phase::ResolveLeg);
+    let _legging = leg.enter();
+    let edges = resolve(output, cx);
+    let asked = output.types.as_ref().map_or(0, |bundle| bundle.aux.candidates.len());
+    crate::trace::record_phase(&leg, 0, edges.len() as u64, asked as u64);
+    edges
 }
 
 /// One comparison per edge under an index, one per (edge, input) pair under a

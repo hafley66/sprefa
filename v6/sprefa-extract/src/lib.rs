@@ -42,6 +42,9 @@ pub mod seams;
 pub mod shape;
 pub mod source;
 pub mod trace;
+/// The run trail rides the same subscriber the `cli` feature installs.
+#[cfg(feature = "cli")]
+pub mod trail;
 pub mod tsi;
 pub mod types;
 pub mod wire;

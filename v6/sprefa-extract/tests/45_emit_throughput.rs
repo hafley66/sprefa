@@ -33,14 +33,18 @@ const WALL_BUDGET_SECS: f64 = 5.5;
 /// sits above that band and cuts only a saturated machine.
 const LOAD_SKIP_THRESHOLD: f64 = 8.0;
 
-/// The `files` column of one `DL_TRACE_SUMMARY` row, which counts span entries
-/// for that family. Columns are `lang family us files facts`.
-fn summary_files(stderr: &str, family: &str) -> Option<u64> {
+/// One `(lang, phase)` row of the `DL_TRACE_SUMMARY` phase table as
+/// `(files, calls, rows)`. Columns are `lang phase files calls rows bytes us`.
+fn phase_row(stderr: &str, lang: &str, phase: &str) -> Option<(u64, u64, u64)> {
     stderr.lines().find_map(|line| {
-        let mut columns = line.split_whitespace();
-        (columns.next() == Some("go") && columns.next() == Some(family))
-            .then(|| columns.nth(1)?.parse().ok())
-            .flatten()
+        let columns: Vec<&str> = line.split_whitespace().collect();
+        (columns.len() == 7 && columns[0] == lang && columns[1] == phase).then(|| {
+            Some((
+                columns[2].parse().ok()?,
+                columns[3].parse().ok()?,
+                columns[4].parse().ok()?,
+            ))
+        })?
     })
 }
 
@@ -111,18 +115,12 @@ fn emit_throughput_350k_rows_under_budget() {
         .args(no_ceiling)
         .arg(&arg)
         .env("DL_TRACE_SUMMARY", "1")
+        .env("DL_TRAIL", "0")
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let facts: u64 = stderr
-        .lines()
-        .filter_map(|line| {
-            line.split("facts=")
-                .nth(1)
-                .and_then(|rest| rest.trim_end_matches(')').parse().ok())
-        })
-        .next_back()
-        .unwrap_or_else(|| panic!("no facts summary in: {stderr}"));
+    let (_, _, facts) = phase_row(&stderr, "-", "flatten")
+        .unwrap_or_else(|| panic!("no flatten phase row in: {stderr}"));
     std::io::stdout().flush().unwrap();
 
     assert_eq!(
@@ -133,8 +131,8 @@ fn emit_throughput_350k_rows_under_budget() {
     // COUNT receipt: hashing the source is linear in file size, so a second
     // full hash per file is a whole extra pass over 25 MB that no wall number
     // distinguishes from a busier machine. The go door takes exactly one.
-    let hashes = summary_files(&stderr, "content-id")
-        .unwrap_or_else(|| panic!("no `go content-id` summary row in: {stderr}"));
+    let (hashes, _, _) =
+        phase_row(&stderr, "go", "hash").unwrap_or_else(|| panic!("no `go hash` row in: {stderr}"));
     assert_eq!(hashes, 1, "go hashed the source {hashes} times, want 1");
     // The measurement is the receipt, so a PASS reports its number too
     // (`-- --nocapture`), not only a FAIL.
