@@ -18,5 +18,7 @@ ts5	call	syntax	codeql2	92.07	71.16	41333391a
 ts5	call	syntax	oracle	88.20	76.14	41333391a
 ts5	call	checker	codeql2	97.33	70.37	41333391a
 ts5	call	checker	oracle	95.02	76.74	41333391a
-ts5	module	syntax	madge	50.57	32.85	41333391a
-ts5	module	checker	madge	50.57	32.85	41333391a
+ts5	module	syntax	depcruise	99.95	100.00	1b2464c9b
+ts5	module	syntax	madge	99.95	100.00	1b2464c9b
+ts5	module	checker	depcruise	99.95	100.00	1b2464c9b
+ts5	module	checker	madge	99.95	100.00	1b2464c9b

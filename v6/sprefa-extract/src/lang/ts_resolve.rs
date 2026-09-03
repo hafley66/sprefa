@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast as ts;
+use oxc_ast_visit::Visit;
 use oxc_resolver::{ResolveOptions, Resolver, TsconfigDiscovery};
 
 use crate::seams::DefIndex;
@@ -210,6 +211,11 @@ pub struct ModuleFacts {
     pub indirect_exports: BTreeMap<String, (String, ImportedName)>,
     /// `export * from 'm'` module specifiers, source order.
     pub star_exports: Vec<String>,
+    /// Every specifier the file names with a literal, whatever the form:
+    /// static import, export-from, side-effect import, `import x = require`,
+    /// `import()` and `require()`. The file-to-file module edge reads this;
+    /// the binding tables above only know forms that bind a name.
+    pub requested_modules: BTreeSet<String>,
 }
 
 impl ModuleFacts {
@@ -224,6 +230,7 @@ impl ModuleFacts {
                     .map(|(module, _)| module.as_str()),
             )
             .chain(self.star_exports.iter().map(String::as_str))
+            .chain(self.requested_modules.iter().map(String::as_str))
             .collect()
     }
 }
@@ -307,8 +314,45 @@ pub(crate) fn ts_module_facts_from_parsed(parsed: &oxc_parser::ParserReturn<'_>)
             facts.star_exports.push(module.name.to_string());
         }
     }
+    for module in parsed.module_record.requested_modules.keys() {
+        facts.requested_modules.insert(module.to_string());
+    }
     typescript_module_forms(&parsed.program, &mut facts);
+    let mut runtime = RuntimeModuleRequests::default();
+    runtime.visit_program(&parsed.program);
+    facts.requested_modules.extend(runtime.modules);
     facts
+}
+
+/// The literal-path runtime forms, `import('m')` and `require('m')`, which the
+/// oxc module record does not list.
+#[derive(Default)]
+struct RuntimeModuleRequests {
+    modules: Vec<String>,
+}
+
+impl<'a> Visit<'a> for RuntimeModuleRequests {
+    fn visit_import_expression(&mut self, it: &ts::ImportExpression<'a>) {
+        if let ts::Expression::StringLiteral(literal) = &it.source {
+            self.modules.push(literal.value.to_string());
+        }
+        oxc_ast_visit::walk::walk_import_expression(self, it);
+    }
+
+    fn visit_call_expression(&mut self, it: &ts::CallExpression<'a>) {
+        if let ts::Expression::Identifier(callee) = &it.callee {
+            if callee.name == "require" {
+                if let Some(ts::Expression::StringLiteral(literal)) = it
+                    .arguments
+                    .first()
+                    .and_then(|argument| argument.as_expression())
+                {
+                    self.modules.push(literal.value.to_string());
+                }
+            }
+        }
+        oxc_ast_visit::walk::walk_call_expression(self, it);
+    }
 }
 
 /// The extract pass's handoff slot: dispatch parses, the module plane
@@ -359,6 +403,9 @@ fn typescript_module_forms(program: &ts::Program<'_>, facts: &mut ModuleFacts) {
                         imported: ImportedName::Namespace,
                     },
                 );
+                facts
+                    .requested_modules
+                    .insert(reference.expression.value.to_string());
             }
             ts::Statement::TSExportAssignment(assignment) => {
                 if let ts::Expression::Identifier(identifier) = &assignment.expression {
@@ -402,6 +449,8 @@ pub enum ResolvedImportKind {
     Namespace,
     /// The name asked of the source module was `default`.
     Default,
+    /// No binding: the row is the file a specifier names, one per specifier.
+    Module,
 }
 
 impl ResolvedImportKind {
@@ -412,6 +461,7 @@ impl ResolvedImportKind {
             ResolvedImportKind::Star => "star",
             ResolvedImportKind::Namespace => "namespace",
             ResolvedImportKind::Default => "default",
+            ResolvedImportKind::Module => "module",
         }
     }
 
@@ -663,11 +713,26 @@ impl TsModuleIndex {
 
     /// Every import binding `path` writes, resolved. One row per binding, in
     /// local-name order; an ambiguous or corpus-external binding has no row.
+    /// Then one `module` row per specifier that names a corpus file, so a
+    /// side-effect import or an `export * from` is a file edge with no binding.
     pub fn bindings(&self, path: &str) -> Vec<ImportRow> {
         let Some(facts) = self.facts.get(path) else {
             return Vec::new();
         };
         let mut rows = Vec::new();
+        for specifier in &facts.requested_modules {
+            let Some(target) = self.target(path, specifier) else {
+                continue;
+            };
+            rows.push(ImportRow {
+                local: String::new(),
+                name: specifier.clone(),
+                target_path: target.to_string(),
+                target_name: None,
+                kind: ResolvedImportKind::Module,
+                hops: 1,
+            });
+        }
         for (local, binding) in &facts.imports {
             let Some(target) = self.target(path, &binding.module) else {
                 continue;
