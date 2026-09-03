@@ -19,6 +19,7 @@ pub mod go;
 pub mod go_modules;
 pub mod kotlin;
 pub mod kotlin_rehome;
+pub mod kotlin_type_edges;
 pub mod kotlin_rename;
 pub mod markdown;
 pub mod prolog;
