@@ -1,0 +1,43 @@
+:- begin_tests(dl7_rust_type_emitter).
+
+:- use_module(library(readutil), [read_file_to_string/3]).
+:- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
+:- use_module('../src/2_comptime/2_compiler', [compile_unit/3]).
+:- use_module('../src/3_emit/2_rust_type_emitter',
+              [render_rust_type_file/4]).
+
+rust_source(
+    'v6/sprefa-extract/tests/fixtures/tsi/rust_probe/src/lib.rs').
+rust_type_stream('v7/test/fixtures/tsi/5_rust_graph.jsonl').
+rust_type_golden('v7/test/fixtures/6_rust_types.expected.dl7').
+
+test(rust_product_sum_generic_trait_and_impl_render_and_compile_together) :-
+    rust_source(SourcePath),
+    rust_type_stream(StreamPath),
+    rust_type_golden(GoldenPath),
+    render_rust_type_file(SourcePath, StreamPath, Text, RenderDiagnostics),
+    render_rust_type_file(SourcePath, StreamPath, TextAgain,
+                          SecondRenderDiagnostics),
+    read_file_to_string(GoldenPath, Expected, [encoding(utf8)]),
+    Text == Expected,
+    TextAgain == Text,
+    RenderDiagnostics == [],
+    SecondRenderDiagnostics == [],
+    dl7_text_unit(generated_rust_types, generated_rust_types, Text,
+                  Unit, ReadDiagnostics),
+    compile_unit(Unit, Compiled, CompileDiagnostics),
+    ReadDiagnostics == [],
+    CompileDiagnostics == [],
+    Compiled = compiled_unit(_, checked_datalog(root_graph(_, Edges), _, _, _),
+                             CompilerRows),
+    memberchk(':'(_, rust_types, ref(RustTypes), _), Edges),
+    findall(Label,
+            member(call(ref(kernel(':')),
+                        [ref(RustTypes), const(Label), ref(_), const(_)]),
+                   CompilerRows),
+            RootLabels0),
+    sort(RootLabels0, RootLabels),
+    RootLabels == ['Mapper', 'Shape', 'User', 'View'],
+    memberchk(call(_, [ref(_), ref(_), ref(_)]), CompilerRows).
+
+:- end_tests(dl7_rust_type_emitter).

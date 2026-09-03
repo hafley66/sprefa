@@ -460,6 +460,38 @@ one trailing newline when needed, reports whether the body changed, and emits
 a Soopy `StageRequest` carrying the analyzed BLAKE3 content identity and exact
 body span. Marker bytes and every byte outside the body remain authored data.
 
+The first Rust projection lives in
+[`v7/src/3_emit/2_rust_type_emitter.pl`](../v7/src/3_emit/2_rust_type_emitter.pl).
+It consumes the mixed JSONL produced directly by `extract --witness --family
+type`; the TSI loader now ignores accompanying base `node` and `sig` records
+instead of diagnosing them as malformed TSI. The emitted DL7 has this shape:
+
+```text
+rust_types
+  Mapper -> rust_type_0
+  User   -> rust_type_4
+  View   -> rust_type_12
+  Shape  -> rust_type_19
+
+rust_type_4 = product(id -> rust_type_5, name -> rust_type_7)
+rust_type_19 = sum(Circle -> rust_type_20, Square -> rust_type_22)
+
+rust_trait(type)
+tsi_callable(type)
+tsi_input(callable, position, target)
+tsi_output(callable, position, target)
+tsi_parameter(parameter, owner, position, variance)
+rust_impl(implementation, self, trait)
+rust_assoc(owner, name, target)
+tsi_conforms(source, target, mode)
+```
+
+Wire IDs receive file-local generated names, while source spellings label only
+the `rust_types` product. This avoids collisions with authored declarations and
+retains graph identity. Syntax TSI currently leaves nested generic applications
+and associated types opaque; semantic TSI supplies the additional application
+and associated-type rows needed for that later projection.
+
 <!-- todo(feature): Complete the source/content/span/located-occurrence vertical by feeding loaded observations through the compiler loop, joining syntax and semantic rows, and refreshing one owned DL7 marker region from an extracted Rust type graph through Soopy. -->
 
 ### Live Markdown documents
@@ -656,8 +688,9 @@ language adapters. They add no kernel form or source-specific schema.
    16. Add a check mode that reports generated-document drift without writing.
    17. Approve ownership and synchronization policy before adding any reverse
        update from generated output to authored Markdown.
-   18. Extract one representative Rust type graph, render deterministic DL7
-       declarations, and refresh only its owned marker region through Soopy.
+   18. **Syntax projection complete:** Extract one representative Rust type
+       graph and render deterministic, compilable DL7 declarations. Semantic
+       generic-application fidelity and automatic marker refresh remain open.
 
    <!-- todo(feature): Source-intelligence section: connect loaded source facts to the compiler observation loop, project semantic Markdown facts, join syntax captures to semantic identities, derive live task rows, render provenance-carrying Markdown, stage fixes, and batch source parsing. -->
 
@@ -715,10 +748,13 @@ language adapters. They add no kernel form or source-specific schema.
 
 7. **Bootstrap**
    1. Approve the projection used to compare stage-zero and generated schemas.
-   2. Extract the Rust implementation types that define the source-analysis and
-      TSI protocols.
-   3. Generate DL7 declarations from their common type graph.
-   4. Compile those generated declarations through the ordinary DL7 compiler.
+   2. **Representative syntax slice complete:** Extract Rust implementation
+      types into a TSI stream. Whole-protocol and semantic-checker coverage
+      remain open.
+   3. **Representative syntax slice complete:** Generate DL7 declarations from
+      the accepted common type graph.
+   4. **Representative syntax slice complete:** Compile those generated
+      declarations through the ordinary DL7 compiler.
    5. Compare identities, edges, order, diagnostics, and public relation shapes
       against stage zero.
    6. Keep stage zero authoritative until the equivalence and failure-mode
@@ -820,9 +856,20 @@ Current implementation receipts:
   0.00 s. It proves deterministic trailing-newline normalization, unchanged
   detection, exact outside-byte preservation, Soopy stage planning, and stale
   content refusal.
+- `swipl -q -g "load_test_files([]),run_tests,halt" -t halt
+  v7/test/6_rust_type_emitter.test.pl`: 1 representative Rust graph golden
+  passed in 0.160 s test time and 0.33 s command wall time. One source contains
+  a generic trait, generic product, implementation, recursive product,
+  ownership-shaped fields, and a sum. Two renders are byte-identical, equal the
+  checked-in DL7 golden, compile through the ordinary V7 compiler, and expose
+  the four source root names through one generated product.
+- Full V7 battery: 57 passed in 133.49 s wall time. The established slow cases
+  remained the generated type-algebra and forwarding fixtures at 32.737 s and
+  31.711 s. The source-fact golden took 0.002 s inside the battery; the
+  Rust-to-DL7 golden took 2.988 s including an ordinary compiler pass.
 
-The current slices add one V7 source-fact golden and one Rust owned-region
-golden. They change no full-suite gate.
+The current slices add one V7 source-fact golden, one Rust owned-region golden,
+and one Rust-to-DL7 type graph golden. They change no full-suite gate.
 
 ## Staffing
 

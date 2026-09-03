@@ -122,11 +122,24 @@ decode_result(Dict, JsonlPath, LineNumber, Result) :-
         get_dict(record, Dict, RecordText),
         string(RecordText),
         atom_string(Record, RecordText)
-    ->  decode_known_record(Record, Dict, JsonlPath, LineNumber, Result)
+    ->  decode_stream_record(Record, Dict, JsonlPath, LineNumber, Result)
     ;   Result = error(diagnostic(extract, stream(JsonlPath),
                                   tsi_line(JsonlPath, LineNumber,
                                            no_record_key)))
     ).
+
+decode_stream_record(Record, Dict, JsonlPath, LineNumber, Result) :-
+    (   tsi_envelope_record(Record)
+    ->  decode_known_record(Record, Dict, JsonlPath, LineNumber, Result)
+    ;   Result = skip
+    ).
+
+tsi_envelope_record(protocol).
+tsi_envelope_record(run).
+tsi_envelope_record(fact).
+tsi_envelope_record(witness).
+tsi_envelope_record(coverage).
+tsi_envelope_record(diagnostic).
 
 decode_known_record(Record, Dict, JsonlPath, LineNumber, Result) :-
     (   decode_record(Record, Dict, Row)

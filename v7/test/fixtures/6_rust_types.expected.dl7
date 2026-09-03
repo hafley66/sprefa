@@ -1,0 +1,103 @@
+; generated from v6/sprefa-extract/tests/fixtures/tsi/rust_probe/src/lib.rs
+(: rust_types
+   (* (: Mapper rust_type_0)
+      (: User rust_type_4)
+      (: View rust_type_12)
+      (: Shape rust_type_19)))
+
+(: rust_type_0
+   (*))
+
+(: rust_type_1
+   (*))
+
+(: rust_type_2
+   (*))
+
+(: rust_type_3
+   (*))
+
+(: rust_type_4
+   (* (: id rust_type_5)
+      (: name rust_type_7)))
+
+(: rust_type_5
+   (*))
+
+(: rust_type_7
+   (*))
+
+(: rust_type_9
+   (*))
+
+(: rust_type_10
+   (*))
+
+(: rust_type_11
+   (*))
+
+(: rust_type_12
+   (* (: text rust_type_13)
+      (: owned rust_type_15)
+      (: shared rust_type_17)))
+
+(: rust_type_13
+   (*))
+
+(: rust_type_15
+   (*))
+
+(: rust_type_17
+   (*))
+
+(: rust_type_19
+   (+ (: Circle rust_type_20)
+      (: Square rust_type_22)))
+
+(: rust_type_20
+   (*))
+
+(: rust_type_22
+   (*))
+
+(: rust_trait (* (: node type)))
+(rust_trait rust_type_0)
+
+(: tsi_callable (* (: node type)))
+(tsi_callable rust_type_2)
+(tsi_callable rust_type_11)
+
+(: tsi_input
+   (* (: callable type)
+      (: position int)
+      (: target type)))
+(tsi_input rust_type_2 0 rust_type_1)
+(tsi_input rust_type_11 0 rust_type_10)
+
+(: tsi_output
+   (* (: callable type)
+      (: position int)
+      (: target type)))
+(tsi_output rust_type_2 0 rust_type_3)
+(tsi_output rust_type_11 0 rust_type_3)
+
+(: tsi_parameter
+   (* (: parameter type)
+      (: owner type)
+      (: position int)
+      (: variance text)))
+(tsi_parameter rust_type_1 rust_type_0 0 "unspecified")
+(tsi_parameter rust_type_5 rust_type_4 0 "unspecified")
+(tsi_parameter rust_type_10 rust_type_9 0 "unspecified")
+
+(: rust_impl
+   (* (: implementation type)
+      (: self type)
+      (: trait type)))
+(rust_impl rust_type_9 rust_type_4 rust_type_0)
+
+(: tsi_conforms
+   (* (: source type)
+      (: target type)
+      (: mode text)))
+(tsi_conforms rust_type_4 rust_type_0 "syntax")
