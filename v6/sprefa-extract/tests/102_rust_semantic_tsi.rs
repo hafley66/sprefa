@@ -37,6 +37,7 @@ const COMPLETE: &[&str] = &[
     "tsi.denotes",
     "tsi.input",
     "tsi.origin",
+    "tsi.name",
     "tsi.output",
     "tsi.parameter",
     "tsi.primitive",
