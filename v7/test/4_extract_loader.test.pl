@@ -145,6 +145,40 @@ test(a_relation_outside_the_registry_is_named_and_skipped) :-
     Relations == [],
     Seeds == [].
 
+% SABOTAGE RECEIPT: on the base sha each of the nine foreign rows files its own
+% malformed_record diagnostic, Diagnostics holds 11 and length/2 fails at 2.
+test(foreign_extract_records_are_skipped_without_a_diagnostic) :-
+    stream_path('tsi_invalid/2_foreign_records', Path),
+    load_tsi_stream(Path, Rows, Diagnostics),
+    length(Diagnostics, 2),
+    memberchk(diagnostic(extract, stream(Path),
+                         tsi_line(Path, 26, malformed_record(frobnicate))),
+              Diagnostics),
+    memberchk(diagnostic(extract, stream(Path),
+                         tsi_line(Path, 27, malformed_record(fact))),
+              Diagnostics),
+    memberchk(extract_fact(231, 'tsi.type', [id(0)]), Rows),
+    memberchk(extract_witness(231, 0, parse), Rows),
+    memberchk(extract_coverage(0, 'tsi.type', partial), Rows),
+    findall(Name,
+            ( member(Row, Rows),
+              functor(Row, Name, _),
+              memberchk(Name, [node, edge, sig, site, param, arg,
+                               resolved_type_edge])
+            ),
+            ForeignNames),
+    ForeignNames == [].
+
+% SABOTAGE RECEIPT: listing fact in foreign_record/1, or reaching that test
+% before decode_record/3, drops this diagnostic and the test fails.
+test(a_malformed_tsi_record_is_still_malformed) :-
+    stream_path('tsi_invalid/2_foreign_records', Path),
+    load_tsi_stream(Path, Rows, Diagnostics),
+    memberchk(diagnostic(extract, stream(Path),
+                         tsi_line(Path, 27, malformed_record(fact))),
+              Diagnostics),
+    \+ memberchk(extract_fact(9001, _, _), Rows).
+
 test(a_loaded_product_proves_conformance_to_an_authored_contract) :-
     compile_dl7_project(
         'v7/test/fixtures/tsi_project',
