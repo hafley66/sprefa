@@ -422,8 +422,13 @@ prelude_primitive(Basements, Class, Identity) :-
     memberchk(module_basement(module(prelude),
                               basement_program(root_graph(_, Edges), _)),
               Basements),
-    memberchk(pending_edge(module(prelude), Class, target(Identity), _),
+    primitive_label(Class, Label),
+    memberchk(pending_edge(module(prelude), Label, target(Identity), _),
               Edges).
+
+% Rust's empty tuple is spelled `()` in the prelude, not `unit`.
+primitive_label(unit, '()') :- !.
+primitive_label(Class, Class).
 
 % Declaring positions, in the order a shared id space resolves them: a symbol,
 % an edge, an argument list, then an ordinary type node.

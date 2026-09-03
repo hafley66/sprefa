@@ -376,6 +376,7 @@ lower_bind(BindNode, Owner, ModuleIdentity, Index, Result) :-
         Result = error(diagnostic(lower, NodeId, expected_bind))
     ).
 
+expression_bind_target(node(_, form([]))) :- !, fail.
 expression_bind_target(node(_, form([node(_, atom('*')) | _]))) :- !, fail.
 expression_bind_target(node(_, form([node(_, atom('+')) | _]))) :- !, fail.
 expression_bind_target(node(_, form(_))).
@@ -423,6 +424,8 @@ lower_target(node(NodeId, form([node(_, atom('+')) | Bindings])),
     finish_constructor_target(BindResult, NodeId, Owner, sum, Result).
 lower_target(node(_, atom(Name)), Owner, _,
              ok(name(Owner, Name), reference, [], [], [], [], [])).
+lower_target(node(_, form([])), Owner, _,
+             ok(name(Owner, '()'), reference, [], [], [], [], [])).
 lower_target(node(_, literal(Value)), _, _,
              ok(const(Value), literal, [], [], [], [], [])).
 lower_target(node(NodeId, variable(_, _)), _, _,
@@ -1029,6 +1032,8 @@ lower_expression(node(NodeId, form([OperatorNode | ArgumentNodes])),
         OperatorDiagnostics, Operator, NodeId, ArgumentNodes,
         Owner, Environment, OperatorGoals, OperatorOrigins,
         Value, Goals, Origins, Diagnostics).
+lower_expression(node(_, form([])), Owner, _,
+                 name(Owner, '()'), [], [], []).
 lower_expression(node(NodeId, form(_)), _, _,
                  none, [], [],
                  [diagnostic(lower, NodeId, unresolved_expression_form)]).
@@ -1429,6 +1434,10 @@ call_contains_var(call(_, Arguments)) :-
 bind_form(node(NodeId,
                form([node(_, atom(':')), node(_, atom(Name)), Target])),
           NodeId, Name, Target).
+% The empty form is the name of the empty product: `(: () (* ))`.
+bind_form(node(NodeId,
+               form([node(_, atom(':')), node(_, form([])), Target])),
+          NodeId, '()', Target).
 
 edge_bind_form(node(NodeId,
                     form([node(_, atom(':')), Label, Target])),

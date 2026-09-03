@@ -61,3 +61,6 @@
 (: usize (* ))
 
 (: isize (* ))
+
+; The empty tuple, the class `unit` on the wire.
+(: () (* ))

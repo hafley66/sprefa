@@ -24,6 +24,30 @@ prelude_stub(
                                       target(prelude_string), 0)]),
              datalog_program([], [], [])))]).
 
+% The empty tuple's class is `unit` on the wire and `()` in the prelude.
+prelude_stub_with_empty_tuple(
+    [module_basement(
+         module(prelude),
+         basement_program(
+             root_graph([ node(module(prelude)), module(module(prelude)),
+                          product(module(prelude)),
+                          node(prelude_empty), product(prelude_empty)
+                        ],
+                        [pending_edge(module(prelude), '()',
+                                      target(prelude_empty), 0)]),
+             datalog_program([], [], [])))]).
+
+test(unit_class_binds_to_the_empty_tuple_prelude_node) :-
+    Rows = [ extract_protocol(1),
+             extract_fact(1, 'tsi.type', [id(7)]),
+             extract_fact(2, 'tsi.primitive', [id(7), atom(unit)]),
+             extract_fact(3, 'tsi.name', [id(7), text("()")])
+           ],
+    prelude_stub_with_empty_tuple(Basements0),
+    install_tsi_graph(Rows, Basements0, [], _, _, Diagnostics),
+    \+ memberchk(diagnostic(_, _, tsi_primitive_class_absent(unit)),
+                 Diagnostics).
+
 stream_path(Name, Path) :-
     atomic_list_concat(['v7/test/fixtures/', Name, '.jsonl'], Path).
 

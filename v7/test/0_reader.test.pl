@@ -105,6 +105,18 @@ test(dotted_reference_resolves_along_owner_edges) :-
     memberchk(':'(_, kept, ref(Target), _), Edges),
     memberchk(':'(Target, value, _, _), Edges).
 
+test(empty_form_is_the_empty_product_as_a_type_target) :-
+    Text = "(: () (* ))\n(: Cell (* (: value ())))\n",
+    dl7_text_unit(empty_form, empty_form_source, Text, Unit, ReadDiagnostics),
+    ReadDiagnostics == [],
+    compile_unit(Unit, Compiled, CompileDiagnostics),
+    CompileDiagnostics == [],
+    Compiled = compiled_unit(_, checked_datalog(root_graph(Nodes, Edges), _, _, _), _),
+    memberchk(':'(_, '()', ref(Empty), _), Edges),
+    memberchk(product(Empty), Nodes),
+    memberchk(':'(Cell, value, ref(Empty), 0), Edges),
+    memberchk(':'(_, 'Cell', ref(Cell), _), Edges).
+
 test(infix_colon_rotates_to_the_canonical_prefix_tree_at_every_depth) :-
     Text = "(User: (* (id: int) (name: text)))\n((Key \"account\" Options): int)\n",
     dl7_text_unit(infix_colon, infix_colon_source, Text, Unit, Diagnostics),
