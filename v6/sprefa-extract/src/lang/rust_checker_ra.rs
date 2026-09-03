@@ -11,7 +11,7 @@ use ra_ap_hir::{
 };
 use ra_ap_ide::{AnalysisHost, NavigationTarget, RootDatabase, TryToNav};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
-use ra_ap_project_model::{CargoConfig, RustLibSource};
+use ra_ap_project_model::{CargoConfig, CargoFeatures, RustLibSource};
 use ra_ap_syntax::{AstNode, ast};
 
 use super::rust_checker::{CheckerAnswers, CheckerError, CheckerRef, OffsetMap};
@@ -44,6 +44,9 @@ pub fn answer(
     let cargo_config = CargoConfig {
         sysroot: Some(RustLibSource::Discover),
         set_test: true,
+        // The default selects no feature, so a `cfg`-gated module stays out of
+        // the crate graph and every file it declares owns no module there.
+        features: CargoFeatures::All,
         ..CargoConfig::default()
     };
     let started = Instant::now();

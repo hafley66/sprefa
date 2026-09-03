@@ -1,6 +1,9 @@
 // Every construct here is one the parse alone cannot answer: an associated
 // type, a lifetime, a borrow against an owned box, a type that names itself.
 
+#[cfg(feature = "gated")]
+pub mod gated;
+
 pub trait Mapper<T> {
     type Output;
 
