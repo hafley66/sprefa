@@ -651,6 +651,17 @@ fn envelope(input: Envelope) -> Vec<FlatFact> {
     if let Some((_, run)) = semantic.iter().find(|(lang, _)| *lang == "rust") {
         if let Some(index) = cx.indexes.rust_checker.get() {
             crate::tsi::emit_semantic(run.run, index, ids, &mut rows);
+            // The tier LOADED and enumerated nothing in this file, so the row is
+            // the semantic run's news rather than a decline on the syntax run.
+            for path in &index.unmodulated {
+                rows.push(FlatFact::Diagnostic(crate::tsi::DiagnosticOut {
+                    run: run.run,
+                    relation: "tier.rust-analyzer".to_string(),
+                    detail: format!(
+                        "{path}: owns no module in the loaded crate graph (cfg-gated, or outside every crate root)"
+                    ),
+                }));
+            }
         }
     }
     // A resolve enumerates no relation exhaustively, so both families are
@@ -739,6 +750,12 @@ fn load_rust_checker(
         method_unresolved = index.method_unresolved,
         "rust checker tier loaded"
     );
+    if !index.unmodulated.is_empty() {
+        tracing::warn!(
+            files = ?index.unmodulated,
+            "the loaded crate graph declares no module for these supplied files; they are cfg-gated out or outside every crate root"
+        );
+    }
     Ok(index)
 }
 
