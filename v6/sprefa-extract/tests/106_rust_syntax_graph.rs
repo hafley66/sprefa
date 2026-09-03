@@ -313,3 +313,38 @@ fn every_written_application_states_its_call() {
     assert_eq!(callees, wanted);
     assert_eq!(probe.rows("tsi.called").len(), 4, "one call per written text");
 }
+
+/// D3: a tuple variant labels its payload by ordinal, a struct variant by
+/// field name, and a unit variant states no shape at all.
+#[test]
+fn a_variant_carries_its_payload() {
+    let probe = Probe::read();
+    let step = probe.id_of("tsi.sum", "Step");
+    let arms = probe.edges_of(step);
+    let labels: Vec<&str> = arms.keys().map(String::as_str).collect();
+    assert_eq!(labels, vec!["Failed", "Idle", "Retry"]);
+    assert_eq!(arms["Idle"].1, 0);
+    assert_eq!(arms["Retry"].1, 1);
+    assert_eq!(arms["Failed"].1, 2);
+
+    let idle = arms["Idle"].0;
+    assert!(!probe.carries("tsi.product", idle), "a unit variant claimed a shape");
+    assert!(probe.edges_of(idle).is_empty());
+
+    let retry = arms["Retry"].0;
+    assert!(probe.carries("tsi.product", retry));
+    let payload = probe.edges_of(retry);
+    let carried: Vec<&str> = payload.keys().map(String::as_str).collect();
+    assert_eq!(carried, vec!["0", "1"]);
+    assert_eq!(payload["0"].1, 0);
+    assert_eq!(payload["1"].1, 1);
+
+    let failed = arms["Failed"].0;
+    assert!(probe.carries("tsi.product", failed));
+    let named = probe.edges_of(failed);
+    let fields: Vec<&str> = named.keys().map(String::as_str).collect();
+    assert_eq!(fields, vec!["code", "reason"]);
+    assert_eq!(named["reason"].1, 0);
+    assert_eq!(named["code"].1, 1);
+    assert_eq!(probe.origin_text(named["reason"].0), "String");
+}

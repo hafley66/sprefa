@@ -336,7 +336,7 @@ fn tsi_item(
         syn::Item::Enum(declared) => {
             let owner = tsi_declaration(&declared.ident, line_starts, strings, names);
             names.fact("tsi.sum", vec![Arg::Id(owner)]);
-            tsi_generics(
+            let scope = tsi_generics(
                 owner,
                 &declared.generics,
                 outer,
@@ -349,6 +349,19 @@ fn tsi_item(
                 let span = syn_span(line_starts, variant.ident.span());
                 let target = names.named(strings, &written, span);
                 names.edge(owner, &variant.ident.to_string(), target, position as i64);
+                // A unit variant carries nothing, so it states no shape.
+                if !matches!(variant.fields, Fields::Unit) {
+                    names.fact("tsi.product", vec![Arg::Id(target)]);
+                    tsi_fields(
+                        target,
+                        &variant.fields,
+                        &scope,
+                        line_starts,
+                        strings,
+                        names,
+                        state,
+                    );
+                }
             }
         }
         syn::Item::Trait(declared) => {
