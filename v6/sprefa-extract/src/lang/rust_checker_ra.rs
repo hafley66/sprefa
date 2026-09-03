@@ -1,6 +1,7 @@
 //! The checker tier's loader: `cargo metadata` into a salsa db, then
 //! rust-analyzer's own resolution over every supplied file. Seam: `rust_checker`.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -13,8 +14,10 @@ use ra_ap_ide::{AnalysisHost, NavigationTarget, RootDatabase, TryToNav};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
 use ra_ap_project_model::{CargoConfig, CargoFeatures, RustLibSource};
 use ra_ap_syntax::{AstNode, ast};
+use tracing::Span;
 
 use super::rust_checker::{CheckerAnswers, CheckerError, CheckerRef, OffsetMap};
+use crate::trace::{phase_span, record_phase, Phase};
 use crate::tsi::{Arg, CoverageClaim, FactOut};
 
 /// One corpus file the walk visits: its supplied path, its ra file id, its
@@ -165,17 +168,80 @@ struct FileAnswers {
     method_unresolved: usize,
 }
 
+/// One resolution kind over one file: the phase row it folds into, how many
+/// rust-analyzer calls it made and how many of those answered.
+struct SiteSpan {
+    span: Span,
+    calls: Cell<u64>,
+    answered: Cell<u64>,
+}
+
+impl SiteSpan {
+    fn new(phase: Phase) -> SiteSpan {
+        SiteSpan {
+            span: phase_span("rust", phase),
+            calls: Cell::new(0),
+            answered: Cell::new(0),
+        }
+    }
+
+    /// Times exactly ONE rust-analyzer call. No guard here wraps another, so a
+    /// span's micros are never a sum containing a sibling's.
+    fn call<T>(&self, resolve: impl FnOnce() -> Option<T>) -> Option<T> {
+        self.calls.set(self.calls.get() + 1);
+        let answer = {
+            let _entered = self.span.enter();
+            resolve()
+        };
+        if answer.is_some() {
+            self.answered.set(self.answered.get() + 1);
+        }
+        answer
+    }
+
+    fn record(&self) {
+        record_phase(&self.span, 0, self.answered.get(), self.calls.get());
+    }
+}
+
+/// The four rust-analyzer calls one file's walk pays for, priced apart.
+struct SiteSpans {
+    method: SiteSpan,
+    call_path: SiteSpan,
+    type_path: SiteSpan,
+    nav: SiteSpan,
+}
+
+impl SiteSpans {
+    fn new() -> SiteSpans {
+        SiteSpans {
+            method: SiteSpan::new(Phase::CheckerMethod),
+            call_path: SiteSpan::new(Phase::CheckerCallPath),
+            type_path: SiteSpan::new(Phase::CheckerTypePath),
+            nav: SiteSpan::new(Phase::CheckerNav),
+        }
+    }
+
+    fn record(&self) {
+        self.method.record();
+        self.call_path.record();
+        self.type_path.record();
+        self.nav.record();
+    }
+}
+
 fn walk_file(
     sema: &Semantics<'_, RootDatabase>,
     destination: &HashMap<ra_ap_ide::FileId, &WalkFile>,
     file: &WalkFile,
 ) -> FileAnswers {
     let source = sema.parse_guess_edition(file.file_id);
+    let spans = SiteSpans::new();
     let mut out = FileAnswers { path: file.path.clone(), ..FileAnswers::default() };
     for node in source.syntax().descendants() {
         if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
             out.method_sites += 1;
-            match method_call_ref(sema, destination, file, &call) {
+            match method_call_ref(sema, destination, file, &spans, &call) {
                 Some(reference) => out.calls.push(reference),
                 None => out.method_unresolved += 1,
             }
@@ -184,7 +250,7 @@ fn walk_file(
         if let Some(call) = ast::CallExpr::cast(node.clone()) {
             if let Some(ast::Expr::PathExpr(path_expr)) = call.expr() {
                 if let Some(path) = path_expr.path() {
-                    if let Some(reference) = path_call_ref(sema, destination, file, &path) {
+                    if let Some(reference) = path_call_ref(sema, destination, file, &spans, &path) {
                         out.calls.push(reference);
                     }
                 }
@@ -193,18 +259,19 @@ fn walk_file(
         }
         if let Some(record) = ast::RecordExpr::cast(node.clone()) {
             if let Some(path) = record.path() {
-                if let Some(reference) = path_call_ref(sema, destination, file, &path) {
+                if let Some(reference) = path_call_ref(sema, destination, file, &spans, &path) {
                     out.calls.push(reference);
                 }
             }
             continue;
         }
         if let Some(path) = ast::Path::cast(node) {
-            if let Some(reference) = type_ref(sema, destination, file, &path) {
+            if let Some(reference) = type_ref(sema, destination, file, &spans, &path) {
                 out.types.push(reference);
             }
         }
     }
+    spans.record();
     out
 }
 
@@ -214,11 +281,12 @@ fn method_call_ref(
     sema: &Semantics<'_, RootDatabase>,
     destination: &HashMap<ra_ap_ide::FileId, &WalkFile>,
     file: &WalkFile,
+    spans: &SiteSpans,
     call: &ast::MethodCallExpr,
 ) -> Option<CheckerRef> {
     let name_ref = call.name_ref()?;
-    let function = sema.resolve_method_call(call)?;
-    let nav = nav_of(sema, ModuleDef::Function(function))?;
+    let function = spans.method.call(|| sema.resolve_method_call(call))?;
+    let nav = spans.nav.call(|| nav_of(sema, ModuleDef::Function(function)))?;
     mint(destination, file, name_ref.syntax().text_range(), &nav)
 }
 
@@ -227,16 +295,17 @@ fn path_call_ref(
     sema: &Semantics<'_, RootDatabase>,
     destination: &HashMap<ra_ap_ide::FileId, &WalkFile>,
     file: &WalkFile,
+    spans: &SiteSpans,
     path: &ast::Path,
 ) -> Option<CheckerRef> {
     let name_ref = path.segment()?.name_ref()?;
-    let PathResolution::Def(def) = sema.resolve_path(path)? else {
+    let PathResolution::Def(def) = spans.call_path.call(|| sema.resolve_path(path))? else {
         return None;
     };
     if matches!(def, ModuleDef::Module(_) | ModuleDef::BuiltinType(_)) {
         return None;
     }
-    let nav = nav_of(sema, def)?;
+    let nav = spans.nav.call(|| nav_of(sema, def))?;
     mint(destination, file, name_ref.syntax().text_range(), &nav)
 }
 
@@ -246,10 +315,11 @@ fn type_ref(
     sema: &Semantics<'_, RootDatabase>,
     destination: &HashMap<ra_ap_ide::FileId, &WalkFile>,
     file: &WalkFile,
+    spans: &SiteSpans,
     path: &ast::Path,
 ) -> Option<CheckerRef> {
     let name_ref = path.segment()?.name_ref()?;
-    let PathResolution::Def(def) = sema.resolve_path(path)? else {
+    let PathResolution::Def(def) = spans.type_path.call(|| sema.resolve_path(path))? else {
         return None;
     };
     if !matches!(
@@ -258,7 +328,7 @@ fn type_ref(
     ) {
         return None;
     }
-    let nav = nav_of(sema, def)?;
+    let nav = spans.nav.call(|| nav_of(sema, def))?;
     mint(destination, file, name_ref.syntax().text_range(), &nav)
 }
 
