@@ -2,7 +2,7 @@
 //! (field/variant/generic/impl/uses) that `Resolve<TypeF>` binds. Port of v5
 //! `edges_from`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use syn::punctuated::Punctuated;
 use syn::{
@@ -271,6 +271,13 @@ fn push_candidate(
 /// Type-parameter names in scope, innermost declaration last.
 type TsiScope = BTreeMap<String, u32>;
 
+/// Per-file walk bookkeeping: the ids whose application rows are already
+/// written, so one written text states its call once.
+#[derive(Default)]
+struct TsiState {
+    called: BTreeSet<u32>,
+}
+
 /// The rust twin of the ts pass, over the items `edge_candidates` walks.
 fn tsi_rows(
     parsed: &syn::File,
@@ -282,8 +289,9 @@ fn tsi_rows(
     let _entered = span.enter();
     let mut names = TsiNames::new("rust");
     let outer = TsiScope::new();
+    let mut state = TsiState::default();
     for item in &parsed.items {
-        tsi_item(item, &outer, line_starts, strings, &mut names);
+        tsi_item(item, &outer, line_starts, strings, &mut names, &mut state);
     }
     sink.aux.tsi = names.into_facts();
     crate::trace::record_phase(&span, 0, sink.aux.tsi.len() as u64, 1);
@@ -295,6 +303,7 @@ fn tsi_item(
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     match item {
         syn::Item::Struct(declared) => {
@@ -308,7 +317,7 @@ fn tsi_item(
                 strings,
                 names,
             );
-            tsi_fields(owner, &declared.fields, &scope, line_starts, strings, names);
+            tsi_fields(owner, &declared.fields, &scope, line_starts, strings, names, state);
         }
         syn::Item::Union(declared) => {
             let owner = tsi_declaration(&declared.ident, line_starts, strings, names);
@@ -322,7 +331,7 @@ fn tsi_item(
                 names,
             );
             let fields = Fields::Named(declared.fields.clone());
-            tsi_fields(owner, &fields, &scope, line_starts, strings, names);
+            tsi_fields(owner, &fields, &scope, line_starts, strings, names, state);
         }
         syn::Item::Enum(declared) => {
             let owner = tsi_declaration(&declared.ident, line_starts, strings, names);
@@ -355,7 +364,7 @@ fn tsi_item(
             );
             for member in &declared.items {
                 if let syn::TraitItem::Fn(method) = member {
-                    tsi_callable(&method.sig, &scope, line_starts, strings, names);
+                    tsi_callable(&method.sig, &scope, line_starts, strings, names, state);
                 }
             }
         }
@@ -369,14 +378,16 @@ fn tsi_item(
                 strings,
                 names,
             );
-            tsi_called(owner, &declared.ty, &scope, line_starts, strings, names);
+            tsi_application(owner, &declared.ty, &scope, line_starts, strings, names, state);
         }
-        syn::Item::Impl(block) => tsi_impl(block, outer, line_starts, strings, names),
-        syn::Item::Fn(declared) => tsi_callable(&declared.sig, outer, line_starts, strings, names),
+        syn::Item::Impl(block) => tsi_impl(block, outer, line_starts, strings, names, state),
+        syn::Item::Fn(declared) => {
+            tsi_callable(&declared.sig, outer, line_starts, strings, names, state);
+        }
         syn::Item::Mod(module) => {
             if let Some((_, inner)) = &module.content {
                 for nested in inner {
-                    tsi_item(nested, outer, line_starts, strings, names);
+                    tsi_item(nested, outer, line_starts, strings, names, state);
                 }
             }
         }
@@ -404,6 +415,7 @@ fn tsi_impl(
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     let Some((self_span, self_name)) = self_ty_head(&block.self_ty, line_starts) else {
         return;
@@ -439,7 +451,7 @@ fn tsi_impl(
     }
     for member in &block.items {
         if let syn::ImplItem::Fn(method) = member {
-            tsi_callable(&method.sig, &scope, line_starts, strings, names);
+            tsi_callable(&method.sig, &scope, line_starts, strings, names, state);
         }
     }
 }
@@ -495,13 +507,14 @@ fn tsi_fields(
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     for (position, field) in fields.iter().enumerate() {
         let label = match &field.ident {
             Some(ident) => ident.to_string(),
             None => position.to_string(),
         };
-        let target = tsi_type_id(&field.ty, scope, line_starts, strings, names);
+        let target = tsi_type_id(&field.ty, scope, line_starts, strings, names, state);
         names.edge(owner, &label, target, position as i64);
     }
 }
@@ -512,6 +525,7 @@ fn tsi_callable(
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     let callable = names.anonymous(syn_span(line_starts, signature.ident.span()));
     names.fact("tsi.callable", vec![Arg::Id(callable)]);
@@ -528,7 +542,7 @@ fn tsi_callable(
         let syn::FnArg::Typed(typed) = input else {
             continue;
         };
-        let target = tsi_type_id(&typed.ty, &scope, line_starts, strings, names);
+        let target = tsi_type_id(&typed.ty, &scope, line_starts, strings, names, state);
         names.fact(
             "tsi.input",
             vec![Arg::Id(callable), Arg::Int(position), Arg::Id(target)],
@@ -536,7 +550,7 @@ fn tsi_callable(
         position += 1;
     }
     if let ReturnType::Type(_, returned) = &signature.output {
-        let target = tsi_type_id(returned, &scope, line_starts, strings, names);
+        let target = tsi_type_id(returned, &scope, line_starts, strings, names, state);
         names.fact(
             "tsi.output",
             vec![Arg::Id(callable), Arg::Int(0), Arg::Id(target)],
@@ -544,14 +558,16 @@ fn tsi_callable(
     }
 }
 
-/// A written `Name<Args>` alias body. Anything else emits no body row.
-fn tsi_called(
-    owner: u32,
+/// The application a written `Name<Args>` states, wherever written: the callee
+/// is that path with its arguments dropped. A lifetime argument takes no slot.
+fn tsi_application(
+    result: u32,
     ty: &Type,
     scope: &TsiScope,
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) {
     let Type::Path(path) = strip_type(ty) else {
         return;
@@ -562,19 +578,22 @@ fn tsi_called(
     let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
         return;
     };
+    if !state.called.insert(result) {
+        return;
+    }
     let span = syn_span(line_starts, segment.ident.span());
     let callee = names.named(strings, &path_head_text(&path.path), span);
     let list = names.bare_id();
     names.fact(
         "tsi.called",
-        vec![Arg::Id(owner), Arg::Id(callee), Arg::Id(list)],
+        vec![Arg::Id(result), Arg::Id(callee), Arg::Id(list)],
     );
     let mut position = 0i64;
     for argument in &arguments.args {
         let GenericArgument::Type(written) = argument else {
             continue;
         };
-        let target = tsi_type_id(written, scope, line_starts, strings, names);
+        let target = tsi_type_id(written, scope, line_starts, strings, names, state);
         names.fact(
             "tsi.argument",
             vec![Arg::Id(list), Arg::Int(position), Arg::Id(target)],
@@ -583,20 +602,45 @@ fn tsi_called(
     }
 }
 
-/// A type parameter in scope wins over the file's written-text table, so the
-/// `T` of one declaration is never the `T` of another (identity rule 4).
+/// One id per written text, except a scoped type parameter (rule 4) and a
+/// tuple (rule 2). An array, slice, bare fn, `impl` or `dyn` states no shape.
 fn tsi_type_id(
     ty: &Type,
     scope: &TsiScope,
     line_starts: &[u32],
     strings: &mut Strings,
     names: &mut TsiNames,
+    state: &mut TsiState,
 ) -> u32 {
     let text = type_text(ty);
-    match scope.get(&text) {
-        Some(&id) => id,
-        None => names.named(strings, &text, tsi_type_span(ty, line_starts)),
+    if let Some(&id) = scope.get(&text) {
+        return id;
     }
+    if let Type::Tuple(tuple) = strip_type(ty) {
+        return tsi_tuple_id(tuple, scope, line_starts, strings, names, state);
+    }
+    let id = names.named(strings, &text, tsi_type_span(ty, line_starts));
+    tsi_application(id, ty, scope, line_starts, strings, names, state);
+    id
+}
+
+/// A tuple is structural, so its identity is its ordered edges (rule 2) rather
+/// than its text, and every occurrence takes a fresh id.
+fn tsi_tuple_id(
+    tuple: &syn::TypeTuple,
+    scope: &TsiScope,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) -> u32 {
+    let id = names.anonymous(syn_span(line_starts, tuple.paren_token.span.join()));
+    names.fact("tsi.product", vec![Arg::Id(id)]);
+    for (position, element) in tuple.elems.iter().enumerate() {
+        let target = tsi_type_id(element, scope, line_starts, strings, names, state);
+        names.edge(id, &position.to_string(), target, position as i64);
+    }
+    id
 }
 
 /// The LAST path segment names a written type; the rest qualifies it. `syn` is

@@ -261,3 +261,55 @@ fn qualified_path_spans_its_last_segment() {
     let applied = as_id(&probe.edge(trail, "outcome").args[3]).expect("the field names a type");
     assert_ne!(applied, target, "two written texts took one id");
 }
+
+/// D2: a written `Name<Args>` states its application wherever it stands, a
+/// nested one states its own, and a tuple states its ordered members.
+#[test]
+fn every_written_application_states_its_call() {
+    let probe = Probe::read();
+    let trail = probe.id_of("tsi.product", "Trail");
+
+    let steps = as_id(&probe.edge(trail, "steps").args[3]).expect("the field names a type");
+    let (outer, outer_list) = probe.call(steps);
+    assert_eq!(probe.origin_text(outer), "Vec");
+    let carried = probe.arguments(outer_list);
+    assert_eq!(carried.len(), 1);
+    assert_eq!(carried[0].0, 0);
+    let (inner, inner_list) = probe.call(carried[0].1);
+    assert_eq!(probe.origin_text(inner), "Option");
+    let element = probe.arguments(inner_list);
+    assert_eq!(element.len(), 1);
+    assert!(
+        probe.carries("tsi.parameter", element[0].1),
+        "the innermost argument is not the declared parameter"
+    );
+
+    let outcome = as_id(&probe.edge(trail, "outcome").args[3]).expect("the field names a type");
+    let (returned, returned_list) = probe.call(outcome);
+    assert_eq!(probe.origin_text(returned), "Result");
+    let parts = probe.arguments(returned_list);
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].0, 0);
+    assert_eq!(probe.origin_text(parts[1].1), "Error");
+
+    let label = as_id(&probe.edge(trail, "label").args[3]).expect("the field names a type");
+    assert!(probe.carries("tsi.product", label), "a tuple states no shape");
+    let members = probe.edges_of(label);
+    let labels: Vec<&str> = members.keys().map(String::as_str).collect();
+    assert_eq!(labels, vec!["0", "1"]);
+    assert_eq!(members["0"].1, 0);
+    assert_eq!(members["1"].1, 1);
+    assert_eq!(probe.origin_text(members["0"].0), "String");
+
+    let callees: BTreeSet<String> = probe
+        .rows("tsi.called")
+        .into_iter()
+        .map(|fact| probe.origin_text(as_id(&fact.args[1]).expect("a call names a callee")))
+        .collect();
+    let wanted: BTreeSet<String> = ["Box", "Option", "Result", "Vec"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(callees, wanted);
+    assert_eq!(probe.rows("tsi.called").len(), 4, "one call per written text");
+}
