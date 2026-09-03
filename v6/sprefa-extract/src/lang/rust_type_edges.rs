@@ -599,14 +599,14 @@ fn tsi_type_id(
     }
 }
 
-/// The head identifier of a written type. `syn` is parsed without the printing
-/// feature, so no token stream is available to span the whole thing.
+/// The LAST path segment names a written type; the rest qualifies it. `syn` is
+/// parsed without printing, so no token stream spans the whole thing.
 fn tsi_type_span(ty: &Type, line_starts: &[u32]) -> Span {
     match strip_type(ty) {
         Type::Path(path) => path
             .path
             .segments
-            .first()
+            .last()
             .map(|segment| syn_span(line_starts, segment.ident.span()))
             .unwrap_or_else(Span::empty),
         Type::Array(inner) => tsi_type_span(&inner.elem, line_starts),
