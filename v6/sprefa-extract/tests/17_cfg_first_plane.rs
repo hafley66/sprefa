@@ -298,7 +298,7 @@ fn kotlin_keyword_read_splits_return_from_break() {
 
 #[test]
 fn a_language_with_no_kind_role_rows_emits_no_cfg() {
-    assert!(cfg_facts("walk.py", b"def walk():\n    return 1\n").is_empty());
+    assert!(cfg_facts("walk.md", b"# walk\n\nreturn 1\n").is_empty());
 }
 
 fn node_kinds(
