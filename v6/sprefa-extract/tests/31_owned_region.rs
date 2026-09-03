@@ -58,5 +58,54 @@ fn generated_dl7_region_checks_stages_and_preserves_every_outside_byte() {
     std::fs::write(target.join("generated.dl7"), b"changed after analysis\n").unwrap();
     let refusal = soopy::plan_mutations(&mut root, &request).unwrap_err();
     assert!(matches!(refusal, soopy::StageRefusal::Stale { .. }));
+
+    #[cfg(feature = "cli")]
+    {
+        std::fs::write(target.join("generated.dl7"), before).unwrap();
+        let generated_path = target.join("body.dl7");
+        std::fs::write(&generated_path, generated).unwrap();
+        let state = std::env::temp_dir().join(format!(
+            "sprefa_owned_region_state_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&state).unwrap();
+        let command = |apply: bool| {
+            let mut run = std::process::Command::new(env!("CARGO_BIN_EXE_extract"));
+            run.args([
+                "region",
+                target.join("generated.dl7").to_str().unwrap(),
+                "rust-types",
+                "--generated",
+                generated_path.to_str().unwrap(),
+                "--state",
+                state.to_str().unwrap(),
+            ]);
+            if apply {
+                run.arg("--apply");
+            }
+            run.output().unwrap()
+        };
+        let drift = command(false);
+        assert_eq!(drift.status.code(), Some(1));
+        assert!(String::from_utf8(drift.stdout)
+            .unwrap()
+            .contains(r#""status":"drift""#));
+        let applied = command(true);
+        assert!(applied.status.success());
+        assert!(String::from_utf8(applied.stdout)
+            .unwrap()
+            .contains(r#""status":"applied""#));
+        let current = command(false);
+        assert!(current.status.success());
+        assert!(String::from_utf8(current.stdout)
+            .unwrap()
+            .contains(r#""status":"current""#));
+        let _ = std::fs::remove_dir_all(state);
+    }
+
     let _ = std::fs::remove_dir_all(target);
 }

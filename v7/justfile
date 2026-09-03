@@ -33,3 +33,19 @@ runtime-shootout-smoke:
 # Run one warmup and five measured repetitions for every native-logic arm.
 runtime-shootout n="48":
     bash "{{ v7 }}/labs/18_runtime_shootout/4_run.sh" full "{{ n }}"
+
+# Extract one Rust file's type graph, render compilable DL7, and report whether
+# the named generated region differs. Exit 1 means drift.
+rust-types-check rust target region="rust-types":
+    swipl -q -s "{{ v7 }}/src/3_emit/3_rust_type_region_mainer.pl" -- "{{ rust }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract"
+
+# Run the same pipeline and commit only the generated marker body through
+# Soopy's expected-content staging boundary.
+rust-types-apply rust target region="rust-types":
+    swipl -q -s "{{ v7 }}/src/3_emit/3_rust_type_region_mainer.pl" -- "{{ rust }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract" --apply
+
+# Build the host command and prove extraction, rendering, Soopy replacement,
+# unchanged detection, outside-byte preservation, and final DL7 compilation.
+rust-types-e2e:
+    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/test/7_rust_type_region.e2e.pl"

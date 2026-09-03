@@ -52,6 +52,9 @@ mod source_move;
 #[path = "../2_move_text.rs"]
 mod move_text;
 
+#[path = "../3_region_writer.rs"]
+mod region_writer;
+
 #[path = "../0_rename.rs"]
 mod source_rename;
 
@@ -480,6 +483,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(error) = source_rename::run(argv) {
             eprintln!("{error}");
             std::process::exit(error.exit);
+        }
+        return Ok(());
+    }
+    if std::env::args().nth(1).as_deref() == Some("region") {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        match region_writer::run(argv) {
+            Ok(0) => {}
+            Ok(exit) => std::process::exit(exit),
+            Err(error) => {
+                eprintln!("{}", error.message);
+                std::process::exit(error.exit);
+            }
         }
         return Ok(());
     }

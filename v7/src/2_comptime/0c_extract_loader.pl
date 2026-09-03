@@ -1,5 +1,6 @@
 :- module(dl7_extract_loader,
           [ load_tsi_stream/3,
+            load_tsi_text/3,
             accepted_rows/2,
             install_tsi_graph/6
           ]).
@@ -75,6 +76,15 @@ load_tsi_stream(JsonlPath, Rows, Diagnostics) :-
         stream_rows(Stream, JsonlPath, 1, Rows0, Diagnostics0),
         close(Stream)),
     finish_stream_rows(Rows0, Diagnostics0, JsonlPath, Rows, Diagnostics).
+
+%% load_tsi_text(+JsonlText, -Rows, -Diagnostics) is det.
+load_tsi_text(JsonlText, Rows, Diagnostics) :-
+    must_be(string, JsonlText),
+    setup_call_cleanup(
+        open_string(JsonlText, Stream),
+        stream_rows(Stream, memory, 1, Rows0, Diagnostics0),
+        close(Stream)),
+    finish_stream_rows(Rows0, Diagnostics0, memory, Rows, Diagnostics).
 
 finish_stream_rows(Rows0, Diagnostics0, JsonlPath, Rows, Diagnostics) :-
     (   member(extract_protocol(Version), Rows0),
