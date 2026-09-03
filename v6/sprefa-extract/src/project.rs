@@ -535,6 +535,11 @@ fn envelope(
             crate::tsi::emit_semantic(run.run, index, &mut rows);
         }
     }
+    if let Some((_, run)) = semantic.iter().find(|(lang, _)| *lang == "rust") {
+        if let Some(index) = cx.indexes.rust_checker.get() {
+            crate::tsi::emit_semantic(run.run, index, &mut rows);
+        }
+    }
     // A resolve enumerates no relation exhaustively, so both families are
     // partial; a checker WALK is the only leg that claims complete.
     for relation in ["extract.call", "extract.type"] {
@@ -571,7 +576,8 @@ fn load_rust_checker(
             (input.path.clone(), absolute)
         })
         .collect();
-    let answers = match crate::lang::rust_checker::answer(&root, &files, CHECKER_BUDGET) {
+    let answers = match crate::lang::rust_checker::answer(&root, &files, CHECKER_BUDGET, cx.witness)
+    {
         Ok(answers) => answers,
         Err(err) => {
             tracing::warn!("rust checker tier off, syntax tier answers alone: {err}");

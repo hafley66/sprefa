@@ -37,6 +37,11 @@ pub enum CheckerAnswer {
 pub struct CheckerAnswers {
     pub calls: HashMap<String, Vec<CheckerRef>>,
     pub types: HashMap<String, Vec<CheckerRef>>,
+    /// The item walk's own rows, ids run-local across the whole workspace. Empty
+    /// unless the caller asked for them: the walk is not free.
+    pub tsi: Vec<crate::tsi::FactOut>,
+    /// A claim about the whole run, never a file.
+    pub coverage: Vec<crate::tsi::CoverageClaim>,
     /// `cargo metadata` plus the salsa workspace load.
     pub load: Duration,
     /// The per-file resolve walk over the loaded workspace.
@@ -88,6 +93,10 @@ pub struct RustCheckerIndex {
     /// A TypeF candidate carries no reference span, so the type plane keys on
     /// (file, name); a name one file resolves two ways binds nothing.
     types: HashMap<String, HashMap<String, Option<CheckerAnswer>>>,
+    /// The walk's rows, span digests already substituted for the supplied paths
+    /// the walk wrote.
+    tsi: Vec<crate::tsi::FactOut>,
+    coverage: Vec<crate::tsi::CoverageClaim>,
     /// Answers naming a corpus file whose parse minted no def there; they fall
     /// back to the syntax leg, so this is the tier's own miss count.
     pub unjoined: usize,
@@ -121,6 +130,8 @@ impl RustCheckerIndex {
             files_answered: answers.files_answered,
             method_sites: answers.method_sites,
             method_unresolved: answers.method_unresolved,
+            tsi: stamp_digests(answers.tsi, corpus),
+            coverage: answers.coverage,
             ..RustCheckerIndex::default()
         };
         for (path, refs) in answers.calls {
@@ -182,6 +193,48 @@ impl RustCheckerIndex {
     pub fn type_at(&self, path: &str, name: &str) -> Option<CheckerAnswer> {
         self.types.get(path)?.get(name)?.clone()
     }
+
+    pub fn semantic_rows(&self) -> &[crate::tsi::FactOut] {
+        &self.tsi
+    }
+
+    pub fn coverage(&self) -> &[crate::tsi::CoverageClaim] {
+        &self.coverage
+    }
+}
+
+impl crate::tsi::SemanticRows for RustCheckerIndex {
+    fn facts(&self) -> &[crate::tsi::FactOut] {
+        self.semantic_rows()
+    }
+
+    fn coverage(&self) -> &[crate::tsi::CoverageClaim] {
+        RustCheckerIndex::coverage(self)
+    }
+}
+
+/// The walk wrote each corpus span's SUPPLIED path; that becomes the file's
+/// content digest, and any other path stays as it is, naming a file off-corpus.
+fn stamp_digests(
+    rows: Vec<crate::tsi::FactOut>,
+    corpus: &[(String, ContentId)],
+) -> Vec<crate::tsi::FactOut> {
+    let digest_of: HashMap<&str, String> = corpus
+        .iter()
+        .map(|(path, blob)| (path.as_str(), blob.to_string()))
+        .collect();
+    rows.into_iter()
+        .map(|mut row| {
+            for arg in &mut row.args {
+                if let crate::tsi::Arg::Span(key, _, _) = arg {
+                    if let Some(digest) = digest_of.get(key.as_str()) {
+                        *key = digest.clone();
+                    }
+                }
+            }
+            row
+        })
+        .collect()
 }
 
 /// A call answer prefers the call facet and settles for the type facet: a tuple
@@ -226,6 +279,7 @@ pub fn answer(
     _root: &Path,
     _files: &[(String, PathBuf)],
     _budget: Duration,
+    _tsi: bool,
 ) -> Result<CheckerAnswers, CheckerError> {
     Err(CheckerError::NotBuilt)
 }
@@ -235,8 +289,9 @@ pub fn answer(
     root: &Path,
     files: &[(String, PathBuf)],
     budget: Duration,
+    tsi: bool,
 ) -> Result<CheckerAnswers, CheckerError> {
-    super::rust_checker_ra::answer(root, files, budget)
+    super::rust_checker_ra::answer(root, files, budget, tsi)
 }
 
 /// A file's byte offset -> the parse plane's offset for the same position: a
