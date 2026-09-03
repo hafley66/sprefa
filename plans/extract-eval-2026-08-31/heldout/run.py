@@ -151,6 +151,8 @@ SCORE_COLUMNS = [
 ]
 HELDOUT = HERE / "HELDOUT.tsv"
 REPORT = HERE / "REPORT.md"
+# Hand-written, appended verbatim as section 4 so a regeneration keeps it.
+FINDINGS = HERE / "FINDINGS.md"
 REFERENCE_SCORES = HERE / "SCORES.reference-graph.tsv"
 SKIP_COLUMNS = ["repo", "lang", "stage", "reason", "detail"]
 
@@ -546,11 +548,14 @@ def clone_and_measure(repo, lang):
     if free < DISK_FLOOR_GB:
         sys.exit(f"disk floor: {free:.1f}G free, floor {DISK_FLOOR_GB}G")
     dest = CHECKOUTS / repo.replace("/", "_")
-    shutil.rmtree(dest, ignore_errors=True)
-    rc, tail, _ = run(
-        ["git", "clone", "--depth", "1", f"https://github.com/{repo}.git", str(dest)],
-        timeout=CLONE_BUDGET_SECS,
-    )
+    if KEEP_WORK and (dest / ".git").is_dir():
+        rc, tail = 0, ""
+    else:
+        shutil.rmtree(dest, ignore_errors=True)
+        rc, tail, _ = run(
+            ["git", "clone", "--depth", "1", f"https://github.com/{repo}.git", str(dest)],
+            timeout=CLONE_BUDGET_SECS,
+        )
     if rc != 0:
         record_skip(repo, lang.key, "clone", "clone_failed", tail)
         shutil.rmtree(dest, ignore_errors=True)
@@ -758,6 +763,7 @@ def cmd_report(args):
         "1. Overfit gap per measure id",
         "2. Per language: tuning corpus beside every held-out repo",
         "3. Skipped",
+        "4. Findings (FINDINGS.md, hand-written)",
         "",
         "## 1. Overfit gap, recall / precision",
         "",
@@ -768,6 +774,8 @@ def cmd_report(args):
     doc += ["## 3. Skipped", ""]
     doc += skip_table(skips)
     doc.append("")
+    if FINDINGS.exists():
+        doc += ["## 4. Findings", "", FINDINGS.read_text().rstrip(), ""]
     REPORT.write_text("\n".join(doc))
     print("\n".join(doc))
 
