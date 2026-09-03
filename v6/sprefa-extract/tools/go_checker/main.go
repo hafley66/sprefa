@@ -139,6 +139,15 @@ func main() {
 	for _, path := range sink.order {
 		rows := sink.files[path]
 		answered++
+		// A nil slice marshals to `null`, which the caller's row vector
+		// cannot decode; a file with no call and no type reference is the
+		// common case over a real corpus.
+		if rows.calls == nil {
+			rows.calls = []wireRow{}
+		}
+		if rows.types == nil {
+			rows.types = []wireRow{}
+		}
 		if err := encoder.Encode(wireFile{
 			Path:  path,
 			Calls: rows.calls,
