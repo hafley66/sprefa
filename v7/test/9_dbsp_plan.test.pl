@@ -76,6 +76,16 @@ test(negative_goal_is_a_named_emitter_gap) :-
         [diagnostic(emit, none,
                     unsupported_dbsp_negation(rule_id(0)))].
 
+test(reified_program_graph_reconstructs_the_checked_executable_exactly) :-
+    fixture(Runtime),
+    Runtime = checked_datalog(
+                  _, datalog_program(_, ExpectedSeeds, ExpectedRules), _, _),
+    logical_program_rows(Runtime, LogicalRows),
+    dl7_dbsp_plan_emitter:logical_executable(
+        LogicalRows, Seeds, Rules),
+    executable(Seeds, Rules) ==
+        executable(ExpectedSeeds, ExpectedRules).
+
 test(checked_argument_alternatives_are_ordinary_edges) :-
     ProtocolRows = [
         call(ref(kernel(':')),

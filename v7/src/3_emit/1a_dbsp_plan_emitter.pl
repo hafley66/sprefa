@@ -4,6 +4,7 @@
           ]).
 
 :- use_module(library(http/json), [atom_json_dict/3]).
+:- use_module('0_logical_program_reifier', [logical_program_rows/2]).
 
 %% emit_dbsp_plan(+CheckedProgram, -Plan, -Diagnostics) is det.
 %
@@ -11,9 +12,13 @@
 % contract consumed by v6/dd-runner's pure RAM kernel. Relation names are the
 % authored edge labels. A dot in one is ordinary atom content.
 emit_dbsp_plan(
-    checked_datalog(root_graph(_, Edges),
-                    datalog_program(Relations, Seeds, Rules), _, _),
+    CheckedProgram,
     Plan, Diagnostics) :-
+    CheckedProgram = checked_datalog(
+                         root_graph(_, Edges),
+                         datalog_program(Relations, _, _), _, _),
+    logical_program_rows(CheckedProgram, LogicalRows),
+    logical_executable(LogicalRows, Seeds, Rules),
     runtime_identities(Relations, Rules, RuntimeIdentities),
     relation_map(Edges, Relations, RuntimeIdentities,
                  RelationMap, NameDiagnostics),
@@ -36,6 +41,68 @@ emit_dbsp_plan(
               operators:Operators,
               wires:Wires
             }.
+
+%% logical_executable(+ProgramRows, -Seeds, -Rules) is det.
+%
+% The DBSP lowering consumes only the public reified program graph. This
+% reconstruction is temporary host rendering machinery; operator derivation
+% can move into DL7 without changing the rows or the runtime contract.
+logical_executable(ProgramRows, Seeds, Rules) :-
+    findall(Index-Call,
+            ( member(program_seed(seed_id(Index), CallId), ProgramRows),
+              logical_call(ProgramRows, CallId, Call)
+            ),
+            IndexedSeeds0),
+    keysort(IndexedSeeds0, IndexedSeeds),
+    pairs_values(IndexedSeeds, Seeds),
+    findall(Index-Rule,
+            ( member(program_rule(rule_id(Index), HeadCallId), ProgramRows),
+              logical_call(ProgramRows, HeadCallId, Head),
+              logical_goals(ProgramRows, rule_id(Index), Goals),
+              Rule = rule(Head, Goals)
+            ),
+            IndexedRules0),
+    keysort(IndexedRules0, IndexedRules),
+    pairs_values(IndexedRules, Rules).
+
+logical_goals(ProgramRows, Rule, Goals) :-
+    findall(Position-checked_goal(Polarity, Call),
+            ( member(program_goal(Rule, Position, Polarity, CallId),
+                     ProgramRows),
+              logical_call(ProgramRows, CallId, Call)
+            ),
+            Indexed0),
+    keysort(Indexed0, Indexed),
+    pairs_values(Indexed, Goals).
+
+logical_call(ProgramRows, CallId, call(ref(Relation), Arguments)) :-
+    memberchk(program_apply(CallId, Relation), ProgramRows),
+    findall(Position-Argument,
+            ( member(program_argument(CallId, Position, ArgumentId),
+                     ProgramRows),
+              logical_argument(ProgramRows, ArgumentId, Argument)
+            ),
+            Indexed0),
+    keysort(Indexed0, Indexed),
+    pairs_values(Indexed, Arguments).
+
+logical_argument(ProgramRows, ArgumentId, var(Variable)) :-
+    memberchk(program_edge(ArgumentId, variable, const(Variable), 0),
+              ProgramRows),
+    !.
+logical_argument(ProgramRows, ArgumentId, ref(Reference)) :-
+    memberchk(program_edge(ArgumentId, reference, ref(Reference), 0),
+              ProgramRows),
+    !.
+logical_argument(ProgramRows, ArgumentId, const(Value)) :-
+    memberchk(program_edge(ArgumentId, literal, const(Value), 0),
+              ProgramRows),
+    !.
+logical_argument(ProgramRows, ArgumentId, aggregate(Operator, Input)) :-
+    memberchk(program_edge(ArgumentId, aggregate, const(Operator), 0),
+              ProgramRows),
+    memberchk(program_edge(ArgumentId, input, ref(InputId), 1), ProgramRows),
+    logical_argument(ProgramRows, InputId, Input).
 
 dbsp_plan_json(Plan, Json) :-
     atom_json_dict(Json, Plan, [as(string), width(0)]).
