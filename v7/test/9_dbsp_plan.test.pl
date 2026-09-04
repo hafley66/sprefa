@@ -89,7 +89,10 @@ test(checked_argument_alternatives_are_ordinary_edges) :-
               ref(protocol(program_apply)), const(2)]),
         call(ref(kernel(':')),
              [ref(module(prelude)), const(program_argument),
-              ref(protocol(program_argument)), const(3)])
+              ref(protocol(program_argument)), const(3)]),
+        call(ref(kernel(':')),
+             [ref(module(prelude)), const(program_edge),
+              ref(protocol(program_edge)), const(4)])
     ],
     Arguments = [var(value), ref(other), const("Ada"),
                  aggregate(count, var(value))],
@@ -106,7 +109,7 @@ test(checked_argument_alternatives_are_ordinary_edges) :-
             ( between(0, 3, Position),
               Argument = argument_id(SeedCall, Position),
               findall([Label, Target, Index],
-                      member(call(ref(kernel(':')),
+                      member(call(ref(protocol(program_edge)),
                                   [ ref(logical_program(Argument)),
                                     const(Label), Target, const(Index)
                                   ]),
@@ -128,7 +131,7 @@ test(checked_argument_alternatives_are_ordinary_edges) :-
                            argument_id(SeedCall, 3), input))), 1]])
     ],
     AggregateInput = argument_child(argument_id(SeedCall, 3), input),
-    memberchk(call(ref(kernel(':')),
+    memberchk(call(ref(protocol(program_edge)),
                    [ ref(logical_program(AggregateInput)),
                      const(variable), const(value), const(0)
                    ]),
@@ -136,6 +139,7 @@ test(checked_argument_alternatives_are_ordinary_edges) :-
     Diagnostics == [].
 
 test(dl7_dbsp_emitter_derives_exact_checked_program_rows) :-
+    garbage_collect,
     Paths = [ 'v7/emitters/0_dbsp.dl7',
               'v7/test/fixtures/10_dbsp_source.dl7'
             ],
@@ -150,26 +154,39 @@ test(dl7_dbsp_emitter_derives_exact_checked_program_rows) :-
     expected_dbsp_operator_rows(LogicalRows, ExpectedOperators),
     expected_dbsp_read_rows(LogicalRows, ExpectedReads),
     expected_dbsp_projection_rows(LogicalRows, ExpectedProjections),
+    expected_dbsp_call_rows(LogicalRows, ExpectedCalls),
+    expected_dbsp_argument_rows(LogicalRows, ExpectedArguments),
+    expected_dbsp_argument_edge_rows(LogicalRows, ExpectedArgumentEdges),
     artifact_rows(Artifacts, "relations", RelationRows),
     artifact_rows(Artifacts, "operators", OperatorRows),
     artifact_rows(Artifacts, "reads", ReadRows),
     artifact_rows(Artifacts, "projections", ProjectionRows),
+    artifact_rows(Artifacts, "calls", CallRows),
+    artifact_rows(Artifacts, "arguments", ArgumentRows),
+    artifact_rows(Artifacts, "argument_edges", ArgumentEdgeRows),
     Observed = dbsp_artifacts(
                    compile(CompileDiagnostics),
                    emit(EmitDiagnostics),
                    relations(RelationRows),
                    operators(OperatorRows),
                    reads(ReadRows),
-                   projections(ProjectionRows)),
+                   projections(ProjectionRows),
+                   calls(CallRows),
+                   arguments(ArgumentRows),
+                   argument_edges(ArgumentEdgeRows)),
     Observed == dbsp_artifacts(
                     compile([]),
                     emit([]),
                     relations(ExpectedRelations),
                     operators(ExpectedOperators),
                     reads(ExpectedReads),
-                    projections(ExpectedProjections)).
+                    projections(ExpectedProjections),
+                    calls(ExpectedCalls),
+                    arguments(ExpectedArguments),
+                    argument_edges(ExpectedArgumentEdges)).
 
 test(dl7_clock_emitter_queries_level_dependencies_during_comptime) :-
+    garbage_collect,
     Paths = [ 'v7/emitters/0_dbsp.dl7',
               'v7/emitters/1_clock.dl7',
               'v7/test/fixtures/10_dbsp_source.dl7'
@@ -239,6 +256,45 @@ expected_dbsp_projection_rows(LogicalRows, Rows) :-
         ),
         Rows0),
     sort(Rows0, Rows).
+
+expected_dbsp_call_rows(LogicalRows, Rows) :-
+    findall(
+        [ ref(logical_program(Rule)), const(Role), const(Position),
+          ref(logical_program(Call)), ref(Relation) ],
+        logical_dbsp_call(LogicalRows, Rule, Role, Position, Call, Relation),
+        Rows0),
+    sort(Rows0, Rows).
+
+logical_dbsp_call(LogicalRows, Rule, "head", 0, Call, Relation) :-
+    member(program_rule(Rule, Call), LogicalRows),
+    memberchk(program_apply(Call, Relation), LogicalRows).
+logical_dbsp_call(LogicalRows, Rule, Role, Position, Call, Relation) :-
+    member(program_goal(Rule, Position, Polarity, Call), LogicalRows),
+    atom_string(Polarity, Role),
+    memberchk(program_apply(Call, Relation), LogicalRows).
+
+expected_dbsp_argument_rows(LogicalRows, Rows) :-
+    findall(
+        [ ref(logical_program(Call)), const(Position),
+          ref(logical_program(Argument)) ],
+        member(program_argument(Call, Position, Argument), LogicalRows),
+        Rows0),
+    sort(Rows0, Rows).
+
+expected_dbsp_argument_edge_rows(LogicalRows, Rows) :-
+    findall(
+        [ ref(logical_program(Argument)), const(Label), Target,
+          const(Index) ],
+        ( member(program_argument(_, _, Argument), LogicalRows),
+          member(program_edge(Argument, Label, RawTarget, Index),
+                 LogicalRows),
+          expected_logical_target(RawTarget, Target)
+        ),
+        Rows0),
+    sort(Rows0, Rows).
+
+expected_logical_target(ref(Identity), ref(logical_program(Identity))).
+expected_logical_target(const(Value), const(Value)).
 
 expected_clock_dependency_rows(LogicalRows, Rows) :-
     findall(

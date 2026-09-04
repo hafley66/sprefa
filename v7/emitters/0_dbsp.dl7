@@ -23,10 +23,31 @@
       (: position int)
       (: argument any)))
 
+(: dbsp_call
+   (* (: rule any)
+      (: role text)
+      (: position int)
+      (: call any)
+      (: relation type)))
+
+(: dbsp_argument
+   (* (: call any)
+      (: position int)
+      (: argument any)))
+
+(: dbsp_argument_edge
+   (* (: argument any)
+      (: label any)
+      (: target any)
+      (: index int)))
+
 (emits DbspEmitter "relations" dbsp_relation)
 (emits DbspEmitter "operators" dbsp_operator)
 (emits DbspEmitter "reads" dbsp_read)
 (emits DbspEmitter "projections" dbsp_projection)
+(emits DbspEmitter "calls" dbsp_call)
+(emits DbspEmitter "arguments" dbsp_argument)
+(emits DbspEmitter "argument_edges" dbsp_argument_edge)
 
 (<- (dbsp_relation ?Relation ?Arity)
     (program_relation ?Relation ?Arity))
@@ -43,3 +64,18 @@
 (<- (dbsp_projection ?Rule ?Position ?Argument)
     (program_rule ?Rule ?HeadCall)
     (program_argument ?HeadCall ?Position ?Argument))
+
+(<- (dbsp_call ?Rule "head" 0 ?Call ?Relation)
+    (program_rule ?Rule ?Call)
+    (program_apply ?Call ?Relation))
+
+(<- (dbsp_call ?Rule ?Polarity ?Position ?Call ?Relation)
+    (program_goal ?Rule ?Position ?Polarity ?Call)
+    (program_apply ?Call ?Relation))
+
+(<- (dbsp_argument ?Call ?Position ?Argument)
+    (program_argument ?Call ?Position ?Argument))
+
+(<- (dbsp_argument_edge ?Argument ?Label ?Target ?Index)
+    (program_argument ?Call ?Position ?Argument)
+    (program_edge ?Argument ?Label ?Target ?Index))

@@ -276,6 +276,15 @@
       (: position int)
       (: argument any)))
 
+; One edge relation classifies any reified program node. Labels remain data;
+; variable, reference, literal, aggregate, and later annotations do not gain
+; separate protocol relations.
+(: program_edge
+   (* (: owner any)
+      (: label any)
+      (: target any)
+      (: index int)))
+
 (: program_dependency
    (* (: head type)
       (: body type)

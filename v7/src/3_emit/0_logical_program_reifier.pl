@@ -101,22 +101,10 @@ logical_row_call_for_relation(ok(Relation), Relations, Row,
 logical_row_call_for_relation(error(Reason), _, _, _,
                               error(diagnostic(emit, none, Reason))).
 
-logical_row_relation(program_argument_edge(_, _, _, _), _,
-                     ok(kernel(':'))) :-
-    !.
 logical_row_relation(Row, CompilerFacts, Result) :-
     functor(Row, Name, _),
     prelude_relation_id(CompilerFacts, Name, Result).
 
-logical_row_call(Row, _, Result) :-
-    Row = program_argument_edge(Argument, Label, Target, Index),
-    !,
-    logical_identity(Argument, LogicalArgument),
-    logical_argument_target(Target, LogicalTarget),
-    Result = ok(call(ref(kernel(':')),
-                     [ LogicalArgument, const(Label), LogicalTarget,
-                       const(Index)
-                     ])).
 logical_row_call(Row, CompilerFacts, Result) :-
     functor(Row, Name, _),
     prelude_relation_id(CompilerFacts, Name, RelationResult),
@@ -185,6 +173,12 @@ logical_row_arguments(program_argument(Call, Position, Argument),
                       [LogicalCall, const(Position), LogicalArgument]) :-
     logical_identity(Call, LogicalCall),
     logical_identity(Argument, LogicalArgument).
+logical_row_arguments(program_edge(Owner, Label, Target, Index),
+                      [ LogicalOwner, const(Label), LogicalTarget,
+                        const(Index)
+                      ]) :-
+    logical_identity(Owner, LogicalOwner),
+    logical_argument_target(Target, LogicalTarget).
 logical_row_arguments(program_dependency(Head, Body, Polarity),
                       [ref(Head), ref(Body), const(PolarityText)]) :-
     atom_string(Polarity, PolarityText).
@@ -259,19 +253,19 @@ argument_rows([Argument | Arguments], CallId, Position, Rows) :-
            RestRows, Rows).
 
 argument_value_rows(var(Variable), Argument,
-                    [program_argument_edge(Argument, variable,
-                                           const(Variable), 0)]).
+                    [program_edge(Argument, variable,
+                                  const(Variable), 0)]).
 argument_value_rows(ref(Reference), Argument,
-                    [program_argument_edge(Argument, reference,
-                                           ref(Reference), 0)]).
+                    [program_edge(Argument, reference,
+                                  ref(Reference), 0)]).
 argument_value_rows(const(Value), Argument,
-                    [program_argument_edge(Argument, literal,
-                                           const(Value), 0)]).
+                    [program_edge(Argument, literal,
+                                  const(Value), 0)]).
 argument_value_rows(aggregate(Operator, Input), Argument,
-                    [ program_argument_edge(Argument, aggregate,
-                                            const(Operator), 0),
-                      program_argument_edge(Argument, input,
-                                            ref(InputArgument), 1)
+                    [ program_edge(Argument, aggregate,
+                                   const(Operator), 0),
+                      program_edge(Argument, input,
+                                   ref(InputArgument), 1)
                     | InputRows]) :-
     InputArgument = argument_child(Argument, input),
     argument_value_rows(Input, InputArgument, InputRows).
