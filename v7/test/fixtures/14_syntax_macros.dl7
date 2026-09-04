@@ -43,6 +43,14 @@
    (* (: invocation type)
       (: output type)))
 
+(: plus_form
+   (* (: invocation type)
+      (: output type)))
+
+(: plus_operator
+   (* (: invocation type)
+      (: output type)))
+
 (<- (syntax_claim ?Form "drop")
     (syntax_form ?Form)
     (: ?Form item ?Head 0)
@@ -88,3 +96,60 @@
 
 (<- (: ?Form expansion ?Output 0)
     (generated_atom ?Form ?Output))
+
+(<- (syntax_claim ?Form "<+")
+    (syntax_form ?Form)
+    (: ?Form item ?Head 0)
+    (syntax_atom ?Head "<+"))
+
+(<- (plus_form ?Form ?Output)
+    (syntax_claim ?Form "<+")
+    (nil ?Empty)
+    (cons 0 ?Empty ?TemplateArguments)
+    (cons 0 ?TemplateArguments ?OutputArguments)
+    (cons ?Form ?OutputArguments ?Arguments)
+    (intern GeneratedSyntax ?Arguments ?Output))
+
+(<- (plus_operator ?Form ?Output)
+    (syntax_claim ?Form "<+")
+    (nil ?Empty)
+    (cons 1 ?Empty ?TemplateArguments)
+    (cons 0 ?TemplateArguments ?OutputArguments)
+    (cons ?Form ?OutputArguments ?Arguments)
+    (intern GeneratedSyntax ?Arguments ?Output))
+
+(<- (node ?Output)
+    (plus_form ?Form ?Output))
+
+(<- (node ?Output)
+    (plus_operator ?Form ?Output))
+
+(<- (syntax_form ?Output)
+    (plus_form ?Form ?Output))
+
+(<- (syntax_atom ?Output "<-")
+    (plus_operator ?Form ?Output))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (plus_form ?Form ?Output)
+    (syntax_source ?Form ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (plus_operator ?Form ?Output)
+    (syntax_source ?Form ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (: ?Output item ?Operator 0)
+    (plus_form ?Form ?Output)
+    (plus_operator ?Form ?Operator))
+
+(<- (: ?Output item ?Child ?Index)
+    (plus_form ?Form ?Output)
+    (: ?Form item ?Child ?Index)
+    (before ?Form 0 ?Index))
+
+(<- (: ?Form expansion ?Output 0)
+    (plus_form ?Form ?Output))

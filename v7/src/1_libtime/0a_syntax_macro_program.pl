@@ -55,10 +55,14 @@ evaluate_macro_program(
     checked_datalog(_, datalog_program(_, ProgramSeeds, AllRules), _, _),
     Rows, Closure, Diagnostics) :-
     macro_rules(Protocol, AllRules, Rules),
+    exclude(compiler_predecessor_seed, ProgramSeeds, MacroProgramSeeds),
     syntax_seed_calls(Rows, Protocol, SyntaxSeeds),
-    append(ProgramSeeds, SyntaxSeeds, Seeds0),
+    append(MacroProgramSeeds, SyntaxSeeds, Seeds0),
     sort(Seeds0, Seeds),
     evaluate(Rules, Seeds, Closure, Diagnostics).
+
+compiler_predecessor_seed(
+    call(ref(kernel(predecessor)), _)).
 
 macro_rules(Protocol, Rules, MacroRules) :-
     include(macro_root_rule(Protocol), Rules, Roots),
@@ -101,9 +105,26 @@ rule_heads_one_of(Relations, rule(call(ref(Relation), _), _)) :-
     memberchk(Relation, Relations).
 
 syntax_seed_calls([], _, []).
-syntax_seed_calls([Row | Rows], Protocol, [Call | Calls]) :-
+syntax_seed_calls(Rows, Protocol, Calls) :-
+    syntax_row_calls(Rows, Protocol, RowCalls),
+    syntax_predecessor_calls(Rows, PredecessorCalls),
+    append(RowCalls, PredecessorCalls, Calls).
+
+syntax_row_calls([], _, []).
+syntax_row_calls([Row | Rows], Protocol, [Call | Calls]) :-
     syntax_row_call(Row, Protocol, Call),
-    syntax_seed_calls(Rows, Protocol, Calls).
+    syntax_row_calls(Rows, Protocol, Calls).
+
+syntax_predecessor_calls(Rows, Calls) :-
+    findall(
+        call(ref(kernel(predecessor)),
+             [ref(Owner), const(Earlier), const(Later)]),
+        ( member(':'(Owner, item, _, Later), Rows),
+          Later > 0,
+          Earlier is Later - 1
+        ),
+        Calls0),
+    sort(Calls0, Calls).
 
 syntax_row_call(node(Id), _, call(ref(kernel(node)), [ref(Id)])).
 syntax_row_call(':'(Owner, Label, Target, Index), _,
@@ -191,14 +212,14 @@ closure_syntax_row(Closure, protocol(_, _, _, _, _, Source, _),
                   const(EndLine), const(EndColumn)
                 ]), Closure).
 closure_syntax_row(Closure, Protocol, node(Node)) :-
-    syntax_identity_in_closure(Closure, Protocol, Node),
-    memberchk(call(ref(kernel(node)), [ref(Node)]), Closure).
+    member(call(ref(kernel(node)), [ref(Node)]), Closure),
+    syntax_identity_in_closure(Closure, Protocol, Node).
 closure_syntax_row(Closure, Protocol, ':'(Owner, item, ref(Target), Index)) :-
-    syntax_identity_in_closure(Closure, Protocol, Owner),
-    syntax_identity_in_closure(Closure, Protocol, Target),
     member(call(ref(kernel(':')),
                 [ref(Owner), const(item), ref(Target), const(Index)]),
-           Closure).
+           Closure),
+    syntax_identity_in_closure(Closure, Protocol, Owner),
+    syntax_identity_in_closure(Closure, Protocol, Target).
 
 syntax_identity_in_closure(Closure, protocol(_, Form, Atom, Literal,
                                               Variable, _, _), Node) :-

@@ -24,12 +24,20 @@ test(dl7_rules_delete_and_splice_nested_syntax_occurrences) :-
         CompileUnit, MacroProgram, Compiled, MacroCompileDiagnostics),
     compiled_bind_names(Compiled, BindNames),
     generated_identity_receipt(MacroProgram, GeneratedReceipt),
+    PlusText = "(: Action (* (: value int)))\n(: Event (* (: value int)))\n(<+ (Action ?Value) (Event ?Value))\n",
+    dl7_text_unit(plus_compile, plus_compile_source, PlusText,
+                  PlusUnit, PlusReadDiagnostics),
+    compile_unit_with_macros(
+        PlusUnit, MacroProgram, PlusCompiled, PlusCompileDiagnostics),
+    plus_rule_receipt(PlusCompiled, PlusRuleReceipt),
     Observed = macro_result(
                    CompileDiagnostics, ReaderDiagnostics,
                    ReifyDiagnostics, ExpansionDiagnostics,
                    Snapshot, ProvenanceSnapshot,
                    CompileReadDiagnostics, MacroCompileDiagnostics,
-                   BindNames, GeneratedReceipt),
+                   BindNames, GeneratedReceipt,
+                   PlusReadDiagnostics, PlusCompileDiagnostics,
+                   PlusRuleReceipt),
     Observed ==
         macro_result(
             [], [], [], [],
@@ -56,7 +64,22 @@ test(dl7_rules_delete_and_splice_nested_syntax_occurrences) :-
                 arguments([[reader_node(generated_source, 0), 0, 0],
                            [reader_node(generated_source, 2), 0, 0]]),
                 constructor_bound(true), stable(true), distinct(true),
-                copied_sources(true))).
+                copied_sources(true)),
+            [], [], plus_rule(head('Action'), body('Event'),
+                             shared_variable(true))).
+
+plus_rule_receipt(
+    compiled_unit(_, checked_datalog(root_graph(_, Edges),
+                                     datalog_program(_, _, Rules), _, _), _),
+    plus_rule(head('Action'), body('Event'), shared_variable(Shared))) :-
+    memberchk(':'(module(plus_compile), 'Action', ref(Action), _), Edges),
+    memberchk(':'(module(plus_compile), 'Event', ref(Event), _), Edges),
+    member(rule(call(ref(Action), [HeadArgument]),
+                [checked_goal(positive,
+                              call(ref(Event), [BodyArgument]))]),
+           Rules),
+    equality(HeadArgument, BodyArgument, Shared),
+    !.
 
 generated_identity_receipt(MacroProgram, Receipt) :-
     read_dl7(generated_source, "(emit_atom)\n(emit_atom)\n",

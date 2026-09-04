@@ -950,8 +950,11 @@ Current implementation status:
 
 - `<-` is accepted by the reader and recognized by the Prolog lowerer as the
   only source rule form.
-- `<+` is design syntax in this plan. The reader currently rejects it and the
-  lowerer has no `<+` rule branch.
+- `<+` is accepted as one reader atom. The checked macro fixture constructs a
+  fresh form and `<-` operator, copies the original head and body children, and
+  removes `<+` before the existing lowerer. The lowerer has no `<+` branch.
+  `compile_unit_with_macros/4` exercises this path; ordinary file/project entry
+  points do not select the macro program yet.
 - `->` is accepted only as an atom token. It has no rule, pattern, arm, or
   direction semantics in the lowerer.
 
@@ -1122,6 +1125,17 @@ resident runtime interprets committed action rows at the generation boundary.
 `<+` therefore requires no second source rule kind in the parser or Prolog
 lowerer. Clock, trigger, and write-plane rows are derived annotations on the
 expanded rule graph.
+
+The first executable `<+` receipt performs the syntax transformation and then
+passes the generated form through the ordinary lowerer. Its head and body calls
+share the authored variable identity. The fixture uses neutral `Action` and
+`Event` relations; `Key.Replace`, `History.Append`, `Time.Next`, and
+`Event.Enter` schemas remain part of the DBSP/Rx application cut.
+The macro evaluator derives predecessor rows from the active syntax item edges
+and excludes the checked macro program's retained compiler predecessor seeds.
+The latter contained 448 rows in this fixture and made unrelated type-graph
+owners enter the recursive item-copy SCC. The complete 13-test reader and
+macrotime command passes under SWI's default 1 GB stack in 13.919 wall seconds.
 
 This mirrors the boolean basis already present in rules:
 

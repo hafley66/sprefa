@@ -79,6 +79,14 @@ test(dotted_names_are_one_opaque_atom) :-
                     ],
                     3).
 
+test(reactive_rule_marker_is_one_atom) :-
+    read_dl7(reactive_rule_source, "(<+ (Action ?Value))",
+             Forms, _, Diagnostics),
+    maplist(payload_tree, Forms, Trees),
+    Trees == [form([atom('<+'),
+                    form([atom('Action'), variable('Value')])])],
+    Diagnostics == [].
+
 test(unterminated_tree_sitter_query_is_positioned) :-
     read_dl7(query_source, "{ (identifier)", Forms, SourceRows,
              Diagnostics),

@@ -52,7 +52,7 @@ read_dl7(+Path, +Text, -Forms, -SourceRows, -Diagnostics).
 ```
 
 It accepts atoms matching `[A-Za-z_][A-Za-z0-9_.-]*`, the symbolic atoms `:`,
-`*`, `+`, `->`, and `<-`, `?Name` logic variables, decimal integers, strings,
+`*`, `+`, `->`, `<-`, and `<+`, `?Name` logic variables, decimal integers, strings,
 `'Name` symbol literals, parenthesized forms, whitespace, and `;` line
 comments. Strings decode `\n`,
 `\t`, `\r`, `\\`, and `\"`; an unknown escape preserves its backslash and
