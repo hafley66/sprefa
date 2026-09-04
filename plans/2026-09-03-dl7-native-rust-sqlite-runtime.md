@@ -97,12 +97,28 @@ the Rust/SQLite executor.
 14. Wall-clock time enters through hosted rows. Generated code has no implicit
     wall-clock read. Fixpoint rounds, runtime generations, and wall-clock values
     remain separate identities.
-15. The same `Host` relation form serves compiler and runtime evaluation. Its
-    phase follows the evaluator that consumes the hosted relation. A relation
-    reachable from both evaluators has phase-scoped demand and response state.
-16. DL7's JSON-capable type graph must represent every JSON Schema 2020-12
-    validation shape used at HTTP and CLI boundaries. JSON Schema import and
-    emission are DL7 programs over that graph.
+15. The same hosted-callable contract serves macrotime, comptime, and residual
+    application evaluation. Its phase follows the evaluation root that demands
+    it. A callable reachable from several evaluators has phase-scoped demand
+    and response state.
+16. Reader forms are reified as graph data before executable lowering. DL7
+    expansion rules map one input form to zero or more ordered output forms.
+    `<+`, `match`, and `scan` are definitions in the DBSP/Rx application over
+    that protocol rather than additional Prolog rule forms.
+17. Phase is derived from evaluation roots. Expansion outputs select macrotime,
+    compiler artifact outputs select comptime, and residual application outputs
+    select target time. Pure helper relations may participate in several phases.
+18. The DL6 relation-value model becomes one DL7-authored storage application.
+    Product and sum values are structurally interned, product- or sum-typed
+    fields lower to references, and text fields lower to one shared string
+    dictionary. These are derived storage representations rather than graph
+    type-system primitives.
+19. JSON is a boundary codec annotation over ordinary graph types. Full JSON
+    Schema import and emission remain a later emitter package and are not an
+    acceptance criterion for the macrotime or relational-runtime foundation.
+20. `Console.Stdout` and `Console.Stderr` are occurrence-sensitive hosted sinks.
+    Their rows commit after logical closure, in deterministic per-stream order,
+    so temporary or retracted derivations do not print.
 
 Disposition of earlier paths:
 
@@ -158,6 +174,96 @@ relation boundary.
 DBSP names remain available for the target-neutral lowering graph, for example
 `DBSP.Map`, `DBSP.Join`, `DBSP.Antijoin`, `DBSP.Reduce`, and `DBSP.Feedback`.
 They identify backend algebra rather than surface language semantics.
+
+## Phase model
+
+The compiler and target share one graph and one rule algebra. The phases differ
+by their input roots, available host boundary, output roots, and lifetime:
+
+```text
+Read:
+  Text -> SyntaxGraph
+
+Macro:
+  MacroRules x SyntaxGraph -> ExpandedSyntaxGraph
+
+Compile:
+  CompilerRules x ExpandedSyntaxGraph x HostedFacts
+    -> CheckedGraph x ResidualGraph x Artifacts
+
+Target:
+  ResidualGraph x StoredState x InputChanges
+    -> StoredState x OutputChanges x HostDemands
+```
+
+`Target` is the residual or emitter phase. A one-shot CLI can evaluate its
+residual graph with the Prolog evaluator and exit. A Rust/SQLite emitter can
+translate the same graph into a resident executable. Physical execution inside
+the compiler process does not change the graph's phase.
+
+Phase membership is derived by dependency reachability:
+
+```text
+Expansion output root       -> macrotime
+compiler artifact root      -> comptime
+residual application root   -> target time
+```
+
+The dependency direction is `Macro -> Compile -> Target`. A shared pure helper
+can be evaluated from roots in more than one phase. Phase-scoped calls derive
+separate demand, response, cache, and occurrence identities.
+
+### Reader graph terminology
+
+For `(foo Bar ?x)`, a **form** is the parenthesized ordered container. An
+**atom** is a name token such as `foo`, `Bar`, `<-`, or `->`; a symbol literal
+such as `'foo` is immediate data and does not enter name resolution. Each
+textual child is a syntax-node occurrence with a source identity and position.
+Named `?x` occurrences within one top-level form share one logical variable
+identity while retaining separate source occurrences. Each `?_` is fresh.
+
+The current reader stores form order in a Prolog list:
+
+```prolog
+node(FormId,
+     form([node(FooId, atom(foo)),
+           node(BarId, atom('Bar')),
+           node(XOccurrenceId, variable(XIdentity, 'x'))]))
+```
+
+Syntax graph reification exposes the same order through ordinary edges:
+
+```text
+:(FormId, item, FooId, 0)
+:(FormId, item, BarId, 1)
+:(FormId, item, XOccurrenceId, 2)
+```
+
+`reader_node(Path, Index)` is parse-local provenance. Binding identities,
+interned applications, and generated semantic identities carry longer-lived
+meaning. A macro-introduced identity is derived from its macro definition,
+invocation identity, output ordinal, and template path. Spliced user syntax
+retains its existing identities.
+
+### Macro expansion relation
+
+One expansion invocation has zero or more ordered output-form edges:
+
+```text
+:(Invocation, expansion, OutputForm0, 0)
+:(Invocation, expansion, OutputForm1, 1)
+```
+
+Zero edges remove the invocation from the active syntax frontier. One replaces
+it. Several splice forms in ordinal order. This finite ordered sequence uses
+the graph's indexed edges and does not require a first-class cons list.
+
+The compiler reserves declaration identities, evaluates expansion rules, and
+derives the active frontier until no active macro invocation remains. Expansion
+records remain as provenance. The generated identity formula makes repeated
+rounds idempotent and makes separate invocations hygienic. A later quasiquote
+surface only needs template preservation, one-node splice, and sequence splice;
+those operations lower to the same syntax-node and indexed-edge graph.
 
 ## Bind and namespace model
 
@@ -303,18 +409,27 @@ A:B:c     = follow B from A, then c
 A:B:c:d   = follow B, c, and d; return the final target
 ```
 
+A colon path is an expression. It has no source-visible `return` argument.
+The value of `A:B` is the target reached by following `B` from `A`. Lowering
+may introduce existential variables while translating a path to `:/4` joins,
+but those variables are absent from the path's surface arity.
+
 Using a path directly creates no alias or binding edge:
 
 ```dl7
 (: Holder
    (* (: value A:B:c:d)))
-
-(<- (Copied ?Value)
-    (A:B ?Value))
 ```
 
-The first path supplies a type identity. The second resolves `A:B` to a
-callable product and calls it. Binding the result remains explicit:
+The path supplies a type identity. If its resulting identity is callable, it
+can separately occupy call position:
+
+```dl7
+(A:B 7 "Ada")
+```
+
+The arguments belong to that ordinary call. They are not an output slot for
+the path. Binding the path result remains explicit:
 
 ```dl7
 (BType: A:B)
@@ -358,6 +473,23 @@ The continuity receipts are:
 The first implementation signatures are grouped by layer.
 
 ```prolog
+% Reader nodes and list positions to the ordinary indexed syntax graph.
+reify_syntax(
+    +ReaderForms,
+    +SourceRows,
+    -SyntaxGraphRows,
+    -Diagnostics
+).
+
+% Evaluate DL7 expansion rules to a closed active syntax frontier.
+expand_syntax(
+    +SyntaxGraphRows,
+    +MacroProgram,
+    -ExpandedSyntaxRows,
+    -ExpansionProvenanceRows,
+    -Diagnostics
+).
+
 % Checked program to ordinary DL7 rows.
 logical_program_calls(
     +CompilerView,
@@ -390,6 +522,26 @@ lower_rust_sqlite(
     -Diagnostics
 ).
 
+% Derive local IDs, durable digests, scalar dictionaries, and reference fields
+% from the graph types selected by the relational storage application.
+derive_value_storage(
+    +TypeGraphRows,
+    +StorageApplicationRows,
+    -InternPlanRows,
+    -ReferencePlanRows,
+    -Diagnostics
+).
+
+% Normalize one boundary batch child-first into scalar and relation IDs.
+intern_boundary_values(
+    +InternPlanRows,
+    +SignedLogicalRows,
+    +StoreHandle,
+    -SignedPhysicalRows,
+    -IdentityRows,
+    -Diagnostics
+).
+
 % Reify temporal dependencies without adding a second type vocabulary.
 temporal_program_rows(
     +CheckedProgramRows,
@@ -412,6 +564,15 @@ boundary_plan(
     +CompilerView,
     +HostedRows,
     -BoundaryRows,
+    -Diagnostics
+).
+
+% Dispatch committed occurrence-sensitive stdout and stderr sink rows.
+dispatch_console(
+    +PhaseIdentity,
+    +CommittedConsoleRows,
+    +DeliveredOccurrenceRows,
+    -NextDeliveredOccurrenceRows,
     -Diagnostics
 ).
 
@@ -484,6 +645,12 @@ Each compiler generation owns:
 The resident runtime owns one active generation and may hold one validated next
 generation. An old library remains loaded until its active tick count reaches
 zero. No pointer, callback, or buffer owned by the old library survives unload.
+
+Dynamic loading is currently a researched boundary rather than an executable
+DL7 path. `v7/labs/19_rust_dynamic_loading/0_RESEARCH.md` specifies the ABI,
+artifact identity, reload sequence, and benchmark matrix. DL7-generated Rust
+types and generated Rust DBSP construction modules exist; a generated project
+`cdylib`, resident loader, and generation-boundary swap do not yet exist.
 
 ### Tick
 
@@ -567,18 +734,158 @@ call count, and content-addressed path. Build products live outside the SQLite
 transaction and become eligible for loading only after Rust compilation
 succeeds.
 
+## DL6 relation values as a DL7 storage application
+
+DL6 coupled four behaviors under its relation declarations:
+
+1. A field whose declared type was another relation accepted a nested relation
+   term as its logical value.
+2. `0_relation_pattern.pl` recursively canonicalized those nested terms before
+   execution.
+3. `sprefa-engine-rs/src/struct_plane.rs` interned distinct child values before
+   parents and replaced each child value with the child's SQLite `__id`.
+4. `sprefa-engine-rs/src/text_plane.rs` interned every `text` column through one
+   shared `__str(__id, content)` dictionary when the emitted plan selected
+   dictionary mode.
+
+That behavior becomes one application over the DL7 graph. A product or sum
+constructor application has a structural identity:
+
+```text
+SemanticIdentity = Intern(ConstructorIdentity, OrderedArguments)
+```
+
+The current comptime kernel already implements this operation as
+`intern(constructor, arguments, return)`. Its Prolog result is the structural
+term `application(Constructor, Arguments)`, and `intern_snapshot` exposes
+requests frozen from the preceding compiler round. This currently names
+comptime applications; it does not yet generate persistent Rust/SQLite value
+interning.
+
+The storage application derives physical reference fields from the ordinary
+type graph:
+
+```text
+product(Span)
+:(Span, start, int, 0)
+:(Span, end, int, 1)
+
+product(Node)
+:(Node, file, File, 0)
+:(Node, at, Span, 1)
+:(Node, kind, text, 2)
+
+Storage.Reference(Node, file, File)
+Storage.Reference(Node, at, Span)
+Storage.Text(Node, kind)
+```
+
+`Storage.Reference` and `Storage.Text` are derived layout rows emitted by the
+DL7 Rust/SQLite package. They are not additional source type constructors. A
+logical arrival can retain its nested value shape while boundary lowering does:
+
+```text
+collect distinct nested values
+  -> intern scalar text contents
+  -> intern deepest product and sum values
+  -> replace child values with local child IDs
+  -> intern parents
+  -> replace top-level reference fields with local IDs
+  -> apply signed physical rows
+```
+
+The reverse boundary receives an explicit projection graph. It can return a
+local reference identity, selected child fields, or a recursively rendered
+value. This avoids making every reference read recursively serialize its whole
+reachable graph.
+
+### Hashes and intern IDs
+
+If “half and intern” meant “hash and intern”, both identities have separate
+jobs:
+
+```text
+semantic digest:
+  hash(canonical constructor identity, child digests, scalar values)
+
+local intern ID:
+  dense identity assigned within one SQLite catalog or in-memory evaluation
+```
+
+The digest can survive process restarts, artifact builds, and database exchange
+when its canonical encoding and version are fixed. The local ID is used for
+joins, indexes, and compact reference columns. One catalog records the mapping:
+
+```text
+Identity(LocalId, SemanticDigest, Constructor)
+```
+
+Domain identities remain ordinary declared keys. A Git object ID, source
+revision digest, or external protocol identifier is not replaced by the local
+intern ID.
+
+### Text and source-content interning
+
+The Rust/SQLite relational application derives one shared text dictionary for
+all physical text fields:
+
+```text
+Text(LocalId, Content)
+```
+
+Rows and interned product values store `LocalId`. Host and rendered boundaries
+read `Content`. Rule literals are looked up through the same dictionary so a
+literal comparison and a column comparison use the same physical ID space.
+
+Large immutable source contents use a separate content-addressed table:
+
+```text
+Content(Digest, Bytes)
+SourceRevision(PathId, Digest)
+```
+
+The relational graph carries `PathId`, `Digest`, spans, symbols, and references.
+Raw source bytes are fetched by digest when parsing, rendering diagnostics, or
+serving a requested slice. This keeps repeated text and source bodies out of
+every relation row while retaining their logical value at boundaries.
+
+### Spans
+
+A span remains an ordinary product, commonly:
+
+```dl7
+(: Span
+   (* (: source SourceRevision)
+      (: start ByteOffset)
+      (: end ByteOffset)))
+```
+
+Offsets are half-open: `start` is inclusive and `end` is exclusive. Structural
+interning means repeated use of the same `(source, start, end)` stores one span
+value and several reference IDs. A syntax or semantic node that needs `kind` as
+part of its identity includes `kind` in that node's own constructor or declared
+domain key; two nodes may therefore share one span without becoming one node.
+
+The colon read surface can follow logical values through these reference
+fields. The SQLite emitter lowers each reference step to a join on the stored
+ID. A read of the identity itself remains a projection of the ID and performs
+no child join. Repeated identical paths in one rule share their normalized join
+prefix in the DBSP graph.
+
 ## Relational lowering flow
 
 ```text
 DL7 files
   -> reader trees and source rows
+  -> indexed syntax graph
+  -> DL7 macro expansion to a closed active syntax frontier
   -> colon-owned type and module graph
   -> checked Datalog
   -> reified program calls
-  -> DL7 DBSP rules
+  -> DL7-authored DBSP/Rx application rules
   -> DBSP relation and operator rows
   -> DL7 Rust/SQLite rules
-  -> layout, SQL, schedule, and Rust-item rows
+  -> value interning, references, layout, SQL, schedule, and Rust-item rows
   -> DL7 Rust emitter
   -> one .rs per DL7 file plus lib.rs
   -> content-addressed cdylib
@@ -603,6 +910,15 @@ watch policy, and host transports enter later lowering relations.
 
 ### Application-runtime temporal basis
 
+Current implementation status:
+
+- `<-` is accepted by the reader and recognized by the Prolog lowerer as the
+  only source rule form.
+- `<+` is design syntax in this plan. The reader currently rejects it and the
+  lowerer has no `<+` rule branch.
+- `->` is accepted only as an atom token. It has no rule, pattern, arm, or
+  direction semantics in the lowerer.
+
 The existing DL6 fixtures provide historical input/output receipts for this
 userland runtime model:
 
@@ -621,6 +937,27 @@ plane, and history plane.
 The reified dependency row carries source relation, target relation, read plane,
 write plane, sign, grade, and role. Clock checking is a DL7 analysis over those
 rows.
+
+The temporal identities have an algebraic dependency rather than independent
+operator semantics. For a signed multiset relation at generation `G`:
+
+```text
+Current[G]  = Previous[G] ⊕ Change[G]
+Change[G]   = Current[G]  ⊖ Previous[G]
+Previous[G] = Current[G]  ⊖ Change[G]
+```
+
+Any two determine the third. `⊕` and `⊖` are signed-weight addition and
+subtraction. `Change.Assert` and `Change.Retract` are the positive and negative
+parts of `Change`. `Event.Enter` and `Event.Exit` are zero-boundary crossings
+derived by comparing `Previous` and `Current`; they differ from another `+1`
+or `-1` applied to a row whose consolidated weight remains nonzero.
+
+The runtime must supply one generation boundary with durable prior state. The
+remaining temporal views can be DL7 rules over signed changes, previous state,
+and current state. A keyed replacement expands to one retraction of the prior
+keyed row and one assertion of its replacement. A history append expands to an
+assertion carrying an occurrence identity.
 
 Within one generation:
 
@@ -671,6 +1008,91 @@ This is one compiler protocol shared by `match`, `scan`, future syntax
 constructors, and project-defined forms. Individual forms require no Prolog
 branch and no reader production beyond their ordinary list shape.
 
+### Rule graph and bootstrap boundary
+
+DL7 can already generate rules as data, but the current carrier is split
+between kernel relations and prelude relations:
+
+```dl7
+(def Relation 2)
+(head Rule HeadCall)
+(body Rule 0 "positive" BodyCall)
+(Apply HeadCall Relation)
+(Apply BodyCall Source)
+(: HeadCall value HeadArgument 0)
+(: BodyCall value BodyArgument 0)
+```
+
+`def/2`, `head/2`, and `body/4` are currently hardcoded into the kernel graph
+in `v7/src/2_comptime/1_checker.pl` and interpreted by
+`v7/src/2_comptime/1a_generated_program_assembler.pl`. `Apply/2`, variable
+nodes, literal nodes, and call-argument edges are declared in the DL7 prelude.
+The compiler already evaluates authored rules to a fixpoint, assembles these
+rows, then evaluates again with the generated rules.
+
+The graph-normalized carrier can remove the structural distinction among
+`head`, `body`, application metadata, and annotations. One possible normalized
+instance is:
+
+```text
+product(Relation)
+
+:(Rule, head, HeadCall, 0)
+:(Rule, body, BodyCall, 0)
+
+:(HeadCall, apply, Relation, 0)
+:(HeadCall, value, HeadArgument, 0)
+
+:(BodyCall, apply, Source, 0)
+:(BodyCall, value, BodyArgument, 0)
+
+edge_ref(Rule, body, BodyOccurrenceEdge)
+:(BodyOccurrenceEdge, polarity, Negative, 0)
+```
+
+The `body` edge index supplies goal order. Call argument edge indices supply
+argument order. Polarity, clock, trigger mode, and sampling mode annotate the
+reified body-occurrence edge because they belong to one use of the call inside
+one rule. Write mode annotates the reified head-occurrence edge. Positive
+polarity is the absence of the `Negative` annotation. Generated relation arity
+comes from the product's field edges, so `def/2` is a derivable compatibility
+view. The assembler's irreducible operation becomes "freeze and check the graph
+rooted at each rule head" rather than interpreting three unrelated kernel
+relations.
+
+The bootstrap basis is then:
+
+1. The reader produces ordinary nested forms and preserves their identities and
+   order.
+2. `<-` lowers one monotone rule. Body goals are conjunction. Multiple `<-`
+   rules sharing a head are disjunction. Stratified negative goals provide
+   antijoin.
+3. The generic form protocol exposes raw forms to already-compiled DL7 prelude
+   rules.
+4. Those prelude rules emit the normalized rule graph for a later compiler
+   round.
+5. The runtime supplies signed input changes and a generation boundary with
+   prior state.
+
+With that basis, `<+` can be a DL7 macro. Its expansion is an ordinary `<-`
+rule whose body reads an occurrence such as `Event.Enter` and whose head emits
+a keyed-replacement, history-append, or next-generation action row. The
+resident runtime interprets committed action rows at the generation boundary.
+`<+` therefore requires no second source rule kind in the parser or Prolog
+lowerer. Clock, trigger, and write-plane rows are derived annotations on the
+expanded rule graph.
+
+This mirrors the boolean basis already present in rules:
+
+```text
+AND = several goals in one body
+OR  = several rules with the same head
+NOT = stratified negative goal / antijoin
+```
+
+`AND` and `OR` come from the shape of `<-`; only stratified negation adds a
+non-monotone primitive.
+
 ### `match`
 
 The DL6-compatible surface can contain complete rule fragments as arms:
@@ -700,11 +1122,18 @@ Rust-style matching over a closed sum uses pattern arms:
 
 ```dl7
 (match ?Response
-  (-> (Page ?Body)
-      (<- (PageBody ?Body)))
-  (-> (Redirect ?Url)
-      (<- (RedirectTarget ?Url))))
+  ((Page ?Body)
+   (<- (PageBody ?Body)))
+  ((Redirect ?Url)
+   (<- (RedirectTarget ?Url))))
 ```
+
+Inside `match`, each arm is an ordered pair of a pattern form and a rule
+fragment. It introduces no arm-arrow token. The earlier draft's `->` spelling
+was only a proposed delimiter. In the current implementation the reader emits
+`node(Id, atom('->'))`, and the generic call lowerer attempts to resolve it as
+an ordinary callable named `->`. Since no such callable is declared, lowering
+would report `undeclared_relation('->')` when the form reaches call lowering.
 
 Each variant pattern lowers to its ordinary constructor/deconstructor relation.
 Variant disjointness supplies exclusivity. A compile-time query joins arm
@@ -829,6 +1258,72 @@ edges, derive `node` and `product`, emit `def`, and emit executable `head` and
 uses fewer generated identities and makes hosting an annotation on existing
 graph objects.
 
+### Console stdout and stderr sinks
+
+The relational application declares two ordinary one-field products:
+
+```dl7
+(: Console.Stdout
+   (* (: line text)))
+
+(: Console.Stderr
+   (* (: line text)))
+```
+
+Their declaration edges are annotated as hosted sinks implemented by the
+resident console host. One logical row means one complete UTF-8 line; the host
+adds the line terminator. Exact byte writes can be a later separately named
+boundary without changing line logging.
+
+Surface use is an ordinary rule head:
+
+```dl7
+(<- (Console.Stdout ?Rendered)
+    (ReportLine ?Rendered))
+
+(<- (Console.Stderr ?Rendered)
+    (TraceLine ?Rendered))
+```
+
+The source arity stays one. Lowering attaches an occurrence envelope derived
+from the phase, rule-head occurrence, generation, and triggering occurrence:
+
+```text
+ConsoleDemand(
+  phase,
+  generation,
+  occurrence,
+  stream,
+  line
+)
+```
+
+This preserves repeated equal lines caused by distinct occurrences while
+consolidating duplicate proofs of the same logical occurrence. Dispatch is an
+irreversible terminal effect:
+
+```text
+logical closure
+  -> consolidate positive and negative sink differences
+  -> commit phase or generation
+  -> sort by (generation, occurrence ordinal)
+  -> write each undelivered positive occurrence
+  -> flush each stream
+  -> record delivered occurrence
+```
+
+A retraction before commit cancels the pending line. A retraction after the OS
+write cannot erase bytes already observed. The delivered-occurrence ledger
+prevents repeats within the live evaluation and reload lifetime. The contract
+makes no cross-crash exactly-once claim because a terminal file descriptor has
+no transactional acknowledgement shared with SQLite.
+
+The evaluator supplies the phase identity. Macro-expansion trace rows therefore
+print after one closed expansion round, compiler rows print after comptime
+closure, and residual application rows print after an application generation
+commits. Compiler diagnostics and tracing continue to use stderr; stdout remains
+available for deliberate program or artifact output.
+
 ## Comptime and application-host execution
 
 The evaluator consuming a hosted callable determines its phase:
@@ -876,11 +1371,34 @@ ground head and ground proper tail can construct the next list. Prelude rules
 already use these calls for constructor argument lists, closed name sets, and
 recursive `contains`.
 
-The graph has no declared recursive `List` sum/product type yet. Rust/SQLite
-layout, dylib ABI cells, equality, interning, JSON array conversion, and an open
-or improper tail also have no list contract. The userland graph shape to prove
-is a recursive sum with one empty variant and one product carrying `head` and
-`tail`; the current `nil` and `cons` calls can bootstrap its constructor rules.
+Macro output sequences and form children use repeated indexed edges. They do
+not require a cons value. A first-class list is reserved for programs that need
+recursive head/tail values, sharing, or list pattern rules.
+
+The graph has no declared recursive `List` sum/product type yet. Its userland
+shape is one empty variant and one product carrying `head` and `tail`. Proper
+finite values can be proven relationally from the empty value:
+
+```text
+Proper(Nil)
+
+Proper(Value) <-
+  Cons(Value, Head, Tail)
+  Proper(Tail)
+
+Invalid(Value) <-
+  ClaimedList(Value)
+  not Proper(Value)
+```
+
+A tail cycle with no path to `Nil` never enters `Proper`. Product cardinality
+and sum-variant checks separately guarantee one tail and one constructor per
+value. The current `nil` and `cons` calls can bootstrap these constructor rules.
+Rust/SQLite layout, dylib ABI cells, equality, and structural interning then
+derive from the same product/sum storage application described above.
+
+JSON array conversion is a codec edge on a host or artifact boundary. It is not
+part of list formation, properness, equality, or storage identity.
 
 ## Hosted HTTP, servers, and CLIs
 
@@ -938,71 +1456,73 @@ CLI lifecycle uses the same source/sink pairing. A short command waits for one
 terminal result. A long-lived command subscribes to output rows until an exit or
 cancellation row is committed.
 
-## JSON Schema coverage
+## JSON boundary
 
-JSON compatibility is a capability of an ordinary type node. The graph needs
-one representation for each JSON Schema 2020-12 validation family:
+JSON compatibility is a codec capability on an ordinary type, field edge,
+variant edge, hosted port edge, or artifact-output edge. Core products, sums,
+lists, text, numbers, identities, and references retain their graph meaning.
 
-| JSON Schema family | DL7 graph representation |
-| --- | --- |
-| object properties and required names | product edges plus required/optional constraint edges |
-| open objects and additional properties | one rest-value edge carrying its value schema |
-| arrays, tuples, `prefixItems`, and `contains` | collection node plus ordered item and containment constraints |
-| `enum` and `const` | literal alternatives or a literal constraint edge |
-| `anyOf` and `oneOf` | sum edges plus selection constraint |
-| `allOf` and `not` | intersection and exclusion relations over schema identities |
-| `$ref`, `$dynamicRef`, `$defs`, recursion | ordinary identity edges, retaining URI and anchor as data |
-| number and string bounds, pattern, format | constraint edges on the scalar node |
-| `if`/`then`/`else`, dependent schemas, dependent required | validation rules over product edges |
-| `unevaluatedProperties` and `unevaluatedItems` | post-composition coverage constraints |
-| `null` versus absence | `null` value node versus an optional product edge |
+```text
+BoundaryEdge -codec-> Json.Value
+ListEdge     -codec-> Json.Array
+ProductEdge  -codec-> Json.Object
+VariantEdge  -codec-> Json.Tagged
+```
 
-Constraint identity is reified, so annotations can target the constraint edge,
-the field edge, the enclosing product, or the boundary relation. DL7-specific
-capabilities may additionally describe relation keys, temporal retention, host
-ports, provenance, and graph constraints. JSON Schema import produces these
-ordinary nodes and edges. Emission succeeds for the representable JSON subset of
-a DL7 graph and returns diagnostic rows for capabilities with no JSON Schema
-encoding.
+The codec package derives encode, decode, validation, and diagnostic rows at
+the selected boundary. Unannotated graph values acquire no JSON representation.
+Host input is validated before logical rows enter an evaluation. Host output is
+encoded after its phase or generation commits.
 
-The compatibility gate uses the official JSON Schema test suite categories plus
-round trips through imported and emitted schemas. HTTP request and response body
-validation runs at the host boundary before rows enter the program or bytes leave
-the host.
+JSON Schema 2020-12 import, emission, and category-corpus coverage remain a
+later DL7 emitter package over these codec and constraint edges. They do not
+gate syntax reification, macros, relation-value interning, clock checking, or
+the first Rust/SQLite residual application.
 
 ## Delivery sequence
 
-1. Convert `logical_program_rows/2` output into declared DL7 relation calls and
-   add a second emitter evaluation that receives the complete compiler view.
-2. Re-express the current positive map/join projection from
-   `1a_dbsp_plan_emitter.pl` as DL7 rules. Compare its rows with the current
-   JSON prototype on the existing fixture.
-3. Add SCC, recursion, aggregate, negation, and retraction cases. Every supported
-   operator enters the `dd-runner` shootout before the Rust/SQLite emitter uses
-   it.
-4. Define the minimal target-neutral relation layout rows: stored role,
-   ordered columns, semantic representation, and keys.
-5. Derive SQLite table identities, DDL, statements, and reload catalog hashes in
-   DL7.
-6. Restore a generalized form of the compiled Rust technique represented by
+1. Reify reader forms and their ordered children as the ordinary syntax graph,
+   retaining source-node, logical-variable, binding, and generated identities.
+2. Add the generic expansion relation, active syntax frontier, deterministic
+   generated identities, and repeated-round termination diagnostics.
+3. Normalize generated rule, head occurrence, body occurrence, application,
+   argument, polarity, clock, trigger, and write metadata onto reified graph
+   nodes and edges. Retain `def/head/body/Apply` as derived compatibility views
+   while the existing assembler consumes them.
+4. Define `<+`, `match`, and `scan` in the DL7-authored DBSP/Rx application and
+   prove their expansions contain only `<-`, stratified negation, ordinary
+   applications, and occurrence annotations.
+5. Reify temporal dependency sign, grade, and plane from occurrence-edge
+   annotations. Implement the clock checker as DL7 comptime rules and compare
+   its complete diagnostic rows with the existing Prolog checks.
+6. Complete SCC, recursion, aggregate, negation, and retraction DBSP cases.
+   Every supported operator enters the relational shootout before the
+   Rust/SQLite emitter uses it.
+7. Derive the DL6-style relation-value application: structural product and sum
+   identities, bottom-up reference flattening, the shared text dictionary,
+   content-addressed source bytes, and span references.
+8. Add `Console.Stdout` and `Console.Stderr` hosted sinks to the Prolog
+   comptime runner and the Rust/SQLite target, with committed occurrence order
+   and duplicate-delivery receipts.
+9. Define the minimal target-neutral relation layout rows: stored role, ordered
+   columns, semantic representation, references, and keys. Derive SQLite table
+   identities, DDL, statements, and reload catalog hashes in DL7.
+10. Restore a generalized form of the compiled Rust technique represented by
    `v6/labs/exec_shootout/mono/src/main.rs`. Emit one Rust module for each DL7
    file and direct operator functions rather than a runtime-plan string.
-7. Build one static executable first, then place the same generated project
+11. Build one static executable first, then place the same generated project
    behind the `Dl7ModuleV1` boundary.
-8. Add a resident host that watches sources, incrementally compiles a fresh
+12. Add a resident host that watches sources, incrementally compiles a fresh
    content-addressed library, validates it, and swaps at a generation boundary.
-9. Reify rule kind, temporal body operations, dependency sign/grade, and clock
-   diagnostics; implement level closure, ordered edge firing, current/pre-state
-   reads, and generation carry in the shootout.
-10. Feed `sprefa-extract` watch changes into the active runtime and persist their
+13. Feed `sprefa-extract` watch changes into the active target and persist their
    relational state in SQLite.
-11. Move source-membership selection from the CLI path list into DL7 rules over
+14. Move source-membership selection from the CLI path list into DL7 rules over
     hosted filesystem observations, retaining the entry file and prelude as the
     bootstrap roots.
-12. Add generic hosted source and sink relations, then exercise HTTP client,
+15. Add generic hosted source and sink relations, then exercise HTTP client,
     HTTP server, and CLI request/response lifecycles over them.
-13. Add JSON Schema import, validation, and emission rows after the product, sum,
-    reference, optional-edge, open-object, and constraint identities are stable.
+16. Add JSON codec annotations at selected hosted and artifact boundaries.
+    JSON Schema import, validation, and emission remain a later emitter package.
 
 ## Implementation receipts
 
@@ -1089,8 +1609,9 @@ The arc closes with these executable receipts:
     reaches quiescence after all host responses and `Time.Next` carry drain.
 13. HTTP server and CLI fixtures correlate ingress with egress and prove that no
     socket or process wait holds a SQLite write transaction.
-14. JSON Schema category fixtures import into the type graph, validate boundary
-    values, and emit a schema whose accepted JSON instances match the input.
+14. Reader forms reify to exact indexed syntax edges, named variable occurrences
+    share one logical identity, anonymous variables remain distinct, and macro
+    output identities remain stable across repeated expansion rounds.
 15. A `match` form expands through the generic form protocol into exact ordinary
     rules, leaving no match operation in the checked runtime program.
 16. Closed-sum match fixtures prove exhaustive disjoint variants; guarded
@@ -1098,6 +1619,20 @@ The arc closes with these executable receipts:
 17. A `Scan` fixture folds three same-generation inputs in occurrence order and
     emits all three intermediate states, then reproduces them through generated
     Rust and SQLite execution.
+18. A nested `SourceRevision -> Span -> Node` arrival interns children before
+    parents, stores reference IDs, shares equal span values, retains distinct
+    node kinds at one span, and reconstructs an explicitly selected projection.
+19. Repeated text across unrelated relations occupies one shared dictionary row;
+    relation rows store the same local ID and boundary rendering returns the
+    original content.
+20. `Console.Stdout` and `Console.Stderr` print equal text once per distinct
+    committed occurrence, suppress a derivation retracted before commit, retain
+    deterministic order within each stream, and do not repeat after a compatible
+    generated-library reload.
+21. A proper cons chain derives `Proper`; a tail cycle, improper tail, duplicate
+    tail, and conflicting sum variant each produce the exact graph diagnostic.
+22. A JSON-annotated host boundary round-trips its selected value while the same
+    unannotated type remains free of JSON storage or validation semantics.
 
 CI coverage added by this arc consists of DL7 PLUnit compiler/emitter tests,
 Rust ABI and reload integration tests, SQLite migration tests, and shootout
