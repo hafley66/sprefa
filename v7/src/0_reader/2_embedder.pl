@@ -1,6 +1,7 @@
 :- module(dl7_embedder,
           [ dl7/4,
-            dl7_text_unit/5
+            dl7_text_unit/5,
+            dl7_text_unit/6
           ]).
 
 :- use_module(library(crypto), [crypto_data_hash/3]).
@@ -12,10 +13,14 @@
               ]).
 :- use_module('0_parser', [read_dl7/5]).
 :- use_module('1_expander', [expand_dl7/6]).
+:- use_module('1a_syntax_grapher', [reify_syntax/4]).
 
 :- quasi_quotation_syntax(dl7).
 
 dl7_text_unit(Origin, ReaderPath, Text, Unit, Diagnostics) :-
+    dl7_text_unit(Origin, ReaderPath, Text, Unit, _, Diagnostics).
+
+dl7_text_unit(Origin, ReaderPath, Text, Unit, SyntaxGraphRows, Diagnostics) :-
     must_be(ground, Origin),
     must_be(ground, ReaderPath),
     must_be(text, Text),
@@ -25,11 +30,18 @@ dl7_text_unit(Origin, ReaderPath, Text, Unit, Diagnostics) :-
                        encoding(utf8)
                      ]),
     read_dl7(ReaderPath, String, Forms, SourceRows, ReaderDiagnostics),
-    expand_after_read(ReaderDiagnostics, Forms, SourceRows,
+    reify_after_read(ReaderDiagnostics, Forms, SourceRows,
+                     SyntaxGraphRows, SyntaxDiagnostics),
+    expand_after_read(SyntaxDiagnostics, Forms, SourceRows,
                       ExpandedForms, ExpandedSourceRows,
                       ExpansionRows, Diagnostics),
     Unit = dl7_unit(Origin, content_sha256(Digest),
                     ExpandedForms, ExpandedSourceRows, ExpansionRows).
+
+reify_after_read([], Forms, SourceRows, SyntaxGraphRows, Diagnostics) :-
+    !,
+    reify_syntax(Forms, SourceRows, SyntaxGraphRows, Diagnostics).
+reify_after_read(Diagnostics, _, _, [], Diagnostics).
 
 expand_after_read([], Forms, SourceRows,
                   ExpandedForms, ExpandedSourceRows,

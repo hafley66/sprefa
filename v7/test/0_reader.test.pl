@@ -1,8 +1,10 @@
 :- begin_tests(dl7_reader_foundation).
 
 :- use_module('../src/0_reader/0_parser', [read_dl7/5]).
+:- use_module('../src/0_reader/1a_syntax_grapher', [reify_syntax/4]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
-:- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
+:- use_module('../src/0_reader/2_embedder',
+              [dl7_text_unit/5, dl7_text_unit/6]).
 :- use_module('../src/2_comptime/2_compiler', [compile_unit/3]).
 
 test(standalone_fixture_has_canonical_reader_snapshot) :-
@@ -121,6 +123,77 @@ test(infix_colon_rotates_to_the_canonical_prefix_tree_at_every_depth) :-
                            atom(int)])
                    ],
                    [_ | _]).
+
+test(reader_tree_reifies_to_indexed_syntax_graph) :-
+    Text = "(pair ?Value ?Value ?_) 'tag\n()\n",
+    dl7_text_unit(syntax_graph, syntax_graph_source, Text,
+                  Unit, Rows, Diagnostics),
+    Unit = dl7_unit(_, _, _, _, _),
+    syntax_graph_snapshot(Rows, Snapshot),
+    Observed = syntax_graph_result(Diagnostics, Snapshot),
+    Observed ==
+        syntax_graph_result(
+            [],
+            [ frontier(0, 0),
+              frontier(1, 5),
+              frontier(2, 6),
+              form(0),
+              form(6),
+              atom(1, pair),
+              literal(5, symbol(tag)),
+              variable(2, variable(0, 'Value'), 'Value'),
+              variable(3, variable(0, 'Value'), 'Value'),
+              variable(4, variable(4, '_'), '_'),
+              edge(0, item, 1, 0),
+              edge(0, item, 2, 1),
+              edge(0, item, 3, 2),
+              edge(0, item, 4, 3),
+              nodes([0, 1, 2, 3, 4, 5, 6]),
+              sources([0, 1, 2, 3, 4, 5, 6])
+            ]).
+
+test(syntax_graph_reports_a_missing_source_without_partial_rows) :-
+    Forms = [node(reader_node(missing, 0), atom(value))],
+    reify_syntax(Forms, [], Rows, Diagnostics),
+    Observed = syntax_graph_result(Rows, Diagnostics),
+    Observed == syntax_graph_result(
+                    [],
+                    [ diagnostic(
+                          syntax_graph, reader_node(missing, 0),
+                          missing_source)
+                    ]).
+
+syntax_graph_snapshot(Rows, Snapshot) :-
+    findall(frontier(Index, Node),
+            member(syntax_frontier(Index, reader_node(_, Node)), Rows),
+            Frontiers),
+    findall(form(Node),
+            member(syntax_form(reader_node(_, Node)), Rows),
+            Forms),
+    findall(atom(Node, Name),
+            member(syntax_atom(reader_node(_, Node), Name), Rows),
+            Atoms),
+    findall(literal(Node, Value),
+            member(syntax_literal(reader_node(_, Node), Value), Rows),
+            Literals),
+    findall(variable(Node, SnapshotVariable, Name),
+            ( member(syntax_variable(reader_node(_, Node), Variable, Name),
+                     Rows),
+              snapshot_variable_id(Variable, SnapshotVariable)
+            ),
+            Variables),
+    findall(edge(Owner, Label, Target, Index),
+            member(':'(reader_node(_, Owner), Label,
+                       ref(reader_node(_, Target)), Index), Rows),
+            Edges),
+    findall(Node,
+            member(node(reader_node(_, Node)), Rows),
+            Nodes),
+    findall(Node,
+            member(source(reader_node(_, Node), _, _, _, _, _, _, _), Rows),
+            Sources),
+    append([Frontiers, Forms, Atoms, Literals, Variables, Edges,
+            [nodes(Nodes), sources(Sources)]], Snapshot).
 
 payload_tree(node(_, Payload), Tree) :-
     payload_tree_value(Payload, Tree).

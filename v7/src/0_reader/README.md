@@ -13,6 +13,7 @@ v7/src/0_reader/
   0_README.md
   0_parser.pl
   1_expander.pl
+  1a_syntax_grapher.pl
   2_embedder.pl
   3_file_loader.pl
   4_module_loader.pl
@@ -27,8 +28,9 @@ v7/src/0_reader/
 
 `0_parser.pl` owns text scanning and has no V7 module dependency.
 `1_expander.pl` owns the static rewrite registry and expansion fixpoint.
-`2_embedder.pl` imports both and owns the shared text-to-unit pipeline plus the
-`dl7/4` quasi quoter. `3_file_loader.pl` imports that pipeline for files.
+`1a_syntax_grapher.pl` reifies reader output as relational graph rows.
+`2_embedder.pl` imports all three and owns the shared text-to-unit pipeline plus
+the `dl7/4` quasi quoter. `3_file_loader.pl` imports that pipeline for files.
 `4_module_loader.pl` retains several files as separate units. `5_cli_mainer.pl`
 imports only the single-file loader.
 
@@ -92,6 +94,23 @@ The reader path is the canonical file path or
 `embedded(CanonicalSourceFile, StartOffset)`, respectively. File uniqueness is
 canonical path plus digest. Embedded uniqueness is source file plus quotation
 start plus digest.
+
+Callers that need the pre-expansion syntax graph use the compatible extended
+entry point:
+
+```prolog
+dl7_text_unit(+Origin, +ReaderPath, +Text,
+              -Unit, -SyntaxGraphRows, -Diagnostics).
+```
+
+`reify_syntax/4` emits `node/1` for every reader occurrence,
+`syntax_form/1`, `syntax_atom/2`, `syntax_literal/2`, or
+`syntax_variable/3` for its one payload alternative, and existing `source/8`
+rows. A form's children are `':'(Form, item, ref(Child), Index)` edges.
+`syntax_frontier(Index, Node)` records top-level order before macro expansion.
+Named variable occurrences retain their shared logical variable identity, and
+each anonymous occurrence retains its distinct identity. The existing
+`dl7_text_unit/5` and `dl7_unit/5` contracts remain unchanged.
 
 ## Expansion seam
 
