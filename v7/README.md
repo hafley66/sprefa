@@ -99,3 +99,35 @@ The Rust DBSP kernel participates in the chain and ring runtime shootout:
 cd v7
 just runtime-shootout-smoke
 ```
+
+DL7 products and sums can own a generated Rust region through Soopy:
+
+```bash
+cd v7
+just dl7-rust-check \
+  schema/0_runtime_types.dl7 \
+  ../v6/dd-runner/src/0_dl7_types.rs \
+  dl7-runtime-types
+```
+
+The checked program can also generate direct `dd-runner` constructors. This
+path carries no serialized program string and performs no program decode:
+
+```bash
+cd v7
+just dbsp-rust-check \
+  test/fixtures/12_native_runtime.dl7 \
+  ../v6/dd-runner/src/2_generated_fixture.rs \
+  dl7-native-runtime
+```
+
+Replace `check` with `apply` in either recipe to submit the generated body
+through Soopy's expected-content stage. Bytes outside the named marker region
+remain authored. `just watch-e2e` builds both resident processes and proves a
+tracked checkout snapshot derives the exact DL7 result row.
+
+`dbsp-generated` is a separate arm in the full shootout. At N=48 its current
+medians are 4.078458 ms for the 1,128-row chain closure and 6.935125 ms for the
+2,304-row ring closure. The generated and hand-constructed arms use the same
+RAM kernel, so this measurement isolates generated plan construction and
+dispatch rather than a different closure algorithm.

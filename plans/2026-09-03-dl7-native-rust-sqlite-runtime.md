@@ -42,8 +42,8 @@ DL7 already retains file and nested declaration identity:
 - `v7/src/3_emit/0_logical_program_reifier.pl` reifies a checked program as
   relations, rules, goals, calls, arguments, dependencies, and strata.
 - `v7/src/3_emit/1_artifact_emitter.pl` gives host-Prolog emitters the complete
-  compiler view. A DL7 emitter currently receives only `CompilerFacts`, so it
-  cannot derive output from the reified checked program.
+  compiler view and runs a dependency-sliced second comptime evaluation for
+  DL7 emitters over the reified checked program.
 - `v7/src/3_emit/1a_dbsp_plan_emitter.pl` currently builds a JSON dictionary in
   Prolog for `v6/dd-runner`. This is a prototype endpoint rather than the
   planned DL7-authored lowering seam.
@@ -624,9 +624,32 @@ the host.
 13. Add JSON Schema import, validation, and emission rows after the product, sum,
     reference, optional-edge, open-object, and constraint identities are stable.
 
-<!-- todo(feature): Convert the checked-program reifier output into declared DL7 calls and evaluate DL7 emitters against the complete compiler view. -->
+## Implementation receipts
 
-<!-- todo(feature): Re-express the current DBSP prototype as DL7 relations and rules, with source relation identities preserved independently of authored labels. -->
+The first executable cuts landed on `feature/dl7-source-intelligence`:
+
+| Commit | Receipt |
+| --- | --- |
+| `3b5e019fe` | checked programs re-enter a dependency-sliced second DL7 comptime evaluation as `program_*` calls |
+| `1dc9b0696` | `v7/emitters/0_dbsp.dl7` derives relation, operator, read, and projection rows |
+| `17a379d05` | clock dependencies are queryable during comptime with sign, grade, and role |
+| `7f3d446df` | zero-input hosted sources and zero-output hosted sinks retain ordinary relation types and erase planning nodes |
+| `b4cd5459b`, `db8265af7`, `f2fd4e18e` | argument occurrences, nested aggregates, calls, and classifications form an opaque node and generic-edge graph |
+| `b726df258` | authored DL7 products and sums generate serde Rust types through a Soopy-owned region |
+| `fdb4fa5ac`, `6e7f19c61`, `bc6fba7ea` | `dd-runner` exposes a native construction API and generated Rust modules construct plans without an embedded or decoded program string |
+| `1b9683bb6` | a DL7-generated transitive-closure module entered the full runtime shootout |
+| `f487b5c12` | `extract watch` snapshot rows reach a resident DL7 program and derive an exact source-intelligence result |
+
+Current native construction uses the operational map/join lowering in
+`1a_dbsp_plan_emitter.pl`; the DL7 emitter independently derives and tests the
+structural DBSP graph. Moving binding selection, equality predicates, literal
+filters, aggregate operators, and projections from that Prolog renderer into
+DL7 relations is the next lowering cut. Generated source currently constructs
+the RAM kernel's types. SQLite statements, catalog rows, per-source Rust module
+partitioning, content-addressed compilation, and generation-boundary library
+reload have no implementation receipt yet.
+
+<!-- todo(feature): Move operational binding, equality, literal-filter, aggregate, and projection lowering from 1a_dbsp_plan_emitter.pl into the existing DL7 DBSP graph. -->
 
 <!-- todo(feature): Derive the Rust and SQLite layout, SQL statements, catalog hashes, and generated Rust items from the DBSP graph in DL7. -->
 
@@ -634,15 +657,15 @@ the host.
 
 <!-- todo(feature): Implement generation-boundary dynamic-library reload while retaining the resident SQLite connection and arrival queue. -->
 
-<!-- todo(feature): Express desired source membership as DL7 rules over hosted filesystem revisions and feed sprefa-extract watch changes into the resident runtime. -->
+<!-- todo(feature): Express desired source membership as DL7 rules over hosted filesystem revisions; the signed sprefa-extract watch wire and resident runtime receipt are complete. -->
 
-<!-- todo(feature): Reify the minimal temporal dependency algebra and port the DL6 generation, latest, pre-state, edge-trigger, carry, and clock receipts to DL7. -->
+<!-- todo(feature): Extend the current comptime level-clock query with generation, latest, pre-state, edge-trigger, carry, and ordered difference receipts. -->
 
-<!-- todo(feature): Define generic hosted source and sink contracts, then derive HTTP client, HTTP server, and CLI boundaries without protocol-specific kernel syntax. -->
+<!-- todo(feature): Derive HTTP client, HTTP server, and CLI boundaries from the proven generic hosted source and sink contracts. -->
 
 <!-- todo(feature): Define the JSON-capable constraint graph and gate JSON Schema 2020-12 import, validation, and emission against the official category corpus. -->
 
-<!-- todo(perf): Add the generated Rust and Rust/SQLite arms to every relational shootout and record compile latency, load latency, peak RSS, tick latency, and SQLite file size. -->
+<!-- todo(perf): Add the Rust/SQLite arm and compile/load measurements beside the generated-Rust runtime arm now present in the relational shootout. -->
 
 ## Verification
 
