@@ -81,3 +81,10 @@ rust-types-apply rust target region="rust-types":
 rust-types-e2e:
     cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
     swipl -q -s "{{ v7 }}/test/7_rust_type_region.e2e.pl"
+
+# Build both resident processes and prove a checkout snapshot reaches a DL7
+# result relation through the signed watch wire.
+watch-e2e:
+    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
+    cargo build --manifest-path "{{ v7 }}/../v6/dd-runner/Cargo.toml"
+    swipl -q -s "{{ v7 }}/test/12_watch_pipeline.e2e.pl"
