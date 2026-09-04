@@ -71,32 +71,57 @@ watch_pipeline(PlanPath, PlanStream, StatePath, RuntimePath, Arm, Observed) :-
                    replay(Replay)).
 
 expected_replay(ram, skipped).
-expected_replay(sqlite, unchanged(exit(0), [])).
+expected_replay(
+    sqlite,
+    persisted(
+        duplicate(exit(0), add([]), del([])),
+        removal(exit(0), add([]), del([["Render"]])))).
 
 replay_result(ram, _, _, _, skipped).
 replay_result(sqlite, Runner, RunnerArguments, WatchOutput,
-              unchanged(Exit, Traits)) :-
-    snapshot_as_delta(WatchOutput, DeltaInput),
+              persisted(Duplicate, Removal)) :-
+    watch_delta_stream(WatchOutput, 1, 1, DuplicateInput),
+    replay_changes(
+        Runner, RunnerArguments, DuplicateInput,
+        duplicate(DuplicateExit, add(DuplicateAdd), del(DuplicateDel))),
+    Duplicate = duplicate(
+                    DuplicateExit, add(DuplicateAdd), del(DuplicateDel)),
+    watch_delta_stream(WatchOutput, -1, 2, RemovalInput),
+    replay_changes(
+        Runner, RunnerArguments, RemovalInput,
+        removal(RemovalExit, add(RemovalAdd), del(RemovalDel))),
+    Removal = removal(RemovalExit, add(RemovalAdd), del(RemovalDel)).
+
+replay_changes(Runner, RunnerArguments, Input,
+               ResultTerm) :-
     run_process(
         Runner, RunnerArguments,
-        DeltaInput, RunnerOutput, Exit),
+        Input, RunnerOutput, Exit),
     normalize_space(string(Json), RunnerOutput),
     atom_json_dict(Json, Result, [value_string_as(string)]),
     get_dict(deltas, Result, Deltas),
     ( get_dict(source_trait, Deltas, TraitDelta)
-    -> Traits = TraitDelta.add
-    ;  Traits = []
-    ).
+    -> Add = TraitDelta.add,
+       Del = TraitDelta.del
+    ;  Add = [],
+       Del = []
+    ),
+    ResultTerm =.. [_, Exit, add(Add), del(Del)].
 
-snapshot_as_delta(Input, Output) :-
+watch_delta_stream(Input, Sign, Generation, Output) :-
     split_string(Input, "\n", "\n", Lines),
-    with_output_to(string(Output), maplist(write_delta_record, Lines)).
+    with_output_to(
+        string(Output),
+        maplist(write_delta_record(Sign, Generation), Lines)).
 
-write_delta_record(Line) :-
+write_delta_record(Sign, Generation, Line) :-
     atom_json_dict(Line, Record0, [value_string_as(string)]),
+    put_dict(generation, Record0, Generation, Record1),
     ( Record0.record == "batch_start"
-    -> put_dict(mode, Record0, "delta", Record)
-    ;  Record = Record0
+    -> put_dict(mode, Record1, "delta", Record)
+    ; Record0.record == "change"
+    -> put_dict(sign, Record1, Sign, Record)
+    ;  Record = Record1
     ),
     json_write_dict(current_output, Record, [width(0)]),
     nl.
