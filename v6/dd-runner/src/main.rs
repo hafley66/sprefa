@@ -512,6 +512,16 @@ fn runtime_catalog(plan: &Plan) -> Vec<(String, i64, String)> {
             .to_string(),
         ));
     }
+    for (position, row) in plan.initial.iter().enumerate() {
+        rows.push((
+            "initial".into(),
+            position as i64,
+            json!({"rel":row.rel, "values":row.values}).to_string(),
+        ));
+    }
+    for (position, operator) in plan.operators.iter().enumerate() {
+        rows.push(("operator".into(), position as i64, operator.to_string()));
+    }
     for (position, phase) in plan.tick_order.iter().enumerate() {
         rows.push(("tick".into(), position as i64, phase.clone()));
     }
