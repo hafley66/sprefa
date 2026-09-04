@@ -1,6 +1,7 @@
 :- module(dl7_compiler,
           [ compile_dl7/4,
             compile_dl7_project/5,
+            compile_dl7_project_rows/6,
             compile_unit/3,
             compile_units/3,
             type_prelude_paths/1
@@ -20,12 +21,14 @@
                 lower_units_with_exporter_deferred/5,
                 lower_units_with_exporter_and_environment/6,
                 lower_units_with_exporter_and_environment_deferred/6,
-                merge_module_basements/4
+                merge_module_basements/4,
+                install_module_aliases/6
               ]).
 :- use_module('0b_filesystem_grapher', [install_project_graph/6]).
 :- use_module('0c_extract_loader',
               [ load_tsi_stream/3,
-                install_tsi_graph/6
+                install_tsi_graph/6,
+                tsi_expression_environment/3
               ]).
 :- use_module('1_checker',
               [ check_datalog/4,
@@ -41,6 +44,10 @@
 :- use_module('1c_compiler_cacher',
               [ with_prelude_cache/5,
                 with_compilation_cache/5
+              ]).
+:- use_module('1d_host_planner',
+              [ validate_hosted_relations/4,
+                erase_host_planning_rows/7
               ]).
 
 %% compile_dl7(+Path, -CompilerRows, -RuntimeProgram, -Diagnostics) is det.
@@ -125,6 +132,36 @@ compile_dl7_project_traced(Root, Paths,
             Project, ProjectDiagnostics, TsiRows, TsiDiagnostics),
         _),
     append([PreludeDiagnostics, ProjectDiagnostics, TsiDiagnostics],
+           ReaderDiagnostics),
+    compile_after_project_reads(ReaderDiagnostics, PreludeUnit, Project,
+                                TsiRows, Compiled, Diagnostics),
+    compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
+    !.
+
+%% compile_dl7_project_rows(+Root, +Paths, +TsiRows,
+%%                          -CompilerRows, -RuntimeProgram,
+%%                          -Diagnostics) is det.
+%
+% Compile already-decoded TSI observations without materializing a temporary
+% JSONL stream. Host tools use this after reading an extractor process pipe.
+compile_dl7_project_rows(Root, Paths, TsiRows,
+                         CompilerRows, RuntimeProgram, Diagnostics) :-
+    compile_trace_program_name(Root, ProgramName),
+    with_compile_trace(
+        ProgramName,
+        compile_dl7_project_rows_traced(
+            Root, Paths, TsiRows,
+            CompilerRows, RuntimeProgram, Diagnostics)).
+
+compile_dl7_project_rows_traced(
+    Root, Paths, TsiRows, CompilerRows, RuntimeProgram, Diagnostics) :-
+    run_compile_phase(
+        read,
+        read_project_units(
+            Root, Paths, [], PreludeUnit, PreludeDiagnostics,
+            Project, ProjectDiagnostics, _, StreamDiagnostics),
+        _),
+    append([PreludeDiagnostics, ProjectDiagnostics, StreamDiagnostics],
            ReaderDiagnostics),
     compile_after_project_reads(ReaderDiagnostics, PreludeUnit, Project,
                                 TsiRows, Compiled, Diagnostics),
@@ -272,9 +309,12 @@ compile_units_traced(Units, Compiled, Diagnostics) :-
     !.
 
 compile_project_units(Project, TsiRows, Units, Compiled, Diagnostics) :-
+    source_unit_module_owners(Units, SourceOwners),
+    tsi_expression_environment(TsiRows, SourceOwners, TsiEnvironment),
     run_compile_phase(
         lower,
-        lower_compiler_units(Units, ModuleBasements0, ModuleOrigins0,
+        lower_compiler_units(Units, TsiEnvironment,
+                             ModuleBasements0, ModuleOrigins0,
                              LowerDiagnostics),
         _),
     install_project_after_lower(
@@ -304,11 +344,45 @@ install_graphs(Project, TsiRows, Basements0, Origins0,
                           Basements1, Origins1, ProjectDiagnostics),
     (   ProjectDiagnostics == []
     ->  install_tsi_graph(TsiRows, Basements1, Origins1,
-                          Basements, Origins, Diagnostics)
+                          Basements2, Origins2, TsiDiagnostics),
+        expose_tsi_relations(
+            TsiDiagnostics, Project, Basements1, Basements2, Origins2,
+            Basements, Origins, Diagnostics)
     ;   Basements = Basements1,
         Origins = Origins1,
         Diagnostics = ProjectDiagnostics
     ).
+
+expose_tsi_relations([], dl7_project(_, Units), BasementsBefore,
+                     Basements0, Origins0,
+                     Basements, Origins, []) :-
+    !,
+    unit_module_owners(Units, Importers),
+    added_module_owners(BasementsBefore, Basements0, Exporters),
+    install_exporter_aliases(Exporters, Importers,
+                             Basements0, Origins0, Basements, Origins).
+expose_tsi_relations(Diagnostics, _, _, Basements, Origins,
+                     Basements, Origins, Diagnostics).
+
+unit_module_owners([], []).
+unit_module_owners([dl7_unit(Origin, _, _, _, _) | Units],
+                   [module(Origin) | Owners]) :-
+    unit_module_owners(Units, Owners).
+
+added_module_owners(BasementsBefore, BasementsAfter, Owners) :-
+    findall(Owner,
+            ( member(module_basement(Owner, _), BasementsAfter),
+              \+ memberchk(module_basement(Owner, _), BasementsBefore)
+            ),
+            Owners).
+
+install_exporter_aliases([], _, Basements, Origins, Basements, Origins).
+install_exporter_aliases([Exporter | Exporters], Importers,
+                         Basements0, Origins0, Basements, Origins) :-
+    install_module_aliases(Exporter, Importers,
+                           Basements0, Origins0, Basements1, Origins1),
+    install_exporter_aliases(Exporters, Importers,
+                             Basements1, Origins1, Basements, Origins).
 
 lower_compiler_units(Units, ModuleBasements, ModuleOrigins, Diagnostics) :-
     (   select(PreludeUnit, Units, ImporterUnits),
@@ -319,6 +393,26 @@ lower_compiler_units(Units, ModuleBasements, ModuleOrigins, Diagnostics) :-
     ;   lower_units_deferred(Units, ModuleBasements, ModuleOrigins,
                              Diagnostics)
     ).
+
+lower_compiler_units(Units, Environment,
+                     ModuleBasements, ModuleOrigins, Diagnostics) :-
+    (   select(PreludeUnit, Units, ImporterUnits),
+        unit_has_origin(PreludeUnit, prelude)
+    ->  lower_units_with_exporter_and_environment_deferred(
+            PreludeUnit, ImporterUnits, Environment,
+            ModuleBasements, ModuleOrigins, Diagnostics)
+    ;   lower_units_with_environment_deferred(
+            Units, Environment,
+            ModuleBasements, ModuleOrigins, Diagnostics)
+    ).
+
+source_unit_module_owners([], []).
+source_unit_module_owners([dl7_unit(prelude, _, _, _, _) | Units], Owners) :-
+    !,
+    source_unit_module_owners(Units, Owners).
+source_unit_module_owners([dl7_unit(Origin, _, _, _, _) | Units],
+                          [module(Origin) | Owners]) :-
+    source_unit_module_owners(Units, Owners).
 
 unit_has_origin(dl7_unit(Origin, _, _, _, _), Origin).
 
@@ -507,9 +601,13 @@ finish_final_check([], FinalChecked, CompilerFacts, GeneratedProgram,
                    Compiled, Diagnostics) :-
     !,
     FinalChecked = checked_datalog(
-                       _, datalog_program(Relations, _, _), _, _),
+                       Graph, datalog_program(Relations, _, _), _, _),
     validate_functional_rows(Relations, CompilerFacts, KeyDiagnostics),
-    finish_key_validation(KeyDiagnostics, CompilerFacts, FinalChecked,
+    validate_hosted_relations(
+        Graph, Relations, CompilerFacts, HostDiagnostics),
+    append(KeyDiagnostics, HostDiagnostics, ValidationDiagnostics0),
+    sort(ValidationDiagnostics0, ValidationDiagnostics),
+    finish_key_validation(ValidationDiagnostics, CompilerFacts, FinalChecked,
                           GeneratedProgram, Compiled, Diagnostics).
 finish_final_check(Diagnostics, _, _, _, [], Diagnostics).
 
@@ -524,14 +622,17 @@ finish_key_validation([], CompilerFacts,
     GeneratedProgram = generated_program(
                            GeneratedRelations, GeneratedRules, _, _),
     append(Relations, GeneratedRelations, RuntimeRelations0),
-    sort(RuntimeRelations0, RuntimeRelations),
+    sort(RuntimeRelations0, RuntimeRelations1),
     append(Rules, GeneratedRules, RuntimeRules0),
-    sort(RuntimeRules0, RuntimeRules),
+    sort(RuntimeRules0, RuntimeRules1),
+    erase_host_planning_rows(
+        Graph, RuntimeRelations1, AuthoredSeeds, RuntimeRules1,
+        RuntimeRelations, RuntimeSeeds, RuntimeRules),
     check_resolved_rules(RuntimeRelations, RuntimeRules,
                          RuntimeDepends, RuntimeStrata,
                          RuntimeDiagnostics),
     finish_runtime_program(
-        RuntimeDiagnostics, Graph, RuntimeRelations, AuthoredSeeds,
+        RuntimeDiagnostics, Graph, RuntimeRelations, RuntimeSeeds,
         RuntimeRules, RuntimeDepends, RuntimeStrata,
         CompilerFacts, TypeGraphFacts,
         Compiled, Diagnostics).
@@ -558,9 +659,10 @@ finish_runtime_program(Diagnostics, _, _, _, _, _, _, _, _,
 % authored program.
 final_checked_program(Context, CompilerFacts, GeneratedRelations,
                       Checked, Diagnostics) :-
-    generated_expression_environment(
-        CompilerFacts, GeneratedRelations, DerivedBindSlots, Environment),
     Context = compile_context(Units, ProjectContext, DerivedBindSlots),
+    final_expression_environment(
+        CompilerFacts, GeneratedRelations, DerivedBindSlots,
+        Units, ProjectContext, Environment),
     lower_final_units(Units, Environment,
                       ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
     freeze_after_final_lower(
@@ -577,9 +679,10 @@ final_checked_program(Context, CompilerFacts, GeneratedRelations,
 
 deferred_checked_program(Context, CompilerFacts, GeneratedRelations,
                          Checked, Diagnostics) :-
-    generated_expression_environment(
-        CompilerFacts, GeneratedRelations, DerivedBindSlots, Environment),
     Context = compile_context(Units, ProjectContext, DerivedBindSlots),
+    final_expression_environment(
+        CompilerFacts, GeneratedRelations, DerivedBindSlots,
+        Units, ProjectContext, Environment),
     lower_deferred_final_units(
         Units, Environment,
         ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
@@ -714,6 +817,33 @@ generated_expression_environment(
         ),
         Edges0),
     sort(Edges0, Edges).
+
+final_expression_environment(
+    CompilerFacts, GeneratedRelations, DerivedBindSlots,
+    Units, ProjectContext, Environment) :-
+    generated_expression_environment(
+        CompilerFacts, GeneratedRelations, DerivedBindSlots,
+        GeneratedEnvironment),
+    source_unit_module_owners(Units, SourceOwners),
+    project_tsi_environment(ProjectContext, SourceOwners, TsiEnvironment),
+    merge_expression_environments(
+        GeneratedEnvironment, TsiEnvironment, Environment).
+
+project_tsi_environment(project(_, TsiRows), SourceOwners, Environment) :-
+    !,
+    tsi_expression_environment(TsiRows, SourceOwners, Environment).
+project_tsi_environment(_, _, expression_environment([], [], [])).
+
+merge_expression_environments(
+    expression_environment(Reservations0, Relations0, Edges0),
+    expression_environment(Reservations1, Relations1, Edges1),
+    expression_environment(Reservations, Relations, Edges)) :-
+    append(Reservations0, Reservations1, Reservations2),
+    append(Relations0, Relations1, Relations2),
+    append(Edges0, Edges1, Edges2),
+    sort(Reservations2, Reservations),
+    sort(Relations2, Relations),
+    sort(Edges2, Edges).
 
 generated_callable_reservation(_, _, _, Relation,
                                GeneratedRelations, _, product) :-

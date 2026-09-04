@@ -24,6 +24,36 @@ prelude_stub(
                                       target(prelude_string), 0)]),
              datalog_program([], [], [])))]).
 
+prelude_stub_with_empty_tuple(
+    [module_basement(
+         module(prelude),
+         basement_program(
+             root_graph([ node(module(prelude)), module(module(prelude)),
+                          product(module(prelude)),
+                          node(prelude_empty), product(prelude_empty)
+                        ],
+                        [pending_edge(module(prelude), '()',
+                                      target(prelude_empty), 0)]),
+             datalog_program([], [], [])))]).
+
+test(unit_wire_class_reuses_the_empty_tuple_prelude_node) :-
+    Rows = [ extract_run(1, syntax, rust, test, ['unit']),
+             extract_fact(1, 'tsi.type', [id(7)]),
+             extract_fact(2, 'tsi.primitive', [id(7), atom(unit)]),
+             extract_fact(3, 'tsi.name', [id(7), text("()")]),
+             extract_witness(1, 1, parse),
+             extract_witness(2, 1, parse),
+             extract_witness(3, 1, parse)
+           ],
+    prelude_stub_with_empty_tuple(Basements0),
+    install_tsi_graph(Rows, Basements0, [], Basements, _, Diagnostics),
+    Owner = module(tsi(rust, ['unit'])),
+    Basements = [module_basement(Owner,
+                                 basement_program(root_graph(Nodes, _), _))
+                | Basements0],
+    \+ memberchk(node(tsi_node(Owner, 7)), Nodes),
+    Diagnostics == [].
+
 stream_path(Name, Path) :-
     atomic_list_concat(['v7/test/fixtures/', Name, '.jsonl'], Path).
 
@@ -198,5 +228,29 @@ test(a_loaded_product_proves_conformance_to_an_authored_contract) :-
             Proofs),
     Proofs = [application(_, [UserNode, Mapper])],
     length(Proofs, 1).
+
+test(authored_rules_can_join_dotted_tsi_relations) :-
+    compile_dl7_project(
+        'v7/examples',
+        [ 'v7/examples/0_rust_traits.dl7',
+          tsi_streams(['v7/test/fixtures/tsi/5_rust_graph.jsonl'])
+        ],
+        Rows, Runtime, Diagnostics),
+    Diagnostics == [],
+    absolute_file_name('v7/examples/0_rust_traits.dl7',
+                       ProgramPath, [access(read)]),
+    ProgramOwner = module(file(ProgramPath)),
+    Runtime = checked_datalog(root_graph(_, Edges), _, _, _),
+    memberchk(':'(ProgramOwner, source_name, ref(SourceName), _), Edges),
+    findall(Name,
+            member(call(ref(SourceName), [const(Name)]), Rows),
+            Names),
+    Names == ["Box", "Circle", "Mapper", "Option", "Self", "Shape",
+              "Square", "T", "User", "View", "map", "std", "str"],
+    memberchk(':'(ProgramOwner, source_trait, ref(SourceTrait), _), Edges),
+    findall(Trait,
+            member(call(ref(SourceTrait), [const(Trait)]), Rows),
+            Traits),
+    Traits == ["Mapper"].
 
 :- end_tests(dl7_extract_loader).

@@ -233,3 +233,18 @@
    (* (: emitter type)
       (: name text)
       (: output type)))
+
+; Hosted relations retain an ordinary callable product. Hosted identifies the
+; implementation node, while HostPort classifies each existing relation edge
+; by the direction used at the external operator boundary.
+(: Input (*))
+(: Output (*))
+
+(: Hosted
+   (* (: relation type)
+      (: implementation type)))
+
+(: HostPort
+   (* (: relation type)
+      (: label any)
+      (: direction type)))

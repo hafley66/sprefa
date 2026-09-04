@@ -23,6 +23,8 @@
               ]).
 :- use_module('../src/2_comptime/1a_generated_program_assembler',
               [assemble_generated_program/5]).
+:- use_module('../src/2_comptime/1d_host_planner',
+              [validate_hosted_relations/4]).
 :- use_module('../src/3_emit/0_logical_program_reifier',
               [logical_program_rows/2]).
 :- use_module('../src/3_emit/1_artifact_emitter',
@@ -674,20 +676,21 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 11634,
+                    [], [], 12716,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(246, 465, 119, 374, 129, 224, 119),
+                    runtime(counts(258, 483, 123, 389, 129, 224, 123),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
-                         nil([[0]]),
-                         cons([[0, 1], [2]]),
-                         intern([[0, 1]]),
+                        nil([[0]]),
+                        cons([[0, 1], [2]]),
+                        edge_ref([[0, 1]]),
+                        intern([[0, 1]]),
                          intern_snapshot([[0, 1]]),
                          predecessor([[0, 1], [0, 2]]),
                          def([[0]]), head([[0]]), body([[0, 1]])),
@@ -712,6 +715,145 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               temporary_lower_rows(0), temporary_requests(0)),
                     true, true),
     !.
+
+test(host_declaration_closes_to_graph_rows_and_runtime_boundary) :-
+    hosted_relation_receipt(Observed),
+    Observed == hosted_relation(
+                    diagnostics([]),
+                    fields([ port(mode, input, 1),
+                             port(record, output, 2),
+                             port(source, input, 0)
+                           ]),
+                    reified_edges(
+                        [ edge(mode, 1),
+                          edge(record, 2),
+                          edge(source, 0)
+                        ],
+                        3),
+                    runtime_planning_references(0)).
+
+hosted_relation_receipt(Observed) :-
+    compile_dl7('v7/test/fixtures/8_hosted.dl7',
+                Rows, Runtime, Diagnostics),
+    named_owner(Rows, 'Source', Source),
+    named_owner(Rows, 'ExtractMode', ExtractMode),
+    named_owner(Rows, 'TsiRecord', TsiRecord),
+    named_owner(Rows, 'SprefaExtract', SprefaExtract),
+    named_owner(Rows, 'ExtractTsi', ExtractTsi),
+    named_owner(Rows, 'Hosted', Hosted),
+    named_owner(Rows, 'HostPort', HostPort),
+    named_owner(Rows, 'Input', Input),
+    named_owner(Rows, 'Output', Output),
+    Runtime = checked_datalog(
+                  root_graph(_, GraphEdges),
+                  datalog_program(Relations, Seeds, Rules), _, _),
+    memberchk(relation(ref(ExtractTsi), 3, []), Relations),
+    memberchk(call(ref(Hosted),
+                   [ref(ExtractTsi), ref(SprefaExtract)]), Rows),
+    memberchk(':'(ExtractTsi, source, ref(Source), 0), GraphEdges),
+    memberchk(':'(ExtractTsi, mode, ref(ExtractMode), 1), GraphEdges),
+    memberchk(':'(ExtractTsi, record, ref(TsiRecord), 2), GraphEdges),
+    findall(
+        port(Label, Direction, Index),
+        ( member(call(ref(HostPort),
+                      [ref(ExtractTsi), const(Label), ref(DirectionId)]),
+                 Rows),
+          host_direction_name(DirectionId, Input, Output, Direction),
+          member(':'(ExtractTsi, Label, _, Index), GraphEdges)
+        ),
+        Ports0),
+    sort(Ports0, Ports),
+    findall(
+        edge(Label, Target, Index, Edge),
+        ( member(':'(ExtractTsi, Label, ref(Target), Index), GraphEdges),
+          Edge = edge(ExtractTsi, Label),
+          member(call(ref(kernel(':')),
+                      [ ref(Edge), const(direction), ref(_), const(0) ]),
+                 Rows)
+        ),
+        ReifiedEdges0),
+    sort(ReifiedEdges0, ReifiedEdges),
+    maplist(host_reified_edge_id, ReifiedEdges, ReifiedEdgeIds),
+    sort(ReifiedEdgeIds, UniqueReifiedEdgeIds),
+    length(UniqueReifiedEdgeIds, UniqueReifiedEdgeCount),
+    maplist(host_reified_edge_snapshot, ReifiedEdges, ReifiedEdgeSnapshot),
+    host_runtime_reference_count(
+        [Hosted, HostPort], Relations, Seeds, Rules, RuntimeReferenceCount),
+    Observed = hosted_relation(
+                   diagnostics(Diagnostics),
+                   fields(Ports),
+                   reified_edges(ReifiedEdgeSnapshot,
+                                 UniqueReifiedEdgeCount),
+                   runtime_planning_references(RuntimeReferenceCount)).
+
+test(host_validation_reports_closed_shape_conflicts) :-
+    Graph = root_graph(
+                [module(prelude)],
+                [ ':'(prelude, 'Hosted', ref(hosted), 0),
+                  ':'(prelude, 'HostPort', ref(host_port), 1),
+                  ':'(prelude, 'Input', ref(input), 2),
+                  ':'(prelude, 'Output', ref(output), 3),
+                  ':'(extract_tsi, source, ref(source), 0),
+                  ':'(extract_tsi, record, ref(record), 1)
+                ]),
+    Relations = [relation(ref(extract_tsi), 2, [])],
+    Facts = [ call(ref(hosted), [ref(extract_tsi), ref(first)]),
+              call(ref(hosted), [ref(extract_tsi), ref(second)]),
+              call(ref(host_port),
+                   [ref(extract_tsi), const(source), ref(input)]),
+              call(ref(host_port),
+                   [ref(extract_tsi), const(source), ref(output)]),
+              call(ref(host_port),
+                   [ref(extract_tsi), const(ghost), ref(sideways)])
+            ],
+    validate_hosted_relations(Graph, Relations, Facts, Diagnostics),
+    Diagnostics ==
+        [ diagnostic(host, none,
+                     hosted_implementation_count(extract_tsi, 2)),
+          diagnostic(host, none,
+                     hosted_port_unknown_edge(extract_tsi, ghost)),
+          diagnostic(host, none,
+                     hosted_port_invalid_direction(
+                         extract_tsi, ghost, sideways)),
+          diagnostic(host, none,
+                     hosted_port_direction_count(
+                         extract_tsi, record, 1, 0)),
+          diagnostic(host, none,
+                     hosted_port_direction_count(
+                         extract_tsi, source, 0, 2))
+        ].
+
+test(host_lowering_keeps_dotted_names_opaque) :-
+    Text = "(: impl.with.dot (*))\n(: rel.with.dot (Host impl.with.dot (* (: input.with.dot type)) (* (: output.with.dot type))))\n",
+    dl7_text_unit(dotted_host, dotted_host_source, Text, Unit, []),
+    lower_datalog(Unit,
+                  basement_program(
+                      root_graph(_, Edges),
+                      datalog_program(Relations, _, Rules)),
+                  _, Diagnostics),
+    memberchk(pending_edge(Module, 'rel.with.dot', target(Relation), 1),
+              Edges),
+    memberchk(pending_edge(Module, 'impl.with.dot', target(_), 0), Edges),
+    memberchk(pending_edge(Relation, 'input.with.dot', _, 0), Edges),
+    memberchk(pending_edge(Relation, 'output.with.dot', _, 1), Edges),
+    memberchk(relation(Relation, 2, []), Relations),
+    memberchk(rule(call(name(Relation, 'Hosted'),
+                        [ref(Relation), name(Relation, 'impl.with.dot')]),
+                   []),
+              Rules),
+    memberchk(rule(call(name(Relation, 'HostPort'),
+                        [ ref(Relation), const('input.with.dot'),
+                          name(Relation, 'Input')
+                        ]),
+                   []),
+              Rules),
+    memberchk(rule(call(name(Relation, 'HostPort'),
+                        [ ref(Relation), const('output.with.dot'),
+                          name(Relation, 'Output')
+                        ]),
+                   []),
+              Rules),
+    Diagnostics == [].
 
 test(generated_relations_are_callable_after_declarations_freeze) :-
     Path = 'v7/test/fixtures/4_generated_call.dl7',
@@ -1696,7 +1838,8 @@ runtime_snapshot(
 runtime_key_snapshot(
     checked_datalog(_, datalog_program(Relations, _, _), _, _),
     keys(colon(ColonKeys), edge_snapshot(SnapshotKeys),
-         nil(NilKeys), cons(ConsKeys), intern(InternKeys),
+         nil(NilKeys), cons(ConsKeys), edge_ref(EdgeRefKeys),
+         intern(InternKeys),
          intern_snapshot(InternSnapshotKeys),
          predecessor(PredecessorKeys), def(DefKeys), head(HeadKeys),
          body(BodyKeys))) :-
@@ -1705,6 +1848,7 @@ runtime_key_snapshot(
               Relations),
     memberchk(relation(ref(kernel(nil)), 1, NilKeys), Relations),
     memberchk(relation(ref(kernel(cons)), 3, ConsKeys), Relations),
+    memberchk(relation(ref(kernel(edge_ref)), 3, EdgeRefKeys), Relations),
     memberchk(relation(ref(kernel(intern)), 3, InternKeys), Relations),
     memberchk(relation(ref(kernel(intern_snapshot)), 3,
                        InternSnapshotKeys), Relations),
@@ -1920,6 +2064,33 @@ ordered_primitive_edges(Rows, Owner, Edges) :-
 indexed_edge_values([], []).
 indexed_edge_values([_-Edge | Indexed], [Edge | Edges]) :-
     indexed_edge_values(Indexed, Edges).
+
+host_direction_name(Direction, Direction, _, input).
+host_direction_name(Direction, _, Direction, output).
+
+host_reified_edge_id(edge(_, _, _, Edge), Edge).
+
+host_reified_edge_snapshot(edge(Label, _, Index, _), edge(Label, Index)).
+
+host_runtime_reference_count(PlanningIds, Relations, Seeds, Rules, Count) :-
+    findall(
+        Reference,
+        ( member(Reference, Relations),
+          Reference = relation(ref(Relation), _, _),
+          memberchk(Relation, PlanningIds)
+        ; member(Reference, Seeds),
+          Reference = call(ref(Relation), _),
+          memberchk(Relation, PlanningIds)
+        ; member(Reference, Rules),
+          Reference = rule(call(ref(Relation), _), _),
+          memberchk(Relation, PlanningIds)
+        ; member(Reference, Rules),
+          Reference = rule(_, Body),
+          member(checked_goal(_, call(ref(Relation), _)), Body),
+          memberchk(Relation, PlanningIds)
+        ),
+        References),
+    length(References, Count).
 
 named_owner(Rows, Name, Owner) :-
     member(call(ref(kernel(':')),

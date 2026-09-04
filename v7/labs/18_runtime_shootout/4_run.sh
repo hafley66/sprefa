@@ -2,6 +2,8 @@
 set -euo pipefail
 
 lab_dir=$(cd "$(dirname "$0")" && pwd)
+repo_dir=$(cd "$lab_dir/../../.." && pwd)
+dbsp_runner="$repo_dir/v6/dd-runner/target/release/dd-runner"
 mode=${1:-full}
 n=${2:-48}
 repetitions=5
@@ -50,6 +52,7 @@ set_arm_command() {
     sbcl) command_argv=(sbcl --noinform --disable-debugger --script "$lab_dir/1_sbcl.lisp" "$graph_case" "$graph_n") ;;
     swi) command_argv=(swipl -q -s "$lab_dir/2_swi.pl" -- "$graph_case" "$graph_n") ;;
     racket) command_argv=(racket "$lab_dir/3_racket.rkt" "$graph_case" "$graph_n") ;;
+    dbsp-kernel) command_argv=("$dbsp_runner" --shootout "$graph_case" "$graph_n") ;;
   esac
 }
 
@@ -59,6 +62,7 @@ set_startup_command() {
     sbcl) command_argv=(sbcl --noinform --disable-debugger --script /dev/null) ;;
     swi) command_argv=(swipl -q -s /dev/null -g halt) ;;
     racket) command_argv=(racket -e '(void)') ;;
+    dbsp-kernel) command_argv=("$dbsp_runner" --shootout chain 1) ;;
   esac
 }
 
@@ -78,6 +82,7 @@ runtime_version() {
     sbcl) sbcl --version | awk '{print $2}' ;;
     swi) swipl --version | sed 's/^SWI-Prolog version \([^ ]*\).*/\1/' ;;
     racket) racket --version | sed 's/^Welcome to Racket v\([^ ]*\).*/\1/' ;;
+    dbsp-kernel) "$dbsp_runner" --shootout chain 1 | jq -r .version ;;
   esac
 }
 
@@ -150,7 +155,7 @@ measure_arm() {
 
 smoke() {
   local runtime graph_case output_file
-  for runtime in sbcl swi racket; do
+  for runtime in sbcl swi racket dbsp-kernel; do
     for graph_case in chain ring; do
       output_file="$tmp_dir/smoke-${runtime}-${graph_case}.json"
       run_arm "$runtime" "$graph_case" "$n" > "$output_file"
@@ -196,19 +201,21 @@ generate_results() {
 }
 
 if [[ "$mode" == smoke ]]; then
+  cargo build --release --manifest-path "$repo_dir/v6/dd-runner/Cargo.toml" >/dev/null
   smoke
   exit 0
 fi
 
 start_seconds=$SECONDS
-for runtime in sbcl swi racket; do
+cargo build --release --manifest-path "$repo_dir/v6/dd-runner/Cargo.toml" >/dev/null
+for runtime in sbcl swi racket dbsp-kernel; do
   run_startup "$runtime" >/dev/null
   for repetition in $(seq 1 "$repetitions"); do
     measure_startup "$runtime" "$repetition"
   done
 done
 
-for runtime in sbcl swi racket; do
+for runtime in sbcl swi racket dbsp-kernel; do
   for graph_case in chain ring; do
     run_arm "$runtime" "$graph_case" "$n" >/dev/null
     for repetition in $(seq 1 "$repetitions"); do

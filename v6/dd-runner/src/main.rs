@@ -3,7 +3,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env, error, fs, process,
+    env, error, fs,
+    io::{BufRead, BufReader},
+    process,
 };
 
 mod kernel;
@@ -102,20 +104,33 @@ enum Arm {
 }
 
 fn main() {
+    let arguments = env::args().collect::<Vec<_>>();
+    if arguments.get(1).map(String::as_str) == Some("--shootout") {
+        let graph_case = arguments.get(2).map(String::as_str).unwrap_or("");
+        let n = arguments
+            .get(3)
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let result = kernel::shootout(graph_case, n).unwrap_or_else(|error| fail(error));
+        println!("{result}");
+        return;
+    }
     let mut path = None;
     let mut arm = Arm::Sqlite;
     let mut phases_only = false;
-    for argument in env::args().skip(1) {
+    let mut watch_stdin = false;
+    for argument in arguments.into_iter().skip(1) {
         match argument.as_str() {
             "--dd-diet-rust-sqlite" => arm = Arm::Sqlite,
             "--dd-diet-rust-rust" => arm = Arm::Kernel,
             "--dd-rust-dd" => arm = Arm::RustDd,
             "--phases" => phases_only = true,
+            "--watch-stdin" => watch_stdin = true,
             other => path = Some(other.to_owned()),
         }
     }
     let Some(path) = path else {
-        println!("usage: dd-runner PLAN.json [--dd-diet-rust-sqlite|--dd-diet-rust-rust|--dd-rust-dd] [--phases]");
+        println!("usage: dd-runner PLAN.json [--dd-diet-rust-sqlite|--dd-diet-rust-rust|--dd-rust-dd] [--phases] [--watch-stdin]");
         process::exit(2);
     };
     if matches!(arm, Arm::RustDd) {
@@ -130,6 +145,14 @@ fn main() {
         }
         return;
     }
+    if watch_stdin {
+        if !matches!(arm, Arm::Kernel) {
+            fail("--watch-stdin requires --dd-diet-rust-rust");
+        }
+        let operators = kernel_operators(&plan).unwrap_or_else(|error| fail(error));
+        watch_kernel(&plan, operators).unwrap_or_else(|error| fail(error));
+        return;
+    }
     match arm {
         Arm::Sqlite => {
             let conn = Connection::open_in_memory().unwrap_or_else(|error| fail(error));
@@ -141,6 +164,106 @@ fn main() {
                 .unwrap_or_else(|error| fail(error));
         }
         Arm::RustDd => unreachable!("guarded before dispatch"),
+    }
+}
+
+#[derive(Deserialize)]
+struct WatchSource {
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct WatchRecord {
+    record: String,
+    #[serde(default)]
+    generation: usize,
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    sign: i8,
+    #[serde(default)]
+    relation: String,
+    #[serde(default)]
+    args: Vec<Value>,
+    #[serde(default)]
+    source: Option<WatchSource>,
+}
+
+fn watch_kernel(plan: &Plan, operators: Vec<kernel::Operator>) -> Result<(), String> {
+    let mut runtime = kernel::Runtime::open(&plan.rels, &plan.initial, operators)?;
+    let mut arrivals = Vec::new();
+    let mut generation = 0usize;
+    for line in BufReader::new(std::io::stdin().lock()).lines() {
+        let line = line.map_err(|error| error.to_string())?;
+        let record: WatchRecord =
+            serde_json::from_str(&line).map_err(|error| format!("watch stream: {error}"))?;
+        match record.record.as_str() {
+            "batch_start" => {
+                generation = record.generation;
+                arrivals.clear();
+                if record.mode == "snapshot" {
+                    runtime.reset()?;
+                }
+            }
+            "change" if runtime.accepts(&record.relation) => {
+                let content = record
+                    .source
+                    .as_ref()
+                    .map(|source| source.content.as_str())
+                    .unwrap_or("");
+                arrivals.push(SignedRow {
+                    sign: record.sign,
+                    row: Row {
+                        rel: record.relation,
+                        values: record
+                            .args
+                            .iter()
+                            .map(|argument| tsi_value(argument, content))
+                            .collect(),
+                    },
+                });
+            }
+            "change" => {}
+            "batch_end" => println!("{}", runtime.tick(generation, &arrivals)?),
+            other => return Err(format!("watch stream record {other} is unsupported")),
+        }
+    }
+    Ok(())
+}
+
+fn tsi_value(argument: &Value, content: &str) -> Value {
+    let Some(object) = argument.as_object() else {
+        return argument.clone();
+    };
+    if let Some(id) = object.get("id") {
+        return json!({"tsi":{"content":content,"id":id}});
+    }
+    for tag in ["text", "atom", "int"] {
+        if let Some(value) = object.get(tag) {
+            return value.clone();
+        }
+    }
+    if let Some(span) = object.get("span") {
+        return json!({"span":span});
+    }
+    argument.clone()
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+
+    #[test]
+    fn tsi_ids_are_scoped_by_source_content() {
+        assert_eq!(
+            tsi_value(&json!({"id":7}), "blake3:abc"),
+            json!({"tsi":{"content":"blake3:abc","id":7}})
+        );
+        assert_eq!(tsi_value(&json!({"text":"Render"}), ""), json!("Render"));
+        assert_eq!(
+            tsi_value(&json!({"span":["blake3:abc", 3, 9]}), ""),
+            json!({"span":["blake3:abc", 3, 9]})
+        );
     }
 }
 

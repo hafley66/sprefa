@@ -55,6 +55,9 @@ mod move_text;
 #[path = "../3_region_writer.rs"]
 mod region_writer;
 
+#[path = "../4_watch.rs"]
+mod watch;
+
 #[path = "../0_rename.rs"]
 mod source_rename;
 
@@ -463,6 +466,9 @@ fn emit(line: &str) -> Result<(), std::io::Error> {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("watch") {
+        return watch::run(std::env::args().skip(1));
+    }
     if std::env::args().nth(1).as_deref() == Some("query") {
         if let Err(error) = query::run(std::env::args().skip(1)) {
             eprintln!("{error}");

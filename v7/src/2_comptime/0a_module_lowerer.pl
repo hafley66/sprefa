@@ -461,7 +461,9 @@ importable_target(_).
 
 source_edge_node(ModuleOrigins, Module, Name, Index, NodeId) :-
     memberchk(module_origins(Module, Origins), ModuleOrigins),
-    memberchk(origin(edge(Module, Name, Index), NodeId), Origins).
+    memberchk(origin(edge(Module, Name, Index), NodeId), Origins),
+    !.
+source_edge_node(_, _, _, _, none).
 
 replace_module_basement(Module, Replacement,
                         [module_basement(Module, _) | Basements],

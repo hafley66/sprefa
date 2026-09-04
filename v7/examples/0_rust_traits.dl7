@@ -1,0 +1,14 @@
+; Query source names and the subset declared as Rust traits.
+
+(: source_name
+   (* (: name text)))
+
+(<- (source_name ?Name)
+    (tsi.name ?Identity ?Name))
+
+(: source_trait
+   (* (: name text)))
+
+(<- (source_trait ?Name)
+    (rust.trait ?Identity)
+    (tsi.name ?Identity ?Name))

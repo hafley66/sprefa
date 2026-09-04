@@ -441,6 +441,11 @@ proves(EvaluationId, Head) :-
     proves_body(Body, EvaluationId).
 proves(_, call(ref(kernel(cons)), [Head, Tail, List])) :-
     cons_relation(Head, Tail, List).
+proves(_, call(ref(kernel(edge_ref)),
+               [ref(Owner), Label, ref(edge(Owner, SemanticLabel))])) :-
+    ground(Owner),
+    ground(Label),
+    semantic_argument(Label, SemanticLabel).
 proves(EvaluationId,
        call(ref(kernel(intern)), [Constructor, Arguments, Result])) :-
     ground(Constructor),

@@ -44,7 +44,7 @@ The one reader entry point is:
 read_dl7(+Path, +Text, -Forms, -SourceRows, -Diagnostics).
 ```
 
-It accepts atoms matching `[A-Za-z_][A-Za-z0-9_-]*`, the symbolic atoms `:`,
+It accepts atoms matching `[A-Za-z_][A-Za-z0-9_.-]*`, the symbolic atoms `:`,
 `*`, `+`, `->`, and `<-`, `?Name` logic variables, decimal integers, strings,
 `'Name` symbol literals, parenthesized forms, whitespace, and `;` line
 comments. Strings decode `\n`,
@@ -52,6 +52,10 @@ comments. Strings decode `\n`,
 following character. A symbol literal reads one identifier after `'` and
 yields `literal(symbol(Name))`; it is data immediately and never enters name
 resolution. Comments are layout and produce no node.
+
+A dot is an ordinary identifier character after the first character. The
+reader returns the complete spelling as one atom; scope and module resolution
+do not segment it.
 
 Canonical rows follow the current V7 contract:
 

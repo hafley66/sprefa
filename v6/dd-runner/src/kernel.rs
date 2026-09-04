@@ -106,28 +106,178 @@ pub fn run(
     schedule: &[Vec<SignedRow>],
     operators: &[Operator],
 ) -> Result<()> {
-    let columns = rels
-        .iter()
-        .map(|rel| (rel.name.clone(), rel.columns.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let mut state = Relations::new();
-    for rel in rels {
-        state.insert(rel.name.clone(), Relation::default());
-    }
-    for row in initial {
-        change(&mut state, row, 1)?;
-    }
-    settle(&mut state, &columns, operators)?;
-    let mut before = state.clone();
+    let mut runtime = Runtime::open(rels, initial, operators.to_vec())?;
     for (index, arrivals) in schedule.iter().enumerate() {
-        for arrival in arrivals {
-            change(&mut state, &arrival.row, arrival.sign)?;
-        }
-        settle(&mut state, &columns, operators)?;
-        println!("{}", tick_json(index + 1, &before, &state));
-        before = state.clone();
+        println!("{}", runtime.tick(index + 1, arrivals)?);
     }
     Ok(())
+}
+
+pub struct Runtime {
+    relation_names: Vec<String>,
+    columns: BTreeMap<String, Vec<String>>,
+    state: Relations,
+    before: Relations,
+    operators: Vec<Operator>,
+}
+
+impl Runtime {
+    pub fn open(rels: &[Rel], initial: &[Row], operators: Vec<Operator>) -> Result<Self> {
+        let columns = rels
+            .iter()
+            .map(|rel| (rel.name.clone(), rel.columns.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let mut state = Relations::new();
+        for rel in rels {
+            state.insert(rel.name.clone(), Relation::default());
+        }
+        for row in initial {
+            change(&mut state, row, 1)?;
+        }
+        settle(&mut state, &columns, &operators)?;
+        let before = state.clone();
+        Ok(Self {
+            relation_names: rels.iter().map(|relation| relation.name.clone()).collect(),
+            columns,
+            state,
+            before,
+            operators,
+        })
+    }
+
+    pub fn reset(&mut self) -> Result<()> {
+        self.state = self
+            .relation_names
+            .iter()
+            .map(|name| (name.clone(), Relation::default()))
+            .collect();
+        settle(&mut self.state, &self.columns, &self.operators)?;
+        self.before = self.state.clone();
+        Ok(())
+    }
+
+    pub fn accepts(&self, relation: &str) -> bool {
+        self.columns.contains_key(relation)
+    }
+
+    pub fn row_count(&self, relation: &str) -> usize {
+        self.state
+            .get(relation)
+            .map(|rows| rows.rows.len())
+            .unwrap_or(0)
+    }
+
+    pub fn tick(&mut self, generation: usize, arrivals: &[SignedRow]) -> Result<String> {
+        for arrival in arrivals {
+            change(&mut self.state, &arrival.row, arrival.sign)?;
+        }
+        settle(&mut self.state, &self.columns, &self.operators)?;
+        let output = tick_json(generation, &self.before, &self.state);
+        self.before = self.state.clone();
+        Ok(output)
+    }
+}
+
+pub fn shootout(graph_case: &str, n: usize) -> Result<Value> {
+    if n == 0 {
+        return Err("shootout N must be greater than zero".into());
+    }
+    let rels = vec![
+        Rel {
+            name: "edge".into(),
+            columns: vec!["from".into(), "to".into()],
+            select_all: String::new(),
+        },
+        Rel {
+            name: "path".into(),
+            columns: vec!["from".into(), "to".into()],
+            select_all: String::new(),
+        },
+    ];
+    let copy = Operator {
+        id: "map_edge".into(),
+        kind: "map".into(),
+        head: "path".into(),
+        refs: vec!["edge".into()],
+        bindings: BTreeMap::from([("b0".into(), "edge".into())]),
+        predicates: Vec::new(),
+        projection: vec![
+            Projection {
+                head: "from".into(),
+                source: Some("b0.from".into()),
+                value: None,
+            },
+            Projection {
+                head: "to".into(),
+                source: Some("b0.to".into()),
+                value: None,
+            },
+        ],
+        aggregate: None,
+    };
+    let extend = Operator {
+        id: "map_extend".into(),
+        kind: "map".into(),
+        head: "path".into(),
+        refs: vec!["path".into(), "edge".into()],
+        bindings: BTreeMap::from([("b0".into(), "path".into()), ("b1".into(), "edge".into())]),
+        predicates: vec![Predicate {
+            column_equals: Some(["b0.to".into(), "b1.from".into()]),
+            literal_equals: None,
+        }],
+        projection: vec![
+            Projection {
+                head: "from".into(),
+                source: Some("b0.from".into()),
+                value: None,
+            },
+            Projection {
+                head: "to".into(),
+                source: Some("b1.to".into()),
+                value: None,
+            },
+        ],
+        aggregate: None,
+    };
+    let setup_started = std::time::Instant::now();
+    let mut runtime = Runtime::open(&rels, &[], vec![copy, extend])?;
+    let setup_ms = setup_started.elapsed().as_secs_f64() * 1000.0;
+    let edge_count = match graph_case {
+        "chain" => n - 1,
+        "ring" => n,
+        other => return Err(format!("unknown shootout case {other}")),
+    };
+    let mut arrivals = (0..n.saturating_sub(1))
+        .map(|from| SignedRow {
+            sign: 1,
+            row: Row {
+                rel: "edge".into(),
+                values: vec![json!(from), json!(from + 1)],
+            },
+        })
+        .collect::<Vec<_>>();
+    if graph_case == "ring" {
+        arrivals.push(SignedRow {
+            sign: 1,
+            row: Row {
+                rel: "edge".into(),
+                values: vec![json!(n - 1), json!(0)],
+            },
+        });
+    }
+    let closure_started = std::time::Instant::now();
+    let _ = runtime.tick(1, &arrivals)?;
+    let closure_ms = closure_started.elapsed().as_secs_f64() * 1000.0;
+    Ok(json!({
+        "runtime":"dbsp-kernel",
+        "version":env!("CARGO_PKG_VERSION"),
+        "case":graph_case,
+        "n":n,
+        "edge_count":edge_count,
+        "closure_count":runtime.row_count("path"),
+        "setup_ms":setup_ms,
+        "closure_ms":closure_ms,
+    }))
 }
 
 fn change(state: &mut Relations, row: &Row, sign: i8) -> Result<()> {
@@ -626,4 +776,58 @@ fn tick_json(tick: usize, before: &Relations, after: &Relations) -> String {
 fn sorted(mut rows: Vec<&Tuple>) -> Vec<&Tuple> {
     rows.sort_by_key(|row| serde_json::to_string(row).unwrap());
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resident_runtime_reports_derived_add_and_retract() {
+        let rels = vec![
+            Rel {
+                name: "input".into(),
+                columns: vec!["value".into()],
+                select_all: String::new(),
+            },
+            Rel {
+                name: "output".into(),
+                columns: vec!["value".into()],
+                select_all: String::new(),
+            },
+        ];
+        let operator = Operator {
+            id: "map_0".into(),
+            kind: "map".into(),
+            head: "output".into(),
+            refs: vec!["input".into()],
+            bindings: BTreeMap::from([("b0".into(), "input".into())]),
+            predicates: Vec::new(),
+            projection: vec![Projection {
+                head: "value".into(),
+                source: Some("b0.value".into()),
+                value: None,
+            }],
+            aggregate: None,
+        };
+        let row = SignedRow {
+            sign: 1,
+            row: Row {
+                rel: "input".into(),
+                values: vec![json!("alpha")],
+            },
+        };
+        let mut runtime = Runtime::open(&rels, &[], vec![operator]).unwrap();
+
+        assert_eq!(
+            runtime.tick(4, std::slice::from_ref(&row)).unwrap(),
+            r#"{"tick":4,"deltas":{"input":{"add":[["alpha"]],"del":[]},"output":{"add":[["alpha"]],"del":[]}}}"#
+        );
+
+        let removed = SignedRow { sign: -1, ..row };
+        assert_eq!(
+            runtime.tick(5, &[removed]).unwrap(),
+            r#"{"tick":5,"deltas":{"input":{"add":[],"del":[["alpha"]]},"output":{"add":[],"del":[["alpha"]]}}}"#
+        );
+    }
 }

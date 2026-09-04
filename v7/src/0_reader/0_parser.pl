@@ -309,6 +309,7 @@ identifier_rest_code(Code) :-
     !.
 identifier_rest_code(0'_).
 identifier_rest_code(0'-).
+identifier_rest_code(0'.).
 
 ascii_alpha(Code) :-
     Code >= 0'a,

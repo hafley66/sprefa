@@ -36,3 +36,66 @@ compile.
 Run `cd v7 && just compiler-perf` for the cold/warm compiler checkpoint. It
 reports wall time and enforces inference, closure-round, compiler-row, and
 warm-cache output budgets on `2_partial.dl7`.
+
+Run a DL7 relation over the type facts extracted from one source file:
+
+```bash
+cd v7
+just query \
+  examples/0_rust_traits.dl7 \
+  ../v6/sprefa-extract/tests/fixtures/tsi/probe_graph.rs \
+  source_trait
+```
+
+The command runs `extract --witness --family type`, exposes its dotted
+`tsi.*` relations to the DL7 source module, evaluates the program, and writes
+one JSON array per result tuple. `0_rust_traits.dl7` derives
+`source_trait(Name)` by joining `rust.trait(Identity)` with
+`tsi.name(Identity, Name)`.
+
+Emit that source-visible relation graph as the operator JSON accepted by the
+resident Rust RAM kernel:
+
+```bash
+cd v7
+just dbsp-plan \
+  examples/0_rust_traits.dl7 \
+  ../v6/sprefa-extract/tests/fixtures/tsi/probe_graph.rs \
+  > /tmp/rust-traits.plan.json
+```
+
+The emitter preserves relation edge labels verbatim. `tsi.name` remains one
+opaque relation name. The current executable cut covers positive projection,
+selection, joins, and positive recursion. A negative rule produces an emitter
+diagnostic until the resident kernel has an anti-join operator.
+
+`sprefa-extract` can keep a checkout open as a signed TSI input stream:
+
+```bash
+v6/sprefa-extract/target/debug/extract watch . \
+  --pattern '**/*.rs' \
+  --family type \
+| v6/dd-runner/target/debug/dd-runner \
+    /tmp/rust-traits.plan.json \
+    --dd-diet-rust-rust \
+    --watch-stdin
+```
+
+Generation 0 is a snapshot reset. Later generations contain deletions from the
+SQLite receipt for the prior source content followed by additions extracted
+from the replacement content. TSI local ids are paired with the content digest
+at the runner boundary. Repository and worktree identities remain on every
+watch row. State defaults to the platform state directory and can be selected
+with `extract watch --state PATH`.
+
+The watcher uses Soopy's event stream where filesystem registration succeeds.
+If the platform rejects a recursive watch, for example because the checkout
+contains a dangling symlink, it retains the same generation protocol through
+Soopy snapshot diffs at `--poll-ms 500`.
+
+The Rust DBSP kernel participates in the chain and ring runtime shootout:
+
+```bash
+cd v7
+just runtime-shootout-smoke
+```

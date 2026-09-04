@@ -2,7 +2,8 @@
           [ load_tsi_stream/3,
             load_tsi_text/3,
             accepted_rows/2,
-            install_tsi_graph/6
+            install_tsi_graph/6,
+            tsi_expression_environment/3
           ]).
 
 :- use_module(library(error), [must_be/2]).
@@ -305,6 +306,35 @@ accepted_fact(Rows, Fact, Relation) :-
     \+ semantic_complete(Rows, Scope, Relation),
     !.
 
+%% tsi_expression_environment(+Rows, +Importers, -Environment) is det.
+%
+% Give source modules callable names for the ordinary TSI relations present in
+% one accepted stream. Graph relations continue to enter through graph rows.
+tsi_expression_environment(Rows, Importers,
+                           expression_environment(Reservations,
+                                                  Relations, [])) :-
+    accepted_rows(Rows, Accepted),
+    stream_owner(Rows, OwnerResult),
+    tsi_environment_for_owner(OwnerResult, Accepted, Importers,
+                              Reservations, Relations).
+
+tsi_environment_for_owner(owner(Owner), Accepted, Importers,
+                          Reservations, Relations) :-
+    !,
+    relation_names(Accepted, Names, _),
+    findall(relation(tsi_relation(Owner, Name), Arity, []),
+            ( member(Name, Names),
+              tsi_relation(Name, Arity)
+            ),
+            Relations),
+    findall(reservation(Importer, Name,
+                        target(tsi_relation(Owner, Name)), product),
+            ( member(Importer, Importers),
+              member(Name, Names)
+            ),
+            Reservations).
+tsi_environment_for_owner(_, _, _, [], []).
+
 % With no complete claim on the relation every semantic run stands; with one or
 % more, the highest run number is the only one left.
 newest_complete_run(Rows, Scope, Relation, Run) :-
@@ -422,8 +452,12 @@ prelude_primitive(Basements, Class, Identity) :-
     memberchk(module_basement(module(prelude),
                               basement_program(root_graph(_, Edges), _)),
               Basements),
-    memberchk(pending_edge(module(prelude), Class, target(Identity), _),
+    primitive_label(Class, Label),
+    memberchk(pending_edge(module(prelude), Label, target(Identity), _),
               Edges).
+
+primitive_label(unit, '()') :- !.
+primitive_label(Class, Class).
 
 % Declaring positions, in the order a shared id space resolves them: a symbol,
 % an edge, an argument list, then an ordinary type node.

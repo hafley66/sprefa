@@ -26,6 +26,18 @@ build: tree-sitter-test
 compiler-perf:
     swipl -q -s "{{ v7 }}/bench/0_compiler_performance.pl" -- "{{ v7 }}/test/fixtures/2_partial.dl7"
 
+# Extract one source file, run a DL7 analysis over its TSI rows, and print the
+# selected program relation as one JSON array per tuple.
+query program source relation:
+    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/src/4_tool/0_source_query_mainer.pl" -- "{{ program }}" "{{ source }}" "{{ relation }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract"
+
+# Emit the source-visible positive-rule slice as the operator JSON consumed by
+# dd-runner's pure RAM kernel. The source supplies the hosted TSI relation set.
+dbsp-plan program source:
+    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/src/4_tool/1_dbsp_plan_mainer.pl" -- "{{ program }}" "{{ source }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract"
+
 # Validate exact closure counts on tiny chain and ring graphs.
 runtime-shootout-smoke:
     bash "{{ v7 }}/labs/18_runtime_shootout/4_run.sh" smoke 4

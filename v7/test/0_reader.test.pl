@@ -3,6 +3,7 @@
 :- use_module('../src/0_reader/0_parser', [read_dl7/5]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
 :- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
+:- use_module('../src/2_comptime/2_compiler', [compile_unit/3]).
 
 test(standalone_fixture_has_canonical_reader_snapshot) :-
     load_dl7('v7/test/fixtures/0_minimal.dl7',
@@ -61,6 +62,21 @@ test(tree_sitter_query_literal_preserves_exact_inner_text) :-
     Diagnostics == [],
     !.
 
+test(dotted_names_are_one_opaque_atom) :-
+    read_dl7(dotted_name_source,
+             "rel.with.dot field.with.dot impl.with.dot",
+             Forms, SourceRows, Diagnostics),
+    maplist(payload_tree, Forms, Names),
+    length(SourceRows, SourceRowCount),
+    Observed = dotted_names(Diagnostics, Names, SourceRowCount),
+    Observed == dotted_names(
+                    [],
+                    [ atom('rel.with.dot'),
+                      atom('field.with.dot'),
+                      atom('impl.with.dot')
+                    ],
+                    3).
+
 test(unterminated_tree_sitter_query_is_positioned) :-
     read_dl7(query_source, "{ (identifier)", Forms, SourceRows,
              Diagnostics),
@@ -73,6 +89,19 @@ test(unterminated_tree_sitter_query_is_positioned) :-
                          unterminated_query,
                          position(14, 1, 15))
             ]).
+
+test(empty_form_names_the_empty_product_in_type_positions) :-
+    Text = "(: () (* ))\n(: Cell (* (: value ())))\n",
+    dl7_text_unit(empty_form, empty_form_source, Text, Unit, ReadDiagnostics),
+    ReadDiagnostics == [],
+    compile_unit(Unit, Compiled, CompileDiagnostics),
+    CompileDiagnostics == [],
+    Compiled = compiled_unit(
+                   _, checked_datalog(root_graph(Nodes, Edges), _, _, _), _),
+    memberchk(':'(_, '()', ref(Empty), _), Edges),
+    memberchk(product(Empty), Nodes),
+    memberchk(':'(Cell, value, ref(Empty), 0), Edges),
+    memberchk(':'(_, 'Cell', ref(Cell), _), Edges).
 
 test(infix_colon_rotates_to_the_canonical_prefix_tree_at_every_depth) :-
     Text = "(User: (* (id: int) (name: text)))\n((Key \"account\" Options): int)\n",

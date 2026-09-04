@@ -69,7 +69,7 @@ type_name_result(Rows, Id, Result) :-
     ;   Result = error(missing_or_invalid_name)
     ).
 
-source_name_identifier("()", ok(unit)) :- !.
+source_name_identifier("()", ok('()')) :- !.
 source_name_identifier(Written, ok(Name)) :-
     identifier_text(Written, Name),
     !.
