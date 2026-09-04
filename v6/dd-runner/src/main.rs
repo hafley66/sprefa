@@ -100,18 +100,29 @@ fn main() {
     let mut arm = Arm::Sqlite;
     let mut phases_only = false;
     let mut watch_stdin = false;
-    for argument in arguments.into_iter().skip(1) {
+    let mut sqlite_state = None;
+    let mut index = 1;
+    while index < arguments.len() {
+        let argument = &arguments[index];
         match argument.as_str() {
             "--dd-diet-rust-sqlite" => arm = Arm::Sqlite,
             "--dd-diet-rust-rust" => arm = Arm::Kernel,
             "--dd-rust-dd" => arm = Arm::RustDd,
             "--phases" => phases_only = true,
             "--watch-stdin" => watch_stdin = true,
+            "--sqlite-state" => {
+                index += 1;
+                sqlite_state = arguments.get(index).cloned();
+                if sqlite_state.is_none() {
+                    fail("--sqlite-state requires a path");
+                }
+            }
             other => path = Some(other.to_owned()),
         }
+        index += 1;
     }
     let Some(path) = path else {
-        println!("usage: dd-runner PLAN.json [--dd-diet-rust-sqlite|--dd-diet-rust-rust|--dd-rust-dd] [--phases] [--watch-stdin]");
+        println!("usage: dd-runner PLAN.json [--dd-diet-rust-sqlite|--dd-diet-rust-rust|--dd-rust-dd] [--sqlite-state PATH] [--phases] [--watch-stdin]");
         process::exit(2);
     };
     if matches!(arm, Arm::RustDd) {
@@ -127,16 +138,22 @@ fn main() {
         return;
     }
     if watch_stdin {
-        if !matches!(arm, Arm::Kernel) {
-            fail("--watch-stdin requires --dd-diet-rust-rust");
+        match arm {
+            Arm::Sqlite => {
+                let conn = open_sqlite(sqlite_state.as_deref()).unwrap_or_else(|error| fail(error));
+                watch_sqlite(&conn, &plan).unwrap_or_else(|error| fail(error));
+            }
+            Arm::Kernel => {
+                let operators = kernel_operators(&plan).unwrap_or_else(|error| fail(error));
+                watch_kernel(&plan, operators).unwrap_or_else(|error| fail(error));
+            }
+            Arm::RustDd => unreachable!("guarded before dispatch"),
         }
-        let operators = kernel_operators(&plan).unwrap_or_else(|error| fail(error));
-        watch_kernel(&plan, operators).unwrap_or_else(|error| fail(error));
         return;
     }
     match arm {
         Arm::Sqlite => {
-            let conn = Connection::open_in_memory().unwrap_or_else(|error| fail(error));
+            let conn = open_sqlite(sqlite_state.as_deref()).unwrap_or_else(|error| fail(error));
             run(&conn, &plan).unwrap_or_else(|error| fail(error));
         }
         Arm::Kernel => {
@@ -145,6 +162,13 @@ fn main() {
                 .unwrap_or_else(|error| fail(error));
         }
         Arm::RustDd => unreachable!("guarded before dispatch"),
+    }
+}
+
+fn open_sqlite(path: Option<&str>) -> rusqlite::Result<Connection> {
+    match path {
+        Some(path) => Connection::open(path),
+        None => Connection::open_in_memory(),
     }
 }
 
@@ -209,6 +233,86 @@ fn watch_kernel(plan: &Plan, operators: Vec<kernel::Operator>) -> Result<(), Str
             other => return Err(format!("watch stream record {other} is unsupported")),
         }
     }
+    Ok(())
+}
+
+fn watch_sqlite(conn: &Connection, plan: &Plan) -> Outcome<()> {
+    setup_sqlite(conn, plan)?;
+    if !edge_arms(plan)?.is_empty() {
+        return Err("SQLite watch currently accepts level operators only".into());
+    }
+    let mut arrivals = Vec::new();
+    let mut generation = 0usize;
+    let mut reset = false;
+    for line in BufReader::new(std::io::stdin().lock()).lines() {
+        let line = line?;
+        let record: WatchRecord = serde_json::from_str(&line)?;
+        match record.record.as_str() {
+            "batch_start" => {
+                generation = record.generation;
+                arrivals.clear();
+                reset = record.mode == "snapshot";
+            }
+            "change" if plan.rels.iter().any(|rel| rel.name == record.relation) => {
+                let content = record
+                    .source
+                    .as_ref()
+                    .map(|source| source.content.as_str())
+                    .unwrap_or("");
+                arrivals.push(SignedRow {
+                    sign: record.sign,
+                    row: Row {
+                        rel: record.relation,
+                        values: record
+                            .args
+                            .iter()
+                            .map(|argument| tsi_value(argument, content))
+                            .collect(),
+                    },
+                });
+            }
+            "change" => {}
+            "batch_end" => {
+                sqlite_watch_tick(conn, plan, generation, &arrivals, reset)?;
+                reset = false;
+            }
+            other => return Err(format!("watch stream record {other} is unsupported").into()),
+        }
+    }
+    Ok(())
+}
+
+fn reset_sqlite(conn: &Connection, plan: &Plan) -> Outcome<()> {
+    for rel in &plan.rels {
+        let table = rel.name.split('/').next().expect("relation name");
+        let table = table.replace('"', "\"\"");
+        conn.execute_batch(&format!("DELETE FROM \"{table}\""))?;
+    }
+    for row in &plan.initial {
+        write_row(conn, plan, row, 1)?;
+    }
+    close_levels(conn, plan)?;
+    Ok(())
+}
+
+fn sqlite_watch_tick(
+    conn: &Connection,
+    plan: &Plan,
+    generation: usize,
+    arrivals: &[SignedRow],
+    reset: bool,
+) -> Outcome<()> {
+    let transaction = conn.unchecked_transaction()?;
+    if reset {
+        reset_sqlite(&transaction, plan)?;
+    }
+    let before = snapshot(&transaction, plan)?;
+    absorb_arrivals(&transaction, plan, arrivals)?;
+    close_levels(&transaction, plan)?;
+    let after = snapshot(&transaction, plan)?;
+    let output = tick_json(generation, &before, &after);
+    transaction.commit()?;
+    println!("{output}");
     Ok(())
 }
 

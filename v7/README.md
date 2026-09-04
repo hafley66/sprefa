@@ -88,12 +88,30 @@ at the runner boundary. Repository and worktree identities remain on every
 watch row. State defaults to the platform state directory and can be selected
 with `extract watch --state PATH`.
 
+The same signed stream can run against a persistent SQLite relation store:
+
+```bash
+v6/sprefa-extract/target/debug/extract watch . \
+  --pattern '**/*.rs' \
+  --family type \
+| v6/dd-runner/target/debug/dd-runner \
+    /tmp/rust-traits.plan.json \
+    --sqlite-state /tmp/rust-traits.runtime.sqlite3 \
+    --watch-stdin
+```
+
+Snapshot generations clear the program relations before applying their rows.
+Delta generations update the existing SQLite state. Restarting `dd-runner`
+with the same `--sqlite-state` path retains the last committed relation rows.
+
 The watcher uses Soopy's event stream where filesystem registration succeeds.
 If the platform rejects a recursive watch, for example because the checkout
 contains a dangling symlink, it retains the same generation protocol through
 Soopy snapshot diffs at `--poll-ms 500`.
 
-The Rust DBSP kernel participates in the chain and ring runtime shootout:
+The RAM kernel, native constructors generated from DL7, and SQLite SQL
+generated from the same DL7 program participate in the chain and ring runtime
+shootout:
 
 ```bash
 cd v7
