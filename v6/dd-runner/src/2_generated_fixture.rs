@@ -4,15 +4,49 @@
 
 #[allow(unused_imports)]
 use dd_runner::kernel::{Aggregate, LiteralEquals, Operator, Predicate, Projection};
-use dd_runner::{Rel, Row};
+use dd_runner::{Rel, Row, Rule};
 #[allow(unused_imports)]
 use std::collections::BTreeMap;
 
 #[rustfmt::skip]
 pub fn relations() -> Vec<Rel> {
     vec![
-        Rel { name: String::from("Input"), columns: vec![String::from("value"), String::from("same"), String::from("tag")], select_all: String::from("") },
-        Rel { name: String::from("Output"), columns: vec![String::from("value")], select_all: String::from("") },
+        Rel { name: String::from("Input"), columns: vec![String::from("value"), String::from("same"), String::from("tag")], select_all: String::from("SELECT t.\"value\" AS \"value\", t.\"same\" AS \"same\", t.\"tag\" AS \"tag\" FROM \"Input\" t") },
+        Rel { name: String::from("Output"), columns: vec![String::from("value")], select_all: String::from("SELECT t.\"value\" AS \"value\" FROM \"Output\" t") },
+    ]
+}
+
+#[rustfmt::skip]
+pub fn ddl() -> Vec<String> {
+    vec![
+        String::from("CREATE TABLE IF NOT EXISTS \"__str\" (\"__id\" INTEGER PRIMARY KEY, \"content\" TEXT NOT NULL UNIQUE)"),
+        String::from("CREATE TABLE IF NOT EXISTS \"Input\" (\"value\" INTEGER NOT NULL, \"same\" INTEGER NOT NULL, \"tag\" INTEGER NOT NULL, UNIQUE (\"value\", \"same\", \"tag\"))"),
+        String::from("CREATE TABLE IF NOT EXISTS \"Output\" (\"value\" INTEGER NOT NULL, UNIQUE (\"value\"))"),
+    ]
+}
+
+#[rustfmt::skip]
+pub fn rules() -> Vec<Rule> {
+    vec![
+        Rule { id: String::from("map_121"), head: String::from("Output"), delete: String::from("DELETE FROM \"Output\""), inserts: vec![String::from("INSERT OR IGNORE INTO \"Output\" (\"value\") SELECT \"b0\".\"value\" FROM \"Input\" \"b0\" WHERE \"b0\".\"value\" = \"b0\".\"same\" AND \"b0\".\"tag\" = 7")] },
+    ]
+}
+
+#[rustfmt::skip]
+pub fn tick_order() -> Vec<String> {
+    vec![
+        String::from("absorb_arrivals"),
+        String::from("index_delta"),
+        String::from("level_before_edges"),
+        String::from("edge_arrivals"),
+        String::from("edge_departures"),
+        String::from("level_after_edges"),
+        String::from("iterate"),
+        String::from("consolidate"),
+        String::from("retain"),
+        String::from("boundary"),
+        String::from("carry"),
+        String::from("drain"),
     ]
 }
 

@@ -54,6 +54,7 @@ set_arm_command() {
     racket) command_argv=(racket "$lab_dir/3_racket.rkt" "$graph_case" "$graph_n") ;;
     dbsp-kernel) command_argv=("$dbsp_runner" --shootout "$graph_case" "$graph_n") ;;
     dbsp-generated) command_argv=("$dbsp_runner" --shootout-generated "$graph_case" "$graph_n") ;;
+    dbsp-sqlite) command_argv=("$dbsp_runner" --shootout-sqlite "$graph_case" "$graph_n") ;;
   esac
 }
 
@@ -65,6 +66,7 @@ set_startup_command() {
     racket) command_argv=(racket -e '(void)') ;;
     dbsp-kernel) command_argv=("$dbsp_runner" --shootout chain 1) ;;
     dbsp-generated) command_argv=("$dbsp_runner" --shootout-generated chain 1) ;;
+    dbsp-sqlite) command_argv=("$dbsp_runner" --shootout-sqlite chain 1) ;;
   esac
 }
 
@@ -86,6 +88,7 @@ runtime_version() {
     racket) racket --version | sed 's/^Welcome to Racket v\([^ ]*\).*/\1/' ;;
     dbsp-kernel) "$dbsp_runner" --shootout chain 1 | jq -r .version ;;
     dbsp-generated) "$dbsp_runner" --shootout-generated chain 1 | jq -r .version ;;
+    dbsp-sqlite) "$dbsp_runner" --shootout-sqlite chain 1 | jq -r .version ;;
   esac
 }
 
@@ -158,7 +161,7 @@ measure_arm() {
 
 smoke() {
   local runtime graph_case output_file
-  for runtime in sbcl swi racket dbsp-kernel dbsp-generated; do
+  for runtime in sbcl swi racket dbsp-kernel dbsp-generated dbsp-sqlite; do
     for graph_case in chain ring; do
       output_file="$tmp_dir/smoke-${runtime}-${graph_case}.json"
       run_arm "$runtime" "$graph_case" "$n" > "$output_file"
@@ -211,14 +214,14 @@ fi
 
 start_seconds=$SECONDS
 cargo build --release --manifest-path "$repo_dir/v6/dd-runner/Cargo.toml" >/dev/null
-for runtime in sbcl swi racket dbsp-kernel dbsp-generated; do
+for runtime in sbcl swi racket dbsp-kernel dbsp-generated dbsp-sqlite; do
   run_startup "$runtime" >/dev/null
   for repetition in $(seq 1 "$repetitions"); do
     measure_startup "$runtime" "$repetition"
   done
 done
 
-for runtime in sbcl swi racket dbsp-kernel dbsp-generated; do
+for runtime in sbcl swi racket dbsp-kernel dbsp-generated dbsp-sqlite; do
   for graph_case in chain ring; do
     run_arm "$runtime" "$graph_case" "$n" >/dev/null
     for repetition in $(seq 1 "$repetitions"); do

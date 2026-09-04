@@ -9,6 +9,7 @@ This lab measures transitive closure through one native logic route per runtime:
 | Racket CS 9.3 | Installed `datalog` package evaluator |
 | `dbsp-kernel` | Rust RAM evaluator over the emitted operator contract |
 | `dbsp-generated` | The same Rust kernel over native constructors generated from DL7 |
+| `dbsp-sqlite` | SQLite fixed point over DDL and SQL rules generated from the same DL7 program |
 
 The algorithms are idiomatic to each runtime. The measurements compare these selected logic routes. They do not hold the low-level closure algorithm constant.
 

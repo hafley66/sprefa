@@ -86,6 +86,16 @@ fn main() {
         println!("{result}");
         return;
     }
+    if arguments.get(1).map(String::as_str) == Some("--shootout-sqlite") {
+        let graph_case = arguments.get(2).map(String::as_str).unwrap_or("");
+        let n = arguments
+            .get(3)
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let result = sqlite_shootout(graph_case, n).unwrap_or_else(|error| fail(error));
+        println!("{result}");
+        return;
+    }
     let mut path = None;
     let mut arm = Arm::Sqlite;
     let mut phases_only = false;
@@ -319,14 +329,23 @@ fn level_bundles(plan: &Plan) -> Vec<&Rule> {
 }
 
 fn run(conn: &Connection, plan: &Plan) -> Outcome<()> {
+    setup_sqlite(conn, plan)?;
+    run_sqlite_ticks(conn, plan, true)
+}
+
+fn setup_sqlite(conn: &Connection, plan: &Plan) -> Outcome<()> {
     for ddl in &plan.ddl {
         conn.execute_batch(ddl)?;
     }
     for row in &plan.initial {
         write_row(conn, plan, row, 1)?;
     }
-    let arms = edge_arms(plan)?;
     close_levels(conn, plan)?;
+    Ok(())
+}
+
+fn run_sqlite_ticks(conn: &Connection, plan: &Plan, emit_ticks: bool) -> Outcome<()> {
+    let arms = edge_arms(plan)?;
     let mut text_before = snapshot(conn, plan)?;
     let mut level_before = storage_snapshot(conn, plan, &level_heads(plan))?;
     let mut carry: Vec<Occurrence> = Vec::new();
@@ -396,10 +415,87 @@ fn run(conn: &Connection, plan: &Plan) -> Outcome<()> {
                 other => return Err(format!("unknown tick phase: {other}").into()),
             }
         }
-        println!("{}", tick_json(tick, &text_before, &text_after));
+        let output = tick_json(tick, &text_before, &text_after);
+        if emit_ticks {
+            println!("{output}");
+        }
         text_before = text_after;
     }
     Ok(())
+}
+
+fn sqlite_shootout(graph_case: &str, n: usize) -> Outcome<Value> {
+    if n == 0 {
+        return Err("shootout N must be greater than zero".into());
+    }
+    let edge_count = match graph_case {
+        "chain" => n - 1,
+        "ring" => n,
+        other => return Err(format!("unknown shootout case {other}").into()),
+    };
+    let mut plan = Plan {
+        ddl: dd_runner::generated_reachability::ddl(),
+        rels: dd_runner::generated_reachability::relations(),
+        rules: dd_runner::generated_reachability::rules(),
+        initial: dd_runner::generated_reachability::initial(),
+        schedule: Vec::new(),
+        tick_order: dd_runner::generated_reachability::tick_order(),
+        operators: Vec::new(),
+    };
+    let setup_started = std::time::Instant::now();
+    let conn = Connection::open_in_memory()?;
+    setup_sqlite(&conn, &plan)?;
+    let setup_ms = setup_started.elapsed().as_secs_f64() * 1000.0;
+    let mut arrivals = (0..n.saturating_sub(1))
+        .map(|from| SignedRow {
+            sign: 1,
+            row: Row {
+                rel: "edge".into(),
+                values: vec![json!(from), json!(from + 1)],
+            },
+        })
+        .collect::<Vec<_>>();
+    if graph_case == "ring" {
+        arrivals.push(SignedRow {
+            sign: 1,
+            row: Row {
+                rel: "edge".into(),
+                values: vec![json!(n - 1), json!(0)],
+            },
+        });
+    }
+    plan.schedule.push(arrivals);
+    let closure_started = std::time::Instant::now();
+    run_sqlite_ticks(&conn, &plan, false)?;
+    let closure_ms = closure_started.elapsed().as_secs_f64() * 1000.0;
+    let closure_count = conn.query_row("SELECT count(*) FROM \"path\"", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    Ok(json!({
+        "runtime":"dbsp-sqlite",
+        "version":rusqlite::version(),
+        "case":graph_case,
+        "n":n,
+        "edge_count":edge_count,
+        "closure_count":closure_count,
+        "setup_ms":setup_ms,
+        "closure_ms":closure_ms,
+    }))
+}
+
+#[cfg(test)]
+mod sqlite_shootout_tests {
+    #[test]
+    fn generated_sql_closes_chain_and_ring_exactly() {
+        assert_eq!(
+            super::sqlite_shootout("chain", 4).unwrap()["closure_count"],
+            6
+        );
+        assert_eq!(
+            super::sqlite_shootout("ring", 4).unwrap()["closure_count"],
+            16
+        );
+    }
 }
 
 fn all_rels(plan: &Plan) -> Vec<String> {

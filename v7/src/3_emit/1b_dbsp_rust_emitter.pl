@@ -6,9 +6,9 @@
 
 %% render_dbsp_rust(+CheckedProgram, -Text, -Diagnostics) is det.
 %
-% Render the checked plan as direct dd-runner constructors. JSON values remain
-% the kernel's cell representation, but no serialized program is embedded or
-% decoded by the generated module.
+% Render the checked plan as direct dd-runner constructors for both storage
+% arms. JSON values remain the cell representation, but no serialized program
+% is embedded or decoded by the generated module.
 render_dbsp_rust(CheckedProgram, Text, Diagnostics) :-
     emit_dbsp_plan(CheckedProgram, Plan, PlanDiagnostics),
     ( PlanDiagnostics == []
@@ -24,11 +24,17 @@ write_native_plan(Plan) :-
     nl,
     writeln('#[allow(unused_imports)]'),
     writeln('use dd_runner::kernel::{Aggregate, LiteralEquals, Operator, Predicate, Projection};'),
-    writeln('use dd_runner::{Rel, Row};'),
+    writeln('use dd_runner::{Rel, Row, Rule};'),
     writeln('#[allow(unused_imports)]'),
     writeln('use std::collections::BTreeMap;'),
     nl,
     write_relations(Plan.rels),
+    nl,
+    write_ddl(Plan.ddl),
+    nl,
+    write_rules(Plan.rules),
+    nl,
+    write_tick_order(Plan.tick_order),
     nl,
     write_initial(Plan.initial),
     nl,
@@ -50,6 +56,46 @@ write_relation(Relation) :-
     write('], select_all: '),
     write_owned_string(Relation.select_all),
     writeln(' },').
+
+write_ddl(Statements) :-
+    writeln('#[rustfmt::skip]'),
+    writeln('pub fn ddl() -> Vec<String> {'),
+    writeln('    vec!['),
+    maplist(write_owned_string_line, Statements),
+    writeln('    ]'),
+    writeln('}').
+
+write_rules(Rules) :-
+    writeln('#[rustfmt::skip]'),
+    writeln('pub fn rules() -> Vec<Rule> {'),
+    writeln('    vec!['),
+    maplist(write_rule, Rules),
+    writeln('    ]'),
+    writeln('}').
+
+write_rule(Rule) :-
+    write('        Rule { id: '),
+    write_owned_string(Rule.id),
+    write(', head: '),
+    write_owned_string(Rule.head),
+    write(', delete: '),
+    write_owned_string(Rule.delete),
+    write(', inserts: vec!['),
+    write_owned_strings(Rule.inserts),
+    writeln('] },').
+
+write_tick_order(Phases) :-
+    writeln('#[rustfmt::skip]'),
+    writeln('pub fn tick_order() -> Vec<String> {'),
+    writeln('    vec!['),
+    maplist(write_owned_string_line, Phases),
+    writeln('    ]'),
+    writeln('}').
+
+write_owned_string_line(Value) :-
+    write('        '),
+    write_owned_string(Value),
+    writeln(',').
 
 write_initial(Rows) :-
     writeln('#[rustfmt::skip]'),
