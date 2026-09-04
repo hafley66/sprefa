@@ -103,6 +103,9 @@ v6/sprefa-extract/target/debug/extract watch . \
 Snapshot generations clear the program relations before applying their rows.
 Delta generations update the existing SQLite state. Restarting `dd-runner`
 with the same `--sqlite-state` path retains the last committed relation rows.
+The `__dl7_catalog` table records the generated DDL, relation reads, SQL rule
+bundles, and tick order. A changed plan is rejected before retained relation
+rows are modified; catalog migration remains a later runtime step.
 
 The watcher uses Soopy's event stream where filesystem registration succeeds.
 If the platform rejects a recursive watch, for example because the checkout

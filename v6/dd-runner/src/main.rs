@@ -438,14 +438,85 @@ fn run(conn: &Connection, plan: &Plan) -> Outcome<()> {
 }
 
 fn setup_sqlite(conn: &Connection, plan: &Plan) -> Outcome<()> {
+    let transaction = conn.unchecked_transaction()?;
+    ensure_runtime_catalog(&transaction, plan)?;
     for ddl in &plan.ddl {
-        conn.execute_batch(ddl)?;
+        transaction.execute_batch(ddl)?;
     }
     for row in &plan.initial {
-        write_row(conn, plan, row, 1)?;
+        write_row(&transaction, plan, row, 1)?;
     }
-    close_levels(conn, plan)?;
+    close_levels(&transaction, plan)?;
+    transaction.commit()?;
     Ok(())
+}
+
+fn ensure_runtime_catalog(conn: &Connection, plan: &Plan) -> Outcome<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS \"__dl7_catalog\" (\"kind\" TEXT NOT NULL, \"position\" INTEGER NOT NULL, \"value\" TEXT NOT NULL, PRIMARY KEY (\"kind\", \"position\"))",
+    )?;
+    let expected = runtime_catalog(plan);
+    let mut statement = conn.prepare(
+        "SELECT \"kind\", \"position\", \"value\" FROM \"__dl7_catalog\" ORDER BY \"kind\", \"position\"",
+    )?;
+    let stored = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    if stored.is_empty() {
+        for (kind, position, value) in expected {
+            conn.execute(
+                "INSERT INTO \"__dl7_catalog\" (\"kind\", \"position\", \"value\") VALUES (?1, ?2, ?3)",
+                params![kind, position, value],
+            )?;
+        }
+    } else if stored != expected {
+        return Err("SQLite runtime catalog differs from the generated DL7 plan".into());
+    }
+    Ok(())
+}
+
+fn runtime_catalog(plan: &Plan) -> Vec<(String, i64, String)> {
+    let mut rows = Vec::new();
+    for (position, ddl) in plan.ddl.iter().enumerate() {
+        rows.push(("ddl".into(), position as i64, ddl.clone()));
+    }
+    for (position, rel) in plan.rels.iter().enumerate() {
+        rows.push((
+            "relation".into(),
+            position as i64,
+            json!({
+                "name":rel.name,
+                "columns":rel.columns,
+                "select_all":rel.select_all,
+            })
+            .to_string(),
+        ));
+    }
+    for (position, rule) in plan.rules.iter().enumerate() {
+        rows.push((
+            "rule".into(),
+            position as i64,
+            json!({
+                "id":rule.id,
+                "head":rule.head,
+                "delete":rule.delete,
+                "inserts":rule.inserts,
+            })
+            .to_string(),
+        ));
+    }
+    for (position, phase) in plan.tick_order.iter().enumerate() {
+        rows.push(("tick".into(), position as i64, phase.clone()));
+    }
+    rows.sort();
+    rows
 }
 
 fn run_sqlite_ticks(conn: &Connection, plan: &Plan, emit_ticks: bool) -> Outcome<()> {
@@ -537,15 +608,7 @@ fn sqlite_shootout(graph_case: &str, n: usize) -> Outcome<Value> {
         "ring" => n,
         other => return Err(format!("unknown shootout case {other}").into()),
     };
-    let mut plan = Plan {
-        ddl: dd_runner::generated_reachability::ddl(),
-        rels: dd_runner::generated_reachability::relations(),
-        rules: dd_runner::generated_reachability::rules(),
-        initial: dd_runner::generated_reachability::initial(),
-        schedule: Vec::new(),
-        tick_order: dd_runner::generated_reachability::tick_order(),
-        operators: Vec::new(),
-    };
+    let mut plan = generated_reachability_plan();
     let setup_started = std::time::Instant::now();
     let conn = Connection::open_in_memory()?;
     setup_sqlite(&conn, &plan)?;
@@ -587,6 +650,18 @@ fn sqlite_shootout(graph_case: &str, n: usize) -> Outcome<Value> {
     }))
 }
 
+fn generated_reachability_plan() -> Plan {
+    Plan {
+        ddl: dd_runner::generated_reachability::ddl(),
+        rels: dd_runner::generated_reachability::relations(),
+        rules: dd_runner::generated_reachability::rules(),
+        initial: dd_runner::generated_reachability::initial(),
+        schedule: Vec::new(),
+        tick_order: dd_runner::generated_reachability::tick_order(),
+        operators: Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod sqlite_shootout_tests {
     #[test]
@@ -599,6 +674,36 @@ mod sqlite_shootout_tests {
             super::sqlite_shootout("ring", 4).unwrap()["closure_count"],
             16
         );
+    }
+
+    #[test]
+    fn catalog_drift_is_rejected_before_relation_state_changes() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let plan = super::generated_reachability_plan();
+        super::setup_sqlite(&conn, &plan).unwrap();
+        super::write_row(
+            &conn,
+            &plan,
+            &dd_runner::Row {
+                rel: "edge".into(),
+                values: vec![serde_json::json!(0), serde_json::json!(1)],
+            },
+            1,
+        )
+        .unwrap();
+        let mut changed = super::generated_reachability_plan();
+        changed.ddl.push("SELECT 'changed'".into());
+        let error = super::setup_sqlite(&conn, &changed).unwrap_err();
+        let edge_count = conn
+            .query_row("SELECT count(*) FROM \"edge\"", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "SQLite runtime catalog differs from the generated DL7 plan"
+        );
+        assert_eq!(edge_count, 1);
     }
 }
 
