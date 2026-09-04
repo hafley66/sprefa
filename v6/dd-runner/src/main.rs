@@ -75,6 +75,17 @@ fn main() {
         println!("{result}");
         return;
     }
+    if arguments.get(1).map(String::as_str) == Some("--shootout-generated") {
+        let graph_case = arguments.get(2).map(String::as_str).unwrap_or("");
+        let n = arguments
+            .get(3)
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let result = dd_runner::generated_reachability::shootout(graph_case, n)
+            .unwrap_or_else(|error| fail(error));
+        println!("{result}");
+        return;
+    }
     let mut path = None;
     let mut arm = Arm::Sqlite;
     let mut phases_only = false;

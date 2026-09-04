@@ -7,6 +7,8 @@ extern crate self as dd_runner;
 pub mod dl7_types;
 #[path = "2_generated_fixture.rs"]
 pub mod generated_fixture;
+#[path = "3_generated_reachability.rs"]
+pub mod generated_reachability;
 pub mod kernel;
 
 #[derive(Deserialize)]
