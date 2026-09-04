@@ -5,7 +5,7 @@
 
 :- use_module('0_logical_program_reifier',
               [ logical_program_rows/2,
-                logical_program_calls/4
+                logical_program_rows_calls/5
               ]).
 :- use_module('../1_libtime/0_evaluator',
               [ evaluate/4,
@@ -116,21 +116,24 @@ continue_dl7_emitter_refs(Reasons, _, _, [], Diagnostics) :-
 
 dl7_emitter_rows(
     OutputRelations,
-    compiler_view(_, CompilerFacts, _, RuntimeProgram),
+    compiler_view(_, CompilerFacts, LogicalProgramRows, RuntimeProgram),
     Rows, Diagnostics) :-
-    logical_program_calls(
-        CompilerFacts, RuntimeProgram, LogicalCalls, ProtocolDiagnostics),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(_, _, Rules), _, _),
+    rules_for_outputs(
+        Rules, OutputRelations, DependencyRelations, EmitterRules),
+    logical_program_rows_calls(
+        CompilerFacts, LogicalProgramRows, DependencyRelations,
+        LogicalCalls, ProtocolDiagnostics),
     evaluate_dl7_emitter_rows(
         ProtocolDiagnostics, CompilerFacts, LogicalCalls, RuntimeProgram,
-        OutputRelations, Rows, Diagnostics).
+        DependencyRelations, EmitterRules, Rows, Diagnostics).
 
 evaluate_dl7_emitter_rows(
     [], CompilerFacts, LogicalCalls,
-    checked_datalog(_, datalog_program(Relations, RuntimeSeeds, Rules), _, _),
-    OutputRelations, Rows, Diagnostics) :-
+    checked_datalog(_, datalog_program(Relations, RuntimeSeeds, _), _, _),
+    DependencyRelations, EmitterRules, Rows, Diagnostics) :-
     !,
-    rules_for_outputs(
-        Rules, OutputRelations, DependencyRelations, EmitterRules),
     include(call_has_relation(DependencyRelations),
             CompilerFacts, RelevantCompilerFacts),
     include(call_has_relation(DependencyRelations),
@@ -146,7 +149,7 @@ evaluate_dl7_emitter_rows(
     evaluate(EmitterRules, Seeds, Closure, EvaluationDiagnostics),
     validate_dl7_emitter_rows(
         EvaluationDiagnostics, RelevantRelations, Closure, Rows, Diagnostics).
-evaluate_dl7_emitter_rows(Diagnostics, _, _, _, _, [], Diagnostics).
+evaluate_dl7_emitter_rows(Diagnostics, _, _, _, _, _, [], Diagnostics).
 
 rules_for_outputs(Rules, OutputRelations, Dependencies, EmitterRules) :-
     output_dependency_closure(Rules, OutputRelations, Dependencies),

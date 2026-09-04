@@ -1,6 +1,8 @@
 :- module(dl7_logical_program_reifier,
           [ logical_program_rows/2,
-            logical_program_calls/4
+            logical_program_calls/4,
+            logical_program_calls/5,
+            logical_program_rows_calls/5
           ]).
 
 :- use_module(library(error), [must_be/2]).
@@ -34,19 +36,44 @@ logical_program_rows(
 % Resolve the prelude's public program relations once the compiler graph is
 % closed, then encode the checked program as ground DL7 calls for a second
 % comptime evaluation. Rule and call occurrences use opaque reference
-% identities. Checked arguments remain tagged values inside `const/1`; later
-% lowering can reify their variable/reference/literal alternatives without
-% changing occurrence identity.
+% identities. Each argument occurrence is an opaque node whose checked
+% variable, reference, literal, or aggregate alternative is another ordinary
+% relation. Aggregate inputs recursively receive their own node identities.
 logical_program_calls(CompilerFacts, CheckedProgram, Calls, Diagnostics) :-
+    logical_program_calls(
+        CompilerFacts, CheckedProgram, all, Calls, Diagnostics).
+
+%% logical_program_calls(+CompilerFacts, +CheckedProgram, +Relations,
+%%                       -Calls, -Diagnostics) is det.
+%
+% `Relations` is either `all` or the closed relation-ID set read by one
+% emitter. Filtering before conversion avoids allocating representations for
+% compiler rows outside that emitter's dependency cone.
+logical_program_calls(
+    CompilerFacts, CheckedProgram, Relations, Calls, Diagnostics) :-
     logical_program_rows(CheckedProgram, Rows),
-    logical_rows_calls(Rows, CompilerFacts, Calls0, Diagnostics0),
-    sort(Calls0, Calls),
+    logical_program_rows_calls(
+        CompilerFacts, Rows, Relations, Calls, Diagnostics).
+
+%% logical_program_rows_calls(+CompilerFacts, +Rows, +Relations,
+%%                            -Calls, -Diagnostics) is det.
+%
+% Convert an existing immutable logical-program view. The artifact emitter
+% already owns this view, so it must not construct and retain a second copy.
+logical_program_rows_calls(
+    CompilerFacts, Rows, Relations, Calls, Diagnostics) :-
+    logical_rows_calls(
+        Rows, CompilerFacts, Relations, Calls0, Diagnostics0),
+    Calls = Calls0,
     sort(Diagnostics0, Diagnostics).
 
-logical_rows_calls([], _, [], []).
-logical_rows_calls([Row | Rows], CompilerFacts, Calls, Diagnostics) :-
-    logical_row_call(Row, CompilerFacts, Result),
-    logical_rows_calls(Rows, CompilerFacts, RestCalls, RestDiagnostics),
+logical_rows_calls([], _, _, [], []).
+logical_rows_calls([Row | Rows], CompilerFacts, Relations,
+                   Calls, Diagnostics) :-
+    logical_row_call_if_requested(
+        Relations, Row, CompilerFacts, Result),
+    logical_rows_calls(
+        Rows, CompilerFacts, Relations, RestCalls, RestDiagnostics),
     prepend_logical_call(Result, RestCalls, RestDiagnostics,
                          Calls, Diagnostics).
 
@@ -54,11 +81,51 @@ prepend_logical_call(ok(Call), Calls, Diagnostics,
                      [Call | Calls], Diagnostics).
 prepend_logical_call(error(Diagnostic), Calls, Diagnostics,
                      Calls, [Diagnostic | Diagnostics]).
+prepend_logical_call(skip, Calls, Diagnostics, Calls, Diagnostics).
 
+logical_row_call_if_requested(all, Row, CompilerFacts, Result) :-
+    !,
+    logical_row_call(Row, CompilerFacts, Result).
+logical_row_call_if_requested(Relations, Row, CompilerFacts, Result) :-
+    logical_row_relation(Row, CompilerFacts, RelationResult),
+    logical_row_call_for_relation(
+        RelationResult, Relations, Row, CompilerFacts, Result).
+
+logical_row_call_for_relation(ok(Relation), Relations, Row,
+                              CompilerFacts, Result) :-
+    !,
+    (   memberchk(Relation, Relations)
+    ->  logical_row_call(Row, CompilerFacts, Result)
+    ;   Result = skip
+    ).
+logical_row_call_for_relation(error(Reason), _, _, _,
+                              error(diagnostic(emit, none, Reason))).
+
+logical_row_relation(program_argument_edge(_, _, _, _), _,
+                     ok(kernel(':'))) :-
+    !.
+logical_row_relation(Row, CompilerFacts, Result) :-
+    functor(Row, Name, _),
+    prelude_relation_id(CompilerFacts, Name, Result).
+
+logical_row_call(Row, _, Result) :-
+    Row = program_argument_edge(Argument, Label, Target, Index),
+    !,
+    logical_identity(Argument, LogicalArgument),
+    logical_argument_target(Target, LogicalTarget),
+    Result = ok(call(ref(kernel(':')),
+                     [ LogicalArgument, const(Label), LogicalTarget,
+                       const(Index)
+                     ])).
 logical_row_call(Row, CompilerFacts, Result) :-
     functor(Row, Name, _),
     prelude_relation_id(CompilerFacts, Name, RelationResult),
     logical_row_call_after_relation(RelationResult, Row, Result).
+
+logical_argument_target(ref(Identity), LogicalIdentity) :-
+    !,
+    logical_identity(Identity, LogicalIdentity).
+logical_argument_target(const(Value), const(Value)).
 
 logical_row_call_after_relation(ok(Relation), Row,
                                 ok(call(ref(Relation), Arguments))) :-
@@ -115,8 +182,9 @@ logical_row_arguments(program_apply(Call, Relation),
                       [LogicalCall, ref(Relation)]) :-
     logical_identity(Call, LogicalCall).
 logical_row_arguments(program_argument(Call, Position, Argument),
-                      [LogicalCall, const(Position), const(Argument)]) :-
-    logical_identity(Call, LogicalCall).
+                      [LogicalCall, const(Position), LogicalArgument]) :-
+    logical_identity(Call, LogicalCall),
+    logical_identity(Argument, LogicalArgument).
 logical_row_arguments(program_dependency(Head, Body, Polarity),
                       [ref(Head), ref(Body), const(PolarityText)]) :-
     atom_string(Polarity, PolarityText).
@@ -182,10 +250,31 @@ call_rows(CallId, call(ref(Relation), Arguments),
     argument_rows(Arguments, CallId, 0, ArgumentRows).
 
 argument_rows([], _, _, []).
-argument_rows([Argument | Arguments], CallId, Position,
-              [program_argument(CallId, Position, Argument) | Rows]) :-
+argument_rows([Argument | Arguments], CallId, Position, Rows) :-
+    ArgumentId = argument_id(CallId, Position),
+    argument_value_rows(Argument, ArgumentId, ValueRows),
     NextPosition is Position + 1,
-    argument_rows(Arguments, CallId, NextPosition, Rows).
+    argument_rows(Arguments, CallId, NextPosition, RestRows),
+    append([program_argument(CallId, Position, ArgumentId) | ValueRows],
+           RestRows, Rows).
+
+argument_value_rows(var(Variable), Argument,
+                    [program_argument_edge(Argument, variable,
+                                           const(Variable), 0)]).
+argument_value_rows(ref(Reference), Argument,
+                    [program_argument_edge(Argument, reference,
+                                           ref(Reference), 0)]).
+argument_value_rows(const(Value), Argument,
+                    [program_argument_edge(Argument, literal,
+                                           const(Value), 0)]).
+argument_value_rows(aggregate(Operator, Input), Argument,
+                    [ program_argument_edge(Argument, aggregate,
+                                            const(Operator), 0),
+                      program_argument_edge(Argument, input,
+                                            ref(InputArgument), 1)
+                    | InputRows]) :-
+    InputArgument = argument_child(Argument, input),
+    argument_value_rows(Input, InputArgument, InputRows).
 
 dependency_rows([], []).
 dependency_rows([depends(ref(Head), ref(Body), Polarity) | Dependencies],

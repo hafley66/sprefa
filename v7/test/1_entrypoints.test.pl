@@ -1228,7 +1228,10 @@ test(checked_program_reifies_as_target_neutral_rows) :-
     Rows1 == Rows2,
     memberchk(program_rule(rule_id(0), call_id(rule(0), head)), Rows1),
     memberchk(program_apply(call_id(rule(0), head), _), Rows1),
-    memberchk(program_argument(call_id(rule(0), head), 0, _), Rows1),
+    HeadArgument = argument_id(call_id(rule(0), head), 0),
+    memberchk(program_argument(call_id(rule(0), head), 0, HeadArgument),
+              Rows1),
+    memberchk(program_argument_edge(HeadArgument, _, _, 0), Rows1),
     !.
 
 test(dl7_emitter_queries_reified_runtime_program_during_second_comptime) :-

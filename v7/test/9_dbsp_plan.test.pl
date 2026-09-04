@@ -4,7 +4,7 @@
               [emit_dbsp_plan/3, dbsp_plan_json/2]).
 :- use_module('../src/2_comptime/2_compiler', [compile_dl7_project/5]).
 :- use_module('../src/3_emit/0_logical_program_reifier',
-              [logical_program_rows/2]).
+              [logical_program_rows/2, logical_program_calls/4]).
 :- use_module('../src/3_emit/1_artifact_emitter', [emit_compiled/4]).
 
 fixture(
@@ -75,6 +75,65 @@ test(negative_goal_is_a_named_emitter_gap) :-
     Diagnostics ==
         [diagnostic(emit, none,
                     unsupported_dbsp_negation(rule_id(0)))].
+
+test(checked_argument_alternatives_are_ordinary_edges) :-
+    ProtocolRows = [
+        call(ref(kernel(':')),
+             [ref(module(prelude)), const(program_relation),
+              ref(protocol(program_relation)), const(0)]),
+        call(ref(kernel(':')),
+             [ref(module(prelude)), const(program_seed),
+              ref(protocol(program_seed)), const(1)]),
+        call(ref(kernel(':')),
+             [ref(module(prelude)), const(program_apply),
+              ref(protocol(program_apply)), const(2)]),
+        call(ref(kernel(':')),
+             [ref(module(prelude)), const(program_argument),
+              ref(protocol(program_argument)), const(3)])
+    ],
+    Arguments = [var(value), ref(other), const("Ada"),
+                 aggregate(count, var(value))],
+    Runtime = checked_datalog(
+                  graph,
+                  datalog_program(
+                      [relation(ref(source), 4, [])],
+                      [call(ref(source), Arguments)],
+                      []),
+                  [], []),
+    logical_program_calls(ProtocolRows, Runtime, Calls, Diagnostics),
+    SeedCall = call_id(seed, 0),
+    findall(argument(Position, Argument, Edges),
+            ( between(0, 3, Position),
+              Argument = argument_id(SeedCall, Position),
+              findall([Label, Target, Index],
+                      member(call(ref(kernel(':')),
+                                  [ ref(logical_program(Argument)),
+                                    const(Label), Target, const(Index)
+                                  ]),
+                             Calls),
+                      Edges)
+            ),
+            ArgumentRows),
+    ArgumentRows == [
+        argument(0, argument_id(SeedCall, 0),
+                 [[variable, const(value), 0]]),
+        argument(1, argument_id(SeedCall, 1),
+                 [[reference, ref(logical_program(other)), 0]]),
+        argument(2, argument_id(SeedCall, 2),
+                 [[literal, const("Ada"), 0]]),
+        argument(3, argument_id(SeedCall, 3),
+                 [[aggregate, const(count), 0],
+                  [input,
+                   ref(logical_program(argument_child(
+                           argument_id(SeedCall, 3), input))), 1]])
+    ],
+    AggregateInput = argument_child(argument_id(SeedCall, 3), input),
+    memberchk(call(ref(kernel(':')),
+                   [ ref(logical_program(AggregateInput)),
+                     const(variable), const(value), const(0)
+                   ]),
+              Calls),
+    Diagnostics == [].
 
 test(dl7_dbsp_emitter_derives_exact_checked_program_rows) :-
     Paths = [ 'v7/emitters/0_dbsp.dl7',
@@ -173,7 +232,8 @@ expected_dbsp_read_rows(LogicalRows, Rows) :-
 
 expected_dbsp_projection_rows(LogicalRows, Rows) :-
     findall(
-        [ ref(logical_program(Rule)), const(Position), const(Argument) ],
+        [ ref(logical_program(Rule)), const(Position),
+          ref(logical_program(Argument)) ],
         ( member(program_rule(Rule, HeadCall), LogicalRows),
           member(program_argument(HeadCall, Position, Argument), LogicalRows)
         ),
