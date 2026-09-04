@@ -77,5 +77,4 @@
     (program_argument ?Call ?Position ?Argument))
 
 (<- (dbsp_argument_edge ?Argument ?Label ?Target ?Index)
-    (program_argument ?Call ?Position ?Argument)
     (program_edge ?Argument ?Label ?Target ?Index))

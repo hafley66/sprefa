@@ -8,3 +8,9 @@
 
 (<- (Output ?Value)
     (Input ?Value))
+
+(: Counted
+   (* (: count int)))
+
+(<- (Counted (count ?Value))
+    (Input ?Value))

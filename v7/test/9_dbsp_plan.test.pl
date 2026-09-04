@@ -164,6 +164,12 @@ test(dl7_dbsp_emitter_derives_exact_checked_program_rows) :-
     artifact_rows(Artifacts, "calls", CallRows),
     artifact_rows(Artifacts, "arguments", ArgumentRows),
     artifact_rows(Artifacts, "argument_edges", ArgumentEdgeRows),
+    memberchk(
+        [ Aggregate, const(aggregate), const(count), const(0) ],
+        ArgumentEdgeRows),
+    memberchk([Aggregate, const(input), Input, const(1)], ArgumentEdgeRows),
+    memberchk([Input, const(variable), const(_), const(0)],
+              ArgumentEdgeRows),
     Observed = dbsp_artifacts(
                    compile(CompileDiagnostics),
                    emit(EmitDiagnostics),
@@ -285,8 +291,7 @@ expected_dbsp_argument_edge_rows(LogicalRows, Rows) :-
     findall(
         [ ref(logical_program(Argument)), const(Label), Target,
           const(Index) ],
-        ( member(program_argument(_, _, Argument), LogicalRows),
-          member(program_edge(Argument, Label, RawTarget, Index),
+        ( member(program_edge(Argument, Label, RawTarget, Index),
                  LogicalRows),
           expected_logical_target(RawTarget, Target)
         ),
