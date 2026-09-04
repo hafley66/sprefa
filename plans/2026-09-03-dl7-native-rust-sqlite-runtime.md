@@ -275,6 +275,8 @@ The first executable slice is present at:
   replacement at top-level and nested positions;
 - `v7/src/1_libtime/1_syntax_expander.pl`: repeated evaluation to an unclaimed
   frontier, with cycle and round-limit diagnostics;
+- `v7/src/0_reader/1b_syntax_materializer.pl`: checked reconstruction of the
+  active graph for the current tree lowerer;
 - `v7/test/fixtures/14_syntax_macros.dl7`: DL7-authored `drop` and `splice2`
   claims. Ordered outputs are ordinary
   `:(Invocation, expansion, Output, Ordinal)` edges.
@@ -283,8 +285,11 @@ The first executable slice is present at:
 distinguishes a zero-output expansion from an unclaimed form. The receipt
 deletes a top-level form, splices nested children, performs a second expansion
 round, preserves reused reader identities, and records claim/output provenance.
-The existing tree callback still constructs `dl7_unit/5`; compiler entry-point
-integration and deterministic identities for macro-created nodes remain open.
+`compile_unit_with_macros/4` now runs this graph phase before ordinary lowering;
+its receipt expands one source declaration form into two declarations and
+removes another form before either reaches the lowerer. Ordinary file/project
+entry points still select the existing tree callback. Automatic macro-program
+selection and deterministic identities for macro-created nodes remain open.
 Macro evaluation slices the checked program to claim writers, syntax
 constructors, `item` and `expansion` edge writers, and their non-input helper
 dependency cone. On the 18-node two-round receipt, expansion alone used

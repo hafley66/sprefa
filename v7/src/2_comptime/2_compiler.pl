@@ -3,17 +3,22 @@
             compile_dl7_project/5,
             compile_dl7_project_rows/6,
             compile_unit/3,
+            compile_unit_with_macros/4,
             compile_units/3,
             type_prelude_paths/1
           ]).
 
+:- use_module(library(error), [must_be/2]).
 :- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module('../0_reader/2_embedder', [dl7_text_unit/5]).
+:- use_module('../0_reader/1a_syntax_grapher', [reify_syntax/4]).
+:- use_module('../0_reader/1b_syntax_materializer', [materialize_syntax/4]).
 :- use_module('../0_reader/4_module_loader', [load_dl7_project/4]).
 :- use_module('../1_libtime/0_evaluator',
               [ evaluate/4,
                 validate_functional_rows/3
               ]).
+:- use_module('../1_libtime/1_syntax_expander', [expand_syntax/5]).
 :- use_module('0a_module_lowerer',
               [ lower_units_deferred/4,
                 lower_units_with_environment/5,
@@ -285,6 +290,57 @@ compiled_outputs([], [], []).
 % retained as immutable artifact data.
 compile_unit(Unit, Compiled, Diagnostics) :-
     compile_units([Unit], Compiled, Diagnostics).
+
+%% compile_unit_with_macros(+Unit, +MacroProgram,
+%%                          -Compiled, -Diagnostics) is det.
+%
+% Transitional graph-first entry point. Reify the unit's current reader tree,
+% run a checked DL7 macro program to closure, materialize the active graph for
+% the existing lowerer, then use the ordinary compiler path.
+compile_unit_with_macros(Unit, MacroProgram, Compiled, Diagnostics) :-
+    must_be(ground, Unit),
+    must_be(ground, MacroProgram),
+    (   Unit = dl7_unit(Origin, Digest, Forms, SourceRows, ExpansionRows)
+    ->  reify_syntax(Forms, SourceRows, SyntaxRows, ReifyDiagnostics),
+        expand_unit_after_reify(
+            ReifyDiagnostics, SyntaxRows, MacroProgram,
+            Origin, Digest, ExpansionRows,
+            ExpandedUnit, ExpansionDiagnostics),
+        compile_expanded_unit(
+            ExpansionDiagnostics, ExpandedUnit, Compiled, Diagnostics)
+    ;   Compiled = [],
+        Diagnostics = [diagnostic(
+                           macrotime, none, invalid_dl7_unit(Unit))]
+    ).
+
+expand_unit_after_reify(
+    [], SyntaxRows, MacroProgram, Origin, Digest, ExpansionRows,
+    ExpandedUnit, Diagnostics) :-
+    !,
+    expand_syntax(SyntaxRows, MacroProgram,
+                  ExpandedRows, MacroProvenance, MacroDiagnostics),
+    materialize_unit_after_expansion(
+        MacroDiagnostics, ExpandedRows, MacroProvenance,
+        Origin, Digest, ExpansionRows, ExpandedUnit, Diagnostics).
+expand_unit_after_reify(Diagnostics, _, _, _, _, _, [], Diagnostics).
+
+materialize_unit_after_expansion(
+    [], ExpandedRows, MacroProvenance, Origin, Digest, ExpansionRows,
+    ExpandedUnit, Diagnostics) :-
+    !,
+    materialize_syntax(
+        ExpandedRows, Forms, SourceRows, MaterializeDiagnostics),
+    append(ExpansionRows, MacroProvenance, AllExpansionRows),
+    ExpandedUnit = dl7_unit(
+                       Origin, Digest, Forms, SourceRows, AllExpansionRows),
+    Diagnostics = MaterializeDiagnostics.
+materialize_unit_after_expansion(
+    Diagnostics, _, _, _, _, _, [], Diagnostics).
+
+compile_expanded_unit([], Unit, Compiled, Diagnostics) :-
+    !,
+    compile_unit(Unit, Compiled, Diagnostics).
+compile_expanded_unit(Diagnostics, _, [], Diagnostics).
 
 %% compile_units(+Units, -Compiled, -Diagnostics) is det.
 %

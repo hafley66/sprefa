@@ -2,8 +2,10 @@
 
 :- use_module('../src/0_reader/0_parser', [read_dl7/5]).
 :- use_module('../src/0_reader/1a_syntax_grapher', [reify_syntax/4]).
+:- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../src/1_libtime/1_syntax_expander', [expand_syntax/5]).
-:- use_module('../src/2_comptime/2_compiler', [compile_dl7/4]).
+:- use_module('../src/2_comptime/2_compiler',
+              [compile_dl7/4, compile_unit_with_macros/4]).
 
 test(dl7_rules_delete_and_splice_nested_syntax_occurrences) :-
     compile_dl7('v7/test/fixtures/14_syntax_macros.dl7',
@@ -15,10 +17,18 @@ test(dl7_rules_delete_and_splice_nested_syntax_occurrences) :-
                   ExpansionDiagnostics),
     syntax_snapshot(Expanded, Snapshot),
     provenance_snapshot(Provenance, ProvenanceSnapshot),
+    CompileText = "(splice2 (Alpha: (*)) (Beta: (*)))\n(drop ignored)\n",
+    dl7_text_unit(macro_compile, macro_compile_source, CompileText,
+                  CompileUnit, CompileReadDiagnostics),
+    compile_unit_with_macros(
+        CompileUnit, MacroProgram, Compiled, MacroCompileDiagnostics),
+    compiled_bind_names(Compiled, BindNames),
     Observed = macro_result(
                    CompileDiagnostics, ReaderDiagnostics,
                    ReifyDiagnostics, ExpansionDiagnostics,
-                   Snapshot, ProvenanceSnapshot),
+                   Snapshot, ProvenanceSnapshot,
+                   CompileReadDiagnostics, MacroCompileDiagnostics,
+                   BindNames),
     Observed ==
         macro_result(
             [], [], [], [],
@@ -39,7 +49,18 @@ test(dl7_rules_delete_and_splice_nested_syntax_occurrences) :-
               output(2, "splice2", 0, 5, 1),
               output(10, "splice2", 0, 12, 0),
               output(10, "splice2", 0, 15, 1)
-            ]).
+            ],
+            [], [], ['Alpha', 'Beta']).
+
+compiled_bind_names(
+    compiled_unit(_, checked_datalog(root_graph(_, Edges), _, _, _), _),
+    Names) :-
+    findall(Name,
+            ( member(':'(module(macro_compile), Name, ref(_), _), Edges),
+              memberchk(Name, ['Alpha', 'Beta'])
+            ),
+            Names0),
+    sort(Names0, Names).
 
 syntax_snapshot(Rows, Snapshot) :-
     findall(frontier(Index, Node),

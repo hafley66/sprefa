@@ -14,6 +14,7 @@ v7/src/0_reader/
   0_parser.pl
   1_expander.pl
   1a_syntax_grapher.pl
+  1b_syntax_materializer.pl
   2_embedder.pl
   3_file_loader.pl
   4_module_loader.pl
@@ -29,8 +30,12 @@ v7/src/0_reader/
 `0_parser.pl` owns text scanning and has no V7 module dependency.
 `1_expander.pl` owns the static rewrite registry and expansion fixpoint.
 `1a_syntax_grapher.pl` reifies reader output as relational graph rows.
-`2_embedder.pl` imports all three and owns the shared text-to-unit pipeline plus
-the `dl7/4` quasi quoter. `3_file_loader.pl` imports that pipeline for files.
+`1b_syntax_materializer.pl` validates and reconstructs an active graph for the
+current tree lowerer.
+`2_embedder.pl` imports the parser, static expander, and grapher and owns the
+shared text-to-unit pipeline plus the `dl7/4` quasi quoter. The compiler imports
+the materializer at its transition back to the current lowerer.
+`3_file_loader.pl` imports the text-to-unit pipeline for files.
 `4_module_loader.pl` retains several files as separate units. `5_cli_mainer.pl`
 imports only the single-file loader.
 

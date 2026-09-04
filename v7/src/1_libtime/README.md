@@ -33,5 +33,7 @@ the resulting frontier are absent from the next round. Provenance is retained
 separately as `expansion_claim/3` and `expansion_output/5` rows.
 
 `expand_syntax/5` currently accepts a checked program supplied by the caller.
-The compiler still uses `0_reader/1_expander.pl` while constructing
-`dl7_unit/5`; automatic macrotime phase selection is a later integration cut.
+`compile_unit_with_macros/4` reifies an existing `dl7_unit/5`, runs this phase,
+materializes the active graph, and enters the current compiler. Ordinary file
+and project compilation still use `0_reader/1_expander.pl`; automatic
+macro-program selection is a later integration cut.
