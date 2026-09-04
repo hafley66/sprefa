@@ -52,27 +52,53 @@ protocol_relation_result(Name, Arity, Relations, _,
 
 evaluate_macro_program(
     Protocol,
-    checked_datalog(Graph, datalog_program(_, ProgramSeeds, Rules), _, _),
+    checked_datalog(_, datalog_program(_, ProgramSeeds, AllRules), _, _),
     Rows, Closure, Diagnostics) :-
-    graph_seeds(Graph, GraphSeeds),
+    macro_rules(Protocol, AllRules, Rules),
     syntax_seed_calls(Rows, Protocol, SyntaxSeeds),
-    append([GraphSeeds, ProgramSeeds, SyntaxSeeds], Seeds0),
+    append(ProgramSeeds, SyntaxSeeds, Seeds0),
     sort(Seeds0, Seeds),
     evaluate(Rules, Seeds, Closure, Diagnostics).
 
-graph_seeds(root_graph(Nodes, Edges), Seeds) :-
-    maplist(graph_node_seed, Nodes, NodeSeeds),
-    maplist(graph_edge_seed, Edges, EdgeSeeds),
-    append(NodeSeeds, EdgeSeeds, Seeds).
+macro_rules(Protocol, Rules, MacroRules) :-
+    include(macro_root_rule(Protocol), Rules, Roots),
+    macro_dependency_closure(Protocol, Rules, Roots, MacroRules0),
+    sort(MacroRules0, MacroRules).
 
-graph_node_seed(node(Id), call(ref(kernel(node)), [ref(Id)])).
-graph_node_seed(module(Id), call(ref(kernel(module)), [ref(Id)])).
-graph_node_seed(product(Id), call(ref(kernel(product)), [ref(Id)])).
-graph_node_seed(sum(Id), call(ref(kernel(sum)), [ref(Id)])).
+macro_root_rule(protocol(_, Form, Atom, Literal, Variable, Source, Claim),
+                rule(call(ref(Relation), _), _)) :-
+    memberchk(Relation, [Form, Atom, Literal, Variable, Source, Claim]),
+    !.
+macro_root_rule(_, rule(call(ref(kernel(node)), _), _)) :- !.
+macro_root_rule(_, rule(call(ref(kernel(':')),
+                             [_, const(Label), _, _]), _)) :-
+    memberchk(Label, [item, expansion]).
 
-graph_edge_seed(':'(Owner, Label, Target, Index),
-                call(ref(kernel(':')),
-                     [ref(Owner), const(Label), Target, const(Index)])).
+macro_dependency_closure(Protocol, Rules, Selected0, Selected) :-
+    findall(
+        Relation,
+        ( member(rule(_, Goals), Selected0),
+          member(checked_goal(_, call(ref(Relation), _)), Goals),
+          \+ macro_input_relation(Protocol, Relation)
+        ),
+        Dependencies0),
+    sort(Dependencies0, Dependencies),
+    include(rule_heads_one_of(Dependencies), Rules, DependencyRules),
+    append(Selected0, DependencyRules, Next0),
+    sort(Next0, Next),
+    (   Next == Selected0
+    ->  Selected = Next
+    ;   macro_dependency_closure(Protocol, Rules, Next, Selected)
+    ).
+
+macro_input_relation(protocol(Frontier, Form, Atom, Literal, Variable,
+                              Source, _), Relation) :-
+    memberchk(Relation, [Frontier, Form, Atom, Literal, Variable, Source]).
+macro_input_relation(_, kernel(node)).
+macro_input_relation(_, kernel(':')).
+
+rule_heads_one_of(Relations, rule(call(ref(Relation), _), _)) :-
+    memberchk(Relation, Relations).
 
 syntax_seed_calls([], _, []).
 syntax_seed_calls([Row | Rows], Protocol, [Call | Calls]) :-

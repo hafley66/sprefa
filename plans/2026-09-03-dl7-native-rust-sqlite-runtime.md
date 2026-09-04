@@ -285,6 +285,12 @@ deletes a top-level form, splices nested children, performs a second expansion
 round, preserves reused reader identities, and records claim/output provenance.
 The existing tree callback still constructs `dl7_unit/5`; compiler entry-point
 integration and deterministic identities for macro-created nodes remain open.
+Macro evaluation slices the checked program to claim writers, syntax
+constructors, `item` and `expansion` edge writers, and their non-input helper
+dependency cone. On the 18-node two-round receipt, expansion alone used
+0.051328 CPU seconds on the local SWI 10.0.2 run. The complete focused command,
+including compilation of the macro fixture and shared prelude, took 12.867 wall
+seconds.
 
 ## Bind and namespace model
 

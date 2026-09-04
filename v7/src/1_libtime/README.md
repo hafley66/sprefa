@@ -12,7 +12,9 @@ Dependency order:
 `0_evaluator.pl` closes a checked stratified Datalog program.
 `0a_syntax_macro_program.pl` resolves the syntax protocol relations from an
 already-checked DL7 program, converts syntax graph rows to evaluator calls, and
-reads macro claims and `expansion` edges from the closure.
+reads macro claims and `expansion` edges from the closure. It slices that
+program to claim writers, syntax constructors, `item` and `expansion` edge
+writers, and their non-input helper dependency cone before evaluation.
 `0b_syntax_rewriter.pl` applies those claims to the active top-level and nested
 item sequences. `1_syntax_expander.pl` owns repeated rounds and termination.
 
