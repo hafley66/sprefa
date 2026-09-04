@@ -1,4 +1,8 @@
-:- module(dl7_logical_program_grapher, [logical_program_graph_rows/2]).
+:- module(dl7_logical_program_grapher,
+          [ logical_program_graph_rows/2,
+            logical_program_graph_calls/2,
+            logical_program_graph_calls/3
+          ]).
 
 :- use_module(library(error), [must_be/2]).
 :- use_module('0_logical_program_reifier', [logical_program_rows/2]).
@@ -14,6 +18,35 @@ logical_program_graph_rows(CheckedProgram, GraphRows) :-
     logical_program_rows(CheckedProgram, Rows),
     findall(Row, logical_graph_row(Rows, Row), Rows0),
     sort(Rows0, GraphRows).
+
+%% logical_program_graph_calls(+CheckedProgram, -Calls) is det.
+logical_program_graph_calls(CheckedProgram, Calls) :-
+    logical_program_graph_calls(CheckedProgram, all, Calls).
+
+%% logical_program_graph_calls(+CheckedProgram, +Relations, -Calls) is det.
+%
+% Convert the normalized view to kernel calls, optionally retaining only the
+% kernel relations in one emitter dependency cone.
+logical_program_graph_calls(CheckedProgram, Relations, Calls) :-
+    logical_program_graph_rows(CheckedProgram, Rows),
+    findall(Call,
+            ( member(Row, Rows),
+              graph_row_call(Row, Relation, Call),
+              requested_relation(Relations, Relation)
+            ),
+            Calls0),
+    sort(Calls0, Calls).
+
+graph_row_call(node(Id), kernel(node),
+               call(ref(kernel(node)), [ref(Id)])).
+graph_row_call(product(Id), kernel(product),
+               call(ref(kernel(product)), [ref(Id)])).
+graph_row_call(':'(Owner, Label, Target, Index), kernel(':'),
+               call(ref(kernel(':')),
+                    [ref(Owner), const(Label), Target, const(Index)])).
+
+requested_relation(all, _) :- !.
+requested_relation(Relations, Relation) :- memberchk(Relation, Relations).
 
 logical_graph_row(Rows, node(Id)) :- occurrence_id(Rows, Id).
 logical_graph_row(Rows, product(Id)) :- occurrence_id(Rows, Id).

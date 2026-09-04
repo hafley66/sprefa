@@ -7,6 +7,8 @@
               [ logical_program_rows/2,
                 logical_program_rows_calls/5
               ]).
+:- use_module('0a_logical_program_grapher',
+              [logical_program_graph_calls/3]).
 :- use_module('../1_libtime/0_evaluator',
               [ evaluate/4,
                 validate_functional_rows/3
@@ -125,12 +127,15 @@ dl7_emitter_rows(
     logical_program_rows_calls(
         CompilerFacts, LogicalProgramRows, DependencyRelations,
         LogicalCalls, ProtocolDiagnostics),
+    logical_program_graph_calls(
+        RuntimeProgram, DependencyRelations, LogicalGraphCalls),
     evaluate_dl7_emitter_rows(
-        ProtocolDiagnostics, CompilerFacts, LogicalCalls, RuntimeProgram,
+        ProtocolDiagnostics, CompilerFacts, LogicalCalls, LogicalGraphCalls,
+        RuntimeProgram,
         DependencyRelations, EmitterRules, Rows, Diagnostics).
 
 evaluate_dl7_emitter_rows(
-    [], CompilerFacts, LogicalCalls,
+    [], CompilerFacts, LogicalCalls, LogicalGraphCalls,
     checked_datalog(_, datalog_program(Relations, RuntimeSeeds, _), _, _),
     DependencyRelations, EmitterRules, Rows, Diagnostics) :-
     !,
@@ -143,13 +148,13 @@ evaluate_dl7_emitter_rows(
     include(declaration_has_relation(DependencyRelations),
             Relations, RelevantRelations),
     append([ RelevantCompilerFacts, RelevantRuntimeSeeds,
-             RelevantLogicalCalls
+             RelevantLogicalCalls, LogicalGraphCalls
            ], Seeds0),
     sort(Seeds0, Seeds),
     evaluate(EmitterRules, Seeds, Closure, EvaluationDiagnostics),
     validate_dl7_emitter_rows(
         EvaluationDiagnostics, RelevantRelations, Closure, Rows, Diagnostics).
-evaluate_dl7_emitter_rows(Diagnostics, _, _, _, _, _, [], Diagnostics).
+evaluate_dl7_emitter_rows(Diagnostics, _, _, _, _, _, _, [], Diagnostics).
 
 rules_for_outputs(Rules, OutputRelations, Dependencies, EmitterRules) :-
     output_dependency_closure(Rules, OutputRelations, Dependencies),

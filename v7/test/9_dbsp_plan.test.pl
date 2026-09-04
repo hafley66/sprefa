@@ -6,7 +6,8 @@
 :- use_module('../src/3_emit/0_logical_program_reifier',
               [logical_program_rows/2, logical_program_calls/4]).
 :- use_module('../src/3_emit/0a_logical_program_grapher',
-              [logical_program_graph_rows/2]).
+              [logical_program_graph_rows/2,
+               logical_program_graph_calls/3]).
 :- use_module('../src/3_emit/1_artifact_emitter', [emit_compiled/4]).
 
 fixture(
@@ -102,10 +103,12 @@ test(reified_program_graph_reconstructs_the_checked_executable_exactly) :-
 test(checked_rules_have_normalized_occurrence_nodes_and_edges) :-
     fixture(Runtime),
     logical_program_graph_rows(Runtime, Rows),
-    logical_rule_snapshot(Rows, Snapshot),
+    logical_program_graph_calls(Runtime, [kernel(':')], EdgeCalls),
+    length(EdgeCalls, EdgeCallCount),
+    logical_rule_snapshot(Rows, EdgeCallCount, Snapshot),
     Snapshot ==
         rule_graph(
-            counts(nodes(7), products(7), edges(12)),
+            counts(nodes(7), products(7), edges(12), edge_calls(12)),
             rule([edge(head, call(head), 0),
                   edge(body, goal(0), 1)]),
             goal([edge(polarity, const(positive), 0),
@@ -122,9 +125,10 @@ test(checked_rules_have_normalized_occurrence_nodes_and_edges) :-
                 argument(body(0), 1,
                          [edge(variable, const(name), 0)])
             ])),
+    EdgeCallCount == 12,
     !.
 
-logical_rule_snapshot(Rows, Snapshot) :-
+logical_rule_snapshot(Rows, EdgeCallCount, Snapshot) :-
     findall(Node, member(node(Node), Rows), Nodes),
     findall(Product, member(product(Product), Rows), Products),
     findall(':'(Owner, Label, Target, Index),
@@ -149,7 +153,7 @@ logical_rule_snapshot(Rows, Snapshot) :-
     maplist(snapshot_call_edge, BodyEdges, BodySnapshot),
     Snapshot = rule_graph(
                    counts(nodes(NodeCount), products(ProductCount),
-                          edges(EdgeCount)),
+                          edges(EdgeCount), edge_calls(EdgeCallCount)),
                    rule(RuleSnapshot), goal(GoalSnapshot),
                    head_call(HeadSnapshot), body_call(BodySnapshot),
                    arguments(Arguments)).

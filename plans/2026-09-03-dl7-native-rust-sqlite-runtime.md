@@ -1104,6 +1104,13 @@ view. The assembler's irreducible operation becomes "freeze and check the graph
 rooted at each rule head" rather than interpreting three unrelated kernel
 relations.
 
+`logical_program_graph_calls/3` converts this view directly to kernel `node`,
+`product`, and `:` calls and filters them by an emitter's dependency cone.
+`v7/src/3_emit/1_artifact_emitter.pl` now includes those calls when a DL7
+emitter reads the corresponding kernel relations. Existing emitters continue
+to receive the compatibility `program_*` relations in parallel; the DBSP
+artifact receipt remains byte-for-byte equal after the additional seed path.
+
 The bootstrap basis is then:
 
 1. The reader produces ordinary nested forms and preserves their identities and
