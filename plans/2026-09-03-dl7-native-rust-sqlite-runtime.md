@@ -265,6 +265,27 @@ rounds idempotent and makes separate invocations hygienic. A later quasiquote
 surface only needs template preservation, one-node splice, and sequence splice;
 those operations lower to the same syntax-node and indexed-edge graph.
 
+The first executable slice is present at:
+
+- `v7/src/0_reader/1a_syntax_grapher.pl`: reader occurrences, source rows,
+  top-level frontier order, and form-child `:/4` edges;
+- `v7/src/1_libtime/0a_syntax_macro_program.pl`: conversion between those rows
+  and an already-checked DL7 macro program;
+- `v7/src/1_libtime/0b_syntax_rewriter.pl`: zero-, one-, and many-output graph
+  replacement at top-level and nested positions;
+- `v7/src/1_libtime/1_syntax_expander.pl`: repeated evaluation to an unclaimed
+  frontier, with cycle and round-limit diagnostics;
+- `v7/test/fixtures/14_syntax_macros.dl7`: DL7-authored `drop` and `splice2`
+  claims. Ordered outputs are ordinary
+  `:(Invocation, expansion, Output, Ordinal)` edges.
+
+`syntax_claim(Invocation, Macro)` is the only extra expansion-control row. It
+distinguishes a zero-output expansion from an unclaimed form. The receipt
+deletes a top-level form, splices nested children, performs a second expansion
+round, preserves reused reader identities, and records claim/output provenance.
+The existing tree callback still constructs `dl7_unit/5`; compiler entry-point
+integration and deterministic identities for macro-created nodes remain open.
+
 ## Bind and namespace model
 
 The proposed source is already accepted by the DL7 reader:
@@ -1556,6 +1577,10 @@ content-addressed compilation, catalog migration, and generation-boundary
 library reload have no implementation receipt yet.
 
 <!-- todo(feature): Move operational binding, equality, literal-filter, aggregate, and projection lowering from 1a_dbsp_plan_emitter.pl into the existing DL7 DBSP graph. -->
+
+<!-- todo(feature): Route compiler input through the checked DL7 graph-expansion phase, move the syntax protocol declarations into a bootstrapped DL7 library, and retire dl7_syntax_rewrite/3 after parity receipts. -->
+
+<!-- todo(feature): Derive hygienic macro-created node identities from macro definition, invocation, output ordinal, and template path, then prove stable repeated builds. -->
 
 <!-- todo(feature): Derive the Rust and SQLite layout, SQL statements, catalog hashes, and generated Rust items from the DBSP graph in DL7. -->
 
