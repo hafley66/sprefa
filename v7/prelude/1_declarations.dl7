@@ -257,6 +257,10 @@
    (* (: rule any)
       (: head_call any)))
 
+(: program_rule_kind
+   (* (: rule any)
+      (: kind text)))
+
 (: program_goal
    (* (: rule any)
       (: position int)

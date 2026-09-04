@@ -110,6 +110,29 @@ test(dl7_dbsp_emitter_derives_exact_checked_program_rows) :-
                     reads(ExpectedReads),
                     projections(ExpectedProjections)).
 
+test(dl7_clock_emitter_queries_level_dependencies_during_comptime) :-
+    Paths = [ 'v7/emitters/0_dbsp.dl7',
+              'v7/emitters/1_clock.dl7',
+              'v7/test/fixtures/10_dbsp_source.dl7'
+            ],
+    compile_dl7_project('.', Paths, CompilerRows, RuntimeProgram,
+                        CompileDiagnostics),
+    named_owner(CompilerRows, 'ClockEmitter', ClockEmitter),
+    Compiled = compiled_unit([], RuntimeProgram, CompilerRows),
+    emit_compiled(dl7(ClockEmitter), Compiled,
+                  artifacts(Artifacts), EmitDiagnostics),
+    artifact_rows(Artifacts, "dependencies", DependencyRows),
+    logical_program_rows(RuntimeProgram, LogicalRows),
+    expected_clock_dependency_rows(LogicalRows, ExpectedRows),
+    Observed = clock_artifact(
+                   compile(CompileDiagnostics),
+                   emit(EmitDiagnostics),
+                   dependencies(DependencyRows)),
+    Observed == clock_artifact(
+                    compile([]),
+                    emit([]),
+                    dependencies(ExpectedRows)).
+
 named_owner(Rows, Name, Owner) :-
     member(call(ref(kernel(':')),
                 [ref(_), const(Name), ref(Owner), const(_)]),
@@ -127,8 +150,10 @@ expected_dbsp_relation_rows(LogicalRows, Rows) :-
 
 expected_dbsp_operator_rows(LogicalRows, Rows) :-
     findall(
-        [ ref(logical_program(Rule)), ref(Head), const("level") ],
+        [ ref(logical_program(Rule)), ref(Head), const(KindText) ],
         ( member(program_rule(Rule, HeadCall), LogicalRows),
+          memberchk(program_rule_kind(Rule, Kind), LogicalRows),
+          atom_string(Kind, KindText),
           memberchk(program_apply(HeadCall, Head), LogicalRows)
         ),
         Rows0),
@@ -154,5 +179,24 @@ expected_dbsp_projection_rows(LogicalRows, Rows) :-
         ),
         Rows0),
     sort(Rows0, Rows).
+
+expected_clock_dependency_rows(LogicalRows, Rows) :-
+    findall(
+        [ ref(logical_program(Rule)), ref(From), ref(To),
+          const("relation"), const("relation"), const(Sign), const(0),
+          const(Role)
+        ],
+        ( member(program_rule(Rule, HeadCall), LogicalRows),
+          memberchk(program_rule_kind(Rule, level), LogicalRows),
+          memberchk(program_apply(HeadCall, To), LogicalRows),
+          member(program_goal(Rule, _, Polarity, BodyCall), LogicalRows),
+          memberchk(program_apply(BodyCall, From), LogicalRows),
+          level_clock_role(Polarity, Sign, Role)
+        ),
+        Rows0),
+    sort(Rows0, Rows).
+
+level_clock_role(positive, "positive", "level_read").
+level_clock_role(negative, "negative", "level_absence").
 
 :- end_tests(dl7_dbsp_plan).

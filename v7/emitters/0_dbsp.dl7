@@ -31,8 +31,9 @@
 (<- (dbsp_relation ?Relation ?Arity)
     (program_relation ?Relation ?Arity))
 
-(<- (dbsp_operator ?Rule ?Head "level")
+(<- (dbsp_operator ?Rule ?Head ?Kind)
     (program_rule ?Rule ?HeadCall)
+    (program_rule_kind ?Rule ?Kind)
     (program_apply ?HeadCall ?Head))
 
 (<- (dbsp_read ?Rule ?Position ?Polarity ?Relation)

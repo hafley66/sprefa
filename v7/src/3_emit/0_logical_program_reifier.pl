@@ -100,6 +100,10 @@ logical_row_arguments(program_rule(Rule, HeadCall),
                       [LogicalRule, LogicalHeadCall]) :-
     logical_identity(Rule, LogicalRule),
     logical_identity(HeadCall, LogicalHeadCall).
+logical_row_arguments(program_rule_kind(Rule, Kind),
+                      [LogicalRule, const(KindText)]) :-
+    logical_identity(Rule, LogicalRule),
+    atom_string(Kind, KindText).
 logical_row_arguments(program_goal(Rule, Position, Polarity, Call),
                       [ LogicalRule, const(Position), const(PolarityText),
                         LogicalCall
@@ -158,7 +162,9 @@ rule_rows([rule(Head, Goals) | Rules], Index, Rows) :-
     goal_rows(Goals, RuleId, Index, 0, GoalRows),
     NextIndex is Index + 1,
     rule_rows(Rules, NextIndex, RestRows),
-    append([[program_rule(RuleId, HeadCallId)], HeadRows, GoalRows,
+    append([[ program_rule(RuleId, HeadCallId),
+              program_rule_kind(RuleId, level)
+            ], HeadRows, GoalRows,
             RestRows], Rows).
 
 goal_rows([], _, _, _, []).
