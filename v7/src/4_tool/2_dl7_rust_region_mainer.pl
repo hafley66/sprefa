@@ -1,4 +1,11 @@
-:- module(dl7_rust_region_mainer, [main/0, refresh_dl7_rust_region/7]).
+:- module(dl7_rust_region_mainer,
+          [ main/0,
+            refresh_dl7_rust_region/7,
+            refresh_generated_region/7,
+            parse_arguments/6,
+            print_result/2,
+            status_exit/2
+          ]).
 
 :- use_module(library(http/json), [atom_json_dict/3]).
 :- use_module(library(process), [process_create/3, process_wait/2]).
@@ -16,10 +23,15 @@ refresh_dl7_rust_region(Extract, Program, Target, Region, Mode,
 continue_after_emit([], Extract, Target, Region, Mode, Generated,
                     Status, Diagnostics) :-
     !,
+    refresh_generated_region(
+        Extract, Target, Region, Mode, Generated, Status, Diagnostics).
+continue_after_emit(Diagnostics, _, _, _, _, _, failed, Diagnostics).
+
+refresh_generated_region(Extract, Target, Region, Mode, Generated,
+                         Status, Diagnostics) :-
     region_arguments(Mode, Target, Region, Arguments),
     run_region(Extract, Arguments, Generated, Exit, Output, Error),
     decode_region_result(Exit, Output, Error, Status, Diagnostics).
-continue_after_emit(Diagnostics, _, _, _, _, _, failed, Diagnostics).
 
 region_arguments(check, Target, Region, [region, Target, Region]).
 region_arguments(apply(default), Target, Region,

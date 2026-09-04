@@ -1,8 +1,12 @@
 use serde::Deserialize;
 use serde_json::Value;
 
+extern crate self as dd_runner;
+
 #[path = "0_dl7_types.rs"]
 pub mod dl7_types;
+#[path = "2_generated_fixture.rs"]
+pub mod generated_fixture;
 pub mod kernel;
 
 #[derive(Deserialize)]

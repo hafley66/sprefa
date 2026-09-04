@@ -48,6 +48,16 @@ dl7-rust-apply program target region:
     cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
     swipl -q -s "{{ v7 }}/src/4_tool/2_dl7_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract" --apply
 
+# Render one checked DL7 program as native dd-runner constructors and check a
+# Soopy-owned Rust region.
+dbsp-rust-check program target region:
+    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/src/4_tool/3_dbsp_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract"
+
+dbsp-rust-apply program target region:
+    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/src/4_tool/3_dbsp_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract" --apply
+
 # Validate exact closure counts on tiny chain and ring graphs.
 runtime-shootout-smoke:
     bash "{{ v7 }}/labs/18_runtime_shootout/4_run.sh" smoke 4

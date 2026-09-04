@@ -22,9 +22,11 @@ write_native_plan(Plan) :-
     writeln('// generated from checked DL7 through the DBSP lowering'),
     writeln('// program structure is native Rust; cells use the kernel Value plane'),
     nl,
-    writeln('use std::collections::BTreeMap;'),
+    writeln('#[allow(unused_imports)]'),
     writeln('use dd_runner::kernel::{Aggregate, LiteralEquals, Operator, Predicate, Projection};'),
     writeln('use dd_runner::{Rel, Row};'),
+    writeln('#[allow(unused_imports)]'),
+    writeln('use std::collections::BTreeMap;'),
     nl,
     write_relations(Plan.rels),
     nl,
@@ -33,6 +35,7 @@ write_native_plan(Plan) :-
     write_operators(Plan.operators).
 
 write_relations(Relations) :-
+    writeln('#[rustfmt::skip]'),
     writeln('pub fn relations() -> Vec<Rel> {'),
     writeln('    vec!['),
     maplist(write_relation, Relations),
@@ -49,6 +52,7 @@ write_relation(Relation) :-
     writeln(' },').
 
 write_initial(Rows) :-
+    writeln('#[rustfmt::skip]'),
     writeln('pub fn initial() -> Vec<Row> {'),
     writeln('    vec!['),
     maplist(write_row, Rows),
@@ -63,6 +67,7 @@ write_row(Row) :-
     writeln('] },').
 
 write_operators(Operators) :-
+    writeln('#[rustfmt::skip]'),
     writeln('pub fn operators() -> Vec<Operator> {'),
     writeln('    vec!['),
     maplist(write_operator, Operators),
