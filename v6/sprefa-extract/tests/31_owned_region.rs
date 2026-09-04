@@ -109,3 +109,19 @@ fn generated_dl7_region_checks_stages_and_preserves_every_outside_byte() {
 
     let _ = std::fs::remove_dir_all(target);
 }
+
+#[test]
+fn rust_comment_markers_select_the_same_owned_region_protocol() {
+    let before = b"pub const BEFORE: u8 = 1;\n// sprefa:auto-begin wire\nold\n// sprefa:auto-end wire\npub const AFTER: u8 = 2;\n";
+    let proposal = propose_owned_region(before, "wire", "generated").unwrap();
+    assert_eq!(proposal.region.current, "old\n");
+    assert_eq!(proposal.replacement, "generated\n");
+    assert_eq!(
+        &before[..proposal.region.start as usize],
+        b"pub const BEFORE: u8 = 1;\n// sprefa:auto-begin wire\n"
+    );
+    assert_eq!(
+        &before[proposal.region.end as usize..],
+        b"// sprefa:auto-end wire\npub const AFTER: u8 = 2;\n"
+    );
+}

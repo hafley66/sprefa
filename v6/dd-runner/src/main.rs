@@ -9,6 +9,8 @@ use std::{
 };
 
 mod kernel;
+#[path = "0_dl7_types.rs"]
+mod dl7_types;
 
 #[derive(Deserialize)]
 struct Plan {

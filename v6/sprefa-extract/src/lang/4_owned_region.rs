@@ -51,16 +51,34 @@ pub fn owned_region_markers(id: &str) -> Result<(String, String), OwnedRegionErr
 
 pub fn find_owned_region(content: &[u8], id: &str) -> Result<OwnedRegion, OwnedRegionError> {
     let text = std::str::from_utf8(content).map_err(|_| OwnedRegionError::NonUtf8)?;
-    let (begin, end) = owned_region_markers(id)?;
-    let begin_offset = unique_marker(text, &begin).map_err(|count| match count {
+    let (semicolon_begin, semicolon_end) = owned_region_markers(id)?;
+    let marker_pairs = [
+        (semicolon_begin, semicolon_end),
+        (
+            format!("// sprefa:auto-begin {id}"),
+            format!("// sprefa:auto-end {id}"),
+        ),
+    ];
+    let begins = marker_pairs
+        .iter()
+        .flat_map(|(begin, _)| {
+            text.match_indices(begin)
+                .map(move |(offset, _)| (offset, begin.len()))
+        })
+        .collect::<Vec<_>>();
+    let ends = marker_pairs
+        .iter()
+        .flat_map(|(_, end)| text.match_indices(end).map(move |(offset, _)| offset))
+        .collect::<Vec<_>>();
+    let (begin_offset, begin_len) = unique_found(&begins).map_err(|count| match count {
         0 => OwnedRegionError::MissingBegin(id.to_string()),
         _ => OwnedRegionError::DuplicateBegin(id.to_string()),
     })?;
-    let end_offset = unique_marker(text, &end).map_err(|count| match count {
+    let end_offset = unique_found(&ends).map_err(|count| match count {
         0 => OwnedRegionError::MissingEnd(id.to_string()),
         _ => OwnedRegionError::DuplicateEnd(id.to_string()),
     })?;
-    let start = line_end(text, begin_offset + begin.len());
+    let start = line_end(text, begin_offset + begin_len);
     if end_offset < start {
         return Err(OwnedRegionError::EndBeforeBegin(id.to_string()));
     }
@@ -72,13 +90,9 @@ pub fn find_owned_region(content: &[u8], id: &str) -> Result<OwnedRegion, OwnedR
     })
 }
 
-fn unique_marker(text: &str, marker: &str) -> Result<usize, usize> {
-    let found = text
-        .match_indices(marker)
-        .map(|(offset, _)| offset)
-        .collect::<Vec<_>>();
-    match found.as_slice() {
-        [offset] => Ok(*offset),
+fn unique_found<T: Copy>(found: &[T]) -> Result<T, usize> {
+    match found {
+        [value] => Ok(*value),
         _ => Err(found.len()),
     }
 }
