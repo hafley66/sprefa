@@ -45,11 +45,8 @@ DL7 already retains file and nested declaration identity:
   compiler view and runs a dependency-sliced second comptime evaluation for
   DL7 emitters over the reified checked program.
 - `v7/src/3_emit/1a_dbsp_plan_emitter.pl` currently builds a JSON dictionary in
-  Prolog for `v6/dd-runner`. This is a prototype endpoint rather than the
-  planned DL7-authored lowering seam.
-- `v6/dd-runner/src/kernel.rs` is a RAM-resident fixed-point evaluator over
-  JSON values. It has no Differential Dataflow dependency. The command reports
-  `--dd-rust-dd` as unbuilt in `v6/dd-runner/src/main.rs`.
+  Prolog. This is a prototype endpoint rather than the planned DL7-authored
+  lowering seam.
 
 The target is generated Rust logic, SQLite-backed relation state, one Rust
 source module corresponding to each loaded DL7 source file, and generation
@@ -91,11 +88,12 @@ the Rust/SQLite executor.
 12. The TS reload catalog rules remain the first migration contract:
     schema change `recreate`, producer change `refill`, equality `keep`, and
     removed relation `drop` when authorized.
-13. Reactive execution has six kernel facts: generation identity, signed row
-    differences, level rules, edge rules, current/pre-state sampling, and an
-    atomic commit boundary. Clocks, retries, HTTP, servers, CLIs, filesystem
-    watching, and retention are programs and hosted implementations over those
-    facts.
+13. The Rust/SQLite application lowering consumes generation identity, signed
+    row differences, level-rule closure, edge-rule occurrences, state samples,
+    and an atomic commit boundary. These are relations in that userland runtime
+    model. The DL7 type graph kernel remains identities and edges. Clocks,
+    retries, HTTP, servers, CLIs, filesystem watching, and history policy are
+    further programs and hosted implementations over the same graph.
 14. Wall-clock time enters through hosted rows. Generated code has no implicit
     wall-clock read. Fixpoint rounds, runtime generations, and wall-clock values
     remain separate identities.
@@ -111,11 +109,55 @@ Disposition of earlier paths:
 | Path | Disposition |
 | --- | --- |
 | `ProgramJson` inside generated Rust | V6 compatibility and debug output |
-| `dd-runner` RAM kernel | shootout arm and semantic oracle |
 | actual Differential Dataflow | optional backend after it enters the same shootout |
 | one dylib per DL7 file | deferred until a measured need for independent linking |
 | one project dylib containing one Rust module per DL7 file | first native reload artifact |
 | source-level `import` and `export` keywords | deferred until colon-edge composition proves insufficient |
+
+## Vocabulary boundary
+
+The DL7 graph layer contains identities, `node`, ordered `:/4` edges, products
+`*`, sums `+`, references, literals, applications, and rules. An edge identity
+can itself own further edges. Dots remain opaque label content at this layer.
+
+The checked Datalog evaluator currently calls each callable product a
+`relation`: its ordered edges define tuple positions and its calls are rows.
+That word describes one evaluator over the graph. Keyed state, append history,
+event boundaries, DBSP operators, SQLite layouts, and the DL6 relation model are
+userland schemas and lowerings over graph identities. They do not define what a
+DL7 type is.
+
+The target userland temporal vocabulary keeps a maximum path depth of three:
+
+```text
+Change.Assert
+Change.Retract
+
+Time.Current
+Time.Previous
+Time.Next
+
+Event.Enter
+Event.Exit
+
+Key.Replace
+History.Append
+History.Window.Count
+History.Window.Time
+```
+
+`Change.Assert` and `Change.Retract` are signed multiplicities. Applying them to
+a stored set produces its current snapshot; that storage fold stays implicit.
+`History.Window.Count` and `History.Window.Time` describe the two history
+removal boundaries.
+`Time.Next` places a derived change in generation `G + 1`; it carries no task,
+thread, timer, or wall-clock scheduling semantics. `Event.Enter` and
+`Event.Exit` are the positive and negative differences observed at a selected
+relation boundary.
+
+DBSP names remain available for the target-neutral lowering graph, for example
+`DBSP.Map`, `DBSP.Join`, `DBSP.Antijoin`, `DBSP.Reduce`, and `DBSP.Feedback`.
+They identify backend algebra rather than surface language semantics.
 
 ## Bind and namespace model
 
@@ -425,9 +467,10 @@ watch policy, and host transports enter later lowering relations.
 
 ## Reactive kernel and userland
 
-### Minimal temporal basis
+### Application-runtime temporal basis
 
-DL6 provides an executable specification for the initial DL7 semantics:
+The existing DL6 fixtures provide historical input/output receipts for this
+userland runtime model:
 
 | Construct | Runtime meaning | Dependency row |
 | --- | --- | --- |
@@ -438,8 +481,9 @@ DL6 provides an executable specification for the initial DL7 semantics:
 | `pre(Rel(...))` | sample persistent state after earlier writes in this generation, with prior level rows frozen | previous sample, grade -1 |
 | signed boundary difference | add, replacement pair, retention removal, or departure | generation boundary |
 
-The old ring names `b`, `z`, and `n` are compiler representation details. DL7
-reifies their meanings as relation plane, occurrence plane, and history plane.
+The old ring names `b`, `z`, and `n` are fixture representation details. The
+DL7 application lowering reifies their meanings as relation plane, occurrence
+plane, and history plane.
 The reified dependency row carries source relation, target relation, read plane,
 write plane, sign, grade, and role. Clock checking is a DL7 analysis over those
 rows.
@@ -503,10 +547,123 @@ debounce, cadence, and retry policies are ordinary relations joining those rows.
 Generated Rust reads the supplied instant or bucket value. Replay therefore uses
 the recorded clock relation and does not consult the machine clock.
 
+## Hosted relations as graph annotations
+
+The current `(Host Implementation Inputs Outputs)` form has a dedicated branch
+in `0_lowerer.pl`. That branch combines both products into one callable product
+and synthesizes `Hosted` and `HostPort` rules. It also explicitly bypasses the
+ordinary expression-bind and generated-program path. The host planner later
+validates the resulting rows after compiler fixpoint and removes only the
+planning relations from the emitted program.
+
+The graph already supports the verbose userland representation:
+
+```dl7
+(: ExtractTsi
+   (* (: source Source)
+      (: mode ExtractMode)
+      (: record TsiRecord)))
+
+(Hosted ExtractTsi SprefaExtract)
+(HostPort ExtractTsi source Input)
+(HostPort ExtractTsi mode Input)
+(HostPort ExtractTsi record Output)
+```
+
+The target source form declares the callable product normally, annotates its
+reified declaration edge with the implementation, and annotates output field
+edges. Unmarked callable fields are inputs. In expanded rows:
+
+```text
+:(File, ExtractTsi, ExtractTsiRelation, declaration_index)
+edge_ref(File, ExtractTsi, ExtractTsiDeclarationEdge)
+:(ExtractTsiDeclarationEdge, host, SprefaExtract, 0)
+
+:(ExtractTsiRelation, record, TsiRecord, field_index)
+edge_ref(ExtractTsiRelation, record, RecordFieldEdge)
+:(RecordFieldEdge, direction, Output, 0)
+```
+
+DL7 rules derive `Hosted(Relation, Implementation)` from the first annotation,
+derive output `HostPort` rows from the second annotation, and derive input
+`HostPort` rows from the remaining callable field edges. Source relations mark
+all fields as output. Sink relations have no output-field marks.
+
+The accepted short surface for annotating a declaration or inline field edge
+still needs a compiler receipt. The implementation cut is:
+
+1. Add the short nested-colon annotation surface and preserve the reified edge
+   identity it targets.
+2. Express host-marker and port-direction normalization as prelude rules.
+3. Feed those derived rows to the existing post-fixpoint host validation.
+4. Remove the `Host` target branch and its expression-bind exclusion from the
+   lowerer after the old fixture has an equivalent graph-authored fixture.
+
+The exact current `Host` expression could instead become a userland constructor.
+`HistoryV1` proves that DL7 rules can intern a result identity, copy ordered
+edges, derive `node` and `product`, emit `def`, and emit executable `head` and
+`body` rows through the generated-program carrier. The normal-declaration form
+uses fewer generated identities and makes hosting an annotation on existing
+graph objects.
+
+## Comptime and application-host execution
+
+The evaluator consuming a hosted callable determines its phase:
+
+```text
+compiler evaluation demands ExtractTsi or Soopy
+  -> compiler host executes the process
+  -> response rows re-enter compiler evaluation
+  -> compiler closure and generated artifacts include the result
+
+generated application demands ExtractTsi or Soopy
+  -> committed demand difference reaches the resident host
+  -> application host executes the process
+  -> response rows enter a later application generation
+  -> application rules close again
+```
+
+Today, source extraction and Soopy region application are direct Prolog process
+calls in their mainer modules. They sit outside the hosted relation contract.
+The application artifact emitter performs one dependency-sliced Datalog
+evaluation to fixed point. It has no host-demand execution loop.
+
+Application run-to-completion means repeating committed generations until the
+host-response queue and `Time.Next` carry are empty:
+
+```text
+close pure rules
+  -> commit signed outputs and hosted demand differences
+  -> execute host demands outside the transaction
+  -> enqueue responses as later-generation assertions
+  -> repeat while responses or carry remain
+```
+
+The persistent SQLite watch path has transactional generations and signed
+retractions. Host-demand derivation, execution, response ingestion, and the
+quiescence loop remain implementation work for the app emitter and resident
+host.
+
+## Lists
+
+DL7 comptime currently exposes `nil(return)` and
+`cons(head, tail, return)` as kernel relations. The evaluator represents their
+values as finite proper Prolog lists. A ground list can be deconstructed; a
+ground head and ground proper tail can construct the next list. Prelude rules
+already use these calls for constructor argument lists, closed name sets, and
+recursive `contains`.
+
+The graph has no declared recursive `List` sum/product type yet. Rust/SQLite
+layout, dylib ABI cells, equality, interning, JSON array conversion, and an open
+or improper tail also have no list contract. The userland graph shape to prove
+is a recursive sum with one empty variant and one product carrying `head` and
+`tail`; the current `nil` and `cons` calls can bootstrap its constructor rules.
+
 ## Hosted HTTP, servers, and CLIs
 
-`Host` already lowers a callable product into `Hosted` and `HostPort` rows. Empty
-input or output products extend that same contract to sources and sinks:
+The current `Host` bootstrap lowers a callable product into `Hosted` and
+`HostPort` rows. Empty input or output products extend that contract to sources
+and sinks:
 
 ```dl7
 (: HttpFetch
@@ -649,7 +806,7 @@ Current native construction uses the operational map/join lowering in
 structural DBSP graph. Moving binding selection, equality predicates, literal
 filters, aggregate operators, and projections from that Prolog renderer into
 DL7 relations is the next lowering cut. Generated source constructs the RAM
-kernel types plus SQLite DDL, decoded reads, SQL rule bundles, and tick phases.
+plan types plus SQLite DDL, decoded reads, SQL rule bundles, and tick phases.
 The resident SQLite path has transactional generations, persistent state, and
 a strict runtime catalog. Per-source Rust module partitioning,
 content-addressed compilation, catalog migration, and generation-boundary
@@ -658,6 +815,10 @@ library reload have no implementation receipt yet.
 <!-- todo(feature): Move operational binding, equality, literal-filter, aggregate, and projection lowering from 1a_dbsp_plan_emitter.pl into the existing DL7 DBSP graph. -->
 
 <!-- todo(feature): Derive the Rust and SQLite layout, SQL statements, catalog hashes, and generated Rust items from the DBSP graph in DL7. -->
+
+<!-- todo(feature): Replace the lowerer-special `Host` target with normal callable declarations plus hosted declaration-edge and output field-edge annotations derived by DL7 rules. -->
+
+<!-- todo(feature): Define the recursive userland List graph and prove its comptime values, Rust/SQLite cells, interning, equality, and JSON array boundary. -->
 
 <!-- todo(feature): Emit one Rust module per loaded DL7 file and compile the generated project into a content-addressed dynamic library. -->
 
@@ -695,13 +856,14 @@ The arc closes with these executable receipts:
 8. A failed source edit leaves the prior library and database state active.
 9. A watcher run over a temporary checkout observes create, edit, rename, and
    removal as signed source and TSI relation changes.
-10. The generated Rust, RAM kernel, and Rust/SQLite arms appear in the existing
-    shootout result table with current measured statistics.
+10. The generated Rust and Rust/SQLite arms appear in the existing shootout
+    result table with current measured statistics.
 11. Temporal fixtures compare ordered signed differences for level closure,
     keyed replacement, same-generation `pre` folding, `latest` sampling,
     delayed recurrence, departure, and retention.
 12. A compile-time HTTP request and runtime HTTP request use the same hosted
-    relation declaration with phase-scoped demand identities.
+    relation declaration with phase-scoped demand identities, and the runtime
+    reaches quiescence after all host responses and `Time.Next` carry drain.
 13. HTTP server and CLI fixtures correlate ingress with egress and prove that no
     socket or process wait holds a SQLite write transaction.
 14. JSON Schema category fixtures import into the type graph, validate boundary
