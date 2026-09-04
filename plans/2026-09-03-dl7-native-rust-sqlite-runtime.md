@@ -219,6 +219,76 @@ An export policy can address the binding edge itself:
 The edge identity remains available for any other annotation. The resolver can
 join the visibility relation when a project chooses restricted traversal.
 
+### Inline and anonymous bind continuity
+
+DL6 assigned each inline product or sum a semantic identity from three inputs:
+
+```text
+owning semantic identity
+recursive site path
+specialized inline shape
+```
+
+The site path appended field names while descending through products and
+variant fields, and appended argument ordinals while descending through
+wrappers or constructor applications. Inserting an unrelated declaration did
+not change that identity. Nested declaration blocks and dotted declaration
+spelling produced the same authored declaration path before DL6 flattened it.
+
+DL7 retains this behavior as graph structure. Generated relation names remain
+diagnostic or rendering artifacts. Every inline `*` or `+` receives an
+identity; the binding edge from its owner supplies the next authored path
+segment:
+
+```dl7
+(Container:
+  (* (payload:
+        (* (id: int)
+           (result:
+             (+ (Ok: text)
+                (Error: text))))))))
+```
+
+```text
+File -Container-> ContainerType
+ContainerType -payload-> PayloadType
+PayloadType -id-> int
+PayloadType -result-> ResultType
+ResultType -Ok-> text
+ResultType -Error-> text
+```
+
+The semantic site key is the owning binding-edge identity followed by nested
+labels and wrapper/application ordinals. Reader-node identity remains source
+origin evidence. The specialized shape distinguishes applications at the same
+authored constructor site.
+
+Two equal inline shapes at different binding sites retain different identities.
+An explicit alias bind points to the existing identity. A named intermediate
+bind exposes any step without changing the target identity:
+
+```dl7
+(Payload: (Member Container payload))
+(Result: (Member Payload result))
+(Ok: (Member Result Ok))
+```
+
+Dots remain opaque atoms. `Container.payload.result.Ok` can be an authored label
+independent of the four-edge walk above.
+
+The continuity receipts are:
+
+1. Nested product and sum sites derive the exact owner/label walk.
+2. Adding an unrelated sibling bind preserves existing semantic site keys.
+3. Equal shapes at separate sites have separate identities.
+4. An alias bind preserves the target identity while gaining its own binding
+   edge identity.
+5. Inline shapes under `List`, `Option`, or another constructor include argument
+   ordinals in their site keys.
+6. Generic specializations at one site include their concrete arguments.
+7. Named and inline products use the same field-value representation at the
+   Rust, SQLite, JSON, and hosted boundaries.
+
 ## Type signatures
 
 The first implementation signatures are grouped by layer.
