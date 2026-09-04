@@ -234,6 +234,53 @@
       (: name text)
       (: output type)))
 
+; The checked runtime program re-enters comptime as ordinary rows for emitter
+; programs. Structural rule, call, and argument identities remain opaque.
+(: program_relation
+   (* (: relation type)
+      (: arity int)))
+
+(: program_key
+   (* (: relation type)
+      (: ordinal int)))
+
+(: program_key_position
+   (* (: relation type)
+      (: key_ordinal int)
+      (: position int)))
+
+(: program_seed
+   (* (: seed any)
+      (: call any)))
+
+(: program_rule
+   (* (: rule any)
+      (: head_call any)))
+
+(: program_goal
+   (* (: rule any)
+      (: position int)
+      (: polarity text)
+      (: call any)))
+
+(: program_apply
+   (* (: call any)
+      (: relation type)))
+
+(: program_argument
+   (* (: call any)
+      (: position int)
+      (: argument any)))
+
+(: program_dependency
+   (* (: head type)
+      (: body type)
+      (: polarity text)))
+
+(: program_stratum
+   (* (: relation type)
+      (: level int)))
+
 ; Hosted relations retain an ordinary callable product. Hosted identifies the
 ; implementation node, while HostPort classifies each existing relation edge
 ; by the direction used at the external operator boundary.

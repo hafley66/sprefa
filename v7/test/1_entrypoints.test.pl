@@ -1174,6 +1174,37 @@ test(checked_program_reifies_as_target_neutral_rows) :-
     memberchk(program_argument(call_id(rule(0), head), 0, _), Rows1),
     !.
 
+test(dl7_emitter_queries_reified_runtime_program_during_second_comptime) :-
+    compile_dl7('v7/test/fixtures/9_program_emitter.dl7',
+                CompilerRows, RuntimeProgram, CompileDiagnostics),
+    named_owner(CompilerRows, 'ProgramEmitter', ProgramEmitter),
+    named_owner(CompilerRows, relation_artifact, RelationArtifact),
+    findall(
+        Arguments,
+        member(call(ref(RelationArtifact), Arguments), CompilerRows),
+        FirstComptimeRows),
+    Compiled = compiled_unit([], RuntimeProgram, CompilerRows),
+    emit_compiled(
+        dl7(ProgramEmitter), Compiled,
+        Artifact, EmitDiagnostics),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(Relations, _, _), _, _),
+    findall(
+        [ref(Relation), const(Arity)],
+        member(relation(ref(Relation), Arity, _), Relations),
+        ExpectedRows0),
+    sort(ExpectedRows0, ExpectedRows),
+    Observed = second_comptime(
+                   compile(CompileDiagnostics),
+                   first_rows(FirstComptimeRows),
+                   emit(EmitDiagnostics, Artifact)),
+    Observed == second_comptime(
+                    compile([]),
+                    first_rows([]),
+                    emit([], artifacts([
+                        artifact("relations", RelationArtifact, ExpectedRows)
+                    ]))).
+
 test(userland_type_algebra_proves_contracts_and_constructs_products) :-
     compile_dl7('v7/test/fixtures/3_type_algebra.dl7',
                 Rows, Runtime, Diagnostics),

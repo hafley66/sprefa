@@ -3,7 +3,14 @@
             compiler_view/2
           ]).
 
-:- use_module('0_logical_program_reifier', [logical_program_rows/2]).
+:- use_module('0_logical_program_reifier',
+              [ logical_program_rows/2,
+                logical_program_calls/4
+              ]).
+:- use_module('../1_libtime/0_evaluator',
+              [ evaluate/4,
+                validate_functional_rows/3
+              ]).
 
 %% compiler_view(+CompiledUnit, -View) is det.
 %
@@ -50,12 +57,12 @@ emit_compiled(prolog(Callable), CompiledUnit, Artifact, Diagnostics) :-
         )).
 emit_compiled(
     dl7(Emitter),
-    compiled_unit(_, _, CompilerFacts),
+    CompiledUnit,
     Artifact,
     Diagnostics) :-
     !,
-    dl7_emitter_artifact(
-        Emitter, CompilerFacts, Artifact, Diagnostics).
+    compiler_view(CompiledUnit, View),
+    dl7_emitter_artifact(Emitter, View, Artifact, Diagnostics).
 emit_compiled(Emitter, _, [],
               [diagnostic(emit, none, unknown_emitter(Emitter))]).
 
@@ -68,14 +75,17 @@ call_prolog_emitter(Callable, View, Artifact, Diagnostics) :-
                            prolog_emitter_failed(Callable))]
     ).
 
-dl7_emitter_artifact(Emitter, CompilerFacts, Artifact, Diagnostics) :-
+dl7_emitter_artifact(
+    Emitter, View,
+    Artifact, Diagnostics) :-
+    View = compiler_view(_, CompilerFacts, _, _),
     named_relation_id(CompilerFacts, emits, EmitsResult),
-    continue_dl7_emitter_artifact(
-        EmitsResult, Emitter, CompilerFacts, Artifact, Diagnostics).
+    continue_dl7_emitter_protocol(
+        EmitsResult, Emitter, CompilerFacts, View, Artifact, Diagnostics).
 
-continue_dl7_emitter_artifact(
-    ok(Emits), Emitter, CompilerFacts,
-    artifacts(Artifacts), Diagnostics) :-
+continue_dl7_emitter_protocol(
+    ok(Emits), Emitter, CompilerFacts, View,
+    Artifact, Diagnostics) :-
     !,
     findall(
         artifact_ref(Name, Output),
@@ -85,12 +95,95 @@ continue_dl7_emitter_artifact(
         ArtifactRefs0),
     sort(ArtifactRefs0, ArtifactRefs),
     artifact_ref_diagnostics(Emitter, ArtifactRefs, RefDiagnostics),
-    materialize_artifact_refs(
-        RefDiagnostics, ArtifactRefs, CompilerFacts,
-        Artifacts, Diagnostics).
-continue_dl7_emitter_artifact(
-    error(Reason), _, _, [],
+    continue_dl7_emitter_refs(
+        RefDiagnostics, ArtifactRefs, View, Artifact, Diagnostics).
+continue_dl7_emitter_protocol(
+    error(Reason), _, _, _, [],
     [diagnostic(emit, none, Reason)]).
+
+continue_dl7_emitter_refs(
+    [], ArtifactRefs, View, artifacts(Artifacts), Diagnostics) :-
+    !,
+    findall(Output,
+            member(artifact_ref(_, Output), ArtifactRefs),
+            OutputRelations0),
+    sort(OutputRelations0, OutputRelations),
+    dl7_emitter_rows(OutputRelations, View, Rows, ViewDiagnostics),
+    materialize_artifact_refs(
+        ViewDiagnostics, ArtifactRefs, Rows, Artifacts, Diagnostics).
+continue_dl7_emitter_refs(Reasons, _, _, [], Diagnostics) :-
+    maplist(emitter_diagnostic, Reasons, Diagnostics).
+
+dl7_emitter_rows(
+    OutputRelations,
+    compiler_view(_, CompilerFacts, _, RuntimeProgram),
+    Rows, Diagnostics) :-
+    logical_program_calls(
+        CompilerFacts, RuntimeProgram, LogicalCalls, ProtocolDiagnostics),
+    evaluate_dl7_emitter_rows(
+        ProtocolDiagnostics, CompilerFacts, LogicalCalls, RuntimeProgram,
+        OutputRelations, Rows, Diagnostics).
+
+evaluate_dl7_emitter_rows(
+    [], CompilerFacts, LogicalCalls,
+    checked_datalog(_, datalog_program(Relations, RuntimeSeeds, Rules), _, _),
+    OutputRelations, Rows, Diagnostics) :-
+    !,
+    rules_for_outputs(
+        Rules, OutputRelations, DependencyRelations, EmitterRules),
+    include(call_has_relation(DependencyRelations),
+            CompilerFacts, RelevantCompilerFacts),
+    include(call_has_relation(DependencyRelations),
+            RuntimeSeeds, RelevantRuntimeSeeds),
+    include(call_has_relation(DependencyRelations),
+            LogicalCalls, RelevantLogicalCalls),
+    include(declaration_has_relation(DependencyRelations),
+            Relations, RelevantRelations),
+    append([ RelevantCompilerFacts, RelevantRuntimeSeeds,
+             RelevantLogicalCalls
+           ], Seeds0),
+    sort(Seeds0, Seeds),
+    evaluate(EmitterRules, Seeds, Closure, EvaluationDiagnostics),
+    validate_dl7_emitter_rows(
+        EvaluationDiagnostics, RelevantRelations, Closure, Rows, Diagnostics).
+evaluate_dl7_emitter_rows(Diagnostics, _, _, _, _, [], Diagnostics).
+
+rules_for_outputs(Rules, OutputRelations, Dependencies, EmitterRules) :-
+    output_dependency_closure(Rules, OutputRelations, Dependencies),
+    include(rule_heads_relation(Dependencies), Rules, EmitterRules).
+
+call_has_relation(Relations, call(ref(Relation), _)) :-
+    memberchk(Relation, Relations).
+
+declaration_has_relation(Relations, relation(ref(Relation), _, _)) :-
+    memberchk(Relation, Relations).
+
+output_dependency_closure(Rules, Relations, Closure) :-
+    findall(
+        BodyRelation,
+        ( member(rule(call(ref(HeadRelation), _), Goals), Rules),
+          memberchk(HeadRelation, Relations),
+          member(checked_goal(_, call(ref(BodyRelation), _)), Goals)
+        ),
+        BodyRelations),
+    append(Relations, BodyRelations, Next0),
+    sort(Next0, Next),
+    (   Next == Relations
+    ->  Closure = Next
+    ;   output_dependency_closure(Rules, Next, Closure)
+    ).
+
+rule_heads_relation(Relations, rule(call(ref(Relation), _), _)) :-
+    memberchk(Relation, Relations).
+
+validate_dl7_emitter_rows([], Relations, Closure, Rows, Diagnostics) :-
+    !,
+    validate_functional_rows(Relations, Closure, Diagnostics),
+    (   Diagnostics == []
+    ->  Rows = Closure
+    ;   Rows = []
+    ).
+validate_dl7_emitter_rows(Diagnostics, _, _, [], Diagnostics).
 
 named_relation_id(CompilerFacts, Name, Result) :-
     findall(
@@ -132,8 +225,7 @@ materialize_artifact_refs([], ArtifactRefs, CompilerFacts,
     !,
     maplist(materialize_artifact_ref(CompilerFacts),
             ArtifactRefs, Artifacts).
-materialize_artifact_refs(Reasons, _, _, [], Diagnostics) :-
-    maplist(emitter_diagnostic, Reasons, Diagnostics).
+materialize_artifact_refs(Diagnostics, _, _, [], Diagnostics).
 
 emitter_diagnostic(Reason, diagnostic(emit, none, Reason)).
 

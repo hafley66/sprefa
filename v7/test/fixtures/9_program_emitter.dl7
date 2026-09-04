@@ -1,0 +1,28 @@
+(: Source
+   (* (: id int)))
+
+(: Selected
+   (* (: id int)))
+
+(Source 1)
+
+(<- (Selected ?Id)
+    (Source ?Id))
+
+(: ProgramEmitter (*))
+
+(: relation_artifact
+   (* (: relation type)
+      (: arity int)))
+
+(: program_relation_copy
+   (* (: relation type)
+      (: arity int)))
+
+(emits ProgramEmitter "relations" relation_artifact)
+
+(<- (program_relation_copy ?Relation ?Arity)
+    (program_relation ?Relation ?Arity))
+
+(<- (relation_artifact ?Relation ?Arity)
+    (program_relation_copy ?Relation ?Arity))
