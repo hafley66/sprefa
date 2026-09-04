@@ -191,8 +191,25 @@ sum(AFieldNode)
 (: ?AFieldNode X ?XTarget ?VariantIndex)
 ```
 
-The author may bind an intermediate result once the ordinary relation used for
-edge projection has a `return` edge:
+The current read-only spelling uses `:/4` in a rule body. An anonymous variable
+discards the ordinal:
+
+```dl7
+(<- (Found ?Target)
+    (: Container payload ?Target ?_))
+```
+
+Several steps currently require one goal per edge:
+
+```dl7
+(<- (Found ?Target)
+    (: A B ?AB ?_)
+    (: ?AB c ?ABC ?_)
+    (: ?ABC d ?Target ?_))
+```
+
+The ordinary relation used for edge projection can expose the target as a
+return value:
 
 ```dl7
 (: Member
@@ -204,9 +221,9 @@ edge projection has a `return` edge:
     (: ?Owner ?Label ?Target ?Index))
 ```
 
-A derived bind such as `(User: (Member accounts 'User))` then lowers through
-the existing expression-bind path in `0_lowerer.pl`. This spelling needs a
-focused compiler receipt before it becomes documentation for module aliases.
+Constant labels in generic calls currently lack the colon relation's special
+label lowering. The path surface below supplies labels directly to generated
+`:/4` goals and avoids that gap.
 
 An export policy can address the binding edge itself:
 
@@ -276,6 +293,51 @@ bind exposes any step without changing the target identity:
 Dots remain opaque atoms. `Container.payload.result.Ok` can be an authored label
 independent of the four-edge walk above.
 
+### Colon path reads
+
+`A:B:c:d` is reserved as read-only path syntax:
+
+```text
+A:B       = follow edge B from A
+A:B:c     = follow B from A, then c
+A:B:c:d   = follow B, c, and d; return the final target
+```
+
+Using a path directly creates no alias or binding edge:
+
+```dl7
+(: Holder
+   (* (: value A:B:c:d)))
+
+(<- (Copied ?Value)
+    (A:B ?Value))
+```
+
+The first path supplies a type identity. The second resolves `A:B` to a
+callable product and calls it. Binding the result remains explicit:
+
+```dl7
+(BType: A:B)
+(DType: A:B:c:d)
+```
+
+These binds add `BType` or `DType` edges from the current owner to the resolved
+targets. They do not mint copies of those targets.
+
+Path lowering expands to fresh intermediate variables and ordinary `:/4` body
+goals. Labels are compile-known atoms. Dynamic owner or label traversal keeps
+the explicit relation form:
+
+```dl7
+(: ?Owner ?Label ?Target ?Index)
+```
+
+The reader currently rejects internal-colon tokens such as `A:B:c:d`. The
+receipt must add tokenization and expression lowering for this path form while
+preserving the existing trailing-colon bind rewrite `A:`. A path expression is
+valid in type, value, callable, and bind-right-hand-side positions. Rule heads
+continue to write edges only through explicit `:/4` calls or bind generation.
+
 The continuity receipts are:
 
 1. Nested product and sum sites derive the exact owner/label walk.
@@ -288,6 +350,8 @@ The continuity receipts are:
 6. Generic specializations at one site include their concrete arguments.
 7. Named and inline products use the same field-value representation at the
    Rust, SQLite, JSON, and hosted boundaries.
+8. `A:B:c:d` lowers to three ordered edge reads and creates no binding edge.
+9. `(Alias: A:B:c:d)` creates one alias edge to the final target.
 
 ## Type signatures
 
@@ -588,26 +652,115 @@ path-conflict and nonconstructive-cycle walk was pinned off on the production
 compile path; DL7 receives it only after its cost and acceptance set are covered
 by receipts.
 
-### Surface disposition
+### Generic form expansion
 
-The temporal basis does not require a family of stream operators:
+Lisp forms remove the dedicated statement grammar that DL6 used for `match`.
+The reader already produces one nested form tree for the operator, scrutinee,
+and arm forms. The remaining compiler mechanism is a generic pre-check expansion
+protocol:
 
-- `match` expands each arm to an ordinary `<-` or `<+` rule with the scrutinee
-  prepended to its body. Exhaustiveness is a checker over sum edges.
-- Accumulation uses a keyed state relation, an optional history relation, and an
-  edge rule reading `pre`. DL6 reserved the word `scan` and added no scan form.
-- `latest` and `pre` remain body operations until a DL7 program demonstrates a
-  smaller relation-only expansion with identical ordering behavior.
-- `files` and `files_at` are hosted relations for live-worktree and pinned-revision
-  enumeration. The old `scan` word does not name filesystem traversal.
-- `next`, `await`, and conditional routing can be ordinary registered relations
-  over generation-scoped rows. Retraction cancels pending work while an effect
-  is still pending; an effect already performed needs an explicit compensation
-  relation.
+1. Reify source forms as ordinary application nodes and ordered argument edges.
+2. Mark a callable such as `match` as compile-time syntax with one ordinary
+   annotation edge.
+3. Let DL7 prelude rules inspect its application and emit `head`, `body`,
+   `Apply`, and `:/4` rows through the existing generated-program carrier.
+4. Omit the syntax application from the checked runtime program after its
+   generated rows reach compiler fixpoint.
 
-The DL7 reader spelling for match arms and temporal sampling remains outside this
-runtime arc. The checked-program rows carry rule kind and body-operation identity,
-which allows syntax experiments without changing the DBSP or Rust/SQLite schemas.
+This is one compiler protocol shared by `match`, `scan`, future syntax
+constructors, and project-defined forms. Individual forms require no Prolog
+branch and no reader production beyond their ordinary list shape.
+
+### `match`
+
+The DL6-compatible surface can contain complete rule fragments as arms:
+
+```dl7
+(match (Source ?Key ?Value)
+  (<- (Accepted ?Key)
+      (GreaterEqual ?Value 10))
+  (<+ (Latest ?Key ?Value)))
+```
+
+Expansion prepends the scrutinee to every arm body:
+
+```dl7
+(<- (Accepted ?Key)
+    (Source ?Key ?Value)
+    (GreaterEqual ?Value 10))
+
+(<+ (Latest ?Key ?Value)
+    (Source ?Key ?Value))
+```
+
+This form is relational fan-out. Every satisfied arm emits. DL6 used this
+meaning.
+
+Rust-style matching over a closed sum uses pattern arms:
+
+```dl7
+(match ?Response
+  (-> (Page ?Body)
+      (<- (PageBody ?Body)))
+  (-> (Redirect ?Url)
+      (<- (RedirectTarget ?Url))))
+```
+
+Each variant pattern lowers to its ordinary constructor/deconstructor relation.
+Variant disjointness supplies exclusivity. A compile-time query joins arm
+patterns against the matched sum's `:/4` variant edges to report missing or
+duplicate variants.
+
+Guarded first-match semantics add one derived `Matched(Occurrence, ArmOrdinal)`
+relation. Arm zero reads its pattern and guard. Every later arm reads its own
+pattern and guard and antijoins earlier successful ordinals for the same
+scrutinee occurrence. This supplies ordered Rust guard fallthrough without a
+runtime match operator.
+
+After expansion, DBSP and Rust/SQLite lowering see only ordinary rules, joins,
+antijoins, and variant operations.
+
+### `scan`
+
+`scan` names ordered state accumulation in the Rust iterator and RxJS sense.
+Its reducer is an ordinary callable relation:
+
+```dl7
+(: AddStep
+   (* (: previous int)
+      (: input int)
+      (: return int)))
+
+(: RunningTotal
+   (Scan NumberEntered 0 AddStep))
+```
+
+The `Scan` constructor generates one keyed state relation and rules equivalent
+to:
+
+```text
+Event.Enter(NumberEntered, occurrence, input)
+Time.Previous(RunningTotal, key, previous)
+AddStep(previous, input, next)
+Key.Replace(RunningTotal, key, next)
+emit RunningTotal(key, next) for this occurrence
+```
+
+Occurrence order is `(generation, ordinal)`. Several inputs in one generation
+fold in ordinal order, so each intermediate state remains observable as RxJS
+`scan` output. A reducer returning zero rows suppresses output for that input.
+A reducer returning a `Continue(state, output) | Stop` sum covers Rust
+`Iterator::scan` termination without changing the temporal basis.
+
+`Scan` is a userland constructor over `Event.Enter`, `Time.Previous`,
+`Key.Replace`, and generated rules. The compiler kernel supplies form expansion,
+time-stratification queries, and the public generated-program carrier.
+
+`latest` and `pre` remain body operations until a DL7 program demonstrates a
+smaller relation-only expansion with identical ordering behavior. `files` and
+`files_at` remain hosted relations for live-worktree and pinned-revision
+enumeration. `next`, `await`, and conditional routing remain ordinary registered
+relations over generation-scoped rows.
 
 ### Clock inputs
 
@@ -938,6 +1091,13 @@ The arc closes with these executable receipts:
     socket or process wait holds a SQLite write transaction.
 14. JSON Schema category fixtures import into the type graph, validate boundary
     values, and emit a schema whose accepted JSON instances match the input.
+15. A `match` form expands through the generic form protocol into exact ordinary
+    rules, leaving no match operation in the checked runtime program.
+16. Closed-sum match fixtures prove exhaustive disjoint variants; guarded
+    first-match fixtures prove ordinal fallthrough through antijoin.
+17. A `Scan` fixture folds three same-generation inputs in occurrence order and
+    emits all three intermediate states, then reproduces them through generated
+    Rust and SQLite execution.
 
 CI coverage added by this arc consists of DL7 PLUnit compiler/emitter tests,
 Rust ABI and reload integration tests, SQLite migration tests, and shootout
