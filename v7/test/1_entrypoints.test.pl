@@ -732,6 +732,63 @@ test(host_declaration_closes_to_graph_rows_and_runtime_boundary) :-
                         3),
                     runtime_planning_references(0)).
 
+test(host_declaration_supports_zero_input_sources_and_zero_output_sinks) :-
+    compile_dl7('v7/test/fixtures/11_host_source_sink.dl7',
+                Rows, Runtime, Diagnostics),
+    named_owner(Rows, 'HttpServer', HttpServer),
+    named_owner(Rows, 'HttpRequestArrived', RequestSource),
+    named_owner(Rows, 'HttpResponseReady', ResponseSink),
+    named_owner(Rows, 'Hosted', Hosted),
+    named_owner(Rows, 'HostPort', HostPort),
+    named_owner(Rows, 'Input', Input),
+    named_owner(Rows, 'Output', Output),
+    Runtime = checked_datalog(
+                  root_graph(_, GraphEdges),
+                  datalog_program(Relations, Seeds, Rules), _, _),
+    host_relation_snapshot(
+        RequestSource, HttpServer, Hosted, HostPort, Input, Output,
+        Rows, GraphEdges, Relations, SourceSnapshot),
+    host_relation_snapshot(
+        ResponseSink, HttpServer, Hosted, HostPort, Input, Output,
+        Rows, GraphEdges, Relations, SinkSnapshot),
+    host_runtime_reference_count(
+        [Hosted, HostPort], Relations, Seeds, Rules, RuntimeReferenceCount),
+    Observed = host_source_sink(
+                   diagnostics(Diagnostics),
+                   source(SourceSnapshot),
+                   sink(SinkSnapshot),
+                   runtime_planning_references(RuntimeReferenceCount)),
+    Observed == host_source_sink(
+                    diagnostics([]),
+                    source(host_relation(
+                               arity(1), implementation(true),
+                               ports([port(request, output, 0)]))),
+                    sink(host_relation(
+                             arity(1), implementation(true),
+                             ports([port(response, input, 0)]))),
+                    runtime_planning_references(0)).
+
+host_relation_snapshot(
+    Relation, Implementation, Hosted, HostPort, Input, Output,
+    Rows, GraphEdges, Relations,
+    host_relation(arity(Arity), implementation(HasImplementation),
+                  ports(Ports))) :-
+    memberchk(relation(ref(Relation), Arity, []), Relations),
+    (   memberchk(call(ref(Hosted),
+                      [ref(Relation), ref(Implementation)]), Rows)
+    ->  HasImplementation = true
+    ;   HasImplementation = false
+    ),
+    findall(
+        port(Label, Direction, Index),
+        ( member(call(ref(HostPort),
+                      [ref(Relation), const(Label), ref(DirectionId)]), Rows),
+          host_direction_name(DirectionId, Input, Output, Direction),
+          member(':'(Relation, Label, _, Index), GraphEdges)
+        ),
+        Ports0),
+    sort(Ports0, Ports).
+
 hosted_relation_receipt(Observed) :-
     compile_dl7('v7/test/fixtures/8_hosted.dl7',
                 Rows, Runtime, Diagnostics),

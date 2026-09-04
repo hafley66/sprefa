@@ -1,0 +1,22 @@
+(: HttpRequest
+   (* (: request_id text)
+      (: body any)))
+
+(: HttpResponse
+   (* (: request_id text)
+      (: status int)
+      (: body any)))
+
+(: HttpServer
+   (* (: abi text)))
+
+; Zero inputs make a host-backed source. Zero outputs make a host-backed sink.
+(: HttpRequestArrived
+   (Host HttpServer
+      (*)
+      (* (: request HttpRequest))))
+
+(: HttpResponseReady
+   (Host HttpServer
+      (* (: response HttpResponse))
+      (*)))
