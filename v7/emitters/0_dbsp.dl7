@@ -1,0 +1,44 @@
+; Target-neutral relational program rows derived from the checked program.
+; One checked rule is one map-shaped operator until later lowering splits joins,
+; filters, aggregates, and feedback into separate operator identities.
+(: DbspEmitter (*))
+
+(: dbsp_relation
+   (* (: relation type)
+      (: arity int)))
+
+(: dbsp_operator
+   (* (: rule any)
+      (: head type)
+      (: classification text)))
+
+(: dbsp_read
+   (* (: rule any)
+      (: position int)
+      (: polarity text)
+      (: relation type)))
+
+(: dbsp_projection
+   (* (: rule any)
+      (: position int)
+      (: argument any)))
+
+(emits DbspEmitter "relations" dbsp_relation)
+(emits DbspEmitter "operators" dbsp_operator)
+(emits DbspEmitter "reads" dbsp_read)
+(emits DbspEmitter "projections" dbsp_projection)
+
+(<- (dbsp_relation ?Relation ?Arity)
+    (program_relation ?Relation ?Arity))
+
+(<- (dbsp_operator ?Rule ?Head "level")
+    (program_rule ?Rule ?HeadCall)
+    (program_apply ?HeadCall ?Head))
+
+(<- (dbsp_read ?Rule ?Position ?Polarity ?Relation)
+    (program_goal ?Rule ?Position ?Polarity ?Call)
+    (program_apply ?Call ?Relation))
+
+(<- (dbsp_projection ?Rule ?Position ?Argument)
+    (program_rule ?Rule ?HeadCall)
+    (program_argument ?HeadCall ?Position ?Argument))

@@ -7,6 +7,7 @@ This lab measures transitive closure through one native logic route per runtime:
 | SBCL 2.6.7 | Common Lisp host-native data structures |
 | SWI-Prolog 10.0.2 | Tabled recursive reachability |
 | Racket CS 9.3 | Installed `datalog` package evaluator |
+| `dbsp-kernel` | Rust RAM evaluator over the emitted operator contract |
 
 The algorithms are idiomatic to each runtime. The measurements compare these selected logic routes. They do not hold the low-level closure algorithm constant.
 
