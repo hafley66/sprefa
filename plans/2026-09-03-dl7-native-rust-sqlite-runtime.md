@@ -639,15 +639,21 @@ The first executable cuts landed on `feature/dl7-source-intelligence`:
 | `fdb4fa5ac`, `6e7f19c61`, `bc6fba7ea` | `dd-runner` exposes a native construction API and generated Rust modules construct plans without an embedded or decoded program string |
 | `1b9683bb6` | a DL7-generated transitive-closure module entered the full runtime shootout |
 | `f487b5c12` | `extract watch` snapshot rows reach a resident DL7 program and derive an exact source-intelligence result |
+| `eaf1954e3` | checked DL7 types and positive map/join operators lower to executable SQLite DDL, decoded reads, grouped SQL rules, and the complete tick order |
+| `211231cda` | generated Rust carries both RAM constructors and SQLite statements; the SQLite arm entered the chain/ring shootout with exact closure counts |
+| `1fe5406b9`, `e216bf4ca` | a persistent SQLite runner accepts snapshot and delta watch generations transactionally, survives process restart, suppresses duplicate additions, and emits derived retractions |
+| `bc5807cbe` | the persistent store catalogs generated DDL, reads, rules, and tick phases and rejects drift before retained rows change |
 
 Current native construction uses the operational map/join lowering in
 `1a_dbsp_plan_emitter.pl`; the DL7 emitter independently derives and tests the
 structural DBSP graph. Moving binding selection, equality predicates, literal
 filters, aggregate operators, and projections from that Prolog renderer into
-DL7 relations is the next lowering cut. Generated source currently constructs
-the RAM kernel's types. SQLite statements, catalog rows, per-source Rust module
-partitioning, content-addressed compilation, and generation-boundary library
-reload have no implementation receipt yet.
+DL7 relations is the next lowering cut. Generated source constructs the RAM
+kernel types plus SQLite DDL, decoded reads, SQL rule bundles, and tick phases.
+The resident SQLite path has transactional generations, persistent state, and
+a strict runtime catalog. Per-source Rust module partitioning,
+content-addressed compilation, catalog migration, and generation-boundary
+library reload have no implementation receipt yet.
 
 <!-- todo(feature): Move operational binding, equality, literal-filter, aggregate, and projection lowering from 1a_dbsp_plan_emitter.pl into the existing DL7 DBSP graph. -->
 
@@ -665,7 +671,7 @@ reload have no implementation receipt yet.
 
 <!-- todo(feature): Define the JSON-capable constraint graph and gate JSON Schema 2020-12 import, validation, and emission against the official category corpus. -->
 
-<!-- todo(perf): Add the Rust/SQLite arm and compile/load measurements beside the generated-Rust runtime arm now present in the relational shootout. -->
+<!-- todo(perf): Add content-addressed Rust compile and dynamic-load measurements beside the generated-Rust and SQLite runtime arms now present in the relational shootout. -->
 
 ## Verification
 
