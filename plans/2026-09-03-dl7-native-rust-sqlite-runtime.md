@@ -289,7 +289,11 @@ round, preserves reused reader identities, and records claim/output provenance.
 its receipt expands one source declaration form into two declarations and
 removes another form before either reaches the lowerer. Ordinary file/project
 entry points still select the existing tree callback. Automatic macro-program
-selection and deterministic identities for macro-created nodes remain open.
+selection remains open. The `emit_atom` receipt derives
+`application(GeneratedSyntax, [Invocation, OutputOrdinal, TemplatePath])`
+through `nil/1`, `cons/3`, and `intern/3`; two source invocations receive
+distinct identities, repeated expansion receives equal identities, and each
+generated node receives its invocation span through a DL7 rule.
 Macro evaluation slices the checked program to claim writers, syntax
 constructors, `item` and `expansion` edge writers, and their non-input helper
 dependency cone. On the 18-node two-round receipt, expansion alone used
@@ -1591,7 +1595,7 @@ library reload have no implementation receipt yet.
 
 <!-- todo(feature): Route compiler input through the checked DL7 graph-expansion phase, move the syntax protocol declarations into a bootstrapped DL7 library, and retire dl7_syntax_rewrite/3 after parity receipts. -->
 
-<!-- todo(feature): Derive hygienic macro-created node identities from macro definition, invocation, output ordinal, and template path, then prove stable repeated builds. -->
+<!-- todo(feature): Extend the proven macro-definition/invocation/output/template identity formula from a generated atom to quasiquoted form trees with node and sequence splices. -->
 
 <!-- todo(feature): Derive the Rust and SQLite layout, SQL statements, catalog hashes, and generated Rust items from the DBSP graph in DL7. -->
 

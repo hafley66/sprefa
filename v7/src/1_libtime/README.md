@@ -32,6 +32,12 @@ their identity while rewritten child edges are reindexed. Rows unreachable from
 the resulting frontier are absent from the next round. Provenance is retained
 separately as `expansion_claim/3` and `expansion_output/5` rows.
 
+Macro-created identities use the existing constructor algebra. The executable
+fixture interns `GeneratedSyntax(Invocation, OutputOrdinal, TemplatePath)`,
+then derives the generated node, syntax payload, copied source span, and
+expansion edge in DL7. Equal runs preserve the identity and separate invocation
+occurrences produce separate identities.
+
 `expand_syntax/5` currently accepts a checked program supplied by the caller.
 `compile_unit_with_macros/4` reifies an existing `dl7_unit/5`, runs this phase,
 materializes the active graph, and enters the current compiler. Ordinary file

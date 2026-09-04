@@ -34,6 +34,15 @@
    (* (: invocation type)
       (: macro text)))
 
+(: GeneratedSyntax
+   (* (: invocation type)
+      (: output_ordinal int)
+      (: template_path int)))
+
+(: generated_atom
+   (* (: invocation type)
+      (: output type)))
+
 (<- (syntax_claim ?Form "drop")
     (syntax_form ?Form)
     (: ?Form item ?Head 0)
@@ -51,3 +60,31 @@
 (<- (: ?Form expansion ?Second 1)
     (syntax_claim ?Form "splice2")
     (: ?Form item ?Second 2))
+
+(<- (syntax_claim ?Form "emit_atom")
+    (syntax_form ?Form)
+    (: ?Form item ?Head 0)
+    (syntax_atom ?Head "emit_atom"))
+
+(<- (generated_atom ?Form ?Output)
+    (syntax_claim ?Form "emit_atom")
+    (nil ?Empty)
+    (cons 0 ?Empty ?TemplateArguments)
+    (cons 0 ?TemplateArguments ?OutputArguments)
+    (cons ?Form ?OutputArguments ?Arguments)
+    (intern GeneratedSyntax ?Arguments ?Output))
+
+(<- (node ?Output)
+    (generated_atom ?Form ?Output))
+
+(<- (syntax_atom ?Output "generated")
+    (generated_atom ?Form ?Output))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (generated_atom ?Form ?Output)
+    (syntax_source ?Form ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (: ?Form expansion ?Output 0)
+    (generated_atom ?Form ?Output))

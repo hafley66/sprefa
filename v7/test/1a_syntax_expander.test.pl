@@ -23,12 +23,13 @@ test(dl7_rules_delete_and_splice_nested_syntax_occurrences) :-
     compile_unit_with_macros(
         CompileUnit, MacroProgram, Compiled, MacroCompileDiagnostics),
     compiled_bind_names(Compiled, BindNames),
+    generated_identity_receipt(MacroProgram, GeneratedReceipt),
     Observed = macro_result(
                    CompileDiagnostics, ReaderDiagnostics,
                    ReifyDiagnostics, ExpansionDiagnostics,
                    Snapshot, ProvenanceSnapshot,
                    CompileReadDiagnostics, MacroCompileDiagnostics,
-                   BindNames),
+                   BindNames, GeneratedReceipt),
     Observed ==
         macro_result(
             [], [], [], [],
@@ -50,7 +51,71 @@ test(dl7_rules_delete_and_splice_nested_syntax_occurrences) :-
               output(10, "splice2", 0, 12, 0),
               output(10, "splice2", 0, 15, 1)
             ],
-            [], [], ['Alpha', 'Beta']).
+            [], [], ['Alpha', 'Beta'],
+            generated_identity(
+                arguments([[reader_node(generated_source, 0), 0, 0],
+                           [reader_node(generated_source, 2), 0, 0]]),
+                constructor_bound(true), stable(true), distinct(true),
+                copied_sources(true))).
+
+generated_identity_receipt(MacroProgram, Receipt) :-
+    read_dl7(generated_source, "(emit_atom)\n(emit_atom)\n",
+             Forms, SourceRows, []),
+    reify_syntax(Forms, SourceRows, Rows, []),
+    expand_syntax(Rows, MacroProgram, Expanded1, _, []),
+    expand_syntax(Rows, MacroProgram, Expanded2, _, []),
+    findall(Generated,
+            member(syntax_atom(Generated, generated), Expanded1),
+            Generated1),
+    findall(Generated,
+            member(syntax_atom(Generated, generated), Expanded2),
+            Generated2),
+    maplist(generated_application(Constructor), Generated1, Arguments),
+    MacroProgram = checked_datalog(root_graph(_, MacroEdges), _, _, _),
+    (   memberchk(':'(_, 'GeneratedSyntax', ref(Constructor), _), MacroEdges)
+    ->  ConstructorBound = true
+    ;   ConstructorBound = false
+    ),
+    equality(Generated1, Generated2, Stable),
+    distinct_identities(Generated1, Distinct),
+    copied_sources(Rows, Expanded1, Generated1, CopiedSources),
+    Receipt = generated_identity(
+                  arguments(Arguments),
+                  constructor_bound(ConstructorBound), stable(Stable),
+                  distinct(Distinct), copied_sources(CopiedSources)),
+    !.
+
+generated_application(Constructor,
+                      application(Constructor, Arguments), Arguments).
+
+equality(Left, Right, true) :- Left == Right, !.
+equality(_, _, false).
+
+distinct_identities([Left, Right], true) :- Left \== Right, !.
+distinct_identities(_, false).
+
+copied_sources(InputRows, ExpandedRows, Generated, true) :-
+    findall(source_position(StartOffset, EndOffset,
+                            StartLine, StartColumn, EndLine, EndColumn),
+            ( member(syntax_frontier(_, Invocation), InputRows),
+              member(source(Invocation, generated_source,
+                            StartOffset, EndOffset, StartLine, StartColumn,
+                            EndLine, EndColumn), InputRows)
+            ),
+            InputSources0),
+    sort(InputSources0, InputSources),
+    findall(source_position(StartOffset, EndOffset,
+                            StartLine, StartColumn, EndLine, EndColumn),
+            ( member(Identity, Generated),
+              member(source(Identity, generated_source,
+                            StartOffset, EndOffset, StartLine, StartColumn,
+                            EndLine, EndColumn), ExpandedRows)
+            ),
+            GeneratedSources0),
+    sort(GeneratedSources0, GeneratedSources),
+    GeneratedSources == InputSources,
+    !.
+copied_sources(_, _, _, false).
 
 compiled_bind_names(
     compiled_unit(_, checked_datalog(root_graph(_, Edges), _, _, _), _),
