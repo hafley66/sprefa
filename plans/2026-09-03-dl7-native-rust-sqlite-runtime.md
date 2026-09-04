@@ -1066,31 +1066,36 @@ nodes, literal nodes, and call-argument edges are declared in the DL7 prelude.
 The compiler already evaluates authored rules to a fixpoint, assembles these
 rows, then evaluates again with the generated rules.
 
-The graph-normalized carrier can remove the structural distinction among
-`head`, `body`, application metadata, and annotations. One possible normalized
-instance is:
+`v7/src/3_emit/0a_logical_program_grapher.pl` now supplies the parallel
+graph-normalized view without changing the compatibility carrier:
 
 ```text
-product(Relation)
+product(Rule)
 
 :(Rule, head, HeadCall, 0)
-:(Rule, body, BodyCall, 0)
+:(Rule, body, BodyOccurrence0, 1)
 
+product(HeadCall)
 :(HeadCall, apply, Relation, 0)
-:(HeadCall, value, HeadArgument, 0)
+:(HeadCall, argument, HeadArgument0, 1)
 
+product(BodyOccurrence0)
+:(BodyOccurrence0, polarity, positive, 0)
+:(BodyOccurrence0, call, BodyCall, 1)
+
+product(BodyCall)
 :(BodyCall, apply, Source, 0)
-:(BodyCall, value, BodyArgument, 0)
+:(BodyCall, argument, BodyArgument0, 1)
 
-edge_ref(Rule, body, BodyOccurrenceEdge)
-:(BodyOccurrenceEdge, polarity, Negative, 0)
+product(BodyArgument0)
+:(BodyArgument0, variable, VariableIdentity, 0)
 ```
 
-The `body` edge index supplies goal order. Call argument edge indices supply
-argument order. Polarity, clock, trigger mode, and sampling mode annotate the
-reified body-occurrence edge because they belong to one use of the call inside
-one rule. Write mode annotates the reified head-occurrence edge. Positive
-polarity is the absence of the `Negative` annotation. Generated relation arity
+The head occupies rule edge zero; body goal `N` occupies rule edge `N + 1`.
+The callable occupies call edge zero; argument `N` occupies call edge `N + 1`.
+The body-occurrence node carries explicit polarity now and can receive clock,
+trigger, and sampling edges without changing the shared call node. Write mode
+can use the same occurrence pattern for the head. Generated relation arity
 comes from the product's field edges, so `def/2` is a derivable compatibility
 view. The assembler's irreducible operation becomes "freeze and check the graph
 rooted at each rule head" rather than interpreting three unrelated kernel

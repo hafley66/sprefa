@@ -5,6 +5,8 @@
 :- use_module('../src/2_comptime/2_compiler', [compile_dl7_project/5]).
 :- use_module('../src/3_emit/0_logical_program_reifier',
               [logical_program_rows/2, logical_program_calls/4]).
+:- use_module('../src/3_emit/0a_logical_program_grapher',
+              [logical_program_graph_rows/2]).
 :- use_module('../src/3_emit/1_artifact_emitter', [emit_compiled/4]).
 
 fixture(
@@ -96,6 +98,118 @@ test(reified_program_graph_reconstructs_the_checked_executable_exactly) :-
         LogicalRows, Seeds, Rules),
     executable(Seeds, Rules) ==
         executable(ExpectedSeeds, ExpectedRules).
+
+test(checked_rules_have_normalized_occurrence_nodes_and_edges) :-
+    fixture(Runtime),
+    logical_program_graph_rows(Runtime, Rows),
+    logical_rule_snapshot(Rows, Snapshot),
+    Snapshot ==
+        rule_graph(
+            counts(nodes(7), products(7), edges(12)),
+            rule([edge(head, call(head), 0),
+                  edge(body, goal(0), 1)]),
+            goal([edge(polarity, const(positive), 0),
+                  edge(call, call(body(0)), 1)]),
+            head_call([edge(apply, relation(joined), 0),
+                       edge(argument, argument(head, 0), 1)]),
+            body_call([edge(apply, relation('tsi.name'), 0),
+                       edge(argument, argument(body(0), 0), 1),
+                       edge(argument, argument(body(0), 1), 2)]),
+            arguments([
+                argument(head, 0, [edge(variable, const(name), 0)]),
+                argument(body(0), 0,
+                         [edge(variable, const(identity), 0)]),
+                argument(body(0), 1,
+                         [edge(variable, const(name), 0)])
+            ])),
+    !.
+
+logical_rule_snapshot(Rows, Snapshot) :-
+    findall(Node, member(node(Node), Rows), Nodes),
+    findall(Product, member(product(Product), Rows), Products),
+    findall(':'(Owner, Label, Target, Index),
+            member(':'(Owner, Label, Target, Index), Rows), Edges),
+    Rule = logical_program(rule_id(0)),
+    Goal = logical_program(goal_occurrence(rule_id(0), 0)),
+    Head = logical_program(call_id(rule(0), head)),
+    Body = logical_program(call_id(rule(0), goal(0))),
+    owner_edges(Rows, Rule, RuleEdges),
+    owner_edges(Rows, Goal, GoalEdges),
+    owner_edges(Rows, Head, HeadEdges),
+    owner_edges(Rows, Body, BodyEdges),
+    call_argument_snapshots(Rows, Head, head, HeadArguments),
+    call_argument_snapshots(Rows, Body, body(0), BodyArguments),
+    append(HeadArguments, BodyArguments, Arguments),
+    length(Nodes, NodeCount),
+    length(Products, ProductCount),
+    length(Edges, EdgeCount),
+    maplist(snapshot_rule_edge, RuleEdges, RuleSnapshot),
+    maplist(snapshot_goal_edge, GoalEdges, GoalSnapshot),
+    maplist(snapshot_call_edge, HeadEdges, HeadSnapshot),
+    maplist(snapshot_call_edge, BodyEdges, BodySnapshot),
+    Snapshot = rule_graph(
+                   counts(nodes(NodeCount), products(ProductCount),
+                          edges(EdgeCount)),
+                   rule(RuleSnapshot), goal(GoalSnapshot),
+                   head_call(HeadSnapshot), body_call(BodySnapshot),
+                   arguments(Arguments)).
+
+owner_edges(Rows, Owner, Edges) :-
+    findall(Index-edge(Label, Target, Index),
+            member(':'(Owner, Label, Target, Index), Rows), Pairs0),
+    keysort(Pairs0, Pairs),
+    indexed_edges(Pairs, Edges).
+
+indexed_edges([], []).
+indexed_edges([_-Edge | Pairs], [Edge | Edges]) :-
+    indexed_edges(Pairs, Edges).
+
+call_argument_snapshots(Rows, Call, Role, Snapshots) :-
+    findall(Position-Argument,
+            ( member(':'(Call, argument, ref(Argument), EdgeIndex), Rows),
+              Position is EdgeIndex - 1
+            ),
+            Pairs),
+    findall(argument(Role, Position, EdgeSnapshots),
+            ( member(Position-Argument, Pairs),
+              owner_edges(Rows, Argument, ArgumentEdges),
+              maplist(snapshot_value_edge, ArgumentEdges, EdgeSnapshots)
+            ),
+            Snapshots).
+
+snapshot_rule_edge(edge(head, ref(logical_program(call_id(rule(0), head))),
+                        Index),
+                   edge(head, call(head), Index)).
+snapshot_rule_edge(
+    edge(body,
+         ref(logical_program(goal_occurrence(rule_id(0), Position))),
+         Index),
+    edge(body, goal(Position), Index)).
+
+snapshot_goal_edge(edge(polarity, Value, Index),
+                   edge(polarity, Value, Index)).
+snapshot_goal_edge(
+    edge(call, ref(logical_program(call_id(rule(0), goal(Position)))), Index),
+    edge(call, call(body(Position)), Index)).
+
+snapshot_call_edge(edge(apply, ref(owner(file('/fixture.dl7'), relation(0))),
+                        Index),
+                   edge(apply, relation(joined), Index)).
+snapshot_call_edge(edge(apply, ref(tsi_relation(source, 'tsi.name')), Index),
+                   edge(apply, relation('tsi.name'), Index)).
+snapshot_call_edge(
+    edge(argument,
+         ref(logical_program(argument_id(call_id(rule(0), head), Position))),
+         Index),
+    edge(argument, argument(head, Position), Index)).
+snapshot_call_edge(
+    edge(argument,
+         ref(logical_program(
+                 argument_id(call_id(rule(0), goal(Goal)), Position))),
+         Index),
+    edge(argument, argument(body(Goal), Position), Index)).
+
+snapshot_value_edge(edge(Label, Target, Index), edge(Label, Target, Index)).
 
 test(checked_argument_alternatives_are_ordinary_edges) :-
     ProtocolRows = [
