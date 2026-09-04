@@ -91,6 +91,20 @@ the Rust/SQLite executor.
 12. The TS reload catalog rules remain the first migration contract:
     schema change `recreate`, producer change `refill`, equality `keep`, and
     removed relation `drop` when authorized.
+13. Reactive execution has six kernel facts: generation identity, signed row
+    differences, level rules, edge rules, current/pre-state sampling, and an
+    atomic commit boundary. Clocks, retries, HTTP, servers, CLIs, filesystem
+    watching, and retention are programs and hosted implementations over those
+    facts.
+14. Wall-clock time enters through hosted rows. Generated code has no implicit
+    wall-clock read. Fixpoint rounds, runtime generations, and wall-clock values
+    remain separate identities.
+15. The same `Host` relation form serves compiler and runtime evaluation. Its
+    phase follows the evaluator that consumes the hosted relation. A relation
+    reachable from both evaluators has phase-scoped demand and response state.
+16. DL7's JSON-capable type graph must represent every JSON Schema 2020-12
+    validation shape used at HTTP and CLI boundaries. JSON Schema import and
+    emission are DL7 programs over that graph.
 
 Disposition of earlier paths:
 
@@ -200,6 +214,31 @@ lower_rust_sqlite(
     -Diagnostics
 ).
 
+% Reify temporal dependencies without adding a second type vocabulary.
+temporal_program_rows(
+    +CheckedProgramRows,
+    -ClockDependencyRows,
+    -ClockDiagnosticRows
+).
+
+% Execute one externally visible generation.
+run_generation(
+    +ProgramHandle,
+    +GenerationIdentity,
+    +SignedArrivals,
+    +StoreHandle,
+    -SignedOutputs,
+    -HostDemandDifferences
+).
+
+% Derive protocol boundaries from ordinary hosted relation and type rows.
+boundary_plan(
+    +CompilerView,
+    +HostedRows,
+    -BoundaryRows,
+    -Diagnostics
+).
+
 % One source module per DL7 source module plus one project root.
 emit_rust_modules(
     +CompilerView,
@@ -276,17 +315,23 @@ zero. No pointer, callback, or buffer owned by the old library survives unload.
 begin generation
   -> read signed arrivals
   -> apply base-relation changes in one SQLite transaction
-  -> execute generated operators by stratum and SCC
+  -> close level rules by stratum and SCC
+  -> process ordered edge-rule occurrences
   -> materialize relation differences
-  -> run hosted output boundaries
   -> commit
   -> publish output differences
+  -> execute positive hosted demand differences outside the transaction
+  -> enqueue hosted responses for a later generation
 end generation
 ```
 
 The generated operator functions borrow the host context for one call. SQLite
 owns durable rows after commit. Temporary join batches and decoded values end
 with the call.
+
+HTTP, Git, process, and filesystem effects run after commit. Their responses
+enter a later transaction as signed arrivals. A database write lock therefore
+has no network, subprocess, or checkout lifetime.
 
 ### Reload
 
@@ -378,6 +423,173 @@ meaning:
 Storage layout, SQL spelling, Rust identifier spelling, dynamic-library ABI,
 watch policy, and host transports enter later lowering relations.
 
+## Reactive kernel and userland
+
+### Minimal temporal basis
+
+DL6 provides an executable specification for the initial DL7 semantics:
+
+| Construct | Runtime meaning | Dependency row |
+| --- | --- | --- |
+| `<-` | close a level relation within the current generation | positive or negative, grade 0 |
+| `<+` | fire once for each ordered trigger occurrence and write keyed state or history | trigger grade 0 or 1 |
+| bare positive edge-body atom | trigger source | read ring `z` |
+| `latest(Rel(...))` | sample current visible state without becoming a trigger | state sample, grade 0 |
+| `pre(Rel(...))` | sample persistent state after earlier writes in this generation, with prior level rows frozen | previous sample, grade -1 |
+| signed boundary difference | add, replacement pair, retention removal, or departure | generation boundary |
+
+The old ring names `b`, `z`, and `n` are compiler representation details. DL7
+reifies their meanings as relation plane, occurrence plane, and history plane.
+The reified dependency row carries source relation, target relation, read plane,
+write plane, sign, grade, and role. Clock checking is a DL7 analysis over those
+rows.
+
+Within one generation:
+
+```text
+ordered outside arrivals
+  -> base state update
+  -> level closure
+  -> newly true level occurrences
+  -> ordered edge firing
+  -> keyed replacement or history append
+  -> post-write level closure
+  -> signed boundary differences
+  -> next-generation carry
+```
+
+An edge write to a keyed relation replaces the row sharing its declared key.
+An equal replacement has zero boundary difference. Multiple different writes
+for one key from one occurrence are a conflict. History appends preserve an
+occurrence stamp. Carry contains boundary-visible positive writes and subscribed
+departures, so intermediate fold states do not trigger another generation.
+
+During comptime, time stratification queries the same reified dependency graph
+already used for ordinary stratification. It derives weighted strongly connected
+components, inferred clocks, boundary facts, and diagnostics before DBSP
+lowering. Grade-zero positive level cycles are constructive.
+Every cycle in a delayed recurrence must have positive total grade. Cross-plane
+uses such as `latest` or `pre` inside a level rule produce diagnostics. The DL6
+path-conflict and nonconstructive-cycle walk was pinned off on the production
+compile path; DL7 receives it only after its cost and acceptance set are covered
+by receipts.
+
+### Surface disposition
+
+The temporal basis does not require a family of stream operators:
+
+- `match` expands each arm to an ordinary `<-` or `<+` rule with the scrutinee
+  prepended to its body. Exhaustiveness is a checker over sum edges.
+- Accumulation uses a keyed state relation, an optional history relation, and an
+  edge rule reading `pre`. DL6 reserved the word `scan` and added no scan form.
+- `latest` and `pre` remain body operations until a DL7 program demonstrates a
+  smaller relation-only expansion with identical ordering behavior.
+- `files` and `files_at` are hosted relations for live-worktree and pinned-revision
+  enumeration. The old `scan` word does not name filesystem traversal.
+- `next`, `await`, and conditional routing can be ordinary registered relations
+  over generation-scoped rows. Retraction cancels pending work while an effect
+  is still pending; an effect already performed needs an explicit compensation
+  relation.
+
+The DL7 reader spelling for match arms and temporal sampling remains outside this
+runtime arc. The checked-program rows carry rule kind and body-operation identity,
+which allows syntax experiments without changing the DBSP or Rust/SQLite schemas.
+
+### Clock inputs
+
+A clock host emits rows such as `ClockTick(clock, bucket, instant)` and retracts
+generation-scoped tick rows on the following generation. Period, deadline,
+debounce, cadence, and retry policies are ordinary relations joining those rows.
+Generated Rust reads the supplied instant or bucket value. Replay therefore uses
+the recorded clock relation and does not consult the machine clock.
+
+## Hosted HTTP, servers, and CLIs
+
+`Host` already lowers a callable product into `Hosted` and `HostPort` rows. Empty
+input or output products extend that same contract to sources and sinks:
+
+```dl7
+(: HttpFetch
+   (Host HttpClient
+      (* (: request HttpRequest))
+      (* (: response HttpResponse))))
+
+(: HttpRequestArrived
+   (Host HttpServer
+      (*)
+      (* (: request HttpRequest))))
+
+(: HttpResponseReady
+   (Host HttpServer
+      (* (: response HttpResponse))
+      (*)))
+
+(: CliInvocationArrived
+   (Host CliServer
+      (*)
+      (* (: invocation CliInvocation))))
+
+(: CliResultReady
+   (Host CliServer
+      (* (: result CliResult))
+      (*)))
+```
+
+The paired source and sink relations share a correlation field in their ordinary
+request/response products. Route, method, status, header, query, body, argument,
+environment, standard-input, standard-output, standard-error, and exit-code data
+remain fields or relations. HTTP client execution during compiler evaluation is
+a compile-time host call. The same relation retained in the checked runtime
+program is a runtime host call. The host implementation, cancellation contract,
+and cache identity are annotations on reified relation or port edges.
+
+HTTP server lifecycle:
+
+```text
+resident listener accepts request
+  -> enqueue +HttpRequestArrived
+  -> run and commit one or more generations
+  -> observe +HttpResponseReady with the same correlation identity
+  -> write response outside SQLite transaction
+  -> enqueue acknowledgement or disconnect rows when subscribed
+```
+
+CLI lifecycle uses the same source/sink pairing. A short command waits for one
+terminal result. A long-lived command subscribes to output rows until an exit or
+cancellation row is committed.
+
+## JSON Schema coverage
+
+JSON compatibility is a capability of an ordinary type node. The graph needs
+one representation for each JSON Schema 2020-12 validation family:
+
+| JSON Schema family | DL7 graph representation |
+| --- | --- |
+| object properties and required names | product edges plus required/optional constraint edges |
+| open objects and additional properties | one rest-value edge carrying its value schema |
+| arrays, tuples, `prefixItems`, and `contains` | collection node plus ordered item and containment constraints |
+| `enum` and `const` | literal alternatives or a literal constraint edge |
+| `anyOf` and `oneOf` | sum edges plus selection constraint |
+| `allOf` and `not` | intersection and exclusion relations over schema identities |
+| `$ref`, `$dynamicRef`, `$defs`, recursion | ordinary identity edges, retaining URI and anchor as data |
+| number and string bounds, pattern, format | constraint edges on the scalar node |
+| `if`/`then`/`else`, dependent schemas, dependent required | validation rules over product edges |
+| `unevaluatedProperties` and `unevaluatedItems` | post-composition coverage constraints |
+| `null` versus absence | `null` value node versus an optional product edge |
+
+Constraint identity is reified, so annotations can target the constraint edge,
+the field edge, the enclosing product, or the boundary relation. DL7-specific
+capabilities may additionally describe relation keys, temporal retention, host
+ports, provenance, and graph constraints. JSON Schema import produces these
+ordinary nodes and edges. Emission succeeds for the representable JSON subset of
+a DL7 graph and returns diagnostic rows for capabilities with no JSON Schema
+encoding.
+
+The compatibility gate uses the official JSON Schema test suite categories plus
+round trips through imported and emitted schemas. HTTP request and response body
+validation runs at the host boundary before rows enter the program or bytes leave
+the host.
+
 ## Delivery sequence
 
 1. Convert `logical_program_rows/2` output into declared DL7 relation calls and
@@ -399,11 +611,18 @@ watch policy, and host transports enter later lowering relations.
    behind the `Dl7ModuleV1` boundary.
 8. Add a resident host that watches sources, incrementally compiles a fresh
    content-addressed library, validates it, and swaps at a generation boundary.
-9. Feed `sprefa-extract` watch changes into the active runtime and persist their
+9. Reify rule kind, temporal body operations, dependency sign/grade, and clock
+   diagnostics; implement level closure, ordered edge firing, current/pre-state
+   reads, and generation carry in the shootout.
+10. Feed `sprefa-extract` watch changes into the active runtime and persist their
    relational state in SQLite.
-10. Move source-membership selection from the CLI path list into DL7 rules over
+11. Move source-membership selection from the CLI path list into DL7 rules over
     hosted filesystem observations, retaining the entry file and prelude as the
     bootstrap roots.
+12. Add generic hosted source and sink relations, then exercise HTTP client,
+    HTTP server, and CLI request/response lifecycles over them.
+13. Add JSON Schema import, validation, and emission rows after the product, sum,
+    reference, optional-edge, open-object, and constraint identities are stable.
 
 <!-- todo(feature): Convert the checked-program reifier output into declared DL7 calls and evaluate DL7 emitters against the complete compiler view. -->
 
@@ -416,6 +635,12 @@ watch policy, and host transports enter later lowering relations.
 <!-- todo(feature): Implement generation-boundary dynamic-library reload while retaining the resident SQLite connection and arrival queue. -->
 
 <!-- todo(feature): Express desired source membership as DL7 rules over hosted filesystem revisions and feed sprefa-extract watch changes into the resident runtime. -->
+
+<!-- todo(feature): Reify the minimal temporal dependency algebra and port the DL6 generation, latest, pre-state, edge-trigger, carry, and clock receipts to DL7. -->
+
+<!-- todo(feature): Define generic hosted source and sink contracts, then derive HTTP client, HTTP server, and CLI boundaries without protocol-specific kernel syntax. -->
+
+<!-- todo(feature): Define the JSON-capable constraint graph and gate JSON Schema 2020-12 import, validation, and emission against the official category corpus. -->
 
 <!-- todo(perf): Add the generated Rust and Rust/SQLite arms to every relational shootout and record compile latency, load latency, peak RSS, tick latency, and SQLite file size. -->
 
@@ -443,6 +668,15 @@ The arc closes with these executable receipts:
    removal as signed source and TSI relation changes.
 10. The generated Rust, RAM kernel, and Rust/SQLite arms appear in the existing
     shootout result table with current measured statistics.
+11. Temporal fixtures compare ordered signed differences for level closure,
+    keyed replacement, same-generation `pre` folding, `latest` sampling,
+    delayed recurrence, departure, and retention.
+12. A compile-time HTTP request and runtime HTTP request use the same hosted
+    relation declaration with phase-scoped demand identities.
+13. HTTP server and CLI fixtures correlate ingress with egress and prove that no
+    socket or process wait holds a SQLite write transaction.
+14. JSON Schema category fixtures import into the type graph, validate boundary
+    values, and emit a schema whose accepted JSON instances match the input.
 
 CI coverage added by this arc consists of DL7 PLUnit compiler/emitter tests,
 Rust ABI and reload integration tests, SQLite migration tests, and shootout
