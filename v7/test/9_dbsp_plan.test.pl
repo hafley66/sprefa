@@ -42,9 +42,20 @@ test(source_visible_plan_preserves_dotted_relation_labels) :-
     Diagnostics == [],
     Plan.rels =@=
         [ _{columns:[name], input:false, name:joined, output:true,
-             select_all:""},
+             select_all:"SELECT (SELECT s.\"content\" FROM \"__str\" s WHERE s.\"__id\" = t.\"name\") AS \"name\" FROM \"joined\" t"},
           _{columns:[c0,c1], input:true, name:'tsi.name', output:false,
-             select_all:""}
+             select_all:"SELECT json(t.\"c0\") AS \"c0\", json(t.\"c1\") AS \"c1\" FROM \"tsi.name\" t"}
+        ],
+    Plan.ddl ==
+        [ "CREATE TABLE IF NOT EXISTS \"__str\" (\"__id\" INTEGER PRIMARY KEY, \"content\" TEXT NOT NULL UNIQUE)",
+          "CREATE TABLE IF NOT EXISTS \"joined\" (\"name\" INTEGER NOT NULL, UNIQUE (\"name\"))",
+          "CREATE TABLE IF NOT EXISTS \"tsi.name\" (\"c0\" TEXT NOT NULL, \"c1\" TEXT NOT NULL, UNIQUE (\"c0\", \"c1\"))"
+        ],
+    Plan.rules =@=
+        [ _{delete:"DELETE FROM \"joined\"",
+             head:joined,
+             id:map_0,
+             inserts:["INSERT OR IGNORE INTO \"joined\" (\"name\") SELECT \"b0\".\"c1\" FROM \"tsi.name\" \"b0\""]}
         ],
     Plan.operators =@=
         [ _{ bindings:bindings{b0:'tsi.name'},

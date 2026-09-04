@@ -25,18 +25,25 @@ emit_dbsp_plan(
     rule_operators(Rules, RelationMap, Operators,
                    RuleDiagnostics, HeadRelations),
     seed_rows(Seeds, RelationMap, Initial),
-    relation_rows(RelationMap, HeadRelations, RelationRows),
+    relation_rows(RelationMap, HeadRelations, Edges, RelationRows),
+    sqlite_plan(Edges, RelationMap, Operators,
+                Ddl, SqlRules, SqlDiagnostics),
     operator_wires(Operators, Wires),
-    append(NameDiagnostics, RuleDiagnostics, Diagnostics0),
+    append([NameDiagnostics, RuleDiagnostics, SqlDiagnostics], Diagnostics0),
     sort(Diagnostics0, Diagnostics),
     Plan = _{ ir_version:1,
               runtime:"dd-runner-kernel-v1",
-              ddl:[],
+              ddl:Ddl,
               rels:RelationRows,
-              rules:[],
+              rules:SqlRules,
               initial:Initial,
               schedule:[],
-              tick_order:[],
+              tick_order:[ "absorb_arrivals", "index_delta",
+                           "level_before_edges", "edge_arrivals",
+                           "edge_departures", "level_after_edges",
+                           "iterate", "consolidate", "retain",
+                           "boundary", "carry", "drain"
+                         ],
               arrangements:[],
               operators:Operators,
               wires:Wires
@@ -195,13 +202,261 @@ numbered_columns(Index, Arity, [Column | Columns]) :-
     Next is Index + 1,
     numbered_columns(Next, Arity, Columns).
 
-relation_rows([], _, []).
-relation_rows([relation_name(_, Name, _, Columns) | Map], Heads,
-              [_{name:Name, columns:Columns, select_all:"",
+relation_rows([], _, _, []).
+relation_rows([relation_name(Identity, Name, _, Columns) | Map], Heads, Edges,
+              [_{name:Name, columns:Columns, select_all:SelectAll,
                  input:Input, output:Output} | Rows]) :-
+    relation_select_sql(Edges, Identity, Name, Columns, SelectAll),
     ( memberchk(Name, Heads) -> Output = true ; Output = false ),
     ( Output == false -> Input = true ; Input = false ),
-    relation_rows(Map, Heads, Rows).
+    relation_rows(Map, Heads, Edges, Rows).
+
+sqlite_plan(Edges, RelationMap, Operators, Ddl, Rules, Diagnostics) :-
+    findall(Diagnostic,
+            sqlite_operator_diagnostic(Operators, Diagnostic),
+            Diagnostics0),
+    sort(Diagnostics0, Diagnostics),
+    ( Diagnostics == []
+    -> sqlite_ddl(Edges, RelationMap, Ddl),
+       sqlite_rules(Operators, Rules)
+    ;  Ddl = [],
+       Rules = []
+    ).
+
+sqlite_operator_diagnostic(Operators,
+                           diagnostic(emit, none,
+                                      unsupported_sqlite_literal(Value))) :-
+    member(Operator, Operators),
+    operator_literal(Operator, Value),
+    \+ number(Value).
+
+operator_literal(Operator, Value) :-
+    member(Predicate, Operator.predicates),
+    get_dict(literal_equals, Predicate, Literal),
+    Value = Literal.value.
+operator_literal(Operator, Value) :-
+    member(Projection, Operator.projection),
+    get_dict(value, Projection, Value).
+
+sqlite_ddl(Edges, RelationMap, Ddl) :-
+    findall(Statement,
+            ( member(Relation, RelationMap),
+              relation_ddl(Edges, Relation, Statement)
+            ),
+            RelationDdl),
+    Ddl = ["CREATE TABLE IF NOT EXISTS \"__str\" (\"__id\" INTEGER PRIMARY KEY, \"content\" TEXT NOT NULL UNIQUE)"
+           | RelationDdl].
+
+relation_ddl(Edges, relation_name(Identity, Name, Arity, Columns), Statement) :-
+    Arity > 0,
+    sqlite_identifier(Name, Table),
+    findall(ColumnSql,
+            ( nth0(Position, Columns, Column),
+              sqlite_identifier(Column, QuotedColumn),
+              relation_column_kind(Edges, Identity, Position, Kind),
+              sqlite_storage_type(Kind, StorageType),
+              format(string(ColumnSql), '~s ~s NOT NULL',
+                     [QuotedColumn, StorageType])
+            ),
+            ColumnSqls),
+    maplist(sqlite_identifier, Columns, QuotedColumns),
+    atomics_to_string(ColumnSqls, ", ", ColumnList),
+    atomics_to_string(QuotedColumns, ", ", UniqueColumns),
+    format(string(Statement),
+           'CREATE TABLE IF NOT EXISTS ~s (~s, UNIQUE (~s))',
+           [Table, ColumnList, UniqueColumns]).
+
+relation_select_sql(Edges, Identity, Name, Columns, Statement) :-
+    sqlite_identifier(Name, Table),
+    findall(Expression,
+            ( nth0(Position, Columns, Column),
+              relation_column_kind(Edges, Identity, Position, Kind),
+              sqlite_select_expression(Kind, Column, Expression)
+            ),
+            Expressions),
+    atomics_to_string(Expressions, ", ", SelectList),
+    format(string(Statement), 'SELECT ~s FROM ~s t', [SelectList, Table]).
+
+relation_column_kind(Edges, Identity, Position, Kind) :-
+    member(':'(Identity, _, ref(Target), Position), Edges),
+    !,
+    storage_kind(Target, Edges, Kind).
+relation_column_kind(_, _, _, json).
+
+storage_kind(primitive(text), _, text) :- !.
+storage_kind(primitive(int), _, integer) :- !.
+storage_kind(Target, Edges, Kind) :-
+    member(':'(module(prelude), Name, ref(Target), _), Edges),
+    !,
+    prelude_storage_kind(Name, Kind).
+storage_kind(_, _, json).
+
+prelude_storage_kind(Name, integer) :-
+    memberchk(Name, [bool,i8,i16,i32,i64,i128,u8,u16,u32,u64,u128,
+                     usize,isize]),
+    !.
+prelude_storage_kind(Name, real) :-
+    memberchk(Name, [number,f32,f64]),
+    !.
+prelude_storage_kind(Name, text) :-
+    memberchk(Name, [text,str,string,char]),
+    !.
+prelude_storage_kind(_, json).
+
+sqlite_storage_type(text, "INTEGER").
+sqlite_storage_type(integer, "INTEGER").
+sqlite_storage_type(real, "REAL").
+sqlite_storage_type(json, "TEXT").
+
+sqlite_select_expression(text, Column, Expression) :-
+    !,
+    sqlite_identifier(Column, Quoted),
+    format(string(Expression),
+           '(SELECT s."content" FROM "__str" s WHERE s."__id" = t.~s) AS ~s',
+           [Quoted, Quoted]).
+sqlite_select_expression(json, Column, Expression) :-
+    !,
+    sqlite_identifier(Column, Quoted),
+    format(string(Expression), 'json(t.~s) AS ~s', [Quoted, Quoted]).
+sqlite_select_expression(_, Column, Expression) :-
+    sqlite_identifier(Column, Quoted),
+    format(string(Expression), 't.~s AS ~s', [Quoted, Quoted]).
+
+sqlite_rules(Operators, Rules) :-
+    maplist(operator_head, Operators, Heads1),
+    sort(Heads1, Heads),
+    findall(Rule,
+            ( member(Head, Heads),
+              head_sql_rule(Head, Operators, Rule)
+            ),
+            Rules).
+
+operator_head(Operator, Head) :-
+    get_dict(head, Operator, Head).
+
+head_sql_rule(Head, Operators,
+              _{id:Id, head:Head, delete:Delete, inserts:Inserts}) :-
+    include(operator_has_head(Head), Operators, HeadOperators),
+    HeadOperators = [First | _],
+    get_dict(id, First, Id),
+    sqlite_identifier(Head, Table),
+    format(string(Delete), 'DELETE FROM ~s', [Table]),
+    maplist(operator_insert_sql, HeadOperators, Inserts).
+
+operator_has_head(Head, Operator) :-
+    get_dict(head, Operator, OperatorHead),
+    OperatorHead == Head.
+
+operator_insert_sql(Operator, Statement) :-
+    get_dict(head, Operator, Head),
+    get_dict(projection, Operator, Projections),
+    get_dict(bindings, Operator, Bindings),
+    get_dict(predicates, Operator, Predicates),
+    sqlite_identifier(Head, HeadTable),
+    findall(HeadColumn,
+            ( member(Projection, Projections),
+              get_dict(head, Projection, Column),
+              sqlite_identifier(Column, HeadColumn)
+            ),
+            HeadColumns),
+    findall(Expression,
+            ( member(Projection, Projections),
+              projection_sql(Projection, Expression)
+            ),
+            ProjectionSql),
+    dict_pairs(Bindings, _, BindingPairs),
+    maplist(binding_sql, BindingPairs, FromParts),
+    findall(PredicateSql,
+            ( member(Predicate, Predicates),
+              predicate_sql(Predicate, PredicateSql)
+            ),
+            PredicateParts),
+    atomics_to_string(HeadColumns, ", ", HeadList),
+    atomics_to_string(ProjectionSql, ", ", ProjectionList),
+    atomics_to_string(FromParts, ", ", FromList),
+    sqlite_where(PredicateParts, Where),
+    format(string(Statement),
+           'INSERT OR IGNORE INTO ~s (~s) SELECT ~s FROM ~s~s',
+           [HeadTable, HeadList, ProjectionList, FromList, Where]).
+
+binding_sql(Alias-Relation, Sql) :-
+    sqlite_identifier(Relation, Table),
+    sqlite_identifier(Alias, QuotedAlias),
+    format(string(Sql), '~s ~s', [Table, QuotedAlias]).
+
+projection_sql(Projection, Sql) :-
+    get_dict(source, Projection, Source),
+    !,
+    source_column_sql(Source, Sql).
+projection_sql(Projection, Sql) :-
+    get_dict(value, Projection, Value),
+    sqlite_literal_sql(Value, Sql).
+
+predicate_sql(Predicate, Sql) :-
+    get_dict(column_equals, Predicate, [Left, Right]),
+    !,
+    source_column_sql(Left, LeftSql),
+    source_column_sql(Right, RightSql),
+    format(string(Sql), '~s = ~s', [LeftSql, RightSql]).
+predicate_sql(Predicate, Sql) :-
+    get_dict(literal_equals, Predicate, Literal),
+    get_dict(column, Literal, Column),
+    get_dict(value, Literal, Value),
+    source_column_sql(Column, ColumnSql),
+    sqlite_literal_sql(Value, LiteralSql),
+    format(string(Sql), '~s = ~s', [ColumnSql, LiteralSql]).
+
+source_column_sql(Source, Sql) :-
+    text_atom(Source, SourceAtom),
+    sub_atom(SourceAtom, Before, 1, After, '.'),
+    !,
+    sub_atom(SourceAtom, 0, Before, _, Alias),
+    Start is Before + 1,
+    sub_atom(SourceAtom, Start, After, 0, Column),
+    sqlite_identifier(Alias, QuotedAlias),
+    sqlite_identifier(Column, QuotedColumn),
+    format(string(Sql), '~s.~s', [QuotedAlias, QuotedColumn]).
+
+sqlite_literal_sql(Value, Sql) :-
+    integer(Value),
+    !,
+    format(string(Sql), '~d', [Value]).
+sqlite_literal_sql(Value, Sql) :-
+    float(Value),
+    format(string(Sql), '~16g', [Value]).
+
+sqlite_where([], "").
+sqlite_where(Predicates, Where) :-
+    Predicates = [_ | _],
+    atomics_to_string(Predicates, " AND ", Body),
+    string_concat(" WHERE ", Body, Where).
+
+sqlite_identifier(Name, Quoted) :-
+    text_codes(Name, Codes),
+    duplicate_quotes(Codes, Escaped),
+    string_codes(Body, Escaped),
+    format(string(Quoted), '"~s"', [Body]).
+
+duplicate_quotes([], []).
+duplicate_quotes([0'" | Codes], [0'", 0'" | Escaped]) :-
+    !,
+    duplicate_quotes(Codes, Escaped).
+duplicate_quotes([Code | Codes], [Code | Escaped]) :-
+    duplicate_quotes(Codes, Escaped).
+
+text_atom(Value, Atom) :-
+    atom(Value),
+    !,
+    Atom = Value.
+text_atom(Value, Atom) :-
+    atom_string(Atom, Value).
+
+text_codes(Value, Codes) :-
+    string(Value),
+    !,
+    string_codes(Value, Codes).
+text_codes(Value, Codes) :-
+    atom_codes(Value, Codes).
 
 seed_rows([], _, []).
 seed_rows([call(ref(Identity), Arguments) | Seeds], Map, Rows) :-

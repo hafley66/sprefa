@@ -88,3 +88,9 @@ watch-e2e:
     cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
     cargo build --manifest-path "{{ v7 }}/../v6/dd-runner/Cargo.toml"
     swipl -q -s "{{ v7 }}/test/12_watch_pipeline.e2e.pl"
+
+# Compile one DL7 rule to both executable plan representations and compare the
+# SQLite and RAM tick deltas.
+sqlite-plan-e2e:
+    cargo build --manifest-path "{{ v7 }}/../v6/dd-runner/Cargo.toml"
+    swipl -q -s "{{ v7 }}/test/13_sqlite_plan.e2e.pl"
