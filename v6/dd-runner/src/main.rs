@@ -8,49 +8,7 @@ use std::{
     process,
 };
 
-mod kernel;
-#[path = "0_dl7_types.rs"]
-mod dl7_types;
-
-#[derive(Deserialize)]
-struct Plan {
-    ddl: Vec<String>,
-    rels: Vec<Rel>,
-    rules: Vec<Rule>,
-    initial: Vec<Row>,
-    schedule: Vec<Vec<SignedRow>>,
-    tick_order: Vec<String>,
-    #[serde(default)]
-    operators: Vec<Value>,
-}
-
-#[derive(Deserialize)]
-struct Rel {
-    name: String,
-    columns: Vec<String>,
-    select_all: String,
-}
-
-#[derive(Clone, Deserialize, PartialEq)]
-struct Rule {
-    id: String,
-    head: String,
-    delete: String,
-    inserts: Vec<String>,
-}
-
-#[derive(Clone, Deserialize)]
-struct Row {
-    rel: String,
-    values: Vec<Value>,
-}
-
-#[derive(Deserialize)]
-struct SignedRow {
-    sign: i8,
-    #[serde(flatten)]
-    row: Row,
-}
+use dd_runner::{kernel, Plan, Row, Rule, SignedRow};
 
 /// One `edgestmt/9` arm as the JSON twin carries it. `project_sql` binds the
 /// trigger row positionally; `write_sql` binds the projected head row.

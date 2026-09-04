@@ -54,50 +54,50 @@ struct RowKey(Rc<Tuple>);
 
 #[derive(Clone, Deserialize)]
 pub struct Operator {
-    id: String,
-    kind: String,
-    head: String,
+    pub id: String,
+    pub kind: String,
+    pub head: String,
     #[serde(default)]
-    refs: Vec<String>,
+    pub refs: Vec<String>,
     #[serde(default)]
-    bindings: BTreeMap<String, String>,
+    pub bindings: BTreeMap<String, String>,
     #[serde(default)]
-    predicates: Vec<Predicate>,
+    pub predicates: Vec<Predicate>,
     #[serde(default)]
-    projection: Vec<Projection>,
+    pub projection: Vec<Projection>,
     #[serde(default)]
-    aggregate: Option<Aggregate>,
+    pub aggregate: Option<Aggregate>,
 }
 
 #[derive(Clone, Deserialize)]
 pub struct Predicate {
     #[serde(default)]
-    column_equals: Option<[String; 2]>,
+    pub column_equals: Option<[String; 2]>,
     #[serde(default)]
-    literal_equals: Option<LiteralEquals>,
+    pub literal_equals: Option<LiteralEquals>,
 }
 
 #[derive(Clone, Deserialize)]
 pub struct LiteralEquals {
-    column: String,
-    value: Value,
+    pub column: String,
+    pub value: Value,
 }
 
 #[derive(Clone, Deserialize)]
 pub struct Projection {
     #[allow(dead_code)]
-    head: String,
+    pub head: String,
     #[serde(default)]
-    source: Option<String>,
+    pub source: Option<String>,
     #[serde(default)]
-    value: Option<Value>,
+    pub value: Option<Value>,
 }
 
 #[derive(Clone, Deserialize)]
 pub struct Aggregate {
-    kind: Vec<String>,
-    group: Vec<String>,
-    value: Vec<String>,
+    pub kind: Vec<String>,
+    pub group: Vec<String>,
+    pub value: Vec<String>,
 }
 
 pub fn run(
