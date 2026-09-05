@@ -148,7 +148,7 @@ compile_program_texts(
         _),
     append(PreludeDiagnostics, ProgramDiagnostics, ReaderDiagnostics),
     compile_after_macrotime_reads(
-        ReaderDiagnostics, PreludeUnit, MacrotimeText, [ProgramUnit],
+        ReaderDiagnostics, MacrotimeText, [ProgramUnit],
         ExpandedUnits, ExpansionDiagnostics),
     compile_after_reads(
         ExpansionDiagnostics, [PreludeUnit | ExpandedUnits],
@@ -367,16 +367,16 @@ compile_after_reads([], Units, Compiled, Diagnostics) :-
 compile_after_reads(Diagnostics, _, [], Diagnostics).
 
 compile_after_macrotime_reads(
-    [], PreludeUnit, MacrotimeText, Units,
+    [], MacrotimeText, Units,
     ExpandedUnits, Diagnostics) :-
     !,
     standard_macro_program(
-        PreludeUnit, MacrotimeText, MacroProgram, MacroDiagnostics),
+        MacrotimeText, MacroProgram, MacroDiagnostics),
     garbage_collect,
     expand_units_after_macro_program(
         MacroDiagnostics, Units, MacroProgram, ExpandedUnits, Diagnostics).
 compile_after_macrotime_reads(
-    Diagnostics, _, _, _, [], Diagnostics).
+    Diagnostics, _, _, [], Diagnostics).
 
 compile_after_project_reads(
     [], PreludeUnit, MacrotimeText,
@@ -384,7 +384,7 @@ compile_after_project_reads(
     Compiled, Diagnostics) :-
     !,
     compile_after_macrotime_reads(
-        [], PreludeUnit, MacrotimeText, Units,
+        [], MacrotimeText, Units,
         ExpandedUnits, ExpansionDiagnostics),
     compile_expanded_project(
         ExpansionDiagnostics, CanonicalRoot, ExpandedUnits,
@@ -402,8 +402,7 @@ compile_expanded_project(
 compile_expanded_project(
     Diagnostics, _, _, _, _, [], Diagnostics).
 
-standard_macro_program(
-    _PreludeUnit, MacrotimeText, MacroProgram, Diagnostics) :-
+standard_macro_program(MacrotimeText, MacroProgram, Diagnostics) :-
     MacroKey = macrotime(MacrotimeText),
     run_compile_step(
         expand, macrotime_program_cache,
