@@ -5,11 +5,15 @@
 :- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../src/1_libtime/1_syntax_expander', [expand_syntax/5]).
 :- use_module('../src/2_comptime/2_compiler',
-              [compile_dl7/4, compile_unit_with_macros/4]).
+              [ compile_dl7/4,
+                compile_dl7_macro_program/3,
+                compile_unit_with_macros/4
+              ]).
 
 test(dl7_rules_delete_and_splice_nested_syntax_occurrences) :-
-    compile_dl7('v7/test/fixtures/14_syntax_macros.dl7',
-                _, MacroProgram, CompileDiagnostics),
+    compile_dl7_macro_program(
+        'v7/test/fixtures/14_syntax_macros.dl7',
+        MacroProgram, CompileDiagnostics),
     Text = "(keep (splice2 alpha beta) omega)\n(drop erased)\n(splice2 (drop later) final)\n",
     read_dl7(macro_source, Text, Forms, SourceRows, ReaderDiagnostics),
     reify_syntax(Forms, SourceRows, Rows, ReifyDiagnostics),
@@ -68,12 +72,31 @@ test(dl7_rules_delete_and_splice_nested_syntax_occurrences) :-
             [], [], plus_rule(head('Action'), body('Event'),
                              shared_variable(true))).
 
+test(standard_plus_macro_runs_through_normal_file_compilation) :-
+    compile_dl7('v7/test/fixtures/15_standard_plus.dl7',
+                _, Runtime, Diagnostics),
+    absolute_file_name('v7/test/fixtures/15_standard_plus.dl7',
+                       CanonicalPath, [access(read)]),
+    plus_rule_receipt_for_owner(
+        Runtime, module(file(CanonicalPath)), Receipt),
+    Diagnostics == [],
+    Receipt == plus_rule(head('Action'), body('Event'),
+                         shared_variable(true)).
+
 plus_rule_receipt(
-    compiled_unit(_, checked_datalog(root_graph(_, Edges),
-                                     datalog_program(_, _, Rules), _, _), _),
+    Runtime, Receipt) :-
+    plus_rule_receipt_for_owner(Runtime, module(plus_compile), Receipt).
+
+plus_rule_receipt_for_owner(
+    compiled_unit(_, Runtime, _), Owner, Receipt) :-
+    plus_rule_receipt_for_owner(Runtime, Owner, Receipt).
+plus_rule_receipt_for_owner(
+    checked_datalog(root_graph(_, Edges),
+                    datalog_program(_, _, Rules), _, _),
+    Owner,
     plus_rule(head('Action'), body('Event'), shared_variable(Shared))) :-
-    memberchk(':'(module(plus_compile), 'Action', ref(Action), _), Edges),
-    memberchk(':'(module(plus_compile), 'Event', ref(Event), _), Edges),
+    memberchk(':'(Owner, 'Action', ref(Action), _), Edges),
+    memberchk(':'(Owner, 'Event', ref(Event), _), Edges),
     member(rule(call(ref(Action), [HeadArgument]),
                 [checked_goal(positive,
                               call(ref(Event), [BodyArgument]))]),

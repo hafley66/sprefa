@@ -1,0 +1,126 @@
+; Standard macrotime protocol and source rewrites. This file is compiled with
+; the ordinary DL7 prelude, then evaluated over source syntax before lowering.
+;
+; TypeScript-shaped row signatures:
+;
+; type Relation<Row extends readonly unknown[]> = ReadonlySet<Row>
+; type NodeId = unknown
+; type SyntaxFrontier = Relation<readonly [ordinal: number, node: NodeId]>
+; type SyntaxForm = Relation<readonly [node: NodeId]>
+; type SyntaxAtom = Relation<readonly [node: NodeId, name: string]>
+; type SyntaxLiteral = Relation<readonly [node: NodeId, value: unknown]>
+; type SyntaxVariable = Relation<readonly [
+;   occurrence: NodeId,
+;   variable: NodeId,
+;   authoredName: string,
+; ]>
+; type SyntaxClaim = Relation<readonly [invocation: NodeId, macro: string]>
+
+(: syntax_frontier
+   (* (: ordinal int)
+      (: node type)))
+
+(: syntax_form
+   (* (: node type)))
+
+(: syntax_atom
+   (* (: node type)
+      (: name text)))
+
+(: syntax_literal
+   (* (: node type)
+      (: value any)))
+
+(: syntax_variable
+   (* (: node type)
+      (: variable type)
+      (: name text)))
+
+(: syntax_source
+   (* (: node type)
+      (: path any)
+      (: start_offset int)
+      (: end_offset int)
+      (: start_line int)
+      (: start_column int)
+      (: end_line int)
+      (: end_column int)))
+
+(: syntax_claim
+   (* (: invocation type)
+      (: macro text)))
+
+; GeneratedSyntax(invocation, output ordinal, template path) is the stable
+; identity constructor shared by standard syntax templates.
+(: GeneratedSyntax
+   (* (: invocation type)
+      (: output_ordinal int)
+      (: template_path int)))
+
+(: plus_form
+   (* (: invocation type)
+      (: output type)))
+
+(: plus_operator
+   (* (: invocation type)
+      (: output type)))
+
+; function plus(invocation: FormNode): readonly [
+;   FormNode<[AtomNode<"<-">, ...Tail<typeof invocation.items>]>,
+; ]
+(<- (syntax_claim ?Form "<+")
+    (syntax_form ?Form)
+    (: ?Form item ?Head 0)
+    (syntax_atom ?Head "<+"))
+
+(<- (plus_form ?Form ?Output)
+    (syntax_claim ?Form "<+")
+    (nil ?Empty)
+    (cons 0 ?Empty ?TemplateArguments)
+    (cons 0 ?TemplateArguments ?OutputArguments)
+    (cons ?Form ?OutputArguments ?Arguments)
+    (intern GeneratedSyntax ?Arguments ?Output))
+
+(<- (plus_operator ?Form ?Output)
+    (syntax_claim ?Form "<+")
+    (nil ?Empty)
+    (cons 1 ?Empty ?TemplateArguments)
+    (cons 0 ?TemplateArguments ?OutputArguments)
+    (cons ?Form ?OutputArguments ?Arguments)
+    (intern GeneratedSyntax ?Arguments ?Output))
+
+(<- (node ?Output)
+    (plus_form ?Form ?Output))
+
+(<- (node ?Output)
+    (plus_operator ?Form ?Output))
+
+(<- (syntax_form ?Output)
+    (plus_form ?Form ?Output))
+
+(<- (syntax_atom ?Output "<-")
+    (plus_operator ?Form ?Output))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (plus_form ?Form ?Output)
+    (syntax_source ?Form ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (plus_operator ?Form ?Output)
+    (syntax_source ?Form ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (: ?Output item ?Operator 0)
+    (plus_form ?Form ?Output)
+    (plus_operator ?Form ?Operator))
+
+(<- (: ?Output item ?Child ?Index)
+    (plus_form ?Form ?Output)
+    (: ?Form item ?Child ?Index)
+    (before ?Form 0 ?Index))
+
+(<- (: ?Form expansion ?Output 0)
+    (plus_form ?Form ?Output))

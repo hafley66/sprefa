@@ -61,4 +61,31 @@ test(filesystem_products_are_traversed_with_colon_goals) :-
     memberchk(call(ref(FoundUser), [ref(UserType)]), Rows),
     Diagnostics == [].
 
+test(project_units_expand_standard_macros_before_module_lowering) :-
+    Root = 'v7/test/fixtures/modules',
+    AccountsPath = 'v7/test/fixtures/modules/0_accounts.dl7',
+    ConsumerPath = 'v7/test/fixtures/modules/2_plus_consumer.dl7',
+    compile_dl7_project(Root, [AccountsPath, ConsumerPath],
+                        Rows, Runtime, Diagnostics),
+    absolute_file_name(AccountsPath, CanonicalAccounts, [access(read)]),
+    absolute_file_name(ConsumerPath, CanonicalConsumer, [access(read)]),
+    AccountsOwner = module(file(CanonicalAccounts)),
+    ConsumerOwner = module(file(CanonicalConsumer)),
+    Runtime = checked_datalog(
+                  root_graph(_, Edges),
+                  datalog_program(_, _, Rules), _, _),
+    memberchk(':'(AccountsOwner, 'User', ref(UserType), 0), Edges),
+    memberchk(':'(ConsumerOwner, fired, ref(Fired), 0), Edges),
+    member(rule(call(ref(Fired), [HeadArgument]),
+                [checked_goal(
+                     positive,
+                     call(ref(kernel(':')),
+                          [ ref(AccountsOwner), const('User'),
+                            BodyArgument, _
+                          ]))]),
+           Rules),
+    HeadArgument == BodyArgument,
+    memberchk(call(ref(Fired), [ref(UserType)]), Rows),
+    Diagnostics == [].
+
 :- end_tests(dl7_module_system).

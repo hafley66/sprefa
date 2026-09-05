@@ -1,11 +1,13 @@
 :- module(dl7_compiler,
           [ compile_dl7/4,
+            compile_dl7_macro_program/3,
             compile_dl7_project/5,
             compile_dl7_project_rows/6,
             compile_unit/3,
             compile_unit_with_macros/4,
             compile_units/3,
-            type_prelude_paths/1
+            type_prelude_paths/1,
+            standard_macrotime_paths/1
           ]).
 
 :- use_module(library(error), [must_be/2]).
@@ -66,25 +68,66 @@ compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
         compile_dl7_traced(
             Path, CompilerRows, RuntimeProgram, Diagnostics)).
 
+%% compile_dl7_macro_program(+Path, -MacroProgram, -Diagnostics) is det.
+%
+% Bootstrap one macro library through the ordinary prelude and checked
+% compiler without applying the standard macro library to its own source.
+compile_dl7_macro_program(Path, MacroProgram, Diagnostics) :-
+    compile_trace_program_name(Path, ProgramName),
+    with_compile_trace(
+        ProgramName,
+        compile_dl7_macro_program_traced(
+            Path, MacroProgram, Diagnostics)).
+
+compile_dl7_macro_program_traced(Path, MacroProgram, Diagnostics) :-
+    once(absolute_file_name(Path, ProgramPath,
+                            [access(read), file_errors(error)])),
+    run_compile_phase(
+        read,
+        read_macro_program_texts(ProgramPath, PreludeText, ProgramText),
+        _),
+    CompileKey = macro_program(ProgramPath, PreludeText, ProgramText),
+    run_compile_step(
+        driver, compilation_cache,
+        with_compilation_cache(
+            CompileKey,
+            compile_raw_program_texts(
+                ProgramPath, PreludeText, ProgramText),
+            Compiled, Diagnostics, CacheHit),
+        cache_compile_metrics(CacheHit)),
+    macro_program_output(Diagnostics, Compiled, MacroProgram),
+    !.
+
 compile_dl7_traced(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
     once(absolute_file_name(Path, ProgramPath,
                             [access(read), file_errors(error)])),
     run_compile_phase(
         read,
-        read_program_texts(ProgramPath, PreludeText, ProgramText),
+        read_program_texts(
+            ProgramPath, PreludeText, MacrotimeText, ProgramText),
         _),
-    CompileKey = compile(ProgramPath, PreludeText, ProgramText),
+    CompileKey = compile(
+                     ProgramPath, PreludeText, MacrotimeText, ProgramText),
     run_compile_step(
         driver, compilation_cache,
         with_compilation_cache(
             CompileKey,
-            compile_program_texts(ProgramPath, PreludeText, ProgramText),
+            compile_program_texts(
+                ProgramPath, PreludeText, MacrotimeText, ProgramText),
             Compiled, Diagnostics, CacheHit),
         cache_compile_metrics(CacheHit)),
     compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
     !.
 
-read_program_texts(ProgramPath, PreludeText, ProgramText) :-
+read_program_texts(ProgramPath, PreludeText, MacrotimeText, ProgramText) :-
+    once(type_prelude_paths(PreludePaths)),
+    read_prelude_texts(PreludePaths, PreludeTexts),
+    join_prelude_texts(PreludeTexts, PreludeText),
+    standard_macrotime_text(MacrotimeText),
+    read_file_to_string(ProgramPath, ProgramText, [encoding(utf8)]),
+    !.
+
+read_macro_program_texts(ProgramPath, PreludeText, ProgramText) :-
     once(type_prelude_paths(PreludePaths)),
     read_prelude_texts(PreludePaths, PreludeTexts),
     join_prelude_texts(PreludeTexts, PreludeText),
@@ -92,6 +135,24 @@ read_program_texts(ProgramPath, PreludeText, ProgramText) :-
     !.
 
 compile_program_texts(
+    ProgramPath, PreludeText, MacrotimeText, ProgramText,
+    Compiled, Diagnostics) :-
+    run_compile_phase(
+        expand,
+        parse_program_texts(
+            ProgramPath, PreludeText, ProgramText,
+            PreludeUnit, PreludeDiagnostics,
+            ProgramUnit, ProgramDiagnostics),
+        _),
+    append(PreludeDiagnostics, ProgramDiagnostics, ReaderDiagnostics),
+    compile_after_macrotime_reads(
+        ReaderDiagnostics, PreludeUnit, MacrotimeText, [ProgramUnit],
+        ExpandedUnits, ExpansionDiagnostics),
+    compile_after_reads(
+        ExpansionDiagnostics, [PreludeUnit | ExpandedUnits],
+        Compiled, Diagnostics).
+
+compile_raw_program_texts(
     ProgramPath, PreludeText, ProgramText, Compiled, Diagnostics) :-
     run_compile_phase(
         expand,
@@ -101,8 +162,9 @@ compile_program_texts(
             ProgramUnit, ProgramDiagnostics),
         _),
     append(PreludeDiagnostics, ProgramDiagnostics, ReaderDiagnostics),
-    compile_after_reads(ReaderDiagnostics, [PreludeUnit, ProgramUnit],
-                        Compiled, Diagnostics).
+    compile_after_reads(
+        ReaderDiagnostics, [PreludeUnit, ProgramUnit],
+        Compiled, Diagnostics).
 
 parse_program_texts(
     ProgramPath, PreludeText, ProgramText,
@@ -132,14 +194,16 @@ compile_dl7_project_traced(Root, Paths,
     project_stream_paths(Paths, SourcePaths, StreamPaths),
     run_compile_phase(
         read,
-        read_project_units(
-            Root, SourcePaths, StreamPaths, PreludeUnit, PreludeDiagnostics,
+        read_project_with_macrotime(
+            Root, SourcePaths, StreamPaths,
+            PreludeUnit, PreludeDiagnostics, MacrotimeText,
             Project, ProjectDiagnostics, TsiRows, TsiDiagnostics),
         _),
     append([PreludeDiagnostics, ProjectDiagnostics, TsiDiagnostics],
            ReaderDiagnostics),
-    compile_after_project_reads(ReaderDiagnostics, PreludeUnit, Project,
-                                TsiRows, Compiled, Diagnostics),
+    compile_after_project_reads(
+        ReaderDiagnostics, PreludeUnit, MacrotimeText, Project,
+        TsiRows, Compiled, Diagnostics),
     compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
     !.
 
@@ -162,14 +226,15 @@ compile_dl7_project_rows_traced(
     Root, Paths, TsiRows, CompilerRows, RuntimeProgram, Diagnostics) :-
     run_compile_phase(
         read,
-        read_project_units(
-            Root, Paths, [], PreludeUnit, PreludeDiagnostics,
+        read_project_with_macrotime(
+            Root, Paths, [], PreludeUnit, PreludeDiagnostics, MacrotimeText,
             Project, ProjectDiagnostics, _, StreamDiagnostics),
         _),
     append([PreludeDiagnostics, ProjectDiagnostics, StreamDiagnostics],
            ReaderDiagnostics),
-    compile_after_project_reads(ReaderDiagnostics, PreludeUnit, Project,
-                                TsiRows, Compiled, Diagnostics),
+    compile_after_project_reads(
+        ReaderDiagnostics, PreludeUnit, MacrotimeText, Project,
+        TsiRows, Compiled, Diagnostics),
     compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
     !.
 
@@ -190,6 +255,15 @@ read_project_units(
     load_type_prelude(PreludeUnit, PreludeDiagnostics),
     load_dl7_project(Root, SourcePaths, Project, ProjectDiagnostics),
     load_tsi_streams(StreamPaths, TsiRows, TsiDiagnostics).
+
+read_project_with_macrotime(
+    Root, SourcePaths, StreamPaths,
+    PreludeUnit, PreludeDiagnostics, MacrotimeText,
+    Project, ProjectDiagnostics, TsiRows, TsiDiagnostics) :-
+    standard_macrotime_text(MacrotimeText),
+    read_project_units(
+        Root, SourcePaths, StreamPaths, PreludeUnit, PreludeDiagnostics,
+        Project, ProjectDiagnostics, TsiRows, TsiDiagnostics).
 
 load_tsi_streams([], [], []).
 load_tsi_streams([Path | Paths], Rows, Diagnostics) :-
@@ -242,6 +316,26 @@ type_prelude_paths(Paths) :-
     sort(NumberedEntries, SortedEntries),
     maplist(prelude_path(AbsolutePreludeDirectory), SortedEntries, Paths).
 
+standard_macrotime_paths(Paths) :-
+    once(source_file(dl7_compiler:compile_dl7(_, _, _, _), SourcePath)),
+    once(absolute_file_name(SourcePath, AbsoluteSourcePath,
+                            [access(read), file_errors(error)])),
+    file_directory_name(AbsoluteSourcePath, ComptimeDirectory),
+    directory_file_path(
+        ComptimeDirectory, '../../macrotime', MacrotimeDirectory),
+    once(absolute_file_name(MacrotimeDirectory, AbsoluteMacrotimeDirectory,
+                            [file_type(directory), access(read),
+                             file_errors(error)])),
+    directory_files(AbsoluteMacrotimeDirectory, Entries),
+    include(numbered_dl7_file, Entries, NumberedEntries),
+    sort(NumberedEntries, SortedEntries),
+    maplist(prelude_path(AbsoluteMacrotimeDirectory), SortedEntries, Paths).
+
+standard_macrotime_text(Text) :-
+    once(standard_macrotime_paths(Paths)),
+    read_prelude_texts(Paths, Texts),
+    join_prelude_texts(Texts, Text).
+
 numbered_dl7_file(Entry) :-
     file_name_extension(Stem, dl7, Entry),
     sub_atom(Stem, Before, 1, _, '_'),
@@ -270,14 +364,83 @@ compile_after_reads([], Units, Compiled, Diagnostics) :-
     compile_units(Units, Compiled, Diagnostics).
 compile_after_reads(Diagnostics, _, [], Diagnostics).
 
-compile_after_project_reads([], PreludeUnit,
-                            dl7_project(CanonicalRoot, Units),
-                            TsiRows, Compiled, Diagnostics) :-
+compile_after_macrotime_reads(
+    [], PreludeUnit, MacrotimeText, Units,
+    ExpandedUnits, Diagnostics) :-
+    !,
+    standard_macro_program(
+        PreludeUnit, MacrotimeText, MacroProgram, MacroDiagnostics),
+    expand_units_after_macro_program(
+        MacroDiagnostics, Units, MacroProgram, ExpandedUnits, Diagnostics).
+compile_after_macrotime_reads(
+    Diagnostics, _, _, _, [], Diagnostics).
+
+compile_after_project_reads(
+    [], PreludeUnit, MacrotimeText,
+    dl7_project(CanonicalRoot, Units), TsiRows,
+    Compiled, Diagnostics) :-
+    !,
+    compile_after_macrotime_reads(
+        [], PreludeUnit, MacrotimeText, Units,
+        ExpandedUnits, ExpansionDiagnostics),
+    compile_expanded_project(
+        ExpansionDiagnostics, CanonicalRoot, ExpandedUnits,
+        PreludeUnit, TsiRows, Compiled, Diagnostics).
+compile_after_project_reads(
+    Diagnostics, _, _, _, _, [], Diagnostics).
+
+compile_expanded_project(
+    [], CanonicalRoot, Units, PreludeUnit, TsiRows,
+    Compiled, Diagnostics) :-
     !,
     compile_project_units(
         dl7_project(CanonicalRoot, Units), TsiRows,
         [PreludeUnit | Units], Compiled, Diagnostics).
-compile_after_project_reads(Diagnostics, _, _, _, [], Diagnostics).
+compile_expanded_project(
+    Diagnostics, _, _, _, _, [], Diagnostics).
+
+standard_macro_program(
+    PreludeUnit, MacrotimeText, MacroProgram, Diagnostics) :-
+    MacroKey = macrotime(PreludeUnit, MacrotimeText),
+    run_compile_step(
+        expand, macrotime_program_cache,
+        with_compilation_cache(
+            MacroKey,
+            compile_macrotime_program(PreludeUnit, MacrotimeText),
+            Compiled, Diagnostics, CacheHit),
+        cache_compile_metrics(CacheHit)),
+    macro_program_output(Diagnostics, Compiled, MacroProgram).
+
+compile_macrotime_program(
+    PreludeUnit, MacrotimeText, Compiled, Diagnostics) :-
+    dl7_text_unit(
+        macrotime, macrotime, MacrotimeText,
+        MacrotimeUnit, ReaderDiagnostics),
+    compile_after_reads(
+        ReaderDiagnostics, [PreludeUnit, MacrotimeUnit],
+        Compiled, Diagnostics).
+
+macro_program_output([], compiled_unit(_, MacroProgram, _), MacroProgram) :-
+    !.
+macro_program_output(_, _, []).
+
+expand_units_after_macro_program([], Units, MacroProgram,
+                                 ExpandedUnits, Diagnostics) :-
+    !,
+    expand_units_with_macros(
+        Units, MacroProgram, ExpandedUnits, Diagnostics).
+expand_units_after_macro_program(
+    Diagnostics, _, _, [], Diagnostics).
+
+expand_units_with_macros([], _, [], []).
+expand_units_with_macros(
+    [Unit | Units], MacroProgram,
+    [ExpandedUnit | ExpandedUnits], Diagnostics) :-
+    expand_unit_with_macros(
+        Unit, MacroProgram, ExpandedUnit, UnitDiagnostics),
+    expand_units_with_macros(
+        Units, MacroProgram, ExpandedUnits, RestDiagnostics),
+    append(UnitDiagnostics, RestDiagnostics, Diagnostics).
 
 compiled_outputs(compiled_unit(_, RuntimeProgram, CompilerRows),
                  CompilerRows, RuntimeProgram).
@@ -300,15 +463,19 @@ compile_unit(Unit, Compiled, Diagnostics) :-
 compile_unit_with_macros(Unit, MacroProgram, Compiled, Diagnostics) :-
     must_be(ground, Unit),
     must_be(ground, MacroProgram),
+    expand_unit_with_macros(
+        Unit, MacroProgram, ExpandedUnit, ExpansionDiagnostics),
+    compile_expanded_unit(
+        ExpansionDiagnostics, ExpandedUnit, Compiled, Diagnostics).
+
+expand_unit_with_macros(Unit, MacroProgram, ExpandedUnit, Diagnostics) :-
     (   Unit = dl7_unit(Origin, Digest, Forms, SourceRows, ExpansionRows)
     ->  reify_syntax(Forms, SourceRows, SyntaxRows, ReifyDiagnostics),
         expand_unit_after_reify(
             ReifyDiagnostics, SyntaxRows, MacroProgram,
             Origin, Digest, ExpansionRows,
-            ExpandedUnit, ExpansionDiagnostics),
-        compile_expanded_unit(
-            ExpansionDiagnostics, ExpandedUnit, Compiled, Diagnostics)
-    ;   Compiled = [],
+            ExpandedUnit, Diagnostics)
+    ;   ExpandedUnit = [],
         Diagnostics = [diagnostic(
                            macrotime, none, invalid_dl7_unit(Unit))]
     ).
