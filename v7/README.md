@@ -37,6 +37,13 @@ Run `cd v7 && just compiler-perf` for the cold/warm compiler checkpoint. It
 reports wall time and enforces inference, closure-round, compiler-row, and
 warm-cache output budgets on `2_partial.dl7`.
 
+The 2026-09-05 checkpoint after standard macrotime integration reports a clean
+warm cache at 2,339 inferences and 418 ms. Its cold checkpoint currently fails
+three pinned budgets: 172,420,501 versus 88,000,000 inferences, 15,542 versus
+12,716 compiler rows, and 8 versus 7 closure rounds. Cold wall time was 48,831
+ms. This receipt remains visible while compiler-fixpoint cost is separated from
+the 0.037-second no-invocation macro dispatch path.
+
 Normal single-file and project compilation loads the numbered standard
 macrotime library under `v7/macrotime/`, compiles it through the ordinary DL7
 prelude, and evaluates it over each source unit before module lowering. The

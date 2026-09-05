@@ -308,6 +308,15 @@ dependency cone. On the 18-node two-round receipt, expansion alone used
 including compilation of the macro fixture and shared prelude, took 12.867 wall
 seconds.
 
+The normal compiler now caches the sliced checked macro program instead of the
+complete compiler prelude and compiler rows. The standard library owns its
+ordinal closure directly over kernel `predecessor`, so its bootstrap compile
+uses one macrotime unit and the kernel relation set. Claim rules whose bodies
+join invocation item zero to a literal `syntax_atom` form a resolver-style
+dispatch index. A graph containing none of those heads returns exactly without
+closure evaluation; the focused no-invocation receipt completed in 0.037
+seconds. General claim predicates retain closure evaluation.
+
 ## Bind and namespace model
 
 The proposed source is already accepted by the DL7 reader:
@@ -1614,6 +1623,7 @@ The first executable cuts landed on `feature/dl7-source-intelligence`:
 | `1fe5406b9`, `e216bf4ca` | a persistent SQLite runner accepts snapshot and delta watch generations transactionally, survives process restart, suppresses duplicate additions, and emits derived retractions |
 | `bc5807cbe` | the persistent store catalogs generated DDL, reads, rules, and tick phases and rejects drift before retained rows change |
 | `bae03a4a6` | normal single-file and project compilation load the checked standard macro library, expand `<+` before module lowering, and retain filesystem colon traversal |
+| `7d8e58cf6` | checked macro programs are compacted to their protocol and rule cone, standard bootstrap uses kernel relations alone, and indexed literal heads bypass empty expansion closure |
 
 Current native construction uses the operational map/join lowering in
 `1a_dbsp_plan_emitter.pl`; the DL7 emitter independently derives and tests the
@@ -1625,6 +1635,13 @@ The resident SQLite path has transactional generations, persistent state, and
 a strict runtime catalog. Per-source Rust module partitioning,
 content-addressed compilation, catalog migration, and generation-boundary
 library reload have no implementation receipt yet.
+
+The 2026-09-05 `just compiler-perf` run passed diagnostics and warm output
+equality. The warm compile used 2,339 inferences and 418 ms. The cold run used
+172,420,501 inferences and 48,831 ms, returned 15,542 compiler rows, and recorded
+8 closure rounds. The pinned rails remain 88,000,000 inferences, 12,716 rows,
+and 7 rounds, so the command exits 1. The indexed macro no-op receipt is
+separate from this compiler-fixpoint regression.
 
 <!-- todo(feature): Move operational binding, equality, literal-filter, aggregate, and projection lowering from 1a_dbsp_plan_emitter.pl into the existing DL7 DBSP graph. -->
 

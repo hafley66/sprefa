@@ -56,3 +56,12 @@ source unit, then install the existing file and directory module graph around
 the expanded units. `compile_dl7_macro_program/3` provides the raw bootstrap
 path for a macro library. Project-authored macro imports remain to be derived
 from module graph edges.
+
+The standard-library cache retains the sliced checked program rather than its
+complete compiler prelude and compiler rows. Its source defines its ordinal
+closure over the kernel `predecessor` relation, so bootstrap compilation needs
+only the kernel relation set. Claim rules with the exact shape “form item zero
+has literal atom Name” form a dispatch index. When every claim writer has that
+shape and the active graph contains none of those names, expansion returns the
+input graph exactly without evaluator closure. A general claim rule makes the
+dispatch result unknown and retains the full evaluation path.
