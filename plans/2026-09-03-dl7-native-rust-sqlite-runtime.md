@@ -285,11 +285,18 @@ The first executable slice is present at:
 distinguishes a zero-output expansion from an unclaimed form. The receipt
 deletes a top-level form, splices nested children, performs a second expansion
 round, preserves reused reader identities, and records claim/output provenance.
-`compile_unit_with_macros/4` now runs this graph phase before ordinary lowering;
+`compile_unit_with_macros/4` runs this graph phase before ordinary lowering;
 its receipt expands one source declaration form into two declarations and
-removes another form before either reaches the lowerer. Ordinary file/project
-entry points still select the existing tree callback. Automatic macro-program
-selection remains open. The `emit_atom` receipt derives
+removes another form before either reaches the lowerer. Normal single-file and
+project entry points now compile `v7/macrotime/0_standard.dl7` through the
+ordinary checked compiler, cache it by prelude and macro source content, and
+expand every source unit before module lowering. The project receipt expands
+`<+` and then resolves `accounts:User` through the existing filesystem module
+graph. `compile_dl7_macro_program/3` is the bootstrap entry point that compiles
+a macro library without applying the standard library to its own source.
+Project-authored macro visibility still needs module-edge resolution. The
+static tree callback remains only for infix-colon normalization. The
+`emit_atom` receipt derives
 `application(GeneratedSyntax, [Invocation, OutputOrdinal, TemplatePath])`
 through `nil/1`, `cons/3`, and `intern/3`; two source invocations receive
 distinct identities, repeated expansion receives equal identities, and each
@@ -953,8 +960,9 @@ Current implementation status:
 - `<+` is accepted as one reader atom. The checked macro fixture constructs a
   fresh form and `<-` operator, copies the original head and body children, and
   removes `<+` before the existing lowerer. The lowerer has no `<+` branch.
-  `compile_unit_with_macros/4` exercises this path; ordinary file/project entry
-  points do not select the macro program yet.
+  `compile_unit_with_macros/4` exercises the explicit path. Normal file and
+  project entry points load the standard checked macro program and exercise
+  the same expansion before module lowering.
 - `->` is accepted only as an atom token. It has no rule, pattern, arm, or
   direction semantics in the lowerer.
 
@@ -1605,6 +1613,7 @@ The first executable cuts landed on `feature/dl7-source-intelligence`:
 | `211231cda` | generated Rust carries both RAM constructors and SQLite statements; the SQLite arm entered the chain/ring shootout with exact closure counts |
 | `1fe5406b9`, `e216bf4ca` | a persistent SQLite runner accepts snapshot and delta watch generations transactionally, survives process restart, suppresses duplicate additions, and emits derived retractions |
 | `bc5807cbe` | the persistent store catalogs generated DDL, reads, rules, and tick phases and rejects drift before retained rows change |
+| `bae03a4a6` | normal single-file and project compilation load the checked standard macro library, expand `<+` before module lowering, and retain filesystem colon traversal |
 
 Current native construction uses the operational map/join lowering in
 `1a_dbsp_plan_emitter.pl`; the DL7 emitter independently derives and tests the
@@ -1619,7 +1628,7 @@ library reload have no implementation receipt yet.
 
 <!-- todo(feature): Move operational binding, equality, literal-filter, aggregate, and projection lowering from 1a_dbsp_plan_emitter.pl into the existing DL7 DBSP graph. -->
 
-<!-- todo(feature): Route compiler input through the checked DL7 graph-expansion phase, move the syntax protocol declarations into a bootstrapped DL7 library, and retire dl7_syntax_rewrite/3 after parity receipts. -->
+<!-- todo(feature): Move infix-colon normalization into v7/macrotime/0_standard.dl7, retire dl7_syntax_rewrite/3 after parity receipts, and derive project-authored macro visibility from module graph edges. -->
 
 <!-- todo(feature): Extend the proven macro-definition/invocation/output/template identity formula from a generated atom to quasiquoted form trees with node and sequence splices. -->
 

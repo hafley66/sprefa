@@ -135,6 +135,12 @@ Recursive rewriting stops with the named diagnostic
 `expansion_cycle(MacroIdentities)` when a tree shape repeats. The empty
 registry is an identity transformation with no expansion rows.
 
+The static registry currently owns only infix-colon normalization. Normal
+single-file and project compilation subsequently evaluates the checked DL7
+library at `v7/macrotime/0_standard.dl7` over the reified syntax graph before
+module lowering. Moving colon normalization into that library is the remaining
+static-registry retirement step.
+
 ## Supported entry spellings
 
 Standalone loading is explicit:

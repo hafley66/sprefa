@@ -37,6 +37,13 @@ Run `cd v7 && just compiler-perf` for the cold/warm compiler checkpoint. It
 reports wall time and enforces inference, closure-round, compiler-row, and
 warm-cache output budgets on `2_partial.dl7`.
 
+Normal single-file and project compilation loads the numbered standard
+macrotime library under `v7/macrotime/`, compiles it through the ordinary DL7
+prelude, and evaluates it over each source unit before module lowering. The
+standard library currently defines `<+` as a graph rewrite to `<-`.
+`compile_dl7_macro_program/3` is the bootstrap entry point for compiling a
+macro library without applying that library to its own source.
+
 Run a DL7 relation over the type facts extracted from one source file:
 
 ```bash

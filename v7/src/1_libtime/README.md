@@ -47,8 +47,12 @@ remaining source children through their indexed `item` edges, and expands the
 source form to that generated form. The source head remains an explicit action
 relation; runtime meaning comes from the selected action and trigger relations.
 
-`expand_syntax/5` currently accepts a checked program supplied by the caller.
-`compile_unit_with_macros/4` reifies an existing `dl7_unit/5`, runs this phase,
-materializes the active graph, and enters the current compiler. Ordinary file
-and project compilation still use `0_reader/1_expander.pl`; automatic
-macro-program selection is a later integration cut.
+`expand_syntax/5` accepts a checked program supplied by the caller.
+`compile_unit_with_macros/4` retains that explicit test and embedding seam.
+Normal `compile_dl7/4`, `compile_dl7_project/5`, and
+`compile_dl7_project_rows/6` compile the numbered library under
+`v7/macrotime/`, cache it by prelude and macro source content, expand every
+source unit, then install the existing file and directory module graph around
+the expanded units. `compile_dl7_macro_program/3` provides the raw bootstrap
+path for a macro library. Project-authored macro imports remain to be derived
+from module graph edges.
