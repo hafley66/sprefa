@@ -1,5 +1,7 @@
 :- module(dl7_syntax_macro_program,
           [ macro_protocol/3,
+            slice_macro_program/3,
+            macro_dispatch/4,
             evaluate_macro_program/5,
             macro_results/6
           ]).
@@ -26,6 +28,111 @@ macro_protocol(
 macro_protocol(Program, _,
                [diagnostic(macrotime, none,
                            invalid_macro_program(Program))]).
+
+%% slice_macro_program(+CheckedProgram, -MacroProgram, -Diagnostics) is det.
+%
+% Retain the protocol declarations, claim/output rule dependency cone, and
+% authored seeds read by that cone. The compact result is sufficient for every
+% expansion round and avoids retaining the complete compiler prelude.
+slice_macro_program(CheckedProgram, MacroProgram, Diagnostics) :-
+    macro_protocol(CheckedProgram, Protocol, ProtocolDiagnostics),
+    slice_after_protocol(
+        ProtocolDiagnostics, Protocol, CheckedProgram,
+        MacroProgram, Diagnostics).
+
+slice_after_protocol(
+    [], Protocol,
+    checked_datalog(root_graph(_, Edges),
+                    datalog_program(Relations, Seeds, Rules), _, _),
+    checked_datalog(root_graph([], ProtocolEdges),
+                    datalog_program(ProtocolRelations, MacroSeeds,
+                                    MacroRules), [], []),
+    []) :-
+    !,
+    macro_rules(Protocol, Rules, MacroRules),
+    protocol_relation_ids(Protocol, ProtocolIds),
+    include(edge_targets_one_of(ProtocolIds), Edges, ProtocolEdges),
+    include(declaration_one_of(ProtocolIds), Relations, ProtocolRelations),
+    macro_rule_relations(MacroRules, MacroRelationIds),
+    include(seed_relation_one_of(MacroRelationIds), Seeds, CandidateSeeds),
+    exclude(compiler_predecessor_seed, CandidateSeeds, MacroSeeds).
+slice_after_protocol(
+    Diagnostics, _, _, [], Diagnostics).
+
+protocol_relation_ids(
+    protocol(Frontier, Form, Atom, Literal, Variable, Source, Claim),
+    [Frontier, Form, Atom, Literal, Variable, Source, Claim]).
+
+edge_targets_one_of(Ids, ':'(_, _, ref(Target), _)) :-
+    memberchk(Target, Ids).
+
+declaration_one_of(Ids, relation(ref(Relation), _, _)) :-
+    memberchk(Relation, Ids).
+
+macro_rule_relations(Rules, Relations) :-
+    findall(Relation,
+            ( member(Rule, Rules),
+              rule_relation(Rule, Relation)
+            ),
+            Relations0),
+    sort(Relations0, Relations).
+
+rule_relation(rule(call(ref(Relation), _), _), Relation).
+rule_relation(rule(_, Goals), Relation) :-
+    member(checked_goal(_, call(ref(Relation), _)), Goals).
+
+seed_relation_one_of(Relations, call(ref(Relation), _)) :-
+    memberchk(Relation, Relations).
+
+%% macro_dispatch(+Protocol, +MacroProgram, +SyntaxRows, -Dispatch) is det.
+%
+% Index claim rules shaped as a literal atom in item position zero. When every
+% claim writer has that shape, absence of those heads proves an empty claim set
+% without running the evaluator. Unknown preserves support for general claim
+% rules by falling through to closure evaluation.
+macro_dispatch(
+    protocol(_, _, Atom, _, _, _, Claim),
+    checked_datalog(_, datalog_program(_, _, Rules), _, _),
+    SyntaxRows, Dispatch) :-
+    include(rule_writes_relation(Claim), Rules, ClaimRules),
+    findall(Name,
+            ( member(Rule, ClaimRules),
+              claim_rule_head_name(Rule, Atom, Claim, Name)
+            ),
+            Names0),
+    sort(Names0, Names),
+    length(ClaimRules, ClaimCount),
+    length(Names, NameCount),
+    dispatch_result(
+        ClaimCount, NameCount, Names, SyntaxRows, Dispatch).
+
+rule_writes_relation(Relation, rule(call(ref(Relation), _), _)).
+
+claim_rule_head_name(
+    rule(call(ref(Claim), [Invocation, _]), Goals), Atom, Claim, Name) :-
+    memberchk(
+        checked_goal(
+            positive,
+            call(ref(kernel(':')),
+                 [Invocation, const(item), Head, const(0)])),
+        Goals),
+    memberchk(
+        checked_goal(positive, call(ref(Atom), [Head, const(Text)])),
+        Goals),
+    atom_string(Name, Text).
+
+dispatch_result(ClaimCount, NameCount, _, _, unknown) :-
+    ClaimCount =\= NameCount,
+    !.
+dispatch_result(_, _, Names, Rows, present) :-
+    syntax_invocation_head(Rows, Name),
+    memberchk(Name, Names),
+    !.
+dispatch_result(_, _, _, _, absent).
+
+syntax_invocation_head(Rows, Name) :-
+    member(':'(_, item, ref(Head), 0), Rows),
+    memberchk(syntax_atom(Head, Name), Rows).
 
 resolve_protocol_relation(Edges, Relations, Name, Arity, Relation,
                           Diagnostics) :-

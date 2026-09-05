@@ -65,6 +65,20 @@
    (* (: invocation type)
       (: output type)))
 
+; Macrotime owns this transitive ordinal helper so compiling the standard
+; library requires only the kernel relation set.
+(: syntax_before
+   (* (: owner type)
+      (: earlier int)
+      (: later int)))
+
+(<- (syntax_before ?Owner ?Earlier ?Later)
+    (predecessor ?Owner ?Earlier ?Later))
+
+(<- (syntax_before ?Owner ?Earlier ?Later)
+    (predecessor ?Owner ?Earlier ?Middle)
+    (syntax_before ?Owner ?Middle ?Later))
+
 ; function plus(invocation: FormNode): readonly [
 ;   FormNode<[AtomNode<"<-">, ...Tail<typeof invocation.items>]>,
 ; ]
@@ -120,7 +134,7 @@
 (<- (: ?Output item ?Child ?Index)
     (plus_form ?Form ?Output)
     (: ?Form item ?Child ?Index)
-    (before ?Form 0 ?Index))
+    (syntax_before ?Form 0 ?Index))
 
 (<- (: ?Form expansion ?Output 0)
     (plus_form ?Form ?Output))

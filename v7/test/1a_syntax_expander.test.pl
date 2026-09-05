@@ -4,6 +4,8 @@
 :- use_module('../src/0_reader/1a_syntax_grapher', [reify_syntax/4]).
 :- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../src/1_libtime/1_syntax_expander', [expand_syntax/5]).
+:- use_module('../src/1_libtime/0a_syntax_macro_program',
+              [slice_macro_program/3]).
 :- use_module('../src/2_comptime/2_compiler',
               [ compile_dl7/4,
                 compile_dl7_macro_program/3,
@@ -82,6 +84,58 @@ test(standard_plus_macro_runs_through_normal_file_compilation) :-
     Diagnostics == [],
     Receipt == plus_rule(head('Action'), body('Event'),
                          shared_variable(true)).
+
+test(macro_program_slice_retains_protocol_and_expansion_behavior) :-
+    compile_dl7_macro_program(
+        'v7/test/fixtures/14_syntax_macros.dl7',
+        FullProgram, CompileDiagnostics),
+    slice_macro_program(FullProgram, MacroProgram, SliceDiagnostics),
+    MacroProgram = checked_datalog(
+                       root_graph([], ProtocolEdges),
+                       datalog_program(ProtocolRelations, Seeds, Rules),
+                       [], []),
+    read_dl7(slice_source, "(splice2 alpha beta)\n",
+             Forms, SourceRows, ReaderDiagnostics),
+    reify_syntax(Forms, SourceRows, Rows, ReifyDiagnostics),
+    expand_syntax(Rows, MacroProgram, Expanded, _, ExpansionDiagnostics),
+    syntax_snapshot(Expanded, Snapshot),
+    length(ProtocolEdges, EdgeCount),
+    length(ProtocolRelations, RelationCount),
+    length(Seeds, SeedCount),
+    length(Rules, RuleCount),
+    Receipt = slice(
+                  diagnostics(
+                      CompileDiagnostics, SliceDiagnostics,
+                      ReaderDiagnostics, ReifyDiagnostics,
+                      ExpansionDiagnostics),
+                  counts(EdgeCount, RelationCount, SeedCount, RuleCount),
+                  syntax(Snapshot)),
+    Receipt == slice(
+                   diagnostics([], [], [], [], []),
+                   counts(7, 7, 0, 75),
+                   syntax([frontier(0, 2), frontier(1, 3),
+                           atom(2, alpha), atom(3, beta)])).
+
+test(indexed_macro_dispatch_preserves_an_unclaimed_graph_exactly) :-
+    compile_dl7_macro_program(
+        'v7/test/fixtures/14_syntax_macros.dl7',
+        FullProgram, CompileDiagnostics),
+    slice_macro_program(FullProgram, MacroProgram, SliceDiagnostics),
+    read_dl7(dispatch_source, "(ordinary alpha beta)\n",
+             Forms, SourceRows, ReaderDiagnostics),
+    reify_syntax(Forms, SourceRows, Rows, ReifyDiagnostics),
+    expand_syntax(Rows, MacroProgram, Expanded, Provenance,
+                  ExpansionDiagnostics),
+    Expanded == Rows,
+    Provenance == [],
+    diagnostics_empty([
+        CompileDiagnostics, SliceDiagnostics, ReaderDiagnostics,
+        ReifyDiagnostics, ExpansionDiagnostics
+    ]).
+
+diagnostics_empty([]).
+diagnostics_empty([[] | Diagnostics]) :-
+    diagnostics_empty(Diagnostics).
 
 plus_rule_receipt(
     Runtime, Receipt) :-

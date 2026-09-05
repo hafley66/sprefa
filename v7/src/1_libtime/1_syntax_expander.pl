@@ -3,6 +3,7 @@
 :- use_module(library(error), [must_be/2]).
 :- use_module('0a_syntax_macro_program',
               [ macro_protocol/3,
+                macro_dispatch/4,
                 evaluate_macro_program/5,
                 macro_results/6
               ]).
@@ -30,9 +31,18 @@ expand_after_protocol([], Protocol, Rows, Program,
                       Expanded, Provenance, Diagnostics) :-
     !,
     sort(Rows, CanonicalRows),
-    expand_rounds(0, 64, [CanonicalRows], Protocol, Program, CanonicalRows,
-                  [], Expanded, Provenance, Diagnostics).
+    macro_dispatch(Protocol, Program, CanonicalRows, Dispatch),
+    expand_after_dispatch(
+        Dispatch, Protocol, Program, CanonicalRows,
+        Expanded, Provenance, Diagnostics).
 expand_after_protocol(Diagnostics, _, _, _, [], [], Diagnostics).
+
+expand_after_dispatch(absent, _, _, Rows, Rows, [], []) :-
+    !.
+expand_after_dispatch(_, Protocol, Program, Rows,
+                      Expanded, Provenance, Diagnostics) :-
+    expand_rounds(0, 64, [Rows], Protocol, Program, Rows,
+                  [], Expanded, Provenance, Diagnostics).
 
 expand_rounds(Wave, Limit, _, _, _, _, _, [], [],
               [diagnostic(macrotime, none,

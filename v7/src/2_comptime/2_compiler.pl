@@ -20,6 +20,8 @@
               [ evaluate/4,
                 validate_functional_rows/3
               ]).
+:- use_module('../1_libtime/0a_syntax_macro_program',
+              [slice_macro_program/3]).
 :- use_module('../1_libtime/1_syntax_expander', [expand_syntax/5]).
 :- use_module('0a_module_lowerer',
               [ lower_units_deferred/4,
@@ -370,6 +372,7 @@ compile_after_macrotime_reads(
     !,
     standard_macro_program(
         PreludeUnit, MacrotimeText, MacroProgram, MacroDiagnostics),
+    garbage_collect,
     expand_units_after_macro_program(
         MacroDiagnostics, Units, MacroProgram, ExpandedUnits, Diagnostics).
 compile_after_macrotime_reads(
@@ -400,25 +403,34 @@ compile_expanded_project(
     Diagnostics, _, _, _, _, [], Diagnostics).
 
 standard_macro_program(
-    PreludeUnit, MacrotimeText, MacroProgram, Diagnostics) :-
-    MacroKey = macrotime(PreludeUnit, MacrotimeText),
+    _PreludeUnit, MacrotimeText, MacroProgram, Diagnostics) :-
+    MacroKey = macrotime(MacrotimeText),
     run_compile_step(
         expand, macrotime_program_cache,
         with_compilation_cache(
             MacroKey,
-            compile_macrotime_program(PreludeUnit, MacrotimeText),
-            Compiled, Diagnostics, CacheHit),
+            compile_sliced_macrotime_program(MacrotimeText),
+            MacroProgram, Diagnostics, CacheHit),
         cache_compile_metrics(CacheHit)),
-    macro_program_output(Diagnostics, Compiled, MacroProgram).
+    !.
 
-compile_macrotime_program(
-    PreludeUnit, MacrotimeText, Compiled, Diagnostics) :-
+compile_sliced_macrotime_program(
+    MacrotimeText, MacroProgram, Diagnostics) :-
     dl7_text_unit(
         macrotime, macrotime, MacrotimeText,
         MacrotimeUnit, ReaderDiagnostics),
     compile_after_reads(
-        ReaderDiagnostics, [PreludeUnit, MacrotimeUnit],
-        Compiled, Diagnostics).
+        ReaderDiagnostics, [MacrotimeUnit],
+        Compiled, CompileDiagnostics),
+    slice_compiled_macro_program(
+        CompileDiagnostics, Compiled, MacroProgram, Diagnostics).
+
+slice_compiled_macro_program(
+    [], compiled_unit(_, CheckedProgram, _), MacroProgram, Diagnostics) :-
+    !,
+    slice_macro_program(CheckedProgram, MacroProgram, Diagnostics).
+slice_compiled_macro_program(
+    Diagnostics, _, [], Diagnostics).
 
 macro_program_output([], compiled_unit(_, MacroProgram, _), MacroProgram) :-
     !.
@@ -473,7 +485,7 @@ expand_unit_with_macros(Unit, MacroProgram, ExpandedUnit, Diagnostics) :-
     ->  reify_syntax(Forms, SourceRows, SyntaxRows, ReifyDiagnostics),
         expand_unit_after_reify(
             ReifyDiagnostics, SyntaxRows, MacroProgram,
-            Origin, Digest, ExpansionRows,
+            Unit, Origin, Digest, ExpansionRows,
             ExpandedUnit, Diagnostics)
     ;   ExpandedUnit = [],
         Diagnostics = [diagnostic(
@@ -481,15 +493,25 @@ expand_unit_with_macros(Unit, MacroProgram, ExpandedUnit, Diagnostics) :-
     ).
 
 expand_unit_after_reify(
-    [], SyntaxRows, MacroProgram, Origin, Digest, ExpansionRows,
+    [], SyntaxRows, MacroProgram, Unit, Origin, Digest, ExpansionRows,
     ExpandedUnit, Diagnostics) :-
     !,
     expand_syntax(SyntaxRows, MacroProgram,
                   ExpandedRows, MacroProvenance, MacroDiagnostics),
-    materialize_unit_after_expansion(
-        MacroDiagnostics, ExpandedRows, MacroProvenance,
+    finish_unit_expansion(
+        MacroDiagnostics, MacroProvenance, Unit, ExpandedRows,
         Origin, Digest, ExpansionRows, ExpandedUnit, Diagnostics).
-expand_unit_after_reify(Diagnostics, _, _, _, _, _, [], Diagnostics).
+expand_unit_after_reify(
+    Diagnostics, _, _, _, _, _, _, [], Diagnostics).
+
+finish_unit_expansion([], [], Unit, _, _, _, _, Unit, []) :-
+    !.
+finish_unit_expansion(
+    Diagnostics, MacroProvenance, _, ExpandedRows,
+    Origin, Digest, ExpansionRows, ExpandedUnit, ResultDiagnostics) :-
+    materialize_unit_after_expansion(
+        Diagnostics, ExpandedRows, MacroProvenance,
+        Origin, Digest, ExpansionRows, ExpandedUnit, ResultDiagnostics).
 
 materialize_unit_after_expansion(
     [], ExpandedRows, MacroProvenance, Origin, Digest, ExpansionRows,
