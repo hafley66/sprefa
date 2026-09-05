@@ -1,25 +1,58 @@
 ; The checked runtime program doubles as the macrotime evaluator. Claims name
 ; the macro even when expansion has zero output rows.
+;
+; TypeScript-shaped reading aid. These comments describe row signatures only;
+; the executable definitions below remain DL7 relations and rules.
+;
+; type Int = number
+; type Text = string
+; type NodeId = unknown
+; type Value = unknown
+; type Relation<Row extends readonly unknown[]> = ReadonlySet<Row>
+; type Ref<T> = { readonly ref: T }
+;
+; Every (: Name (* ...fields)) form declares the tuple accepted by one
+; relation. A fact (Name a b) inserts or matches the tuple [a, b], depending
+; on whether the call occurs in a rule head or body.
+;
+; type SyntaxFrontier = Relation<readonly [ordinal: Int, node: NodeId]>
+; Top-level syntax nodes are ordered by ordinal.
 (: syntax_frontier
    (* (: ordinal int)
       (: node type)))
 
+; type SyntaxForm = Relation<readonly [node: NodeId]>
+; Membership means that node carries a parenthesized form payload.
 (: syntax_form
    (* (: node type)))
 
+; type SyntaxAtom = Relation<readonly [node: NodeId, name: Text]>
 (: syntax_atom
    (* (: node type)
       (: name text)))
 
+; type SyntaxLiteral = Relation<readonly [node: NodeId, value: Value]>
 (: syntax_literal
    (* (: node type)
       (: value any)))
 
+; type SyntaxVariable = Relation<readonly [
+;   occurrence: NodeId,
+;   variable: NodeId,
+;   authoredName: Text,
+; ]>
+; Separate occurrences can share one logical variable identity.
 (: syntax_variable
    (* (: node type)
       (: variable type)
       (: name text)))
 
+; type SyntaxSource = Relation<readonly [
+;   node: NodeId, path: Value,
+;   startOffset: Int, endOffset: Int,
+;   startLine: Int, startColumn: Int,
+;   endLine: Int, endColumn: Int,
+; ]>
 (: syntax_source
    (* (: node type)
       (: path any)
@@ -30,32 +63,78 @@
       (: end_line int)
       (: end_column int)))
 
+; type SyntaxClaim = Relation<readonly [
+;   invocation: NodeId,
+;   macroName: Text,
+; ]>
+; A claim says that the rewriter owns this invocation. Zero expansion edges
+; means deletion, one means replacement, and several mean an ordered splice.
 (: syntax_claim
    (* (: invocation type)
       (: macro text)))
 
+; type GeneratedSyntax = (
+;   invocation: NodeId,
+;   outputOrdinal: Int,
+;   templatePath: Int,
+; ) => NodeId
+; `intern GeneratedSyntax Args Output` applies this identity constructor.
+; Equal arguments yield the same Output identity. Invocation is part of Args,
+; so separate source occurrences remain separate.
 (: GeneratedSyntax
    (* (: invocation type)
       (: output_ordinal int)
       (: template_path int)))
 
+; Internal helper relation used while constructing emit_atom output.
+; type GeneratedAtom = Relation<readonly [invocation: NodeId, output: NodeId]>
 (: generated_atom
    (* (: invocation type)
       (: output type)))
 
+; Internal helper relations used while constructing <+ output.
+; type PlusForm = Relation<readonly [invocation: NodeId, output: NodeId]>
 (: plus_form
    (* (: invocation type)
       (: output type)))
 
+; type PlusOperator = Relation<readonly [invocation: NodeId, output: NodeId]>
 (: plus_operator
    (* (: invocation type)
       (: output type)))
 
+; Rule reading aid:
+;
+;   (<- Head Body0 Body1 ...)
+;
+; corresponds approximately to:
+;
+;   for (const binding of join(Body0, Body1, ...)) {
+;     Head.add(project(binding))
+;   }
+;
+; A colon call has the common graph-edge signature:
+;
+; type Edge = Relation<readonly [
+;   owner: NodeId,
+;   label: Text,
+;   target: NodeId | Ref<NodeId> | Value,
+;   ordinal: Int,
+; ]>
+;
+; In a body it reads an edge. In a head it derives an edge.
+;
+; function drop(invocation: FormNode): readonly []
+; Claiming the form without deriving expansion edges deletes it.
 (<- (syntax_claim ?Form "drop")
     (syntax_form ?Form)
     (: ?Form item ?Head 0)
     (syntax_atom ?Head "drop"))
 
+; function splice2(invocation: FormNode): readonly [
+;   invocation.items[1],
+;   invocation.items[2],
+; ]
 (<- (syntax_claim ?Form "splice2")
     (syntax_form ?Form)
     (: ?Form item ?Head 0)
@@ -69,11 +148,17 @@
     (syntax_claim ?Form "splice2")
     (: ?Form item ?Second 2))
 
+; function emitAtom(invocation: FormNode): readonly [AtomNode<"generated">]
 (<- (syntax_claim ?Form "emit_atom")
     (syntax_form ?Form)
     (: ?Form item ?Head 0)
     (syntax_atom ?Head "emit_atom"))
 
+; The nil/cons rows build this constructor argument list without a special
+; list value in the macro protocol:
+;
+; const args = cons(invocation, cons(0, cons(0, nil)))
+; const output = intern(GeneratedSyntax, args)
 (<- (generated_atom ?Form ?Output)
     (syntax_claim ?Form "emit_atom")
     (nil ?Empty)
@@ -97,6 +182,12 @@
 (<- (: ?Form expansion ?Output 0)
     (generated_atom ?Form ?Output))
 
+; function plus(invocation: FormNode): readonly [
+;   FormNode<[AtomNode<"<-">, ...Tail<typeof invocation.items>]>,
+; ]
+;
+; The original item 0 is <+. The generated item 0 is <-. Original items 1..
+; are copied with their existing identities and ordinals.
 (<- (syntax_claim ?Form "<+")
     (syntax_form ?Form)
     (: ?Form item ?Head 0)
