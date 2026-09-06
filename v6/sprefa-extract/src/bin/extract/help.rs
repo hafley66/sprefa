@@ -7,6 +7,19 @@
 //! Included with `#[path]` rather than living beside a `main.rs`, so cargo's
 //! bin auto-discovery does not see this directory as a second binary.
 
+pub const AFTER_HELP: &str = concat!(
+    "Aliases:\n",
+    "  extract fast PATH...    syntax-only whole-project extraction (diet_scip)\n",
+    "  extract slow ROOT       semantic whole-project extraction (real SCIP/compiler)\n",
+    "\n",
+    "Build:\n",
+    "  git hash: ",
+    env!("SPREFA_BUILD_GIT_HASH"),
+    "\n",
+    "  datetime: ",
+    env!("SPREFA_BUILD_DATETIME"),
+);
+
 /// Self-describing enough that `extract --help` + `extract --schema` are a
 /// complete contract for a fresh caller (human or AI). No outside docs needed.
 pub const LONG_ABOUT: &str = "\

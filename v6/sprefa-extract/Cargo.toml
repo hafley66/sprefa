@@ -11,6 +11,7 @@ members = [
 name = "sprefa-extract"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 description = "v6 extraction leaf: a corpus at a version -> normalized graph facts. Sync, rayon-parallel, arena-mastered. No DB, no async."
 license = "MIT OR Apache-2.0"
 publish = false
@@ -252,4 +253,3 @@ rusqlite = { version = "0.40", features = ["bundled", "trace"] }
 [profile.dist]
 inherits = "release"
 lto = "thin"
-

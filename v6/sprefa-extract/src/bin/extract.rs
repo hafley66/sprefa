@@ -20,7 +20,7 @@ use std::time::Instant;
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 use sprefa_extract::schema::schema_text;
 use sprefa_extract::trail::Trail;
@@ -37,7 +37,7 @@ use sprefa_extract::{
 mod help;
 
 use help::{
-    BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, MAX_BYTES_LONG,
+    AFTER_HELP, BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, MAX_BYTES_LONG,
     OCCURRENCE_TEXT_LONG, PACKAGE_DEPS_LONG, PATH_LONG, PROJECT_ROOT_LONG, RUST_CHECKER_LONG,
     SCIP_BUILD_LONG, SCIP_CACHE_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG,
     SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG, TS_CHECKER_LONG,
@@ -67,6 +67,7 @@ mod source_rename;
     version,
     about = "sprefa-extract: one source file -> flat graph facts (JSONL to stdout)",
     long_about = LONG_ABOUT,
+    after_help = AFTER_HELP,
 )]
 struct Cli {
     #[arg(required_unless_present_any = ["schema", "ingest", "trail"], value_name = "PATH", long_help = PATH_LONG)]
@@ -275,6 +276,60 @@ enum FamilyMode {
     Scip,
     /// The tree-sitter + heuristic resolve pass over the supplied paths.
     DietScip,
+}
+
+#[derive(Clone, Copy)]
+enum AliasMode {
+    Fast,
+    Slow,
+}
+
+impl AliasMode {
+    fn family(self) -> &'static str {
+        match self {
+            Self::Fast => "diet_scip",
+            Self::Slow => "scip",
+        }
+    }
+}
+
+/// Expand the command aliases onto the existing family-mode dispatch. An alias
+/// owns the SCIP/compiler choice, so flags which could name or configure a
+/// different choice are rejected instead of being accepted and then ignored.
+fn alias_args() -> Result<Vec<String>, String> {
+    let mut args: Vec<String> = std::env::args().collect();
+    let alias = match args.get(1).map(String::as_str) {
+        Some("fast") => AliasMode::Fast,
+        Some("slow") => AliasMode::Slow,
+        _ => return Ok(args),
+    };
+    const MODE_FLAGS: [&str; 5] = [
+        "--family",
+        "--scip-index",
+        "--scip-build",
+        "--rust-checker",
+        "--ts-checker",
+    ];
+    if let Some(flag) = args
+        .iter()
+        .skip(2)
+        .take_while(|arg| arg.as_str() != "--")
+        .find(|arg| {
+            MODE_FLAGS
+                .iter()
+                .any(|name| arg.as_str() == *name || arg.starts_with(&format!("{name}=")))
+        })
+    {
+        return Err(format!(
+            "extract {} pins --family {}; {flag} cannot select or configure another mode",
+            args[1],
+            alias.family(),
+        ));
+    }
+    args.remove(1);
+    args.insert(1, alias.family().to_string());
+    args.insert(1, "--family".to_string());
+    Ok(args)
 }
 
 /// Which mode `--family` names, if any. Mixing a mode with a mask name is an
@@ -504,7 +559,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
-    let cli = Cli::parse();
+    let argv = match alias_args() {
+        Ok(argv) => argv,
+        Err(error) => Cli::command()
+            .error(clap::error::ErrorKind::ArgumentConflict, error)
+            .exit(),
+    };
+    let cli = Cli::parse_from(argv);
 
     // `--scip-timeout` must reach the library's `ScipMode::Build` path, whose
     // budget comes from `IndexBudget::from_env` (project.rs). Setting the same
