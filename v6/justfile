@@ -445,6 +445,16 @@ dl6-doc:
 dl6-bench-full:
     DL6_BENCH_FULL=1 bash {{ v6 }}/labs/exec_shootout/dl6/bench.sh
 
+# Opt-in PostgreSQL/PGlite nonrecursive IVM oracle gate. Requires the pinned
+# task-local npm packages; native rows run when 1_prepare_native.sh has prepared
+# the lab-local PostgreSQL prefix.
+postgres-pglite-ivm-smoke:
+    bash {{ v6 }}/labs/exec_shootout/postgres_pglite_ivm/7_run.sh smoke
+
+# One warmup and three measured repetitions over the bounded size/batch ladder.
+postgres-pglite-ivm:
+    bash {{ v6 }}/labs/exec_shootout/postgres_pglite_ivm/7_run.sh full
+
 # retraction maintenance bench (DRed in-place vs refCount recompute), grid 45x45
 # numbers banked in labs/exec_shootout/dl6/FACTS.dredland.md
 dl6-dred-bench:
