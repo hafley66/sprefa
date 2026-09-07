@@ -186,6 +186,6 @@ Normal recipes remain dependency-free. The smoke recipe is a deterministic corre
 | commit | content |
 |---|---|
 | `063d5f813` | isolated provisioner, shared workload and oracle, four execution arms, bounded runner, summarizer, and opt-in just recipes |
-| pending | raw receipts and this report |
+| `eda98b99c` | raw smoke and scale receipts, generated phase summary, and this report |
 
 No compiler kernel, compiler semantics, call-site migration, production database configuration, shared daemon, system service, or primary checkout was changed.
