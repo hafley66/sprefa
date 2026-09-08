@@ -17,6 +17,9 @@ was inferred from Terra's failed testfixture build.
 Worktree base: `46e918dac`; task brief commit: `0aa441195`.
 Milestone 1 commit: `176b45818`.
 Milestone 2 commit: `bef056ccb`.
+Milestone 3 commit: `3d764fe1a`.
+All commits are local; no pushes or merges. Gate runs stayed within the four-per-
+milestone limit. Parent notifications were sent through boop without waiting.
 
 ## Commands
 
