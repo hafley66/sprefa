@@ -206,9 +206,13 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     return false;
   }
   if (exit.code !== 0) {
+    const status = exit.signal === "SIGKILL" ? "oom-or-external-sigkill" : "error";
     append({
       event: "case-status",
-      status: "error",
+      status,
+      reason: status === "oom-or-external-sigkill"
+        ? "process received SIGKILL outside the benchmark timeout; cgroup OOM attribution is unavailable"
+        : "process exited unsuccessfully",
       exit_code: exit.code,
       signal: exit.signal,
       stderr: stderr.slice(0, 8_000),
