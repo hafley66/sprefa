@@ -35,6 +35,53 @@ function cellColor(speedup) {
   return { fill: `rgb(${rgb.join(",")})`, text: magnitude > 0.58 ? "#ffffff" : "#111827" };
 }
 
+if (process.argv.includes("--three-way")) {
+  const planned = records.filter((row) => row.event === "run-metadata")
+    .flatMap((row) => row.cases.map((entry) => ({ ...entry, budget: row.budget })));
+  const cases = [...new Map(planned.map((row) => [cellKey(row), row])).values()];
+  const triples = records.filter((row) => row.event === "three-way-run" && row.status === "ok" && row.all_input_output_states_match);
+  const arms = [["pg_ivm_ms", "pg_ivm", "circle"], ["sqlite_affected_group_ms", "SQLite affected-group", "square"], ["dd_ms", "DD volatile", "triangle"]];
+  const all = triples.flatMap((row) => arms.map(([field]) => row[field]));
+  const lowPower = all.length ? Math.floor(Math.log10(Math.min(...all))) : -1;
+  const highPower = all.length ? Math.max(lowPower + 1, Math.ceil(Math.log10(Math.max(...all)))) : 3;
+  const left = 350, plotWidth = 400, width = 990, top = 105, rowHeight = 86;
+  const height = top + cases.length * rowHeight + 60;
+  const x = (value) => left + (Math.log10(value) - lowPower) / (highPower - lowPower) * plotWidth;
+  const parts = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-labelledby="title desc">`,
+    `<title id="title">pg_ivm, SQLite affected-group and native DD crossover</title>`,
+    `<desc id="desc">Four mutation transactions plus materialization and count, milliseconds on a logarithmic axis. Marks show median and whiskers minimum to maximum across successful exact-state matched repetitions. PostgreSQL and SQLite commit durable writes; DD is volatile.</desc>`,
+    `<style>text{font-family:system-ui,sans-serif;fill:currentColor;font-size:12px}.head{font-size:16px}.small{font-size:11px}line,path,rect,circle{stroke:currentColor}.grid{opacity:.15}.mark{fill:currentColor}</style>`,
+    `<text class="head" x="16" y="25">Matched join + count/sum: write through result materialization</text>`,
+    `<text x="16" y="48">PG/SQLite durable; DD volatile. Exact validation outside timing. Median [min, max] ms.</text>`,
+    `<text x="16" y="76">rows / batch / fanout</text><text x="${left}" y="76">milliseconds (log scale)</text>`];
+  for (let power = lowPower; power <= highPower; power++) {
+    const at = x(10 ** power);
+    parts.push(`<line class="grid" x1="${at}" x2="${at}" y1="90" y2="${height - 55}"/><text class="small" x="${at}" y="90" text-anchor="middle">${10 ** power}</text>`);
+  }
+  cases.forEach((cell, index) => {
+    const matched = triples.filter((row) => cellKey(row) === cellKey(cell));
+    const base = top + index * rowHeight;
+    parts.push(`<text x="16" y="${base + 24}">${cell.rows} / ${cell.batch_size} / ${cell.fanout}</text>`,
+      `<text class="small" x="16" y="${base + 42}">${escapeXml(cell.budget)}; n=${matched.length} triples</text>`);
+    arms.forEach(([field, label, shape], armIndex) => {
+      const y = base + armIndex * 22;
+      parts.push(`<text x="174" y="${y + 4}">${label}</text>`);
+      if (!matched.length) { parts.push(`<text x="${left}" y="${y + 4}">UNMEASURED</text>`); return; }
+      const values = matched.map((row) => row[field]);
+      const mid = median(values), low = Math.min(...values), high = Math.max(...values), center = x(mid);
+      parts.push(`<line x1="${x(low)}" x2="${x(high)}" y1="${y}" y2="${y}"/>`);
+      if (shape === "circle") parts.push(`<circle class="mark" cx="${center}" cy="${y}" r="3"/>`);
+      if (shape === "square") parts.push(`<rect class="mark" x="${center - 3}" y="${y - 3}" width="6" height="6"/>`);
+      if (shape === "triangle") parts.push(`<path class="mark" d="M${center},${y - 4} l4,7 h-8 Z"/>`);
+      parts.push(`<text x="775" y="${y + 4}">${mid.toFixed(3)} [${low.toFixed(3)}, ${high.toFixed(3)}]</text>`);
+    });
+  });
+  parts.push(`<text x="16" y="${height - 20}">Total memory cap unenforced. Native SQL includes client/server command latency; DD uses keyed in-process writes.</text></svg>`);
+  await writeFile(outputPath, parts.join("\n") + "\n");
+  console.log(JSON.stringify({ event: "crossover-three-way-chart", status: "ok", input: inputPath, output: outputPath, cells: cases.length, successful_triples: triples.length }));
+  process.exit(0);
+}
+
 const planned = new Map();
 for (const metadata of records.filter((record) => record.event === "run-metadata")) {
   for (const testCase of metadata.cases) {

@@ -314,7 +314,7 @@ if (["pg_ivm", "sqlite-template-group", "dd"].every((arm) => arms.includes(arm))
   for (const testCase of cases) for (let repetition = 1; repetition <= repetitions; repetition++) {
     const matching = records.filter((row) => row.run_kind === "measured" && row.repetition === repetition && caseKey(row) === caseKey(testCase));
     const totals = ["pg_ivm", "sqlite-template-group", "dd"].map((arm) => matching.find((row) => row.event === "case-total" && row.maintenance === arm));
-    const states = matching.filter((row) => row.event === "mutation");
+    const states = matching.filter((row) => row.event === "mutation" && ["pg_ivm", "sqlite-template-group", "dd"].includes(row.maintenance));
     const expectedStates = makeCrossoverFixture(testCase.rows, testCase.batch_size, testCase.fanout, profile === "semantic").states;
     const exact = expectedStates.every((state) => {
       const rows = states.filter((row) => row.state === state.name);
