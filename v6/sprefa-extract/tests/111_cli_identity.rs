@@ -28,6 +28,8 @@ fn help_names_the_build_and_mode_aliases() {
     assert!(help.contains(concat!("datetime: ", env!("SPREFA_BUILD_DATETIME"))));
     assert!(help.contains("extract fast PATH..."));
     assert!(help.contains("extract slow ROOT"));
+    assert!(help.contains("RUST_LOG=sprefa_extract=info"));
+    assert!(help.contains("HAFLEY_LOG_FORMAT"));
 }
 
 #[test]

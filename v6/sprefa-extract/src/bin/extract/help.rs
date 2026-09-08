@@ -65,8 +65,16 @@ EXACT MODE: --family scip ROOT
 
   When a root cannot be indexed you get scip_skip rows saying exactly which
   root and why: not_installed comes with the install command, timed_out with
-  the budget, failed with the indexer's own last stderr line. Exit is 0 and the
-  stream continues. You never get a silently empty stream.
+  the budget, and failed with the command, process status, leading diagnostic,
+  and bounded stderr tail. Exit is 0 and the stream continues. You never get a
+  silently empty stream.
+
+TELEMETRY
+  Diagnostics use the shared hafley-observe convention and stay on stderr so
+  stdout remains JSONL facts. Warnings and errors are enabled by default.
+  RUST_LOG selects targets and levels, for example
+  RUST_LOG=sprefa_extract=info. HAFLEY_LOG_FORMAT selects human (also text) or
+  json output. Invalid RUST_LOG falls back to the default warning filter.
 
 FAST MODE: --family diet_scip PATH...
   This binary's own parsers (tree-sitter, oxc, syn) plus name matching across

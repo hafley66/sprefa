@@ -1,4 +1,4 @@
-//! The tracing seam: stderr silence by default, and the summary layer's table.
+//! The tracing seam: shared warn-by-default telemetry and the summary table.
 #![cfg(feature = "cli")]
 
 use std::process::Command;
@@ -72,10 +72,10 @@ fn phases_of(path: &str) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-// FAIL-FIRST RECEIPT: a subscriber installed with a default-on filter put a
-// CLOSE line per span on stderr for every file, under no flag at all.
+// Ordinary extraction emits debug spans only, so the standard warn default
+// remains silent until a warning or error occurs.
 #[test]
-fn no_rust_log_means_no_stderr_byte() {
+fn the_warn_default_keeps_an_ordinary_run_off_stderr() {
     let output = Command::new(BIN)
         .args(["--family", "call", FIXTURE])
         .env_remove("RUST_LOG")
