@@ -1,0 +1,101 @@
+session2-1.0... Ok
+session2-1.1... Ok
+session2-1.2... Ok
+session2-1.3... Ok
+session2-1.4... Ok
+session2-2.1... Ok
+session2-2.2... Ok
+session2-2.3... Ok
+session2-2.4... Ok
+session2-2.5... Ok
+session2-2.6... Ok
+session2-2.7... Ok
+session2-2.8... Ok
+session2-2.9... Ok
+session2-2.10... Ok
+session2-2.11... Ok
+session2-2.12... Ok
+session2-2.13... Ok
+session2-2.14... Ok
+session2-2.15... Ok
+session2-2.16... Ok
+session2-2.17... Ok
+session2-2.18... Ok
+session2-2.19... Ok
+session2-2.20... Ok
+session2-3.0... Ok
+session2-3.1... Ok
+session2-3.2... Ok
+session2-3.3... Ok
+session2-3.4... Ok
+session2-3.5... Ok
+session2-3.6... Ok
+session2-3.7... Ok
+session2-3.8... Ok
+session2-3.9... Ok
+session2-3.10... Ok
+session2-3.11... Ok
+session2-3.12... Ok
+session2-3.13... Ok
+session2-3.14... Ok
+session2-3.15... Ok
+session2-3.16... Ok
+session2-3.17... Ok
+session2-3.18... Ok
+session2-3.19... Ok
+session2-3.20... Ok
+session2-4.0... Ok
+session2-4.1... Ok
+session2-4.2... Ok
+session2-4.3... Ok
+session2-4.4... Ok
+session2-4.5... Ok
+session2-4.6... Ok
+session2-4.7... Ok
+session2-4.8... Ok
+session2-4.9... Ok
+session2-5.0... Ok
+session2-5.1... Ok
+session2-5.2... Ok
+session2-5.3... Ok
+session2-6.0... Ok
+session2-6.1.1... Ok
+session2-6.1.2... Ok
+session2-6.1.3... Ok
+session2-6.1.4... Ok
+session2-6.1.4... Ok
+session2-6.1.5... Ok
+session2-6.1.6... Ok
+session2-6.1.7... Ok
+session2-6.1.8... Ok
+session2-6.2.1... Ok
+session2-7.1.1... Ok
+session2-7.1.2... Ok
+session2-7.1.3... Ok
+session2-7.1.4... Ok
+session2-7.1.5... Ok
+session2-7.2.1... Ok
+session2-7.2.2... Ok
+session2-7.2.3... Ok
+session2-8.1.0... Ok
+session2-8.1.1... Ok
+session2-8.1.2... Ok
+session2-8.2.0... Ok
+session2-8.2.1... Ok
+session2-8.2.2... Ok
+session2-9.1... Ok
+session2-9.2... Ok
+session2-9.3... Ok
+session2-10.1... Ok
+session2-10.2... Ok
+session2-11.0... Ok
+SQLite 2026-09-04 14:20:44 4021369bc9558fbfcfa83ee4cd6b986734b8c41b6d72bd97064e566ca8189ea8
+0 errors out of 92 tests on Chriss-MacBook-Pro Darwin 64-bit
+All memory allocations freed - no leaks
+Memory used:          now          0  max    2248528  max-size     262144
+Allocation count:     now          0  max       6884
+Page-cache used:      now          0  max          0  max-size       1296
+Page-cache overflow:  now          0  max    1266176
+Maximum memory usage: 2248528 bytes
+Current memory usage: 0 bytes
+Number of malloc()  : -1 calls

@@ -1,0 +1,7 @@
+{"case":"naive_reset_after_drain","expected_gap_observed":true}
+{"case":"flush_before_savepoint_reset_after_rollback","exact":true}
+{"case":"ABORT","exact":true}
+{"case":"FAIL","exact":true}
+{"case":"IGNORE","exact":true}
+{"case":"REPLACE","exact":true}
+{"case":"summary","drains":13,"changed_rows":18,"peak_session_bytes":2456,"bounded_bytes":65536,"reopen_exact":true,"production_scheduler":false}

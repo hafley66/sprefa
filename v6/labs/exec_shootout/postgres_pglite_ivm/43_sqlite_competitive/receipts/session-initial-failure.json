@@ -1,0 +1,6 @@
+{
+  "command": "session-probe /tmp/sprefa-sqlite-competitive/session-probe-0.db",
+  "exit_code": 139,
+  "cause": "sqlite3session_delete called with NULL initial session",
+  "log": "/tmp/sprefa-sqlite-competitive/session-probe-0.log"
+}

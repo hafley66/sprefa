@@ -1,0 +1,53 @@
+{
+  "exit_code": 0,
+  "steps": [
+    {
+      "command": [
+        "cc",
+        "-g",
+        "-O1",
+        "-fsanitize=address",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-I/private/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/8_session_probe.c",
+        "/private/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri/libsqlite3.dylib",
+        "-Wl,-rpath,/private/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri",
+        "-o",
+        "/tmp/sprefa-sqlite-competitive/session-gate-skavnkqt/probe"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/tmp/sprefa-sqlite-competitive/session-gate-skavnkqt/probe",
+        "/tmp/sprefa-sqlite-competitive/session-gate-skavnkqt/state.db"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/private/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri/testfixture",
+        "/tmp/sprefa-sqlite-extension-research.ZsALrZ/sqlite/ext/session/session1.test"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/private/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri/testfixture",
+        "/tmp/sprefa-sqlite-extension-research.ZsALrZ/sqlite/ext/session/session2.test"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "hashes": {
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/8_session_probe.c": "4d9868f38827fe0ea4963465a8d5f9bb8970f9d29558bf882baef2873c6c1df7",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/8a_session_gate.py": "9d9f678667ec92a1489503f405ef4b7bb3298bde1622e897767a5aa933d51b6b",
+    "/private/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri/libsqlite3.dylib": "2b065e41921cfb478238a4b3fb8076b6d9fc126a7d2740e82ac186b81916180e",
+    "/tmp/sprefa-sqlite-competitive/session-gate-skavnkqt/2.log": "2e052b8e61dda9dcfd8cc5358819452a884ea19167c5221de07d459f310ba2c4",
+    "/tmp/sprefa-sqlite-competitive/session-gate-skavnkqt/3.log": "ed6835d988c536e29cb6fa195ca1f1f993fe807b5ab157aaf46d9d5652c41325",
+    "/tmp/sprefa-sqlite-competitive/session-gate-skavnkqt/1.log": "81ce84770572a546f42b29c92f2302668355d0ae6567f7162e228cf246747578",
+    "/tmp/sprefa-sqlite-competitive/session-gate-skavnkqt/0.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

@@ -453,3 +453,31 @@ bash v6/labs/exec_shootout/postgres_pglite_ivm/13_crossover_run.sh full /tmp/spr
 --take2-extension /tmp/sprefa-sqlite-native-take2/gate-u9mxe9w9/take2.dylib \
 --competitive-extension /tmp/sprefa-sqlite-competitive/counted-fixed.dylib --warmups 0 --repetitions 3
 ```
+
+## Session capture/drain mechanism ledger
+
+`8_session_probe.c` reuses SQLite's public session/changeset APIs on an exclusively
+owned connection linked to the pinned task-local SQLite. Changed primary keys
+drive point updates of a persistent same-DB mirror. No host relation copy or
+preupdate hook replacement is used. The fixed probe reproduces a naive reset
+gap: pending prefix A, savepoint, B, drain A+B, reset, rollback-to leaves A in
+source and no maintained A. It then proves flush-before-savepoint and reset after
+rollback-to for its fixed sequence, including nested release, outer rollback,
+ABORT/FAIL/IGNORE/REPLACE, primary-key changes, cancellation and durable reopen.
+13 drains applied 18 changed rows; peak session memory was 2456 bytes. The drain
+checks 64 KiB before generating a changeset; this is not a production hard cap
+on capture memory. Direct-only drain calls reject trigger invocation.
+
+The first probe process exited 139 because it called sqlite3session_delete with
+a NULL initial session. Guarding initial deletion repaired it. The ASan probe
+then passed, along with pinned upstream session1 (211 tests) and session2 (92
+tests), both zero errors and no reported leaks. Receipt:
+`/tmp/sprefa-sqlite-competitive/session-gate-skavnkqt/receipt.json`.
+Command: `python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/8a_session_gate.py /tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri`.
+
+Disposition: the naive reset option is rejected by executable evidence. A full
+session arm needs module-integrated savepoint/read/commit scheduling, missing-
+drain rejection and an admitted memory contract. This probe makes no production
+maintenance or performance claim. The working trigger/counting arms continue.
+CI execution coverage adds this separate reproducible ASan/upstream session gate;
+the stock competitive gate does not require a session-enabled system library.
