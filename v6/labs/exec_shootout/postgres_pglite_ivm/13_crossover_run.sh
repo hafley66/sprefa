@@ -5,18 +5,28 @@ lab_dir=$(cd "$(dirname "$0")" && pwd)
 profile=${1:-smoke}
 output=${2:-"$lab_dir/results/crossover-$profile.jsonl"}
 postgres_prefix=${IVM_POSTGRES_PREFIX:-"$lab_dir/.work/postgres-18.6"}
-run_root=$(mktemp -d "${TMPDIR:-/tmp}/sprefa-pg-crossover.XXXXXX")
+run_root=$(mktemp -d "/tmp/pgx.XXXXXX")
 active_cluster=""
 deadline_seconds=$(date +%s)
 deadline_epoch_ms=$((deadline_seconds * 1000 + 1200000))
 
 cleanup() {
+  cleanup_status=$?
+  if [[ "$cleanup_status" -ne 0 ]]; then
+    for postgres_log in "$run_root"/postgres-*.log; do
+      if [[ -f "$postgres_log" ]]; then
+        printf 'PostgreSQL failure log: %s\n' "$postgres_log" >&2
+        sed -n '1,240p' "$postgres_log" >&2
+      fi
+    done
+  fi
   if [[ -n "$active_cluster" ]]; then
     "$postgres_prefix/bin/pg_ctl" -D "$active_cluster" -m immediate stop >/dev/null 2>&1 || true
   fi
   case "$run_root" in
-    "${TMPDIR:-/tmp}"/sprefa-pg-crossover.*) rm -rf -- "$run_root" ;;
+    /tmp/pgx.*) rm -rf -- "$run_root" ;;
   esac
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
 

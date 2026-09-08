@@ -82,15 +82,22 @@ const adapter = {
     return Object.fromEntries(result.rows.map((row) => [row.name, { setting: row.setting, unit: row.unit }]));
   },
   async disk() {
-    const result = await client.query(`
-      SELECT pg_database_size(current_database())::bigint AS database_bytes,
-             coalesce(sum(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname))), 0)::bigint AS public_relation_bytes
-        FROM pg_stat_user_tables
-    `);
+    const [result, wal, temporary] = await Promise.all([
+      client.query(`
+        SELECT pg_database_size(current_database())::bigint AS database_bytes,
+               coalesce(sum(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname))), 0)::bigint AS public_relation_bytes
+          FROM pg_stat_user_tables
+      `),
+      client.query("SELECT coalesce(sum(size), 0)::bigint AS bytes FROM pg_ls_waldir()"),
+      client.query("SELECT temp_files::bigint, temp_bytes::bigint FROM pg_stat_database WHERE datname = current_database()"),
+    ]);
     return {
       database_bytes: Number(result.rows[0].database_bytes),
       public_relation_bytes: Number(result.rows[0].public_relation_bytes),
-      scope: "current disposable database; relation bytes include indexes and TOAST",
+      wal_directory_bytes: Number(wal.rows[0].bytes),
+      temp_files: Number(temporary.rows[0].temp_files),
+      temp_bytes: Number(temporary.rows[0].temp_bytes),
+      scope: "current disposable database plus cluster-wide pg_wal; relation bytes include indexes and TOAST",
     };
   },
   async tempIo() {

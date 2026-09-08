@@ -63,7 +63,8 @@ async function createView(adapter, maintenance) {
   await adapter.exec(`CREATE VIEW crossover_view AS ${crossoverSummaryQuery}`);
 }
 
-function sumPlanBuffers(node, totals) {
+function planBuffers(node) {
+  const totals = {};
   for (const field of [
     "Shared Hit Blocks",
     "Shared Read Blocks",
@@ -75,15 +76,13 @@ function sumPlanBuffers(node, totals) {
     "Local Written Blocks",
     "Temp Read Blocks",
     "Temp Written Blocks",
-  ]) totals[field] = (totals[field] ?? 0) + Number(node[field] ?? 0);
-  for (const child of node.Plans ?? []) sumPlanBuffers(child, totals);
+  ]) totals[field] = Number(node[field] ?? 0);
+  return totals;
 }
 
 async function explain(adapter, family, sql, common) {
   const result = await adapter.query(`EXPLAIN (ANALYZE, BUFFERS, WAL, FORMAT JSON) ${sql}`);
   const document = result.rows[0]["QUERY PLAN"][0];
-  const buffers = {};
-  sumPlanBuffers(document.Plan, buffers);
   console.log(JSON.stringify({
     event: "diagnostic-explain",
     status: "ok",
@@ -91,7 +90,7 @@ async function explain(adapter, family, sql, common) {
     command: `EXPLAIN (ANALYZE, BUFFERS, WAL, FORMAT JSON) ${sql}`,
     planning_ms: document["Planning Time"],
     execution_ms: document["Execution Time"],
-    buffers,
+    buffers: planBuffers(document.Plan),
     triggers: document.Triggers ?? [],
     plan: document,
     ...common,
