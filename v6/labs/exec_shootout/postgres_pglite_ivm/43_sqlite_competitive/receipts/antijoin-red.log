@@ -1,0 +1,9 @@
+{"event": "case-setup", "status": "ok", "setup_ms": 155.99500003736466, "algorithm": "public vtab anti", "batch": true, "source_views": false, "durability": "durable SQL WAL/FULL", "sqlite_version": "3.53.2", "extension_sha256": "939e7d448dd88407f407e44d5c008f7f3f182686685980dfbd5a6c791a5a76b2"}
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py", line 70, in <module>
+    if __name__=='__main__': main()
+                             ~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py", line 55, in main
+    assert output==state['expected']['rows']==sorted(map(list,db.execute(fixture['query'])))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

@@ -21,14 +21,16 @@ static int enqueue(Tab *t,sqlite3_value **kv,int side,int sign) {
   return sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_delta\"(key,side,k,v,w) VALUES(json_array(%d,?1,?2),%d,?1,?2,%d) ON CONFLICT(key) DO UPDATE SET w=w+excluded.w",t->schema,t->name,side,side,sign),kv,2);
 }
 static int flush_batch(Tab *t) {
-  int arity=t->mode==MULTI?3:t->mode>=JOIN?2:1;
+  int degree=arity(t);
   int rc=SQLITE_OK;
-  for(int mask=1;mask<(1<<arity)&&rc==SQLITE_OK;mask++) {
+  if(t->mode==SEMI||t->mode==ANTI)rc=flush_membership(t);
+  if(t->mode==REACH)rc=flush_reach(t);
+  for(int mask=1;mask<(1<<degree)&&rc==SQLITE_OK&&t->mode<SEMI;mask++) {
     sqlite3_str *from=sqlite3_str_new(t->db);
     sqlite3_str *weight=sqlite3_str_new(t->db);
     int bits=0;
-    for(int i=0;i<arity;i++) {
-      int side=t->mode==SELF?0:i;
+    for(int i=0;i<degree;i++) {
+      int side=t->mode==SELF||t->mode==SELF_CHAIN?0:i;
       if(i) {sqlite3_str_appendall(from," JOIN ");sqlite3_str_appendall(weight,"*");}
       if(mask&(1<<i)) {
         bits++;
@@ -36,21 +38,28 @@ static int flush_batch(Tab *t) {
       } else if(t->source_view) sqlite3_str_appendf(from,"(SELECT k,v,1 AS w FROM \"%w\".\"%w_live_%d\") b%d",t->schema,t->name,side,i);
       else sqlite3_str_appendf(from,"(SELECT k,v,1 AS w FROM \"%w\".\"%w_state\" WHERE side=%d) b%d",t->schema,t->name,side,i);
       sqlite3_str_appendf(weight,"b%d.w",i);
-      if(i) sqlite3_str_appendf(from," ON b0.k=b%d.k",i);
+      if(i) {
+        if(t->mode==SELF_CHAIN||t->mode==CHAIN)sqlite3_str_appendf(from," ON b%d.v=b%d.k",i-1,i);
+        else sqlite3_str_appendf(from," ON b0.k=b%d.k",i);
+      }
     }
     char *relations=sqlite3_str_finish(from),*w=sqlite3_str_finish(weight);
-    const char *value=arity==3?"b0.v*b1.v*b2.v":arity==2?"b0.v*b1.v":"b0.v";
+    const char *value=t->mode==PROJECT?t->projection:t->mode==SELF_CHAIN?"b1.v":t->mode==CHAIN?"b2.v":degree==3?"b0.v*b1.v*b2.v":degree==2?"b0.v*b1.v":"b0.v";
+    char *key=bag(t)?sqlite3_mprintf("json_array(b0.k,%s)",value):sqlite3_mprintf("json_array(b0.k)");
+    char *group=bag(t)?sqlite3_mprintf("b0.k,%s",value):sqlite3_mprintf("b0.k");
+    char *where=t->mode==PROJECT?sqlite3_mprintf("WHERE (%s)",t->predicate):sqlite3_mprintf("%s",t->mode==FILTER?"WHERE b0.v>=0":"");
     int sign=bits%2?1:-1;
     rc=sql(t,sqlite3_mprintf(
       "INSERT INTO \"%w\".\"%w_result\"(key,k,v,n,s,nn) SELECT %s,b0.k,%s,%d*sum(%s),%d*sum(coalesce(%s,0)*%s),%d*sum((%s IS NOT NULL)*%s) FROM %s %s GROUP BY %s "
       "ON CONFLICT(key) DO UPDATE SET n=n+excluded.n,s=s+excluded.s,nn=nn+excluded.nn",
-      t->schema,t->name,t->mode<=BAG?"json_array(b0.k,b0.v)":"json_array(b0.k)",t->mode<=BAG?"b0.v":"NULL",
-      sign,w,sign,value,w,sign,value,w,relations,t->mode==FILTER?"WHERE b0.v>=0":"",t->mode<=BAG?"b0.k,b0.v":"b0.k"),0,0);
+      t->schema,t->name,key,bag(t)?value:"NULL",
+      sign,w,sign,value,w,sign,value,w,relations,where,group),0,0);
+    sqlite3_free(key);sqlite3_free(group);sqlite3_free(where);
     sqlite3_free(relations);sqlite3_free(w);
   }
   if(rc==SQLITE_OK) {
     sqlite3_stmt *s=0;
-    char *q=sqlite3_mprintf("SELECT count(*) FROM \"%w\".\"%w_result\" WHERE n<0 OR nn<0 OR nn>n OR typeof(n)<>'integer' OR typeof(s)<>'integer' OR typeof(nn)<>'integer' OR (n=0 AND (s<>0 OR nn<>0))",t->schema,t->name);
+    char *q=sqlite3_mprintf("SELECT count(*) FROM \"%w\".\"%w_result\" WHERE n<0 OR nn<0 OR nn>n OR typeof(n)<>'integer' OR typeof(s)<>'integer' OR typeof(nn)<>'integer' OR typeof(v) NOT IN ('integer','null') OR (n=0 AND (s<>0 OR nn<>0))",t->schema,t->name);
     rc=q?sqlite3_prepare_v3(t->db,q,-1,SQLITE_PREPARE_NO_VTAB,&s,0):SQLITE_NOMEM;sqlite3_free(q);
     if(rc==SQLITE_OK) {
       int step=sqlite3_step(s);
@@ -84,7 +93,7 @@ static int source_view_setup(Tab *t) {
       sqlite3_column_text(s,2),sqlite3_column_text(s,3),sqlite3_column_text(s,4),sqlite3_column_int(s,0),t->schema,sqlite3_column_text(s,1));
   }
   sqlite3_finalize(s);
-  if(count!=(t->mode==MULTI?3:t->mode==JOIN?2:1)&&rc==SQLITE_OK)rc=error(t,"all source sides must be attached before source-view batching");
+  if(count!=sources(t)&&rc==SQLITE_OK)rc=error(t,"all source sides must be attached before source-view batching");
   q=sqlite3_str_finish(view);
   if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("DELETE FROM \"%w\".\"%w_state\"",t->schema,t->name),0,0);
   for(int i=0;i<3;i++){if(indexes[i]&&rc==SQLITE_OK)rc=sql(t,indexes[i],0,0);else sqlite3_free(indexes[i]);}

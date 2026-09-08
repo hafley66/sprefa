@@ -1,0 +1,15 @@
+test_anti (__main__.Circuits.test_anti) ... ok
+test_chain (__main__.Circuits.test_chain) ... ok
+test_inner (__main__.Circuits.test_inner) ... ok
+test_project (__main__.Circuits.test_project) ... ok
+test_reach (__main__.Circuits.test_reach) ... ok
+test_reject_projection_domain (__main__.Circuits.test_reject_projection_domain) ... ok
+test_reject_scalar_plans (__main__.Circuits.test_reject_scalar_plans) ... ok
+test_scalar_binding (__main__.Circuits.test_scalar_binding) ... ok
+test_self_chain (__main__.Circuits.test_self_chain) ... ok
+test_semi (__main__.Circuits.test_semi) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.243s
+
+OK

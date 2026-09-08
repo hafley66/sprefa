@@ -80,3 +80,55 @@ capture is not admitted without an exclusive hook-ownership proof; SQLite's
 session API documents undefined behavior with an independently installed
 preupdate hook. No hook was replaced and no custom SQLite patch was needed for
 the explicit boundary. Broader circuit families are the next implementation step.
+
+## Shared circuit expansion
+
+Added scalar filter/projection, bag joins, self chains, three-way chains,
+semijoin, antijoin and DRed cyclic reachability in the competitive extension.
+SQLite parses scalar expressions in an isolated plan connection. Relational
+lowering stays in fixed C/SQL templates; no OpenIVM compiler port or DL7 changes.
+Commit `5b4264d7a` preserves the preceding batch/source-view milestone.
+
+Current tests: 13 boundary + 6 original semantic + 9 batch + 9 source-view batch
++ 10 circuit + 10 source-view circuit tests. Shared gates validate 171 semantic
+states and 104 circuit states per competitive arm. CI execution coverage adds
+these circuit tests and shared cases; existing engine implementations are intact.
+
+Failures retained: the prior competitive binary rejects new circuit modes in
+14 focused red runs. The first broadened gate exited 1 because its final receipt
+assertion expected one 104-state row; the runner emits eight 13-state rows. All
+executed test commands had exited 0. The repaired assertion requires eight exact
+paired records, each with both competitive arms and no exclusions.
+Green receipt: `/tmp/sprefa-sqlite-competitive/gate-11woyx03/receipt.json`, exit 0,
+copied to `receipts/circuits-gate-green.json`. Source and log hashes are preserved.
+
+Paired small-circuit medians, 24 rows/batch3/fanout4, two repetitions, constrained
+budget. Values are cumulative mutation + query ms over 13 transitions:
+
+| Circuit | DD volatile | PG full | pg_ivm | SQLite full | Competitive source views |
+|---|---:|---:|---:|---:|---:|
+| pipeline | 1.149 | 28.544 | 222.557 | 10.518 | 4.373 |
+| join | 0.560 | 23.150 | 27.746 | 4.626 | 4.157 |
+| self_join | 0.627 | 20.938 | 39.348 | 3.002 | 6.747 |
+| chain | 0.798 | 19.315 | 92.651 | 2.971 | 10.992 |
+| semijoin | 1.292 | 9.156 | 49.697 | 2.906 | 5.573 |
+| antijoin | 0.574 | 9.331 | unsupported | 4.856 | 4.716 |
+| reach_cycle | 1.221 | 24.503 | unsupported | 2.196 | 12.067 |
+| aggregate_churn | 1.424 | 9.850 | 70.435 | 1.879 | 4.667 |
+
+Each admitted arm validates exact shared input and output hashes. SWI, shadow
+batch, Take 1 and Take 2 records are also retained; unsupported cells are explicit.
+SQL arms preserve durable settings; DD/SWI retain volatile labels. This bounded
+run has startup/host variability, with no throughput extrapolation.
+
+Command: same `13_crossover_run.sh circuits` as above, adding
+`--circuits pipeline,join,self_join,chain,semijoin,antijoin,reach_cycle,aggregate_churn`,
+both competitive arms, `--competitive-extension /tmp/sprefa-sqlite-competitive/circuits2.dylib`,
+`--warmups 0 --repetitions 2`, and `IVM_BUDGETS=constrained`. The complete command,
+binary hashes and timings are in `receipts/circuits-paired.jsonl`; shell exit 0.
+
+Remaining gaps: time/frontier semantics; remaining shared circuit catalog modes;
+source-view teardown; automatic statement-end batching; session/preupdate capture
+under exclusive hook ownership; custom SQLite variant. The current explicit SQL
+boundary needs no custom SQLite patch. The option ledger distinguishes measured
+paths, observed restrictions and unimplemented candidates.

@@ -217,7 +217,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     fanout: testCase.fanout,
   };
   const freePercent = memoryFreePercent();
-  if (take2 && ((testCase.circuit && testCase.circuit !== "aggregate_churn") || testCase.rows > 12000)) {
+  if (take2 && ((testCase.circuit && !(competitive ? ["aggregate_churn","pipeline","join","self_join","chain","semijoin","antijoin","reach_cycle"] : ["aggregate_churn"]).includes(testCase.circuit)) || testCase.rows > 12000)) {
     append({event:"capability",status:"unsupported",reason:"Take 2 shared adapter supports bounded crossover aggregate cells through 12000 source rows; other circuit adapters pending",...context});
     return true;
   }

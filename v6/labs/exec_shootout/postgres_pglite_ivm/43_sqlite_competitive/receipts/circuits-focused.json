@@ -1,0 +1,492 @@
+[
+  {
+    "phase": "red",
+    "family": "pipeline",
+    "views": false,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/pipeline.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-pipeline-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "pipeline",
+    "views": true,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/pipeline.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-pipeline-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "join",
+    "views": false,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/join.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-join-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "join",
+    "views": true,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/join.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-join-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "self_join",
+    "views": false,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/self_join.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-self_join-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "self_join",
+    "views": true,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/self_join.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-self_join-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "chain",
+    "views": false,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/chain.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-chain-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "chain",
+    "views": true,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/chain.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-chain-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "semijoin",
+    "views": false,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/semijoin.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-semijoin-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "semijoin",
+    "views": true,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/semijoin.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-semijoin-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "antijoin",
+    "views": false,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/antijoin.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-antijoin-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "antijoin",
+    "views": true,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/antijoin.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-antijoin-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "reach_cycle",
+    "views": false,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/reach_cycle.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-reach_cycle-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib"
+    ]
+  },
+  {
+    "phase": "red",
+    "family": "reach_cycle",
+    "views": true,
+    "exit_code": 1,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/reach_cycle.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-red-reach_cycle-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/views3.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "pipeline",
+    "views": false,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/pipeline.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-pipeline-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "pipeline",
+    "views": true,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/pipeline.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-pipeline-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "join",
+    "views": false,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/join.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-join-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "join",
+    "views": true,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/join.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-join-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "self_join",
+    "views": false,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/self_join.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-self_join-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "self_join",
+    "views": true,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/self_join.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-self_join-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "chain",
+    "views": false,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/chain.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-chain-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "chain",
+    "views": true,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/chain.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-chain-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "semijoin",
+    "views": false,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/semijoin.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-semijoin-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "semijoin",
+    "views": true,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/semijoin.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-semijoin-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "antijoin",
+    "views": false,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/antijoin.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-antijoin-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "antijoin",
+    "views": true,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/antijoin.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-antijoin-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib",
+      "--source-views"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "reach_cycle",
+    "views": false,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/reach_cycle.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-reach_cycle-0.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib"
+    ]
+  },
+  {
+    "phase": "green",
+    "family": "reach_cycle",
+    "views": true,
+    "exit_code": 0,
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py",
+      "--batch",
+      "--fixture",
+      "/tmp/sprefa-sqlite-competitive/reach_cycle.json",
+      "--db",
+      "/tmp/sprefa-sqlite-competitive/circuits-green-reach_cycle-1.db",
+      "--extension",
+      "/tmp/sprefa-sqlite-competitive/circuits2.dylib",
+      "--source-views"
+    ]
+  }
+]

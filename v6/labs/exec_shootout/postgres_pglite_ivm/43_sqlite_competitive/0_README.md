@@ -61,6 +61,58 @@ mutations, with exact oracle checks. Paired runner measurements are separate.
 | Custom statement-boundary callback | Not currently required by the explicit contract. A transparent statement-end API would need separate evidence and a minimal pinned variant; no patch has been made. |
 
 This is a finite experiment ledger, not an exhaustion claim. Read order:
-types `0a`, SQL lowering `0b`, batch scheduling `0c`, ABI `1`, profile transport
-`2`, batch tests `3`, shared transport `4`, gate `5`. `0_circuit.py` adapts the
-existing aggregate circuit for the preserved Take 2 baseline and batch variant.
+types `0a`, scalar binding `0ab`, SQL lowering `0b`, nonmonotone lowering `0bc`,
+batch scheduling `0c`, ABI `1`, profile transport `2`, batch/circuit tests `3/3a`,
+shared transport `4`, gate `5`. `0_circuit.py` adapts the shared circuit oracle.
+
+## Added circuit contracts
+
+All new modes require the explicit batch boundary. `SELECT id,k FROM result`
+returns the two projected values with bag multiplicity, using a cursor support
+counter without expanding a relation in host memory. Physical column names are
+retained for ABI compatibility. `SELECT id FROM result` reads reachability nodes.
+
+| Mode | Source sides | Query semantics |
+|---|---|---|
+| project | a | `SELECT k,v*2 FROM a WHERE v>=0` by default |
+| inner | a,b | `SELECT a.k,a.v*b.v FROM a JOIN b ON a.k=b.k` |
+| self_chain | a | `SELECT x.k,y.v FROM a x JOIN a y ON x.v=y.k` |
+| chain | a,b,c | `SELECT a.k,c.v FROM a JOIN b ON a.v=b.k JOIN c ON b.v=c.k` |
+| semi / anti | a,b | Left bag rows with / without equal-key right support |
+| reach | edges a(k,v), roots b(k) | Set reachability, including cyclic retraction |
+
+Scalar predicates and value projections use SQLite's parser and binder:
+
+```sql
+CREATE VIRTUAL TABLE result USING take2(project,
+ 'b0.k BETWEEN -2 AND 2 AND (b0.v IS NULL OR b0.v<>1)',
+ 'CASE WHEN b0.v IS NULL THEN NULL ELSE abs(b0.v)+b0.k END');
+SELECT take2_attach('result','a',0,'id','k','v');
+```
+
+The private plan-only SQLite connection permits k/v references, scalar operators,
+CASE and abs/coalesce/ifnull/nullif. It rejects subqueries, aggregate functions,
+unknown columns, bind parameters and unapproved functions. The caller's hooks and
+authorizer remain untouched. Inputs retain the integer/NULL domain; accumulator
+overflow and noninteger stored projections fail the flush. This is scalar SQL
+binding plus fixed relational templates; arbitrary SELECT compilation is absent.
+
+Semijoin/antijoin lower `dLeft * oldMembership + currentLeft * dMembership`.
+Right-side support counts determine zero crossings; NULL equality matches no
+witness. Self/multiway joins enumerate affected occurrences with inclusion-
+exclusion against current sources, including cross terms in one batch.
+
+Reachability uses DRed: negative edge/root support seeds an overdelete cone;
+current roots and surviving incoming edges rederive that cone, followed by new
+support propagation. `_cone(k INTEGER PRIMARY KEY)` is transactional shadow
+storage. Recursive UNION deduplicates cycles. The CTE technique was inspected in
+`v6/sprefa-store/src/engine.rs` retract_dred_cte; no store/kernel code changed.
+Reach nodes must be non-NULL integers. Rootless cycles retract in the shared
+oracle. This mode maintains set reachability, not path counts or arbitrary rules.
+
+The circuit suite covers savepoints across flush, rollback, injected xSync
+failure, ABORT/FAIL/IGNORE/REPLACE, UPSERT, duplicate supports, NULL joins and
+reopen in both layouts. The shared suite adds 104 circuit states per layout.
+Time/frontiers, arbitrary recursive programs, and remaining circuit catalog
+families are unsupported. Source-view teardown is not yet covered; persisted
+per-source views/indexes require a separate teardown lifecycle test.

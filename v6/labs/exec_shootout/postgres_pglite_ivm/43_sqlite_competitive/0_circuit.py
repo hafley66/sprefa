@@ -20,7 +20,10 @@ def main():
     p.add_argument('--source-views',action='store_true')
     args=p.parse_args()
     fixture=json.loads(Path(args.fixture).read_text())
-    if fixture['circuit']!='aggregate_churn':
+    plans={'aggregate_churn':('join',2,3),'pipeline':('project',1,2),
+           'join':('inner',2,2),'self_join':('self_chain',1,2),'chain':('chain',3,2),
+           'semijoin':('semi',2,2),'antijoin':('anti',2,2),'reach_cycle':('reach',2,1)}
+    if fixture['circuit'] not in plans or (not args.batch and fixture['circuit']!='aggregate_churn'):
         emit(event='capability',status='unsupported',reason='adapter has no admitted plan for this circuit')
         return
     if Path(args.db).exists(): raise ValueError('existing database')
@@ -34,11 +37,12 @@ def main():
         db.execute(f'CREATE TABLE {table}(id INTEGER PRIMARY KEY,k INTEGER NOT NULL,v INTEGER NOT NULL)')
         db.execute(f'CREATE INDEX {table}_k ON {table}(k)')
         db.execute(f'CREATE INDEX {table}_v ON {table}(v)')
-    db.execute('CREATE VIRTUAL TABLE result USING take2(join)')
-    for side,table in enumerate(['a','b']):
+    mode,sides,columns=plans[fixture['circuit']]
+    db.execute(f'CREATE VIRTUAL TABLE result USING take2({mode})')
+    for side,table in enumerate(['a','b','c'][:sides]):
         db.execute("SELECT take2_attach('result',?,?, 'id','k','v')",(table,side)).fetchall()
     emit(event='case-setup',status='ok',setup_ms=(time.perf_counter()-start)*1000,
-         algorithm='public vtab signed grouped equijoin',batch=args.batch,source_views=args.source_views,durability='durable SQL WAL/FULL',
+         algorithm=f'public vtab {mode}',batch=args.batch,source_views=args.source_views,durability='durable SQL WAL/FULL',
          sqlite_version=sqlite3.sqlite_version,extension_sha256=hashlib.sha256(Path(args.extension).read_bytes()).hexdigest())
     total=0
     for state in fixture['states']:
@@ -46,7 +50,7 @@ def main():
         db.executescript('BEGIN;'+('INSERT INTO result(op) VALUES(10);' if args.batch else '')+state['mutation_sql']+('INSERT INTO result(op) VALUES(11);' if args.batch else '')+'COMMIT;')
         update_ms=(time.perf_counter()-start)*1000
         start=time.perf_counter()
-        output=sorted(map(list,db.execute('SELECT * FROM result')))
+        output=sorted(map(list,db.execute('SELECT '+','.join(['id','k','v'][:columns])+' FROM result')))
         query_ms=(time.perf_counter()-start)*1000
         assert output==state['expected']['rows']==sorted(map(list,db.execute(fixture['query'])))
         ih=hashlib.sha256()

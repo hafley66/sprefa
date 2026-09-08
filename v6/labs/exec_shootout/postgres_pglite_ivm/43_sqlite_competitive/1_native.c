@@ -6,7 +6,9 @@ SQLITE_EXTENSION_INIT1
 #include <time.h>
 
 #include "0a_state.h"
+#include "0ab_expressions.h"
 #include "0b_delta.h"
+#include "0bc_nonmonotone.h"
 #include "0c_batch.h"
 
 static void trace(Tab *t, const char *event, int depth) {
@@ -67,6 +69,7 @@ static int disconnect(sqlite3_vtab *v) {
   Tab *t = (Tab *)v;
   for(int i=0;i<32;i++) {sqlite3_finalize(t->cached[i].stmt);sqlite3_free(t->cached[i].text);}
   sqlite3_finalize(t->batch_read);
+  sqlite3_free(t->predicate);sqlite3_free(t->projection);
   sqlite3_free(t->schema); sqlite3_free(t->name); sqlite3_free(t);
   return SQLITE_OK;
 }
@@ -74,17 +77,22 @@ static int disconnect(sqlite3_vtab *v) {
 static int connect(sqlite3 *db, void *aux, int argc, const char *const *argv,
                    sqlite3_vtab **out, char **err) {
   (void)err;
-  if (argc < 3 || argc > 4) return SQLITE_ERROR;
+  if (argc != 3 && argc != 4 && argc != 6) return SQLITE_ERROR;
   Tab *t = sqlite3_malloc64(sizeof(*t));
   if (!t) return SQLITE_NOMEM;
   memset(t, 0, sizeof(*t));
   t->db = db; t->env = aux;
-  if(argc==4) {
-    const char *modes[]={"mirror","filter","bag","group","join","self","multi"};
+  if(argc>=4) {
+    const char *modes[]={"mirror","filter","bag","group","join","self","multi","project","inner","self_chain","chain","semi","anti","reach"};
     int found=0;
-    for(int i=0;i<7;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
+    for(int i=0;i<14;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
     if(!found) { sqlite3_free(t); return SQLITE_ERROR; }
   }
+  if(t->mode==PROJECT) {
+    t->predicate=argc==6?literal(argv[4]):sqlite3_mprintf("b0.v>=0");
+    t->projection=argc==6?literal(argv[5]):sqlite3_mprintf("b0.v*2");
+    if(!t->predicate||!t->projection||validate_expressions(t)!=SQLITE_OK){disconnect(&t->base);*err=sqlite3_mprintf("take2: scalar plan requires k/v expressions without subqueries or unapproved functions");return SQLITE_ERROR;}
+  } else if(argc==6){disconnect(&t->base);return SQLITE_ERROR;}
   t->schema = sqlite3_mprintf("%s", argv[1]);
   t->name = sqlite3_mprintf("%s", argv[2]);
   if (!t->schema || !t->name) { disconnect(&t->base); return SQLITE_NOMEM; }
@@ -103,6 +111,7 @@ static int create(sqlite3 *db, void *aux, int argc, const char *const *argv,
   if(rc==SQLITE_OK) rc=sql(t,sqlite3_mprintf("CREATE INDEX \"%w\".\"%w_lookup\" ON \"%w_state\"(side,k)",t->schema,t->name,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_result\"(key TEXT PRIMARY KEY,k INTEGER,v INTEGER,n INTEGER,s INTEGER,nn INTEGER)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE INDEX \"%w\".\"%w_result_key\" ON \"%w_result\"(k)",t->schema,t->name,t->name),0,0);
+  if(rc==SQLITE_OK && t->mode==REACH) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_cone\"(k INTEGER PRIMARY KEY)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_sources\"(side INTEGER PRIMARY KEY,source TEXT UNIQUE,id_col TEXT,k_col TEXT,v_col TEXT)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_batch\"(flag INTEGER NOT NULL,source_views INTEGER NOT NULL)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_batch\" VALUES(0,0)",t->schema,t->name),0,0);
@@ -140,7 +149,10 @@ static int close_cursor(sqlite3_vtab_cursor *p) {
 }
 static int next(sqlite3_vtab_cursor *p) {
   Cursor *c = (Cursor *)p;
+  c->ordinal++;
+  if(c->repeats>1){c->repeats--;return SQLITE_OK;}
   int rc = sqlite3_step(c->stmt); c->eof = rc != SQLITE_ROW;
+  if(rc==SQLITE_ROW&&((Tab *)p->pVtab)->mode>=PROJECT)c->repeats=sqlite3_column_int64(c->stmt,3);
   return rc == SQLITE_ROW || rc == SQLITE_DONE ? SQLITE_OK : rc;
 }
 static int filter(sqlite3_vtab_cursor *p, int idx, const char *str, int n, sqlite3_value **args) {
@@ -151,10 +163,11 @@ static int filter(sqlite3_vtab_cursor *p, int idx, const char *str, int n, sqlit
   if(check!=SQLITE_OK)return check;
   if(flag)return error(t,"batch open: flush before reading maintained output");
   sqlite3_finalize(c->stmt); c->stmt = 0;
+  c->repeats=c->ordinal=0;
   char *q = sqlite3_mprintf("SELECT id,k,v FROM \"%w\".\"%w_state\" ORDER BY id", t->schema,t->name);
   if(t->mode) {
     sqlite3_free(q);
-    q=sqlite3_mprintf("SELECT rowid,%s FROM \"%w\".\"%w_result\"",t->mode<=BAG?"k,v,n":"k,n,CASE WHEN nn=0 THEN NULL ELSE s END",t->schema,t->name);
+    q=sqlite3_mprintf("SELECT rowid,%s FROM \"%w\".\"%w_result\"",bag(t)||t->mode==REACH?"k,v,n":"k,n,CASE WHEN nn=0 THEN NULL ELSE s END",t->schema,t->name);
   }
   if (!q) return SQLITE_NOMEM;
   int rc = sqlite3_prepare_v3(t->db,q,-1,SQLITE_PREPARE_NO_VTAB,&c->stmt,0);
@@ -167,7 +180,7 @@ static int column(sqlite3_vtab_cursor *p, sqlite3_context *ctx, int i) {
   return SQLITE_OK;
 }
 static int rowid(sqlite3_vtab_cursor *p, sqlite3_int64 *id) {
-  *id = sqlite3_column_int64(((Cursor *)p)->stmt,0); return SQLITE_OK;
+  *id = ((Tab *)p->pVtab)->mode>=PROJECT?((Cursor *)p)->ordinal:sqlite3_column_int64(((Cursor *)p)->stmt,0); return SQLITE_OK;
 }
 
 static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *id) {
@@ -180,14 +193,14 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
   if(op==10||op==11) {*id=0;t->busy=1;int rc=batch_command(t,op);t->busy=0;return rc;}
   if (op < 1 || op > 3) return error(t,"op must be 1 insert, 2 delete, 3 update");
   int side=sqlite3_value_int(a[9]);
-  int arity=t->mode==MULTI?3:t->mode==JOIN?2:1;
-  if(side<0||side>=arity) return error(t,"invalid source side");
+  if(side<0||side>=sources(t)) return error(t,"invalid source side");
   for(int image=0;image<2;image++) {
     if((image==0 && op==2)||(image==1 && op==1)) continue;
     int start=image?6:2;
     if(sqlite3_value_type(a[start])!=SQLITE_INTEGER) return error(t,"integer row identity required");
     if(t->mode) for(int j=1;j<=2;j++) {
       int type=sqlite3_value_type(a[start+j]);
+      if(t->mode==REACH&&type==SQLITE_NULL)return error(t,"reach requires non-NULL integer nodes");
       sqlite3_int64 n=sqlite3_value_int64(a[start+j]);
       if(type!=SQLITE_NULL && (type!=SQLITE_INTEGER||n < -1000000||n > 1000000)) return error(t,"NULL or integer in [-1000000,1000000] required");
     }
@@ -200,6 +213,7 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
   int batched=0;
   rc=batching(t,&batched);
   if(rc!=SQLITE_OK)return rc;
+  if(t->mode>=PROJECT&&!batched)return error(t,"circuit mode requires an open batch");
   if(t->source_view && (!t->env->source_views||!batched))return error(t,"source-view layout requires source_views_on and an open batch");
   t->busy = 1;
   if (op != 1) {
