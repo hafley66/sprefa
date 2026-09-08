@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import pg from "pg";
 import { runCrossoverCase } from "./10_crossover_case.mjs";
 
@@ -29,6 +30,8 @@ const batchSize = Number(argument("batch", "10"));
 const fanout = Number(argument("fanout", "10"));
 const budget = argument("budget", "constrained");
 const diagnostic = argument("diagnostic", "0") === "1";
+const fixturePath = argument("fixture", "");
+const fixture = fixturePath ? JSON.parse(readFileSync(fixturePath, "utf8")) : undefined;
 if (!new Set(["query", "pg_ivm"]).has(maintenance)) throw new Error(`bad maintenance: ${maintenance}`);
 
 const client = new Client({
@@ -144,7 +147,7 @@ try {
     budget,
   }));
   await client.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
-  await runCrossoverCase(adapter, { maintenance, rowCount, batchSize, fanout, budget, diagnostic });
+  await runCrossoverCase(adapter, { maintenance, rowCount, batchSize, fanout, budget, diagnostic, fixture });
 } finally {
   await client.end();
 }

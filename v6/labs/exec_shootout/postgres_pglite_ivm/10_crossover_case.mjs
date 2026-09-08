@@ -6,6 +6,7 @@ import {
   expectedAffectedRows,
   makeCrossoverOracle,
   validateCrossoverCase,
+  crossoverInputHash,
 } from "./9_crossover_workload.mjs";
 
 function elapsedMs(started) {
@@ -30,10 +31,10 @@ function normalizeSummary(rows) {
 
 async function readBoundedSnapshot(adapter) {
   await adapter.exec("DROP TABLE IF EXISTS crossover_snapshot");
-  const query = await timed(() => adapter.exec(`
-    CREATE TEMP TABLE crossover_snapshot AS
-    SELECT group_id, row_count, weighted_sum FROM crossover_view
-  `));
+  const query = await timed(async () => {
+    await adapter.exec(`CREATE TEMP TABLE crossover_snapshot AS SELECT group_id, row_count, weighted_sum FROM crossover_view`);
+    return adapter.query("SELECT count(*)::integer AS count FROM crossover_snapshot");
+  });
   const transfer = await timed(() => adapter.query(`
     SELECT group_id, row_count, weighted_sum
       FROM crossover_snapshot
@@ -51,6 +52,8 @@ async function readBoundedSnapshot(adapter) {
     client_transfer_ms: transfer.ms,
     checksum_ms: checksum.ms,
     ...checksum.value,
+    materialized_count: query.value.rows[0].count,
+    summary: transfer.value.rows.map((row) => [String(row.group_id), String(row.row_count), String(row.weighted_sum)]),
   };
 }
 
@@ -122,7 +125,7 @@ async function runDiagnostics(adapter, maintenance, mutations, common) {
 }
 
 export async function runCrossoverCase(adapter, options) {
-  const { maintenance, rowCount, batchSize, fanout, budget, diagnostic = false } = options;
+  const { maintenance, rowCount, batchSize, fanout, budget, diagnostic = false, fixture } = options;
   validateCrossoverCase(rowCount, batchSize, fanout);
   const oracle = makeCrossoverOracle(rowCount, batchSize, fanout);
   const mutations = crossoverMutationSql(rowCount, batchSize, fanout, oracle.groupCount);
@@ -180,23 +183,37 @@ export async function runCrossoverCase(adapter, options) {
   const wallStarted = process.hrtime.bigint();
   let updateQueryTotalMs = 0;
   let finalChecksum = null;
-  for (const state of crossoverStates) {
-    const update = state === "initial" ? { ms: 0, value: { rowCount: 0 } } : await timed(() => adapter.transaction(mutations[state]));
-    oracle.apply[state]();
-    const expected = oracle.snapshot();
+  let finalInputHash = null;
+  for (const entry of fixture?.states ?? crossoverStates.map((name) => ({ name }))) {
+    const state = entry.name;
+    const update = state === "initial" ? { ms: 0, value: { rowCount: 0 } } : await timed(() => adapter.transaction(entry.mutation_sql ?? mutations[state]));
+    if (!fixture) oracle.apply[state]();
+    const expected = entry.expected ?? oracle.snapshot();
     const actual = await readBoundedSnapshot(adapter);
+    const [dimensions, facts] = await Promise.all([
+      adapter.query("SELECT group_id,factor FROM dimension ORDER BY group_id"),
+      adapter.query("SELECT id,group_id,amount FROM fact ORDER BY id"),
+    ]);
+    const observedInputs = { dimension: dimensions.rows.map((row) => [row.group_id, row.factor]),
+      fact: facts.rows.map((row) => [row.id, row.group_id, row.amount]) };
+    const expectedInputs = entry.inputs ?? oracle.inputRows();
+    const inputHash = crossoverInputHash(observedInputs);
+    const exact = JSON.stringify(observedInputs) === JSON.stringify(expectedInputs)
+      && JSON.stringify(actual.summary) === JSON.stringify(expected.summary);
     const memory = await adapter.memory();
     const affectedRows = Number(update.value.rowCount ?? 0);
-    const expectedAffected = expectedAffectedRows(state, batchSize);
+    const expectedAffected = entry.expected_affected_rows ?? expectedAffectedRows(state, batchSize);
     const status = actual.checksum === expected.checksum
       && actual.output_rows === expected.output_rows
       && actual.output_bytes === expected.output_bytes
       && affectedRows === expectedAffected
+      && exact && actual.materialized_count === expected.output_rows
       ? "ok"
       : "mismatch";
     const updateQueryMs = update.ms + actual.query_compute_ms;
     if (state !== "initial") updateQueryTotalMs += updateQueryMs;
     finalChecksum = actual.checksum;
+    finalInputHash = inputHash;
     console.log(JSON.stringify({
       event: "mutation",
       status,
@@ -208,6 +225,8 @@ export async function runCrossoverCase(adapter, options) {
       update_plus_query_ms: updateQueryMs,
       ...actual,
       expected_checksum: expected.checksum,
+      input_hash: inputHash,
+      exact_input_output_validated: exact,
       memory,
       ...common,
     }));
@@ -219,6 +238,7 @@ export async function runCrossoverCase(adapter, options) {
     update_plus_query_ms: updateQueryTotalMs,
     wall_ms: elapsedMs(wallStarted),
     final_checksum: finalChecksum,
+    final_input_hash: finalInputHash,
     disk: await adapter.disk(),
     ...common,
   }));

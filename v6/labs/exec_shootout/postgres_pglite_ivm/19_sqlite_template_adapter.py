@@ -161,8 +161,15 @@ def main():
         update_ms = (time.perf_counter() - started) * 1000 if state['name'] != 'initial' else 0
         started = time.perf_counter()
         db.execute('CREATE TEMP TABLE crossover_snapshot AS ' + program['final_select']['summary'])
+        materialized_count = db.execute('SELECT count(*) FROM crossover_snapshot').fetchone()[0]
         compute_ms = (time.perf_counter() - started) * 1000
         actual, checksum, output_bytes = verify(db, program, state)
+        input_text = '\n'.join(['D\t' + '\t'.join(map(str, row)) for row in actual['dimension']]
+                               + ['F\t' + '\t'.join(map(str, row)) for row in actual['fact']])
+        input_hash = hashlib.sha256(input_text.encode()).hexdigest()
+        if 'input_hash' in state:
+            assert input_hash == state['input_hash']
+        assert materialized_count == len(actual['summary'])
         db.execute('DROP TABLE crossover_snapshot')
         assert affected == state['expected_affected_rows']
         if state['name'] != 'initial':
@@ -172,6 +179,7 @@ def main():
                           'update_transaction_ms': update_ms, 'query_compute_ms': compute_ms,
                           'update_plus_query_ms': update_ms + compute_ms,
                           'checksum': checksum, 'output_rows': len(actual['summary']),
+                          'input_hash': input_hash, 'materialized_count': materialized_count,
                           'output_bytes': output_bytes, 'exact_input_output_validated': True,
                           'summary': actual['summary']}), flush=True)
     db.close()
@@ -180,6 +188,7 @@ def main():
     db.close()
     print(json.dumps({'event': 'case-total', 'status': 'ok', 'update_plus_query_ms': total,
                       'final_checksum': checksum, 'fresh_reopen_validated': True,
+                      'final_input_hash': input_hash,
                       'disk': {'database_bytes': Path(args.db).stat().st_size},
                       'process_peak_rss_platform_units': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                       'rss_units': 'bytes' if sys.platform == 'darwin' else 'KiB'}), flush=True)
