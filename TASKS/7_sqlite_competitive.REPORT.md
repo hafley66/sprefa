@@ -132,3 +132,25 @@ source-view teardown; automatic statement-end batching; session/preupdate captur
 under exclusive hook ownership; custom SQLite variant. The current explicit SQL
 boundary needs no custom SQLite patch. The option ledger distinguishes measured
 paths, observed restrictions and unimplemented candidates.
+
+## Teardown and bounded sweep
+
+Circuit commit: `7eb0376fa`. A focused teardown red test exposed leftover
+per-source views/indexes, triggers and DRed cone storage. DROP now removes owned
+objects transactionally; rollback restores exact schema and output. Current
+circuit tests are 11 per layout, bringing test methods to 59. Source-view teardown
+is covered by execution in the reproducible gate.
+
+Three additional shared Bash cells passed, seven arms and two repetitions each,
+constrained budget. All measured cells match the exact input/output oracle.
+
+| Rows / batch / fanout | DD volatile | pg_ivm | Take 1 | Take 2 | Competitive source views |
+|---|---:|---:|---:|---:|---:|
+| 400 / 10 / 10 | 0.137 | 6.832 | 1.724 | 2.854 | 1.834 |
+| 12000 / 10 / 200 | 0.302 | 8.842 | 2.068 | 4.552 | 3.025 |
+| 12000 / 100 / 200 | 0.529 | 10.556 | 6.992 | 23.877 | 7.708 |
+
+Values are median cumulative mutation + query ms. Setup, RSS scope, durable SQL
+settings, DB/WAL sizes and full-query/shadow-batch results remain in each JSONL.
+`receipts/sweep-receipt.json` preserves exact commands and all three exit codes 0.
+The swept binary is pinned by hash in each run's metadata, before teardown edits.

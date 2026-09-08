@@ -114,5 +114,6 @@ The circuit suite covers savepoints across flush, rollback, injected xSync
 failure, ABORT/FAIL/IGNORE/REPLACE, UPSERT, duplicate supports, NULL joins and
 reopen in both layouts. The shared suite adds 104 circuit states per layout.
 Time/frontiers, arbitrary recursive programs, and remaining circuit catalog
-families are unsupported. Source-view teardown is not yet covered; persisted
-per-source views/indexes require a separate teardown lifecycle test.
+families are unsupported. DROP removes extension-owned source triggers, views,
+indexes and DRed cone storage. A teardown test proves rollback restores the
+schema and exact output, and a completed DROP permits ordinary source writes.

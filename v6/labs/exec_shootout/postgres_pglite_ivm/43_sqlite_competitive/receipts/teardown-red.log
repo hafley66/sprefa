@@ -1,0 +1,32 @@
+test_transactional_teardown (__main__.Circuits.test_transactional_teardown) ... FAIL
+
+======================================================================
+FAIL: test_transactional_teardown (__main__.Circuits.test_transactional_teardown)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 67, in test_transactional_teardown
+    self.assertEqual(self.db.execute("SELECT name FROM sqlite_schema WHERE name LIKE 'result%' OR name LIKE 'sqlite_autoindex_result%'").fetchall(),[])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [('result_cone',), ('result_a_ai',), ('res[167 chars]1',)] != []
+
+First list contains 11 additional elements.
+First extra element 0:
+('result_cone',)
+
++ []
+- [('result_cone',),
+-  ('result_a_ai',),
+-  ('result_a_ad',),
+-  ('result_a_au',),
+-  ('result_b_ai',),
+-  ('result_b_ad',),
+-  ('result_b_au',),
+-  ('result_live_key_0',),
+-  ('result_live_key_1',),
+-  ('result_live_0',),
+-  ('result_live_1',)]
+
+----------------------------------------------------------------------
+Ran 1 test in 0.009s
+
+FAILED (failures=1)

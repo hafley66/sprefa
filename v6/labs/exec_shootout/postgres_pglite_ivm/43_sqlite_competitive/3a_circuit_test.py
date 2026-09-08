@@ -56,6 +56,17 @@ class Circuits(unittest.TestCase):
   self.start();self.db.execute('INSERT INTO a VALUES(1,1,3)')
   with self.assertRaises(sqlite3.DatabaseError):self.flush()
   self.db.execute('ROLLBACK');self.check()
+ def test_transactional_teardown(self):
+  self.install('reach');self.start()
+  self.db.execute('INSERT INTO a VALUES(1,1,2),(2,2,1)');self.db.execute('INSERT INTO b VALUES(1,1,0)')
+  self.flush();self.db.execute('COMMIT')
+  before=self.db.execute("SELECT type,name,sql FROM sqlite_schema ORDER BY type,name").fetchall()
+  self.db.execute('BEGIN');self.db.execute('DROP TABLE result');self.db.execute('ROLLBACK');self.check()
+  self.assertEqual(self.db.execute("SELECT type,name,sql FROM sqlite_schema ORDER BY type,name").fetchall(),before)
+  self.db.execute('DROP TABLE result')
+  self.assertEqual(self.db.execute("SELECT name FROM sqlite_schema WHERE name LIKE 'result%' OR name LIKE 'sqlite_autoindex_result%'").fetchall(),[])
+  self.db.execute('INSERT INTO a VALUES(3,2,3)')
+  self.assertEqual(self.db.execute('SELECT count(*) FROM a').fetchone(),(3,))
 
 def circuit(mode):
  def test(self):

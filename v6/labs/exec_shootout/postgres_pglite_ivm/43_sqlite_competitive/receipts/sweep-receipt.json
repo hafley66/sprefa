@@ -1,0 +1,77 @@
+[
+  {
+    "command": [
+      "bash",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/13_crossover_run.sh",
+      "full",
+      "/tmp/sprefa-sqlite-competitive/sweep-400-10-10.jsonl",
+      "--case",
+      "400:10:10",
+      "--arms",
+      "query,pg_ivm,dd,sqlite-plugin-delta,sqlite-native-take2,sqlite-competitive-batch,sqlite-competitive-sourceview",
+      "--dd-bin",
+      "/private/tmp/sqlite-ivm-astra-target/release/examples/crossover_dd",
+      "--sqlite-extension",
+      "/private/tmp/sqlite-ivm-astra-target/release/libsqlite_ivm.dylib",
+      "--take2-extension",
+      "/tmp/sprefa-sqlite-native-take2/gate-u9mxe9w9/take2.dylib",
+      "--competitive-extension",
+      "/tmp/sprefa-sqlite-competitive/gate-11woyx03/competitive.dylib",
+      "--warmups",
+      "0",
+      "--repetitions",
+      "2"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "bash",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/13_crossover_run.sh",
+      "full",
+      "/tmp/sprefa-sqlite-competitive/sweep-12000-10-200.jsonl",
+      "--case",
+      "12000:10:200",
+      "--arms",
+      "query,pg_ivm,dd,sqlite-plugin-delta,sqlite-native-take2,sqlite-competitive-batch,sqlite-competitive-sourceview",
+      "--dd-bin",
+      "/private/tmp/sqlite-ivm-astra-target/release/examples/crossover_dd",
+      "--sqlite-extension",
+      "/private/tmp/sqlite-ivm-astra-target/release/libsqlite_ivm.dylib",
+      "--take2-extension",
+      "/tmp/sprefa-sqlite-native-take2/gate-u9mxe9w9/take2.dylib",
+      "--competitive-extension",
+      "/tmp/sprefa-sqlite-competitive/gate-11woyx03/competitive.dylib",
+      "--warmups",
+      "0",
+      "--repetitions",
+      "2"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "bash",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/13_crossover_run.sh",
+      "full",
+      "/tmp/sprefa-sqlite-competitive/sweep-12000-100-200.jsonl",
+      "--case",
+      "12000:100:200",
+      "--arms",
+      "query,pg_ivm,dd,sqlite-plugin-delta,sqlite-native-take2,sqlite-competitive-batch,sqlite-competitive-sourceview",
+      "--dd-bin",
+      "/private/tmp/sqlite-ivm-astra-target/release/examples/crossover_dd",
+      "--sqlite-extension",
+      "/private/tmp/sqlite-ivm-astra-target/release/libsqlite_ivm.dylib",
+      "--take2-extension",
+      "/tmp/sprefa-sqlite-native-take2/gate-u9mxe9w9/take2.dylib",
+      "--competitive-extension",
+      "/tmp/sprefa-sqlite-competitive/gate-11woyx03/competitive.dylib",
+      "--warmups",
+      "0",
+      "--repetitions",
+      "2"
+    ],
+    "exit_code": 0
+  }
+]

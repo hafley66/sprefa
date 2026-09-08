@@ -125,6 +125,31 @@ static int create(sqlite3 *db, void *aux, int argc, const char *const *argv,
 static int destroy(sqlite3_vtab *v) {
   Tab *t = (Tab *)v;
   int flag=0,rc=batching(t,&flag);
+  sqlite3_stmt *s=0;
+  char *q=sqlite3_mprintf("SELECT source FROM \"%w\".\"%w_sources\" ORDER BY side",t->schema,t->name);
+  char *attached[3]={0};int count=0;
+  if(rc==SQLITE_OK)rc=q?sqlite3_prepare_v3(t->db,q,-1,SQLITE_PREPARE_NO_VTAB,&s,0):SQLITE_NOMEM;
+  sqlite3_free(q);
+  while(rc==SQLITE_OK) {
+    int step=sqlite3_step(s);if(step==SQLITE_DONE)break;
+    if(step!=SQLITE_ROW){rc=step;break;}
+    if(count==3){rc=error(t,"too many attached sources");break;}
+    attached[count]=sqlite3_mprintf("%s",sqlite3_column_text(s,0));
+    if(!attached[count++])rc=SQLITE_NOMEM;
+  }
+  sqlite3_finalize(s);
+  sqlite3_finalize(t->batch_read);t->batch_read=0;
+  for(int i=0;i<32;i++){sqlite3_finalize(t->cached[i].stmt);sqlite3_free(t->cached[i].text);t->cached[i].stmt=0;t->cached[i].text=0;}
+  for(int i=0;i<count;i++) {
+    const char *suffixes[]={"ai","ad","au"};
+    for(int j=0;j<3&&rc==SQLITE_OK;j++)rc=sql(t,sqlite3_mprintf("DROP TRIGGER \"%w\".\"%w_%w_%s\"",t->schema,t->name,attached[i],suffixes[j]),0,0);
+    sqlite3_free(attached[i]);
+  }
+  for(int i=0;i<sources(t)&&rc==SQLITE_OK&&t->source_view;i++) {
+    rc=sql(t,sqlite3_mprintf("DROP VIEW \"%w\".\"%w_live_%d\"",t->schema,t->name,i),0,0);
+    if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("DROP INDEX \"%w\".\"%w_live_key_%d\"",t->schema,t->name,i),0,0);
+  }
+  if(rc==SQLITE_OK&&t->mode==REACH)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_cone\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK)rc = sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_state\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK&&t->source_view)rc=sql(t,sqlite3_mprintf("DROP VIEW \"%w\".\"%w_live\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_sources\"",t->schema,t->name),0,0);
@@ -245,7 +270,7 @@ static int rollback(sqlite3_vtab *v) { trace((Tab *)v,"rollback",-1); return SQL
 static int savepoint(sqlite3_vtab *v,int i) { trace((Tab *)v,"savepoint",i); return SQLITE_OK; }
 static int release(sqlite3_vtab *v,int i) { trace((Tab *)v,"release",i); return SQLITE_OK; }
 static int rollbackto(sqlite3_vtab *v,int i) { trace((Tab *)v,"rollbackto",i); return SQLITE_OK; }
-static int shadow(const char *suffix) { return !strcmp(suffix,"state") || !strcmp(suffix,"stats") || !strcmp(suffix,"result") || !strcmp(suffix,"batch") || !strcmp(suffix,"delta") || !strcmp(suffix,"sources"); }
+static int shadow(const char *suffix) { return !strcmp(suffix,"state") || !strcmp(suffix,"stats") || !strcmp(suffix,"result") || !strcmp(suffix,"batch") || !strcmp(suffix,"delta") || !strcmp(suffix,"sources") || !strcmp(suffix,"cone"); }
 
 static const sqlite3_module module = {
   .iVersion=3, .xCreate=create, .xConnect=connect, .xBestIndex=best,

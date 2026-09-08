@@ -1,0 +1,6 @@
+test_transactional_teardown (__main__.Circuits.test_transactional_teardown) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.157s
+
+OK
