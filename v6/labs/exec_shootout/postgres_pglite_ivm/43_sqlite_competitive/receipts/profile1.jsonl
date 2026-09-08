@@ -1,0 +1,4 @@
+{"state": "insert_batch", "cache": true, "elapsed_ns": 17946500, "prepares": 0, "steps": 4000, "vm_steps": 609991, "fullscan_steps": 0, "prepare_ns": 199000, "step_ns": 8945000}
+{"state": "delete_batch", "cache": true, "elapsed_ns": 21657708, "prepares": 2, "steps": 4000, "vm_steps": 606991, "fullscan_steps": 0, "prepare_ns": 265000, "step_ns": 9525000}
+{"state": "update_batch", "cache": true, "elapsed_ns": 39164208, "prepares": 0, "steps": 7000, "vm_steps": 1195982, "fullscan_steps": 0, "prepare_ns": 359000, "step_ns": 16931000}
+{"state": "dimension_fanout", "cache": true, "elapsed_ns": 953666, "prepares": 2, "steps": 7, "vm_steps": 104692, "fullscan_steps": 0, "prepare_ns": 49000, "step_ns": 706000}

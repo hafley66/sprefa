@@ -1,0 +1,14 @@
+test_bag (__main__.Batch.test_bag) ... ok
+test_filter (__main__.Batch.test_filter) ... ok
+test_group (__main__.Batch.test_group) ... ok
+test_join (__main__.Batch.test_join) ... ok
+test_misuse (__main__.Batch.test_misuse) ... ok
+test_multi (__main__.Batch.test_multi) ... ok
+test_savepoints_and_failed_flush (__main__.Batch.test_savepoints_and_failed_flush) ... ok
+test_self (__main__.Batch.test_self) ... ok
+test_source_view_writer_configuration (__main__.Batch.test_source_view_writer_configuration) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.118s
+
+OK

@@ -16,6 +16,8 @@ def main():
     p.add_argument('--fixture',required=True)
     p.add_argument('--db',required=True)
     p.add_argument('--extension',required=True)
+    p.add_argument('--batch',action='store_true')
+    p.add_argument('--source-views',action='store_true')
     args=p.parse_args()
     fixture=json.loads(Path(args.fixture).read_text())
     if fixture['circuit']!='aggregate_churn':
@@ -25,6 +27,8 @@ def main():
     start=time.perf_counter()
     db=sqlite3.connect(args.db,isolation_level=None)
     db.enable_load_extension(True);db.load_extension(args.extension);db.enable_load_extension(False)
+    if args.batch:db.execute("SELECT take2_control('cache_on')").fetchall()
+    if args.source_views:db.execute("SELECT take2_control('source_views_on')").fetchall()
     db.executescript('PRAGMA recursive_triggers=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA cache_size=-8192;')
     for table in ['a','b','c']:
         db.execute(f'CREATE TABLE {table}(id INTEGER PRIMARY KEY,k INTEGER NOT NULL,v INTEGER NOT NULL)')
@@ -34,12 +38,12 @@ def main():
     for side,table in enumerate(['a','b']):
         db.execute("SELECT take2_attach('result',?,?, 'id','k','v')",(table,side)).fetchall()
     emit(event='case-setup',status='ok',setup_ms=(time.perf_counter()-start)*1000,
-         algorithm='public vtab signed grouped equijoin',durability='durable SQL WAL/FULL',
+         algorithm='public vtab signed grouped equijoin',batch=args.batch,source_views=args.source_views,durability='durable SQL WAL/FULL',
          sqlite_version=sqlite3.sqlite_version,extension_sha256=hashlib.sha256(Path(args.extension).read_bytes()).hexdigest())
     total=0
     for state in fixture['states']:
         start=time.perf_counter()
-        db.executescript('BEGIN;'+state['mutation_sql']+'COMMIT;')
+        db.executescript('BEGIN;'+('INSERT INTO result(op) VALUES(10);' if args.batch else '')+state['mutation_sql']+('INSERT INTO result(op) VALUES(11);' if args.batch else '')+'COMMIT;')
         update_ms=(time.perf_counter()-start)*1000
         start=time.perf_counter()
         output=sorted(map(list,db.execute('SELECT * FROM result')))

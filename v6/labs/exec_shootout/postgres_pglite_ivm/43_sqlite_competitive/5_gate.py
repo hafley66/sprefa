@@ -1,0 +1,30 @@
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+here=Path(__file__).resolve().parent
+run=Path(tempfile.mkdtemp(prefix='gate-',dir='/tmp/sprefa-sqlite-competitive'))
+env=dict(os.environ,TAKE2_EXTENSION=str(run/'competitive.dylib'),TAKE2_SCRATCH=str(run),IVM_RUN_ROOT=str(run/'shared'))
+commands=[['cc','-O2','-Wall','-Wextra','-Werror','-fPIC','-shared','-I/opt/homebrew/opt/sqlite/include',str(here/'1_native.c'),'-o',env['TAKE2_EXTENSION']],
+          [sys.executable,str(here.parent/'42_sqlite_native_take2/3_boundary_test.py')],
+          [sys.executable,str(here.parent/'42_sqlite_native_take2/6_semantic_test.py')],
+          [sys.executable,str(here/'3_batch_test.py')],
+          [sys.executable,str(here/'3_batch_test.py')],
+          ['node',str(here.parent/'12_crossover_runner.mjs'),'--profile','semantic','--arms','sqlite-competitive-batch,sqlite-competitive-sourceview','--competitive-extension',env['TAKE2_EXTENSION'],'--output',str(run/'shared.jsonl'),'--repetitions','1','--warmups','0']]
+steps=[];rc=0
+for index,command in enumerate(commands):
+    with (run/f'{index}.log').open('wb') as log:
+        try:rc=subprocess.run(command,env=dict(env,TAKE2_SOURCE_VIEWS='1') if index==4 else env,stdout=log,stderr=subprocess.STDOUT,timeout=120).returncode
+        except subprocess.TimeoutExpired:rc=124
+    steps.append(dict(command=command,exit_code=rc))
+    if rc:break
+if rc==0:
+    rows=[json.loads(s) for s in (run/'shared.jsonl').read_text().splitlines()]
+    if not any(r['event']=='all-arm-run' and r.get('all_input_output_states_match') and r.get('state_count_per_arm')==171 for r in rows):rc=1
+hashes={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in [*here.glob('*'),*run.glob('*')] if p.is_file()}
+(run/'receipt.json').write_text(json.dumps(dict(exit_code=rc,steps=steps,hashes=hashes),indent=2))
+print(json.dumps(dict(receipt=str(run/'receipt.json'),exit_code=rc)));sys.exit(rc)
