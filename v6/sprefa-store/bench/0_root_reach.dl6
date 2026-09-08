@@ -1,0 +1,7 @@
+rel root(node: int) key(1).
+rel edge(parent: int, child: int) key(1, 2).
+
+alive(Node) <- root(Node).
+alive(Child) <- alive(Parent), edge(Parent, Child).
+
+? alive(Node).

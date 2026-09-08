@@ -630,18 +630,17 @@ fn source_stage_response(
             }
         }
     } else {
-        let request: soopy::StageRequest =
-            match serde_json::from_value(request_value.clone()) {
-                Ok(request) => request,
-                Err(error) => {
-                    return mutation_row(
-                        "",
-                        "refused",
-                        format!("decode StageRequest: {error}"),
-                        serde_json::json!([]),
-                    )
-                }
-            };
+        let request: soopy::StageRequest = match serde_json::from_value(request_value.clone()) {
+            Ok(request) => request,
+            Err(error) => {
+                return mutation_row(
+                    "",
+                    "refused",
+                    format!("decode StageRequest: {error}"),
+                    serde_json::json!([]),
+                )
+            }
+        };
         match mutation_root(&target_root, &request) {
             Ok(root) => root,
             Err(detail) => return mutation_row("", "refused", detail, serde_json::json!([])),
@@ -729,7 +728,10 @@ fn fill_create_text(request: &mut serde_json::Value) {
             continue;
         };
         action["bytes"] = serde_json::Value::Array(
-            text.as_bytes().iter().map(|byte| serde_json::json!(byte)).collect(),
+            text.as_bytes()
+                .iter()
+                .map(|byte| serde_json::json!(byte))
+                .collect(),
         );
         if let Some(object) = action.as_object_mut() {
             object.remove("text");

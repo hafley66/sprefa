@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { readdir, stat } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
 
 const sourceDir = dirname(fileURLToPath(import.meta.url));
 const dependencyDir = process.env.PG_DEPENDENCY_DIR
@@ -17,9 +18,10 @@ function addEdge(head, to, next, cursor, parent, child) {
   return cursor + 1;
 }
 
-export function graphOracle(layers, width) {
+export function graphOracle(layers, width, backStride = 0) {
   const nodes = 2 + layers * width;
-  const edges = width + Math.ceil(width / 3) + 2 * (layers - 1) * width;
+  const backEdges = backStride > 0 ? Math.floor((nodes - 1) / backStride) - Math.floor((width + 1) / backStride) : 0;
+  const edges = width + Math.ceil(width / 3) + 2 * (layers - 1) * width + backEdges;
   const head = new Int32Array(nodes);
   head.fill(-1);
   const to = new Int32Array(edges);
@@ -38,6 +40,9 @@ export function graphOracle(layers, width) {
       cursor = addEdge(head, to, next, cursor, previous + column, child);
       cursor = addEdge(head, to, next, cursor, previous + ((column + 1) % width), child);
     }
+  }
+  for (let node = 2 + width; backStride > 0 && node < nodes; node += 1) {
+    if (node % backStride === 0) cursor = addEdge(head, to, next, cursor, node, node - width);
   }
   if (cursor !== edges) throw new Error(`edge count mismatch: ${cursor} != ${edges}`);
 
@@ -66,7 +71,18 @@ export function graphOracle(layers, width) {
     return { seen, count: write };
   };
 
-  return { nodes, edges, before: reachable([0, 1]), after: reachable([1]) };
+  return { nodes, edges, head, to, next, before: reachable([0, 1]), after: reachable([1]) };
+}
+
+export function graphFixture(layers, width, backStride = 0) {
+  const graph = graphOracle(layers, width, backStride);
+  const edges = [];
+  for (let parent = 0; parent < graph.nodes; parent += 1) {
+    for (let edge = graph.head[parent]; edge !== -1; edge = graph.next[edge]) edges.push([parent, graph.to[edge]]);
+  }
+  edges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const input_hash = createHash("sha256").update(edges.map(([p, c]) => `${p},${c}\n`).join("")).digest("hex");
+  return { nodes: graph.nodes, edges, input_hash, before: Array.from(graph.before.seen.keys()).filter(node => graph.before.seen[node]), after: Array.from(graph.after.seen.keys()).filter(node => graph.after.seen[node]) };
 }
 
 export function checksumSeen(seen) {
@@ -207,6 +223,12 @@ async function run() {
   const layers = Number(process.argv[3]);
   const width = Number(process.argv[4]);
   const dataDir = process.argv[5];
+  const backStride = Number(process.env.BENCH_BACK_STRIDE ?? 0);
+  if (!Number.isInteger(backStride) || backStride < 0) throw new Error("invalid BENCH_BACK_STRIDE");
+  if (runtime === "fixture") {
+    console.log(JSON.stringify(graphFixture(layers, width, backStride)));
+    return;
+  }
   if (!new Set(["native", "pglite"]).has(runtime)) throw new Error(`unknown runtime: ${runtime}`);
   if (!Number.isInteger(layers) || layers < 1 || !Number.isInteger(width) || width < 1) {
     throw new Error(`layers and width must be positive integers: ${layers}x${width}`);
@@ -217,7 +239,7 @@ async function run() {
   if (runtime === "pglite" && !dataDir) throw new Error("PGlite data directory is required");
 
   const label = runtime === "native" ? "native-postgres-query" : "pglite-query";
-  const oracle = graphOracle(layers, width);
+  const oracle = graphOracle(layers, width, backStride);
   const database = await openDatabase(runtime, dataDir);
   try {
     const version = await database.version();
@@ -244,6 +266,7 @@ async function run() {
         FROM generate_series(1, ${layers - 1}) AS layer_id
        CROSS JOIN generate_series(0, ${width - 1}) AS column_id;
       CREATE INDEX edge_parent_idx ON edge(parent);
+      ${backStride > 0 ? `INSERT INTO edge SELECT node, node - ${width} FROM generate_series(${2 + width}, ${oracle.nodes - 1}) AS node WHERE node % ${backStride} = 0;` : ""}
     `);
     const beforeCount = await materializeAndCount(database);
     const setupMs = elapsedMs(setupStarted);
@@ -251,6 +274,10 @@ async function run() {
       throw new Error(`before count mismatch: ${beforeCount} != ${oracle.before.count}`);
     }
     const before = await transferAndValidate(database, oracle.before, "before");
+    const fixture = graphFixture(layers, width, backStride);
+    const inputRows = await database.query("SELECT parent, child FROM edge ORDER BY parent, child");
+    assert.deepEqual(inputRows.rows.map(row => [Number(row.parent), Number(row.child)]), fixture.edges);
+    console.log(`INPUT|${label}|${fixture.input_hash}`);
 
     const retractStarted = process.hrtime.bigint();
     await database.exec("BEGIN; DELETE FROM root WHERE node = 0; COMMIT");

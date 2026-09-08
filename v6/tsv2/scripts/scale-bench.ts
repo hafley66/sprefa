@@ -11,6 +11,9 @@ import { program } from "../gen/scale_generated.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
 import type { IArrivalBatch, IRow, ISqlSeam } from "../runtime/types.ts";
+import { graphFixture } from "../../sprefa-store/bench/engines/1_postgres_reach.mjs";
+import { stmt_counter } from "sprefa-store-engine/src/engine/counter.ts";
+import assert from "node:assert/strict";
 
 const BATCH_SIZE = 100;
 
@@ -73,6 +76,7 @@ async function final_table_sizes(seam: ISqlSeam): Promise<Readonly<Record<string
 }
 
 async function main(): Promise<void> {
+  if (process.argv[2] === "reach") return reach_cell();
   const { shape, rows, record_path, log_path } = parse_args();
   const schedule = schedule_for(shape, rows);
   const seam = ScratchStore.open(":memory:");
@@ -128,6 +132,47 @@ async function main(): Promise<void> {
   if (record_path !== "/dev/null") appendFileSync(record_path, `${JSON.stringify(result)}\n`);
   const final_rows = Object.values(table_sizes).reduce((sum, value) => sum + value, 0);
   process.stdout.write(`CSV,tsv2-gen,${rows},${arrivals},${final_rows},${total_wall_ms},${mean_tick_ms}\n`);
+}
+
+async function reach_cell(): Promise<void> {
+  const layers = Number(process.argv[3]);
+  const width = Number(process.argv[4]);
+  const graph = graphFixture(layers, width, Number(process.env.BENCH_BACK_STRIDE ?? 0));
+  const { program: emitted } = await import("../gen/bench_root_reach.ts");
+  const seam = ScratchStore.open(":memory:");
+  const arrivals: IArrivalBatch = [
+    ...graph.edges.map((row: number[]) => ({ rel: "edge", sign: "add" as const, row })),
+    { rel: "root", sign: "add", row: [0] }, { rel: "root", sign: "add", row: [1] },
+  ];
+  const count = async () => Number((await lastValueFrom(seam.runner.execute(seam.db,
+    `SELECT count(*) AS n FROM (${emitted.final_select.alive})`))).rows[0]?.n);
+  const rows = async (rel: "alive" | "edge") => (await lastValueFrom(seam.runner.execute(seam.db,
+    `${emitted.final_select[rel]} ORDER BY ${rel === "edge" ? "parent, child" : "node"}`))).rows
+    .map(row => rel === "edge" ? [Number(row.parent), Number(row.child)] : Number(row.node));
+  try {
+    const setup_started = process.hrtime.bigint();
+    await lastValueFrom(ScratchStore.boot(seam, emitted.ddl));
+    for (const statement of emitted.boot) await lastValueFrom(seam.runner.execute(seam.db, { sql: statement.sql, args: [...statement.params] }));
+    const initial = await lastValueFrom(emitted.tick(seam, arrivals));
+    const before_count = await count();
+    const setup_ms = Number(process.hrtime.bigint() - setup_started) / 1e6;
+    assert.equal(initial.carry_pending, false, "root reach must settle inside its tick");
+    assert.equal(before_count, graph.before.length);
+    assert.deepEqual(await rows("alive"), graph.before);
+    assert.deepEqual(await rows("edge"), graph.edges);
+    process.stderr.write(`INPUT|tsv2-runtime|${graph.input_hash}\n`);
+    stmt_counter.reset();
+    const started = process.hrtime.bigint();
+    const retracted = await lastValueFrom(emitted.tick(seam, [{ rel: "root", sign: "del", row: [0] }]));
+    const after_count = await count();
+    const retract_ms = Number(process.hrtime.bigint() - started) / 1e6;
+    const statements = stmt_counter.get();
+    assert.equal(retracted.carry_pending, false);
+    assert.equal(after_count, graph.after.length);
+    assert.deepEqual(await rows("alive"), graph.after);
+    process.stderr.write("STATUS|tsv2-runtime|ok|compile_dl6 emitted program.tick through IncrementalRuntime; emitted recursive DRed plan; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|Node process RSS sampled after validation; in-memory libSQL store|DL_MEMCAP_MB limits Node old-space only; SQLite C heap and total RSS unenforced\n");
+    process.stderr.write(`CSV,tsv2-runtime,${graph.nodes},${graph.edges.length},${before_count-after_count},${setup_ms.toFixed(3)},${retract_ms.toFixed(3)},${statements},${(process.memoryUsage().rss/1048576).toFixed(1)},N/A,N/A,0\n`);
+  } finally { seam.db.close(); }
 }
 
 void main().catch((error: unknown) => {

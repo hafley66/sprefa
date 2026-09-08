@@ -8,12 +8,18 @@ cat <<EOF
 # Z-set / IVM head-to-head: feasibility lab
 
 Same computation in every engine: reachability from roots {0,1} over a generated
-DAG, then **retract root 0** and recount the survivor set. The PostgreSQL-family
+layered graph, then **retract root 0** and recount the survivor set. The PostgreSQL-family
 numeric arms compare complete ordered results with an independent BFS oracle
 before emitting CSV. Only the root retraction and survivor recount are the
 measured operation; setup is reported separately. Requested memory budget:
 ${CAP} MB/run. Enforcement and accounting scope are adapter-specific and
 recorded below.
+
+Graph back-edge stride: ${BENCH_BACK_STRIDE:-0} (0 is the layered DAG;
+positive values add the existing cyclic workload's child-to-parent edges).
+Input-hash gating: ${BENCH_REQUIRE_INPUT_HASH:-0}. When enabled, every numeric
+arm must match the shared canonical edge-list SHA-256 in \`input-hashes.tsv\`.
+The tagged store keys are normalized to global node IDs for this comparison.
 
 Ordinary PostgreSQL and PGlite arms execute the recursive query from scratch
 after the root deletion. Their timed phase ends after query materialization and
@@ -40,6 +46,14 @@ the scope receipts describe which processes and limits are included.
 Per-cell output and exit codes are retained in \`logs/\`. Failed processes and
 error/timeout/OOM status rows do not contribute numeric measurements. A run
 refuses to overwrite existing CSV/status receipts.
+
+When selected, the \`sqlite-*\` arms call the native store's count, SCC, DRed,
+or signed-delta implementation through \`perf_report --shared\`. The
+\`tsv2-runtime\` and \`sprefa-engine-rs\` arms execute compiler-emitted programs
+through their actual runtime tick methods. These adapters validate complete
+initial and survivor sets outside the clocks, and include counting inside.
+The older \`tsv2_retract.sh\` specialized SQL script is not a generated-runtime
+arm and is not selected by \`SQLITE_SHOOTOUT\`.
 
 ## Charts
 

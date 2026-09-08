@@ -19,6 +19,7 @@
 //!   one child alone:  cargo run --release --example perf_report -- <engine> <l> <w> <stride>
 //!   knobs: DL_MEMCAP_MB (default 2048), DL_PERF_REPORT (output path)
 
+use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 use sea_orm::{ConnectOptions, ConnectionTrait, Database};
@@ -73,6 +74,7 @@ fn fingerprint(keys: &[i64]) -> String {
 #[derive(Default, Clone)]
 struct Outcome {
     survivors: Vec<i64>,
+    setup_ms: f64,
     retract_ms: f64,
     statements: u64,
     rust_peak_mb: f64, // high-water Rust heap DURING the retract (not after)
@@ -146,6 +148,13 @@ where
         (i64, i64),
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>>,
 {
+    let mut expected_before: Vec<i64> = g
+        .rows
+        .iter()
+        .map(|(tag, id, _)| benchgraph::encode(*tag, *id))
+        .collect();
+    expected_before.sort_unstable();
+    let setup_started = Instant::now();
     let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
     let deps: Vec<(i64, i64, i64, i64)> = g
         .edges
@@ -156,6 +165,15 @@ where
     let (store, path) = open_store().await;
     store.add_rows(&rows).await.unwrap();
     store.add_deps(&deps).await.unwrap();
+    let before_count = store.alive().await.unwrap();
+    let setup_ms = setup_started.elapsed().as_secs_f64() * 1e3;
+    assert_eq!(before_count as usize, expected_before.len());
+    assert_eq!(
+        store.alive_keys().await.unwrap(),
+        expected_before,
+        "initial store set mismatch"
+    );
+    drop(expected_before);
     drop(rows);
     drop(deps);
     drop(g); // corpus lives on disk now; nothing below counts its residence
@@ -174,11 +192,13 @@ where
     memcap::reset_peak(); // bracket the retract's Rust-heap high-water
     let t = Instant::now();
     op(&store, seed).await;
+    let survivor_count = store.alive().await.unwrap();
     let retract_ms = t.elapsed().as_secs_f64() * 1e3;
     let statements = stmt_counter::get();
     let rust_peak = memcap::peak_bytes() as f64 / 1048576.0;
     let sqlite_hw = sqlite_hw_mb(false);
     let survivors = store.alive_keys().await.unwrap();
+    assert_eq!(survivor_count as usize, survivors.len());
 
     store
         .conn()
@@ -188,6 +208,7 @@ where
     let db_mb = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) as f64 / 1048576.0;
     let out = Outcome {
         survivors,
+        setup_ms,
         retract_ms,
         statements,
         rust_peak_mb: rust_peak,
@@ -496,7 +517,11 @@ fn run_child(exe: &std::path::Path, engine: &str, l: usize, w: usize, bs: usize,
 
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    let shared = args.get(1).map(String::as_str) == Some("--shared");
+    if shared {
+        args.remove(1);
+    }
     let cap_mb: u64 = std::env::var("DL_MEMCAP_MB")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -510,10 +535,65 @@ async fn main() {
         let l: usize = args[2].parse().unwrap();
         let w: usize = args[3].parse().unwrap();
         let bs: usize = args[4].parse().unwrap();
+        if shared && bs > 0 && args[1] == "sqlite-count" {
+            eprintln!("STATUS|sqlite-count|unsupported|plain reference counting does not collect unsupported cycles; use SCC or DRed|no graph loaded|not applicable");
+            return;
+        }
+        let graph_started = Instant::now();
         let g = benchgraph::gen_multi_cyclic(l, w, bs); // bs=0 => plain DAG
+        let graph_ms = graph_started.elapsed().as_secs_f64() * 1e3;
+        let nodes = g.rows.len();
+        let edges = g.edges.len();
         let ih = input_hash(&g);
+        if shared {
+            let global_ids: HashMap<i64, usize> = g
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(index, (tag, id, _))| (benchgraph::encode(*tag, *id), index))
+                .collect();
+            let mut edges: Vec<_> = g
+                .edges
+                .iter()
+                .map(|(pt, pi, ct, ci)| {
+                    (
+                        global_ids[&benchgraph::encode(*pt, *pi)],
+                        global_ids[&benchgraph::encode(*ct, *ci)],
+                    )
+                })
+                .collect();
+            edges.sort_unstable();
+            let mut hash = Sha256::new();
+            for (parent, child) in edges {
+                hash.update(format!("{parent},{child}\n"));
+            }
+            eprintln!("INPUT|{}|{:x}", args[1], hash.finalize());
+        }
+        let expected: Option<Vec<i64>> = shared.then(|| {
+            benchgraph::oracle_survivors(&g, g.seed)
+                .into_iter()
+                .collect()
+        });
         let name = args[1].clone();
         let out = run_engine(&name, g).await.unwrap();
+        if let Some(expected) = expected {
+            assert_eq!(
+                out.survivors, expected,
+                "shared survivor set mismatch for {name}"
+            );
+            eprintln!("STATUS|{name}|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3={ih}; survivor blake3={}|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB={cap_mb} caps live Rust allocations; SQLite C heap and total RSS are unenforced", fingerprint(&out.survivors));
+            eprintln!(
+                "CSV,{name},{nodes},{edges},{},{:.3},{:.3},{},{:.1},{:.2},{:.2},{:.2}",
+                nodes - out.survivors.len(),
+                graph_ms + out.setup_ms,
+                out.retract_ms,
+                out.statements,
+                out.peak_rss_mb,
+                out.rust_peak_mb,
+                out.sqlite_hw_mb,
+                out.db_mb
+            );
+        }
         println!(
             "RESULT engine={name} storage={} count={} out_hash={} in_hash={ih} ms={:.3} stmts={} rust_peak_mb={:.2} sqlite_hw_mb={:.2} rss_mb={:.1} db_mb={:.2}",
             if sqlite_ram_probe() { "memory" } else { "file" },

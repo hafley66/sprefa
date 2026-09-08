@@ -325,8 +325,10 @@ mod canonical_key_order_tests {
     // `serde_json/preserve_order` on (oxc_resolver does since #481).
     #[test]
     fn object_keys_render_sorted_regardless_of_insertion_order() {
-        let rendered = canonical_json_text(r#"{"zeta":1,"alpha":{"nested_b":2,"nested_a":3},"mid":[{"y":0,"x":1}]}"#)
-            .expect("valid json");
+        let rendered = canonical_json_text(
+            r#"{"zeta":1,"alpha":{"nested_b":2,"nested_a":3},"mid":[{"y":0,"x":1}]}"#,
+        )
+        .expect("valid json");
         assert_eq!(
             rendered,
             r#"{"alpha":{"nested_a":3,"nested_b":2},"mid":[{"x":1,"y":0}],"zeta":1}"#
