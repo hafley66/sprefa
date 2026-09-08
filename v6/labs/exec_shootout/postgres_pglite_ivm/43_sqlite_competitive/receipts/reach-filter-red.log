@@ -1,0 +1,35 @@
+test_cycle_root_predicate_retraction (__main__.FilteredReach.test_cycle_root_predicate_retraction) ... ERROR
+test_invalid_recursive_predicate_rejected (__main__.FilteredReach.test_invalid_recursive_predicate_rejected) ... ERROR
+test_random_predicate_crossings (__main__.FilteredReach.test_random_predicate_crossings) ... ERROR
+
+======================================================================
+ERROR: test_cycle_root_predicate_retraction (__main__.FilteredReach.test_cycle_root_predicate_retraction)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/10_reach_filter_test.py", line 16, in setUp
+    self.db.execute("CREATE VIRTUAL TABLE result USING take2_counted(reach,'b0.k<>b0.v AND b0.v<>99','b0.v>=0')")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_invalid_recursive_predicate_rejected (__main__.FilteredReach.test_invalid_recursive_predicate_rejected)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/10_reach_filter_test.py", line 16, in setUp
+    self.db.execute("CREATE VIRTUAL TABLE result USING take2_counted(reach,'b0.k<>b0.v AND b0.v<>99','b0.v>=0')")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_random_predicate_crossings (__main__.FilteredReach.test_random_predicate_crossings)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/10_reach_filter_test.py", line 16, in setUp
+    self.db.execute("CREATE VIRTUAL TABLE result USING take2_counted(reach,'b0.k<>b0.v AND b0.v<>99','b0.v>=0')")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.007s
+
+FAILED (errors=3)

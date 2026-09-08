@@ -108,7 +108,7 @@ static int connect(sqlite3 *db, void *aux, int argc, const char *const *argv,
   } else if(t->mode==PLAN) {
     if(argc!=5||load_plan(t,argv[4])!=SQLITE_OK){disconnect(&t->base);*err=sqlite3_mprintf("take2: invalid bounded plan or scalar binding");return SQLITE_ERROR;}
   } else if(argc==5){disconnect(&t->base);return SQLITE_ERROR;}
-  else if(t->mode==PROJECT) {
+  else if(t->mode==PROJECT||(t->mode==REACH&&argc==6)) {
     t->predicate=argc==6?literal(argv[4]):sqlite3_mprintf("b0.v>=0");
     t->projection=argc==6?literal(argv[5]):sqlite3_mprintf("b0.v*2");
     if(!t->predicate||!t->projection||validate_expressions(t)!=SQLITE_OK){disconnect(&t->base);*err=sqlite3_mprintf("take2: scalar plan requires k/v expressions without subqueries or unapproved functions");return SQLITE_ERROR;}

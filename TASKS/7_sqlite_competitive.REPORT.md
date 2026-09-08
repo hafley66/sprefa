@@ -1,13 +1,13 @@
 # Competitive SQLite-native IVM
 
-Current gate exit 0: 233 Python test methods, 2 Rust compiler tests, and the plan
+Current gate exit 0: 239 Python test methods, 2 Rust compiler tests, and the plan
 audit, 171 shared semantic states per batch/sourceview/lazy/fused/counted arm,
 and 143 core circuit states per these arms plus frontier. All eleven core circuits include actual
 incremental maintenance, with negation, cyclic retraction and a separately
 labeled finite scalar epoch variant. CI execution coverage is additive.
 
 Reproduce: `python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/5_gate.py`.
-Current receipt: `43_sqlite_competitive/receipts/window-gate.json`.
+Current receipt: `43_sqlite_competitive/receipts/reach-filter-gate.json`.
 Take 1, Take 2, other worktrees and DL7 sources remain preserved. No push or merge.
 
 | Commit | Tested step |
@@ -499,3 +499,24 @@ plan. Initial unsupported-mode failures are retained. CI execution coverage adds
 12 Python executions to the existing gate, now 233 Python methods plus 2 Rust
 tests and all existing shared states. Window performance is not paired yet.
 Run command: `TAKE2_SOURCE_VIEWS=1 TAKE2_EXTENSION=/tmp/sprefa-sqlite-competitive/window-probe.dylib python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/9_window_test.py`.
+
+## Filtered recursive supports and refreshed combined receipt
+
+Filtered reachability reuses the SQLite scalar binder and existing DRed
+implementation. Edge/root predicates apply to current images and signed OLD/NEW
+deltas. Tests retract roots across the predicate boundary, remove alternative
+paths to cycles, roll back, reopen and apply deterministic randomized changes.
+General recursive SQL lowering, path multiplicities and recursive aggregates
+remain outside this admitted API. Three new tests per layout pass in the full
+debug gate: `/tmp/sprefa-sqlite-competitive/gate-kvxonda7/receipt.json`, exit 0.
+Current CI execution coverage: 239 Python methods, 2 Rust tests and shared oracles.
+
+The current ten-arm combined aggregate_churn circuit run includes real PG,
+pg_ivm, DD, SWI, SQLite full-query, Take 1, Take 2, sourceview, lazy and counted.
+Three repetitions match all 13 input/output states per arm. Preserved receipt:
+`receipts/current-combined.jsonl`. SWI aggregate evaluation is volatile full
+predicate recomputation; DD is volatile incremental; SQL durability labels remain.
+Command is the earlier combined-baseline Bash command with output
+`/tmp/sprefa-sqlite-competitive/current-combined.jsonl`, `--warmups 0 --repetitions 3`,
+and additional arms `sqlite-competitive-sourceview,sqlite-competitive-lazy,sqlite-competitive-counted`
+using `--competitive-extension /tmp/sprefa-sqlite-competitive/reach-filter-probe.dylib`.

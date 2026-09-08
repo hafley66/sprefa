@@ -46,6 +46,14 @@ This mode uses scalar event time; it does not implement partial-order antichains
 or arbitrary DD timestamp/frontier programs. It has no shared cross-engine
 window performance claim.
 
+Filtered recursive API: `take2_counted(reach,'b0.k<>b0.v AND b0.v<>99',
+'b0.v>=0')` binds an edge predicate and a root predicate through the same private
+SQLite scalar validator. DRed applies them to both current images and signed
+OLD/NEW deltas, so crossing a predicate boundary retracts or adds support.
+`10_reach_filter_test.py` covers filtered cyclic retraction, alternative roots,
+predicate crossings, rollback and reopen. General recursive program lowering,
+path multiplicities and arbitrary recursive aggregates remain unsupported.
+
 Current SQL boundary:
 
 ```sql

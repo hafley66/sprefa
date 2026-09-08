@@ -33,6 +33,8 @@ commands.append([sys.executable,str(here/'3e_fused_test.py')])
 commands.append([sys.executable,str(here/'3e_fused_test.py')])
 commands.append([sys.executable,str(here/'9_window_test.py')])
 commands.append([sys.executable,str(here/'9_window_test.py')])
+commands.append([sys.executable,str(here/'10_reach_filter_test.py')])
+commands.append([sys.executable,str(here/'10_reach_filter_test.py')])
 for command in commands:
     if '--arms' in command:
         position=command.index('--arms')+1
@@ -40,7 +42,7 @@ for command in commands:
 steps=[];rc=0
 for index,command in enumerate(commands):
     with (run/f'{index}.log').open('wb') as log:
-        try:rc=subprocess.run(command,env=dict(env,TAKE2_SOURCE_VIEWS='1') if index in [4,6,8,14,18,20,22] else env,stdout=log,stderr=subprocess.STDOUT,timeout=120).returncode
+        try:rc=subprocess.run(command,env=dict(env,TAKE2_SOURCE_VIEWS='1') if index in [4,6,8,14,18,20,22,24] else env,stdout=log,stderr=subprocess.STDOUT,timeout=120).returncode
         except subprocess.TimeoutExpired:rc=124
     steps.append(dict(command=command,exit_code=rc))
     if rc:break

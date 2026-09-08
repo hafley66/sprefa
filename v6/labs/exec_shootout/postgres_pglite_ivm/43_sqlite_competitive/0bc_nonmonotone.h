@@ -1,7 +1,9 @@
 /* Current SQLite source images, used only from the explicit flush statement. */
 static char *relation(Tab *t,int side) {
-  return t->source_view?sqlite3_mprintf("(SELECT k,v FROM \"%w\".\"%w_live_%d\")",t->schema,t->name,side):
+  char *base=t->source_view?sqlite3_mprintf("(SELECT k,v FROM \"%w\".\"%w_live_%d\")",t->schema,t->name,side):
     sqlite3_mprintf("(SELECT k,v FROM \"%w\".\"%w_state\" WHERE side=%d)",t->schema,t->name,side);
+  if(t->mode==REACH&&t->predicate){char *filtered=sqlite3_mprintf("(SELECT k,v FROM %s b0 WHERE (%s))",base,side?t->projection:t->predicate);sqlite3_free(base);return filtered;}
+  return base;
 }
 
 /* Telescoping: dLeft * oldMembership + currentLeft * dMembership.
@@ -29,6 +31,7 @@ static int flush_reach(Tab *t) {
   char *edges=relation(t,0),*roots=relation(t,1);
   char *result=sqlite3_mprintf("\"%w\".\"%w_result\"",t->schema,t->name);
   char *delta=sqlite3_mprintf("\"%w\".\"%w_delta\"",t->schema,t->name);
+  if(t->predicate){char *filtered=sqlite3_mprintf("(SELECT side,k,v,w FROM %s b0 WHERE CASE side WHEN 0 THEN (%s) ELSE (%s) END)",delta,t->predicate,t->projection);sqlite3_free(delta);delta=filtered;}
   char *cone=sqlite3_mprintf("\"%w\".\"%w_cone\"",t->schema,t->name);
   int rc=sql(t,sqlite3_mprintf(
     "WITH RECURSIVE affected(k) AS MATERIALIZED ("

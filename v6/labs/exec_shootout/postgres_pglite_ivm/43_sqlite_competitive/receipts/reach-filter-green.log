@@ -1,0 +1,8 @@
+test_cycle_root_predicate_retraction (__main__.FilteredReach.test_cycle_root_predicate_retraction) ... ok
+test_invalid_recursive_predicate_rejected (__main__.FilteredReach.test_invalid_recursive_predicate_rejected) ... ok
+test_random_predicate_crossings (__main__.FilteredReach.test_random_predicate_crossings) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.184s
+
+OK
