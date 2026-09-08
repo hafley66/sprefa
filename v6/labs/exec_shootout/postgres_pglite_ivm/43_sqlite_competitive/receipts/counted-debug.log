@@ -1,0 +1,1 @@
+test_anti (__main__.Counted.test_anti) ... Assertion failed: (pTab->nTabRef>1 || rc!=SQLITE_OK), function vtabCallConstructor, file sqlite3.c, line 163041.

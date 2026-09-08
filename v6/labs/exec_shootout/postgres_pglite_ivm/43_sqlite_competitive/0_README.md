@@ -21,6 +21,16 @@ malformed-index errors when the old lazy path created source indexes inside the
 first multi-row source INSERT. Setup, rollback, reopen and integrity checks are
 covered. Existing receipts remain preserved, including the newly found failure.
 
+Counter variants use the same SQL and lifecycle contracts: `take2_fused(mode)`
+updates `_stats` through SQL triggers on delta writes; `take2_counted(mode)`
+stores a separate `events` count in each delta row. In counted mode `_counter(n)`
+holds flushed events and `_stats(n)` is a view of saturated `_counter.n +
+sum(_delta.events)`. Reads remain exact before flush. Flush folds events into
+`_counter` before deleting the queue, within the same SQLite transaction. Event
+counts survive signed-delta cancellation and roll back with source changes.
+The optional shared arms are `sqlite-competitive-fused` and
+`sqlite-competitive-counted`; existing arm names retain their storage layouts.
+
 Current SQL boundary:
 
 ```sql
@@ -79,7 +89,9 @@ mutations, with exact oracle checks. Paired runner measurements are separate.
 |---|---|
 | Prepared statement reuse | Implemented 32-entry cache. Same batch1000 fixture: 191.8 ms uncached vs 79.7 ms cached; 15007 vs 4 measured write prepares, same VM work. Single profiling run, not a throughput conclusion. |
 | SQL/index tuning | Indexed per-source views remove duplicate image writes and UNION ALL materialization. Profiling dimension update: 12108 to 109 full-scan steps; 8.034 to 0.331 ms. |
+| Counter SQL tuning | Profile attributed about 6.6 ms per batch1000 case to per-event `_stats` UPDATEs. Trigger fusion measured slower; counted delta metadata removes those UPDATEs while `_stats` remains exact during batches. Both variants have executable lifecycle/count tests and separate paired arms. |
 | Bounded session-local cache | Implemented 32 prepared statements per vtab. SQLite pager targets of 1/8/32 MiB measured 28.440/29.046/26.834 ms median over two batch1000 profiles each. Pager size is a target, not a hard memory ceiling; existing runner RSS guards remain. No host source-relation copy. |
+| Scheduler metadata cache candidate | Component profile measured only about 0.7 ms total in persistent batch-state reads across batch1000 mutations. No metadata cache added in this pass; measured counter SQL cost was about 6.6 ms. This does not establish a row-trigger floor. |
 | Delta consolidation | Implemented persistent signed support queue and set-based flush; nine batch tests per layout pass. |
 | Explicit SQL batch/flush | Implemented above, with read/missing-flush misuse rejection and savepoint tests. |
 | Public vtab lifecycle batching | `take2_lazy` queues source deltas, flushes on xFilter and xSync, and passes completed-statement reads, conflicts, savepoints and failed-read/source rollback tests. It does not treat xSync as statement end. Explicit batch and epoch variants remain. |

@@ -1,13 +1,13 @@
 # Competitive SQLite-native IVM
 
-Current gate exit 0: 147 Python test methods, 2 Rust compiler tests, and the plan
-audit, 171 shared semantic states per batch/sourceview/lazy arm, and 143 core
-circuit states per batch/sourceview/frontier/lazy arm. All eleven core circuits include actual
+Current gate exit 0: 221 Python test methods, 2 Rust compiler tests, and the plan
+audit, 171 shared semantic states per batch/sourceview/lazy/fused/counted arm,
+and 143 core circuit states per these arms plus frontier. All eleven core circuits include actual
 incremental maintenance, with negation, cyclic retraction and a separately
 labeled finite scalar epoch variant. CI execution coverage is additive.
 
 Reproduce: `python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/5_gate.py`.
-Current receipt: `43_sqlite_competitive/receipts/compiler-gate.json`.
+Current receipt: `43_sqlite_competitive/receipts/counters-debug-gate.json`.
 Take 1, Take 2, other worktrees and DL7 sources remain preserved. No push or merge.
 
 | Commit | Tested step |
@@ -394,3 +394,62 @@ Commands:
 `CARGO_HOME=/tmp/sprefa-sqlite-competitive/cargo CARGO_TARGET_DIR=/tmp/sprefa-sqlite-competitive/compiler-target cargo test --locked --manifest-path v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/6_sql_compile/Cargo.toml`
 and the reproducible `5_gate.py` command above. Retained red/green logs and gate
 hashes are in `43_sqlite_competitive/receipts/compiler-*`.
+
+## Counted delta metadata: measured durable gap
+
+Component profile adds batch-read, recursive-trigger-PRAGMA, enqueue, stats and
+flush elapsed counters. These instrumented scopes overlap the existing SQL
+prepare/step metrics; they must not be summed with prepare/step as disjoint work.
+Three batch1000 profiles attributed about 6.6 ms to separate stats UPDATEs,
+0.7 ms to batch-state reads and 1.7 ms to PRAGMA checks. A scheduler metadata
+cache was not pursued in this pass because the measured stats cost was larger.
+
+Two executable alternatives preserve exact transaction-safe event counts:
+`take2_fused` invokes stats UPDATE through delta SQL triggers; `take2_counted`
+stores events alongside signed deltas and presents `_stats` as an exact view of
+the flushed `_counter` plus pending events. Counted flush folds this metadata
+inside SQLite before clearing deltas. Counts remain exact before flush, through
+FAIL/IGNORE/REPLACE, no-op UPDATE, signed cancellation, savepoints and rollback.
+Trigger fusion measured slower and remains an optional probe arm. No host
+relation cache or benchmark-only counter omission was introduced.
+
+The first debug counter run aborted (exit 134) at vtabCallConstructor's nTabRef
+assertion: ALTER TABLE was being used during xCreate. The repair creates the
+final schemas directly. Focused 37-method counter tests pass under debug, and
+the full debug gate passes at `/tmp/sprefa-sqlite-competitive/gate-10yrz574/receipt.json`.
+The gate adds 74 Python executions across both layouts and tests both new arms
+against every supported shared semantic/core state. CI execution coverage is
+additive; no existing arm was removed.
+
+Repaired-build shared Bash sweep, constrained budget, three measured repetitions,
+zero warmups, nine cells, nine arms, 27 exact all-arm matches. Values below are
+median sums of mutation plus query milliseconds. SQL arms are durable WAL/FULL;
+DD is volatile. Full setup/RSS/DB/WAL and per-mutation receipts remain in
+`receipts/counters-fixed-sweep.jsonl`.
+
+| Rows / batch / fanout | pg_ivm | DD volatile | Take 1 | Take 2 | Sourceview | Lazy | Fused | Counted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 400 / 10 / 10 | 5.424 | 0.131 | 1.452 | 2.823 | 1.686 | 1.668 | 1.681 | 1.734 |
+| 12000 / 10 / 10 | 8.290 | 0.153 | 1.898 | 4.097 | 2.491 | 2.640 | 3.574 | 2.687 |
+| 400 / 10 / 200 | 5.911 | 0.151 | 1.741 | 3.172 | 2.069 | 1.851 | 1.875 | 1.787 |
+| 1200 / 10 / 200 | 7.015 | 0.147 | 1.435 | 2.829 | 1.950 | 1.956 | 2.071 | 1.820 |
+| 4000 / 10 / 200 | 9.552 | 0.152 | 1.707 | 3.480 | 2.254 | 2.680 | 3.466 | 2.597 |
+| 12000 / 10 / 200 | 13.507 | 0.197 | 1.856 | 3.926 | 2.506 | 2.377 | 3.870 | 2.417 |
+| 12000 / 1000 / 200 | 21.311 | 1.118 | 25.055 | 186.954 | 27.201 | 27.715 | 43.389 | 21.121 |
+| 12000 / 1 / 200 | 8.441 | 0.166 | 1.449 | 2.781 | 2.904 | 2.655 | 2.125 | 2.506 |
+| 12000 / 100 / 200 | 10.610 | 0.353 | 5.653 | 25.122 | 9.690 | 8.696 | 11.206 | 9.231 |
+
+The batch1000 cell closes the measured gap to pg_ivm within this run; it does not
+establish equal performance across workloads. Counted metadata did not improve
+every smaller cell. The trigger-based path retains per-event forwarding costs.
+
+Exact sweep command:
+```sh
+IVM_BUDGETS=constrained IVM_POSTGRES_PREFIX=/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-pglite-ivm/v6/labs/exec_shootout/postgres_pglite_ivm/.work/postgres-18.6 \
+bash v6/labs/exec_shootout/postgres_pglite_ivm/13_crossover_run.sh full /tmp/sprefa-sqlite-competitive/counters-fixed-sweep.jsonl \
+--max-rows 12000 --arms query,pg_ivm,dd,sqlite-plugin-delta,sqlite-native-take2,sqlite-competitive-sourceview,sqlite-competitive-lazy,sqlite-competitive-fused,sqlite-competitive-counted \
+--dd-bin /private/tmp/sqlite-ivm-astra-target/release/examples/crossover_dd \
+--sqlite-extension /private/tmp/sqlite-ivm-astra-target/release/libsqlite_ivm.dylib \
+--take2-extension /tmp/sprefa-sqlite-native-take2/gate-u9mxe9w9/take2.dylib \
+--competitive-extension /tmp/sprefa-sqlite-competitive/counted-fixed.dylib --warmups 0 --repetitions 3
+```

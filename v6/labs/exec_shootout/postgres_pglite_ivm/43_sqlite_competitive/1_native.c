@@ -90,7 +90,8 @@ static int connect(sqlite3 *db, void *aux, int argc, const char *const *argv,
   memset(t, 0, sizeof(*t));
   t->db = db; t->env = aux;
   t->frontiers=!strcmp(argv[0],"take2_epoch");
-  t->lazy=!strcmp(argv[0],"take2_lazy");
+  t->fused=!strcmp(argv[0],"take2_counted")?2:!strcmp(argv[0],"take2_fused");
+  t->lazy=!strcmp(argv[0],"take2_lazy")||t->fused;
   if(argc>=4) {
     const char *modes[]={"mirror","filter","bag","group","join","self","multi","project","inner","self_chain","chain","semi","anti","reach","distinct","fanout","diamond","plan"};
     int found=0;
@@ -132,10 +133,13 @@ static int create(sqlite3 *db, void *aux, int argc, const char *const *argv,
   if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_clock\" VALUES(0)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_frontier\"(side INTEGER PRIMARY KEY,t INTEGER NOT NULL)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_frontier\" VALUES(0,0),(1,0),(2,0)",t->schema,t->name),0,0);
-  if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_delta\"(key TEXT PRIMARY KEY,side INTEGER,k INTEGER,v INTEGER,w INTEGER)",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_delta\"(key TEXT PRIMARY KEY,side INTEGER,k INTEGER,v INTEGER,w INTEGER%s)",t->schema,t->name,t->fused?",events INTEGER NOT NULL DEFAULT 0":""),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE INDEX \"%w\".\"%w_delta_lookup\" ON \"%w_delta\"(side,k)",t->schema,t->name,t->name),0,0);
-  if (rc == SQLITE_OK) rc = sql(t, sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_stats\"(n INTEGER NOT NULL);",t->schema,t->name),0,0);
-  if (rc == SQLITE_OK) rc = sql(t, sqlite3_mprintf("INSERT INTO \"%w\".\"%w_stats\" VALUES(0)",t->schema,t->name),0,0);
+  if (rc == SQLITE_OK) rc = sql(t, sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_%s\"(n INTEGER NOT NULL);",t->schema,t->name,t->fused==2?"counter":"stats"),0,0);
+  if (rc == SQLITE_OK) rc = sql(t, sqlite3_mprintf("INSERT INTO \"%w\".\"%w_%s\" VALUES(0)",t->schema,t->name,t->fused==2?"counter":"stats"),0,0);
+  if(rc==SQLITE_OK&&t->fused==1)rc=sql(t,sqlite3_mprintf("CREATE TRIGGER \"%w\".\"%w_delta_ai\" AFTER INSERT ON \"%w_delta\" WHEN NEW.events>0 BEGIN UPDATE \"%w_stats\" SET n=min(1000000000000000,n+NEW.events); END",t->schema,t->name,t->name,t->name),0,0);
+  if(rc==SQLITE_OK&&t->fused==1)rc=sql(t,sqlite3_mprintf("CREATE TRIGGER \"%w\".\"%w_delta_au\" AFTER UPDATE ON \"%w_delta\" WHEN NEW.events>OLD.events BEGIN UPDATE \"%w_stats\" SET n=min(1000000000000000,n+NEW.events-OLD.events); END",t->schema,t->name,t->name,t->name),0,0);
+  if(rc==SQLITE_OK&&t->fused==2)rc=sql(t,sqlite3_mprintf("CREATE VIEW \"%w\".\"%w_stats\" AS SELECT min(1000000000000000,n+coalesce((SELECT sum(events) FROM \"%w_delta\"),0)) AS n FROM \"%w_counter\"",t->schema,t->name,t->name,t->name),0,0);
   if (rc != SQLITE_OK) { disconnect(*out); *out = 0; }
   return rc;
 }
@@ -172,7 +176,8 @@ static int destroy(sqlite3_vtab *v) {
   if(rc==SQLITE_OK)rc = sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_state\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK&&t->source_view)rc=sql(t,sqlite3_mprintf("DROP VIEW \"%w\".\"%w_live\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_sources\"",t->schema,t->name),0,0);
-  if (rc == SQLITE_OK) rc = sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_stats\"",t->schema,t->name),0,0);
+  if (rc == SQLITE_OK) rc = sql(t,sqlite3_mprintf("DROP %s \"%w\".\"%w_stats\"",t->fused==2?"VIEW":"TABLE",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&t->fused==2)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_counter\"",t->schema,t->name),0,0);
   if (rc == SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_result\"",t->schema,t->name),0,0);
   if (rc == SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_delta\"",t->schema,t->name),0,0);
   if (rc == SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_batch\"",t->schema,t->name),0,0);
@@ -260,9 +265,11 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
     }
   }
   sqlite3_stmt *pragma=0;
+  sqlite3_int64 started=now_ns();
   int rc=sqlite3_prepare_v2(t->db,"PRAGMA recursive_triggers",-1,&pragma,0);
   int enabled=rc==SQLITE_OK&&sqlite3_step(pragma)==SQLITE_ROW&&sqlite3_column_int(pragma,0);
   sqlite3_finalize(pragma);
+  t->env->pragma_ns+=now_ns()-started;
   if (!enabled) return error(t,"recursive_triggers=ON required for REPLACE deletion forwarding");
   int batched=0;
   rc=batching(t,&batched);
@@ -282,13 +289,15 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
       rc = sql(t,sqlite3_mprintf("DELETE FROM \"%w\".\"%w_state\" WHERE id=?1 AND k IS ?2 AND v IS ?3 AND side=%d",t->schema,t->name,side),a+6,3);
       if (rc == SQLITE_OK && sqlite3_changes(t->db) != 1) rc = error(t,"OLD shadow mismatch");
     }
-    if(rc==SQLITE_OK) rc=batched?enqueue(t,a+7,side,-1):contribute(t,a+7,side,-1);
+    if(rc==SQLITE_OK) rc=batched?enqueue(t,a+7,side,-1,op==2):contribute(t,a+7,side,-1);
   }
-  if (rc == SQLITE_OK && op != 2) rc=batched?enqueue(t,a+3,side,1):contribute(t,a+3,side,1);
+  if (rc == SQLITE_OK && op != 2) rc=batched?enqueue(t,a+3,side,1,1):contribute(t,a+3,side,1);
   if (rc == SQLITE_OK && op != 2 && !t->source_view)
     rc = sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_state\" VALUES(?1,?2,?3,%d)",t->schema,t->name,side),a+2,3);
-  if (rc == SQLITE_OK)
+  started=now_ns();
+  if (rc == SQLITE_OK&&!t->fused)
     rc = sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_stats\" SET n=min(1000000000000000,n+1)",t->schema,t->name),0,0);
+  t->env->stats_ns+=now_ns()-started;
   t->busy = 0; *id = 0;
   return rc;
 }
@@ -307,7 +316,7 @@ static int rollback(sqlite3_vtab *v) { trace((Tab *)v,"rollback",-1); return SQL
 static int savepoint(sqlite3_vtab *v,int i) { trace((Tab *)v,"savepoint",i); return SQLITE_OK; }
 static int release(sqlite3_vtab *v,int i) { trace((Tab *)v,"release",i); return SQLITE_OK; }
 static int rollbackto(sqlite3_vtab *v,int i) { trace((Tab *)v,"rollbackto",i); return SQLITE_OK; }
-static int shadow(const char *suffix) { return !strcmp(suffix,"state") || !strcmp(suffix,"stats") || !strcmp(suffix,"result") || !strcmp(suffix,"batch") || !strcmp(suffix,"delta") || !strcmp(suffix,"sources") || !strcmp(suffix,"cone") || !strcmp(suffix,"clock") || !strcmp(suffix,"frontier"); }
+static int shadow(const char *suffix) { return !strcmp(suffix,"state") || !strcmp(suffix,"stats") || !strcmp(suffix,"counter") || !strcmp(suffix,"result") || !strcmp(suffix,"batch") || !strcmp(suffix,"delta") || !strcmp(suffix,"sources") || !strcmp(suffix,"cone") || !strcmp(suffix,"clock") || !strcmp(suffix,"frontier"); }
 
 static const sqlite3_module module = {
   .iVersion=3, .xCreate=create, .xConnect=connect, .xBestIndex=best,
@@ -328,8 +337,8 @@ static void control(sqlite3_context *ctx,int argc,sqlite3_value **a) {
   } else if (cmd && !strcmp(cmd,"fail_sync")) e->fail_sync = 1;
   else if (cmd && !strcmp(cmd,"cache_on")) e->cache=1;
   else if (cmd && !strcmp(cmd,"source_views_on")) e->source_views=1;
-  else if (cmd && !strcmp(cmd,"profile_reset")) e->prepares=e->steps=e->vm=e->scans=e->prepare_ns=e->step_ns=e->delta_build_ns=e->reprepares=e->scalar_steps=0;
-  else if (cmd && !strcmp(cmd,"profile")) sqlite3_result_text(ctx,sqlite3_mprintf("{\"prepares\":%lld,\"steps\":%lld,\"vm_steps\":%lld,\"fullscan_steps\":%lld,\"prepare_ns\":%lld,\"step_ns\":%lld,\"delta_sql_build_ns\":%lld,\"automatic_reprepares\":%lld,\"scalar_steps\":%lld}",e->prepares,e->steps,e->vm,e->scans,e->prepare_ns,e->step_ns,e->delta_build_ns,e->reprepares,e->scalar_steps),-1,sqlite3_free);
+  else if (cmd && !strcmp(cmd,"profile_reset")) e->prepares=e->steps=e->vm=e->scans=e->prepare_ns=e->step_ns=e->delta_build_ns=e->reprepares=e->scalar_steps=e->batch_read_ns=e->pragma_ns=e->enqueue_ns=e->stats_ns=e->flush_ns=0;
+  else if (cmd && !strcmp(cmd,"profile")) sqlite3_result_text(ctx,sqlite3_mprintf("{\"prepares\":%lld,\"steps\":%lld,\"vm_steps\":%lld,\"fullscan_steps\":%lld,\"prepare_ns\":%lld,\"step_ns\":%lld,\"delta_sql_build_ns\":%lld,\"automatic_reprepares\":%lld,\"scalar_steps\":%lld,\"batch_read_ns\":%lld,\"pragma_ns\":%lld,\"enqueue_ns\":%lld,\"stats_ns\":%lld,\"flush_ns\":%lld}",e->prepares,e->steps,e->vm,e->scans,e->prepare_ns,e->step_ns,e->delta_build_ns,e->reprepares,e->scalar_steps,e->batch_read_ns,e->pragma_ns,e->enqueue_ns,e->stats_ns,e->flush_ns),-1,sqlite3_free);
   else if (cmd && !strcmp(cmd,"log_on")) e->logging = 1;
   else if (cmd && !strcmp(cmd,"log_off")) e->logging = 0;
   else sqlite3_result_error(ctx,"unknown take2 control",-1);
@@ -360,6 +369,12 @@ int sqlite3_extension_init(sqlite3 *db,char **err,const sqlite3_api_routines *ap
   if(rc!=SQLITE_OK)return rc;
   e->references++;
   rc=sqlite3_create_module_v2(db,"take2_lazy",&module,e,release_env);
+  if(rc!=SQLITE_OK)return rc;
+  e->references++;
+  rc=sqlite3_create_module_v2(db,"take2_fused",&module,e,release_env);
+  if(rc!=SQLITE_OK)return rc;
+  e->references++;
+  rc=sqlite3_create_module_v2(db,"take2_counted",&module,e,release_env);
   if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_control",1,SQLITE_UTF8, e,control,0,0,0);
   if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_attach",6,SQLITE_UTF8|SQLITE_DIRECTONLY,0,attach,0,0,0);
   if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_prepare",1,SQLITE_UTF8|SQLITE_DIRECTONLY,e,prepare_layout,0,0,0);

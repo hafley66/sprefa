@@ -7,6 +7,7 @@ typedef struct Env {
   int references;
   sqlite3_int64 prepares,steps,vm,scans,prepare_ns,step_ns;
   sqlite3_int64 delta_build_ns,reprepares,scalar_steps;
+  sqlite3_int64 batch_read_ns,pragma_ns,enqueue_ns,stats_ns,flush_ns;
 } Env;
 typedef struct Cached { char *text; sqlite3_stmt *stmt; } Cached;
 typedef struct Tab {
@@ -21,6 +22,7 @@ typedef struct Tab {
   int source_view;
   int frontiers;
   int lazy;
+  int fused;
   sqlite3_int64 epoch;
   char *predicate,*projection;
   int degree,source_count,side_map[3];

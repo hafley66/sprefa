@@ -2,6 +2,7 @@
 import importlib.util
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -20,7 +21,9 @@ fixture=json.loads(Path(fixture_path).read_text())
 db=oracle.connection(db_path,extension)
 db.execute(f'PRAGMA cache_size=-{pager_kib}')
 if int(cache):db.execute("SELECT take2_control('cache_on')").fetchall()
-db.executescript('PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;CREATE TABLE fact(id INTEGER PRIMARY KEY,group_id INTEGER,amount INTEGER);CREATE TABLE dimension(group_id INTEGER PRIMARY KEY,factor INTEGER);CREATE VIRTUAL TABLE native_result USING take2(join);CREATE VIEW summary AS SELECT id group_id,k n,v s FROM native_result;')
+module=os.environ.get('TAKE2_PROFILE_MODULE','take2')
+if module not in ['take2','take2_lazy','take2_fused','take2_counted']:raise ValueError('invalid profile module')
+db.executescript(f'PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;CREATE TABLE fact(id INTEGER PRIMARY KEY,group_id INTEGER,amount INTEGER);CREATE TABLE dimension(group_id INTEGER PRIMARY KEY,factor INTEGER);CREATE VIRTUAL TABLE native_result USING {module}(join);CREATE VIEW summary AS SELECT id group_id,k n,v s FROM native_result;')
 db.execute("SELECT take2_attach('native_result','fact',0,'id','group_id','amount')").fetchall()
 db.execute("SELECT take2_attach('native_result','dimension',1,'group_id','group_id','factor')").fetchall()
 db.execute('BEGIN')
@@ -39,5 +42,5 @@ for state in fixture['states'][1:]:
     elapsed=time.perf_counter_ns()-start
     metrics=json.loads(db.execute("SELECT take2_control('profile')").fetchone()[0])
     oracle.verify(db,state)
-    print(json.dumps(dict(state=state['name'],cache=bool(int(cache)),batch=batch,source_views=views,pager_kib=pager_kib,analyzed=analyzed,extension_sha256=hashlib.sha256(Path(extension).read_bytes()).hexdigest(),elapsed_ns=elapsed,**metrics)),flush=True)
+    print(json.dumps(dict(state=state['name'],module=module,cache=bool(int(cache)),batch=batch,source_views=views,pager_kib=pager_kib,analyzed=analyzed,extension_sha256=hashlib.sha256(Path(extension).read_bytes()).hexdigest(),elapsed_ns=elapsed,**metrics)),flush=True)
 db.close()

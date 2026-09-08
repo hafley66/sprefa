@@ -29,10 +29,16 @@ commands.append(['cargo','test','--locked','--manifest-path',str(here/'6_sql_com
 commands.append(['cargo','build','--locked','--manifest-path',str(here/'6_sql_compile/Cargo.toml')])
 commands.append([sys.executable,str(here/'7_compile_test.py')])
 commands.append([sys.executable,str(here/'7_compile_test.py')])
+commands.append([sys.executable,str(here/'3e_fused_test.py')])
+commands.append([sys.executable,str(here/'3e_fused_test.py')])
+for command in commands:
+    if '--arms' in command:
+        position=command.index('--arms')+1
+        command[position]+=',sqlite-competitive-fused,sqlite-competitive-counted'
 steps=[];rc=0
 for index,command in enumerate(commands):
     with (run/f'{index}.log').open('wb') as log:
-        try:rc=subprocess.run(command,env=dict(env,TAKE2_SOURCE_VIEWS='1') if index in [4,6,8,14,18] else env,stdout=log,stderr=subprocess.STDOUT,timeout=120).returncode
+        try:rc=subprocess.run(command,env=dict(env,TAKE2_SOURCE_VIEWS='1') if index in [4,6,8,14,18,20] else env,stdout=log,stderr=subprocess.STDOUT,timeout=120).returncode
         except subprocess.TimeoutExpired:rc=124
     steps.append(dict(command=command,exit_code=rc))
     if rc:break
@@ -41,7 +47,7 @@ if rc==0:
     if not any(r['event']=='all-arm-run' and r.get('all_input_output_states_match') and r.get('state_count_per_arm')==171 for r in rows):rc=1
     circuits=[json.loads(s) for s in (run/'circuits.jsonl').read_text().splitlines()]
     paired=[r for r in circuits if r['event']=='all-arm-run']
-    if len(paired)!=11 or not all(r.get('all_input_output_states_match') and r.get('state_count_per_arm')==13 and len(r['arms'])==4 and not r['excluded_arms'] for r in paired):rc=1
+    if len(paired)!=11 or not all(r.get('all_input_output_states_match') and r.get('state_count_per_arm')==13 and len(r['arms'])==6 and not r['excluded_arms'] for r in paired):rc=1
     if sum(r['event']=='frontier-check' and r.get('completion_after_all_inputs_advanced') for r in circuits)!=11:rc=1
 hashes={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in [*here.glob('*'),*here.glob('6_sql_compile/*'),*run.glob('*')] if p.is_file()}
 (run/'receipt.json').write_text(json.dumps(dict(exit_code=rc,steps=steps,hashes=hashes),indent=2))

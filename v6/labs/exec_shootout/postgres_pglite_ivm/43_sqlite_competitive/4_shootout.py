@@ -11,13 +11,18 @@ source_views='--source-views' in sys.argv
 if source_views:sys.argv.remove('--source-views')
 lazy='--lazy' in sys.argv
 if lazy:sys.argv.remove('--lazy')
+counter_mode=None
+if '--counter-mode' in sys.argv:
+    index=sys.argv.index('--counter-mode');counter_mode=sys.argv[index+1];del sys.argv[index:index+2]
+    if counter_mode not in ['fused','counted']:raise ValueError('invalid counter mode')
+module='take2_'+counter_mode if counter_mode else 'take2_lazy'
 
 class BatchConnection(sqlite3.Connection):
     opened=False
     def executescript(self,sql):
-        return super().executescript(sql.replace('USING take2(join)','USING take2_lazy(join)') if lazy else sql)
+        return super().executescript(sql.replace('USING take2(join)',f'USING {module}(join)') if lazy else sql)
     def execute(self,sql,parameters=()):
-        if lazy:sql=sql.replace('USING take2(join)','USING take2_lazy(join)')
+        if lazy:sql=sql.replace('USING take2(join)',f'USING {module}(join)')
         if not lazy and sql=='COMMIT' and self.opened:
             super().execute('INSERT INTO native_result(op) VALUES(11)')
         cursor=super().execute(sql,parameters)
@@ -47,6 +52,7 @@ def emit(**row):
         if lazy:
             row['algorithm']='public vtab lazy read/xSync flush; consolidated signed deltas'
             row['consistency']='completed-statement reads flush pending deltas; xSync prepares atomic source/output commit'
+            row['counter_storage']=counter_mode or 'per-event stats UPDATE'
     original_emit(**row)
 transport.emit=emit
 if __name__=='__main__':transport.main()

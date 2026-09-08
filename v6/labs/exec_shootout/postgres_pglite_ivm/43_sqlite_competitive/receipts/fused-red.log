@@ -1,0 +1,227 @@
+test_anti (__main__.Fused.test_anti) ... ERROR
+test_autocommit_conflicts (__main__.Fused.test_autocommit_conflicts) ... ERROR
+test_chain (__main__.Fused.test_chain) ... ERROR
+test_diamond (__main__.Fused.test_diamond) ... ERROR
+test_distinct (__main__.Fused.test_distinct) ... ERROR
+test_failed_read_then_retry (__main__.Fused.test_failed_read_then_retry) ... ERROR
+test_fanout (__main__.Fused.test_fanout) ... ERROR
+test_first_multirow_index_integrity (__main__.Fused.test_first_multirow_index_integrity) ... ERROR
+test_inner (__main__.Fused.test_inner) ... ERROR
+test_layout_setup_misuse_and_rollback (__main__.Fused.test_layout_setup_misuse_and_rollback) ... ok
+test_project (__main__.Fused.test_project) ... ERROR
+test_reach (__main__.Fused.test_reach) ... ERROR
+test_read_in_source_trigger_then_abort (__main__.Fused.test_read_in_source_trigger_then_abort) ... ERROR
+test_second_writer (__main__.Fused.test_second_writer) ... ERROR
+test_self_chain (__main__.Fused.test_self_chain) ... ERROR
+test_semi (__main__.Fused.test_semi) ... ERROR
+test_sync_failure (__main__.Fused.test_sync_failure) ... ERROR
+test_transactional_event_counts (__main__.Fused.test_transactional_event_counts) ... ERROR
+
+======================================================================
+ERROR: test_anti (__main__.Fused.test_anti)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 85, in test
+    self.install(mode);rng=random.Random(885)
+    ~~~~~~~~~~~~^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_autocommit_conflicts (__main__.Fused.test_autocommit_conflicts)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 53, in test_autocommit_conflicts
+    self.install('inner');self.db.execute('INSERT INTO b VALUES(1,1,3)')
+    ~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_chain (__main__.Fused.test_chain)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 85, in test
+    self.install(mode);rng=random.Random(885)
+    ~~~~~~~~~~~~^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_diamond (__main__.Fused.test_diamond)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 85, in test
+    self.install(mode);rng=random.Random(885)
+    ~~~~~~~~~~~~^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_distinct (__main__.Fused.test_distinct)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 85, in test
+    self.install(mode);rng=random.Random(885)
+    ~~~~~~~~~~~~^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_failed_read_then_retry (__main__.Fused.test_failed_read_then_retry)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 71, in test_failed_read_then_retry
+    self.install('inner');self.db.execute('BEGIN')
+    ~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_fanout (__main__.Fused.test_fanout)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 85, in test
+    self.install(mode);rng=random.Random(885)
+    ~~~~~~~~~~~~^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_first_multirow_index_integrity (__main__.Fused.test_first_multirow_index_integrity)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 18, in test_first_multirow_index_integrity
+    self.install('self_chain')
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_inner (__main__.Fused.test_inner)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 85, in test
+    self.install(mode);rng=random.Random(885)
+    ~~~~~~~~~~~~^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_project (__main__.Fused.test_project)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 85, in test
+    self.install(mode);rng=random.Random(885)
+    ~~~~~~~~~~~~^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_reach (__main__.Fused.test_reach)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 85, in test
+    self.install(mode);rng=random.Random(885)
+    ~~~~~~~~~~~~^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_read_in_source_trigger_then_abort (__main__.Fused.test_read_in_source_trigger_then_abort)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 77, in test_read_in_source_trigger_then_abort
+    self.install('inner')
+    ~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_second_writer (__main__.Fused.test_second_writer)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 60, in test_second_writer
+    self.install('inner');self.db.execute('INSERT INTO a VALUES(1,1,2)');self.db.execute('INSERT INTO b VALUES(1,1,3)')
+    ~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_self_chain (__main__.Fused.test_self_chain)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 85, in test
+    self.install(mode);rng=random.Random(885)
+    ~~~~~~~~~~~~^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_semi (__main__.Fused.test_semi)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 85, in test
+    self.install(mode);rng=random.Random(885)
+    ~~~~~~~~~~~~^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_sync_failure (__main__.Fused.test_sync_failure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3d_lazy_test.py", line 46, in test_sync_failure
+    self.install('inner');self.db.execute('BEGIN')
+    ~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+======================================================================
+ERROR: test_transactional_event_counts (__main__.Fused.test_transactional_event_counts)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3e_fused_test.py", line 16, in test_transactional_event_counts
+    self.install('inner')
+    ~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_fused
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.034s
+
+FAILED (errors=17)

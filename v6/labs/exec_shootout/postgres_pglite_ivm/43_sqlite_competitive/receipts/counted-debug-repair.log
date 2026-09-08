@@ -1,0 +1,42 @@
+test_anti (__main__.Counted.test_anti) ... ok
+test_autocommit_conflicts (__main__.Counted.test_autocommit_conflicts) ... ok
+test_chain (__main__.Counted.test_chain) ... ok
+test_diamond (__main__.Counted.test_diamond) ... ok
+test_distinct (__main__.Counted.test_distinct) ... ok
+test_drop_rollback (__main__.Counted.test_drop_rollback) ... ok
+test_failed_read_then_retry (__main__.Counted.test_failed_read_then_retry) ... ok
+test_fanout (__main__.Counted.test_fanout) ... ok
+test_first_multirow_index_integrity (__main__.Counted.test_first_multirow_index_integrity) ... ok
+test_inner (__main__.Counted.test_inner) ... ok
+test_layout_setup_misuse_and_rollback (__main__.Counted.test_layout_setup_misuse_and_rollback) ... ok
+test_project (__main__.Counted.test_project) ... ok
+test_reach (__main__.Counted.test_reach) ... ok
+test_read_in_source_trigger_then_abort (__main__.Counted.test_read_in_source_trigger_then_abort) ... ok
+test_second_writer (__main__.Counted.test_second_writer) ... ok
+test_self_chain (__main__.Counted.test_self_chain) ... ok
+test_semi (__main__.Counted.test_semi) ... ok
+test_sync_failure (__main__.Counted.test_sync_failure) ... ok
+test_transactional_event_counts (__main__.Counted.test_transactional_event_counts) ... ok
+test_anti (__main__.Fused.test_anti) ... ok
+test_autocommit_conflicts (__main__.Fused.test_autocommit_conflicts) ... ok
+test_chain (__main__.Fused.test_chain) ... ok
+test_diamond (__main__.Fused.test_diamond) ... ok
+test_distinct (__main__.Fused.test_distinct) ... ok
+test_failed_read_then_retry (__main__.Fused.test_failed_read_then_retry) ... ok
+test_fanout (__main__.Fused.test_fanout) ... ok
+test_first_multirow_index_integrity (__main__.Fused.test_first_multirow_index_integrity) ... ok
+test_inner (__main__.Fused.test_inner) ... ok
+test_layout_setup_misuse_and_rollback (__main__.Fused.test_layout_setup_misuse_and_rollback) ... ok
+test_project (__main__.Fused.test_project) ... ok
+test_reach (__main__.Fused.test_reach) ... ok
+test_read_in_source_trigger_then_abort (__main__.Fused.test_read_in_source_trigger_then_abort) ... ok
+test_second_writer (__main__.Fused.test_second_writer) ... ok
+test_self_chain (__main__.Fused.test_self_chain) ... ok
+test_semi (__main__.Fused.test_semi) ... ok
+test_sync_failure (__main__.Fused.test_sync_failure) ... ok
+test_transactional_event_counts (__main__.Fused.test_transactional_event_counts) ... ok
+
+----------------------------------------------------------------------
+Ran 37 tests in 1.258s
+
+OK

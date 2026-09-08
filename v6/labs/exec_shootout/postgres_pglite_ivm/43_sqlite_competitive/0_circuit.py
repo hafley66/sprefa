@@ -20,6 +20,7 @@ def main():
     p.add_argument('--source-views',action='store_true')
     p.add_argument('--frontiers',action='store_true')
     p.add_argument('--lazy',action='store_true')
+    p.add_argument('--counter-mode',choices=['fused','counted'])
     args=p.parse_args()
     fixture=json.loads(Path(args.fixture).read_text())
     plans={'aggregate_churn':('join',2,3),'pipeline':('project',1,2),
@@ -42,6 +43,7 @@ def main():
         db.execute(f'CREATE INDEX {table}_v ON {table}(v)')
     mode,sides,columns=plans[fixture['circuit']]
     module='take2_lazy' if args.lazy else 'take2_epoch' if args.frontiers else 'take2'
+    if args.counter_mode:module='take2_'+args.counter_mode
     db.execute(f'CREATE VIRTUAL TABLE result USING {module}({mode})')
     for side,table in enumerate(['a','b','c'][:sides]):
         db.execute("SELECT take2_attach('result',?,?, 'id','k','v')",(table,side)).fetchall()

@@ -3,6 +3,7 @@
 static int batching(Tab *t,int *flag) {
   *flag=0;
   if(!t->mode) return SQLITE_OK;
+  sqlite3_int64 started=now_ns();
   int rc=SQLITE_OK;
   if(!t->batch_read) {
     char *q=t->frontiers?sqlite3_mprintf("SELECT flag,source_views,epoch FROM \"%w\".\"%w_batch\" CROSS JOIN \"%w\".\"%w_clock\"",t->schema,t->name,t->schema,t->name):sqlite3_mprintf("SELECT flag,source_views FROM \"%w\".\"%w_batch\"",t->schema,t->name);
@@ -15,6 +16,7 @@ static int batching(Tab *t,int *flag) {
     else if(rc==SQLITE_DONE) rc=error(t,"missing batch flag");
   }
   sqlite3_reset(t->batch_read);
+  t->env->batch_read_ns+=now_ns()-started;
   return rc;
 }
 static int frontier_check(Tab *t,int side,int sealing) {
@@ -37,10 +39,14 @@ static int seal_frontier(Tab *t,sqlite3_value *epoch,sqlite3_value *side_value) 
   if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_frontier\" SET t=%lld WHERE side=%d",t->schema,t->name,t->epoch,side),0,0);
   return rc;
 }
-static int enqueue(Tab *t,sqlite3_value **kv,int side,int sign) {
-  return sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_delta\"(key,side,k,v,w) VALUES(json_array(%d,?1,?2),%d,?1,?2,%d) ON CONFLICT(key) DO UPDATE SET w=w+excluded.w",t->schema,t->name,side,side,sign),kv,2);
+static int enqueue(Tab *t,sqlite3_value **kv,int side,int sign,int event) {
+  sqlite3_int64 started=now_ns();
+  char *q=t->fused?sqlite3_mprintf("INSERT INTO \"%w\".\"%w_delta\"(key,side,k,v,w,events) VALUES(json_array(%d,?1,?2),%d,?1,?2,%d,%d) ON CONFLICT(key) DO UPDATE SET w=w+excluded.w,events=events+excluded.events",t->schema,t->name,side,side,sign,event):sqlite3_mprintf("INSERT INTO \"%w\".\"%w_delta\"(key,side,k,v,w) VALUES(json_array(%d,?1,?2),%d,?1,?2,%d) ON CONFLICT(key) DO UPDATE SET w=w+excluded.w",t->schema,t->name,side,side,sign);
+  int rc=sql(t,q,kv,2);
+  t->env->enqueue_ns+=now_ns()-started;return rc;
 }
 static int flush_batch(Tab *t) {
+  sqlite3_int64 started=now_ns();
   int degree=arity(t);
   int rc=SQLITE_OK;
   if(t->mode==PROJECT)rc=projection_domain(t);
@@ -102,8 +108,10 @@ static int flush_batch(Tab *t) {
     sqlite3_finalize(s);
   }
   if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("DELETE FROM \"%w\".\"%w_result\" WHERE n=0",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&t->fused==2)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_counter\" SET n=(SELECT n FROM \"%w_stats\")",t->schema,t->name,t->name),0,0);
   if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("DELETE FROM \"%w\".\"%w_delta\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_batch\" SET flag=0",t->schema,t->name),0,0);
+  t->env->flush_ns+=now_ns()-started;
   return rc;
 }
 static int source_view_setup(Tab *t) {
