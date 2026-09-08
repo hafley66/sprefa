@@ -1,0 +1,890 @@
+[
+  {
+    "engine": "swi-incr",
+    "fixture": "diamond-multiple-support",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 7,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "diamond-multiple-support",
+    "status": "pass",
+    "passed_ticks": 7,
+    "total_ticks": 7,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "diamond-multiple-support",
+    "status": "pass",
+    "passed_ticks": 7,
+    "total_ticks": 7,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cycle-final-external-root",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 5,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cycle-final-external-root",
+    "status": "pass",
+    "passed_ticks": 5,
+    "total_ticks": 5,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cycle-final-external-root",
+    "status": "pass",
+    "passed_ticks": 5,
+    "total_ticks": 5,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "self-loop-final-external-root",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 4,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "self-loop-final-external-root",
+    "status": "pass",
+    "passed_ticks": 4,
+    "total_ticks": 4,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "self-loop-final-external-root",
+    "status": "pass",
+    "passed_ticks": 4,
+    "total_ticks": 4,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 11,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "pass",
+    "passed_ticks": 11,
+    "total_ticks": 11,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "pass",
+    "passed_ticks": 11,
+    "total_ticks": 11,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 9,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "pass",
+    "passed_ticks": 9,
+    "total_ticks": 9,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "pass",
+    "passed_ticks": 9,
+    "total_ticks": 9,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-1-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-1-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-7-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-7-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-19-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-19-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-42-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-42-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-73-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-73-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-101-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-101-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-409-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-409-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-2026-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-1-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-7-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-19-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-42-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-73-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-101-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-409-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-2026-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "fail",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "SyntaxError: Unexpected end of JSON input"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  }
+]

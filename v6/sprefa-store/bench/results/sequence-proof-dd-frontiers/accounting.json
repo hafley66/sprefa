@@ -1,0 +1,314 @@
+[
+  {
+    "engine": "differential-dataflow",
+    "fixture": "two-isolated-roots",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "disconnected-zero-weight-node",
+    "status": "pass",
+    "passed_ticks": 2,
+    "total_ticks": 2,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "diamond-multiple-support",
+    "status": "pass",
+    "passed_ticks": 7,
+    "total_ticks": 7,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cycle-final-external-root",
+    "status": "pass",
+    "passed_ticks": 5,
+    "total_ticks": 5,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "self-loop-final-external-root",
+    "status": "pass",
+    "passed_ticks": 4,
+    "total_ticks": 4,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "pass",
+    "passed_ticks": 11,
+    "total_ticks": 11,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "pass",
+    "passed_ticks": 9,
+    "total_ticks": 9,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  }
+]

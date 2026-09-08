@@ -1,0 +1,85 @@
+{
+  "name": "self-loop-final-external-root",
+  "nodes": 4,
+  "dag": false,
+  "cascade": true,
+  "ticks": [
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "add",
+          "row": [
+            0
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            0,
+            2
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            2,
+            2
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ]
+        ],
+        "edge": [
+          [
+            0,
+            2
+          ],
+          [
+            2,
+            2
+          ]
+        ],
+        "alive": [
+          [
+            0
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "del",
+          "row": [
+            0
+          ]
+        }
+      ],
+      "expected": {
+        "root": [],
+        "edge": [
+          [
+            0,
+            2
+          ],
+          [
+            2,
+            2
+          ]
+        ],
+        "alive": []
+      }
+    }
+  ]
+}

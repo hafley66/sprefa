@@ -1,0 +1,4 @@
+INPUT|sqlite-dred-loop|0dda99eadff144d9a4065cfa603e29e6282c93d87ad25f2c14e0bb88ad1cd0a9
+STATUS|sqlite-dred-loop|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=14955fe055a07105; survivor blake3=6e29820385bc6b56|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-dred-loop,402,696,180,4.645,0.934,31,6.7,0.11,0.29,0.07
+EXIT_STATUS|0

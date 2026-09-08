@@ -1,0 +1,22 @@
+INPUT|sprefa-engine-rs|0f2fb9996c0c8b20d2c7f6526c9c614413ce6bcb2e3f65ae44f1dc4fa0915e41
+STATUS|sprefa-engine-rs|ok|compile_dl6 emit_rust program through drive_tick_transacted and GenProgram::run_tick; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|child-process peak RSS from time; in-memory rusqlite store|DL_MEMCAP_MB requested but unenforced for this adapter
+CSV,sprefa-engine-rs,160002,326667,18096,2123.878,1053.401,88,513.4,N/A,N/A,0
+        3.28 real         3.17 user         0.10 sys
+           538345472  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               34267  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  24  involuntary context switches
+         56308831181  instructions retired
+         11302283258  cycles elapsed
+           224727424  peak memory footprint
+EXIT_STATUS|0

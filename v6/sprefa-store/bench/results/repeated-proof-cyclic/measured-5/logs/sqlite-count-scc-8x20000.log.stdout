@@ -1,0 +1,1 @@
+RESULT engine=sqlite-count-scc storage=file count=141906 out_hash=4513570c9a2459b4 in_hash=968700d3a18355e1 ms=306.926 stmts=51 rust_peak_mb=1.24 sqlite_hw_mb=14.72 rss_mb=118.6 db_mb=10.39

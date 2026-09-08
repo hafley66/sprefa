@@ -1,0 +1,2962 @@
+[
+  {
+    "engine": "differential-dataflow",
+    "fixture": "diamond-multiple-support",
+    "status": "pass",
+    "passed_ticks": 7,
+    "total_ticks": 7,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "diamond-multiple-support",
+    "status": "pass",
+    "passed_ticks": 7,
+    "total_ticks": 7,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "diamond-multiple-support",
+    "status": "pass",
+    "passed_ticks": 7,
+    "total_ticks": 7,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "diamond-multiple-support",
+    "status": "pass",
+    "passed_ticks": 7,
+    "total_ticks": 7,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "diamond-multiple-support",
+    "status": "pass",
+    "passed_ticks": 7,
+    "total_ticks": 7,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "diamond-multiple-support",
+    "status": "unsupported",
+    "passed_ticks": 3,
+    "total_ticks": 7,
+    "reason": "root reinsertion and edge mutation lack equivalent support-count adapter semantics"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "diamond-multiple-support",
+    "status": "unsupported",
+    "passed_ticks": 3,
+    "total_ticks": 7,
+    "reason": "root reinsertion and edge mutation lack equivalent support-count adapter semantics"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "diamond-multiple-support",
+    "status": "unsupported",
+    "passed_ticks": 3,
+    "total_ticks": 7,
+    "reason": "root reinsertion and edge mutation lack equivalent support-count adapter semantics"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "diamond-multiple-support",
+    "status": "unsupported",
+    "passed_ticks": 3,
+    "total_ticks": 7,
+    "reason": "root reinsertion and edge mutation lack equivalent support-count adapter semantics"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "diamond-multiple-support",
+    "status": "fail",
+    "passed_ticks": 1,
+    "total_ticks": 7,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 1\n+ actual - expected\n... Skipped lines\n\n  {\n    alive: [\n      [\n        1\n      ],\n...\n      ],\n+     [\n+       6\n+     ]\n    ],\n    edge: [\n      [\n        0,\n        2\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cycle-final-external-root",
+    "status": "pass",
+    "passed_ticks": 5,
+    "total_ticks": 5,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cycle-final-external-root",
+    "status": "pass",
+    "passed_ticks": 5,
+    "total_ticks": 5,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cycle-final-external-root",
+    "status": "pass",
+    "passed_ticks": 5,
+    "total_ticks": 5,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cycle-final-external-root",
+    "status": "pass",
+    "passed_ticks": 5,
+    "total_ticks": 5,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cycle-final-external-root",
+    "status": "pass",
+    "passed_ticks": 5,
+    "total_ticks": 5,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cycle-final-external-root",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 5,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cycle-final-external-root",
+    "status": "unsupported",
+    "passed_ticks": 3,
+    "total_ticks": 5,
+    "reason": "root reinsertion and edge mutation lack equivalent support-count adapter semantics"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cycle-final-external-root",
+    "status": "unsupported",
+    "passed_ticks": 3,
+    "total_ticks": 5,
+    "reason": "root reinsertion and edge mutation lack equivalent support-count adapter semantics"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cycle-final-external-root",
+    "status": "unsupported",
+    "passed_ticks": 3,
+    "total_ticks": 5,
+    "reason": "root reinsertion and edge mutation lack equivalent support-count adapter semantics"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cycle-final-external-root",
+    "status": "fail",
+    "passed_ticks": 1,
+    "total_ticks": 5,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 1\n+ actual - expected\n... Skipped lines\n\n  {\n    alive: [\n      [\n        1\n      ],\n...\n      ],\n+     [\n+       5\n+     ]\n    ],\n    edge: [\n      [\n        0,\n        2\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "self-loop-final-external-root",
+    "status": "pass",
+    "passed_ticks": 4,
+    "total_ticks": 4,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "self-loop-final-external-root",
+    "status": "pass",
+    "passed_ticks": 4,
+    "total_ticks": 4,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "self-loop-final-external-root",
+    "status": "pass",
+    "passed_ticks": 4,
+    "total_ticks": 4,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "self-loop-final-external-root",
+    "status": "pass",
+    "passed_ticks": 4,
+    "total_ticks": 4,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "self-loop-final-external-root",
+    "status": "pass",
+    "passed_ticks": 4,
+    "total_ticks": 4,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "self-loop-final-external-root",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 4,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "self-loop-final-external-root",
+    "status": "unsupported",
+    "passed_ticks": 2,
+    "total_ticks": 4,
+    "reason": "root reinsertion and edge mutation lack equivalent support-count adapter semantics"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "self-loop-final-external-root",
+    "status": "unsupported",
+    "passed_ticks": 2,
+    "total_ticks": 4,
+    "reason": "root reinsertion and edge mutation lack equivalent support-count adapter semantics"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "self-loop-final-external-root",
+    "status": "unsupported",
+    "passed_ticks": 2,
+    "total_ticks": 4,
+    "reason": "root reinsertion and edge mutation lack equivalent support-count adapter semantics"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "self-loop-final-external-root",
+    "status": "fail",
+    "passed_ticks": 1,
+    "total_ticks": 4,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 1\n+ actual - expected\n\n  {\n+   alive: [\n+     [\n+       1\n+     ],\n+     [\n+       3\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "pass",
+    "passed_ticks": 11,
+    "total_ticks": 11,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "pass",
+    "passed_ticks": 11,
+    "total_ticks": 11,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "pass",
+    "passed_ticks": 11,
+    "total_ticks": 11,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "pass",
+    "passed_ticks": 11,
+    "total_ticks": 11,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "pass",
+    "passed_ticks": 11,
+    "total_ticks": 11,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 11,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 11,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 11,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 11,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "edge-delete-reinsert-diamond",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 11,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "pass",
+    "passed_ticks": 9,
+    "total_ticks": 9,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "pass",
+    "passed_ticks": 9,
+    "total_ticks": 9,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "pass",
+    "passed_ticks": 9,
+    "total_ticks": 9,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "pass",
+    "passed_ticks": 9,
+    "total_ticks": 9,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "pass",
+    "passed_ticks": 9,
+    "total_ticks": 9,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 9,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 9,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 9,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 9,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "disconnected-cycle-attach-detach",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 9,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-1-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-1-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-1-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-1-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-1-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-1-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-1-dag",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       3\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-7-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-7-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-7-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-7-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-7-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-7-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-7-dag",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-19-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-19-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-19-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-19-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-19-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-19-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-19-dag",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-42-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-42-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-42-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-42-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-42-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-42-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-42-dag",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-73-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-73-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-73-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-73-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-73-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-73-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-73-dag",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       3\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-101-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-101-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-101-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-101-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-101-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-101-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-101-dag",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-409-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-409-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-409-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-409-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-409-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-409-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-409-dag",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-2026-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-2026-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-2026-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-2026-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-2026-dag",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-2026-dag",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-1-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-1-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-1-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-1-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-1-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-1-cyclic",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       3\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-7-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-7-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-7-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-7-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-7-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-7-cyclic",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       3\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-19-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-19-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-19-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-19-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-19-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-19-cyclic",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       3\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-42-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-42-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-42-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-42-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-42-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-42-cyclic",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       3\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-73-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-73-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-73-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-73-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-73-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-73-cyclic",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       3\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-101-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-101-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-101-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-101-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-101-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-101-cyclic",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-409-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-409-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-409-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-409-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-409-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-409-cyclic",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       3\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 65,
+    "total_ticks": 65,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "seed-2026-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "seed-2026-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "seed-2026-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "seed-2026-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "seed-2026-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 65,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "differential-dataflow",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "swi-incr",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "tsv2-runtime",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sprefa-engine-rs",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "native-postgres-query",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-count",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "unsupported",
+    "passed_ticks": 0,
+    "total_ticks": 3,
+    "reason": "static support graph required; plain counting requires DAG"
+  },
+  {
+    "engine": "sqlite-count-scc",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-loop",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-dred-cte",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "pass",
+    "passed_ticks": 3,
+    "total_ticks": 3,
+    "reason": "exact roots, edges, and alive sets match BFS"
+  },
+  {
+    "engine": "sqlite-signed-delta-v2",
+    "fixture": "cascade-seed-2026-cyclic",
+    "status": "fail",
+    "passed_ticks": 2,
+    "total_ticks": 3,
+    "reason": "AssertionError [ERR_ASSERTION]: tick 2\n+ actual - expected\n... Skipped lines\n\n  {\n+   alive: [\n+     [\n+       0\n+     ],\n+     [\n+       2\n+     ],\n+     [\n+       3\n+     ],\n+     [\n+       4\n+     ],\n+     [\n+       5\n+     ],\n+     [\n+       6\n+     ],\n+     [\n+       7\n+     ],\n+     [\n+       8\n+     ],\n+     [\n+       9\n+     ],\n+     [\n+       10\n+     ],\n+     [\n+       11\n+     ]\n+   ],\n-   alive: [],\n    edge: [\n      [\n        0,\n        2\n      ],\n...\n    ],\n+   root: [\n+     [\n+       0\n+     ]\n+   ]\n-   root: []\n  }\n"
+  }
+]

@@ -1,0 +1,4 @@
+INPUT|sqlite-signed-delta-v2|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|sqlite-signed-delta-v2|ok|full recursive recomputation from implicit zero-indegree roots excluding current seeds; validated single deletion only; repeated deletion and disconnected zero-weight cases fail sequence checks; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=6035d0f3b9cf2bb5; survivor blake3=979516e118581f07|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-signed-delta-v2,12002,22667,2000,21.338,12.716,3,13.6,0.21,1.35,0.79
+EXIT_STATUS|0

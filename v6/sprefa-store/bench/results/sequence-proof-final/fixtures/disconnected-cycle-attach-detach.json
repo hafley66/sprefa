@@ -1,0 +1,369 @@
+{
+  "name": "disconnected-cycle-attach-detach",
+  "nodes": 8,
+  "dag": false,
+  "cascade": false,
+  "ticks": [
+    {
+      "arrivals": [
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            2,
+            3
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            3,
+            2
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            5,
+            5
+          ]
+        }
+      ],
+      "expected": {
+        "root": [],
+        "edge": [
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "alive": []
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "add",
+          "row": [
+            0
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ]
+        ],
+        "edge": [
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "alive": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            0,
+            2
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ]
+        ],
+        "edge": [
+          [
+            0,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "alive": [
+          [
+            0
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "edge",
+          "sign": "del",
+          "row": [
+            0,
+            2
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ]
+        ],
+        "edge": [
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "alive": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "add",
+          "row": [
+            2
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ],
+          [
+            2
+          ]
+        ],
+        "edge": [
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "alive": [
+          [
+            0
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "del",
+          "row": [
+            2
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ]
+        ],
+        "edge": [
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "alive": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "add",
+          "row": [
+            5
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ],
+          [
+            5
+          ]
+        ],
+        "edge": [
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "alive": [
+          [
+            0
+          ],
+          [
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "del",
+          "row": [
+            5
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ]
+        ],
+        "edge": [
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "alive": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "del",
+          "row": [
+            0
+          ]
+        }
+      ],
+      "expected": {
+        "root": [],
+        "edge": [
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "alive": []
+      }
+    }
+  ]
+}

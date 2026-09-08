@@ -1,0 +1,54 @@
+{
+  "name": "disconnected-cycle-attach-detach",
+  "nodes": 8,
+  "dag": false,
+  "cascade": false,
+  "ticks": [
+    {
+      "arrivals": [
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            2,
+            3
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            3,
+            2
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            5,
+            5
+          ]
+        }
+      ],
+      "expected": {
+        "root": [],
+        "edge": [
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "alive": []
+      }
+    }
+  ]
+}

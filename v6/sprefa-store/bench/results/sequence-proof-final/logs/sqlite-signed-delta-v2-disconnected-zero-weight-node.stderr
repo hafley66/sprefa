@@ -1,0 +1,10 @@
+
+thread 'main' (78816215) panicked at examples/perf_report.rs:979:9:
+assertion `left == right` failed: "disconnected-zero-weight-node" tick 1
+  left: Object {"alive": Array [Array [Number(1)]], "edge": Array [], "root": Array []}
+ right: Object {"alive": Array [], "edge": Array [], "root": Array []}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+EXIT_STATUS|101
+SIGNAL|null
+ERROR|

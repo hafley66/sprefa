@@ -1,0 +1,169 @@
+{
+  "name": "cycle-final-external-root",
+  "nodes": 6,
+  "dag": false,
+  "cascade": true,
+  "ticks": [
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "add",
+          "row": [
+            0
+          ]
+        },
+        {
+          "rel": "root",
+          "sign": "add",
+          "row": [
+            1
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            0,
+            2
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            1,
+            2
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            2,
+            3
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            3,
+            2
+          ]
+        },
+        {
+          "rel": "edge",
+          "sign": "add",
+          "row": [
+            3,
+            4
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ],
+          [
+            1
+          ]
+        ],
+        "edge": [
+          [
+            0,
+            2
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "alive": [
+          [
+            0
+          ],
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ],
+          [
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "del",
+          "row": [
+            0
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            1
+          ]
+        ],
+        "edge": [
+          [
+            0,
+            2
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "alive": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ],
+          [
+            4
+          ]
+        ]
+      }
+    }
+  ]
+}

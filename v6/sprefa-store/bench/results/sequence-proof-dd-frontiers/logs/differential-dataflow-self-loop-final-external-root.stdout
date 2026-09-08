@@ -1,0 +1,4 @@
+{"actual":{"alive":[[0],[2]],"edge":[[0,2],[2,2]],"root":[[0]]},"carry_pending":false,"tick":0}
+{"actual":{"alive":[],"edge":[[0,2],[2,2]],"root":[]},"carry_pending":false,"tick":1}
+{"actual":{"alive":[[0],[2]],"edge":[[0,2],[2,2]],"root":[[0]]},"carry_pending":false,"tick":2}
+{"actual":{"alive":[],"edge":[[0,2],[2,2]],"root":[]},"carry_pending":false,"tick":3}

@@ -1,0 +1,1 @@
+RESULT engine=sqlite-dred-loop storage=file count=140002 out_hash=239d2120ef6ba1c3 in_hash=fea9e9d65d21ef13 ms=277.377 stmts=67 rust_peak_mb=1.22 sqlite_hw_mb=14.32 rss_mb=107.2 db_mb=10.25

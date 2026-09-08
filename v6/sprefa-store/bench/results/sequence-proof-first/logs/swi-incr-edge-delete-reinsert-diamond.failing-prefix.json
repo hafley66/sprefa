@@ -1,0 +1,16 @@
+{
+  "name": "edge-delete-reinsert-diamond",
+  "nodes": 7,
+  "dag": true,
+  "cascade": false,
+  "ticks": [
+    {
+      "arrivals": [],
+      "expected": {
+        "root": [],
+        "edge": [],
+        "alive": []
+      }
+    }
+  ]
+}

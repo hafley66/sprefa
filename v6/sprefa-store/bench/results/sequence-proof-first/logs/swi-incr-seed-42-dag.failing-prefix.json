@@ -1,0 +1,16 @@
+{
+  "name": "seed-42-dag",
+  "nodes": 12,
+  "dag": true,
+  "cascade": false,
+  "ticks": [
+    {
+      "arrivals": [],
+      "expected": {
+        "root": [],
+        "edge": [],
+        "alive": []
+      }
+    }
+  ]
+}

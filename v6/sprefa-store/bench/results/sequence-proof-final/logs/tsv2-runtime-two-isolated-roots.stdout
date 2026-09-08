@@ -1,0 +1,3 @@
+{"tick":0,"actual":{"root":[[0],[1]],"edge":[],"alive":[[0],[1]]},"carry_pending":false,"statements":38}
+{"tick":1,"actual":{"root":[[1]],"edge":[],"alive":[[1]]},"carry_pending":false,"statements":82}
+{"tick":2,"actual":{"root":[],"edge":[],"alive":[]},"carry_pending":false,"statements":82}
