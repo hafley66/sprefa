@@ -102,8 +102,10 @@ const repetitions = Number(argument("repetitions", profile === "full" ? "3" : "1
 const maxRows = Number(argument("max-rows", "Infinity"));
 const cases = buildCases(profile, budget).filter((testCase) => testCase.rows <= maxRows);
 const arms = argument("arms", "query,pg_ivm").split(",");
-if (arms.some((arm) => !["query", "pg_ivm", "sqlite-template-group", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+if (arms.some((arm) => !["query", "pg_ivm", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
 const ddBinary = argument("dd-bin", new URL("../../../sprefa-store/target/release/examples/crossover_dd", import.meta.url).pathname);
+const sqliteExtension = argument("sqlite-extension", "");
+if (arms.some((arm) => arm.startsWith("sqlite-plugin")) && !sqliteExtension) throw new Error("--sqlite-extension required");
 const sqliteProgram = argument("sqlite-program", "");
 if (arms.includes("sqlite-template-group") && !sqliteProgram) throw new Error("--sqlite-program is required for sqlite-template-group");
 const records = [];
@@ -158,11 +160,15 @@ append({
   machine: { hostname: hostname(), platform: platform(), release: release(), arch: arch(), total_memory_bytes: totalmem() },
   server_startup_ms: Number(process.env.IVM_SERVER_STARTUP_MS ?? "0"),
   node_version: process.version,
+  sqlite_extension_sha256: sqliteExtension ? await fileSha256(sqliteExtension) : null,
+  workload: {skew:"fixture hot group plus uniform remainder", churn:"four defined mutation families", cardinality:"recorded per mutation"},
   retained_baseline: baseline,
 });
 
 async function runProcess(testCase, maintenance, runKind, repetition) {
-  const sqlite = maintenance === "sqlite-template-group";
+  const template = maintenance === "sqlite-template-group";
+  const plugin = maintenance.startsWith("sqlite-plugin");
+  const sqlite = template || plugin;
   const dd = maintenance === "dd";
   const rssField = sqlite ? "sqlite_process_observed_peak_rss_kb" : dd ? "dd_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb";
   const context = {
@@ -200,7 +206,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     "--budget", budget,
     "--diagnostic", profile === "diagnostic" ? "1" : "0",
   ];
-  if (sqlite) {
+  if (template) {
     const source = await readFile(sqliteProgram, "utf8");
     const program = JSON.parse(source.match(/pub const PROGRAM_JSON: &str = r(#+)"\n([\s\S]*?)\n"\1;/)[2]);
     for (const state of fixture.states) {
@@ -217,16 +223,20 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   }
   const fixturePath = join(childRoot, "fixture.json");
   await writeFile(fixturePath, JSON.stringify(fixture));
-  if (sqlite) {
+  if (template) {
     args = ["19_sqlite_template_adapter.py", "--program", sqliteProgram,
       "--fixture", fixturePath, "--db", join(childRoot, "maintained.sqlite"),
       "--sql-output", join(childRoot, "installed.sql")];
+  } else if (plugin) {
+    args = ["26_sqlite_plugin_adapter.py", "--extension", sqliteExtension, "--metrics", maintenance === "sqlite-plugin-logged" ? "1" : "0",
+      "--fixture",fixturePath,"--db",join(childRoot,"maintained.sqlite"),"--sql-output",join(childRoot,"installed.sql")];
   } else if (dd) args = [fixturePath];
   else args.push("--fixture", fixturePath);
   const child = spawn(sqlite ? "python3" : dd ? ddBinary : process.execPath, args, {
     cwd: labDir,
     env: {
       ...process.env,
+      SQLITE_IVM_LOG_LIMIT: maintenance === "sqlite-plugin-logged" ? "32" : "0",
       PGDATABASE: maintenance === "query" ? process.env.PGDATABASE_NATIVE_QUERY : process.env.PGDATABASE_NATIVE_IVM,
       NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --max-old-space-size=1024`.trim(),
     },
@@ -308,6 +318,23 @@ for (const testCase of cases) {
       }
     }
   }
+}
+
+
+// Compare every requested arm against the same independent fixture, including
+// plugin logging modes. Missing/failed states never count as parity.
+for (const testCase of cases) for (let repetition=1; repetition<=repetitions; repetition++) {
+  const matching=records.filter((r)=>r.run_kind==="measured" && r.repetition===repetition && caseKey(r)===caseKey(testCase));
+  const expected=makeCrossoverFixture(testCase.rows,testCase.batch_size,testCase.fanout,profile==="semantic").states;
+  const exact=arms.every((arm)=>expected.every((state)=> {
+    const rows=matching.filter((r)=>r.event==="mutation" && r.maintenance===arm && r.state===state.name);
+    return rows.length===1 && rows[0].status==="ok" && rows[0].exact_input_output_validated && rows[0].input_hash===state.input_hash && rows[0].checksum===state.expected.checksum;
+  }));
+  const totals=Object.fromEntries(arms.map((arm)=>[arm,matching.find((r)=>r.event==="case-total" && r.maintenance===arm)?.update_plus_query_ms ?? null]));
+  const ok=exact && Object.values(totals).every((v)=>v!==null);
+  if(!ok) failed=true;
+  append({event:"all-arm-run",status:ok?"ok":"unmeasured-or-mismatch",...testCase,budget,repetition,arms,totals,
+    state_count_per_arm:expected.length,all_input_output_states_match:exact,final_input_hash:expected.at(-1).input_hash,final_checksum:expected.at(-1).expected.checksum});
 }
 
 if (["pg_ivm", "sqlite-template-group", "dd"].every((arm) => arms.includes(arm))) {

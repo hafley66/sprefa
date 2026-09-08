@@ -28,6 +28,17 @@ fn table(db: &Connection, ast: &SelectTable<'_>) -> Result<Table> {
     if external_trigger {
         return Err(reject("existing unmanaged source triggers unsupported"));
     }
+    // Foreign-key cascades can interleave another logical join input between
+    // this row's base change and AFTER image maintenance. Reject both column
+    // and table-constraint declarations through the catalog, before mutation.
+    let foreign_key: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_foreign_key_list(?, 'main'))",
+        [&actual],
+        |r| r.get(0),
+    )?;
+    if foreign_key {
+        return Err(reject("source foreign keys unsupported"));
+    }
     let bump = Bump::new();
     let mut parser = Parser::new(&bump, sql.as_bytes());
     let Some(Cmd::Stmt(Stmt::CreateTable {

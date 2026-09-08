@@ -1,0 +1,6 @@
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+added 16 packages, and audited 17 packages in 445ms
+
+found 0 vulnerabilities

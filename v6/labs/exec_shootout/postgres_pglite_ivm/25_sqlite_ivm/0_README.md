@@ -44,7 +44,9 @@ internal state. Deliberate edits to internal tables, schema DDL after install,
 disabling triggers through C APIs, writable_schema, custom function overrides,
 and incremental blob APIs are outside the ordinary DML contract. Pure persistent
 SQL cannot prevent a database owner from removing its triggers. Existing
-unmanaged source triggers and TEMP source shadows are rejected at installation.
+unmanaged source triggers, outgoing foreign keys (column or table constraints),
+and TEMP source shadows are rejected at installation. Foreign-key cascades
+can interleave changes to logical join inputs before AFTER maintenance.
 Applications must drop maintained views before altering source schema. General
 schema ownership/authorization and dependency migration remain unimplemented.
 

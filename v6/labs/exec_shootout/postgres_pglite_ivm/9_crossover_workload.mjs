@@ -226,6 +226,14 @@ export function makeCrossoverFixture(rowCount, batchSize, fanout, semantic = fal
         }
       }
     }
+    step("semantic_duplicate_supports", "INSERT INTO fact VALUES(91001,1,7),(91002,1,7)", () => {facts.set(91001,[91001,1,7]);facts.set(91002,[91002,1,7]);},2);
+    step("semantic_duplicate_retract", "DELETE FROM fact WHERE id=91001", () => facts.delete(91001));
+    step("semantic_multirow_dimension", "UPDATE dimension SET factor=-factor", () => {for(const [g,f] of dimensions) dimensions.set(g,f===0?0:-f);},dimensions.size);
+    step("semantic_dimension_key_move", "UPDATE dimension SET group_id=901 WHERE group_id=900", () => {const f=dimensions.get(900);dimensions.delete(900);dimensions.set(901,f);});
+    step("semantic_empty_facts", "DELETE FROM fact", () => facts.clear(),facts.size);
+    step("semantic_empty_dimensions", "DELETE FROM dimension", () => dimensions.clear(),dimensions.size);
+    step("semantic_empty_reseed_dimension", "INSERT INTO dimension VALUES(1,-2)", () => dimensions.set(1,-2));
+    step("semantic_empty_reseed_fact", "INSERT INTO fact VALUES(1,1,5)", () => facts.set(1,[1,1,5]));
   }
   return { states, integer_contract: "bounded non-null integers; keyed sets; exact signed 64-bit count/sum domain" };
 }

@@ -123,28 +123,36 @@ def verify(db, program, fixture_state):
     return actual, checksum, len(canonical.encode())
 
 
-def main():
+def main(plugin_install=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--program', required=True)
+    parser.add_argument('--program', required=plugin_install is None)
+    parser.add_argument('--extension')
+    parser.add_argument('--metrics', type=int, default=0)
     parser.add_argument('--fixture', required=True)
     parser.add_argument('--db', required=True)
     parser.add_argument('--sql-output')
     args = parser.parse_args()
-    program = load_program(args.program)
+    program = load_program(args.program) if plugin_install is None else {
+        "final_select": {"fact":"SELECT id,group_id,amount FROM fact", "dimension":"SELECT group_id,factor FROM dimension", "summary":"SELECT group_id,n,s FROM summary"}}
     fixture = json.loads(Path(args.fixture).read_text())
     if Path(args.db).exists():
         raise ValueError('refusing to overwrite prior SQLite receipt')
     db = sqlite3.connect(args.db, isolation_level=None)
     started = time.perf_counter()
-    install(db, program, fixture['states'][0]['inputs'], args.sql_output)
+    provenance = {}
+    if plugin_install is None:
+        install(db, program, fixture['states'][0]['inputs'], args.sql_output)
+    else:
+        provenance = plugin_install(db, fixture['states'][0]['inputs'], args.extension, args.metrics, args.sql_output)
     setup_ms = (time.perf_counter() - started) * 1000
     print(json.dumps({'event': 'case-setup', 'status': 'ok', 'setup_ms': setup_ms,
-                      'program_sha256': hashlib.sha256(Path(args.program).read_bytes()).hexdigest(),
+                      'program_sha256': hashlib.sha256(Path(args.program).read_bytes()).hexdigest() if args.program else None,
                       'runtime': 'stock SQLite ' + sqlite3.sqlite_version,
                       'algorithm': 'compiler-emitted affected-group recomputation in persistent row triggers',
-                      'sql_consumer_install_api': False, 'durability': 'WAL/synchronous=FULL',
-                      'memory_scope': 'Python process incl SQLite; no enforced total cap'}), flush=True)
+                      'sql_consumer_install_api': plugin_install is not None, 'durability': 'WAL/synchronous=FULL',
+                      'memory_scope': 'Python process incl SQLite; no enforced total cap', **provenance}), flush=True)
     total = 0
+    previous_summary = set()
     for state in fixture['states']:
         started = time.perf_counter()
         if state['name'] != 'initial':
@@ -153,8 +161,10 @@ def main():
                 db.execute(state['mutation_sql'])
                 affected = db.execute('SELECT changes()').fetchone()[0]
                 db.execute('COMMIT')
-            except Exception:
+            except Exception as error:
                 db.execute('ROLLBACK')
+                if plugin_install is not None:
+                    print(json.dumps({'event':'transaction-rollback','state':state['name'],'extended_code':getattr(error,'sqlite_errorcode',None)}),file=sys.stderr)
                 raise
         else:
             affected = 0
@@ -164,6 +174,10 @@ def main():
         materialized_count = db.execute('SELECT count(*) FROM crossover_snapshot').fetchone()[0]
         compute_ms = (time.perf_counter() - started) * 1000
         actual, checksum, output_bytes = verify(db, program, state)
+        current_summary = set(actual['summary'])
+        output_insertions = len(current_summary - previous_summary)
+        output_retractions = len(previous_summary - current_summary)
+        previous_summary = current_summary
         input_text = '\n'.join(['D\t' + '\t'.join(map(str, row)) for row in actual['dimension']]
                                + ['F\t' + '\t'.join(map(str, row)) for row in actual['fact']])
         input_hash = hashlib.sha256(input_text.encode()).hexdigest()
@@ -171,6 +185,9 @@ def main():
             assert input_hash == state['input_hash']
         assert materialized_count == len(actual['summary'])
         db.execute('DROP TABLE crossover_snapshot')
+        if plugin_install is not None and args.metrics:
+            counters = db.execute('SELECT operations,contributions,groups_touched FROM __ivm_73756d6d617279_meta').fetchone()
+            print(json.dumps({'event':'observed-transaction','state':state['name'],'boundary':'initial' if state['name']=='initial' else 'commit-returned','affected_inputs':affected,'duration_ms':update_ms,'cumulative_counters':counters,'counter_scope':'transactional operations/contributions/groups touched; OLD and NEW separately'}),file=sys.stderr)
         assert affected == state['expected_affected_rows']
         if state['name'] != 'initial':
             total += update_ms + compute_ms
@@ -180,8 +197,12 @@ def main():
                           'update_plus_query_ms': update_ms + compute_ms,
                           'checksum': checksum, 'output_rows': len(actual['summary']),
                           'input_hash': input_hash, 'materialized_count': materialized_count,
-                          'output_bytes': output_bytes, 'exact_input_output_validated': True,
+                          'output_bytes': output_bytes, 'output_insertions': output_insertions,
+                          'output_retractions': output_retractions,
+                          'output_delta_scope': 'distinct aggregate rows versus previous verified snapshot; outside timer',
+                          'exact_input_output_validated': True,
                           'summary': actual['summary']}), flush=True)
+    live_disk = {name: Path(args.db + suffix).stat().st_size if Path(args.db + suffix).exists() else 0 for name,suffix in [('main_bytes',''),('wal_bytes','-wal'),('shm_bytes','-shm')]}
     db.close()
     db = sqlite3.connect(args.db, isolation_level=None)
     verify(db, program, fixture['states'][-1])
@@ -189,7 +210,7 @@ def main():
     print(json.dumps({'event': 'case-total', 'status': 'ok', 'update_plus_query_ms': total,
                       'final_checksum': checksum, 'fresh_reopen_validated': True,
                       'final_input_hash': input_hash,
-                      'disk': {'database_bytes': Path(args.db).stat().st_size},
+                      'disk': {'database_bytes': Path(args.db).stat().st_size, **live_disk, 'temp_bytes': None, 'temp_scope':'SQLite temp files not sampled'},
                       'process_peak_rss_platform_units': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                       'rss_units': 'bytes' if sys.platform == 'darwin' else 'KiB'}), flush=True)
 

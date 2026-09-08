@@ -291,4 +291,42 @@ class Plugin(unittest.TestCase):
         try: self.assertEqual(check.execute('SELECT * FROM v').fetchall(),[])
         finally: check.close()
 
+    def test_20_table_foreign_key_cascade_rejected_before_install(self):
+        self.db.execute('CREATE TABLE child(id INTEGER PRIMARY KEY,k INTEGER,v INTEGER,FOREIGN KEY(k) REFERENCES weights(id) ON UPDATE CASCADE)')
+        before=self.db.execute('SELECT * FROM sqlite_schema ORDER BY name').fetchall()
+        with self.assertRaisesRegex(sqlite3.Error,'foreign keys unsupported'):
+            self.db.execute('SELECT sqlite_ivm_create(?,?)',('cascade',QUERY.replace('items f','child f'))).fetchall()
+        self.assertEqual(self.db.execute('SELECT * FROM sqlite_schema ORDER BY name').fetchall(),before)
+
+    def test_21_initial_values_rejected_atomically(self):
+        self.db.execute('CREATE TABLE nullable(id INTEGER,k INTEGER,v INTEGER)')
+        query=QUERY.replace('items f','nullable f')
+        for value in [None,1.5,1000001]:
+            self.db.execute('DELETE FROM nullable')
+            self.db.execute('INSERT INTO nullable VALUES(1,1,?)',(value,))
+            before=self.db.execute('SELECT * FROM sqlite_schema ORDER BY name').fetchall()
+            with self.assertRaises(sqlite3.Error): self.db.execute('SELECT sqlite_ivm_create(?,?)',('invalid',query)).fetchall()
+            self.assertEqual(self.db.execute('SELECT * FROM sqlite_schema ORDER BY name').fetchall(),before)
+
+    def test_22_failed_drop_restores_objects(self):
+        before=self.db.execute('SELECT * FROM sqlite_schema ORDER BY name').fetchall()
+        self.db.set_authorizer(lambda action,*args:sqlite3.SQLITE_DENY if action==sqlite3.SQLITE_DROP_TABLE else sqlite3.SQLITE_OK)
+        try:
+            with self.assertRaises(sqlite3.Error): self.db.execute("SELECT sqlite_ivm_drop('totals')").fetchall()
+        finally: self.db.set_authorizer(None)
+        self.assertEqual(self.db.execute('SELECT * FROM sqlite_schema ORDER BY name').fetchall(),before)
+        self.db.execute('UPDATE items SET v=9'); self.exact()
+
+    def test_23_host_trace_ownership_and_directonly(self):
+        other=sqlite3.connect(':memory:',isolation_level=None)
+        observed=[]
+        try:
+            other.set_trace_callback(lambda sql:observed.append(sql) if sql=='SELECT 42' else None)
+            configure(other,True)
+            other.execute('SELECT 42').fetchall()
+            self.assertEqual(observed,['SELECT 42'])
+            other.execute('CREATE VIEW indirect AS SELECT sqlite_ivm_version()')
+            with self.assertRaises(sqlite3.Error): other.execute('SELECT * FROM indirect').fetchall()
+        finally:other.close()
+
 if __name__=='__main__': unittest.main()

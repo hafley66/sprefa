@@ -1,0 +1,92 @@
+✖ shared semantic sequence has deterministic exact inputs and keyed transitions (121.833625ms)
+✔ native DD executes every semantic state and rejects a missing keyed write (86.847208ms)
+✔ three-way summarizer excludes failed triples and records exact denominator (27.675417ms)
+✔ loaded plugin consumes shared semantic fixture and rejects missing SQL write (305.733209ms)
+✔ all-arm report excludes a failed trial for every engine (25.239792ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 4
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 608.173209
+
+✖ failing tests:
+
+test at v6/labs/exec_shootout/postgres_pglite_ivm/23_crossover.test.mjs:9:1
+✖ shared semantic sequence has deterministic exact inputs and keyed transitions (121.833625ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+  
+    [
+      [
+        0,
+        -2
+      ],
+  ...
+        4,
+  +     0
+  -     -0
+      ],
+      [
+        5,
+        2
+      ],
+  ...
+        14,
+  +     0
+  -     -0
+      ],
+      [
+        15,
+        -2
+      ],
+  ...
+        17,
+  +     0
+  -     -0
+      ],
+      [
+        18,
+        5
+      ],
+      [
+        19,
+  +     0
+  -     -0
+      ],
+      [
+        900,
+        2
+      ]
+  
+      at TestContext.<anonymous> (file:///Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/23_crossover.test.mjs:18:14)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [
+      [ 0, -2 ],  [ 1, -1 ],  [ 2, 4 ],
+      [ 3, 2 ],   [ 4, 0 ],   [ 5, 2 ],
+      [ 6, -5 ],  [ 7, -4 ],  [ 8, 5 ],
+      [ 9, -4 ],  [ 10, -4 ], [ 11, 1 ],
+      [ 12, 1 ],  [ 13, -5 ], [ 14, 0 ],
+      [ 15, -2 ], [ 16, -5 ], [ 17, 0 ],
+      [ 18, 5 ],  [ 19, 0 ],  [ 900, 2 ]
+    ],
+    expected: [
+      [ 0, -2 ],  [ 1, -1 ],  [ 2, 4 ],
+      [ 3, 2 ],   [ 4, -0 ],  [ 5, 2 ],
+      [ 6, -5 ],  [ 7, -4 ],  [ 8, 5 ],
+      [ 9, -4 ],  [ 10, -4 ], [ 11, 1 ],
+      [ 12, 1 ],  [ 13, -5 ], [ 14, -0 ],
+      [ 15, -2 ], [ 16, -5 ], [ 17, -0 ],
+      [ 18, 5 ],  [ 19, -0 ], [ 900, 2 ]
+    ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

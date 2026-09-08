@@ -5,6 +5,9 @@ lab_dir=$(cd "$(dirname "$0")" && pwd)
 profile=${1:-smoke}
 output=${2:-"$lab_dir/results/crossover-$profile.jsonl"}
 if [[ "$#" -ge 2 ]]; then shift 2; else shift "$#"; fi
+# Plugin arms: --arms sqlite-plugin-delta,sqlite-plugin-logged
+# Supply --sqlite-extension <absolute .so/.dylib>; the runner shares fixtures,
+# guards and deadlines with the preserved pg_ivm/SQLite-template/DD arms.
 extra_runner_args=("$@")
 if [[ -e "$output" ]]; then printf 'refusing to overwrite receipt: %s\n' "$output" >&2; exit 2; fi
 receipt_root="${output%.jsonl}.artifacts"

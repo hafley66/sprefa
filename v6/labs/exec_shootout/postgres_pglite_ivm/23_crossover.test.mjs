@@ -9,7 +9,7 @@ import { crossoverInputHash, makeCrossoverFixture } from "./9_crossover_workload
 test("shared semantic sequence has deterministic exact inputs and keyed transitions", () => {
   const fixture = makeCrossoverFixture(400, 10, 10, true);
   assert.deepEqual(fixture, makeCrossoverFixture(400, 10, 10, true));
-  assert.equal(fixture.states.length, 163);
+  assert.equal(fixture.states.length, 171);
   const source = { dimension: new Map(), fact: new Map() };
   for (const state of fixture.states) {
     for (const rel of ["dimension", "fact"]) {
@@ -19,8 +19,8 @@ test("shared semantic sequence has deterministic exact inputs and keyed transiti
     }
     assert.equal(crossoverInputHash(state.inputs), state.input_hash);
   }
-  assert.equal(fixture.states.at(-1).input_hash, "585993cdff3650018e09c96e1e87f55ef6b153cc2e2bfcd1daae6b1e6e88b2da");
-  assert.equal(fixture.states.at(-1).expected.checksum, "82d6dbe032ff42f547c8831f2c606bc1ae7497f47c7c671f2e00d042aec20b1f");
+  assert.equal(fixture.states.at(-1).input_hash, "fd386f195a2f07b75649a761c8d90e94ca6eb31fac9c092402359f8f0778e58a");
+  assert.equal(fixture.states.at(-1).expected.checksum, "24993af460d300c615be67af77653c00a1c8b6ac5463ceb2bf8d7b82ac8542b8");
 });
 
 test("native DD executes every semantic state and rejects a missing keyed write", async () => {
@@ -33,7 +33,7 @@ test("native DD executes every semantic state and rejects a missing keyed write"
     const run = spawnSync(binary, [path], { encoding: "utf8", timeout: 120000 });
     assert.equal(run.status, 0, run.stderr);
     const records = run.stdout.trim().split("\n").map(JSON.parse);
-    assert.equal(records.filter((row) => row.event === "mutation" && row.exact_input_output_validated).length, 163);
+    assert.equal(records.filter((row) => row.event === "mutation" && row.exact_input_output_validated).length, 171);
     assert.equal(records.at(-1).final_input_hash, fixture.states.at(-1).input_hash);
     fixture.states[1].keyed_writes.fact.puts.pop();
     await writeFile(path, JSON.stringify(fixture));
@@ -66,4 +66,40 @@ test("three-way summarizer excludes failed triples and records exact denominator
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("loaded plugin consumes shared semantic fixture and rejects missing SQL write", async () => {
+  const directory=await mkdtemp(join(tmpdir(),"crossover-plugin-test-"));
+  try {
+    const fixture=makeCrossoverFixture(400,10,10,true);
+    const path=join(directory,"fixture.json");
+    const extension=process.env.SQLITE_IVM_EXTENSION;
+    assert.ok(extension,"SQLITE_IVM_EXTENSION required for loaded-plugin integration gate");
+    await writeFile(path,JSON.stringify(fixture));
+    const adapter=new URL("26_sqlite_plugin_adapter.py",import.meta.url).pathname;
+    const run=spawnSync("python3",[adapter,"--extension",extension,"--fixture",path,"--db",join(directory,"good.sqlite")],{encoding:"utf8",timeout:120000});
+    assert.equal(run.status,0,run.stderr);
+    assert.equal(run.stdout.trim().split("\n").map(JSON.parse).filter((r)=>r.event==="mutation" && r.exact_input_output_validated).length,171);
+    fixture.states[1].mutation_sql="SELECT 1";
+    await writeFile(path,JSON.stringify(fixture));
+    const bad=spawnSync("python3",[adapter,"--extension",extension,"--fixture",path,"--db",join(directory,"bad.sqlite")],{encoding:"utf8",timeout:120000});
+    assert.notEqual(bad.status,0);
+    assert.match(bad.stderr,/AssertionError/);
+  } finally {await rm(directory,{recursive:true,force:true});}
+});
+
+test("all-arm report excludes a failed trial for every engine", async () => {
+  const directory=await mkdtemp(join(tmpdir(),"crossover-all-report-"));
+  try {
+    const cell={budget:"test",rows:400,batch_size:10,fanout:10};
+    const records=[{event:"run-metadata",cases:[cell],budget:"test",arms:["sqlite-plugin-delta","dd"]},
+      {event:"all-arm-run",status:"ok",all_input_output_states_match:true,...cell,totals:{"sqlite-plugin-delta":2,dd:1},state_count_per_arm:5},
+      {event:"all-arm-run",status:"unmeasured-or-mismatch",all_input_output_states_match:false,...cell,totals:{"sqlite-plugin-delta":999,dd:999}}];
+    const input=join(directory,"input.jsonl"),output=join(directory,"all.tsv");
+    await writeFile(input,records.map(JSON.stringify).join("\n"));
+    const run=spawnSync(process.execPath,[new URL("14_crossover_summarize.mjs",import.meta.url).pathname,input,join(directory,"p.tsv"),join(directory,"f.tsv"),join(directory,"t.tsv"),output],{encoding:"utf8"});
+    assert.equal(run.status,0,run.stderr);
+    const rows=(await readFile(output,"utf8")).trim().split("\n").slice(1).map((r)=>r.split("\t").slice(4,9));
+    assert.deepEqual(rows,[["sqlite-plugin-delta","1","2.000000","2.000000","2.000000"],["dd","1","1.000000","1.000000","1.000000"]]);
+  } finally {await rm(directory,{recursive:true,force:true});}
 });

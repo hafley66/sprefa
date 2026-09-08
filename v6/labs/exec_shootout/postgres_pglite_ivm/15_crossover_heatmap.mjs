@@ -35,20 +35,21 @@ function cellColor(speedup) {
   return { fill: `rgb(${rgb.join(",")})`, text: magnitude > 0.58 ? "#ffffff" : "#111827" };
 }
 
-if (process.argv.includes("--three-way")) {
+if (process.argv.includes("--three-way") || process.argv.includes("--all-arms")) {
+  const allArms=process.argv.includes("--all-arms");
   const planned = records.filter((row) => row.event === "run-metadata")
     .flatMap((row) => row.cases.map((entry) => ({ ...entry, budget: row.budget })));
   const cases = [...new Map(planned.map((row) => [cellKey(row), row])).values()];
-  const triples = records.filter((row) => row.event === "three-way-run" && row.status === "ok" && row.all_input_output_states_match);
-  const arms = [["pg_ivm_ms", "pg_ivm", "circle"], ["sqlite_affected_group_ms", "SQLite affected-group", "square"], ["dd_ms", "DD volatile", "triangle"]];
-  const all = triples.flatMap((row) => arms.map(([field]) => row[field]));
+  const triples = records.filter((row) => row.event === (allArms ? "all-arm-run" : "three-way-run") && row.status === "ok" && row.all_input_output_states_match);
+  const arms = allArms ? [...new Set(records.filter((r)=>r.event==="run-metadata").flatMap((r)=>r.arms))].map((a)=>[a,a,"circle"]) : [["pg_ivm_ms", "pg_ivm", "circle"], ["sqlite_affected_group_ms", "SQLite affected-group", "square"], ["dd_ms", "DD volatile", "triangle"]];
+  const all = triples.flatMap((row) => arms.map(([field]) => (allArms ? row.totals[field] : row[field])));
   const lowPower = all.length ? Math.floor(Math.log10(Math.min(...all))) : -1;
   const highPower = all.length ? Math.max(lowPower + 1, Math.ceil(Math.log10(Math.max(...all)))) : 3;
-  const left = 350, plotWidth = 400, width = 990, top = 105, rowHeight = 86;
+  const left = 375, plotWidth = 375, width = 1050, top = 105, rowHeight = arms.length*22+20;
   const height = top + cases.length * rowHeight + 60;
   const x = (value) => left + (Math.log10(value) - lowPower) / (highPower - lowPower) * plotWidth;
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-labelledby="title desc">`,
-    `<title id="title">pg_ivm, SQLite affected-group and native DD crossover</title>`,
+    `<title id="title">Matched SQLite plugin and existing engine crossover</title>`,
     `<desc id="desc">Four mutation transactions plus materialization and count, milliseconds on a logarithmic axis. Marks show median and whiskers minimum to maximum across successful exact-state matched repetitions. PostgreSQL and SQLite commit durable writes; DD is volatile.</desc>`,
     `<style>text{font-family:system-ui,sans-serif;fill:currentColor;font-size:12px}.head{font-size:16px}.small{font-size:11px}line,path,rect,circle{stroke:currentColor}.grid{opacity:.15}.mark{fill:currentColor}</style>`,
     `<text class="head" x="16" y="25">Matched join + count/sum: write through result materialization</text>`,
@@ -62,12 +63,12 @@ if (process.argv.includes("--three-way")) {
     const matched = triples.filter((row) => cellKey(row) === cellKey(cell));
     const base = top + index * rowHeight;
     parts.push(`<text x="16" y="${base + 24}">${cell.rows} / ${cell.batch_size} / ${cell.fanout}</text>`,
-      `<text class="small" x="16" y="${base + 42}">${escapeXml(cell.budget)}; n=${matched.length} triples</text>`);
+      `<text class="small" x="16" y="${base + 42}">${escapeXml(cell.budget)}; n=${matched.length} matched trials</text>`);
     arms.forEach(([field, label, shape], armIndex) => {
       const y = base + armIndex * 22;
       parts.push(`<text x="174" y="${y + 4}">${label}</text>`);
       if (!matched.length) { parts.push(`<text x="${left}" y="${y + 4}">UNMEASURED</text>`); return; }
-      const values = matched.map((row) => row[field]);
+      const values = matched.map((row) => (allArms ? row.totals[field] : row[field]));
       const mid = median(values), low = Math.min(...values), high = Math.max(...values), center = x(mid);
       parts.push(`<line x1="${x(low)}" x2="${x(high)}" y1="${y}" y2="${y}"/>`);
       if (shape === "circle") parts.push(`<circle class="mark" cx="${center}" cy="${y}" r="3"/>`);
@@ -78,7 +79,7 @@ if (process.argv.includes("--three-way")) {
   });
   parts.push(`<text x="16" y="${height - 20}">Total memory cap unenforced. Native SQL includes client/server command latency; DD uses keyed in-process writes.</text></svg>`);
   await writeFile(outputPath, parts.join("\n") + "\n");
-  console.log(JSON.stringify({ event: "crossover-three-way-chart", status: "ok", input: inputPath, output: outputPath, cells: cases.length, successful_triples: triples.length }));
+  console.log(JSON.stringify({ event: allArms ? "crossover-all-arm-chart" : "crossover-three-way-chart", status: "ok", input: inputPath, output: outputPath, cells: cases.length, successful_matched_trials: triples.length }));
   process.exit(0);
 }
 

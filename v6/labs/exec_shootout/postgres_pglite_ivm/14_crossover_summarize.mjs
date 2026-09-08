@@ -146,3 +146,29 @@ console.log(JSON.stringify({
   measured_cells: [...pairGroups.values()].filter((group) => group.some((record) => record.status === "ok")).length,
   mutation_groups: familyGroups.size,
 }));
+
+if (process.argv[6]) {
+  const lines=[["budget","rows","batch_size","fanout","arm","successful_trials","median_ms","min_ms","max_ms","states_per_arm","final_input_hash","final_checksum"].join("\t")];
+  for(const [key,cell] of planned) {
+    const good=records.filter((r)=>r.event==="all-arm-run" && r.status==="ok" && r.all_input_output_states_match && cellKey(r)===key);
+    const arms=[...new Set(records.filter((r)=>r.event==="run-metadata").flatMap((r)=>r.arms ?? []))];
+    for(const arm of arms) {
+      const samples=good.map((r)=>r.totals[arm]).filter(Number.isFinite);
+      lines.push([cell.budget,cell.rows,cell.batch_size,cell.fanout,arm,samples.length,number(samples),number(samples,Math.min),number(samples,Math.max),good[0]?.state_count_per_arm ?? "",good[0]?.final_input_hash ?? "",good[0]?.final_checksum ?? ""].join("\t"));
+    }
+  }
+  await writeFile(process.argv[6],lines.join("\n")+"\n");
+}
+if (process.argv[7]) {
+  const lines=[["budget","rows","batch_size","fanout","paired_trials","logged_over_disabled_median","ratio_min","ratio_max","process_wall_logged_over_disabled_median"].join("\t")];
+  for(const [key,cell] of planned) {
+    const good=records.filter((r)=>r.event==="all-arm-run" && r.status==="ok" && r.all_input_output_states_match && cellKey(r)===key && Number.isFinite(r.totals["sqlite-plugin-logged"]) && Number.isFinite(r.totals["sqlite-plugin-delta"]));
+    const ratios=good.map((r)=>r.totals["sqlite-plugin-logged"]/r.totals["sqlite-plugin-delta"]);
+    const processRatios=good.map((r)=> {
+      const rows=records.filter((p)=>p.event==="case-process" && p.run_kind==="measured" && p.repetition===r.repetition && cellKey(p)===key);
+      return rows.find((p)=>p.maintenance==="sqlite-plugin-logged")?.process_wall_ms/rows.find((p)=>p.maintenance==="sqlite-plugin-delta")?.process_wall_ms;
+    });
+    lines.push([cell.budget,cell.rows,cell.batch_size,cell.fanout,ratios.length,number(ratios),number(ratios,Math.min),number(ratios,Math.max),number(processRatios)].join("\t"));
+  }
+  await writeFile(process.argv[7],lines.join("\n")+"\n");
+}
