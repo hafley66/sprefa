@@ -54,6 +54,9 @@ just runtime-shootout 48
 POSTGRES_SHOOTOUT=1 just runtime-shootout-smoke
 ```
 
+Set `RUNTIME_SHOOTOUT_SMOKE_OUTPUT=path.jsonl` to retain the validated smoke
+records without replacing `5_RESULTS.md`.
+
 The default `N=48` follows one-pass smoke sweeps on this machine: `N=32` took
 1.08 seconds, `N=48` took 2.41 seconds, and `N=64` took 6.36 seconds. The full
 one-warmup/five-repeat gate uses the selected default and enforces the 60-second

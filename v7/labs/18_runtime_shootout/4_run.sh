@@ -190,16 +190,23 @@ measure_arm() {
 }
 
 smoke() {
-  local runtime graph_case output_file
+  local runtime graph_case output_file line
+  local receipt="${RUNTIME_SHOOTOUT_SMOKE_OUTPUT:-}"
+  if [[ -n "$receipt" ]]; then : > "$receipt"; fi
   for runtime in "${runtimes[@]}"; do
     for graph_case in chain ring; do
       output_file="$tmp_dir/smoke-${runtime}-${graph_case}.json"
       run_arm "$runtime" "$graph_case" "$n" > "$output_file"
       validate_arm_json "$runtime" "$graph_case" "$n" "$output_file"
-      jq -c . "$output_file"
+      line=$(jq -c . "$output_file")
+      printf '%s\n' "$line"
+      if [[ -n "$receipt" ]]; then printf '%s\n' "$line" >> "$receipt"; fi
     done
   done
-  jq -c 'select(.kind == "arm-status")' "$raw_file"
+  while IFS= read -r line; do
+    printf '%s\n' "$line"
+    if [[ -n "$receipt" ]]; then printf '%s\n' "$line" >> "$receipt"; fi
+  done < <(jq -c 'select(.kind == "arm-status")' "$raw_file")
 }
 
 generate_results() {
