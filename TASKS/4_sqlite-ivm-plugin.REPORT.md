@@ -13,6 +13,9 @@ Implementation commits:
 - `3f858cf50`: shared plugin arms, expanded semantics, 35-family matrix,
   foreign-key rejection, generalized reports and the complete gate.
 
+- `3c6d6781a`: assigned-key bounds regression, final binary semantic/grid
+  receipts, stock SQL consumer and provenance.
+
 This handoff additionally validates assigned INTEGER PRIMARY KEY values after
 BEFORE INSERT, with a stored-image bounds regression. It adds final-binary receipts, provenance and a stock SQL consumer
 example. Parent owns sampled review and integration.

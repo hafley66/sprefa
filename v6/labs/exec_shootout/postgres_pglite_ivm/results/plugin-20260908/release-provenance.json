@@ -1,5 +1,5 @@
 {
-  "implementation_commit": "assigned-key guard pending handoff commit; exact source hashes below",
+  "implementation_commit": "3c6d6781afa0de4b98a263627c42fca757fe895f",
   "rustc": "rustc 1.100.0-nightly (17fd5b8a3 2026-08-28)",
   "cargo": "cargo 1.100.0-nightly (e8cb624d5 2026-08-22)",
   "python_sqlite": "3.53.2",
