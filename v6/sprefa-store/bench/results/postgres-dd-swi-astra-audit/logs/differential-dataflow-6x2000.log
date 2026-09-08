@@ -1,0 +1,5 @@
+STATUS|differential-dataflow|ok|differential-dataflow 0.25 with timely 0.31; shared contiguous-node DAG; setup and retract end after fixed-point materialization and count; exact ordered sets match BFS oracle|process peak RSS from getrusage including untimed oracle allocations|DL_MEMCAP_MB=4096 caps live Rust allocations through CappedAlloc (0 disables); RLIMIT_AS and RLIMIT_DATA are also requested best-effort; total process RSS is not capped
+[dd] SETUP nodes=12002 edges=22667 records=12002 ms=7.925
+[dd] RETRACT killed=2000 survivors=10002 records=2000 ms=2.877
+CSV,differential-dataflow,12002,22667,2000,7.925,2.877,2000,7.8
+EXIT_STATUS|0
