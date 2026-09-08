@@ -41,10 +41,10 @@ Sources inspected:
 Executable identifiers:
 
 - **S**: 9_crossover_workload.mjs `makeCrossoverFixture(400,10,10,true)`;
-  171 states in `results/plugin-20260908/semantic.jsonl` (final binary rerun recorded separately), five arms including
+  171 states in `results/plugin-20260908/release-semantic.jsonl`, five arms including
   both logging modes, 855 exact input/output validations. Base rows, summary
   multiplicities, hashes and independent recomputation are checked each state.
-- **P01..P23**: `27_sqlite_ivm.test.py`, method test_01 through test_23.
+- **P01..P24**: `27_sqlite_ivm.test.py`, method test_01 through test_24.
   P02 checks 240 seeded two-sided bag transitions (seeds 7,42,2026).
   P08 has 32 named query rejection subcases; rejection is never counted as parity.
 - **T**: `20_sqlite_template.test.py` six tests of existing emitted maintenance.
@@ -94,7 +94,7 @@ Executable identifiers:
 | 29 Transaction / savepoint | no SQL rollback in DD arm | E S transactions | E T/M | E P03/P04/P09/P10/P13; base/support/counters rollback together |
 | 30 Durability / reopen | volatile DD arm, N persistence | durable configured E S | E T/S reopen | E P05/S reopen; crash/power-loss injection untested |
 | 31 Concurrent connections | one DD worker E S | server E S; competing-writer test not run | E T/M | E P05 lock contention/WAL visibility; P06 required writer pragmas |
-| 32 Types / bounds / collations | fixture bounded integers E S; generic type depends on operator | bounded fixture E S | non-null integers E T/S | E affinity-converted integers P07; R float/text/blob/NULL/bounds P07/P17, collation/generated catalog P12 |
+| 32 Types / bounds / collations | fixture bounded integers E S; generic type depends on operator | bounded fixture E S | non-null integers E T/S | E affinity-converted integers P07; R float/text/blob/NULL/bounds P07/P17/P24, collation/generated catalog P12 |
 | 33 Schema / install/drop ownership | N SQL installer | E shared create | host installer E T | E P09/P10/P11/P22; R foreign-key cascades P20; R collisions/shadows/unmanaged triggers P09/P18; public result edits R P16 |
 | 34 Fault detection | E J removed keyed write | exact state S | exact state T/S | E J removed SQL write; P15 deliberate accumulator corruption is detected |
 | 35 Telemetry boundaries | current arm JSONL stage/probe receipts | existing case/server receipts | stage receipts | E P13 counters/rollback/second writer; P14 CLI scoped logging/rejection/off; P19 closed sink; P23 host trace retained |
@@ -130,4 +130,4 @@ Missing lowering algorithms, corresponding to R/N rows:
 Every engine comparison here is restricted to the common S fixture. Library D/C
 cells and successful rejection tests are reported separately from the 855 shared
 semantic validations. Build/test receipts are under results/plugin-20260908/;
-final-gate-2/status.txt is written only after the complete gate succeeds.
+final-gate-3/status.txt is written only after the complete gate succeeds.

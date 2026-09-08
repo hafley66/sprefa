@@ -1,0 +1,5 @@
+{"abi":"rusqlite=0.40.2/libsqlite3-sys loadable_extension","algorithm":"signed_join_count_sum","extension":"0.1.0","parser":"sqlite3-parser=0.17.0","sqlite":"3.53.2","sqlite_source_id":"2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24","writer":"recursive_triggers=ON; trusted_schema=ON"}
+totals
+1|2|6
+1|2|-9
+1|2|-9

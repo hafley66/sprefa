@@ -76,6 +76,11 @@ pub fn lower(plan: &Plan, view: &str) -> Vec<String> {
                 _ => vec![("OLD", -1), ("NEW", 1)],
             };
             let mut body = Vec::new();
+            // An omitted INTEGER PRIMARY KEY is assigned after BEFORE INSERT
+            // (NEW.rowid may be -1 there). Validate the actual stored image.
+            if event != "DELETE" {
+                body.push(format!("SELECT CASE WHEN {} THEN RAISE(ABORT,'sqlite_ivm: assigned row outside integer bound') END", domain(&plan.tables[side], "NEW.")));
+            }
             for (image, sign) in images {
                 let other = 1 - side;
                 let key = plan.column(&plan.keys[side], Some((side, image)));

@@ -329,4 +329,12 @@ class Plugin(unittest.TestCase):
             with self.assertRaises(sqlite3.Error): other.execute('SELECT * FROM indirect').fetchall()
         finally:other.close()
 
+    def test_24_assigned_integer_primary_key_bound(self):
+        self.db.execute('INSERT INTO items VALUES(1000000,1,7)')
+        before=self.exact()
+        for policy in ['ABORT','FAIL','IGNORE','REPLACE']:
+            with self.assertRaisesRegex(sqlite3.Error,'assigned row outside integer bound'):
+                self.db.execute('INSERT OR '+policy+' INTO items(k,v) VALUES(1,8)')
+            self.assertEqual(self.exact(),before)
+
 if __name__=='__main__': unittest.main()

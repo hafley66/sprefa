@@ -1,0 +1,12 @@
+SQLite 3.53.2; exact emitted-SQL transport tests; no public SQL installer
+test_original_crossover_exact_states (__main__.TemplateReuse.test_original_crossover_exact_states) ... ok
+test_replace_upsert_ignore_and_last_group_removal (__main__.TemplateReuse.test_replace_upsert_ignore_and_last_group_removal) ... ok
+test_rollback_and_constraint_abort_leave_no_maintenance (__main__.TemplateReuse.test_rollback_and_constraint_abort_leave_no_maintenance) ... ok
+test_second_writer_reopen_and_fail_closed_setup (__main__.TemplateReuse.test_second_writer_reopen_and_fail_closed_setup) ... ok
+test_seeded_ordinary_write_sequences (__main__.TemplateReuse.test_seeded_ordinary_write_sequences) ... ok
+test_unsupported_plan_and_null_source_rejected (__main__.TemplateReuse.test_unsupported_plan_and_null_source_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.113s
+
+OK

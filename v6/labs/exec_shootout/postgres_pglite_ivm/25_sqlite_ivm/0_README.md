@@ -30,7 +30,8 @@ Installation validates before schema mutation, then atomically creates an
 accumulator, transient delta table, fixed-size metrics row, public read-only
 view, source indexes and BEFORE/AFTER triggers. Savepoint rollback removes
 partial installation and preserves caller transactions. Initial population
-performs one recomputation. A changed source row joins OLD (-1) and NEW (+1)
+performs one recomputation. AFTER triggers recheck actual stored values, including assigned INTEGER PRIMARY
+KEY values. A changed source row joins OLD (-1) and NEW (+1)
 against the opposite table. Group counts/sums add the signed contribution;
 zero-support groups disappear. The opposite-side join is the delta work, not
 an affected-group full refresh. UPDATE retracts then inserts, including key

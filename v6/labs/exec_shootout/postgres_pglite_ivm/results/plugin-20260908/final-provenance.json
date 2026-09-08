@@ -1,0 +1,96 @@
+{
+  "implementation_commit": "3f858cf508c68b7248964c9a30cba232b785927e",
+  "rustc": "rustc 1.100.0-nightly (17fd5b8a3 2026-08-28)",
+  "cargo": "cargo 1.100.0-nightly (e8cb624d5 2026-08-22)",
+  "python_sqlite": "3.53.2",
+  "cli": "3.53.2 2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24 (64-bit)",
+  "extension_linkage": "/private/tmp/sqlite-ivm-astra-target/release/libsqlite_ivm.dylib:\n\t/private/tmp/sqlite-ivm-astra-target/release/build/sqlite-ivm/385a989bc27ccbf9/out/libsqlite_ivm.dylib (compatibility version 0.0.0, current version 0.0.0)\n\t/usr/lib/libsqlite3.dylib (compatibility version 9.0.0, current version 358.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n",
+  "files": [
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/25_sqlite_ivm/Cargo.toml",
+      "bytes": 390,
+      "sha256": "4a6c7bc1eb8ff2d880b239a75024dc5cb8b967c2ba46e42e744de94dfde2d103"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/25_sqlite_ivm/Cargo.lock",
+      "bytes": 13961,
+      "sha256": "6eb768ee9ada0dc93fecd7286c814dff287df67b114ad3ae59fa3077ae807d91"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/25_sqlite_ivm/src/0_types.rs",
+      "bytes": 2326,
+      "sha256": "50fda6d4677bc4e0e3cf4165d0edd25bd87830094ebb8ffcba0fe074173e8a78"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/25_sqlite_ivm/src/1_bind.rs",
+      "bytes": 10394,
+      "sha256": "bc4e3c4769b03e6b06f3041a8bc0a14d5205b9d52db91eb681f7f0ea76bec2e0"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/25_sqlite_ivm/src/2_lower.rs",
+      "bytes": 6632,
+      "sha256": "d28f1bfe2069d1e2ef21ceb3b1fbdc8403eaf50474e288bd676d5df86802b07d"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/25_sqlite_ivm/src/3_telemetry.rs",
+      "bytes": 1737,
+      "sha256": "e1482c4aafca086f6e11bc794a37e8eae84327478fa8c01135e634dd2fa373fc"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/25_sqlite_ivm/src/lib.rs",
+      "bytes": 5721,
+      "sha256": "7793f87cb409f821bbaf82d8f01e53204a4a6ea96a161e9f8fdf2324852495be"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/9_crossover_workload.mjs",
+      "bytes": 10577,
+      "sha256": "fece748f04a08eaa76400a7b0f52e8616b745241ed7141621f46ac6949291f74"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/12_crossover_runner.mjs",
+      "bytes": 18774,
+      "sha256": "99c541436ef97c438b2c96b320b1907953798496498ed85da14205371dc76d3f"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/13_crossover_run.sh",
+      "bytes": 4986,
+      "sha256": "f8dd7ca79ed1a12f61c23e2a95ee729ff28372429d1e2473364be5866eb2aa49"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/19_sqlite_template_adapter.py",
+      "bytes": 12492,
+      "sha256": "78d0af274f6e023b2733af90985dbfa123095908f46a206baa4d77a1ce34b25c"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/26_sqlite_plugin_adapter.py",
+      "bytes": 2171,
+      "sha256": "758f0e5d0d2616518b98bc8060a1bb65c3b61a5b541a0a3aa7219c58fc428f66"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/22_crossover_dd.rs",
+      "bytes": 11067,
+      "sha256": "256a2233d24d2512e4204a8637a1df3e81a0046be05f54ac7801aecc8c7857df"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/sprefa-store/Cargo.lock",
+      "bytes": 123621,
+      "sha256": "61c7e422f506378114d861613d4ef5602cb35353da3356b0b7353463caa0d5d9"
+    },
+    {
+      "path": "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/results/template-reuse-20260908/18_crossover.rs",
+      "bytes": 11669,
+      "sha256": "98f4b91f6da96dfa52b943baa3421d44d274375a300fbe4d20c280e9bab82825"
+    },
+    {
+      "path": "/private/tmp/sqlite-ivm-astra-target/release/libsqlite_ivm.dylib",
+      "bytes": 1308768,
+      "sha256": "ea65441e3f3fbff4f8bb94375dc7d6fcdd583798096c4710547c9d47438545f0"
+    },
+    {
+      "path": "/private/tmp/sqlite-ivm-astra-target/release/examples/crossover_dd",
+      "bytes": 2792288,
+      "sha256": "37d9cbdff7ea20e8f83d5c607649803cee44e63eee364af8ddd7b7d3178cbd3c"
+    }
+  ],
+  "sqlite_undefined_symbols": []
+}

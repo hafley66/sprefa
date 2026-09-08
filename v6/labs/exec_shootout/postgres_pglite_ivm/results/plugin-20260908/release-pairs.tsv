@@ -1,0 +1,10 @@
+budget	fanout	rows	batch_size	stage	status	measured_pairs	full_query_update_plus_query_median_ms	ivm_update_plus_query_median_ms	full_query_over_ivm_speedup_median	speedup_min	speedup_max	speedup_span_percent	full_query_setup_median_ms	ivm_setup_median_ms	full_query_process_median_ms	ivm_process_median_ms	postgres_group_observed_peak_rss_kb	full_query_database_median_bytes	ivm_database_median_bytes
+constrained	10	400	10	fanout-anchor	unmeasured	0								7.075959		80.785250	64480.000000		8115903.000000
+constrained	10	12000	10	fanout-anchor	unmeasured	0								55.843666		255.259208	69472.000000		9336511.000000
+constrained	200	400	10	batch10-row-sweep	unmeasured	0								8.307833		85.160750	47616.000000		8763071.000000
+constrained	200	1200	10	batch10-row-sweep	unmeasured	0								11.270083		97.925584	50304.000000		9172671.000000
+constrained	200	4000	10	batch10-row-sweep	unmeasured	0								19.816041		129.102458	51264.000000		9721535.000000
+constrained	200	12000	1	batch-sweep	unmeasured	0								46.426540		212.738333	52112.000000		11261631.000000
+constrained	200	12000	10	batch10-row-sweep	unmeasured	0								45.216958		202.929625	53504.000000		10663615.000000
+constrained	200	12000	100	batch-sweep	unmeasured	0								48.580459		222.050542	52576.000000		11695807.000000
+constrained	200	12000	1000	batch-sweep	unmeasured	0								57.169582		257.828750	54960.000000		11237055.000000

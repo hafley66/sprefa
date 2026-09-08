@@ -1,0 +1,1 @@
+PRAGMA recursive_triggers=ON; PRAGMA trusted_schema=ON; UPDATE fact SET amount=10 WHERE id=1; SELECT * FROM totals; SELECT (SELECT weighted_sum FROM totals)=(SELECT sum(amount*factor) FROM fact JOIN dimension USING(group_id));

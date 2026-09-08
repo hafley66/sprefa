@@ -1,0 +1,13 @@
+✔ shared semantic sequence has deterministic exact inputs and keyed transitions (148.820459ms)
+✔ native DD executes every semantic state and rejects a missing keyed write (269.342208ms)
+✔ three-way summarizer excludes failed triples and records exact denominator (27.602209ms)
+✔ loaded plugin consumes shared semantic fixture and rejects missing SQL write (330.5115ms)
+✔ all-arm report excludes a failed trial for every engine (28.134583ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 852.395125
