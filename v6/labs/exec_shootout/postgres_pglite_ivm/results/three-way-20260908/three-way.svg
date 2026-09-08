@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 990 939" width="990" height="939" role="img" aria-labelledby="title desc">
+<title id="title">pg_ivm, SQLite affected-group and native DD crossover</title>
+<desc id="desc">Four mutation transactions plus materialization and count, milliseconds on a logarithmic axis. Marks show median and whiskers minimum to maximum across successful exact-state matched repetitions. PostgreSQL and SQLite commit durable writes; DD is volatile.</desc>
+<style>text{font-family:system-ui,sans-serif;fill:currentColor;font-size:12px}.head{font-size:16px}.small{font-size:11px}line,path,rect,circle{stroke:currentColor}.grid{opacity:.15}.mark{fill:currentColor}</style>
+<text class="head" x="16" y="25">Matched join + count/sum: write through result materialization</text>
+<text x="16" y="48">PG/SQLite durable; DD volatile. Exact validation outside timing. Median [min, max] ms.</text>
+<text x="16" y="76">rows / batch / fanout</text><text x="350" y="76">milliseconds (log scale)</text>
+<line class="grid" x1="350" x2="350" y1="90" y2="884"/><text class="small" x="350" y="90" text-anchor="middle">0.1</text>
+<line class="grid" x1="450" x2="450" y1="90" y2="884"/><text class="small" x="450" y="90" text-anchor="middle">1</text>
+<line class="grid" x1="550" x2="550" y1="90" y2="884"/><text class="small" x="550" y="90" text-anchor="middle">10</text>
+<line class="grid" x1="650" x2="650" y1="90" y2="884"/><text class="small" x="650" y="90" text-anchor="middle">100</text>
+<line class="grid" x1="750" x2="750" y1="90" y2="884"/><text class="small" x="750" y="90" text-anchor="middle">1000</text>
+<text x="16" y="129">400 / 10 / 10</text>
+<text class="small" x="16" y="147">constrained; n=5 triples</text>
+<text x="174" y="109">pg_ivm</text>
+<line x1="530.7540710389386" x2="536.5792315886196" y1="105" y2="105"/>
+<circle class="mark" cx="534.6386106692224" cy="105" r="3"/>
+<text x="775" y="109">7.021 [6.420, 7.342]</text>
+<text x="174" y="131">SQLite affected-group</text>
+<line x1="476.4424424550813" x2="482.83793973839505" y1="127" y2="127"/>
+<rect class="mark" x="476.28834775172686" y="124" width="6" height="6"/>
+<text x="775" y="131">1.963 [1.838, 2.130]</text>
+<text x="174" y="153">DD volatile</text>
+<line x1="360.0380885339273" x2="368.12460221114327" y1="149" y2="149"/>
+<path class="mark" d="M362.20781932933755,145 l4,7 h-8 Z"/>
+<text x="775" y="153">0.132 [0.126, 0.152]</text>
+<text x="16" y="215">12000 / 10 / 10</text>
+<text class="small" x="16" y="233">constrained; n=5 triples</text>
+<text x="174" y="195">pg_ivm</text>
+<line x1="547.8311835770536" x2="553.8138117711195" y1="191" y2="191"/>
+<circle class="mark" cx="549.1046914426611" cy="191" r="3"/>
+<text x="775" y="195">9.796 [9.513, 10.918]</text>
+<text x="174" y="217">SQLite affected-group</text>
+<line x1="507.51589601747605" x2="513.4896854646822" y1="213" y2="213"/>
+<rect class="mark" x="508.28147847731947" y="210" width="6" height="6"/>
+<text x="775" y="217">4.100 [3.760, 4.314]</text>
+<text x="174" y="239">DD volatile</text>
+<line x1="392.0436013997293" x2="402.25524675918155" y1="235" y2="235"/>
+<path class="mark" d="M397.4643061953939,231 l4,7 h-8 Z"/>
+<text x="775" y="239">0.298 [0.263, 0.333]</text>
+<text x="16" y="301">400 / 10 / 200</text>
+<text class="small" x="16" y="319">constrained; n=5 triples</text>
+<text x="174" y="281">pg_ivm</text>
+<line x1="527.3768093092618" x2="535.9648578736403" y1="277" y2="277"/>
+<circle class="mark" cx="529.721274838956" cy="277" r="3"/>
+<text x="775" y="281">6.269 [5.940, 7.239]</text>
+<text x="174" y="303">SQLite affected-group</text>
+<line x1="468.66269752060964" x2="480.98877024432306" y1="299" y2="299"/>
+<rect class="mark" x="475.01516141811254" y="296" width="6" height="6"/>
+<text x="775" y="303">1.906 [1.537, 2.041]</text>
+<text x="174" y="325">DD volatile</text>
+<line x1="364.883701187894" x2="387.0685144932092" y1="321" y2="321"/>
+<path class="mark" d="M365.2548231614437,317 l4,7 h-8 Z"/>
+<text x="775" y="325">0.142 [0.141, 0.235]</text>
+<text x="16" y="387">1200 / 10 / 200</text>
+<text class="small" x="16" y="405">constrained; n=5 triples</text>
+<text x="174" y="367">pg_ivm</text>
+<line x1="532.4901011714297" x2="554.0025151960226" y1="363" y2="363"/>
+<circle class="mark" cx="536.121069007291" cy="363" r="3"/>
+<text x="775" y="367">7.265 [6.682, 10.965]</text>
+<text x="174" y="389">SQLite affected-group</text>
+<line x1="489.591588044912" x2="498.4365038289236" y1="385" y2="385"/>
+<rect class="mark" x="488.9363695391385" y="382" width="6" height="6"/>
+<text x="775" y="389">2.626 [2.488, 3.050]</text>
+<text x="174" y="411">DD volatile</text>
+<line x1="365.31804836856776" x2="394.41728782792177" y1="407" y2="407"/>
+<path class="mark" d="M368.8931294719277,403 l4,7 h-8 Z"/>
+<text x="775" y="411">0.155 [0.142, 0.278]</text>
+<text x="16" y="473">4000 / 10 / 200</text>
+<text class="small" x="16" y="491">constrained; n=5 triples</text>
+<text x="174" y="453">pg_ivm</text>
+<line x1="532.5831659380916" x2="546.8512087335173" y1="449" y2="449"/>
+<circle class="mark" cx="543.4429009074338" cy="449" r="3"/>
+<text x="775" y="453">8.599 [6.696, 9.301]</text>
+<text x="174" y="475">SQLite affected-group</text>
+<line x1="500.5200870488511" x2="520.6244647745074" y1="471" y2="471"/>
+<rect class="mark" x="500.13353425800585" y="468" width="6" height="6"/>
+<text x="775" y="475">3.399 [3.200, 5.084]</text>
+<text x="174" y="497">DD volatile</text>
+<line x1="370.37832739409635" x2="390.1545281486734" y1="493" y2="493"/>
+<path class="mark" d="M381.56198312039953,489 l4,7 h-8 Z"/>
+<text x="775" y="497">0.207 [0.160, 0.252]</text>
+<text x="16" y="559">12000 / 10 / 200</text>
+<text class="small" x="16" y="577">constrained; n=5 triples</text>
+<text x="174" y="539">pg_ivm</text>
+<line x1="546.2759882966593" x2="551.401971941107" y1="535" y2="535"/>
+<circle class="mark" cx="548.1165270394507" cy="535" r="3"/>
+<text x="775" y="539">9.576 [9.178, 10.328]</text>
+<text x="174" y="561">SQLite affected-group</text>
+<line x1="512.8346399130089" x2="518.3815825372045" y1="557" y2="557"/>
+<rect class="mark" x="511.6485191515476" y="554" width="6" height="6"/>
+<text x="775" y="561">4.431 [4.250, 4.829]</text>
+<text x="174" y="583">DD volatile</text>
+<line x1="377.63652835634673" x2="401.94460140765426" y1="579" y2="579"/>
+<path class="mark" d="M393.70240179376145,575 l4,7 h-8 Z"/>
+<text x="775" y="583">0.274 [0.189, 0.331]</text>
+<text x="16" y="645">12000 / 1000 / 200</text>
+<text class="small" x="16" y="663">constrained; n=5 triples</text>
+<text x="174" y="625">pg_ivm</text>
+<line x1="581.9523302254543" x2="588.3602976356079" y1="621" y2="621"/>
+<circle class="mark" cx="586.9851837090794" cy="621" r="3"/>
+<text x="775" y="625">23.434 [20.870, 24.188]</text>
+<text x="174" y="647">SQLite affected-group</text>
+<line x1="673.3703905580282" x2="676.1253447616248" y1="643" y2="643"/>
+<rect class="mark" x="671.8495994578202" y="640" width="6" height="6"/>
+<text x="775" y="647">177.213 [171.279, 182.496]</text>
+<text x="174" y="669">DD volatile</text>
+<line x1="452.24283711854866" x2="463.0105945421223" y1="665" y2="665"/>
+<path class="mark" d="M455.70629209965824,661 l4,7 h-8 Z"/>
+<text x="775" y="669">1.140 [1.053, 1.349]</text>
+<text x="16" y="731">12000 / 1 / 200</text>
+<text class="small" x="16" y="749">constrained; n=5 triples</text>
+<text x="174" y="711">pg_ivm</text>
+<line x1="547.190178372309" x2="555.6420457241011" y1="707" y2="707"/>
+<circle class="mark" cx="549.1905082528888" cy="707" r="3"/>
+<text x="775" y="711">9.815 [9.373, 11.387]</text>
+<text x="174" y="733">SQLite affected-group</text>
+<line x1="491.033443748929" x2="498.29212929469145" y1="729" y2="729"/>
+<rect class="mark" x="489.4922613438665" y="726" width="6" height="6"/>
+<text x="775" y="733">2.660 [2.572, 3.040]</text>
+<text x="174" y="755">DD volatile</text>
+<line x1="383.6545783676694" x2="396.51373759581793" y1="751" y2="751"/>
+<path class="mark" d="M393.76839870307265,747 l4,7 h-8 Z"/>
+<text x="775" y="755">0.274 [0.217, 0.292]</text>
+<text x="16" y="817">12000 / 100 / 200</text>
+<text class="small" x="16" y="835">constrained; n=5 triples</text>
+<text x="174" y="797">pg_ivm</text>
+<line x1="558.211794651006" x2="565.495244378495" y1="793" y2="793"/>
+<circle class="mark" cx="561.7898017508622" cy="793" r="3"/>
+<text x="775" y="797">13.119 [12.081, 14.287]</text>
+<text x="174" y="819">SQLite affected-group</text>
+<line x1="581.5498028211156" x2="591.2508843880636" y1="815" y2="815"/>
+<rect class="mark" x="580.1248400332989" y="812" width="6" height="6"/>
+<text x="775" y="819">21.441 [20.677, 25.853]</text>
+<text x="174" y="841">DD volatile</text>
+<line x1="408.40019858141557" x2="416.18117393608884" y1="837" y2="837"/>
+<path class="mark" d="M413.405889652626,833 l4,7 h-8 Z"/>
+<text x="775" y="841">0.431 [0.384, 0.459]</text>
+<text x="16" y="919">Total memory cap unenforced. Native SQL includes client/server command latency; DD uses keyed in-process writes.</text></svg>
