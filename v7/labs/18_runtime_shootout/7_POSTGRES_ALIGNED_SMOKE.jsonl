@@ -1,0 +1,18 @@
+{"runtime":"sbcl","version":"2.6.7","case":"chain","n":16,"edge_count":15,"closure_count":120,"setup_ms":0.001,"closure_ms":0.013}
+{"runtime":"sbcl","version":"2.6.7","case":"ring","n":16,"edge_count":16,"closure_count":256,"setup_ms":0.001,"closure_ms":0.034}
+{"runtime":"swi","version":"10.0.2","case":"chain","n":16,"edge_count":15,"closure_count":120,"setup_ms":0,"closure_ms":1}
+{"runtime":"swi","version":"10.0.2","case":"ring","n":16,"edge_count":16,"closure_count":256,"setup_ms":0,"closure_ms":1}
+{"runtime":"racket","version":"9.3","case":"chain","n":16,"edge_count":15,"closure_count":120,"setup_ms":0.10099999999999909,"closure_ms":11.283000000000015}
+{"runtime":"racket","version":"9.3","case":"ring","n":16,"edge_count":16,"closure_count":256,"setup_ms":0.09100000000000819,"closure_ms":26.676999999999992}
+{"case":"chain","closure_count":120,"closure_ms":0.27954199999999996,"edge_count":15,"n":16,"runtime":"dbsp-kernel","setup_ms":0.10691700000000001,"version":"0.1.0"}
+{"case":"ring","closure_count":256,"closure_ms":0.477542,"edge_count":16,"n":16,"runtime":"dbsp-kernel","setup_ms":0.024791,"version":"0.1.0"}
+{"case":"chain","closure_count":120,"closure_ms":0.264041,"edge_count":15,"n":16,"runtime":"dbsp-generated","setup_ms":0.024083999999999998,"version":"0.1.0"}
+{"case":"ring","closure_count":256,"closure_ms":0.46025,"edge_count":16,"n":16,"runtime":"dbsp-generated","setup_ms":0.021417,"version":"0.1.0"}
+{"case":"chain","closure_count":120,"closure_ms":1.438458,"edge_count":15,"n":16,"runtime":"dbsp-sqlite","setup_ms":0.9764160000000001,"version":"3.53.2"}
+{"case":"ring","closure_count":256,"closure_ms":2.6775420000000003,"edge_count":16,"n":16,"runtime":"dbsp-sqlite","setup_ms":0.33075,"version":"3.53.2"}
+{"runtime":"pglite-query","version":"18.3","case":"chain","n":16,"edge_count":15,"closure_count":120,"setup_ms":5.212125,"closure_ms":2.721958,"transfer_ms":0.614333,"checksum_ms":0.439666,"checksum":"27983d72a697692be5be47b93b6f9d0f7d38ae7e9aa536bb2d88a4b52a2a9463","evaluation":"ordinary recursive SQL full query","timing_boundary":"recursive query materialization and count; full transfer and exact validation excluded"}
+{"runtime":"pglite-query","version":"18.3","case":"ring","n":16,"edge_count":16,"closure_count":256,"setup_ms":4.766292,"closure_ms":2.541125,"transfer_ms":0.991834,"checksum_ms":0.511541,"checksum":"e8fe89894ebcd498cd47f104eabef525bc5baf0f0a3970d667461e899c95e267","evaluation":"ordinary recursive SQL full query","timing_boundary":"recursive query materialization and count; full transfer and exact validation excluded"}
+{"runtime":"native-postgres-query","version":"18.6","case":"chain","n":16,"edge_count":15,"closure_count":120,"setup_ms":2.068208,"closure_ms":1.052583,"transfer_ms":0.445458,"checksum_ms":0.324208,"checksum":"27983d72a697692be5be47b93b6f9d0f7d38ae7e9aa536bb2d88a4b52a2a9463","evaluation":"ordinary recursive SQL full query","timing_boundary":"recursive query materialization and count; full transfer and exact validation excluded"}
+{"runtime":"native-postgres-query","version":"18.6","case":"ring","n":16,"edge_count":16,"closure_count":256,"setup_ms":6.243959,"closure_ms":1.370375,"transfer_ms":0.895917,"checksum_ms":0.456458,"checksum":"e8fe89894ebcd498cd47f104eabef525bc5baf0f0a3970d667461e899c95e267","evaluation":"ordinary recursive SQL full query","timing_boundary":"recursive query materialization and count; full transfer and exact validation excluded"}
+{"kind":"arm-status","runtime":"pglite-pg_ivm","status":"unsupported","reason":"pg_ivm rejects recursive WITH RECURSIVE view definitions"}
+{"kind":"arm-status","runtime":"native-postgres-pg_ivm","status":"unsupported","reason":"pg_ivm rejects recursive WITH RECURSIVE view definitions"}
