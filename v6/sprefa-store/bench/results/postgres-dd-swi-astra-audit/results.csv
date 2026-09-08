@@ -1,0 +1,13 @@
+engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb,host_peak_mb,sqlite_hw_mb,db_mb
+swi-incr,402,667,200,1,1,0,9.81,N/A,N/A,N/A
+swi-incr,12002,22667,2000,76,70,0,43.59,N/A,N/A,N/A
+swi-incr,160002,306667,20000,1133,1213,0,557.34,N/A,N/A,N/A
+differential-dataflow,402,667,200,1.216,0.248,200,3.2,N/A,N/A,N/A
+differential-dataflow,12002,22667,2000,7.925,2.877,2000,7.8,N/A,N/A,N/A
+differential-dataflow,160002,306667,20000,97.055,26.772,20000,84.2,N/A,N/A,N/A
+pglite-query,402,667,200,10.385,1.660,N/A,807.6,N/A,N/A,38.117
+pglite-query,12002,22667,2000,60.782,27.263,N/A,1011.3,N/A,N/A,39.274
+pglite-query,160002,306667,20000,771.782,436.257,N/A,1148.7,N/A,N/A,70.274
+native-postgres-query,402,667,200,6.634,1.817,N/A,114.5,N/A,N/A,7.412
+native-postgres-query,12002,22667,2000,37.785,19.754,N/A,184.5,N/A,N/A,8.568
+native-postgres-query,160002,306667,20000,609.518,232.599,N/A,302.3,N/A,N/A,23.568
