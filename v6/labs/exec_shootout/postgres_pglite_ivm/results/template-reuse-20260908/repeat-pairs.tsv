@@ -1,0 +1,6 @@
+budget	fanout	rows	batch_size	stage	status	measured_pairs	full_query_update_plus_query_median_ms	ivm_update_plus_query_median_ms	full_query_over_ivm_speedup_median	speedup_min	speedup_max	speedup_span_percent	full_query_setup_median_ms	ivm_setup_median_ms	full_query_process_median_ms	ivm_process_median_ms	postgres_group_observed_peak_rss_kb	full_query_database_median_bytes	ivm_database_median_bytes
+focused	10	400	10	fanout-anchor	unmeasured	0													
+focused	10	12000	10	fanout-anchor	unmeasured	0													
+focused	200	400	10	batch10-row-sweep	unmeasured	0													
+focused	200	12000	10	batch10-row-sweep	unmeasured	0													
+focused	200	12000	1000	batch-sweep	unmeasured	0													

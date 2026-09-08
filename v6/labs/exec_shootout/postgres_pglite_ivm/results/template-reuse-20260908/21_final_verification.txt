@@ -1,0 +1,25 @@
+Recorded from terminal verification on 2026-09-08, after explicit trusted_schema setup and keyed-source rejection were added.
+
+SQLITE_TEMPLATE_PROGRAM=results/template-reuse-20260908/18_crossover.rs SQLITE_TEMPLATE_FIXTURE=results/template-reuse-20260908/smoke/constrained-sqlite-template-group-400:10:10-measured-1/fixture.json python3 20_sqlite_template.test.py -v
+SQLite 3.53.2; exact emitted-SQL transport tests; no public SQL installer
+test_original_crossover_exact_states ... ok
+test_replace_upsert_ignore_and_last_group_removal ... ok
+test_rollback_and_constraint_abort_leave_no_maintenance ... ok
+test_second_writer_reopen_and_fail_closed_setup ... ok
+test_seeded_ordinary_write_sequences ... ok
+test_unsupported_plan_and_null_source_rejected ... ok
+Ran 6 tests in 0.092s
+OK
+
+python3 17_sqlite_trigger_capabilities.py
+SQLite 3.53.2; stdlib sqlite3; temporary on-disk DBs; no IVM candidate executed
+Ran 10 tests in 0.028s
+OK
+
+System sqlite3 CLI probe on retained first smoke DB:
+PRAGMA recursive_triggers=ON alone: Error: in prepare, unsafe use of virtual table "pragma_recursive_triggers" (exit 1).
+PRAGMA trusted_schema=ON; PRAGMA recursive_triggers=ON; BEGIN; ordinary fact UPDATE; exact maintained SUM = recomputed join SUM; source delta count; ROLLBACK:
+3.43.2|1|0 (exit 0).
+
+Final shared smoke: final-smoke.jsonl, two successful cases, ten exact states, two fresh reopens, 194 ms runner wall.
+Sandbox sysctl vm.swapusage probe returned Operation not permitted; recorded host swap fields remain null.

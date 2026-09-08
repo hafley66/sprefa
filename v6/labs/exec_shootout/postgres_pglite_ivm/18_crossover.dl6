@@ -1,0 +1,7 @@
+rel fact(id: int, group_id: int, amount: int) key(1).
+rel dimension(group_id: int, factor: int) key(1).
+
+summary(Group, count(Id), sum(Amount * Factor)) <-
+    fact(Id, Group, Amount), dimension(Group, Factor).
+
+? summary(Group, Count, WeightedSum).
