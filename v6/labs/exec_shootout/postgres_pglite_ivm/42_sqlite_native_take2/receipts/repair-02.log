@@ -1,0 +1,12 @@
+{"sqlite": "3.53.2", "extension": "/tmp/sprefa-sqlite-native-take2/build/take2.dylib"}
+test_autocommit_trace (__main__.Boundary.test_autocommit_trace) ... {"test": "__main__.Boundary.test_autocommit_trace", "trace": [["sync", -1], ["commit", -1]]}
+{"test": "__main__.Boundary.test_autocommit_trace", "trace": [["begin", -1], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["sync", -1], ["commit", -1]]}
+ok
+test_savepoints (__main__.Boundary.test_savepoints) ... {"test": "__main__.Boundary.test_savepoints", "trace": [["sync", -1], ["commit", -1]]}
+{"test": "__main__.Boundary.test_savepoints", "trace": [["begin", -1], ["savepoint", 1], ["update", 4], ["savepoint", 2], ["release", 2], ["release", 1], ["savepoint", 1], ["savepoint", 2], ["update", 4], ["savepoint", 3], ["release", 3], ["release", 2], ["release", 1], ["savepoint", 1], ["savepoint", 2], ["update", 4], ["savepoint", 3], ["release", 3], ["release", 2], ["rollbackto", 1], ["filter", -1], ["rollbackto", 0], ["filter", -1], ["release", 0], ["rollback", -1], ["filter", -1]]}
+ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.008s
+
+OK

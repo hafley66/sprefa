@@ -1,0 +1,65 @@
+{"sqlite": "3.53.2", "extension": "/tmp/sprefa-sqlite-native-take2/build/take2.dylib"}
+test_autocommit_trace (__main__.Boundary.test_autocommit_trace) ... {"test": "__main__.Boundary.test_autocommit_trace", "trace": [["sync", -1], ["commit", -1]]}
+{"test": "__main__.Boundary.test_autocommit_trace", "trace": [["begin", -1], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["sync", -1], ["commit", -1]]}
+FAIL
+test_conflicts (__main__.Boundary.test_conflicts) ... {"test": "__main__.Boundary.test_conflicts", "trace": [["sync", -1], ["commit", -1]]}
+{"test": "__main__.Boundary.test_conflicts", "trace": [["begin", -1], ["sync", -1], ["commit", -1], ["begin", -1], ["savepoint", 0], ["update", 4], ["savepoint", 1], ["release", 1], ["rollbackto", 0], ["release", 0], ["filter", -1], ["sync", -1], ["commit", -1], ["filter", -1]]}
+{"test": "__main__.Boundary.test_conflicts", "trace": [["begin", -1], ["sync", -1], ["commit", -1], ["begin", -1], ["savepoint", 0], ["update", 3], ["savepoint", 1], ["release", 1], ["release", 0], ["filter", -1], ["sync", -1], ["commit", -1], ["filter", -1]]}
+{"test": "__main__.Boundary.test_conflicts", "trace": [["begin", -1], ["update", 4], ["savepoint", 0], ["release", 0], ["sync", -1], ["commit", -1], ["begin", -1], ["savepoint", 0], ["update", 2], ["savepoint", 1], ["release", 1], ["update", 2], ["savepoint", 1], ["release", 1], ["release", 0], ["filter", -1], ["sync", -1], ["commit", -1], ["filter", -1]]}
+{"test": "__main__.Boundary.test_conflicts", "trace": [["begin", -1], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["sync", -1], ["commit", -1], ["begin", -1], ["savepoint", 0], ["update", 5], ["savepoint", 1], ["release", 1], ["update", 5], ["savepoint", 1], ["release", 1], ["update", 5], ["savepoint", 1], ["release", 1], ["update", 5], ["savepoint", 1], ["release", 1], ["release", 0], ["filter", -1], ["sync", -1], ["commit", -1], ["filter", -1]]}
+ok
+test_connections (__main__.Boundary.test_connections) ... {"test": "__main__.Boundary.test_connections", "trace": [["sync", -1], ["commit", -1]]}
+ok
+test_direct_event_probe (__main__.Boundary.test_direct_event_probe) ... {"test": "__main__.Boundary.test_direct_event_probe", "trace": [["sync", -1], ["commit", -1]]}
+ok
+test_explicit_visibility (__main__.Boundary.test_explicit_visibility) ... {"test": "__main__.Boundary.test_explicit_visibility", "trace": [["sync", -1], ["commit", -1]]}
+ok
+test_guard_and_shadow_failure (__main__.Boundary.test_guard_and_shadow_failure) ... {"test": "__main__.Boundary.test_guard_and_shadow_failure", "trace": [["sync", -1], ["commit", -1]]}
+ok
+test_savepoints (__main__.Boundary.test_savepoints) ... {"test": "__main__.Boundary.test_savepoints", "trace": [["sync", -1], ["commit", -1]]}
+{"test": "__main__.Boundary.test_savepoints", "trace": [["begin", -1], ["savepoint", 1], ["update", 4], ["savepoint", 2], ["release", 2], ["release", 1], ["savepoint", 1], ["savepoint", 2], ["update", 4], ["savepoint", 3], ["release", 3], ["release", 2], ["release", 1], ["savepoint", 1], ["savepoint", 2], ["update", 4], ["savepoint", 3], ["release", 3], ["release", 2], ["rollbackto", 1], ["filter", -1], ["rollbackto", 0], ["filter", -1], ["release", 0], ["rollback", -1], ["filter", -1]]}
+ok
+test_sync_failure (__main__.Boundary.test_sync_failure) ... {"test": "__main__.Boundary.test_sync_failure", "trace": [["sync", -1], ["commit", -1]]}
+{"test": "__main__.Boundary.test_sync_failure", "trace": []}
+{"test": "__main__.Boundary.test_sync_failure", "trace": [["begin", -1], ["update", 4], ["savepoint", 0], ["release", 0], ["sync", -1], ["rollback", -1], ["filter", -1]]}
+{"test": "__main__.Boundary.test_sync_failure", "trace": []}
+{"test": "__main__.Boundary.test_sync_failure", "trace": [["begin", -1], ["savepoint", 0], ["update", 4], ["savepoint", 1], ["release", 1], ["release", 0], ["filter", -1], ["sync", -1], ["rollback", -1], ["filter", -1]]}
+ok
+test_trace_bound (__main__.Boundary.test_trace_bound) ... {"test": "__main__.Boundary.test_trace_bound", "trace": [["sync", -1], ["commit", -1]]}
+{"test": "__main__.Boundary.test_trace_bound", "trace": [["begin", -1], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0], ["update", 4], ["savepoint", 0], ["release", 0]]}
+ok
+test_upsert_check_rollback (__main__.Boundary.test_upsert_check_rollback) ... {"test": "__main__.Boundary.test_upsert_check_rollback", "trace": [["sync", -1], ["commit", -1]]}
+ok
+
+======================================================================
+FAIL: test_autocommit_trace (__main__.Boundary.test_autocommit_trace)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/3_boundary_test.py", line 44, in test_autocommit_trace
+    self.assertEqual(self.trace(), [['begin',-1],['savepoint',0],['update',4],['update',4],['release',0],['sync',-1],['commit',-1]])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [['begin', -1], ['update', 4], ['savepoint', 0], ['release'[79 chars] -1]] != [['begin', -1], ['savepoint', 0], ['update', 4], ['update',[45 chars] -1]]
+
+First differing element 1:
+['update', 4]
+['savepoint', 0]
+
+First list contains 2 additional elements.
+First extra element 7:
+['sync', -1]
+
+  [['begin', -1],
++  ['savepoint', 0],
+   ['update', 4],
+-  ['savepoint', 0],
+-  ['release', 0],
+   ['update', 4],
+-  ['savepoint', 0],
+   ['release', 0],
+   ['sync', -1],
+   ['commit', -1]]
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.326s
+
+FAILED (failures=1)
