@@ -211,7 +211,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     fanout: testCase.fanout,
   };
   const freePercent = memoryFreePercent();
-  if (take2 && (testCase.circuit || testCase.rows > 12000)) {
+  if (take2 && ((testCase.circuit && testCase.circuit !== "aggregate_churn") || testCase.rows > 12000)) {
     append({event:"capability",status:"unsupported",reason:"Take 2 shared adapter supports bounded crossover aggregate cells through 12000 source rows; other circuit adapters pending",...context});
     return true;
   }
@@ -271,7 +271,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
       "--fixture",fixturePath,"--db",join(childRoot,"maintained.sqlite"),"--sql-output",join(childRoot,"installed.sql")];
   } else if (dd) args = [fixturePath];
   else args.push("--fixture", fixturePath);
-  if (testCase.circuit) args = swi ? ["-q","-s",fixture.columns?"39_semantic_swi.pl":"35_circuit_swi.pl","--",fixturePath] : dd ? [fixturePath] : sqlite
+  if (testCase.circuit) args = take2 ? ["43_sqlite_competitive/0_circuit.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),"--extension",take2Extension] : swi ? ["-q","-s",fixture.columns?"39_semantic_swi.pl":"35_circuit_swi.pl","--",fixturePath] : dd ? [fixturePath] : sqlite
     ? [fixture.columns?"31b_circuit_sqlite.py":"31_circuit_sqlite.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),...(plugin?["--extension",sqliteExtension]:[])]
     : [fixture.columns?"31a_circuit_postgres.mjs":"32_circuit_postgres.mjs",fixturePath,maintenance];
   const child = spawn(swi ? "swipl" : sqlite ? "python3" : dd ? (fixture.columns ? semanticDdBinary : testCase.circuit ? circuitDdBinary : ddBinary) : process.execPath, args, {
