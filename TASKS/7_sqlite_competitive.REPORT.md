@@ -308,3 +308,13 @@ the same input/output hashes. This run is retained separately from prior paired
 runs; no cross-run timing normalization is applied. `invariant-shared.jsonl`
 contains the exact command, extension hashes, durability and memory/disk scope.
 No external blocker occurred. The remaining contracts listed above stay explicit.
+
+## Resumed acceptance work
+
+Parent requested continuation from `68401f9f4`. No pending frontier diff existed
+in this worktree. Added partial input sealing across nested savepoint release and
+rollback: side a stays sealed while b/c restore their earlier frontiers, b accepts
+a new write, and the final committed join equals SQL. Focused source-view frontier
+suite: 18 tests pass, exit 0. Command:
+`TAKE2_SOURCE_VIEWS=1 TAKE2_EXTENSION=/tmp/sprefa-sqlite-competitive/invariant-cache.dylib python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3b_frontier_test.py`.
+Receipt: `receipts/frontier-resume.log`. Remaining acceptance work continues.

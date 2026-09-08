@@ -33,6 +33,17 @@ class Frontiers(circuits.Circuits):
    with self.subTest(epoch=epoch,side=side),self.assertRaises(sqlite3.DatabaseError):
     self.db.execute('INSERT INTO result(op,id,side) VALUES(12,?,?)',(epoch,side))
   self.db.execute('ROLLBACK');self.check()
+ def test_partial_seal_savepoint_release(self):
+  self.install('inner');self.start()
+  self.db.execute('INSERT INTO a VALUES(1,1,2)');self.db.execute('INSERT INTO b VALUES(1,1,3)')
+  self.seal(0);self.db.execute('SAVEPOINT partial')
+  self.seal(1);self.db.execute('SAVEPOINT nested');self.seal(2);self.db.execute('RELEASE nested')
+  self.db.execute('ROLLBACK TO partial')
+  self.assertEqual(self.db.execute('SELECT side,t FROM result_frontier ORDER BY side').fetchall(),[(0,1),(1,0),(2,0)])
+  with self.assertRaisesRegex(sqlite3.DatabaseError,'sealed input'):self.db.execute('UPDATE a SET v=5')
+  self.db.execute('UPDATE b SET v=4');self.seal(1);self.seal(2)
+  super().flush();self.db.execute('RELEASE partial');self.db.execute('COMMIT');self.check()
+  self.assertEqual(self.db.execute('SELECT id,k FROM result').fetchall(),[(1,8)])
  def test_second_writer_and_absent_module(self):
   self.install('project');self.start();self.db.execute('INSERT INTO a VALUES(1,1,2)');self.flush();self.db.execute('COMMIT')
   absent=sqlite3.connect(self.path,isolation_level=None)
