@@ -1,5 +1,25 @@
 # Competitive SQLite-native IVM
 
+Current implementation: `5ec333d19`. Gate exit 0: 99 test methods, 171 shared
+semantic states for each original competitive layout, and 143 core circuit states
+for each of three competitive variants. All eleven core circuits include actual
+incremental maintenance, with negation, cyclic retraction and a separately
+labeled finite scalar epoch variant. CI execution coverage is additive.
+
+Reproduce: `python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/5_gate.py`.
+Final receipt: `43_sqlite_competitive/receipts/frontier-gate-final.json`.
+Take 1, Take 2, other worktrees and DL7 sources remain preserved. No push or merge.
+
+| Commit | Tested step |
+|---|---|
+| `651913433` | Expanded authorization brief |
+| `0d49d4d46` | Seven-arm exact aggregate baseline |
+| `5b4264d7a` | Cached consolidated batches and indexed source views |
+| `7eb0376fa` | Shared joins, negation and DRed cyclic retraction |
+| `3478a9bbb` | Transactional teardown and three paired sweep cells |
+| `ee7ec0fc3` | Eleven core circuits and pager cache measurements |
+| `5ec333d19` | Persisted scalar input seals and projection type checks |
+
 Expanded authorization: `651913433`, brief `TASKS/7_sqlite_competitive.BRIEF.md`.
 
 Combined baseline: PASS. Seven arms, two repetitions, 13 aggregate_churn states
@@ -29,7 +49,7 @@ IVM_POSTGRES_PREFIX=/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/p
 Exit code 0. Full receipt copied to `43_sqlite_competitive/receipts/`.
 CI coverage adds actual Take 2 aggregate_churn execution in the shared circuit
 runner. Existing engine implementations and Take 1/Take 2 extension sources
-remain preserved. Profiling and batching are the next steps.
+remain preserved. This baseline precedes the batching results below.
 
 ## Prepared statements, batching and source views
 
@@ -79,7 +99,7 @@ The finite option ledger is `43_sqlite_competitive/0_README.md`. Session/preupda
 capture is not admitted without an exclusive hook-ownership proof; SQLite's
 session API documents undefined behavior with an independently installed
 preupdate hook. No hook was replaced and no custom SQLite patch was needed for
-the explicit boundary. Broader circuit families are the next implementation step.
+the explicit boundary. Broader circuit results follow below.
 
 ## Shared circuit expansion
 
@@ -89,7 +109,7 @@ SQLite parses scalar expressions in an isolated plan connection. Relational
 lowering stays in fixed C/SQL templates; no OpenIVM compiler port or DL7 changes.
 Commit `5b4264d7a` preserves the preceding batch/source-view milestone.
 
-Current tests: 13 boundary + 6 original semantic + 9 batch + 9 source-view batch
+Circuit milestone tests: 13 boundary + 6 original semantic + 9 batch + 9 source-view batch
 + 10 circuit + 10 source-view circuit tests. Shared gates validate 171 semantic
 states and 104 circuit states per competitive arm. CI execution coverage adds
 these circuit tests and shared cases; existing engine implementations are intact.
@@ -127,8 +147,9 @@ both competitive arms, `--competitive-extension /tmp/sprefa-sqlite-competitive/c
 `--warmups 0 --repetitions 2`, and `IVM_BUDGETS=constrained`. The complete command,
 binary hashes and timings are in `receipts/circuits-paired.jsonl`; shell exit 0.
 
-Remaining gaps: time/frontier semantics; remaining shared circuit catalog modes;
-source-view teardown; automatic statement-end batching; session/preupdate capture
+At this milestone the remaining gaps included time/frontier semantics, remaining
+core circuit modes and teardown; later sections record those additions.
+Automatic statement-end batching, session/preupdate capture
 under exclusive hook ownership; custom SQLite variant. The current explicit SQL
 boundary needs no custom SQLite patch. The option ledger distinguishes measured
 paths, observed restrictions and unimplemented candidates.
@@ -137,7 +158,7 @@ paths, observed restrictions and unimplemented candidates.
 
 Circuit commit: `7eb0376fa`. A focused teardown red test exposed leftover
 per-source views/indexes, triggers and DRed cone storage. DROP now removes owned
-objects transactionally; rollback restores exact schema and output. Current
+objects transactionally; rollback restores exact schema and output. At this step,
 circuit tests are 11 per layout, bringing test methods to 59. Source-view teardown
 is covered by execution in the reproducible gate.
 
@@ -159,7 +180,7 @@ The swept binary is pinned by hash in each run's metadata, before teardown edits
 
 Teardown/sweep commit: `3478a9bbb`. Added DISTINCT support, fanout/fanin and diamond
 bag union lowering. All 11 core circuit families now run in both competitive
-layouts. Current gate: 65 test methods, 171 semantic states plus 143 circuit states
+layouts. This milestone gate: 65 test methods, 171 semantic states plus 143 circuit states
 per arm. `/tmp/sprefa-sqlite-competitive/gate-c9hf310n/receipt.json` exits 0.
 Three focused unsupported-mode red tests precede the implementation; logs remain.
 
