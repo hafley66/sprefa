@@ -13,7 +13,7 @@ function caseKey(testCase) {
   return `${testCase.rows}:${testCase.batch_size}:${testCase.fanout}`;
 }
 
-function buildCases(profile) {
+function buildCases(profile, budget) {
   if (profile === "smoke") {
     return [
       { stage: "smoke", rows: 400, batch_size: 10, fanout: 10 },
@@ -23,17 +23,22 @@ function buildCases(profile) {
   if (profile === "diagnostic") {
     return [{ stage: "diagnostic", rows: 160_000, batch_size: 10, fanout: 200 }];
   }
-  const cases = [];
-  for (const fanout of [10, 200]) {
-    for (const rows of [400, 1_200, 4_000, 12_000]) {
-      cases.push({ stage: "batch10-row-sweep", rows, batch_size: 10, fanout });
-    }
-    for (const batchSize of [1, 100, 1_000]) {
-      cases.push({ stage: "batch-sweep", rows: 12_000, batch_size: batchSize, fanout });
-    }
-  }
-  for (const rows of [40_000, 160_000]) {
-    cases.push({ stage: "larger-batch10", rows, batch_size: 10, fanout: 200 });
+  const cases = [
+    { stage: "fanout-anchor", rows: 400, batch_size: 10, fanout: 10 },
+    { stage: "fanout-anchor", rows: 12_000, batch_size: 10, fanout: 10 },
+    { stage: "batch10-row-sweep", rows: 400, batch_size: 10, fanout: 200 },
+    { stage: "batch10-row-sweep", rows: 12_000, batch_size: 10, fanout: 200 },
+    { stage: "larger-batch10", rows: 160_000, batch_size: 10, fanout: 200 },
+    { stage: "batch-sweep", rows: 12_000, batch_size: 1_000, fanout: 200 },
+  ];
+  if (budget === "constrained") {
+    cases.splice(3, 0,
+      { stage: "batch10-row-sweep", rows: 1_200, batch_size: 10, fanout: 200 },
+      { stage: "batch10-row-sweep", rows: 4_000, batch_size: 10, fanout: 200 });
+    cases.splice(cases.length - 1, 0, { stage: "larger-batch10", rows: 40_000, batch_size: 10, fanout: 200 });
+    cases.push(
+      { stage: "batch-sweep", rows: 12_000, batch_size: 1, fanout: 200 },
+      { stage: "batch-sweep", rows: 12_000, batch_size: 100, fanout: 200 });
   }
   return cases;
 }
@@ -84,7 +89,7 @@ const timeoutMs = Math.min(120_000, Number(argument("timeout-ms", "120000")));
 const deadlineEpochMs = Number(argument("deadline-epoch-ms", String(Date.now() + 20 * 60_000)));
 const warmups = Number(argument("warmups", profile === "full" ? "1" : "0"));
 const repetitions = Number(argument("repetitions", profile === "full" ? "3" : "1"));
-const cases = buildCases(profile);
+const cases = buildCases(profile, budget);
 const arms = ["query", "pg_ivm"];
 const records = [];
 const startedAt = Date.now();
