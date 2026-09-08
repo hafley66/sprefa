@@ -9,14 +9,19 @@ spec=importlib.util.spec_from_file_location('transport',p)
 transport=importlib.util.module_from_spec(spec);spec.loader.exec_module(transport)
 source_views='--source-views' in sys.argv
 if source_views:sys.argv.remove('--source-views')
+lazy='--lazy' in sys.argv
+if lazy:sys.argv.remove('--lazy')
 
 class BatchConnection(sqlite3.Connection):
     opened=False
+    def executescript(self,sql):
+        return super().executescript(sql.replace('USING take2(join)','USING take2_lazy(join)') if lazy else sql)
     def execute(self,sql,parameters=()):
-        if sql=='COMMIT' and self.opened:
+        if lazy:sql=sql.replace('USING take2(join)','USING take2_lazy(join)')
+        if not lazy and sql=='COMMIT' and self.opened:
             super().execute('INSERT INTO native_result(op) VALUES(11)')
         cursor=super().execute(sql,parameters)
-        if sql=='BEGIN IMMEDIATE' and self.opened:
+        if not lazy and sql=='BEGIN IMMEDIATE' and self.opened:
             super().execute('INSERT INTO native_result(op) VALUES(10)')
         if sql=="SELECT take2_control('trace')":self.opened=True
         if source_views and 'take2_attach' in sql and "'dimension'" in sql:self.opened=True
@@ -37,6 +42,9 @@ def emit(**row):
         row['algorithm']='explicit SQL batch; consolidated signed deltas; 32 cached statements'
         row['consistency']='maintained reads fail inside open batch; flush before COMMIT; source and output commit atomically'
         row['source_images']='indexed source views' if source_views else 'shadow copies'
+        if lazy:
+            row['algorithm']='public vtab lazy read/xSync flush; consolidated signed deltas'
+            row['consistency']='completed-statement reads flush pending deltas; xSync prepares atomic source/output commit'
     original_emit(**row)
 transport.emit=emit
 if __name__=='__main__':transport.main()

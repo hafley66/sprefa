@@ -1,0 +1,11 @@
+file:///Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/12_crossover_runner.mjs:109
+if (!runRoot) throw new Error("IVM_RUN_ROOT is required");
+                    ^
+
+Error: IVM_RUN_ROOT is required
+    at file:///Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/12_crossover_runner.mjs:109:21
+    at ModuleJob.run (node:internal/modules/esm/module_job:437:25)
+    at async node:internal/modules/esm/loader:639:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.15.0

@@ -64,7 +64,7 @@ mutations, with exact oracle checks. Paired runner measurements are separate.
 | Bounded session-local cache | Implemented 32 prepared statements per vtab. SQLite pager targets of 1/8/32 MiB measured 28.440/29.046/26.834 ms median over two batch1000 profiles each. Pager size is a target, not a hard memory ceiling; existing runner RSS guards remain. No host source-relation copy. |
 | Delta consolidation | Implemented persistent signed support queue and set-based flush; nine batch tests per layout pass. |
 | Explicit SQL batch/flush | Implemented above, with read/missing-flush misuse rejection and savepoint tests. |
-| Public vtab lifecycle batching | xSync is commit preparation, not statement end; Take 2 exact traces prove this. Current contract uses explicit flush, preserving precommit reads after flush. Automatic statement batching remains unimplemented. |
+| Public vtab lifecycle batching | `take2_lazy` queues source deltas, flushes on xFilter and xSync, and passes completed-statement reads, conflicts, savepoints and failed-read/source rollback tests. It does not treat xSync as statement end. Explicit batch and epoch variants remain. |
 | Preupdate/session capture + drain | SQLite exports both ENABLE_PREUPDATE_HOOK and ENABLE_SESSION. Its header explicitly declares session objects plus an independently registered preupdate hook undefined behavior. This is not admitted to the shared-module contract without an exclusive-ownership proof; no hook is replaced. An exclusive connection factory remains a separately testable configuration. |
 | Custom statement-boundary callback | Not currently required by the explicit contract. A transparent statement-end API would need separate evidence and a minimal pinned variant; no patch has been made. |
 
@@ -164,6 +164,23 @@ The `sqlite-competitive-frontier` shared arm uses source views and explicit
 sealing. Its finite held-c check corresponds to `34_circuit_dd.rs:132` and
 `33a_dd_host.rs:83`. Those DD hosts already advance all inputs and wait on their
 probe. No DD or kernel source changed. SQL frontier costs are reported separately.
+
+## Public-ABI lazy read/commit flush
+
+`CREATE VIRTUAL TABLE result USING take2_lazy(inner)` selects automatic delta
+queuing. Ordinary source statements need no op10/op11 transport. Maintained reads
+flush pending deltas before opening their shadow cursor. xSync flushes remaining
+deltas during transaction preparation; source and maintained state commit or
+roll back together. A failed flush returns an error. Source-view writers retain
+the explicit connection configuration requirement.
+
+The lazy tests cover completed-statement visibility, autocommit and explicit
+transactions, ABORT/FAIL/IGNORE/REPLACE/UPSERT, nested source-read trigger abort,
+failed SELECT after a flush, xSync failure, second writers, absent module and
+reopen. Both storage layouts pass. `sqlite-competitive-lazy` is a separate shared
+arm. Its three-repetition batch1000 total was 30.373 ms versus explicit source
+views 29.285 ms and pg_ivm 20.000 ms. This removes caller flush scheduling under
+the tested visibility contract; it does not establish a performance improvement.
 
 ## Reused sources
 

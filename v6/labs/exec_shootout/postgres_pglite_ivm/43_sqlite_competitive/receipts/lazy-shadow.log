@@ -1,0 +1,18 @@
+test_anti (__main__.Lazy.test_anti) ... ok
+test_chain (__main__.Lazy.test_chain) ... ok
+test_diamond (__main__.Lazy.test_diamond) ... ok
+test_distinct (__main__.Lazy.test_distinct) ... ok
+test_failed_read_then_retry (__main__.Lazy.test_failed_read_then_retry) ... ok
+test_fanout (__main__.Lazy.test_fanout) ... ok
+test_inner (__main__.Lazy.test_inner) ... ok
+test_project (__main__.Lazy.test_project) ... ok
+test_reach (__main__.Lazy.test_reach) ... ok
+test_read_in_source_trigger_then_abort (__main__.Lazy.test_read_in_source_trigger_then_abort) ... ok
+test_self_chain (__main__.Lazy.test_self_chain) ... ok
+test_semi (__main__.Lazy.test_semi) ... ok
+test_sync_failure (__main__.Lazy.test_sync_failure) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.734s
+
+OK

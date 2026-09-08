@@ -318,3 +318,25 @@ a new write, and the final committed join equals SQL. Focused source-view fronti
 suite: 18 tests pass, exit 0. Command:
 `TAKE2_SOURCE_VIEWS=1 TAKE2_EXTENSION=/tmp/sprefa-sqlite-competitive/invariant-cache.dylib python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3b_frontier_test.py`.
 Receipt: `receipts/frontier-resume.log`. Remaining acceptance work continues.
+
+## Executable public-ABI lazy flush boundary
+
+Frontier regression commit: `e5827b9f5`. Added a separate take2_lazy module with
+automatic delta queueing, read-time flush and xSync preparation flush. No public
+hook is replaced. Ordinary source forwarding triggers and SQLite shadow storage
+remain. Tests cover precommit reads after completed statements, autocommit
+conflicts including partial FAIL, failed reads after maintenance, source-trigger
+prefix reads followed by ABORT, savepoints, second writers and missing module.
+
+Gate `/tmp/sprefa-sqlite-competitive/gate-hh86gdqt/receipt.json` exits 0:
+135 test methods plus plan audit; 171 semantic states per three arms; 143 circuit
+states per four arms. The new lazy tests add 15 methods per storage layout.
+The first standalone runner call omitted required IVM_RUN_ROOT and exited 1;
+the corrected call and full gate pass, with the failure retained.
+
+Shared Bash batch1000, three repetitions: PG query 22.410 ms, pg_ivm 20.000,
+volatile DD 0.975, explicit source views 29.285, lazy source views 30.373.
+Every state matches exact shared hashes. `receipts/lazy-paired.jsonl` records the
+complete command, hashes and telemetry; exit 0. The public read/preparation path
+is now executable evidence in the finite ledger. It does not close the measured
+SQLite/pg_ivm gap. A task-local debug SQLite lifecycle probe follows.

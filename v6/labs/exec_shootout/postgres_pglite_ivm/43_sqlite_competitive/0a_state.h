@@ -19,6 +19,7 @@ typedef struct Tab {
   sqlite3_stmt *batch_read;
   int source_view;
   int frontiers;
+  int lazy;
   sqlite3_int64 epoch;
   char *predicate,*projection;
 } Tab;

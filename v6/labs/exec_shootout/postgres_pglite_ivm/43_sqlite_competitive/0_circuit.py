@@ -19,20 +19,21 @@ def main():
     p.add_argument('--batch',action='store_true')
     p.add_argument('--source-views',action='store_true')
     p.add_argument('--frontiers',action='store_true')
+    p.add_argument('--lazy',action='store_true')
     args=p.parse_args()
     fixture=json.loads(Path(args.fixture).read_text())
     plans={'aggregate_churn':('join',2,3),'pipeline':('project',1,2),
            'join':('inner',2,2),'self_join':('self_chain',1,2),'chain':('chain',3,2),
            'semijoin':('semi',2,2),'antijoin':('anti',2,2),'reach_cycle':('reach',2,1),
            'distinct':('distinct',1,2),'fanout_fanin':('fanout',1,2),'diamond':('diamond',3,2)}
-    if fixture['circuit'] not in plans or (not args.batch and fixture['circuit']!='aggregate_churn'):
+    if fixture['circuit'] not in plans or (not args.batch and not args.lazy and fixture['circuit']!='aggregate_churn'):
         emit(event='capability',status='unsupported',reason='adapter has no admitted plan for this circuit')
         return
     if Path(args.db).exists(): raise ValueError('existing database')
     start=time.perf_counter()
     db=sqlite3.connect(args.db,isolation_level=None)
     db.enable_load_extension(True);db.load_extension(args.extension);db.enable_load_extension(False)
-    if args.batch:db.execute("SELECT take2_control('cache_on')").fetchall()
+    if args.batch or args.lazy:db.execute("SELECT take2_control('cache_on')").fetchall()
     if args.source_views:db.execute("SELECT take2_control('source_views_on')").fetchall()
     db.executescript('PRAGMA recursive_triggers=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA cache_size=-8192;')
     for table in ['a','b','c']:
@@ -40,7 +41,7 @@ def main():
         db.execute(f'CREATE INDEX {table}_k ON {table}(k)')
         db.execute(f'CREATE INDEX {table}_v ON {table}(v)')
     mode,sides,columns=plans[fixture['circuit']]
-    module='take2_epoch' if args.frontiers else 'take2'
+    module='take2_lazy' if args.lazy else 'take2_epoch' if args.frontiers else 'take2'
     db.execute(f'CREATE VIRTUAL TABLE result USING {module}({mode})')
     for side,table in enumerate(['a','b','c'][:sides]):
         db.execute("SELECT take2_attach('result',?,?, 'id','k','v')",(table,side)).fetchall()

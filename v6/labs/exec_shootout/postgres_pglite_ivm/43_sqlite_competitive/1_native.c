@@ -89,13 +89,14 @@ static int connect(sqlite3 *db, void *aux, int argc, const char *const *argv,
   memset(t, 0, sizeof(*t));
   t->db = db; t->env = aux;
   t->frontiers=!strcmp(argv[0],"take2_epoch");
+  t->lazy=!strcmp(argv[0],"take2_lazy");
   if(argc>=4) {
     const char *modes[]={"mirror","filter","bag","group","join","self","multi","project","inner","self_chain","chain","semi","anti","reach","distinct","fanout","diamond"};
     int found=0;
     for(int i=0;i<17;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
     if(!found) { sqlite3_free(t); return SQLITE_ERROR; }
   }
-  if(t->frontiers&&!t->mode){sqlite3_free(t);*err=sqlite3_mprintf("take2_epoch requires a query mode");return SQLITE_ERROR;}
+  if((t->frontiers||t->lazy)&&!t->mode){sqlite3_free(t);*err=sqlite3_mprintf("epoch/lazy module requires a query mode");return SQLITE_ERROR;}
   if(t->mode==PROJECT) {
     t->predicate=argc==6?literal(argv[4]):sqlite3_mprintf("b0.v>=0");
     t->projection=argc==6?literal(argv[5]):sqlite3_mprintf("b0.v*2");
@@ -201,6 +202,7 @@ static int filter(sqlite3_vtab_cursor *p, int idx, const char *str, int n, sqlit
   trace(t,"filter",-1);
   int flag=0,check=batching(t,&flag);
   if(check!=SQLITE_OK)return check;
+  if(flag&&t->lazy){check=flush_batch(t);if(check!=SQLITE_OK)return check;flag=0;}
   if(flag)return error(t,"batch open: flush before reading maintained output");
   sqlite3_finalize(c->stmt); c->stmt = 0;
   c->repeats=c->ordinal=0;
@@ -254,6 +256,12 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
   int batched=0;
   rc=batching(t,&batched);
   if(rc!=SQLITE_OK)return rc;
+  if(t->lazy&&!batched) {
+    rc=source_view_setup(t);
+    if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_batch\" SET flag=1",t->schema,t->name),0,0);
+    if(rc!=SQLITE_OK)return rc;
+    batched=1;
+  }
   if((t->mode>=PROJECT||t->frontiers)&&!batched)return error(t,"circuit mode requires an open batch");
   if(t->frontiers){rc=frontier_check(t,side,0);if(rc!=SQLITE_OK)return rc;}
   if(t->source_view && (!t->env->source_views||!batched))return error(t,"source-view layout requires source_views_on and an open batch");
@@ -278,6 +286,7 @@ static int sync_tab(sqlite3_vtab *v) {
   Tab *t = (Tab *)v; trace(t,"sync",-1);
   int flag=0,rc=batching(t,&flag);
   if(rc!=SQLITE_OK)return rc;
+  if(flag&&t->lazy){rc=flush_batch(t);if(rc!=SQLITE_OK)return rc;flag=0;}
   if(flag)return error(t,"batch open at COMMIT: explicit flush required");
   if (t->env->fail_sync) { t->env->fail_sync = 0; return error(t,"injected xSync failure"); }
   return SQLITE_OK;
@@ -328,6 +337,9 @@ int sqlite3_extension_init(sqlite3 *db,char **err,const sqlite3_api_routines *ap
   if(rc!=SQLITE_OK)return rc;
   e->references++;
   rc=sqlite3_create_module_v2(db,"take2_epoch",&module,e,release_env);
+  if(rc!=SQLITE_OK)return rc;
+  e->references++;
+  rc=sqlite3_create_module_v2(db,"take2_lazy",&module,e,release_env);
   if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_control",1,SQLITE_UTF8, e,control,0,0,0);
   if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_attach",6,SQLITE_UTF8|SQLITE_DIRECTONLY,0,attach,0,0,0);
   return rc;
