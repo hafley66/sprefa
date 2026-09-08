@@ -9,6 +9,7 @@ run_root=$(mktemp -d "/tmp/pgx.XXXXXX")
 active_cluster=""
 deadline_seconds=$(date +%s)
 deadline_epoch_ms=$((deadline_seconds * 1000 + 1200000))
+overall_status=0
 
 cleanup() {
   cleanup_status=$?
@@ -102,6 +103,7 @@ for budget in "${budgets[@]}"; do
   sed -n 'p' "$part" >> "$output"
   if [[ "$runner_status" -ne 0 ]]; then
     printf 'runner returned %s for budget %s; failure rows retained\n' "$runner_status" "$budget" >&2
+    overall_status=1
   fi
 
   "$postgres_prefix/bin/pg_ctl" -D "$cluster_dir" -m immediate stop >/dev/null
@@ -109,3 +111,4 @@ for budget in "${budgets[@]}"; do
 done
 
 printf 'wrote %s\n' "$output"
+exit "$overall_status"
