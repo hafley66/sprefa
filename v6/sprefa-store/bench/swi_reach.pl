@@ -35,6 +35,7 @@ main(Argv) :-
     statistics(walltime, [_, SetupMs]),
     Nodes is 2 + Layers * Width,
     initial_oracle_check(Nodes, AliveBefore),
+    statistics(walltime, _),
     retract(root(0)),
     aggregate_all(count, alive(_), AliveAfter),         % incremental re-eval
     statistics(walltime, [_, RetractMs]),

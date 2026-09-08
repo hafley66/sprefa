@@ -190,7 +190,7 @@ fn main() {
     let killed = node_count - survivors.len();
     let rss = peak_rss_mb();
     eprintln!(
-        "STATUS|differential-dataflow|ok|differential-dataflow 0.25 with timely 0.31; shared contiguous-node DAG; setup and retract end after fixed-point materialization and count; exact ordered sets match BFS oracle|process peak RSS from getrusage|DL_MEMCAP_MB={cap_mb} requested through RLIMIT_AS; enforcement is best-effort and unverified"
+        "STATUS|differential-dataflow|ok|differential-dataflow 0.25 with timely 0.31; shared contiguous-node DAG; setup and retract end after fixed-point materialization and count; exact ordered sets match BFS oracle|process peak RSS from getrusage including untimed oracle allocations|DL_MEMCAP_MB={cap_mb} caps live Rust allocations through CappedAlloc (0 disables); RLIMIT_AS and RLIMIT_DATA are also requested best-effort; total process RSS is not capped"
     );
     eprintln!(
         "[dd] SETUP nodes={node_count} edges={edge_count} records={build_records} ms={:.3}",

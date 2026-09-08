@@ -16,12 +16,18 @@ if [[ -n "${BENCH_CELL_BUDGET_S:-}" ]]; then
 fi
 
 OUT="${BENCH_OUT:-bench/out}"
+if [[ -e "$OUT/results.csv" || -e "$OUT/adapter-status.tsv" ]]; then
+  echo "REFUSE existing receipts in $OUT; choose a new BENCH_OUT" >&2
+  exit 2
+fi
 mkdir -p "$OUT"
+mkdir -p "$OUT/logs"
 CSV="$OUT/results.csv"
 STATUS_TSV="$OUT/adapter-status.tsv"
 : > "$OUT/tsv2-results.jsonl"
 : > "$OUT/v1-results.jsonl"
 CAP="${CAP:-4096}"
+failed=0
 # Engines: label|binary|extra-env.
 ENGINES=(
   "swi-incr|bench/engines/swi_incr.sh|"
@@ -37,8 +43,9 @@ if [[ "${DD_SHOOTOUT:-0}" == "1" ]]; then
 fi
 if [[ "${POSTGRES_SHOOTOUT:-0}" == "1" ]]; then
   . bench/engines/0_postgres_cluster.sh
-  pg_bench_start bench
+  PG_BENCH_LOG_DIR="$OUT/logs/postgres"
   trap pg_bench_stop EXIT
+  pg_bench_start bench
   ENGINES+=(
     "pglite-query|bench/engines/2_postgres_query.sh|PG_REACH_RUNTIME=pglite"
     "native-postgres-query|bench/engines/2_postgres_query.sh|PG_REACH_RUNTIME=native"
@@ -86,28 +93,35 @@ for spec in "${ENGINES[@]}"; do
       continue
     fi
     layers="${s%x*}"; width="${s#*x}"
-    cell_log=$(mktemp)
+    cell_log="$OUT/logs/$label-$s.log"
     command_argv=(env)
     if [[ -n "$env" ]]; then command_argv+=("$env"); fi
     command_argv+=(DL_MEMCAP_MB="$CAP" "$binpath" "$layers" "$width")
     if [[ -n "${BENCH_CELL_BUDGET_S:-}" ]]; then
-      run_capped "$BENCH_CELL_BUDGET_S" "${command_argv[@]}" >/dev/null 2>"$cell_log"
+      run_capped "$BENCH_CELL_BUDGET_S" "${command_argv[@]}" >"$cell_log.stdout" 2>"$cell_log"
     else
-      "${command_argv[@]}" >/dev/null 2>"$cell_log"
+      "${command_argv[@]}" >"$cell_log.stdout" 2>"$cell_log"
     fi
     status=$?
+    printf 'EXIT_STATUS|%s\n' "$status" >> "$cell_log"
     line=$(grep '^CSV,' "$cell_log" | head -1 | cut -d, -f2-)
     status_count=0
+    adapter_failed=0
     while IFS='|' read -r marker status_engine adapter_status reason memory_scope limit_scope; do
       [[ "$marker" == STATUS ]] || continue
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$status_engine" "$s" "$adapter_status" "$reason" "$memory_scope" "$limit_scope" \
         >> "$STATUS_TSV"
       status_count=$((status_count + 1))
+      case "$adapter_status" in error|oom|timeout) adapter_failed=1 ;; esac
     done < <(grep '^STATUS|' "$cell_log" || true)
     if [[ "$status" -eq 124 || "$status" -eq 142 ]]; then
       printf '%s\t%s\ttimeout\tcase exceeded %s seconds\tunavailable\tprocess-time bound only\n' \
         "$label" "$s" "${BENCH_CELL_BUDGET_S:-unknown}" >> "$STATUS_TSV"
+      status_count=$((status_count + 1))
+    elif [[ "$status" -ne 0 ]]; then
+      printf '%s\t%s\terror\tprocess exited with status %s; see logs/%s-%s.log\tunavailable\tunknown\n' \
+        "$label" "$s" "$status" "$label" "$s" >> "$STATUS_TSV"
       status_count=$((status_count + 1))
     fi
     if [[ -n "$line" && "$(awk -F, '{print NF}' <<< "$line")" -eq 8 ]]; then
@@ -117,11 +131,13 @@ for spec in "${ENGINES[@]}"; do
     if [[ "$label" == "tsv2-gen" && "$status" -ne 0 && \
           "$(grep -c '^TSV2_ORACLE_DIFF' "$cell_log")" -gt 0 ]]; then
       cat "$cell_log"
-      rm -f "$cell_log"
       exit 1
     fi
     cat "$cell_log"
-    if [[ -n "$line" ]]; then
+    if [[ "$status" -ne 0 || "$adapter_failed" -eq 1 ]]; then
+      failed=1
+      echo "FAILED $label $s (see $cell_log and $STATUS_TSV)"
+    elif [[ -n "$line" ]]; then
       echo "$line" >> "$CSV"
       echo "OK   $label $s -> $line"
     elif [[ "$label" == "v1-gen" && "$na_count" -gt 0 ]]; then
@@ -129,16 +145,19 @@ for spec in "${ENGINES[@]}"; do
     elif [[ "$status_count" -gt 0 ]]; then
       echo "STATUS $label $s (see $STATUS_TSV)"
     else
-      # non-empty means it aborted/OOM'd at the cap: record as a wall hit.
+      # No numeric result or classified status is an unclassified failure.
       nodes=$(( 2 + layers * width ))
-      echo "$label,$nodes,,,,,WALL,,N/A,N/A,N/A" >> "$CSV"
+      echo "$label,$nodes,,,,WALL,,,N/A,N/A,N/A" >> "$CSV"
+      printf '%s\t%s\terror\tno CSV or adapter status; see logs/%s-%s.log\tunavailable\tunknown\n' \
+        "$label" "$s" "$label" "$s" >> "$STATUS_TSV"
+      failed=1
       echo "WALL $label $s (hit the ${CAP}MB budget or failed)"
     fi
-    rm -f "$cell_log"
   done
 done
 
 echo "== wrote $CSV =="
-bench/chart.sh "$CSV" "$OUT"
-bench/report.sh "$CSV" "$OUT" "$CAP" "$STATUS_TSV" > "$OUT/REPORT.md"
+bench/chart.sh "$CSV" "$OUT" || failed=1
+bench/report.sh "$CSV" "$OUT" "$CAP" "$STATUS_TSV" > "$OUT/REPORT.md" || failed=1
 echo "== wrote $OUT/REPORT.md and PNG charts in $OUT/ =="
+exit "$failed"

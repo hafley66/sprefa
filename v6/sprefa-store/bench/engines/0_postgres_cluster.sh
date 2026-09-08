@@ -38,6 +38,8 @@ pg_bench_start() {
   fi
 
   PG_NATIVE_STARTED=1
+  PG_NATIVE_BIN="$postgres_prefix/bin"
+  PG_NATIVE_CLUSTER="$cluster_dir"
   export PGHOST="$socket_dir"
   export PGPORT=5432
   PGUSER=$(id -un)
@@ -52,14 +54,21 @@ pg_bench_start() {
   export PG_POSTMASTER_PID
   export PG_NATIVE_READY=1
   export PG_NATIVE_REASON=""
-  PG_NATIVE_BIN="$postgres_prefix/bin"
-  PG_NATIVE_CLUSTER="$cluster_dir"
 }
 
 pg_bench_stop() {
   if [[ "${PG_NATIVE_STARTED:-0}" -eq 1 && -n "${PG_NATIVE_BIN:-}" && \
         -n "${PG_NATIVE_CLUSTER:-}" ]]; then
     "$PG_NATIVE_BIN/pg_ctl" -D "$PG_NATIVE_CLUSTER" -m immediate stop >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${PG_BENCH_LOG_DIR:-}" && -d "${PG_BENCH_RUN_ROOT:-}" ]]; then
+    mkdir -p "$PG_BENCH_LOG_DIR"
+    local name
+    for name in initdb postgres createdb; do
+      if [[ -f "$PG_BENCH_RUN_ROOT/$name.log" ]]; then
+        cp -f "$PG_BENCH_RUN_ROOT/$name.log" "$PG_BENCH_LOG_DIR/$name.log"
+      fi
+    done
   fi
   case "${PG_BENCH_RUN_ROOT:-}" in
     "${TMPDIR:-/tmp}"/sprefa-store-pg.*) rm -rf -- "$PG_BENCH_RUN_ROOT" ;;
