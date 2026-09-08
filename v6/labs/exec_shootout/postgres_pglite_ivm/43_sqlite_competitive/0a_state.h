@@ -24,9 +24,9 @@ typedef struct Cursor {
   int eof;
   sqlite3_int64 repeats,ordinal;
 } Cursor;
-enum { MIRROR, FILTER, BAG, GROUP, JOIN, SELF, MULTI, PROJECT, INNER, SELF_CHAIN, CHAIN, SEMI, ANTI, REACH };
-static int arity(Tab *t) {return t->mode==MULTI||t->mode==CHAIN?3:t->mode==JOIN||t->mode==SELF||t->mode==INNER||t->mode==SELF_CHAIN?2:1;}
-static int sources(Tab *t) {return t->mode==MULTI||t->mode==CHAIN?3:t->mode==JOIN||t->mode==INNER||t->mode==SEMI||t->mode==ANTI||t->mode==REACH?2:1;}
-static int bag(Tab *t) {return t->mode==FILTER||t->mode==BAG||(t->mode>=PROJECT&&t->mode<=ANTI);}
+enum { MIRROR, FILTER, BAG, GROUP, JOIN, SELF, MULTI, PROJECT, INNER, SELF_CHAIN, CHAIN, SEMI, ANTI, REACH, DISTINCT, FANOUT, DIAMOND };
+static int arity(Tab *t) {return t->mode==MULTI||t->mode==CHAIN?3:t->mode==JOIN||t->mode==SELF||t->mode==INNER||t->mode==SELF_CHAIN||t->mode==DIAMOND?2:1;}
+static int sources(Tab *t) {return t->mode==MULTI||t->mode==CHAIN||t->mode==DIAMOND?3:t->mode==JOIN||t->mode==INNER||t->mode==SEMI||t->mode==ANTI||t->mode==REACH?2:1;}
+static int bag(Tab *t) {return t->mode==FILTER||t->mode==BAG||(t->mode>=PROJECT&&t->mode!=REACH);}
 static int sql(Tab *, char *, sqlite3_value **, int);
 static int error(Tab *, const char *);

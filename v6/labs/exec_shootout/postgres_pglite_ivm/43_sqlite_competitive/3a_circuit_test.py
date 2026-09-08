@@ -14,6 +14,9 @@ QUERIES={
  'semi':('SELECT k,v FROM a WHERE EXISTS(SELECT 1 FROM b WHERE b.k=a.k)',2,2),
  'anti':('SELECT k,v FROM a WHERE NOT EXISTS(SELECT 1 FROM b WHERE b.k=a.k)',2,2),
  'reach':('WITH RECURSIVE r(k) AS(SELECT k FROM b UNION SELECT a.v FROM a JOIN r ON a.k=r.k) SELECT k FROM r',2,1),
+ 'distinct':('SELECT DISTINCT k,v FROM a',1,2),
+ 'fanout':('SELECT k,v FROM a WHERE v>=0 UNION ALL SELECT k,v FROM a WHERE v%2=0',1,2),
+ 'diamond':('SELECT a.k,b.v FROM a JOIN b ON a.v=b.k UNION ALL SELECT a.k,c.v FROM a JOIN c ON a.v=c.k',3,2),
 }
 
 class Circuits(unittest.TestCase):

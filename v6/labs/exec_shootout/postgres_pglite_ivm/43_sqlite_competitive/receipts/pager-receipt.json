@@ -1,0 +1,86 @@
+[
+  {
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py",
+      "/tmp/sprefa-sqlite-competitive/unions.dylib",
+      "/tmp/sprefa-sqlite-competitive/batch1000.json",
+      "/tmp/sprefa-sqlite-competitive/pager-1024-1.db",
+      "1",
+      "1",
+      "1",
+      "1024"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py",
+      "/tmp/sprefa-sqlite-competitive/unions.dylib",
+      "/tmp/sprefa-sqlite-competitive/batch1000.json",
+      "/tmp/sprefa-sqlite-competitive/pager-1024-2.db",
+      "1",
+      "1",
+      "1",
+      "1024"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py",
+      "/tmp/sprefa-sqlite-competitive/unions.dylib",
+      "/tmp/sprefa-sqlite-competitive/batch1000.json",
+      "/tmp/sprefa-sqlite-competitive/pager-8192-1.db",
+      "1",
+      "1",
+      "1",
+      "8192"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py",
+      "/tmp/sprefa-sqlite-competitive/unions.dylib",
+      "/tmp/sprefa-sqlite-competitive/batch1000.json",
+      "/tmp/sprefa-sqlite-competitive/pager-8192-2.db",
+      "1",
+      "1",
+      "1",
+      "8192"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py",
+      "/tmp/sprefa-sqlite-competitive/unions.dylib",
+      "/tmp/sprefa-sqlite-competitive/batch1000.json",
+      "/tmp/sprefa-sqlite-competitive/pager-32768-1.db",
+      "1",
+      "1",
+      "1",
+      "32768"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py",
+      "/tmp/sprefa-sqlite-competitive/unions.dylib",
+      "/tmp/sprefa-sqlite-competitive/batch1000.json",
+      "/tmp/sprefa-sqlite-competitive/pager-32768-2.db",
+      "1",
+      "1",
+      "1",
+      "32768"
+    ],
+    "exit_code": 0
+  }
+]

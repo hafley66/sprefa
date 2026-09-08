@@ -53,8 +53,8 @@ mutations, with exact oracle checks. Paired runner measurements are separate.
 |---|---|
 | Prepared statement reuse | Implemented 32-entry cache. Same batch1000 fixture: 191.8 ms uncached vs 79.7 ms cached; 15007 vs 4 measured write prepares, same VM work. Single profiling run, not a throughput conclusion. |
 | SQL/index tuning | Indexed per-source views remove duplicate image writes and UNION ALL materialization. Profiling dimension update: 12108 to 109 full-scan steps; 8.034 to 0.331 ms. |
-| Bounded session-local data cache | Candidate: SQLite session library, available in host compile options. No source-relation cache implemented. |
-| Delta consolidation | Implemented persistent signed support queue and set-based flush; eight batch tests pass. |
+| Bounded session-local cache | Implemented 32 prepared statements per vtab. SQLite pager targets of 1/8/32 MiB measured 28.440/29.046/26.834 ms median over two batch1000 profiles each. Pager size is a target, not a hard memory ceiling; existing runner RSS guards remain. No host source-relation copy. |
+| Delta consolidation | Implemented persistent signed support queue and set-based flush; nine batch tests per layout pass. |
 | Explicit SQL batch/flush | Implemented above, with read/missing-flush misuse rejection and savepoint tests. |
 | Public vtab lifecycle batching | xSync is commit preparation, not statement end; Take 2 exact traces prove this. Current contract uses explicit flush, preserving precommit reads after flush. Automatic statement batching remains unimplemented. |
 | Preupdate/session capture + drain | SQLite exports both ENABLE_PREUPDATE_HOOK and ENABLE_SESSION. Its header explicitly declares session objects plus an independently registered preupdate hook undefined behavior. This is not admitted to the shared-module contract without an exclusive-ownership proof; no hook is replaced. An exclusive connection factory remains a separately testable configuration. |
@@ -80,6 +80,9 @@ retained for ABI compatibility. `SELECT id FROM result` reads reachability nodes
 | chain | a,b,c | `SELECT a.k,c.v FROM a JOIN b ON a.v=b.k JOIN c ON b.v=c.k` |
 | semi / anti | a,b | Left bag rows with / without equal-key right support |
 | reach | edges a(k,v), roots b(k) | Set reachability, including cyclic retraction |
+| distinct | a | Set projection with signed bag support counts |
+| fanout | a | Bag union of `v>=0` and `v%2=0` filtered projections |
+| diamond | a,b,c | Bag union of a-to-b and a-to-c chain joins |
 
 Scalar predicates and value projections use SQLite's parser and binder:
 
@@ -112,8 +115,9 @@ oracle. This mode maintains set reachability, not path counts or arbitrary rules
 
 The circuit suite covers savepoints across flush, rollback, injected xSync
 failure, ABORT/FAIL/IGNORE/REPLACE, UPSERT, duplicate supports, NULL joins and
-reopen in both layouts. The shared suite adds 104 circuit states per layout.
-Time/frontiers, arbitrary recursive programs, and remaining circuit catalog
-families are unsupported. DROP removes extension-owned source triggers, views,
+reopen in both layouts. The shared suite adds 143 circuit states per layout,
+covering all 11 families in `30_circuit_workload.mjs`. Additional semantic catalog
+families, arbitrary recursive programs and time/frontiers are unsupported.
+DROP removes extension-owned source triggers, views,
 indexes and DRed cone storage. A teardown test proves rollback restores the
 schema and exact output, and a completed DROP permits ordinary source writes.

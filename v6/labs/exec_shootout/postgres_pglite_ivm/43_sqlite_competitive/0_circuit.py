@@ -22,7 +22,8 @@ def main():
     fixture=json.loads(Path(args.fixture).read_text())
     plans={'aggregate_churn':('join',2,3),'pipeline':('project',1,2),
            'join':('inner',2,2),'self_join':('self_chain',1,2),'chain':('chain',3,2),
-           'semijoin':('semi',2,2),'antijoin':('anti',2,2),'reach_cycle':('reach',2,1)}
+           'semijoin':('semi',2,2),'antijoin':('anti',2,2),'reach_cycle':('reach',2,1),
+           'distinct':('distinct',1,2),'fanout_fanin':('fanout',1,2),'diamond':('diamond',3,2)}
     if fixture['circuit'] not in plans or (not args.batch and fixture['circuit']!='aggregate_churn'):
         emit(event='capability',status='unsupported',reason='adapter has no admitted plan for this circuit')
         return

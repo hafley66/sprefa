@@ -25,12 +25,14 @@ static int flush_batch(Tab *t) {
   int rc=SQLITE_OK;
   if(t->mode==SEMI||t->mode==ANTI)rc=flush_membership(t);
   if(t->mode==REACH)rc=flush_reach(t);
-  for(int mask=1;mask<(1<<degree)&&rc==SQLITE_OK&&t->mode<SEMI;mask++) {
+  for(int branch=0;branch<(t->mode==DIAMOND?2:1);branch++)
+  for(int mask=1;mask<(1<<degree)&&rc==SQLITE_OK&&t->mode!=SEMI&&t->mode!=ANTI&&t->mode!=REACH;mask++) {
     sqlite3_str *from=sqlite3_str_new(t->db);
     sqlite3_str *weight=sqlite3_str_new(t->db);
     int bits=0;
     for(int i=0;i<degree;i++) {
       int side=t->mode==SELF||t->mode==SELF_CHAIN?0:i;
+      if(t->mode==DIAMOND&&i==1)side=branch+1;
       if(i) {sqlite3_str_appendall(from," JOIN ");sqlite3_str_appendall(weight,"*");}
       if(mask&(1<<i)) {
         bits++;
@@ -39,12 +41,13 @@ static int flush_batch(Tab *t) {
       else sqlite3_str_appendf(from,"(SELECT k,v,1 AS w FROM \"%w\".\"%w_state\" WHERE side=%d) b%d",t->schema,t->name,side,i);
       sqlite3_str_appendf(weight,"b%d.w",i);
       if(i) {
-        if(t->mode==SELF_CHAIN||t->mode==CHAIN)sqlite3_str_appendf(from," ON b%d.v=b%d.k",i-1,i);
+        if(t->mode==SELF_CHAIN||t->mode==CHAIN||t->mode==DIAMOND)sqlite3_str_appendf(from," ON b%d.v=b%d.k",i-1,i);
         else sqlite3_str_appendf(from," ON b0.k=b%d.k",i);
       }
     }
     char *relations=sqlite3_str_finish(from),*w=sqlite3_str_finish(weight);
-    const char *value=t->mode==PROJECT?t->projection:t->mode==SELF_CHAIN?"b1.v":t->mode==CHAIN?"b2.v":degree==3?"b0.v*b1.v*b2.v":degree==2?"b0.v*b1.v":"b0.v";
+    if(t->mode==FANOUT){char *prior=w;w=sqlite3_mprintf("(%s*(coalesce(b0.v>=0,0)+coalesce(b0.v%%2=0,0)))",prior);sqlite3_free(prior);}
+    const char *value=t->mode==PROJECT?t->projection:t->mode==SELF_CHAIN||t->mode==DIAMOND?"b1.v":t->mode==CHAIN?"b2.v":degree==3?"b0.v*b1.v*b2.v":degree==2?"b0.v*b1.v":"b0.v";
     char *key=bag(t)?sqlite3_mprintf("json_array(b0.k,%s)",value):sqlite3_mprintf("json_array(b0.k)");
     char *group=bag(t)?sqlite3_mprintf("b0.k,%s",value):sqlite3_mprintf("b0.k");
     char *where=t->mode==PROJECT?sqlite3_mprintf("WHERE (%s)",t->predicate):sqlite3_mprintf("%s",t->mode==FILTER?"WHERE b0.v>=0":"");
@@ -86,6 +89,7 @@ static int source_view_setup(Tab *t) {
   while(rc==SQLITE_OK) {
     int step=sqlite3_step(s);if(step==SQLITE_DONE)break;if(step!=SQLITE_ROW){rc=step;break;}
     if(count>=3){rc=error(t,"too many source sides");break;}
+    if(sqlite3_column_int(s,0)!=count){rc=error(t,"source sides must be contiguous from zero");break;}
     indexes[count]=sqlite3_mprintf("CREATE INDEX \"%w\".\"%w_live_key_%d\" ON \"%w\"(\"%w\")",t->schema,t->name,count,sqlite3_column_text(s,1),sqlite3_column_text(s,3));
     views[count]=sqlite3_mprintf("CREATE VIEW \"%w\".\"%w_live_%d\" AS SELECT \"%w\" AS id,\"%w\" AS k,\"%w\" AS v FROM \"%w\"",t->schema,t->name,count,sqlite3_column_text(s,2),sqlite3_column_text(s,3),sqlite3_column_text(s,4),sqlite3_column_text(s,1));
     if(count++)sqlite3_str_appendall(view," UNION ALL ");

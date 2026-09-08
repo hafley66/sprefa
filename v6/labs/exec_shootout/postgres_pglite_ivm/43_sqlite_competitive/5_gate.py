@@ -17,7 +17,7 @@ commands=[['cc','-O2','-Wall','-Wextra','-Werror','-fPIC','-shared','-I/opt/home
           [sys.executable,str(here/'3a_circuit_test.py')],
           [sys.executable,str(here/'3a_circuit_test.py')],
           ['node',str(here.parent/'12_crossover_runner.mjs'),'--profile','semantic','--arms','sqlite-competitive-batch,sqlite-competitive-sourceview','--competitive-extension',env['TAKE2_EXTENSION'],'--output',str(run/'shared.jsonl'),'--repetitions','1','--warmups','0']]
-commands.append(['node',str(here.parent/'12_crossover_runner.mjs'),'--profile','circuits','--circuits','pipeline,join,self_join,chain,semijoin,antijoin,reach_cycle,aggregate_churn','--arms','sqlite-competitive-batch,sqlite-competitive-sourceview','--competitive-extension',env['TAKE2_EXTENSION'],'--output',str(run/'circuits.jsonl'),'--repetitions','1','--warmups','0'])
+commands.append(['node',str(here.parent/'12_crossover_runner.mjs'),'--profile','circuits','--circuits','pipeline,join,self_join,chain,semijoin,antijoin,reach_cycle,aggregate_churn,distinct,fanout_fanin,diamond','--arms','sqlite-competitive-batch,sqlite-competitive-sourceview','--competitive-extension',env['TAKE2_EXTENSION'],'--output',str(run/'circuits.jsonl'),'--repetitions','1','--warmups','0'])
 steps=[];rc=0
 for index,command in enumerate(commands):
     with (run/f'{index}.log').open('wb') as log:
@@ -30,7 +30,7 @@ if rc==0:
     if not any(r['event']=='all-arm-run' and r.get('all_input_output_states_match') and r.get('state_count_per_arm')==171 for r in rows):rc=1
     circuits=[json.loads(s) for s in (run/'circuits.jsonl').read_text().splitlines()]
     paired=[r for r in circuits if r['event']=='all-arm-run']
-    if len(paired)!=8 or not all(r.get('all_input_output_states_match') and r.get('state_count_per_arm')==13 and len(r['arms'])==2 and not r['excluded_arms'] for r in paired):rc=1
+    if len(paired)!=11 or not all(r.get('all_input_output_states_match') and r.get('state_count_per_arm')==13 and len(r['arms'])==2 and not r['excluded_arms'] for r in paired):rc=1
 hashes={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in [*here.glob('*'),*run.glob('*')] if p.is_file()}
 (run/'receipt.json').write_text(json.dumps(dict(exit_code=rc,steps=steps,hashes=hashes),indent=2))
 print(json.dumps(dict(receipt=str(run/'receipt.json'),exit_code=rc)));sys.exit(rc)

@@ -154,3 +154,31 @@ Values are median cumulative mutation + query ms. Setup, RSS scope, durable SQL
 settings, DB/WAL sizes and full-query/shadow-batch results remain in each JSONL.
 `receipts/sweep-receipt.json` preserves exact commands and all three exit codes 0.
 The swept binary is pinned by hash in each run's metadata, before teardown edits.
+
+## Core circuit catalog and cache experiment
+
+Teardown/sweep commit: `3478a9bbb`. Added DISTINCT support, fanout/fanin and diamond
+bag union lowering. All 11 core circuit families now run in both competitive
+layouts. Current gate: 65 test methods, 171 semantic states plus 143 circuit states
+per arm. `/tmp/sprefa-sqlite-competitive/gate-c9hf310n/receipt.json` exits 0.
+Three focused unsupported-mode red tests precede the implementation; logs remain.
+
+Two-repetition small shared-circuit medians (mutation + query ms):
+
+| Circuit | DD volatile | pg_ivm | SQLite full | Competitive source views |
+|---|---:|---:|---:|---:|
+| distinct | 0.567 | 15.454 | 2.223 | 3.942 |
+| fanout_fanin | 0.285 | unsupported | 1.759 | 7.798 |
+| diamond | 0.470 | unsupported | 1.894 | 6.892 |
+
+`receipts/unions-paired.jsonl` retains the complete shared Bash command, hashes,
+other arms, unsupported cells and memory/disk telemetry; exit 0. Exact oracle
+checks precede every admitted timing record.
+
+Six focused batch1000 profiles exercise SQLite session-local pager targets of
+1024/8192/32768 KiB. Median totals: 28.440/29.046/26.834 ms, two runs per target.
+The profile transport accepts this target as its last argument; each run retains
+extension hash, target and exact SQL oracle checks. `pager-receipt.json` records
+six exit codes 0. This uses SQLite's pager and the 32-statement extension cache;
+no copied source relation is held by Python or C. Pager targets are not hard RSS
+limits. The shared benchmark retains its existing memory guards and cache target.

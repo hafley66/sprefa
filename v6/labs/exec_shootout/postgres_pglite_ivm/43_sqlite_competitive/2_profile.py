@@ -1,5 +1,6 @@
 """Profile the shared batch1000 fixture, with unchanged SQL oracle checks."""
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -12,8 +13,11 @@ oracle=importlib.util.module_from_spec(spec);spec.loader.exec_module(oracle)
 extension,fixture_path,db_path,cache,*rest=sys.argv[1:]
 batch=bool(rest and int(rest[0]))
 views=bool(len(rest)>1 and int(rest[1]))
+pager_kib=int(rest[2]) if len(rest)>2 else 8192
+if not 1<=pager_kib<=32768:raise ValueError('pager cache must be 1..32768 KiB')
 fixture=json.loads(Path(fixture_path).read_text())
 db=oracle.connection(db_path,extension)
+db.execute(f'PRAGMA cache_size=-{pager_kib}')
 if int(cache):db.execute("SELECT take2_control('cache_on')").fetchall()
 db.executescript('PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;CREATE TABLE fact(id INTEGER PRIMARY KEY,group_id INTEGER,amount INTEGER);CREATE TABLE dimension(group_id INTEGER PRIMARY KEY,factor INTEGER);CREATE VIRTUAL TABLE native_result USING take2(join);CREATE VIEW summary AS SELECT id group_id,k n,v s FROM native_result;')
 db.execute("SELECT take2_attach('native_result','fact',0,'id','group_id','amount')").fetchall()
@@ -33,5 +37,5 @@ for state in fixture['states'][1:]:
     elapsed=time.perf_counter_ns()-start
     metrics=json.loads(db.execute("SELECT take2_control('profile')").fetchone()[0])
     oracle.verify(db,state)
-    print(json.dumps(dict(state=state['name'],cache=bool(int(cache)),batch=batch,source_views=views,elapsed_ns=elapsed,**metrics)),flush=True)
+    print(json.dumps(dict(state=state['name'],cache=bool(int(cache)),batch=batch,source_views=views,pager_kib=pager_kib,extension_sha256=hashlib.sha256(Path(extension).read_bytes()).hexdigest(),elapsed_ns=elapsed,**metrics)),flush=True)
 db.close()

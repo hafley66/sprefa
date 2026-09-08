@@ -83,9 +83,9 @@ static int connect(sqlite3 *db, void *aux, int argc, const char *const *argv,
   memset(t, 0, sizeof(*t));
   t->db = db; t->env = aux;
   if(argc>=4) {
-    const char *modes[]={"mirror","filter","bag","group","join","self","multi","project","inner","self_chain","chain","semi","anti","reach"};
+    const char *modes[]={"mirror","filter","bag","group","join","self","multi","project","inner","self_chain","chain","semi","anti","reach","distinct","fanout","diamond"};
     int found=0;
-    for(int i=0;i<14;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
+    for(int i=0;i<17;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
     if(!found) { sqlite3_free(t); return SQLITE_ERROR; }
   }
   if(t->mode==PROJECT) {
@@ -178,6 +178,7 @@ static int next(sqlite3_vtab_cursor *p) {
   if(c->repeats>1){c->repeats--;return SQLITE_OK;}
   int rc = sqlite3_step(c->stmt); c->eof = rc != SQLITE_ROW;
   if(rc==SQLITE_ROW&&((Tab *)p->pVtab)->mode>=PROJECT)c->repeats=sqlite3_column_int64(c->stmt,3);
+  if(((Tab *)p->pVtab)->mode==DISTINCT)c->repeats=1;
   return rc == SQLITE_ROW || rc == SQLITE_DONE ? SQLITE_OK : rc;
 }
 static int filter(sqlite3_vtab_cursor *p, int idx, const char *str, int n, sqlite3_value **args) {
