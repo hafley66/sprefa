@@ -1,0 +1,6 @@
+(node:64523) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+INPUT|tsv2-runtime|0dda99eadff144d9a4065cfa603e29e6282c93d87ad25f2c14e0bb88ad1cd0a9
+STATUS|tsv2-runtime|ok|compile_dl6 emitted program.tick through IncrementalRuntime; emitted recursive DRed plan; setup loads edges in 1000-row batches then roots; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|Node process RSS sampled after validation; in-memory libSQL store|DL_MEMCAP_MB limits Node old-space only; SQLite C heap and total RSS unenforced
+CSV,tsv2-runtime,402,696,180,17.158,4.779,98,150.7,N/A,N/A,0
+EXIT_STATUS|0

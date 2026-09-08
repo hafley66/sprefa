@@ -1,0 +1,4 @@
+INPUT|swi-incr|55160e384ef11aad18268e39a8f4b7550e855816d4a54bbc812ebc7cf07fb27b
+STATUS|swi-incr|ok|SWI incremental tabling; setup and retract end after table materialization and count; exact ordered initial set matches the generated node range and exact incremental survivor set matches cold table recomputation|process RSS sampled with ps after both phases|DL_MEMCAP_MB is passed by the harness but unenforced by this adapter
+CSV,swi-incr,12002,24096,1715,92,84,0,50.12
+EXIT_STATUS|0

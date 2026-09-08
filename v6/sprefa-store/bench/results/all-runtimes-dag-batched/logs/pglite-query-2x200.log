@@ -1,0 +1,4 @@
+INPUT|pglite-query|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|pglite-query|ok|ordinary recursive SQL full recomputation; timed phases end after materialization and count; exact before=ada7ea43e998e3ba1357b4270279f2976e2659c6e3dd768d0fbfc6a15cd11314 after=d290b0a93c2138767799bffe561de2bad1a45c0ffc8210a3be393f16eb7bc305; untimed transfer_ms before=1.048 after=0.469; untimed checksum_validation_ms before=0.909 after=0.083; PostgreSQL 18.3|sampled RSS of the Node process containing PGlite WASM|DL_MEMCAP_MB=4096 limits Node old-space only; total process RSS is unenforced
+CSV,pglite-query,402,667,200,22.880,2.327,N/A,1126.0,N/A,N/A,38.117
+EXIT_STATUS|0
