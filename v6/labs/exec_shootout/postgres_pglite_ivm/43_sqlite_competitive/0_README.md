@@ -3,6 +3,24 @@
 Take 1 and Take 2 remain immutable comparison arms. This directory copies the
 Take 2 C extension as the starting point for separately built variants.
 
+SELECT compilation reading order: `6_sql_compile/0_README.md`, pinned Cargo
+manifest/lock, `6_sql_compile/1_main.rs`, then `7_compile_test.py`. The offline
+compiler accepts two scalar projections over up to three INNER/theta/self-join
+occurrences. It emits a versioned JSON plan for `take2_lazy(plan,'...')`.
+SQLite privately binds k/v scalar expressions. The C delta executor maps each
+occurrence to its source side and applies every nonempty inclusion-exclusion
+mask against current source images. No full-query recomputation is used.
+Projection types must be INTEGER/NULL before affinity; accumulator overflow
+fails atomically. Other SELECT shapes remain explicit compiler errors.
+
+Lazy source-view layout setup now requires `SELECT take2_prepare('result')`
+after all `take2_attach` calls and before source writes. The function is
+`SQLITE_DIRECTONLY`; its internal op 13 rejects ordinary caller INSERTs.
+Missing setup rejects the first write. This fixes observed index omissions and
+malformed-index errors when the old lazy path created source indexes inside the
+first multi-row source INSERT. Setup, rollback, reopen and integrity checks are
+covered. Existing receipts remain preserved, including the newly found failure.
+
 Current SQL boundary:
 
 ```sql

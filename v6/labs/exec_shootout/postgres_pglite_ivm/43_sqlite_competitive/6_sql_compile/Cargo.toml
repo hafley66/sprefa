@@ -1,0 +1,15 @@
+[package]
+name = "take2-sql-compile"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace]
+
+[[bin]]
+name = "take2-sql-compile"
+path = "1_main.rs"
+
+[dependencies]
+sqlite3-parser = "=0.17.0"
+serde_json = "=1.0.149"

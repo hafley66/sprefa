@@ -3,6 +3,7 @@ typedef struct Env {
   int used, events, logging, fail_sync;
   int cache;
   int source_views;
+  int preparing;
   int references;
   sqlite3_int64 prepares,steps,vm,scans,prepare_ns,step_ns;
   sqlite3_int64 delta_build_ns,reprepares,scalar_steps;
@@ -22,6 +23,8 @@ typedef struct Tab {
   int lazy;
   sqlite3_int64 epoch;
   char *predicate,*projection;
+  int degree,source_count,side_map[3];
+  char *aliases[3],*key_expression;
 } Tab;
 typedef struct Cursor {
   sqlite3_vtab_cursor base;
@@ -29,9 +32,9 @@ typedef struct Cursor {
   int eof;
   sqlite3_int64 repeats,ordinal;
 } Cursor;
-enum { MIRROR, FILTER, BAG, GROUP, JOIN, SELF, MULTI, PROJECT, INNER, SELF_CHAIN, CHAIN, SEMI, ANTI, REACH, DISTINCT, FANOUT, DIAMOND };
-static int arity(Tab *t) {return t->mode==MULTI||t->mode==CHAIN?3:t->mode==JOIN||t->mode==SELF||t->mode==INNER||t->mode==SELF_CHAIN||t->mode==DIAMOND?2:1;}
-static int sources(Tab *t) {return t->mode==MULTI||t->mode==CHAIN||t->mode==DIAMOND?3:t->mode==JOIN||t->mode==INNER||t->mode==SEMI||t->mode==ANTI||t->mode==REACH?2:1;}
+enum { MIRROR, FILTER, BAG, GROUP, JOIN, SELF, MULTI, PROJECT, INNER, SELF_CHAIN, CHAIN, SEMI, ANTI, REACH, DISTINCT, FANOUT, DIAMOND, PLAN };
+static int arity(Tab *t) {return t->mode==PLAN?t->degree:t->mode==MULTI||t->mode==CHAIN?3:t->mode==JOIN||t->mode==SELF||t->mode==INNER||t->mode==SELF_CHAIN||t->mode==DIAMOND?2:1;}
+static int sources(Tab *t) {return t->mode==PLAN?t->source_count:t->mode==MULTI||t->mode==CHAIN||t->mode==DIAMOND?3:t->mode==JOIN||t->mode==INNER||t->mode==SEMI||t->mode==ANTI||t->mode==REACH?2:1;}
 static int bag(Tab *t) {return t->mode==FILTER||t->mode==BAG||(t->mode>=PROJECT&&t->mode!=REACH);}
 static int sql(Tab *, char *, sqlite3_value **, int);
 static int scalar_sql(Tab *, char *, sqlite3_value **, int,sqlite3_int64 *);

@@ -1,0 +1,46 @@
+    Updating crates.io index
+     Locking 22 packages to highest compatible versions
+      Adding serde_json v1.0.149 (available: v1.0.151)
+ Downloading 0 crates                                                          Downloading 1 crate                                                           Downloading 2 crates                                                          Downloading 3 crates                                                          Downloading 4 crates                                                          Downloading 5 crates                                                          Downloading 6 crates                                                          Downloading 7 crates                                                          Downloading 8 crates                                                          Downloading 9 crates                                                          Downloading 10 crates                                                         Downloading 11 crates                                                         Downloading 12 crates                                                         Downloading 13 crates                                                         Downloading 14 crates                                                         Downloading 15 crates                                                          Downloaded bitflags v2.13.1
+ Downloading 15 crates, remaining bytes: 96.4KiB                                Downloaded equivalent v1.0.2
+ Downloading 14 crates, remaining bytes: 912.3KiB                               Downloaded fallible-iterator v0.3.0
+ Downloading 13 crates, remaining bytes: 864.4KiB                               Downloaded itoa v1.0.18
+ Downloading 12 crates, remaining bytes: 864.4KiB                               Downloaded memchr v2.8.3
+ Downloading 11 crates, remaining bytes: 818.2KiB                               Downloaded shlex v2.0.1
+ Downloading 10 crates, remaining bytes: 482.5KiB                               Downloaded zmij v1.0.23
+ Downloading 9 crates, remaining bytes: 354.6KiB                                Downloaded find-msvc-tools v0.1.12
+ Downloading 8 crates, remaining bytes: 79.4KiB                                 Downloaded bumpalo v3.20.3
+ Downloading 7 crates, remaining bytes: 31.4KiB                                 Downloaded serde_core v1.0.229
+ Downloading 6 crates                                                           Downloaded log v0.4.34
+ Downloading 5 crates                                                           Downloaded cc v1.4.5
+ Downloading 4 crates                                                           Downloaded indexmap v2.14.2
+ Downloading 3 crates                                                           Downloaded sqlite3-parser v0.17.0
+ Downloading 2 crates                                                           Downloaded serde_json v1.0.149
+ Downloading 1 crate                                                            Downloaded hashbrown v0.17.1
+ Downloading 0 crates                                                           Downloaded 16 crates (1.1MiB) in 0.19s
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.12
+   Compiling serde_core v1.0.229
+    Building [                            ] 0/25: shlex, serde_core(build.rs)…   Compiling cc v1.4.5
+    Building [>                           ] 1/25: serde_core(build.rs), cc, f…   Compiling zmij v1.0.23
+    Building [=>                          ] 2/25: serde_core(build.rs), cc, z…    Building [===>                        ] 4/25: serde_core(build), cc, zmij…   Compiling equivalent v1.0.2
+    Building [====>                       ] 5/25: equivalent, cc, zmij(build)    Compiling hashbrown v0.17.1
+    Building [=====>                      ] 6/25: hashbrown, cc, zmij(build)     Compiling memchr v2.8.3
+    Building [======>                     ] 7/25: memchr, hashbrown, cc          Compiling serde_json v1.0.149
+    Building [=======>                    ] 8/25: memchr, serde_json(build.rs…   Compiling indexmap v2.14.2
+    Building [=========>                  ] 9/25: indexmap, serde_json(build.…    Building [=========>                 ] 10/25: indexmap, cc, serde_json(bu…   Compiling sqlite3-parser v0.17.0
+    Building [==========>                ] 11/25: indexmap, sqlite3-parser(bu…    Building [===========>               ] 12/25: indexmap, sqlite3-parser(bu…    Building [=============>             ] 13/25: indexmap, sqlite3-parser(bu…    Building [==============>            ] 14/25: sqlite3-parser(build), zmij…   Compiling fallible-iterator v0.3.0
+    Building [===============>           ] 15/25: sqlite3-parser(build), fall…   Compiling bumpalo v3.20.3
+    Building [================>          ] 16/25: sqlite3-parser(build), bump…   Compiling bitflags v2.13.1
+    Building [=================>         ] 17/25: sqlite3-parser(build), bitf…   Compiling itoa v1.0.18
+    Building [==================>        ] 18/25: sqlite3-parser(build), itoa…   Compiling log v0.4.34
+    Building [===================>       ] 19/25: log, sqlite3-parser(build),…    Building [====================>      ] 20/25: sqlite3-parser(build), serd…    Building [=====================>     ] 21/25: sqlite3-parser, serde_core      Building [=====================>     ] 21/25: sqlite3-parser, serde_json,…    Building [======================>    ] 22/25: sqlite3-parser, serde_json      Building [=======================>   ] 23/25: sqlite3-parser                 Compiling take2-sql-compile v0.1.0 (/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/6_sql_compile)
+    Building [========================>  ] 24/25: take2-sql-compile(bin test)     Finished `test` profile [unoptimized + debuginfo] target(s) in 3.98s
+     Running unittests 1_main.rs (/tmp/sprefa-sqlite-competitive/compiler-target/debug/build/take2-sql-compile/78d22f267ffadd32/out/take2_sql_compile-78d22f267ffadd32)
+
+running 2 tests
+test tests::repeated_source_and_theta ... ok
+test tests::unsupported_shapes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

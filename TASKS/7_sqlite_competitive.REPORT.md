@@ -1,14 +1,13 @@
 # Competitive SQLite-native IVM
 
-Core implementation: `5ec333d19`; cache audit: `c4de80359`. Current gate exit 0:
-103 test methods plus the plan audit, 171 shared
-semantic states for each original competitive layout, and 143 core circuit states
-for each of three competitive variants. All eleven core circuits include actual
+Current gate exit 0: 147 Python test methods, 2 Rust compiler tests, and the plan
+audit, 171 shared semantic states per batch/sourceview/lazy arm, and 143 core
+circuit states per batch/sourceview/frontier/lazy arm. All eleven core circuits include actual
 incremental maintenance, with negation, cyclic retraction and a separately
 labeled finite scalar epoch variant. CI execution coverage is additive.
 
 Reproduce: `python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/5_gate.py`.
-Current receipt: `43_sqlite_competitive/receipts/invariant-cache-gate.json`.
+Current receipt: `43_sqlite_competitive/receipts/compiler-gate.json`.
 Take 1, Take 2, other worktrees and DL7 sources remain preserved. No push or merge.
 
 | Commit | Tested step |
@@ -361,3 +360,37 @@ debug SQLite runtime, including lazy xFilter/xSync writes. The stock arm remains
 Source/library hashes and upstream logs are preserved in debug-build receipts.
 This closes the custom-callback necessity question for the tested read/commit
 contract. It does not claim a general statement-end notification API.
+
+## General SELECT lowering and source-view initialization repair
+
+Reuses Take 1's sqlite3-parser 0.17.0 (Unlicense) AST and expression serializer;
+serde_json 1.0.149 serializes a bounded version-1 plan. Cargo.lock pins transitive
+dependencies. Compiler/build directories are task-owned. The compiler emits
+configuration once and performs no database maintenance. Source schema binding,
+delta masks, scheduling and persistent storage remain separate implementation
+units. Supported fragment: two scalar projections, one to three main table
+occurrences, INNER/CROSS/theta joins, repeated sources, WHERE and admitted scalar
+expressions. Aggregates, negation, recursion and epochs retain their dedicated
+mode APIs; general SELECT lowering for these shapes remains unsupported.
+
+Initial oracle run failed eight subcases before generic delta execution. After
+that implementation, first-ever multi-row source-view insertion exposed an index
+initialization defect in the earlier lazy path: CREATE INDEX ran inside a source
+row trigger, omitted entries, and later DELETE reported malformed images.
+`compiler-sourceview-failure.log` preserves this exit-1 result. No user DB was
+opened. The repaired lazy layout requires direct-only `take2_prepare(name)`
+before source DML. Omitted setup and trigger invocation fail; preparation rollback
+requires preparation again. First multi-row insert/reopen/delete passes exact
+oracle and PRAGMA integrity_check. Prior lazy benchmark receipts predate this fix.
+
+Current gate: `/tmp/sprefa-sqlite-competitive/gate-v969vz3q/receipt.json`, exit 0.
+147 Python methods and 2 Rust tests pass, plus existing shared circuits/oracles.
+Compiler oracle covers six actual SELECTs, including inequality, expressions,
+self/multiway cross terms, NULLs, savepoint rollback, reopen, and retraction.
+Focused source-view compiler tests also pass under the pinned SQLITE_DEBUG build.
+CI execution coverage adds compiler build/tests and two layout regressions.
+
+Commands:
+`CARGO_HOME=/tmp/sprefa-sqlite-competitive/cargo CARGO_TARGET_DIR=/tmp/sprefa-sqlite-competitive/compiler-target cargo test --locked --manifest-path v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/6_sql_compile/Cargo.toml`
+and the reproducible `5_gate.py` command above. Retained red/green logs and gate
+hashes are in `43_sqlite_competitive/receipts/compiler-*`.

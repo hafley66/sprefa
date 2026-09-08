@@ -1,0 +1,106 @@
+test_projection_type_failure_rolls_back (__main__.CompilerOracle.test_projection_type_failure_rolls_back) ... 
+  test_projection_type_failure_rolls_back (__main__.CompilerOracle.test_projection_type_failure_rolls_back) (value="'12'") ... FAIL
+  test_projection_type_failure_rolls_back (__main__.CompilerOracle.test_projection_type_failure_rolls_back) (value='1.5') ... FAIL
+test_scalar_binding_rejections (__main__.CompilerOracle.test_scalar_binding_rejections) ... ok
+test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) ... 
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT a.k+1, CASE WHEN a.v<0 THEN -a.v ELSE a.v END FROM a WHERE a.k%2=0') ... FAIL
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k-y.k, coalesce(x.v,0)+coalesce(y.v,0) FROM a x JOIN b y ON x.k<y.k WHERE x.v IS NOT NULL') ... FAIL
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k, y.v FROM a x JOIN a y ON x.v=y.k WHERE x.k<>y.k') ... FAIL
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k+z.k, y.v-z.v FROM a x JOIN b y ON x.v<y.k JOIN c z ON y.v=z.k WHERE z.v>=0') ... FAIL
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k, z.v FROM a x JOIN a y ON x.v=y.k JOIN a z ON y.v=z.k') ... FAIL
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT "left side".k, "right side".v FROM a AS "left side", b AS "right side" WHERE "left side".v>"right side".k') ... FAIL
+
+======================================================================
+FAIL: test_projection_type_failure_rolls_back (__main__.CompilerOracle.test_projection_type_failure_rolls_back) (value="'12'")
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 94, in test_projection_type_failure_rolls_back
+    with self.assertRaises(sqlite3.DatabaseError):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: DatabaseError not raised
+
+======================================================================
+FAIL: test_projection_type_failure_rolls_back (__main__.CompilerOracle.test_projection_type_failure_rolls_back) (value='1.5')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 94, in test_projection_type_failure_rolls_back
+    with self.assertRaises(sqlite3.DatabaseError):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: DatabaseError not raised
+
+======================================================================
+FAIL: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT a.k+1, CASE WHEN a.v<0 THEN -a.v ELSE a.v END FROM a WHERE a.k%2=0')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 64, in test_shared_select_oracles
+    check()
+    ~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 52, in check
+    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Counter({(2, 1): 1}) != Counter({(3, 1): 1})
+
+======================================================================
+FAIL: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k-y.k, coalesce(x.v,0)+coalesce(y.v,0) FROM a x JOIN b y ON x.k<y.k WHERE x.v IS NOT NULL')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 64, in test_shared_select_oracles
+    check()
+    ~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 52, in check
+    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Counter({(1, 0): 1}) != Counter()
+
+======================================================================
+FAIL: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k, y.v FROM a x JOIN a y ON x.v=y.k WHERE x.k<>y.k')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 64, in test_shared_select_oracles
+    check()
+    ~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 52, in check
+    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Counter() != Counter({(2, 3): 1})
+
+======================================================================
+FAIL: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k+z.k, y.v-z.v FROM a x JOIN b y ON x.v<y.k JOIN c z ON y.v=z.k WHERE z.v>=0')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 64, in test_shared_select_oracles
+    check()
+    ~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 52, in check
+    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Counter({(1, None): 1}) != Counter()
+
+======================================================================
+FAIL: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k, z.v FROM a x JOIN a y ON x.v=y.k JOIN a z ON y.v=z.k')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 64, in test_shared_select_oracles
+    check()
+    ~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 52, in check
+    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Counter() != Counter({(-1, -1): 1, (-1, 1): 1, (-1, 0): 1, (-1, 3): 1})
+
+======================================================================
+FAIL: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT "left side".k, "right side".v FROM a AS "left side", b AS "right side" WHERE "left side".v>"right side".k')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 64, in test_shared_select_oracles
+    check()
+    ~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 52, in check
+    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Counter({(1, 0): 1}) != Counter()
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.383s
+
+FAILED (failures=8)

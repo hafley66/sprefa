@@ -1,0 +1,9 @@
+test_malformed_plan_rejected (__main__.CompilerOracle.test_malformed_plan_rejected) ... ok
+test_projection_type_failure_rolls_back (__main__.CompilerOracle.test_projection_type_failure_rolls_back) ... ok
+test_scalar_binding_rejections (__main__.CompilerOracle.test_scalar_binding_rejections) ... ok
+test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.249s
+
+OK

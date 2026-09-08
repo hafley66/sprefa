@@ -24,7 +24,9 @@ class BatchConnection(sqlite3.Connection):
         if not lazy and sql=='BEGIN IMMEDIATE' and self.opened:
             super().execute('INSERT INTO native_result(op) VALUES(10)')
         if sql=="SELECT take2_control('trace')":self.opened=True
-        if source_views and 'take2_attach' in sql and "'dimension'" in sql:self.opened=True
+        if source_views and 'take2_attach' in sql and "'dimension'" in sql:
+            self.opened=True
+            if lazy:super().execute("SELECT take2_prepare('native_result')")
         return cursor
 
 def connection(path,extension):

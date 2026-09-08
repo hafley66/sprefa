@@ -76,6 +76,7 @@ static int disconnect(sqlite3_vtab *v) {
   for(int i=0;i<32;i++) {sqlite3_finalize(t->cached[i].stmt);sqlite3_free(t->cached[i].text);}
   sqlite3_finalize(t->batch_read);
   sqlite3_free(t->predicate);sqlite3_free(t->projection);
+  sqlite3_free(t->key_expression);for(int i=0;i<3;i++)sqlite3_free(t->aliases[i]);
   sqlite3_free(t->schema); sqlite3_free(t->name); sqlite3_free(t);
   return SQLITE_OK;
 }
@@ -83,7 +84,7 @@ static int disconnect(sqlite3_vtab *v) {
 static int connect(sqlite3 *db, void *aux, int argc, const char *const *argv,
                    sqlite3_vtab **out, char **err) {
   (void)err;
-  if (argc != 3 && argc != 4 && argc != 6) return SQLITE_ERROR;
+  if (argc != 3 && argc != 4 && argc != 5 && argc != 6) return SQLITE_ERROR;
   Tab *t = sqlite3_malloc64(sizeof(*t));
   if (!t) return SQLITE_NOMEM;
   memset(t, 0, sizeof(*t));
@@ -91,13 +92,16 @@ static int connect(sqlite3 *db, void *aux, int argc, const char *const *argv,
   t->frontiers=!strcmp(argv[0],"take2_epoch");
   t->lazy=!strcmp(argv[0],"take2_lazy");
   if(argc>=4) {
-    const char *modes[]={"mirror","filter","bag","group","join","self","multi","project","inner","self_chain","chain","semi","anti","reach","distinct","fanout","diamond"};
+    const char *modes[]={"mirror","filter","bag","group","join","self","multi","project","inner","self_chain","chain","semi","anti","reach","distinct","fanout","diamond","plan"};
     int found=0;
-    for(int i=0;i<17;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
+    for(int i=0;i<18;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
     if(!found) { sqlite3_free(t); return SQLITE_ERROR; }
   }
   if((t->frontiers||t->lazy)&&!t->mode){sqlite3_free(t);*err=sqlite3_mprintf("epoch/lazy module requires a query mode");return SQLITE_ERROR;}
-  if(t->mode==PROJECT) {
+  if(t->mode==PLAN) {
+    if(argc!=5||load_plan(t,argv[4])!=SQLITE_OK){disconnect(&t->base);*err=sqlite3_mprintf("take2: invalid bounded plan or scalar binding");return SQLITE_ERROR;}
+  } else if(argc==5){disconnect(&t->base);return SQLITE_ERROR;}
+  else if(t->mode==PROJECT) {
     t->predicate=argc==6?literal(argv[4]):sqlite3_mprintf("b0.v>=0");
     t->projection=argc==6?literal(argv[5]):sqlite3_mprintf("b0.v*2");
     if(!t->predicate||!t->projection||validate_expressions(t)!=SQLITE_OK){disconnect(&t->base);*err=sqlite3_mprintf("take2: scalar plan requires k/v expressions without subqueries or unapproved functions");return SQLITE_ERROR;}
@@ -232,6 +236,13 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
   if (argc != 10 || sqlite3_value_type(a[0]) != SQLITE_NULL)
     return error(t,"only forwarded event INSERT is supported");
   int op = sqlite3_value_int(a[5]);
+  if(op==13) {
+    if(!t->env->preparing)return error(t,"layout setup requires direct take2_prepare call");
+    int flag=0,rc=batching(t,&flag);
+    if(rc==SQLITE_OK&&flag)rc=error(t,"layout setup requires no pending batch");
+    if(rc==SQLITE_OK)rc=source_view_setup(t);
+    *id=0;return rc;
+  }
   if(op==10||op==11) {*id=0;t->busy=1;int rc=batch_command(t,op);t->busy=0;return rc;}
   if(op==12){*id=0;t->busy=1;int rc=seal_frontier(t,a[2],a[9]);t->busy=0;return rc;}
   if (op < 1 || op > 3) return error(t,"op must be 1 insert, 2 delete, 3 update");
@@ -257,7 +268,7 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
   rc=batching(t,&batched);
   if(rc!=SQLITE_OK)return rc;
   if(t->lazy&&!batched) {
-    rc=source_view_setup(t);
+    if(t->env->source_views&&!t->source_view)return error(t,"source-view layout requires take2_prepare before source writes");
     if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_batch\" SET flag=1",t->schema,t->name),0,0);
     if(rc!=SQLITE_OK)return rc;
     batched=1;
@@ -324,6 +335,15 @@ static void control(sqlite3_context *ctx,int argc,sqlite3_value **a) {
   else sqlite3_result_error(ctx,"unknown take2 control",-1);
 }
 static void release_env(void *p){Env *e=p;if(--e->references==0)sqlite3_free(e);}
+static void prepare_layout(sqlite3_context *ctx,int argc,sqlite3_value **a) {
+  (void)argc;Env *e=sqlite3_user_data(ctx);
+  const char *name=(const char *)sqlite3_value_text(a[0]);
+  if(!name||e->preparing){sqlite3_result_error(ctx,"invalid/reentrant layout preparation",-1);return;}
+  char *q=sqlite3_mprintf("INSERT INTO main.\"%w\"(op) VALUES(13)",name),*err=0;
+  e->preparing=1;int rc=q?sqlite3_exec(sqlite3_context_db_handle(ctx),q,0,0,&err):SQLITE_NOMEM;e->preparing=0;
+  if(rc!=SQLITE_OK)sqlite3_result_error(ctx,err?err:"layout preparation failed",-1);
+  sqlite3_free(q);sqlite3_free(err);
+}
 #ifdef _WIN32
 __declspec(dllexport)
 #endif
@@ -342,5 +362,6 @@ int sqlite3_extension_init(sqlite3 *db,char **err,const sqlite3_api_routines *ap
   rc=sqlite3_create_module_v2(db,"take2_lazy",&module,e,release_env);
   if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_control",1,SQLITE_UTF8, e,control,0,0,0);
   if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_attach",6,SQLITE_UTF8|SQLITE_DIRECTONLY,0,attach,0,0,0);
+  if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_prepare",1,SQLITE_UTF8|SQLITE_DIRECTONLY,e,prepare_layout,0,0,0);
   return rc;
 }

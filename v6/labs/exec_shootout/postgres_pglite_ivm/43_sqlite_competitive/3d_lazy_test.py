@@ -14,6 +14,34 @@ class Lazy(unittest.TestCase):
  connection=c.Circuits.connection
  install=c.Circuits.install
  check=c.Circuits.check
+ def test_first_multirow_index_integrity(self):
+  self.install('self_chain')
+  self.db.execute('INSERT INTO a VALUES(1,1,2),(2,2,3),(3,3,1)')
+  self.check()
+  self.assertEqual(self.db.execute('PRAGMA integrity_check').fetchall(),[('ok',)])
+  self.db.close();self.db=self.connection()
+  self.db.execute('DELETE FROM a');self.check()
+  self.assertEqual(self.db.execute('PRAGMA integrity_check').fetchall(),[('ok',)])
+ def test_layout_setup_misuse_and_rollback(self):
+  self.db.execute("SELECT take2_control('source_views_on')")
+  self.db.execute('CREATE VIRTUAL TABLE result USING take2_lazy(self_chain)')
+  self.db.execute("SELECT take2_attach('result','a',0,'id','k','v')")
+  with self.assertRaisesRegex(sqlite3.DatabaseError,'take2_prepare'):
+   self.db.execute('INSERT INTO a VALUES(1,1,2),(2,2,3)')
+  self.assertEqual(self.db.execute('SELECT * FROM a').fetchall(),[])
+  with self.assertRaisesRegex(sqlite3.DatabaseError,'direct take2_prepare'):
+   self.db.execute('INSERT INTO result(op) VALUES(13)')
+  self.db.execute("CREATE TRIGGER forbidden BEFORE INSERT ON a BEGIN SELECT take2_prepare('result'); END")
+  with self.assertRaisesRegex(sqlite3.DatabaseError,'unsafe'):
+   self.db.execute('INSERT INTO a VALUES(1,1,2)')
+  self.db.execute('DROP TRIGGER forbidden')
+  self.db.execute('BEGIN');self.db.execute("SELECT take2_prepare('result')");self.db.execute('ROLLBACK')
+  with self.assertRaisesRegex(sqlite3.DatabaseError,'take2_prepare'):
+   self.db.execute('INSERT INTO a VALUES(1,1,2)')
+  self.db.execute("SELECT take2_prepare('result')")
+  self.db.execute('INSERT INTO a VALUES(1,1,2),(2,2,3)')
+  self.assertEqual(self.db.execute('SELECT id,k FROM result').fetchall(),[(1,3)])
+  self.assertEqual(self.db.execute('PRAGMA integrity_check').fetchall(),[('ok',)])
  def test_sync_failure(self):
   self.install('inner');self.db.execute('BEGIN')
   self.db.execute('INSERT INTO a VALUES(1,1,2)');self.db.execute('INSERT INTO b VALUES(1,1,3)')

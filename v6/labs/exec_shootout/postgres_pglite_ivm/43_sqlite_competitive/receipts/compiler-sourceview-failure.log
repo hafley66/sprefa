@@ -1,0 +1,81 @@
+test_malformed_plan_rejected (__main__.CompilerOracle.test_malformed_plan_rejected) ... ok
+test_projection_type_failure_rolls_back (__main__.CompilerOracle.test_projection_type_failure_rolls_back) ... ok
+test_scalar_binding_rejections (__main__.CompilerOracle.test_scalar_binding_rejections) ... ok
+test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) ... 
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT a.k+1, CASE WHEN a.v<0 THEN -a.v ELSE a.v END FROM a WHERE a.k%2=0') ... ERROR
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k-y.k, coalesce(x.v,0)+coalesce(y.v,0) FROM a x JOIN b y ON x.k<y.k WHERE x.v IS NOT NULL') ... FAIL
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k, y.v FROM a x JOIN a y ON x.v=y.k WHERE x.k<>y.k') ... ERROR
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k+z.k, y.v-z.v FROM a x JOIN b y ON x.v<y.k JOIN c z ON y.v=z.k WHERE z.v>=0') ... ERROR
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k, z.v FROM a x JOIN a y ON x.v=y.k JOIN a z ON y.v=z.k') ... ERROR
+  test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT "left side".k, "right side".v FROM a AS "left side", b AS "right side" WHERE "left side".v>"right side".k') ... FAIL
+
+======================================================================
+ERROR: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT a.k+1, CASE WHEN a.v<0 THEN -a.v ELSE a.v END FROM a WHERE a.k%2=0')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 74, in test_shared_select_oracles
+    db.execute(f'DELETE FROM "{source}"')
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.DatabaseError: database disk image is malformed
+
+======================================================================
+ERROR: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k, y.v FROM a x JOIN a y ON x.v=y.k WHERE x.k<>y.k')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 57, in test_shared_select_oracles
+    check()
+    ~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 52, in check
+    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+                                         ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: take2: batch accumulator overflow or support invariant
+
+======================================================================
+ERROR: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k+z.k, y.v-z.v FROM a x JOIN b y ON x.v<y.k JOIN c z ON y.v=z.k WHERE z.v>=0')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 74, in test_shared_select_oracles
+    db.execute(f'DELETE FROM "{source}"')
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.DatabaseError: database disk image is malformed
+
+======================================================================
+ERROR: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k, z.v FROM a x JOIN a y ON x.v=y.k JOIN a z ON y.v=z.k')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 57, in test_shared_select_oracles
+    check()
+    ~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 52, in check
+    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+                                         ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: take2: batch accumulator overflow or support invariant
+
+======================================================================
+FAIL: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT x.k-y.k, coalesce(x.v,0)+coalesce(y.v,0) FROM a x JOIN b y ON x.k<y.k WHERE x.v IS NOT NULL')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 57, in test_shared_select_oracles
+    check()
+    ~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 52, in check
+    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Counter({(-2, 3): 1, (-1, 5): 1}) != Counter({(-1, 5): 1, (-2, 3): 1, (-1, 4): 1})
+
+======================================================================
+FAIL: test_shared_select_oracles (__main__.CompilerOracle.test_shared_select_oracles) (query='SELECT "left side".k, "right side".v FROM a AS "left side", b AS "right side" WHERE "left side".v>"right side".k')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 57, in test_shared_select_oracles
+    check()
+    ~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 52, in check
+    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Counter({(1, 2): 1}) != Counter({(1, 2): 1, (2, 2): 1, (2, 3): 1})
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.241s
+
+FAILED (failures=2, errors=4)

@@ -45,6 +45,7 @@ def main():
     db.execute(f'CREATE VIRTUAL TABLE result USING {module}({mode})')
     for side,table in enumerate(['a','b','c'][:sides]):
         db.execute("SELECT take2_attach('result',?,?, 'id','k','v')",(table,side)).fetchall()
+    if args.lazy:db.execute("SELECT take2_prepare('result')").fetchall()
     emit(event='case-setup',status='ok',setup_ms=(time.perf_counter()-start)*1000,
          algorithm=f'public vtab {mode}',batch=args.batch,source_views=args.source_views,durability='durable SQL WAL/FULL',
          sqlite_version=sqlite3.sqlite_version,extension_sha256=hashlib.sha256(Path(args.extension).read_bytes()).hexdigest())

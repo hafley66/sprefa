@@ -53,33 +53,42 @@ static int flush_batch(Tab *t) {
     int bits=0;
     for(int i=0;i<degree;i++) {
       int side=t->mode==SELF||t->mode==SELF_CHAIN?0:i;
+      if(t->mode==PLAN)side=t->side_map[i];
+      char *alias=t->mode==PLAN?sqlite3_mprintf("\"%w\"",t->aliases[i]):sqlite3_mprintf("b%d",i);
       if(t->mode==DIAMOND&&i==1)side=branch+1;
       if(i) {sqlite3_str_appendall(from," JOIN ");sqlite3_str_appendall(weight,"*");}
       if(mask&(1<<i)) {
         bits++;
-        sqlite3_str_appendf(from,"(SELECT k,v,w FROM \"%w\".\"%w_delta\" WHERE side=%d AND w<>0) b%d",t->schema,t->name,side,i);
-      } else if(t->source_view) sqlite3_str_appendf(from,"(SELECT k,v,1 AS w FROM \"%w\".\"%w_live_%d\") b%d",t->schema,t->name,side,i);
-      else sqlite3_str_appendf(from,"(SELECT k,v,1 AS w FROM \"%w\".\"%w_state\" WHERE side=%d) b%d",t->schema,t->name,side,i);
-      sqlite3_str_appendf(weight,"b%d.w",i);
+        sqlite3_str_appendf(from,"(SELECT k,v,w FROM \"%w\".\"%w_delta\" WHERE side=%d AND w<>0) %s",t->schema,t->name,side,alias);
+      } else if(t->source_view) sqlite3_str_appendf(from,"(SELECT k,v,1 AS w FROM \"%w\".\"%w_live_%d\") %s",t->schema,t->name,side,alias);
+      else sqlite3_str_appendf(from,"(SELECT k,v,1 AS w FROM \"%w\".\"%w_state\" WHERE side=%d) %s",t->schema,t->name,side,alias);
+      sqlite3_str_appendf(weight,"%s.w",alias);sqlite3_free(alias);
       if(i) {
-        if(t->mode==SELF_CHAIN||t->mode==CHAIN||t->mode==DIAMOND)sqlite3_str_appendf(from," ON b%d.v=b%d.k",i-1,i);
+        if(t->mode==PLAN)sqlite3_str_appendall(from," ON 1");
+        else if(t->mode==SELF_CHAIN||t->mode==CHAIN||t->mode==DIAMOND)sqlite3_str_appendf(from," ON b%d.v=b%d.k",i-1,i);
         else sqlite3_str_appendf(from," ON b0.k=b%d.k",i);
       }
     }
     char *relations=sqlite3_str_finish(from),*w=sqlite3_str_finish(weight);
     if(t->mode==FANOUT){char *prior=w;w=sqlite3_mprintf("(%s*(coalesce(b0.v>=0,0)+coalesce(b0.v%%2=0,0)))",prior);sqlite3_free(prior);}
-    const char *value=t->mode==PROJECT?t->projection:t->mode==SELF_CHAIN||t->mode==DIAMOND?"b1.v":t->mode==CHAIN?"b2.v":degree==3?"b0.v*b1.v*b2.v":degree==2?"b0.v*b1.v":"b0.v";
-    char *key=bag(t)?sqlite3_mprintf("json_array(b0.k,%s)",value):sqlite3_mprintf("json_array(b0.k)");
-    char *group=bag(t)?sqlite3_mprintf("b0.k,%s",value):sqlite3_mprintf("b0.k");
-    char *where=t->mode==PROJECT?sqlite3_mprintf("WHERE (%s)",t->predicate):sqlite3_mprintf("%s",t->mode==FILTER?"WHERE b0.v>=0":"");
+    const char *value=t->mode==PROJECT||t->mode==PLAN?t->projection:t->mode==SELF_CHAIN||t->mode==DIAMOND?"b1.v":t->mode==CHAIN?"b2.v":degree==3?"b0.v*b1.v*b2.v":degree==2?"b0.v*b1.v":"b0.v";
+    const char *key_expr=t->mode==PLAN?t->key_expression:"b0.k";
+    char *key=bag(t)?sqlite3_mprintf("json_array((%s),(%s))",key_expr,value):sqlite3_mprintf("json_array(b0.k)");
+    char *group=bag(t)?sqlite3_mprintf("(%s),(%s)",key_expr,value):sqlite3_mprintf("b0.k");
+    char *where=t->mode==PROJECT||t->mode==PLAN?sqlite3_mprintf("WHERE (%s)",t->predicate):sqlite3_mprintf("%s",t->mode==FILTER?"WHERE b0.v>=0":"");
     int sign=bits%2?1:-1;
     rc=sql(t,sqlite3_mprintf(
-      "INSERT INTO \"%w\".\"%w_result\"(key,k,v,n,s,nn) SELECT %s,b0.k,%s,%d*sum(%s),%d*sum(coalesce(%s,0)*%s),%d*sum((%s IS NOT NULL)*%s) FROM %s %s GROUP BY %s "
+      "INSERT INTO \"%w\".\"%w_result\"(key,k,v,n,s,nn) SELECT %s,(%s),(%s),%d*sum(%s),%d*sum(coalesce((%s),0)*%s),%d*sum(((%s) IS NOT NULL)*%s) FROM %s %s GROUP BY %s "
       "ON CONFLICT(key) DO UPDATE SET n=n+excluded.n,s=s+excluded.s,nn=nn+excluded.nn",
-      t->schema,t->name,key,bag(t)?value:"NULL",
+      t->schema,t->name,key,key_expr,bag(t)?value:"NULL",
       sign,w,sign,value,w,sign,value,w,relations,where,group),0,0);
     sqlite3_free(key);sqlite3_free(group);sqlite3_free(where);
     sqlite3_free(relations);sqlite3_free(w);
+  }
+  if(rc==SQLITE_OK&&t->mode==PLAN) {
+    sqlite3_int64 invalid=0;
+    rc=scalar_sql(t,sqlite3_mprintf("SELECT count(*) FROM \"%w\".\"%w_result\" WHERE json_type(key,'$[0]') NOT IN ('integer','null') OR json_type(key,'$[1]') NOT IN ('integer','null')",t->schema,t->name),0,0,&invalid);
+    if(rc==SQLITE_OK&&invalid)rc=error(t,"plan projections must produce integer or NULL before storage affinity");
   }
   if(rc==SQLITE_OK) {
     sqlite3_stmt *s=0;

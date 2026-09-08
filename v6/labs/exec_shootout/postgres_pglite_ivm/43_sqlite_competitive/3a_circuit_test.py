@@ -37,6 +37,7 @@ class Circuits(unittest.TestCase):
   self.query,self.sides,self.columns=QUERIES[mode]
   self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
   for side,table in enumerate('abc'[:self.sides]):self.db.execute("SELECT take2_attach('result',?,?,'id','k','v')",(table,side)).fetchall()
+  if getattr(self,'module','take2')=='take2_lazy':self.db.execute("SELECT take2_prepare('result')")
  def check(self):
   columns=','.join(['id','k','v'][:self.columns])
   order=','.join(str(i+1) for i in range(self.columns))
