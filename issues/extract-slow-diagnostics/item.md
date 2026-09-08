@@ -121,3 +121,29 @@ Falcon slow retry with a 15-second indexer budget failed in approximately 534 ms
 ##### Verification scope
 
 This is a source-inspected sample, not a full-corpus precision benchmark. The Falcon metadata refactor passed all 17 gdext library tests before this follow-up. No tool fixes, semantic policy changes, or compiler changes are authorized by this report alone.
+
+### 2026-09-08T13:51:03Z · @codex
+
+#### Requested capability: structural clone detection over CST statement sequences
+
+User request: detect similar lines/statement sequences in the CST, such as the three Godot mesh-upload/acknowledgment blocks consolidated during the Falcon refactor. User recalls a distance/measure function in older versions. Its existence, location, and suitability have not been verified. Search repository history and prior implementations before introducing a new distance metric or clone detector; record recovered symbols/commits and behavior.
+
+Concrete source reference: `hafley-rs`, parent commit `4496f1e`, `games/blender-godot-sqlite-proof/falcon-lab/godot/2_stage.gd`. Refactor commit `88767b1` consolidates the repeated blocks in `_process`, `_process_external`, and `_process_scheduled` into `_upload_and_acknowledge`.
+
+Proposed extraction facts, not implemented:
+
+- A clone group carries source coordinates/digests, occurrence byte spans, matched statement count, normalization policy, and differing CST nodes.
+- First tier: contiguous statement windows with exact structural equality after explicit normalization of formatting and local bindings. Preserve binding relationships when normalizing identifiers. Preserve member names, operators, literal values, and call order by default.
+- Second tier: separately labeled near matches with the metric, threshold, and structural differences exposed. The Falcon example includes a temporary `uploaded` binding versus an inlined `mesh.surface_get_arrays(0)` expression; alpha-normalization alone does not make those CSTs equal. Report that difference rather than silently asserting equivalence.
+- Detection supplies refactor candidates, not proof that consolidation preserves evaluation order, side effects, scope, or behavior.
+- Check parser/grammar availability for GDScript in the installed extract before claiming this exact example is supported.
+
+Suggested bounded follow-up:
+
+- [ ] Locate the historical distance/measure implementation and evaluate reuse against the three real Falcon blocks.
+- [ ] Specify clone-group facts and exact versus approximate match provenance.
+- [ ] Add positive and negative fixtures: identifier-renamed copies, literal/operator/member changes, statement reordering, and temporary-versus-inline expressions.
+- [ ] Bound window sizes, overlap reporting, output volume, and runtime. Avoid claiming corpus-wide precision from the example.
+
+Keep this inside extract's source-fact scope. Git history is used to retrieve the old implementation, not proposed as part of extract's runtime responsibilities. No clone detector or tool code was changed by this report.
+
