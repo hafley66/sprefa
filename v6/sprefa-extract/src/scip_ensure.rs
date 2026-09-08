@@ -689,7 +689,10 @@ fn exit_signal(_status: ExitStatus) -> Option<i32> {
 fn process_failure(argv: &[&str], status: ExitStatus, stderr: &str) -> String {
     let command = format!("{argv:?}");
     if stderr.trim().is_empty() {
-        format!("command {command} {}; stderr was empty", status_description(status))
+        format!(
+            "command {command} {}; stderr was empty",
+            status_description(status)
+        )
     } else {
         format!(
             "command {command} {}; stderr:\n{}",
@@ -779,7 +782,10 @@ fn stderr_evidence(path: &Path) -> String {
 /// The last line of `text` that is not a trailing Rust panic `note:` line.
 /// Retained as a public helper for callers that want the legacy one-line view.
 pub fn last_error_line(text: &str) -> String {
-    let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     let picked = lines
         .iter()
         .rev()

@@ -407,8 +407,14 @@ fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Every mode but `--family scip` takes source FILES. A directory or a missing
 /// path reaches the library as an `io::Error` Debug dump that names no cause.
-fn check_file_paths(paths: &[PathBuf]) {
+fn check_file_paths(paths: &[PathBuf], allow_stdin: bool) {
     for path in paths {
+        // `/dev/stdin` is a descriptor symlink rather than an ordinary file.
+        // Under concurrent child-process churn its existence probe can report
+        // false even though the following read from the open descriptor works.
+        if allow_stdin && path == std::path::Path::new("/dev/stdin") {
+            continue;
+        }
         let stop = if path.is_dir() {
             format!(
                 "{} is a directory; --resolve takes files, so expand the tree \
@@ -596,7 +602,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // `--family scip`, `--scip-facts` and `--scip-deps` take a ROOT directory;
     // every other mode takes files.
     if !matches!(mode, Some(FamilyMode::Scip)) && !cli.scip_facts && !cli.scip_deps {
-        check_file_paths(&cli.paths);
+        check_file_paths(&cli.paths, false);
     }
     match mode {
         Some(FamilyMode::Scip) => {
@@ -1007,7 +1013,7 @@ fn print_schema() {
 /// The reverse door. Every file is one stream, so line numbers in a stop run
 /// across the whole argument list rather than restarting per file.
 fn stream_ingest(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
-    check_file_paths(paths);
+    check_file_paths(paths, true);
     let mut lines: Vec<String> = Vec::new();
     for path in paths {
         lines.extend(std::fs::read_to_string(path)?.lines().map(str::to_string));

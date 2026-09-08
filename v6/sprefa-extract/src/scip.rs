@@ -524,7 +524,10 @@ fn cargo_manifests_below(root: &Path) -> Result<Vec<PathBuf>, ScipError> {
         for entry in entries.flatten() {
             let path = entry.path();
             let file_type = entry.file_type().ok();
-            if file_type.as_ref().is_some_and(std::fs::FileType::is_symlink) {
+            if file_type
+                .as_ref()
+                .is_some_and(std::fs::FileType::is_symlink)
+            {
                 continue;
             }
             if path.is_dir() {
@@ -554,9 +557,9 @@ fn manifest_uses_parent_path(value: &serde_json::Value) -> bool {
                 && value.as_str().is_some_and(has_parent_component);
             let members_field = matches!(key.as_str(), "members" | "default-members")
                 && value.as_array().is_some_and(|members| {
-                    members.iter().any(|member| {
-                        member.as_str().is_some_and(has_parent_component)
-                    })
+                    members
+                        .iter()
+                        .any(|member| member.as_str().is_some_and(has_parent_component))
                 });
             path_field || members_field || manifest_uses_parent_path(value)
         }),

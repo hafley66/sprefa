@@ -343,8 +343,15 @@ fn failed_indexer_retains_bounded_root_cause_tail_status_and_telemetry() {
     assert!(detail.contains("root cause: cargo metadata π failed"));
     assert!(detail.contains("stderr bytes omitted"));
     assert!(detail.ends_with("8: __pthread_joiner_wake"));
-    assert!(!detail.contains('\u{fffd}'), "UTF-8 window boundary was split: {detail}");
-    assert!(detail.len() < 17_000, "stderr evidence was not bounded: {}", detail.len());
+    assert!(
+        !detail.contains('\u{fffd}'),
+        "UTF-8 window boundary was split: {detail}"
+    );
+    assert!(
+        detail.len() < 17_000,
+        "stderr evidence was not bounded: {}",
+        detail.len()
+    );
 
     let events = String::from_utf8(output.stderr).expect("telemetry is UTF-8");
     let failed = events
@@ -385,7 +392,10 @@ fn rust_log_off_suppresses_failure_telemetry_without_suppressing_skip_detail() {
     assert_eq!(output.status.code(), Some(0));
     let row: serde_json::Value = serde_json::from_slice(&output.stdout).expect("skip JSONL");
     assert!(row["detail"].as_str().unwrap().contains("small root cause"));
-    assert!(output.stderr.is_empty(), "RUST_LOG=off must suppress stderr");
+    assert!(
+        output.stderr.is_empty(),
+        "RUST_LOG=off must suppress stderr"
+    );
 }
 
 #[cfg(unix)]
@@ -408,7 +418,10 @@ fn signal_terminated_indexer_reports_signal_and_small_stderr() {
         .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON event"))
         .find(|event| event["fields"]["message"] == "indexer process failed")
         .expect("failure event");
-    assert_eq!(failed["fields"]["process.status"], "terminated by signal 15");
+    assert_eq!(
+        failed["fields"]["process.status"],
+        "terminated by signal 15"
+    );
 }
 
 #[test]
