@@ -1,0 +1,5 @@
+{"tick":0,"actual":{"root":[[0],[1]],"edge":[[0,2],[1,2],[2,3],[3,2],[3,4]],"alive":[[0],[1],[2],[3],[4]]},"carry_pending":false,"statements":54}
+{"tick":1,"actual":{"root":[[1]],"edge":[[0,2],[1,2],[2,3],[3,2],[3,4]],"alive":[[1],[2],[3],[4]]},"carry_pending":false,"statements":94}
+{"tick":2,"actual":{"root":[],"edge":[[0,2],[1,2],[2,3],[3,2],[3,4]],"alive":[]},"carry_pending":false,"statements":85}
+{"tick":3,"actual":{"root":[[0]],"edge":[[0,2],[1,2],[2,3],[3,2],[3,4]],"alive":[[0],[2],[3],[4]]},"carry_pending":false,"statements":50}
+{"tick":4,"actual":{"root":[],"edge":[[0,2],[1,2],[2,3],[3,2],[3,4]],"alive":[]},"carry_pending":false,"statements":85}

@@ -1,0 +1,48 @@
+{
+  "name": "disconnected-zero-weight-node",
+  "nodes": 2,
+  "dag": true,
+  "cascade": true,
+  "ticks": [
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "add",
+          "row": [
+            0
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ]
+        ],
+        "edge": [],
+        "alive": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "del",
+          "row": [
+            0
+          ]
+        }
+      ],
+      "expected": {
+        "root": [],
+        "edge": [],
+        "alive": []
+      }
+    }
+  ]
+}

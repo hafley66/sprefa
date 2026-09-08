@@ -1,0 +1,2 @@
+STATUS|sqlite-count|unsupported|plain reference counting does not collect unsupported cycles; use SCC or DRed|no graph loaded|not applicable
+EXIT_STATUS|0

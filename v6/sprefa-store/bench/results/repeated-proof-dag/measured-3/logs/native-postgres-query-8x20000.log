@@ -1,0 +1,4 @@
+INPUT|native-postgres-query|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|native-postgres-query|ok|ordinary recursive SQL full recomputation; timed phases end after materialization and count; exact before=d5b111c00b9de6c6acc308845af36202735166f81b10ef25547078a8e03fcd77 after=ba46515280fa0525997e4d27a81f4d2dfdb3f4445c1e54d0cc969e59cb068bf2; untimed transfer_ms before=49.749 after=32.425; untimed checksum_validation_ms before=25.537 after=22.038; PostgreSQL 18.6|sampled sum of Node client and disposable PostgreSQL process-tree RSS; shared mappings may be counted more than once|DL_MEMCAP_MB=4096 is unenforced for total PostgreSQL memory
+CSV,native-postgres-query,160002,306667,20000,481.055,226.245,N/A,492.5,N/A,N/A,23.568
+EXIT_STATUS|0

@@ -1,0 +1,21 @@
+   Compiling sprefa-store v0.1.0 (/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store)
+    Building [=======================> ] 255/256: perf_report(example test)   warning: associated function `name` is never used
+  --> examples/perf_report.rs:90:8
+   |
+89 | trait Engine {
+   |       ------ associated function in this trait
+90 |     fn name() -> &'static str;
+   |        ^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `sprefa-store` (example "perf_report" test) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 2.17s
+     Running unittests examples/perf_report.rs (target/release/build/sprefa-store/1917d616bca4d6b0/out/perf_report-1917d616bca4d6b0)
+
+running 1 test
+COUNT_EXHAUSTIVE cases=2048 exact_states=6144 weight_checks=24576 nodes=4 DAG_edge_sets=64 root_sets=16 deletion_orders=2
+test sequence_tests::exhaustive_four_node_dag_counting_states_and_weights ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.16s
+

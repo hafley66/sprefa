@@ -1,0 +1,10 @@
+
+thread 'main' (78816700) panicked at examples/perf_report.rs:979:9:
+assertion `left == right` failed: "self-loop-final-external-root" tick 1
+  left: Object {"alive": Array [Array [Number(1)], Array [Number(3)]], "edge": Array [Array [Number(0), Number(2)], Array [Number(2), Number(2)]], "root": Array []}
+ right: Object {"alive": Array [], "edge": Array [Array [Number(0), Number(2)], Array [Number(2), Number(2)]], "root": Array []}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+EXIT_STATUS|101
+SIGNAL|null
+ERROR|

@@ -1,0 +1,11 @@
+{"actual":{"alive":[],"edge":[],"root":[]},"carry_pending":false,"tick":0}
+{"actual":{"alive":[[0]],"edge":[],"root":[[0]]},"carry_pending":false,"tick":1}
+{"actual":{"alive":[[0],[2],[3],[4]],"edge":[[0,2],[0,3],[2,4],[3,4]],"root":[[0]]},"carry_pending":false,"tick":2}
+{"actual":{"alive":[[0],[2],[3],[4]],"edge":[[0,2],[0,3],[3,4]],"root":[[0]]},"carry_pending":false,"tick":3}
+{"actual":{"alive":[[0],[2],[3]],"edge":[[0,2],[0,3]],"root":[[0]]},"carry_pending":false,"tick":4}
+{"actual":{"alive":[[0],[2],[3],[4]],"edge":[[0,2],[0,3],[2,4]],"root":[[0]]},"carry_pending":false,"tick":5}
+{"actual":{"alive":[[0],[2],[3],[4]],"edge":[[0,2],[0,3],[2,4]],"root":[[0],[4]]},"carry_pending":false,"tick":6}
+{"actual":{"alive":[[0],[3],[4]],"edge":[[0,3],[2,4]],"root":[[0],[4]]},"carry_pending":false,"tick":7}
+{"actual":{"alive":[[0],[3]],"edge":[[0,3],[2,4]],"root":[[0]]},"carry_pending":false,"tick":8}
+{"actual":{"alive":[[0],[2],[3],[4]],"edge":[[0,2],[0,3],[2,4]],"root":[[0]]},"carry_pending":false,"tick":9}
+{"actual":{"alive":[],"edge":[[0,2],[0,3],[2,4]],"root":[]},"carry_pending":false,"tick":10}

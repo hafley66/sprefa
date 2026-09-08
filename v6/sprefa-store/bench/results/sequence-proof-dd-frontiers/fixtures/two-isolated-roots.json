@@ -1,0 +1,85 @@
+{
+  "name": "two-isolated-roots",
+  "nodes": 2,
+  "dag": true,
+  "cascade": true,
+  "ticks": [
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "add",
+          "row": [
+            0
+          ]
+        },
+        {
+          "rel": "root",
+          "sign": "add",
+          "row": [
+            1
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            0
+          ],
+          [
+            1
+          ]
+        ],
+        "edge": [],
+        "alive": [
+          [
+            0
+          ],
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "del",
+          "row": [
+            0
+          ]
+        }
+      ],
+      "expected": {
+        "root": [
+          [
+            1
+          ]
+        ],
+        "edge": [],
+        "alive": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "arrivals": [
+        {
+          "rel": "root",
+          "sign": "del",
+          "row": [
+            1
+          ]
+        }
+      ],
+      "expected": {
+        "root": [],
+        "edge": [],
+        "alive": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+STATUS|pglite-pg_ivm|unsupported|pg_ivm rejects recursive WITH RECURSIVE view definitions|no process started|not applicable
+EXIT_STATUS|0

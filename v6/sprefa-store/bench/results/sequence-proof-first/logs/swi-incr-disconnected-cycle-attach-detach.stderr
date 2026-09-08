@@ -1,0 +1,6 @@
+
+ERROR: [Thread main] /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store/bench/swi_reach.pl:146: user:main Type error: `json_term' expected, found `@(false)' (a compound)
+
+EXIT_STATUS|2
+SIGNAL|null
+ERROR|

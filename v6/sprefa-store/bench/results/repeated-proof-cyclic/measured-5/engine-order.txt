@@ -1,0 +1,13 @@
+sqlite-count|bench/engines/4_sqlite_cascade.sh|SQLITE_CASCADE=sqlite-count
+sqlite-count-scc|bench/engines/4_sqlite_cascade.sh|SQLITE_CASCADE=sqlite-count-scc
+sqlite-dred-loop|bench/engines/4_sqlite_cascade.sh|SQLITE_CASCADE=sqlite-dred-loop
+sqlite-dred-cte|bench/engines/4_sqlite_cascade.sh|SQLITE_CASCADE=sqlite-dred-cte
+sqlite-signed-delta-v2|bench/engines/4_sqlite_cascade.sh|SQLITE_CASCADE=sqlite-signed-delta-v2
+tsv2-runtime|bench/engines/5_generated_reach.sh|GENERATED_REACH_RUNTIME=tsv2
+sprefa-engine-rs|bench/engines/5_generated_reach.sh|GENERATED_REACH_RUNTIME=rust
+pglite-query|bench/engines/2_postgres_query.sh|PG_REACH_RUNTIME=pglite
+native-postgres-query|bench/engines/2_postgres_query.sh|PG_REACH_RUNTIME=native
+pglite-pg_ivm|bench/engines/3_postgres_ivm_unsupported.sh|PG_REACH_RUNTIME=pglite
+native-postgres-pg_ivm|bench/engines/3_postgres_ivm_unsupported.sh|PG_REACH_RUNTIME=native
+swi-incr|bench/engines/swi_incr.sh|
+differential-dataflow|dd_reach|

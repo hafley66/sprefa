@@ -1,0 +1,1 @@
+RESULT engine=sqlite-dred-cte storage=file count=10287 out_hash=4965a69e9e8ee22d in_hash=95e40b2476927975 ms=29.635 stmts=6 rust_peak_mb=0.17 sqlite_hw_mb=1.56 rss_mb=13.9 db_mb=0.80

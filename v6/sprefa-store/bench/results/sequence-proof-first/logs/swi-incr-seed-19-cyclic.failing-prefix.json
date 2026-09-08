@@ -1,0 +1,16 @@
+{
+  "name": "seed-19-cyclic",
+  "nodes": 12,
+  "dag": false,
+  "cascade": false,
+  "ticks": [
+    {
+      "arrivals": [],
+      "expected": {
+        "root": [],
+        "edge": [],
+        "alive": []
+      }
+    }
+  ]
+}

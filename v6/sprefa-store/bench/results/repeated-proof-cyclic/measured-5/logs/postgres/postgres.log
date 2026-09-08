@@ -1,0 +1,6 @@
+2026-09-08 00:18:57.215 EDT [94848] LOG:  starting PostgreSQL 18.6 on aarch64-apple-darwin23.6.0, compiled by Apple clang version 16.0.0 (clang-1600.0.26.6), 64-bit
+2026-09-08 00:18:57.216 EDT [94848] LOG:  listening on Unix socket "/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/sprefa-store-pg.vf2DKp/socket/.s.PGSQL.5432"
+2026-09-08 00:18:57.218 EDT [94854] LOG:  database system was shut down at 2026-09-08 00:18:57 EDT
+2026-09-08 00:18:57.218 EDT [94848] LOG:  database system is ready to accept connections
+2026-09-08 00:19:29.145 EDT [94848] LOG:  received immediate shutdown request
+2026-09-08 00:19:29.147 EDT [94848] LOG:  database system is shut down

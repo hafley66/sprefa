@@ -1,0 +1,257 @@
+INPUT|swi-incr|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|swi-incr|ok|SWI incremental tabling; setup and retract end after table materialization and count; exact ordered initial set matches the generated node range and exact incremental survivor set matches cold table recomputation|process RSS sampled with ps after both phases|DL_MEMCAP_MB is passed by the harness but unenforced by this adapter
+CSV,swi-incr,402,667,200,1,1,0,12.78
+EXIT_STATUS|0
+OK   swi-incr 2x200 -> swi-incr,402,667,200,1,1,0,12.78,N/A,N/A,N/A
+INPUT|swi-incr|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|swi-incr|ok|SWI incremental tabling; setup and retract end after table materialization and count; exact ordered initial set matches the generated node range and exact incremental survivor set matches cold table recomputation|process RSS sampled with ps after both phases|DL_MEMCAP_MB is passed by the harness but unenforced by this adapter
+CSV,swi-incr,12002,22667,2000,68,55,0,46.38
+EXIT_STATUS|0
+OK   swi-incr 6x2000 -> swi-incr,12002,22667,2000,68,55,0,46.38,N/A,N/A,N/A
+INPUT|swi-incr|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|swi-incr|ok|SWI incremental tabling; setup and retract end after table materialization and count; exact ordered initial set matches the generated node range and exact incremental survivor set matches cold table recomputation|process RSS sampled with ps after both phases|DL_MEMCAP_MB is passed by the harness but unenforced by this adapter
+CSV,swi-incr,160002,306667,20000,1006,1068,0,554.73
+EXIT_STATUS|0
+OK   swi-incr 8x20000 -> swi-incr,160002,306667,20000,1006,1068,0,554.73,N/A,N/A,N/A
+INPUT|differential-dataflow|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|differential-dataflow|ok|differential-dataflow 0.25 with timely 0.31; shared layered graph; setup and retract end after fixed-point materialization and count; exact ordered sets match BFS oracle|process peak RSS from getrusage including untimed oracle allocations|DL_MEMCAP_MB=4096 caps live Rust allocations through CappedAlloc (0 disables); RLIMIT_AS and RLIMIT_DATA are also requested best-effort; total process RSS is not capped
+[dd] SETUP nodes=402 edges=667 records=402 ms=0.605
+[dd] RETRACT killed=200 survivors=202 records=200 ms=0.241
+CSV,differential-dataflow,402,667,200,0.605,0.241,200,4.0
+EXIT_STATUS|0
+OK   differential-dataflow 2x200 -> differential-dataflow,402,667,200,0.605,0.241,200,4.0,N/A,N/A,N/A
+INPUT|differential-dataflow|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|differential-dataflow|ok|differential-dataflow 0.25 with timely 0.31; shared layered graph; setup and retract end after fixed-point materialization and count; exact ordered sets match BFS oracle|process peak RSS from getrusage including untimed oracle allocations|DL_MEMCAP_MB=4096 caps live Rust allocations through CappedAlloc (0 disables); RLIMIT_AS and RLIMIT_DATA are also requested best-effort; total process RSS is not capped
+[dd] SETUP nodes=12002 edges=22667 records=12002 ms=6.589
+[dd] RETRACT killed=2000 survivors=10002 records=2000 ms=2.266
+CSV,differential-dataflow,12002,22667,2000,6.589,2.266,2000,8.5
+EXIT_STATUS|0
+OK   differential-dataflow 6x2000 -> differential-dataflow,12002,22667,2000,6.589,2.266,2000,8.5,N/A,N/A,N/A
+INPUT|differential-dataflow|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|differential-dataflow|ok|differential-dataflow 0.25 with timely 0.31; shared layered graph; setup and retract end after fixed-point materialization and count; exact ordered sets match BFS oracle|process peak RSS from getrusage including untimed oracle allocations|DL_MEMCAP_MB=4096 caps live Rust allocations through CappedAlloc (0 disables); RLIMIT_AS and RLIMIT_DATA are also requested best-effort; total process RSS is not capped
+[dd] SETUP nodes=160002 edges=306667 records=160002 ms=94.785
+[dd] RETRACT killed=20000 survivors=140002 records=20000 ms=27.590
+CSV,differential-dataflow,160002,306667,20000,94.785,27.590,20000,87.4
+EXIT_STATUS|0
+OK   differential-dataflow 8x20000 -> differential-dataflow,160002,306667,20000,94.785,27.590,20000,87.4,N/A,N/A,N/A
+INPUT|sqlite-count|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|sqlite-count|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=d21ac679d2ae1b63; survivor blake3=871dc3852156956e|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-count,402,667,200,2.121,0.593,23,5.8,0.11,0.29,0.07
+EXIT_STATUS|0
+OK   sqlite-count 2x200 -> sqlite-count,402,667,200,2.121,0.593,23,5.8,0.11,0.29,0.07
+INPUT|sqlite-count|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|sqlite-count|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=6035d0f3b9cf2bb5; survivor blake3=979516e118581f07|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-count,12002,22667,2000,20.689,5.106,23,12.8,0.21,1.34,0.79
+EXIT_STATUS|0
+OK   sqlite-count 6x2000 -> sqlite-count,12002,22667,2000,20.689,5.106,23,12.8,0.21,1.34,0.79
+INPUT|sqlite-count|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|sqlite-count|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=fea9e9d65d21ef13; survivor blake3=239d2120ef6ba1c3|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-count,160002,306667,20000,299.343,51.031,23,112.4,1.22,12.93,10.25
+EXIT_STATUS|0
+OK   sqlite-count 8x20000 -> sqlite-count,160002,306667,20000,299.343,51.031,23,112.4,1.22,12.93,10.25
+INPUT|sqlite-count-scc|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|sqlite-count-scc|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=d21ac679d2ae1b63; survivor blake3=871dc3852156956e|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-count-scc,402,667,200,4.461,0.819,15,6.6,0.11,0.29,0.07
+EXIT_STATUS|0
+OK   sqlite-count-scc 2x200 -> sqlite-count-scc,402,667,200,4.461,0.819,15,6.6,0.11,0.29,0.07
+INPUT|sqlite-count-scc|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|sqlite-count-scc|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=6035d0f3b9cf2bb5; survivor blake3=979516e118581f07|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-count-scc,12002,22667,2000,21.453,19.286,39,14.4,0.21,1.34,0.79
+EXIT_STATUS|0
+OK   sqlite-count-scc 6x2000 -> sqlite-count-scc,12002,22667,2000,21.453,19.286,39,14.4,0.21,1.34,0.79
+INPUT|sqlite-count-scc|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|sqlite-count-scc|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=fea9e9d65d21ef13; survivor blake3=239d2120ef6ba1c3|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-count-scc,160002,306667,20000,293.214,277.665,51,113.3,1.22,14.32,10.25
+EXIT_STATUS|0
+OK   sqlite-count-scc 8x20000 -> sqlite-count-scc,160002,306667,20000,293.214,277.665,51,113.3,1.22,14.32,10.25
+INPUT|sqlite-dred-loop|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|sqlite-dred-loop|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=d21ac679d2ae1b63; survivor blake3=871dc3852156956e|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-dred-loop,402,667,200,5.067,0.853,25,6.8,0.11,0.29,0.07
+EXIT_STATUS|0
+OK   sqlite-dred-loop 2x200 -> sqlite-dred-loop,402,667,200,5.067,0.853,25,6.8,0.11,0.29,0.07
+INPUT|sqlite-dred-loop|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|sqlite-dred-loop|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=6035d0f3b9cf2bb5; survivor blake3=979516e118581f07|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-dred-loop,12002,22667,2000,21.946,19.852,53,13.4,0.21,1.34,0.79
+EXIT_STATUS|0
+OK   sqlite-dred-loop 6x2000 -> sqlite-dred-loop,12002,22667,2000,21.946,19.852,53,13.4,0.21,1.34,0.79
+INPUT|sqlite-dred-loop|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|sqlite-dred-loop|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=fea9e9d65d21ef13; survivor blake3=239d2120ef6ba1c3|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-dred-loop,160002,306667,20000,288.493,277.377,67,107.2,1.22,14.32,10.25
+EXIT_STATUS|0
+OK   sqlite-dred-loop 8x20000 -> sqlite-dred-loop,160002,306667,20000,288.493,277.377,67,107.2,1.22,14.32,10.25
+INPUT|sqlite-dred-cte|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|sqlite-dred-cte|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=d21ac679d2ae1b63; survivor blake3=871dc3852156956e|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-dred-cte,402,667,200,4.740,0.779,6,6.7,0.11,0.29,0.07
+EXIT_STATUS|0
+OK   sqlite-dred-cte 2x200 -> sqlite-dred-cte,402,667,200,4.740,0.779,6,6.7,0.11,0.29,0.07
+INPUT|sqlite-dred-cte|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|sqlite-dred-cte|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=6035d0f3b9cf2bb5; survivor blake3=979516e118581f07|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-dred-cte,12002,22667,2000,22.117,29.077,6,15.1,0.21,1.53,0.79
+EXIT_STATUS|0
+OK   sqlite-dred-cte 6x2000 -> sqlite-dred-cte,12002,22667,2000,22.117,29.077,6,15.1,0.21,1.53,0.79
+INPUT|sqlite-dred-cte|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|sqlite-dred-cte|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=fea9e9d65d21ef13; survivor blake3=239d2120ef6ba1c3|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-dred-cte,160002,306667,20000,290.926,404.579,6,130.9,1.22,18.20,10.25
+EXIT_STATUS|0
+OK   sqlite-dred-cte 8x20000 -> sqlite-dred-cte,160002,306667,20000,290.926,404.579,6,130.9,1.22,18.20,10.25
+INPUT|sqlite-signed-delta-v2|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|sqlite-signed-delta-v2|ok|full recursive recomputation from implicit zero-indegree roots excluding current seeds; validated single deletion only; repeated deletion and disconnected zero-weight cases fail sequence checks; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=d21ac679d2ae1b63; survivor blake3=871dc3852156956e|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-signed-delta-v2,402,667,200,4.187,0.376,3,6.3,0.11,0.29,0.07
+EXIT_STATUS|0
+OK   sqlite-signed-delta-v2 2x200 -> sqlite-signed-delta-v2,402,667,200,4.187,0.376,3,6.3,0.11,0.29,0.07
+INPUT|sqlite-signed-delta-v2|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|sqlite-signed-delta-v2|ok|full recursive recomputation from implicit zero-indegree roots excluding current seeds; validated single deletion only; repeated deletion and disconnected zero-weight cases fail sequence checks; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=6035d0f3b9cf2bb5; survivor blake3=979516e118581f07|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-signed-delta-v2,12002,22667,2000,21.443,13.240,3,13.2,0.21,1.35,0.79
+EXIT_STATUS|0
+OK   sqlite-signed-delta-v2 6x2000 -> sqlite-signed-delta-v2,12002,22667,2000,21.443,13.240,3,13.2,0.21,1.35,0.79
+INPUT|sqlite-signed-delta-v2|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|sqlite-signed-delta-v2|ok|full recursive recomputation from implicit zero-indegree roots excluding current seeds; validated single deletion only; repeated deletion and disconnected zero-weight cases fail sequence checks; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=fea9e9d65d21ef13; survivor blake3=239d2120ef6ba1c3|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-signed-delta-v2,160002,306667,20000,292.994,178.402,3,124.7,1.22,15.15,10.25
+EXIT_STATUS|0
+OK   sqlite-signed-delta-v2 8x20000 -> sqlite-signed-delta-v2,160002,306667,20000,292.994,178.402,3,124.7,1.22,15.15,10.25
+(node:80697) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+INPUT|tsv2-runtime|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|tsv2-runtime|ok|compile_dl6 emitted program.tick through IncrementalRuntime; emitted recursive DRed plan; setup loads edges in 1000-row batches then roots; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|Node process RSS sampled after validation; in-memory libSQL store|DL_MEMCAP_MB limits Node old-space only; SQLite C heap and total RSS unenforced
+CSV,tsv2-runtime,402,667,200,14.646,3.551,92,150.0,N/A,N/A,0
+EXIT_STATUS|0
+OK   tsv2-runtime 2x200 -> tsv2-runtime,402,667,200,14.646,3.551,92,150.0,N/A,N/A,0
+(node:80719) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+INPUT|tsv2-runtime|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|tsv2-runtime|ok|compile_dl6 emitted program.tick through IncrementalRuntime; emitted recursive DRed plan; setup loads edges in 1000-row batches then roots; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|Node process RSS sampled after validation; in-memory libSQL store|DL_MEMCAP_MB limits Node old-space only; SQLite C heap and total RSS unenforced
+CSV,tsv2-runtime,12002,22667,2000,282.302,44.554,107,174.1,N/A,N/A,0
+EXIT_STATUS|0
+OK   tsv2-runtime 6x2000 -> tsv2-runtime,12002,22667,2000,282.302,44.554,107,174.1,N/A,N/A,0
+(node:80758) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+INPUT|tsv2-runtime|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|tsv2-runtime|ok|compile_dl6 emitted program.tick through IncrementalRuntime; emitted recursive DRed plan; setup loads edges in 1000-row batches then roots; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|Node process RSS sampled after validation; in-memory libSQL store|DL_MEMCAP_MB limits Node old-space only; SQLite C heap and total RSS unenforced
+CSV,tsv2-runtime,160002,306667,20000,6591.145,678.417,113,719.8,N/A,N/A,0
+EXIT_STATUS|0
+OK   tsv2-runtime 8x20000 -> tsv2-runtime,160002,306667,20000,6591.145,678.417,113,719.8,N/A,N/A,0
+INPUT|sprefa-engine-rs|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|sprefa-engine-rs|ok|compile_dl6 emit_rust program through drive_tick_transacted and GenProgram::run_tick; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|child-process peak RSS from time; in-memory rusqlite store|DL_MEMCAP_MB requested but unenforced for this adapter
+CSV,sprefa-engine-rs,402,667,200,10.472,1.952,52,9.4,N/A,N/A,0
+        0.22 real         0.01 user         0.00 sys
+             9863168  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 763  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  10  involuntary context switches
+           129532540  instructions retired
+            36278206  cycles elapsed
+             4982144  peak memory footprint
+EXIT_STATUS|0
+OK   sprefa-engine-rs 2x200 -> sprefa-engine-rs,402,667,200,10.472,1.952,52,9.4,N/A,N/A,0
+INPUT|sprefa-engine-rs|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|sprefa-engine-rs|ok|compile_dl6 emit_rust program through drive_tick_transacted and GenProgram::run_tick; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|child-process peak RSS from time; in-memory rusqlite store|DL_MEMCAP_MB requested but unenforced for this adapter
+CSV,sprefa-engine-rs,12002,22667,2000,158.771,56.933,76,56.3,N/A,N/A,0
+        0.22 real         0.21 user         0.01 sys
+            59047936  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3765  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                   7  involuntary context switches
+          3778471108  instructions retired
+           770660057  cycles elapsed
+            34391360  peak memory footprint
+EXIT_STATUS|0
+OK   sprefa-engine-rs 6x2000 -> sprefa-engine-rs,12002,22667,2000,158.771,56.933,76,56.3,N/A,N/A,0
+INPUT|sprefa-engine-rs|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|sprefa-engine-rs|ok|compile_dl6 emit_rust program through drive_tick_transacted and GenProgram::run_tick; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|child-process peak RSS from time; in-memory rusqlite store|DL_MEMCAP_MB requested but unenforced for this adapter
+CSV,sprefa-engine-rs,160002,306667,20000,1970.950,980.620,88,458.0,N/A,N/A,0
+        3.05 real         2.95 user         0.09 sys
+           480296960  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               30694  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  33  involuntary context switches
+         53348401794  instructions retired
+         10598670878  cycles elapsed
+           218141248  peak memory footprint
+EXIT_STATUS|0
+OK   sprefa-engine-rs 8x20000 -> sprefa-engine-rs,160002,306667,20000,1970.950,980.620,88,458.0,N/A,N/A,0
+INPUT|pglite-query|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|pglite-query|ok|ordinary recursive SQL full recomputation; timed phases end after materialization and count; exact before=ada7ea43e998e3ba1357b4270279f2976e2659c6e3dd768d0fbfc6a15cd11314 after=d290b0a93c2138767799bffe561de2bad1a45c0ffc8210a3be393f16eb7bc305; untimed transfer_ms before=0.903 after=0.453; untimed checksum_validation_ms before=1.006 after=0.082; PostgreSQL 18.3|sampled RSS of the Node process containing PGlite WASM|DL_MEMCAP_MB=4096 limits Node old-space only; total process RSS is unenforced
+CSV,pglite-query,402,667,200,10.057,2.045,N/A,1056.7,N/A,N/A,38.117
+EXIT_STATUS|0
+OK   pglite-query 2x200 -> pglite-query,402,667,200,10.057,2.045,N/A,1056.7,N/A,N/A,38.117
+INPUT|pglite-query|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|pglite-query|ok|ordinary recursive SQL full recomputation; timed phases end after materialization and count; exact before=5359ff08f251a47ab81d104beeff9633f95d50c30ea2ff1db9d40617983ca17b after=e640e84f06cd3d340d290625432f23bf9cf4b9df50d6e4ae1ab7a73f216df46b; untimed transfer_ms before=14.397 after=12.281; untimed checksum_validation_ms before=3.498 after=1.861; PostgreSQL 18.3|sampled RSS of the Node process containing PGlite WASM|DL_MEMCAP_MB=4096 limits Node old-space only; total process RSS is unenforced
+CSV,pglite-query,12002,22667,2000,57.621,28.474,N/A,1040.9,N/A,N/A,39.274
+EXIT_STATUS|0
+OK   pglite-query 6x2000 -> pglite-query,12002,22667,2000,57.621,28.474,N/A,1040.9,N/A,N/A,39.274
+INPUT|pglite-query|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|pglite-query|ok|ordinary recursive SQL full recomputation; timed phases end after materialization and count; exact before=d5b111c00b9de6c6acc308845af36202735166f81b10ef25547078a8e03fcd77 after=ba46515280fa0525997e4d27a81f4d2dfdb3f4445c1e54d0cc969e59cb068bf2; untimed transfer_ms before=191.857 after=154.720; untimed checksum_validation_ms before=25.163 after=22.078; PostgreSQL 18.3|sampled RSS of the Node process containing PGlite WASM|DL_MEMCAP_MB=4096 limits Node old-space only; total process RSS is unenforced
+CSV,pglite-query,160002,306667,20000,715.066,411.752,N/A,1362.8,N/A,N/A,70.274
+EXIT_STATUS|0
+OK   pglite-query 8x20000 -> pglite-query,160002,306667,20000,715.066,411.752,N/A,1362.8,N/A,N/A,70.274
+INPUT|native-postgres-query|db30ac02b193c1cdca2ef7bae9ea9afd835e257c2ada0605d31c51219806f8b3
+STATUS|native-postgres-query|ok|ordinary recursive SQL full recomputation; timed phases end after materialization and count; exact before=ada7ea43e998e3ba1357b4270279f2976e2659c6e3dd768d0fbfc6a15cd11314 after=d290b0a93c2138767799bffe561de2bad1a45c0ffc8210a3be393f16eb7bc305; untimed transfer_ms before=0.705 after=0.156; untimed checksum_validation_ms before=0.482 after=0.085; PostgreSQL 18.6|sampled sum of Node client and disposable PostgreSQL process-tree RSS; shared mappings may be counted more than once|DL_MEMCAP_MB=4096 is unenforced for total PostgreSQL memory
+CSV,native-postgres-query,402,667,200,5.938,1.742,N/A,144.5,N/A,N/A,7.412
+EXIT_STATUS|0
+OK   native-postgres-query 2x200 -> native-postgres-query,402,667,200,5.938,1.742,N/A,144.5,N/A,N/A,7.412
+INPUT|native-postgres-query|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|native-postgres-query|ok|ordinary recursive SQL full recomputation; timed phases end after materialization and count; exact before=5359ff08f251a47ab81d104beeff9633f95d50c30ea2ff1db9d40617983ca17b after=e640e84f06cd3d340d290625432f23bf9cf4b9df50d6e4ae1ab7a73f216df46b; untimed transfer_ms before=6.136 after=2.459; untimed checksum_validation_ms before=3.621 after=2.144; PostgreSQL 18.6|sampled sum of Node client and disposable PostgreSQL process-tree RSS; shared mappings may be counted more than once|DL_MEMCAP_MB=4096 is unenforced for total PostgreSQL memory
+CSV,native-postgres-query,12002,22667,2000,35.987,18.257,N/A,219.2,N/A,N/A,8.568
+EXIT_STATUS|0
+OK   native-postgres-query 6x2000 -> native-postgres-query,12002,22667,2000,35.987,18.257,N/A,219.2,N/A,N/A,8.568
+INPUT|native-postgres-query|333cfdd9c4c1bbed63a527bbe5d1002305e26ac14285809f7b9692ca4a53862e
+STATUS|native-postgres-query|ok|ordinary recursive SQL full recomputation; timed phases end after materialization and count; exact before=d5b111c00b9de6c6acc308845af36202735166f81b10ef25547078a8e03fcd77 after=ba46515280fa0525997e4d27a81f4d2dfdb3f4445c1e54d0cc969e59cb068bf2; untimed transfer_ms before=49.368 after=35.810; untimed checksum_validation_ms before=28.010 after=24.186; PostgreSQL 18.6|sampled sum of Node client and disposable PostgreSQL process-tree RSS; shared mappings may be counted more than once|DL_MEMCAP_MB=4096 is unenforced for total PostgreSQL memory
+CSV,native-postgres-query,160002,306667,20000,516.643,228.133,N/A,493.1,N/A,N/A,23.568
+EXIT_STATUS|0
+OK   native-postgres-query 8x20000 -> native-postgres-query,160002,306667,20000,516.643,228.133,N/A,493.1,N/A,N/A,23.568
+STATUS|pglite-pg_ivm|unsupported|pg_ivm rejects recursive WITH RECURSIVE view definitions|no process started|not applicable
+EXIT_STATUS|0
+STATUS pglite-pg_ivm 2x200 (see bench/results/repeated-proof-dag/warmup-0/adapter-status.tsv)
+STATUS|pglite-pg_ivm|unsupported|pg_ivm rejects recursive WITH RECURSIVE view definitions|no process started|not applicable
+EXIT_STATUS|0
+STATUS pglite-pg_ivm 6x2000 (see bench/results/repeated-proof-dag/warmup-0/adapter-status.tsv)
+STATUS|pglite-pg_ivm|unsupported|pg_ivm rejects recursive WITH RECURSIVE view definitions|no process started|not applicable
+EXIT_STATUS|0
+STATUS pglite-pg_ivm 8x20000 (see bench/results/repeated-proof-dag/warmup-0/adapter-status.tsv)
+STATUS|native-postgres-pg_ivm|unsupported|pg_ivm rejects recursive WITH RECURSIVE view definitions|no process started|not applicable
+EXIT_STATUS|0
+STATUS native-postgres-pg_ivm 2x200 (see bench/results/repeated-proof-dag/warmup-0/adapter-status.tsv)
+STATUS|native-postgres-pg_ivm|unsupported|pg_ivm rejects recursive WITH RECURSIVE view definitions|no process started|not applicable
+EXIT_STATUS|0
+STATUS native-postgres-pg_ivm 6x2000 (see bench/results/repeated-proof-dag/warmup-0/adapter-status.tsv)
+STATUS|native-postgres-pg_ivm|unsupported|pg_ivm rejects recursive WITH RECURSIVE view definitions|no process started|not applicable
+EXIT_STATUS|0
+STATUS native-postgres-pg_ivm 8x20000 (see bench/results/repeated-proof-dag/warmup-0/adapter-status.tsv)
+== wrote bench/results/repeated-proof-dag/warmup-0/results.csv ==
+chart -> bench/results/repeated-proof-dag/warmup-0/retract_ms.png
+chart -> bench/results/repeated-proof-dag/warmup-0/setup_ms.png
+chart -> bench/results/repeated-proof-dag/warmup-0/rss_mb.png
+         line 0: warning: Skipping data file with no valid points
+         line 0: warning: Skipping data file with no valid points
+chart -> bench/results/repeated-proof-dag/warmup-0/ops.png
+== wrote bench/results/repeated-proof-dag/warmup-0/REPORT.md and PNG charts in bench/results/repeated-proof-dag/warmup-0/ ==
