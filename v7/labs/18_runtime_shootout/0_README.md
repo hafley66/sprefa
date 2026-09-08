@@ -10,6 +10,12 @@ This lab measures transitive closure through one native logic route per runtime:
 | `dbsp-kernel` | Rust RAM evaluator over the emitted operator contract |
 | `dbsp-generated` | The same Rust kernel over native constructors generated from DL7 |
 | `dbsp-sqlite` | SQLite fixed point over DDL and SQL rules generated from the same DL7 program |
+| `native-postgres-query` | Opt-in native PostgreSQL ordinary recursive SQL full query |
+| `pglite-query` | Opt-in PGlite ordinary recursive SQL full query |
+
+The PostgreSQL-family arms are enabled with `POSTGRES_SHOOTOUT=1`. Both compare
+all ordered closure pairs with an independent JavaScript BFS oracle. pg_ivm is
+reported as unsupported because it rejects recursive view definitions.
 
 The algorithms are idiomatic to each runtime. The measurements compare these selected logic routes. They do not hold the low-level closure algorithm constant.
 
@@ -38,6 +44,7 @@ From `v7/`:
 just runtime-shootout-smoke
 just runtime-shootout
 just runtime-shootout 48
+POSTGRES_SHOOTOUT=1 just runtime-shootout-smoke
 ```
 
 The default `N=48` follows one-pass smoke sweeps on this machine: `N=32` took
