@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, stat, readFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 
@@ -220,6 +220,33 @@ function safeStatus(value) {
 
 async function run() {
   const runtime = process.argv[2];
+  if (runtime === "sequence-native" || runtime === "sequence-pglite") {
+    const fixture = JSON.parse(await readFile(process.argv[3], "utf8"));
+    const database = await openDatabase(runtime.slice(9), process.argv[4]);
+    try {
+      await database.exec("CREATE TEMP TABLE root(node integer PRIMARY KEY); CREATE TEMP TABLE edge(parent integer, child integer, PRIMARY KEY(parent,child));");
+      for (const [tick, update] of fixture.ticks.entries()) {
+        for (const {rel,sign,row} of update.arrivals) {
+          if (!["root","edge"].includes(rel) || !row.every(Number.isSafeInteger)) throw new Error("invalid sequence arrival");
+          const columns = rel === "root" ? ["node"] : ["parent","child"];
+          await database.exec(sign === "add"
+            ? `INSERT INTO ${rel} VALUES (${row.join(",")})`
+            : `DELETE FROM ${rel} WHERE ${columns.map((column,index)=>`${column}=${row[index]}`).join(" AND ")}`);
+        }
+        await materializeAndCount(database);
+        const actual = {};
+        for (const rel of ["root","edge","alive"]) {
+          const columns = rel === "edge" ? ["parent","child"] : ["node"];
+          const rows = (await database.query(`SELECT * FROM ${rel === "alive" ? "alive_snapshot" : rel} ORDER BY ${columns.join(",")}`)).rows;
+          actual[rel] = rows.map(row=>columns.map(column=>Number(row[column])));
+        }
+        console.log(JSON.stringify({tick,actual,carry_pending:false}));
+        assert.deepEqual(actual,update.expected,`${fixture.name} tick ${tick}`);
+        await database.exec("DROP TABLE alive_snapshot");
+      }
+    } finally { await database.close(); }
+    return;
+  }
   const layers = Number(process.argv[3]);
   const width = Number(process.argv[4]);
   const dataDir = process.argv[5];

@@ -45,6 +45,69 @@ async fn main() {
     let program = run::load_program(std::path::Path::new(&args[1]))
         .unwrap()
         .program;
+    if args.get(3).map(String::as_str) == Some("--sequence") {
+        let fixture: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&args[2]).unwrap()).unwrap();
+        let seam = run::open_seam(None).unwrap();
+        seam.run_program_ddl(&program.ddl, &program.queries)
+            .unwrap();
+        run_boot(&seam, &program.boot);
+        for (tick, update) in fixture["ticks"].as_array().unwrap().iter().enumerate() {
+            let arrivals: Vec<Arrival> = update["arrivals"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|arrival| Arrival {
+                    rel: arrival["rel"].as_str().unwrap().into(),
+                    sign: if arrival["sign"] == "add" {
+                        ArrivalSign::Add
+                    } else {
+                        ArrivalSign::Del
+                    },
+                    row: arrival["row"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|n| Value::Integer(n.as_i64().unwrap()))
+                        .collect(),
+                })
+                .collect();
+            sprefa_engine_rs::trace::reset();
+            let before = SEAM_TALLY.statements.load(Relaxed);
+            let result = drive_tick_transacted(&program, &seam, arrivals)
+                .await
+                .unwrap();
+            let statements = SEAM_TALLY.statements.load(Relaxed) - before;
+            let mut actual = serde_json::Map::new();
+            for rel in ["root", "edge", "alive"] {
+                let order = if rel == "edge" {
+                    "parent, child"
+                } else {
+                    "node"
+                };
+                actual.insert(
+                    rel.into(),
+                    serde_json::json!(rows(
+                        &seam,
+                        &format!("{} ORDER BY {order}", program.final_select[rel])
+                    )),
+                );
+            }
+            let trace: Vec<_> = sprefa_engine_rs::trace::summary_rows().into_iter().map(|(label,stat)| serde_json::json!({"verb":label.verb,"relation":label.relation.as_ref(),"calls":stat.calls,"rows_changed":stat.rows_changed,"sql_ns":stat.nanos})).collect();
+            let actual = serde_json::Value::Object(actual);
+            println!(
+                "{}",
+                serde_json::json!({"tick":tick,"actual":actual,"carry_pending":result.carry_pending,"statements":statements,"trace":trace})
+            );
+            assert!(!result.carry_pending, "tick {tick}");
+            assert_eq!(
+                actual, update["expected"],
+                "{} tick {tick}",
+                fixture["name"]
+            );
+        }
+        return;
+    }
     let graph: Fixture = serde_json::from_str(&std::fs::read_to_string(&args[2]).unwrap()).unwrap();
     let mut arrivals: Vec<Arrival> = graph
         .edges

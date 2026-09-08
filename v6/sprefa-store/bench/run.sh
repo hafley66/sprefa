@@ -20,6 +20,28 @@ if [[ -e "$OUT/results.csv" || -e "$OUT/adapter-status.tsv" ]]; then
   echo "REFUSE existing receipts in $OUT; choose a new BENCH_OUT" >&2
   exit 2
 fi
+if [[ "${BENCH_REPEATS:-0}" -gt 0 ]]; then
+  if [[ -e "$OUT/repeat-runs.tsv" ]]; then
+    echo "REFUSE existing repeat receipts in $OUT" >&2; exit 2
+  fi
+  mkdir -p "$OUT"
+  printf 'phase\titeration\trotation\texit_status\n' > "$OUT/repeat-runs.tsv"
+  repeat_failed=0
+  for ((iteration=0; iteration<=BENCH_REPEATS; iteration++)); do
+    if [[ "$iteration" -eq 0 ]]; then phase=warmup; else phase=measured; fi
+    rotation=$((iteration * 3))
+    BENCH_REPEATS=0 BENCH_ROTATION="$rotation" BENCH_OUT="$OUT/$phase-$iteration" \
+      bash bench/run.sh >"$OUT/$phase-$iteration.log" 2>&1
+    repeat_status=$?
+    printf '%s\t%s\t%s\t%s\n' "$phase" "$iteration" "$rotation" "$repeat_status" >> "$OUT/repeat-runs.tsv"
+    echo "REPEAT $phase $iteration rotation=$rotation exit=$repeat_status"
+    [[ "$repeat_status" -eq 0 ]] || repeat_failed=1
+    [[ "$repeat_status" -eq 3 ]] && break
+  done
+  node bench/7_repeat_summary.mjs "$OUT" || repeat_failed=1
+  bench/chart.sh "$OUT/results.csv" "$OUT" || repeat_failed=1
+  exit "$repeat_failed"
+fi
 mkdir -p "$OUT"
 mkdir -p "$OUT/logs"
 CSV="$OUT/results.csv"
@@ -72,12 +94,18 @@ if [[ -n "${BENCH_ENGINE_FILTER:-}" ]]; then
   done
   ENGINES=("${FILTERED_ENGINES[@]}")
 fi
+if [[ "${#ENGINES[@]}" -gt 0 ]]; then
+  rotation=$(( ${BENCH_ROTATION:-0} % ${#ENGINES[@]} ))
+  ENGINES=("${ENGINES[@]:rotation}" "${ENGINES[@]:0:rotation}")
+fi
+printf '%s\n' "${ENGINES[@]}" > "$OUT/engine-order.txt"
 # Scale sweep as "layers x width". Kept medium so a laptop survives.
 SCALES="${SCALES:-2x200 6x2000 8x20000 10x50000 14x80000}"
 
 echo "engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb,host_peak_mb,sqlite_hw_mb,db_mb" > "$CSV"
 printf 'engine\tscale\tstatus\tsemantics_or_reason\tmemory_scope\tmemory_limit_scope\n' > "$STATUS_TSV"
 printf 'engine\tscale\tactual_sha256\texpected_sha256\n' > "$OUT/input-hashes.tsv"
+printf 'epoch_seconds\tengine\tscale\tavailable_percent\n' > "$OUT/resources.tsv"
 
 for spec in "${ENGINES[@]}"; do
   IFS='|' read -r label bin env <<< "$spec"
@@ -96,6 +124,25 @@ for spec in "${ENGINES[@]}"; do
     scales="${V1_SCALES:-1x1000 1x10000 1x100000 2x1000 2x10000 2x100000 3x1000 3x10000 3x100000}"
   fi
   for s in $scales; do
+    if [[ -n "${BENCH_MIN_FREE_PERCENT:-}" ]]; then
+      for resource_sample in 1 2; do
+        available=""
+        if [[ -x /usr/bin/memory_pressure ]]; then
+          available=$(/usr/bin/memory_pressure -Q 2>/dev/null | awk '/System-wide memory free percentage/ {gsub(/%/,"",$NF);print $NF}')
+        elif [[ -r /proc/meminfo ]]; then
+          available=$(awk '/MemTotal:/ {total=$2} /MemAvailable:/ {available=$2} END {if(total) printf "%.0f",100*available/total}' /proc/meminfo)
+        fi
+        printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$label" "$s" "${available:-unknown}" >> "$OUT/resources.tsv"
+        if [[ "$available" =~ ^[0-9]+$ ]] && [[ "$available" -lt "$BENCH_MIN_FREE_PERCENT" ]]; then
+          if [[ "$resource_sample" -eq 2 ]]; then
+            printf '%s\t%s\tresource-blocked\tavailable memory below %s percent on two checks\tOS memory-pressure query\tno cell started\n' \
+              "$label" "$s" "$BENCH_MIN_FREE_PERCENT" >> "$STATUS_TSV"
+            exit 3
+          fi
+          sleep 5
+        else break; fi
+      done
+    fi
     if [[ " ${BENCH_SKIP_CELLS:-} " == *" $label@$s "* ]]; then
       printf '%s\t%s\tskipped\t%s\tno process started\tprocess-time bound not entered\n' \
         "$label" "$s" "${BENCH_SKIP_REASON:-explicit BENCH_SKIP_CELLS entry}" >> "$STATUS_TSV"

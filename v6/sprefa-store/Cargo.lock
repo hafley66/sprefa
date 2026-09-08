@@ -3782,6 +3782,7 @@ dependencies = [
  "libsqlite3-sys",
  "salsa",
  "sea-orm",
+ "serde_json",
  "sha2",
  "timely",
  "tokio",

@@ -18,6 +18,7 @@
 :- use_module(library(process)).
 :- use_module(library(aggregate)).
 :- use_module(library(crypto)).
+:- use_module(library(http/json)).
 
 :- dynamic edge/2 as incremental.
 :- dynamic root/1 as incremental.
@@ -26,6 +27,10 @@
 alive(Node)  :- root(Node).
 alive(Child) :- edge(Parent, Child), alive(Parent).
 
+main(Argv) :-
+    Argv = ['--sequence', Path], !,
+    setup_call_cleanup(open(Path,read,In),json_read_dict(In,Fixture),close(In)),
+    sequence_ticks(Fixture.ticks, 0).
 main(Argv) :-
     ( Argv = [LayersAtom, WidthAtom]
     -> atom_number(LayersAtom, Layers), atom_number(WidthAtom, Width)
@@ -60,7 +65,22 @@ main(Argv) :-
            [Nodes, Edges, Killed, SetupMs, RetractMs, RssMb]),
     format("nodes=~w edges=~w alive_before=~w alive_after=~w killed=~w setup_ms=~w retract_ms=~w rss_mb=~2f table_mb=~2f~n",
            [Nodes, Edges, AliveBefore, AliveAfter, Killed, SetupMs, RetractMs,
-            RssMb, TableMb]).
+           RssMb, TableMb]).
+
+sequence_ticks([], _).
+sequence_ticks([Update|Rest], Tick) :-
+    maplist(sequence_arrival, Update.arrivals),
+    findall([N],root(N),Rs), sort(Rs,Roots),
+    findall([P,C],edge(P,C),Es), sort(Es,Edges),
+    findall([N],alive(N),As), sort(As,Alive),
+    json_write_dict(current_output,_{tick:Tick,actual:_{root:Roots,edge:Edges,alive:Alive},carry_pending:false},[width(0)]), nl,
+    ( Roots == Update.expected.root, Edges == Update.expected.edge, Alive == Update.expected.alive
+    -> Next is Tick+1, sequence_ticks(Rest,Next)
+    ; halt(2) ).
+sequence_arrival(Update) :-
+    ( Update.rel == "root" -> Update.row=[N], Fact=root(N)
+    ; Update.rel == "edge", Update.row=[P,C], Fact=edge(P,C) ),
+    ( Update.sign == "add" -> assertz(Fact) ; retract(Fact) ).
 
 build(Layers, Width) :-
     assertz(root(0)),
