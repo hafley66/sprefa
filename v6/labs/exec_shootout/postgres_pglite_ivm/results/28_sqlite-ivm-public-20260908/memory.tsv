@@ -1,0 +1,4 @@
+arm	observed_peak_rss_kb	process_reported_peak_rss_bytes	database_bytes_min	database_bytes_max	durability
+pg_ivm	64480		8009407	11409087	fsync=on;synchronous_commit=on;full_page_writes=on
+sqlite-plan-refresh	47712	49840128	65536	339968	WAL;synchronous=FULL
+dd		27082752	0	0	volatile-no-commit

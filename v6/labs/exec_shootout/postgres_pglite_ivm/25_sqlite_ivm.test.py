@@ -82,16 +82,24 @@ class SqliteIvm(unittest.TestCase):
         self.db.execute("DELETE FROM fact WHERE group_id=2")
         self.assertEqual(self.db.execute("SELECT * FROM summary ORDER BY 1").fetchall(),
                          [(1, 1, 20), (3, 2, -6)])
+        self.db.execute("INSERT OR REPLACE INTO fact VALUES(2,3,6)")
+        self.db.execute("INSERT INTO fact VALUES(2,1,9) ON CONFLICT(id) DO UPDATE SET group_id=excluded.group_id,amount=excluded.amount")
+        self.db.execute("INSERT OR IGNORE INTO fact VALUES(2,3,999)")
+        self.assertEqual(self.db.execute("SELECT * FROM summary ORDER BY 1").fetchall(),
+                         [(1, 1, 36), (3, 2, -6)])
         before = self.db.execute("SELECT * FROM summary ORDER BY 1").fetchall()
         self.db.execute("BEGIN")
         self.db.execute("DELETE FROM fact")
         self.assertEqual(self.db.execute("SELECT * FROM summary").fetchall(), [])
         self.db.execute("ROLLBACK")
         self.assertEqual(self.db.execute("SELECT * FROM summary ORDER BY 1").fetchall(), before)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("INSERT INTO fact VALUES(30,1,1),(2,1,1)")
+        self.assertEqual(self.db.execute("SELECT * FROM summary ORDER BY 1").fetchall(), before)
         telemetry = self.db.execute(
             "SELECT refresh_count,last_source,last_operation,last_output_rows FROM __sqlite_ivm_runtime WHERE view_name='summary'"
         ).fetchone()
-        self.assertEqual(telemetry[1:], ("fact", "DELETE", 2))
+        self.assertEqual(telemetry[1:], ("fact", "UPDATE", 2))
         self.assertGreater(telemetry[0], 0)
         self.assertEqual([event["phase"] for event in events], ["bind-lower", "install"])
         with self.assertRaises(sqlite3.OperationalError):
@@ -144,7 +152,9 @@ class SqliteIvm(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT * FROM group_total").fetchall(), [(1, 1, 16)])
         self.db.close()
         self.db = sqlite3.connect(self.path, isolation_level=None)
-        self.db.execute("UPDATE fact SET amount=-3 WHERE id=1")
+        second = sqlite3.connect(self.path, isolation_level=None)
+        second.execute("UPDATE fact SET amount=-3 WHERE id=1")
+        second.close()
         self.assertEqual(self.db.execute("SELECT * FROM global_total").fetchall(), [(1, -6)])
         drop(self.db, "group_total")
         self.assertIsNone(self.db.execute("SELECT type FROM sqlite_schema WHERE name='group_total'").fetchone())

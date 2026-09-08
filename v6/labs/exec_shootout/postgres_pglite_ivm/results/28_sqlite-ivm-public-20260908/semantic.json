@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "arms": [
+    "pg_ivm",
+    "sqlite-plan-refresh",
+    "dd"
+  ],
+  "states_per_arm": 163,
+  "exact_state_checks": 489,
+  "exact_mismatches": 0,
+  "final_input_hash": "585993cdff3650018e09c96e1e87f55ef6b153cc2e2bfcd1daae6b1e6e88b2da",
+  "final_checksum": "82d6dbe032ff42f547c8831f2c606bc1ae7497f47c7c671f2e00d042aec20b1f"
+}

@@ -1,0 +1,104 @@
+{
+  "runner": {
+    "profile": "full",
+    "budget": "constrained",
+    "cases": [
+      {
+        "stage": "fanout-anchor",
+        "rows": 400,
+        "batch_size": 10,
+        "fanout": 10
+      },
+      {
+        "stage": "fanout-anchor",
+        "rows": 12000,
+        "batch_size": 10,
+        "fanout": 10
+      },
+      {
+        "stage": "batch10-row-sweep",
+        "rows": 400,
+        "batch_size": 10,
+        "fanout": 200
+      },
+      {
+        "stage": "batch10-row-sweep",
+        "rows": 1200,
+        "batch_size": 10,
+        "fanout": 200
+      },
+      {
+        "stage": "batch10-row-sweep",
+        "rows": 4000,
+        "batch_size": 10,
+        "fanout": 200
+      },
+      {
+        "stage": "batch10-row-sweep",
+        "rows": 12000,
+        "batch_size": 10,
+        "fanout": 200
+      },
+      {
+        "stage": "batch-sweep",
+        "rows": 12000,
+        "batch_size": 1000,
+        "fanout": 200
+      },
+      {
+        "stage": "batch-sweep",
+        "rows": 12000,
+        "batch_size": 1,
+        "fanout": 200
+      },
+      {
+        "stage": "batch-sweep",
+        "rows": 12000,
+        "batch_size": 100,
+        "fanout": 200
+      }
+    ],
+    "arms": [
+      "pg_ivm",
+      "sqlite-plan-refresh",
+      "dd"
+    ],
+    "warmups": 1,
+    "repetitions": 5,
+    "timing_contract": "ordinary SQL transaction or keyed DD writes, maintenance completion, result materialization and count; exact input/output validation outside timing",
+    "memory_control": {
+      "total_memory_enforcement": "UNENFORCED",
+      "total_memory_limit_bytes": null,
+      "cgroup_swap_limit_bytes": null,
+      "cgroup_oom_events": null,
+      "cgroup_page_cache_bytes": null,
+      "hard_cap_axis": "blocked",
+      "reason": "Docker daemon unavailable and no existing Podman, Colima, Lima, or other Linux runtime",
+      "observed_group_metric": "PostgreSQL postmaster tree for SQL server arms; worker process tree for SQLite/DD; unavailable samples remain null"
+    },
+    "postgres_tuning": {
+      "shared_buffers": "32MB",
+      "work_mem": "1MB",
+      "effective_cache_size": "64MB",
+      "maintenance_work_mem": "32MB",
+      "temp_file_limit": "2GB"
+    },
+    "machine": {
+      "hostname": "Chriss-MacBook-Pro.local",
+      "platform": "darwin",
+      "release": "23.6.0",
+      "arch": "arm64",
+      "total_memory_bytes": 17179869184
+    }
+  },
+  "sqlite": {
+    "journal_mode": "wal",
+    "synchronous": "FULL",
+    "foreign_keys": "ON",
+    "temp_store": "MEMORY",
+    "cache_size": -2000,
+    "mmap_size": 0
+  },
+  "sqlite_algorithm": "full-query-recomputation-per-source-row",
+  "sqlite_plan_sha256": "626e54a83eaddcc80f627c08bdae013484c35c1c2686a8a597f5d320e5616c7b"
+}
