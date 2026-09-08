@@ -425,10 +425,7 @@ fn scip_mode_from_flags_covers_all_three_arms() {
         ScipMode::from_flags(Some(index.as_path()), false),
         ScipMode::Load(path) if path == index.as_path()
     ));
-    assert!(matches!(
-        ScipMode::from_flags(None, true),
-        ScipMode::Build
-    ));
+    assert!(matches!(ScipMode::from_flags(None, true), ScipMode::Build));
     assert!(matches!(ScipMode::from_flags(None, false), ScipMode::Off));
     assert!(matches!(
         ScipMode::from_flags(Some(index.as_path()), true),

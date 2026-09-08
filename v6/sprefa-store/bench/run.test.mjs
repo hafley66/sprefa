@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { graphFixture } from "./engines/1_postgres_reach.mjs";
 
 const source = dirname(fileURLToPath(import.meta.url));
 const header = "engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb,host_peak_mb,sqlite_hw_mb,db_mb\n";
@@ -18,6 +19,7 @@ test("shared harness preserves failures and refuses receipt replacement", async 
   await mkdir(join(bench, "engines"), { recursive: true });
   await mkdir(join(fixture, "tools"));
   await copyFile(join(source, "run.sh"), join(bench, "run.sh"));
+  await copyFile(join(source, "engines/1_postgres_reach.mjs"), join(bench, "engines/1_postgres_reach.mjs"));
   await copyFile(join(source, "../../tools/run-capped.sh"), join(fixture, "tools/run-capped.sh"));
   for (const name of ["chart.sh", "report.sh"]) {
     await writeFile(join(bench, name), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
@@ -35,6 +37,8 @@ else process.exit(exit);
     { name: "reported-error", output: `CSV,${numeric}STATUS|swi-incr|error|validation failed|unavailable|unknown\n`, exit: 0, expectedExit: 1, csv: "", status: "error\tvalidation failed" },
     { name: "timeout-after-csv", output: `CSV,${numeric}`, timeout: true, exit: 124, expectedExit: 1, csv: "", status: "timeout\tcase exceeded 1 seconds" },
     { name: "empty", output: "", exit: 0, expectedExit: 1, csv: "swi-incr,402,,,,WALL,,,N/A,N/A,N/A\n", status: "error\tno CSV or adapter status; see logs/swi-incr-2x200.log" },
+    { name: "input-match", output: `INPUT|swi-incr|${graphFixture(2,200).input_hash}\nCSV,${numeric}`, exit: 0, expectedExit: 0, csv: numeric, status: "", requireHash: true },
+    { name: "input-mismatch", output: `INPUT|swi-incr|wrong\nCSV,${numeric}`, exit: 0, expectedExit: 1, csv: "", status: `error\tinput hash mismatch: actual=wrong expected=${graphFixture(2,200).input_hash}`, requireHash: true },
   ];
   for (const sample of cases) {
     await t.test(sample.name, async () => {
@@ -43,6 +47,7 @@ else process.exit(exit);
         ...process.env, LC_ALL: "C", LANG: "C", POSTGRES_SHOOTOUT: "0", DD_SHOOTOUT: "0",
         BENCH_ENGINE_FILTER: "swi-incr", SCALES: "2x200", BENCH_OUT: output,
         BENCH_SKIP_CELLS: "", BENCH_CELL_BUDGET_S: "1",
+        SQLITE_SHOOTOUT: "0", BENCH_REQUIRE_INPUT_HASH: sample.requireHash ? "1" : "0", BENCH_BACK_STRIDE: "0",
         FIXTURE_CASE: JSON.stringify(sample),
       };
       const run = spawnSync("bash", [join(bench, "run.sh")], { env, encoding: "utf8", timeout: 10_000 });

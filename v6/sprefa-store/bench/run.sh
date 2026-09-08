@@ -41,6 +41,15 @@ ENGINES=(
 if [[ "${DD_SHOOTOUT:-0}" == "1" ]]; then
   ENGINES+=("differential-dataflow|dd_reach|")
 fi
+if [[ "${SQLITE_SHOOTOUT:-0}" == "1" ]]; then
+  for cascade in sqlite-count sqlite-count-scc sqlite-dred-loop sqlite-dred-cte sqlite-signed-delta-v2; do
+    ENGINES+=("$cascade|bench/engines/4_sqlite_cascade.sh|SQLITE_CASCADE=$cascade")
+  done
+  ENGINES+=(
+    "tsv2-runtime|bench/engines/5_generated_reach.sh|GENERATED_REACH_RUNTIME=tsv2"
+    "sprefa-engine-rs|bench/engines/5_generated_reach.sh|GENERATED_REACH_RUNTIME=rust"
+  )
+fi
 if [[ "${POSTGRES_SHOOTOUT:-0}" == "1" ]]; then
   . bench/engines/0_postgres_cluster.sh
   PG_BENCH_LOG_DIR="$OUT/logs/postgres"
@@ -68,6 +77,7 @@ SCALES="${SCALES:-2x200 6x2000 8x20000 10x50000 14x80000}"
 
 echo "engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb,host_peak_mb,sqlite_hw_mb,db_mb" > "$CSV"
 printf 'engine\tscale\tstatus\tsemantics_or_reason\tmemory_scope\tmemory_limit_scope\n' > "$STATUS_TSV"
+printf 'engine\tscale\tactual_sha256\texpected_sha256\n' > "$OUT/input-hashes.tsv"
 
 for spec in "${ENGINES[@]}"; do
   IFS='|' read -r label bin env <<< "$spec"
@@ -126,6 +136,16 @@ for spec in "${ENGINES[@]}"; do
     fi
     if [[ -n "$line" && "$(awk -F, '{print NF}' <<< "$line")" -eq 8 ]]; then
       line="${line},N/A,N/A,N/A"
+    fi
+    if [[ -n "$line" && "$status" -eq 0 && "$adapter_failed" -eq 0 && "${BENCH_REQUIRE_INPUT_HASH:-0}" == "1" ]]; then
+      actual_hash=$(awk -F'|' '$1=="INPUT" {print $3; exit}' "$cell_log")
+      expected_hash=$(node --input-type=module -e 'import {graphFixture} from "./bench/engines/1_postgres_reach.mjs"; console.log(graphFixture(Number(process.argv[1]),Number(process.argv[2]),Number(process.env.BENCH_BACK_STRIDE ?? 0)).input_hash)' "$layers" "$width")
+      printf '%s\t%s\t%s\t%s\n' "$label" "$s" "$actual_hash" "$expected_hash" >> "$OUT/input-hashes.tsv"
+      if [[ -z "$expected_hash" || "$actual_hash" != "$expected_hash" ]]; then
+        printf '%s\t%s\terror\tinput hash mismatch: actual=%s expected=%s\tunavailable\tunknown\n' \
+          "$label" "$s" "$actual_hash" "$expected_hash" >> "$STATUS_TSV"
+        adapter_failed=1
+      fi
     fi
     na_count=$(grep -c '^V1_NA' "$cell_log" || true)
     if [[ "$label" == "tsv2-gen" && "$status" -ne 0 && \

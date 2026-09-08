@@ -16,12 +16,17 @@ fn a_statement_past_its_budget_is_aborted_and_named() {
     let seam = SqliteSeam::in_memory().expect("seam");
     seam.set_statement_budget(Duration::from_millis(200));
     let started = Instant::now();
-    let error = seam.scalar(RUNAWAY).expect_err("the runaway CTE must be cut");
+    let error = seam
+        .scalar(RUNAWAY)
+        .expect_err("the runaway CTE must be cut");
     let wall = started.elapsed();
     assert!(statement_budget_exceeded(&error), "not the valve: {error}");
     let text = error.to_string();
     assert!(text.contains("200 ms budget"), "budget unnamed: {text}");
-    assert!(text.contains("DL_STATEMENT_BUDGET_MS"), "override unnamed: {text}");
+    assert!(
+        text.contains("DL_STATEMENT_BUDGET_MS"),
+        "override unnamed: {text}"
+    );
     assert!(
         wall < Duration::from_secs(5),
         "the valve fired late: {wall:?}"
@@ -44,7 +49,8 @@ fn the_row_path_is_cut_too() {
 fn a_statement_inside_its_budget_is_untouched() {
     let seam = SqliteSeam::in_memory().expect("seam");
     seam.set_statement_budget(Duration::from_millis(200));
-    let bounded = "WITH RECURSIVE spin(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM spin LIMIT 50000) \
+    let bounded =
+        "WITH RECURSIVE spin(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM spin LIMIT 50000) \
                    SELECT count(*) FROM spin";
     assert_eq!(seam.scalar(bounded).expect("bounded"), 50_000);
     assert_eq!(seam.statement_budget(), Duration::from_millis(200));

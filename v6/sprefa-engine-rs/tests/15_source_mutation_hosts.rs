@@ -753,6 +753,12 @@ fn git_init(dir: &std::path::Path) {
     std::fs::write(dir.join("seed.txt"), "seed\n").unwrap();
     run(&["add", "seed.txt"]);
     run(&[
-        "-c", "user.name=test", "-c", "user.email=test@test", "commit", "-qm", "seed",
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@test",
+        "commit",
+        "-qm",
+        "seed",
     ]);
 }

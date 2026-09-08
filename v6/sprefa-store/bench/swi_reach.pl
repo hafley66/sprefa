@@ -17,6 +17,7 @@
 
 :- use_module(library(process)).
 :- use_module(library(aggregate)).
+:- use_module(library(crypto)).
 
 :- dynamic edge/2 as incremental.
 :- dynamic root/1 as incremental.
@@ -31,10 +32,20 @@ main(Argv) :-
     ;  Layers = 2, Width = 200 ),
     statistics(walltime, _),
     build(Layers, Width),
+    ( getenv('BENCH_BACK_STRIDE', StrideAtom), atom_number(StrideAtom, Stride), Stride > 0
+    -> First is 2 + Width, Last is 1 + Layers * Width,
+       forall((between(First, Last, Node), Node mod Stride =:= 0),
+              (Parent is Node - Width, assertz(edge(Node, Parent))))
+    ; true ),
     aggregate_all(count, alive(_), AliveBefore),        % forces the table
     statistics(walltime, [_, SetupMs]),
     Nodes is 2 + Layers * Width,
     initial_oracle_check(Nodes, AliveBefore),
+    findall(Parent-Child, edge(Parent, Child), InputEdges),
+    msort(InputEdges, SortedEdges),
+    with_output_to(string(InputText), forall(member(Parent-Child, SortedEdges), format('~d,~d~n', [Parent, Child]))),
+    crypto_data_hash(InputText, InputHash, [algorithm(sha256)]),
+    format(user_error, 'INPUT|swi-incr|~w~n', [InputHash]),
     statistics(walltime, _),
     retract(root(0)),
     aggregate_all(count, alive(_), AliveAfter),         % incremental re-eval

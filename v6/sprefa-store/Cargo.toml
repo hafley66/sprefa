@@ -64,3 +64,4 @@ dbsp = { version = "0.323", optional = true }
 with-dbsp = ["dep:dbsp"]
 
 [dev-dependencies]
+sha2 = "0.10"

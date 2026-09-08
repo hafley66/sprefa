@@ -5,6 +5,7 @@
 //! fixed point. Complete ordered results are checked against an independent
 //! BFS outside the timed phases.
 
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -92,9 +93,27 @@ fn main() {
         .clamp(1, 500_000);
 
     let graph_started = Instant::now();
-    let parents = benchgraph::gen(layers, width);
+    let mut parents = benchgraph::gen(layers, width);
+    let back_stride: usize = std::env::var("BENCH_BACK_STRIDE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if back_stride > 0 {
+        for node in (2 + width)..parents.len() {
+            if node % back_stride == 0 {
+                parents[node - width].push(node as i64);
+            }
+        }
+    }
     let edges = benchgraph::edges(&parents);
     let graph_setup = graph_started.elapsed();
+    let mut sorted_edges = edges.clone();
+    sorted_edges.sort_unstable();
+    let mut input_hash = Sha256::new();
+    for (parent, child) in sorted_edges {
+        input_hash.update(format!("{parent},{child}\n"));
+    }
+    eprintln!("INPUT|differential-dataflow|{:x}", input_hash.finalize());
     let expected_before: Vec<i64> = (0..parents.len() as i64).collect();
     let expected_after = oracle_survivors(&parents);
     let expected_after_in = expected_after.clone();
@@ -190,7 +209,7 @@ fn main() {
     let killed = node_count - survivors.len();
     let rss = peak_rss_mb();
     eprintln!(
-        "STATUS|differential-dataflow|ok|differential-dataflow 0.25 with timely 0.31; shared contiguous-node DAG; setup and retract end after fixed-point materialization and count; exact ordered sets match BFS oracle|process peak RSS from getrusage including untimed oracle allocations|DL_MEMCAP_MB={cap_mb} caps live Rust allocations through CappedAlloc (0 disables); RLIMIT_AS and RLIMIT_DATA are also requested best-effort; total process RSS is not capped"
+        "STATUS|differential-dataflow|ok|differential-dataflow 0.25 with timely 0.31; shared layered graph; setup and retract end after fixed-point materialization and count; exact ordered sets match BFS oracle|process peak RSS from getrusage including untimed oracle allocations|DL_MEMCAP_MB={cap_mb} caps live Rust allocations through CappedAlloc (0 disables); RLIMIT_AS and RLIMIT_DATA are also requested best-effort; total process RSS is not capped"
     );
     eprintln!(
         "[dd] SETUP nodes={node_count} edges={edge_count} records={build_records} ms={:.3}",
