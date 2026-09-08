@@ -244,12 +244,16 @@ fn sequence(path: &str) {
         let (mut edge_in, mut root_in) = worker.dataflow::<u64, _, _>(|scope| {
             let (ei, ec) = scope.new_collection::<(i64, i64), isize>();
             let (ri, rc) = scope.new_collection::<i64, isize>();
-            ec.clone().inspect(move |(row, _, diff)| {
-                *out_e.lock().unwrap().entry(*row).or_default() += diff
-            });
-            rc.clone().inspect(move |(row, _, diff)| {
-                *out_r.lock().unwrap().entry(*row).or_default() += diff
-            });
+            ec.clone()
+                .inspect(move |(row, _, diff)| {
+                    *out_e.lock().unwrap().entry(*row).or_default() += diff
+                })
+                .probe_with(&mut probe);
+            rc.clone()
+                .inspect(move |(row, _, diff)| {
+                    *out_r.lock().unwrap().entry(*row).or_default() += diff
+                })
+                .probe_with(&mut probe);
             let loop_edges = ec.clone();
             let loop_roots = rc.clone();
             rc.iterate(move |inner_scope, inner| {
