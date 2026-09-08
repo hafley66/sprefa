@@ -16,6 +16,10 @@ This lab measures transitive closure through one native logic route per runtime:
 The PostgreSQL-family arms are enabled with `POSTGRES_SHOOTOUT=1`. Both compare
 all ordered closure pairs with an independent JavaScript BFS oracle. pg_ivm is
 reported as unsupported because it rejects recursive view definitions.
+PGlite peak RSS from `/usr/bin/time` covers its Node process and embedded WASM.
+Native PostgreSQL peak RSS covers the measured Node client process; the
+prestarted disposable server is outside that value, and no total memory cap is
+enforced.
 
 The algorithms are idiomatic to each runtime. The measurements compare these selected logic routes. They do not hold the low-level closure algorithm constant.
 
