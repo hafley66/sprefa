@@ -39,7 +39,7 @@ EOF
   echo "chart -> $OUT/$outfile"
 }
 
-plot_metric "Retract latency (the measured incremental op)" 2 "retract ms" "retract_ms.png" log
+plot_metric "Root-0 retract and survivor recount latency"    2 "retract ms" "retract_ms.png" log
 plot_metric "Setup latency (one-time build)"               3 "setup ms"   "setup_ms.png"   log
 plot_metric "Peak RSS"                                     4 "peak RSS MB" "rss_mb.png"     lin
-plot_metric "Incremental work (ops per retract)"          5 "ops"        "ops.png"        log
+plot_metric "Reported work units per retract"              5 "ops"        "ops.png"        log

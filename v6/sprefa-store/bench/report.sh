@@ -2,22 +2,21 @@
 # Auto-write REPORT.md from results.csv: embeds the charts, prints a per-scale
 # table, and derives one-line takeaways with awk. No hand-authored numbers.
 set -uo pipefail
-CSV="$1"; OUT="$2"; CAP="$3"
+CSV="$1"; OUT="$2"; CAP="$3"; STATUS_TSV="${4:-}"
 
 cat <<EOF
 # Z-set / IVM head-to-head — feasibility lab
 
 Same computation in every engine: reachability from roots {0,1} over a generated
-DAG, then **retract root 0** and maintain the survivor set incrementally. Inputs
-and outputs are byte-identical across engines (enforced by \`tests/head_to_head\`
-against an independent BFS oracle). Only the **retract** is the measured op;
-setup (building the corpus) is reported separately. Heap budget: ${CAP} MB/run.
+DAG, then **retract root 0** and recount the survivor set. The PostgreSQL-family
+numeric arms compare complete ordered results with an independent BFS oracle
+before emitting CSV. Only the root retraction and survivor recount are the
+measured operation; setup is reported separately. Requested memory budget:
+${CAP} MB/run. Enforcement and accounting scope are adapter-specific and
+recorded below.
 
-Engines:
-- **sqlite-mem** — the weight-cascade on an in-memory SQLite db (resident).
-- **sqlite-disk** — same cascade on an on-file db, 32 MB page cache (paged).
-- **dd** — differential-dataflow 0.25 / timely (resident arrangements).
-- **dbsp** — Feldera's \`dbsp\` engine, \`recursive\` Z-set circuit (resident).
+Ordinary PostgreSQL and PGlite arms execute the recursive query from scratch
+after the root deletion. Their rows are full recomputation measurements.
 
 ## Charts
 
@@ -33,6 +32,15 @@ Engines:
 EOF
 tail -n +2 "$CSV" | awk -F, '{printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11}'
 
+if status_path="${STATUS_TSV:-}"; [[ -n "$status_path" && -s "$status_path" ]]; then
+  echo
+  echo "## Adapter status and measurement scope"
+  echo
+  echo "| engine | scale | status | semantics or reason | memory scope | memory-limit scope |"
+  echo "|---|---|---|---|---|---|"
+  tail -n +2 "$status_path" | awk -F '\t' '{printf "| %s | %s | %s | %s | %s | %s |\n",$1,$2,$3,$4,$5,$6}'
+fi
+
 echo
 echo "## Takeaways (derived)"
 echo
@@ -45,10 +53,10 @@ END { print "- Largest scale reached by a numeric run: " maxn " nodes." }' "$CSV
 # Any walls?
 walls=$(awk -F, 'NR>1 && $6=="WALL"{print $1" @ "$2" nodes"}' "$CSV")
 if [[ -n "$walls" ]]; then
-  echo "- Hit the ${CAP} MB budget (aborted, no swap):"
+  echo "- Recorded a WALL row under the requested ${CAP} MB budget or an unclassified engine failure:"
   echo "$walls" | sed 's/^/  - /'
 else
-  echo "- No engine hit the ${CAP} MB budget at these scales."
+  echo "- No numeric arm emitted a WALL row at these scales."
 fi
 
 # sqlite retract op-count independence (O(depth)).
