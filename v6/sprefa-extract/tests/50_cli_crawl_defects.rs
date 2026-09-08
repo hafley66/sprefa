@@ -2,6 +2,11 @@
 //! One test per defect; each ran red before the fix that closed it.
 
 use std::process::Command;
+use std::sync::Mutex;
+
+use sprefa_extract::{ScipRust, ScipSource};
+
+static PROCESS_ENV: Mutex<()> = Mutex::new(());
 
 fn temp_root(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("extract50-{name}-{}", std::process::id()));
@@ -414,4 +419,84 @@ fn legacy_last_error_line_still_skips_a_trailing_panic_note() {
         ),
         "8: __pthread_joiner_wake"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn rust_staging_preserves_nested_workspace_path_dependency_topology() {
+    let _environment = PROCESS_ENV.lock().unwrap();
+    let scratch = temp_root("nested-rust-topology");
+    let repository = scratch.join("repository");
+    let app = repository.join("packages/app");
+    let dependency = repository.join("packages/dependency");
+    let transitive = repository.join("shared/transitive");
+    for source in [&app, &dependency, &transitive] {
+        std::fs::create_dir_all(source.join("src")).unwrap();
+    }
+    std::fs::create_dir_all(repository.join(".cargo")).unwrap();
+    std::fs::write(
+        repository.join("Cargo.toml"),
+        "[workspace]\nresolver='2'\nmembers=['packages/app','packages/dependency','shared/transitive']\n\
+         [workspace.package]\nedition='2021'\n",
+    )
+    .unwrap();
+    std::fs::write(repository.join("Cargo.lock"), "version = 4\n").unwrap();
+    std::fs::write(
+        repository.join(".cargo/config.toml"),
+        "[build]\nincremental = false\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("Cargo.toml"),
+        "[package]\nname='app'\nversion='0.0.0'\nedition.workspace=true\n\
+         [dependencies]\ndependency={path='../dependency'}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dependency.join("Cargo.toml"),
+        "[package]\nname='dependency'\nversion='0.0.0'\nedition.workspace=true\n\
+         [dependencies]\ntransitive={path='../../shared/transitive'}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        transitive.join("Cargo.toml"),
+        "[package]\nname='transitive'\nversion='0.0.0'\nedition.workspace=true\n",
+    )
+    .unwrap();
+    std::fs::write(app.join("src/lib.rs"), "pub fn app() {}\n").unwrap();
+    std::fs::write(dependency.join("src/lib.rs"), "pub fn dependency() {}\n").unwrap();
+    std::fs::write(transitive.join("src/lib.rs"), "pub fn transitive() {}\n").unwrap();
+    assert!(Command::new("git")
+        .args(["init", "-q", repository.to_str().unwrap()])
+        .status()
+        .unwrap()
+        .success());
+
+    let bin = scratch.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let indexer = bin.join("rust-analyzer");
+    std::fs::write(
+        &indexer,
+        "#!/bin/sh\n\
+         test -f ../dependency/Cargo.toml || { echo 'missing sibling dependency' >&2; exit 41; }\n\
+         test -f ../../shared/transitive/Cargo.toml || { echo 'missing transitive dependency' >&2; exit 42; }\n\
+         test -f ../../Cargo.toml || { echo 'missing workspace manifest' >&2; exit 43; }\n\
+         test -f ../../Cargo.lock || { echo 'missing workspace lockfile' >&2; exit 44; }\n\
+         test -f ../../.cargo/config.toml || { echo 'missing cargo config' >&2; exit 45; }\n\
+         test -f ../../shared/transitive/src/lib.rs || { echo 'missing transitive source' >&2; exit 46; }\n\
+         printf 'index' > \"$4\"\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&indexer, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let previous_path = std::env::var_os("PATH");
+    std::env::set_var("PATH", format!("{}:/bin:/usr/bin", bin.display()));
+    let built = ScipRust.build(&app);
+    match previous_path {
+        Some(path) => std::env::set_var("PATH", path),
+        None => std::env::remove_var("PATH"),
+    }
+    let index = built.expect("nested Cargo topology reaches rust-analyzer");
+    assert_eq!(std::fs::read(index).unwrap(), b"index");
 }
