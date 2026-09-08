@@ -1,0 +1,32 @@
+test_reject_projection_domain (__main__.Circuits.test_reject_projection_domain) ... FAIL
+
+======================================================================
+FAIL: test_reject_projection_domain (__main__.Circuits.test_reject_projection_domain)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 61, in test_reject_projection_domain
+    with self.assertRaises(sqlite3.DatabaseError):self.flush()
+                                                  ~~~~~~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 46, in flush
+    def flush(self):self.db.execute('INSERT INTO result(op) VALUES(11)');self.check()
+                                                                         ~~~~~~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 43, in check
+    self.assertEqual(self.db.execute(f'SELECT {columns} FROM result ORDER BY {order}').fetchall(),self.db.execute(self.query+f' ORDER BY {order}').fetchall())
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [(1, 3)] != [(1, 6)]
+
+First differing element 0:
+(1, 3)
+(1, 6)
+
+- [(1, 3)]
+?      ^
+
++ [(1, 6)]
+?      ^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.008s
+
+FAILED (failures=1)

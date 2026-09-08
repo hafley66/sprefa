@@ -18,6 +18,7 @@ def main():
     p.add_argument('--extension',required=True)
     p.add_argument('--batch',action='store_true')
     p.add_argument('--source-views',action='store_true')
+    p.add_argument('--frontiers',action='store_true')
     args=p.parse_args()
     fixture=json.loads(Path(args.fixture).read_text())
     plans={'aggregate_churn':('join',2,3),'pipeline':('project',1,2),
@@ -39,16 +40,30 @@ def main():
         db.execute(f'CREATE INDEX {table}_k ON {table}(k)')
         db.execute(f'CREATE INDEX {table}_v ON {table}(v)')
     mode,sides,columns=plans[fixture['circuit']]
-    db.execute(f'CREATE VIRTUAL TABLE result USING take2({mode})')
+    module='take2_epoch' if args.frontiers else 'take2'
+    db.execute(f'CREATE VIRTUAL TABLE result USING {module}({mode})')
     for side,table in enumerate(['a','b','c'][:sides]):
         db.execute("SELECT take2_attach('result',?,?, 'id','k','v')",(table,side)).fetchall()
     emit(event='case-setup',status='ok',setup_ms=(time.perf_counter()-start)*1000,
          algorithm=f'public vtab {mode}',batch=args.batch,source_views=args.source_views,durability='durable SQL WAL/FULL',
          sqlite_version=sqlite3.sqlite_version,extension_sha256=hashlib.sha256(Path(args.extension).read_bytes()).hexdigest())
+    if args.frontiers:
+        db.executescript('BEGIN;INSERT INTO result(op) VALUES(10);INSERT INTO result(op,id,side) VALUES(12,1,0),(12,1,1);')
+        for statement in ['INSERT INTO result(op) VALUES(11)','SELECT * FROM result']:
+            try:db.execute(statement).fetchall()
+            except sqlite3.DatabaseError:pass
+            else:raise AssertionError('held third input must block completion')
+        db.execute('INSERT INTO result(op,id,side) VALUES(12,1,2)')
+        db.execute('INSERT INTO result(op) VALUES(11)')
+        assert db.execute('SELECT * FROM result').fetchall()==[]
+        db.execute('ROLLBACK')
+        emit(event='frontier-check',status='ok',held_input='c',epoch=1,completion_after_all_inputs_advanced=True,
+             contract='finite sequential scalar epochs; explicit input sealing; no partial-order time claim')
     total=0
-    for state in fixture['states']:
+    for epoch,state in enumerate(fixture['states'],1):
         start=time.perf_counter()
-        db.executescript('BEGIN;'+('INSERT INTO result(op) VALUES(10);' if args.batch else '')+state['mutation_sql']+('INSERT INTO result(op) VALUES(11);' if args.batch else '')+'COMMIT;')
+        seal=f'INSERT INTO result(op,id,side) VALUES(12,{epoch},0),(12,{epoch},1),(12,{epoch},2);' if args.frontiers else ''
+        db.executescript('BEGIN;'+('INSERT INTO result(op) VALUES(10);' if args.batch else '')+state['mutation_sql']+seal+('INSERT INTO result(op) VALUES(11);' if args.batch else '')+'COMMIT;')
         update_ms=(time.perf_counter()-start)*1000
         start=time.perf_counter()
         output=sorted(map(list,db.execute('SELECT '+','.join(['id','k','v'][:columns])+' FROM result')))

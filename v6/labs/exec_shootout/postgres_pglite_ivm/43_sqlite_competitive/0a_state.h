@@ -3,6 +3,7 @@ typedef struct Env {
   int used, events, logging, fail_sync;
   int cache;
   int source_views;
+  int references;
   sqlite3_int64 prepares,steps,vm,scans,prepare_ns,step_ns;
 } Env;
 typedef struct Cached { char *text; sqlite3_stmt *stmt; } Cached;
@@ -16,6 +17,8 @@ typedef struct Tab {
   int next_cache;
   sqlite3_stmt *batch_read;
   int source_view;
+  int frontiers;
+  sqlite3_int64 epoch;
   char *predicate,*projection;
 } Tab;
 typedef struct Cursor {

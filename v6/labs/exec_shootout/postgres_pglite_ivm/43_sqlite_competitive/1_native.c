@@ -82,12 +82,14 @@ static int connect(sqlite3 *db, void *aux, int argc, const char *const *argv,
   if (!t) return SQLITE_NOMEM;
   memset(t, 0, sizeof(*t));
   t->db = db; t->env = aux;
+  t->frontiers=!strcmp(argv[0],"take2_epoch");
   if(argc>=4) {
     const char *modes[]={"mirror","filter","bag","group","join","self","multi","project","inner","self_chain","chain","semi","anti","reach","distinct","fanout","diamond"};
     int found=0;
     for(int i=0;i<17;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
     if(!found) { sqlite3_free(t); return SQLITE_ERROR; }
   }
+  if(t->frontiers&&!t->mode){sqlite3_free(t);*err=sqlite3_mprintf("take2_epoch requires a query mode");return SQLITE_ERROR;}
   if(t->mode==PROJECT) {
     t->predicate=argc==6?literal(argv[4]):sqlite3_mprintf("b0.v>=0");
     t->projection=argc==6?literal(argv[5]):sqlite3_mprintf("b0.v*2");
@@ -115,6 +117,10 @@ static int create(sqlite3 *db, void *aux, int argc, const char *const *argv,
   if(rc==SQLITE_OK) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_sources\"(side INTEGER PRIMARY KEY,source TEXT UNIQUE,id_col TEXT,k_col TEXT,v_col TEXT)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_batch\"(flag INTEGER NOT NULL,source_views INTEGER NOT NULL)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_batch\" VALUES(0,0)",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_clock\"(epoch INTEGER NOT NULL)",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_clock\" VALUES(0)",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_frontier\"(side INTEGER PRIMARY KEY,t INTEGER NOT NULL)",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_frontier\" VALUES(0,0),(1,0),(2,0)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_delta\"(key TEXT PRIMARY KEY,side INTEGER,k INTEGER,v INTEGER,w INTEGER)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE INDEX \"%w\".\"%w_delta_lookup\" ON \"%w_delta\"(side,k)",t->schema,t->name,t->name),0,0);
   if (rc == SQLITE_OK) rc = sql(t, sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_stats\"(n INTEGER NOT NULL);",t->schema,t->name),0,0);
@@ -150,6 +156,8 @@ static int destroy(sqlite3_vtab *v) {
     if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("DROP INDEX \"%w\".\"%w_live_key_%d\"",t->schema,t->name,i),0,0);
   }
   if(rc==SQLITE_OK&&t->mode==REACH)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_cone\"",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_frontier\"",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_clock\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK)rc = sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_state\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK&&t->source_view)rc=sql(t,sqlite3_mprintf("DROP VIEW \"%w\".\"%w_live\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_sources\"",t->schema,t->name),0,0);
@@ -217,6 +225,7 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
     return error(t,"only forwarded event INSERT is supported");
   int op = sqlite3_value_int(a[5]);
   if(op==10||op==11) {*id=0;t->busy=1;int rc=batch_command(t,op);t->busy=0;return rc;}
+  if(op==12){*id=0;t->busy=1;int rc=seal_frontier(t,a[2],a[9]);t->busy=0;return rc;}
   if (op < 1 || op > 3) return error(t,"op must be 1 insert, 2 delete, 3 update");
   int side=sqlite3_value_int(a[9]);
   if(side<0||side>=sources(t)) return error(t,"invalid source side");
@@ -239,7 +248,8 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
   int batched=0;
   rc=batching(t,&batched);
   if(rc!=SQLITE_OK)return rc;
-  if(t->mode>=PROJECT&&!batched)return error(t,"circuit mode requires an open batch");
+  if((t->mode>=PROJECT||t->frontiers)&&!batched)return error(t,"circuit mode requires an open batch");
+  if(t->frontiers){rc=frontier_check(t,side,0);if(rc!=SQLITE_OK)return rc;}
   if(t->source_view && (!t->env->source_views||!batched))return error(t,"source-view layout requires source_views_on and an open batch");
   t->busy = 1;
   if (op != 1) {
@@ -271,7 +281,7 @@ static int rollback(sqlite3_vtab *v) { trace((Tab *)v,"rollback",-1); return SQL
 static int savepoint(sqlite3_vtab *v,int i) { trace((Tab *)v,"savepoint",i); return SQLITE_OK; }
 static int release(sqlite3_vtab *v,int i) { trace((Tab *)v,"release",i); return SQLITE_OK; }
 static int rollbackto(sqlite3_vtab *v,int i) { trace((Tab *)v,"rollbackto",i); return SQLITE_OK; }
-static int shadow(const char *suffix) { return !strcmp(suffix,"state") || !strcmp(suffix,"stats") || !strcmp(suffix,"result") || !strcmp(suffix,"batch") || !strcmp(suffix,"delta") || !strcmp(suffix,"sources") || !strcmp(suffix,"cone"); }
+static int shadow(const char *suffix) { return !strcmp(suffix,"state") || !strcmp(suffix,"stats") || !strcmp(suffix,"result") || !strcmp(suffix,"batch") || !strcmp(suffix,"delta") || !strcmp(suffix,"sources") || !strcmp(suffix,"cone") || !strcmp(suffix,"clock") || !strcmp(suffix,"frontier"); }
 
 static const sqlite3_module module = {
   .iVersion=3, .xCreate=create, .xConnect=connect, .xBestIndex=best,
@@ -298,6 +308,7 @@ static void control(sqlite3_context *ctx,int argc,sqlite3_value **a) {
   else if (cmd && !strcmp(cmd,"log_off")) e->logging = 0;
   else sqlite3_result_error(ctx,"unknown take2 control",-1);
 }
+static void release_env(void *p){Env *e=p;if(--e->references==0)sqlite3_free(e);}
 #ifdef _WIN32
 __declspec(dllexport)
 #endif
@@ -306,7 +317,11 @@ int sqlite3_extension_init(sqlite3 *db,char **err,const sqlite3_api_routines *ap
   Env *e = sqlite3_malloc64(sizeof(*e));
   if (!e) return SQLITE_NOMEM;
   memset(e,0,sizeof(*e));
-  int rc = sqlite3_create_module_v2(db,"take2",&module,e,sqlite3_free);
+  e->references=1;
+  int rc = sqlite3_create_module_v2(db,"take2",&module,e,release_env);
+  if(rc!=SQLITE_OK)return rc;
+  e->references++;
+  rc=sqlite3_create_module_v2(db,"take2_epoch",&module,e,release_env);
   if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_control",1,SQLITE_UTF8, e,control,0,0,0);
   if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_attach",6,SQLITE_UTF8|SQLITE_DIRECTONLY,0,attach,0,0,0);
   return rc;

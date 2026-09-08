@@ -1,0 +1,18 @@
+test_held_input_and_late_write (__main__.Frontiers.test_held_input_and_late_write) ... ERROR
+
+======================================================================
+ERROR: test_held_input_and_late_write (__main__.Frontiers.test_held_input_and_late_write)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3b_frontier_test.py", line 18, in test_held_input_and_late_write
+    self.install('project');self.start();self.db.execute('INSERT INTO a VALUES(1,1,2)')
+    ~~~~~~~~~~~~^^^^^^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 38, in install
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such module: take2_epoch
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+FAILED (errors=1)

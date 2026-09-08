@@ -1,0 +1,22 @@
+test_anti (__main__.Frontiers.test_anti) ... ok
+test_chain (__main__.Frontiers.test_chain) ... ok
+test_diamond (__main__.Frontiers.test_diamond) ... ok
+test_distinct (__main__.Frontiers.test_distinct) ... ok
+test_epoch_domain (__main__.Frontiers.test_epoch_domain) ... ok
+test_fanout (__main__.Frontiers.test_fanout) ... ok
+test_held_input_and_late_write (__main__.Frontiers.test_held_input_and_late_write) ... ok
+test_inner (__main__.Frontiers.test_inner) ... ok
+test_project (__main__.Frontiers.test_project) ... ok
+test_reach (__main__.Frontiers.test_reach) ... ok
+test_reject_projection_domain (__main__.Frontiers.test_reject_projection_domain) ... ok
+test_reject_scalar_plans (__main__.Frontiers.test_reject_scalar_plans) ... ok
+test_scalar_binding (__main__.Frontiers.test_scalar_binding) ... ok
+test_second_writer_and_absent_module (__main__.Frontiers.test_second_writer_and_absent_module) ... ok
+test_self_chain (__main__.Frontiers.test_self_chain) ... ok
+test_semi (__main__.Frontiers.test_semi) ... ok
+test_transactional_teardown (__main__.Frontiers.test_transactional_teardown) ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 0.491s
+
+OK

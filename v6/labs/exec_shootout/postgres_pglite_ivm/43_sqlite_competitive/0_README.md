@@ -62,7 +62,7 @@ mutations, with exact oracle checks. Paired runner measurements are separate.
 
 This is a finite experiment ledger, not an exhaustion claim. Read order:
 types `0a`, scalar binding `0ab`, SQL lowering `0b`, nonmonotone lowering `0bc`,
-batch scheduling `0c`, ABI `1`, profile transport `2`, batch/circuit tests `3/3a`,
+batch scheduling `0c`, ABI `1`, profile transport `2`, batch/circuit/epoch tests `3/3a/3b`,
 shared transport `4`, gate `5`. `0_circuit.py` adapts the shared circuit oracle.
 
 ## Added circuit contracts
@@ -97,7 +97,8 @@ The private plan-only SQLite connection permits k/v references, scalar operators
 CASE and abs/coalesce/ifnull/nullif. It rejects subqueries, aggregate functions,
 unknown columns, bind parameters and unapproved functions. The caller's hooks and
 authorizer remain untouched. Inputs retain the integer/NULL domain; accumulator
-overflow and noninteger stored projections fail the flush. This is scalar SQL
+overflow and noninteger projections fail the flush before storage affinity can
+coerce numeric text or real values. This is scalar SQL
 binding plus fixed relational templates; arbitrary SELECT compilation is absent.
 
 Semijoin/antijoin lower `dLeft * oldMembership + currentLeft * dMembership`.
@@ -117,7 +118,59 @@ The circuit suite covers savepoints across flush, rollback, injected xSync
 failure, ABORT/FAIL/IGNORE/REPLACE, UPSERT, duplicate supports, NULL joins and
 reopen in both layouts. The shared suite adds 143 circuit states per layout,
 covering all 11 families in `30_circuit_workload.mjs`. Additional semantic catalog
-families, arbitrary recursive programs and time/frontiers are unsupported.
+families, arbitrary recursive programs and partial-order time are unsupported.
 DROP removes extension-owned source triggers, views,
 indexes and DRed cone storage. A teardown test proves rollback restores the
 schema and exact output, and a completed DROP permits ordinary source writes.
+
+## Optional finite scalar epochs
+
+`take2_epoch` is a separate module name backed by the same maintenance code.
+Its persisted schema declaration keeps the contract across reopen and writers.
+It adds `_clock(epoch)` and `_frontier(side,t)`, exactly three scalar input
+frontiers matching the shared DD host's a/b/c completion probe. Epochs begin at
+1, advance once per opened batch, and stop with an error at 10^12.
+
+```sql
+CREATE VIRTUAL TABLE result USING take2_epoch(project);
+SELECT take2_attach('result','a',0,'id','k','v');
+BEGIN;
+INSERT INTO result(op) VALUES(10); -- opens epoch 1
+INSERT INTO a VALUES(1,1,2);
+INSERT INTO result(op,id,side) VALUES(12,1,0),(12,1,1),(12,1,2);
+INSERT INTO result(op) VALUES(11); -- requires all three seals
+SELECT id,k FROM result;
+COMMIT;
+```
+
+`op=12,id=epoch,side=0..2` seals that input. The epoch must equal the open epoch
+and strictly advance its previous frontier. A sealed input rejects further
+source writes in that batch. Holding c unsealed blocks flush and output reads,
+even for a query that only reads a. Seals, clock, deltas and outputs roll back
+together. A second writer loads the same module and obeys the persisted contract;
+an absent module rejects source mutation. This is a sequential scalar completion
+barrier. Per-record timestamps, retained historical versions, late data in closed
+epochs and arbitrary partial-order antichains are unsupported.
+
+The `sqlite-competitive-frontier` shared arm uses source views and explicit
+sealing. Its finite held-c check corresponds to `34_circuit_dd.rs:132` and
+`33a_dd_host.rs:83`. Those DD hosts already advance all inputs and wait on their
+probe. No DD or kernel source changed. SQL frontier costs are reported separately.
+
+## Reused sources
+
+The ABI comes from installed `sqlite3ext.h`; SQLite parses/binds scalar SQL and
+stores every relation, delta, support and epoch. OpenIVM's current-base delta
+mask/sign technique is reused as a fixed SQL lowering; its DuckDB-bound compiler
+is not ported. The smallest compiling target is this one C extension translation
+unit. Pg_ivm transition logic and SQLite FTS5 lifecycle/storage tests informed
+the transaction boundary. No source-relation engine runs outside SQLite.
+
+Pinned inspection sources at `/tmp/sprefa-sqlite-extension-research.ZsALrZ/`:
+SQLite `f3b9f74d81132426dee1ccc07a67fdad2ccfeaa9` (public domain), OpenIVM
+`3b3938f4f8293875b56157f563c6f8cb196a0b41` (MIT), pg_ivm
+`dda7470e085822c215411c0b349f4aa4fbb9fdf4` (PostgreSQL license). The upstream
+licenses and source receipts remain in the original research/Take 2 material.
+Discussion 309's Feldera-generated Rust replies remain a proposal; they do not
+prove SQLite-native maintenance. Take 2's executable FTS5 receipts are distinct
+from the earlier source-inspection report whose testfixture build lacked Tcl.

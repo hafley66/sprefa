@@ -29,3 +29,12 @@ static int validate_expressions(Tab *t) {
   if(rc==SQLITE_OK&&(!tail||*tail||sqlite3_bind_parameter_count(s)||sqlite3_column_count(s)!=2))rc=SQLITE_ERROR;
   sqlite3_finalize(s);sqlite3_free(q);sqlite3_close(plan);return rc;
 }
+/* Check the expression's SQL type before INTEGER storage affinity can coerce
+ * numeric text or real values and silently change projection semantics. */
+static int projection_domain(Tab *t) {
+  sqlite3_stmt *s=0;
+  char *q=sqlite3_mprintf("SELECT count(*) FROM \"%w\".\"%w_delta\" b0 WHERE side=0 AND w<>0 AND (%s) AND typeof(%s) NOT IN ('integer','null')",t->schema,t->name,t->predicate,t->projection);
+  int rc=q?sqlite3_prepare_v3(t->db,q,-1,SQLITE_PREPARE_NO_VTAB,&s,0):SQLITE_NOMEM;sqlite3_free(q);
+  if(rc==SQLITE_OK){int step=sqlite3_step(s);if(step!=SQLITE_ROW)rc=step;else if(sqlite3_column_int(s,0))rc=error(t,"projection must produce integer or NULL before storage affinity");}
+  sqlite3_finalize(s);return rc;
+}

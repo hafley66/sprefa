@@ -5,16 +5,36 @@ static int batching(Tab *t,int *flag) {
   if(!t->mode) return SQLITE_OK;
   int rc=SQLITE_OK;
   if(!t->batch_read) {
-    char *q=sqlite3_mprintf("SELECT flag,source_views FROM \"%w\".\"%w_batch\"",t->schema,t->name);
+    char *q=t->frontiers?sqlite3_mprintf("SELECT flag,source_views,epoch FROM \"%w\".\"%w_batch\" CROSS JOIN \"%w\".\"%w_clock\"",t->schema,t->name,t->schema,t->name):sqlite3_mprintf("SELECT flag,source_views FROM \"%w\".\"%w_batch\"",t->schema,t->name);
     rc=q?sqlite3_prepare_v3(t->db,q,-1,SQLITE_PREPARE_NO_VTAB|SQLITE_PREPARE_PERSISTENT,&t->batch_read,0):SQLITE_NOMEM;
     sqlite3_free(q);
   }
   if(rc==SQLITE_OK) {
     rc=sqlite3_step(t->batch_read);
-    if(rc==SQLITE_ROW) {*flag=sqlite3_column_int(t->batch_read,0);t->source_view=sqlite3_column_int(t->batch_read,1);rc=SQLITE_OK;}
+    if(rc==SQLITE_ROW) {*flag=sqlite3_column_int(t->batch_read,0);t->source_view=sqlite3_column_int(t->batch_read,1);if(t->frontiers)t->epoch=sqlite3_column_int64(t->batch_read,2);rc=SQLITE_OK;}
     else if(rc==SQLITE_DONE) rc=error(t,"missing batch flag");
   }
   sqlite3_reset(t->batch_read);
+  return rc;
+}
+static int frontier_check(Tab *t,int side,int sealing) {
+  sqlite3_stmt *s=0;
+  char *q=side<0?sqlite3_mprintf("SELECT min(t) FROM \"%w\".\"%w_frontier\"",t->schema,t->name):sqlite3_mprintf("SELECT t FROM \"%w\".\"%w_frontier\" WHERE side=%d",t->schema,t->name,side);
+  int rc=q?sqlite3_prepare_v3(t->db,q,-1,SQLITE_PREPARE_NO_VTAB,&s,0):SQLITE_NOMEM;sqlite3_free(q);
+  if(rc==SQLITE_OK) {
+    int step=sqlite3_step(s);
+    if(step!=SQLITE_ROW||sqlite3_column_type(s,0)!=SQLITE_INTEGER)rc=error(t,"missing input frontier");
+    else if(side<0&&sqlite3_column_int64(s,0)!=t->epoch)rc=error(t,"all input frontiers must advance before flush");
+    else if(side>=0&&sqlite3_column_int64(s,0)>=t->epoch)rc=error(t,sealing?"frontier must strictly advance":"sealed input rejects late writes");
+  }
+  sqlite3_finalize(s);return rc;
+}
+static int seal_frontier(Tab *t,sqlite3_value *epoch,sqlite3_value *side_value) {
+  int flag=0,rc=batching(t,&flag),side=sqlite3_value_int(side_value);
+  if(rc!=SQLITE_OK)return rc;
+  if(!t->frontiers||!flag||sqlite3_value_type(epoch)!=SQLITE_INTEGER||sqlite3_value_int64(epoch)!=t->epoch||sqlite3_value_type(side_value)!=SQLITE_INTEGER||side<0||side>2)return error(t,"frontier seal requires open epoch and input side 0..2");
+  rc=frontier_check(t,side,1);
+  if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_frontier\" SET t=%lld WHERE side=%d",t->schema,t->name,t->epoch,side),0,0);
   return rc;
 }
 static int enqueue(Tab *t,sqlite3_value **kv,int side,int sign) {
@@ -23,6 +43,7 @@ static int enqueue(Tab *t,sqlite3_value **kv,int side,int sign) {
 static int flush_batch(Tab *t) {
   int degree=arity(t);
   int rc=SQLITE_OK;
+  if(t->mode==PROJECT)rc=projection_domain(t);
   if(t->mode==SEMI||t->mode==ANTI)rc=flush_membership(t);
   if(t->mode==REACH)rc=flush_reach(t);
   for(int branch=0;branch<(t->mode==DIAMOND?2:1);branch++)
@@ -113,10 +134,13 @@ static int batch_command(Tab *t,int op) {
   if(!t->mode||sqlite3_get_autocommit(t->db))return error(t,"batch requires explicit transaction and a query mode");
   if(op==10) {
     if(flag)return error(t,"batch already open");
+    if(t->frontiers&&t->epoch>=1000000000000)return error(t,"scalar epoch limit reached");
     rc=source_view_setup(t);
+    if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_clock\" SET epoch=epoch+1",t->schema,t->name),0,0);
     if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_batch\" SET flag=1",t->schema,t->name),0,0);
     return rc;
   }
   if(!flag)return error(t,"no open batch");
+  if(t->frontiers){rc=frontier_check(t,-1,0);if(rc!=SQLITE_OK)return rc;}
   return flush_batch(t);
 }

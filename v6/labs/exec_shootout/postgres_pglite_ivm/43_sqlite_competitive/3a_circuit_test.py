@@ -35,7 +35,7 @@ class Circuits(unittest.TestCase):
  def tearDown(self):self.db.close();self.tmp.cleanup()
  def install(self,mode,args=''):
   self.query,self.sides,self.columns=QUERIES[mode]
-  self.db.execute(f'CREATE VIRTUAL TABLE result USING take2({mode}{args})')
+  self.db.execute(f'CREATE VIRTUAL TABLE result USING {getattr(self,"module","take2")}({mode}{args})')
   for side,table in enumerate('abc'[:self.sides]):self.db.execute("SELECT take2_attach('result',?,?,'id','k','v')",(table,side)).fetchall()
  def check(self):
   columns=','.join(['id','k','v'][:self.columns])
@@ -55,10 +55,11 @@ class Circuits(unittest.TestCase):
     self.db.execute("CREATE VIRTUAL TABLE result USING take2(project,'1','"+expression+"')")
   self.assertEqual(self.db.execute("SELECT name FROM sqlite_schema WHERE name LIKE 'result%'").fetchall(),[])
  def test_reject_projection_domain(self):
-  self.install('project',",'1','b0.v/2.0'")
-  self.start();self.db.execute('INSERT INTO a VALUES(1,1,3)')
-  with self.assertRaises(sqlite3.DatabaseError):self.flush()
-  self.db.execute('ROLLBACK');self.check()
+  for expression in ['b0.v/2.0','b0.v*1.0','CAST(b0.v AS TEXT)']:
+   self.install('project',f",'1','{expression}'")
+   self.start();self.db.execute('INSERT INTO a VALUES(1,1,3)')
+   with self.assertRaises(sqlite3.DatabaseError):self.flush()
+   self.db.execute('ROLLBACK');self.check();self.db.execute('DROP TABLE result')
  def test_transactional_teardown(self):
   self.install('reach');self.start()
   self.db.execute('INSERT INTO a VALUES(1,1,2),(2,2,1)');self.db.execute('INSERT INTO b VALUES(1,1,0)')

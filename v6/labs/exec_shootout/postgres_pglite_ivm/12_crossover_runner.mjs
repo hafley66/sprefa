@@ -116,7 +116,7 @@ const maxRows = Number(argument("max-rows", "Infinity"));
 const selectedCase = argument("case", "");
 const cases = buildCases(profile, budget).filter((testCase) => testCase.rows <= maxRows && (!selectedCase || `${testCase.rows}:${testCase.batch_size}:${testCase.fanout}` === selectedCase));
 const arms = argument("arms", (profile === "circuits" ? "query,pg_ivm,sqlite-query" : "query,pg_ivm")).split(",");
-if (arms.some((arm) => !["query", "pg_ivm", "sqlite-query", "swi-circuit", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "sqlite-native-take2", "sqlite-native-take2-logged", "sqlite-competitive-batch", "sqlite-competitive-sourceview", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+if (arms.some((arm) => !["query", "pg_ivm", "sqlite-query", "swi-circuit", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "sqlite-native-take2", "sqlite-native-take2-logged", "sqlite-competitive-batch", "sqlite-competitive-sourceview", "sqlite-competitive-frontier", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
 if (profile !== "circuits" && arms.some(a=>["sqlite-query","swi-circuit"].includes(a))) throw new Error("circuit-only arm requires circuits profile");
 const ddBinary = argument("dd-bin", new URL("../../../sprefa-store/target/release/examples/crossover_dd", import.meta.url).pathname);
 const circuitDdBinary = argument("circuit-dd-bin", "");
@@ -197,7 +197,8 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   const template = maintenance === "sqlite-template-group";
   const plugin = maintenance.startsWith("sqlite-plugin");
   const competitive = maintenance.startsWith("sqlite-competitive");
-  const sourceview = maintenance === "sqlite-competitive-sourceview";
+  const frontier = maintenance === "sqlite-competitive-frontier";
+  const sourceview = maintenance === "sqlite-competitive-sourceview" || frontier;
   const take2 = maintenance.startsWith("sqlite-native-take2") || competitive;
   const sqlite = template || plugin || take2 || maintenance === "sqlite-query";
   const dd = maintenance === "dd";
@@ -217,6 +218,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     fanout: testCase.fanout,
   };
   const freePercent = memoryFreePercent();
+  if(frontier&&!testCase.circuit){append({event:"capability",status:"unsupported",reason:"scalar frontier variant requires circuit profile",...context});return true;}
   if (take2 && ((testCase.circuit && !(competitive ? ["aggregate_churn","pipeline","join","self_join","chain","semijoin","antijoin","reach_cycle","distinct","fanout_fanin","diamond"] : ["aggregate_churn"]).includes(testCase.circuit)) || testCase.rows > 12000)) {
     append({event:"capability",status:"unsupported",reason:"Take 2 shared adapter supports bounded crossover aggregate cells through 12000 source rows; other circuit adapters pending",...context});
     return true;
@@ -278,7 +280,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
       "--fixture",fixturePath,"--db",join(childRoot,"maintained.sqlite"),"--sql-output",join(childRoot,"installed.sql")];
   } else if (dd) args = [fixturePath];
   else args.push("--fixture", fixturePath);
-  if (testCase.circuit) args = take2 ? ["43_sqlite_competitive/0_circuit.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),"--extension",competitive ? competitiveExtension : take2Extension,...(competitive?["--batch"]:[]),...(sourceview?["--source-views"]:[])] : swi ? ["-q","-s",fixture.columns?"39_semantic_swi.pl":"35_circuit_swi.pl","--",fixturePath] : dd ? [fixturePath] : sqlite
+  if (testCase.circuit) args = take2 ? ["43_sqlite_competitive/0_circuit.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),"--extension",competitive ? competitiveExtension : take2Extension,...(competitive?["--batch"]:[]),...(sourceview?["--source-views"]:[]),...(frontier?["--frontiers"]:[])] : swi ? ["-q","-s",fixture.columns?"39_semantic_swi.pl":"35_circuit_swi.pl","--",fixturePath] : dd ? [fixturePath] : sqlite
     ? [fixture.columns?"31b_circuit_sqlite.py":"31_circuit_sqlite.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),...(plugin?["--extension",sqliteExtension]:[])]
     : [fixture.columns?"31a_circuit_postgres.mjs":"32_circuit_postgres.mjs",fixturePath,maintenance];
   const child = spawn(swi ? "swipl" : sqlite ? "python3" : dd ? (fixture.columns ? semanticDdBinary : testCase.circuit ? circuitDdBinary : ddBinary) : process.execPath, args, {

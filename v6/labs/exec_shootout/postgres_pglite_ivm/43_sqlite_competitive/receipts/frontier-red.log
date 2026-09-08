@@ -1,0 +1,18 @@
+test_held_input_and_late_write (__main__.Frontiers.test_held_input_and_late_write) ... ERROR
+
+======================================================================
+ERROR: test_held_input_and_late_write (__main__.Frontiers.test_held_input_and_late_write)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py", line 26, in setUp
+    self.db=self.connection()
+            ~~~~~~~~~~~~~~~^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3b_frontier_test.py", line 12, in connection
+    db=super().connection();db.execute("SELECT take2_control('frontiers_on')");return db
+                            ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: unknown take2 control
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+FAILED (errors=1)

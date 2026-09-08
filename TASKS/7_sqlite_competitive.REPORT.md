@@ -182,3 +182,46 @@ extension hash, target and exact SQL oracle checks. `pager-receipt.json` records
 six exit codes 0. This uses SQLite's pager and the 32-statement extension cache;
 no copied source relation is held by Python or C. Pager targets are not hard RSS
 limits. The shared benchmark retains its existing memory guards and cache target.
+
+## Finite scalar epoch variant
+
+Core catalog/cache commit: `ee7ec0fc3`. Added `take2_epoch` and the separately
+labeled `sqlite-competitive-frontier` arm. SQLite persists a scalar clock and
+three input seals. Holding c unsealed blocks completion; a sealed input rejects
+late writes. Savepoints, failed commits, reopen and second writers preserve the
+contract. An absent module rejects source writes. No DD/kernel changes.
+
+This implements the sequential scalar completion check already present in
+`34_circuit_dd.rs` and `33a_dd_host.rs`. Per-record logical times, historical
+versions and partial-order antichains remain unsupported. The extension performs
+the checks and maintenance; the adapter sends explicit SQL seals.
+
+Current execution coverage: 99 test methods (13 boundary, 6 semantic, 9 batch per
+layout, 14 circuit per layout, 17 frontier per layout). Shared gate: 171 semantic
+states per batch/source-view arm, and 143 circuit states per batch/source-view/
+frontier arm, plus eleven held-input checks. The initial missing-API red receipt,
+missing-module red receipt and green logs are retained.
+Final gate: `/tmp/sprefa-sqlite-competitive/gate-otdtiuo5/receipt.json`, exit 0,
+copied to `receipts/frontier-gate-final.json`. A projection-affinity red test
+exposed numeric text/real coercion; the flush now validates SQL expression types
+before INTEGER storage affinity. All four circuit/frontier test variants pass.
+
+Paired constrained small-circuit medians, two repetitions, mutation + query ms:
+
+| Circuit | DD volatile | Source views | Scalar-epoch source views |
+|---|---:|---:|---:|
+| pipeline | 0.548 | 9.158 | 18.666 |
+| antijoin | 1.068 | 11.324 | 15.747 |
+| reach_cycle | 1.350 | 7.740 | 33.122 |
+
+`receipts/frontier-paired.jsonl` contains the exact Bash command, hashes, PG
+records and unsupported cells. Exit 0; twelve finite frontier checks (DD and
+SQLite, three circuits, two repetitions) pass. These are observed paired costs
+under the existing durable SQL and volatile DD labels; no equal-durability claim.
+
+Remaining scoped gaps: additional semantic catalog operators; arbitrary SELECT
+compilation; general recursive rule programs; per-record/partial-order time;
+automatic statement-end batching; session capture under exclusive hook ownership;
+a custom SQLite variant. Public explicit flush/seal APIs meet the tested boundary
+without a custom patch. The finite option ledger records the concrete experiments
+and the narrower contracts behind unimplemented alternatives.
