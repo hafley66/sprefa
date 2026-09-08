@@ -67,6 +67,10 @@ else process.exit(exit);
     });
   }
   await t.test("warmup excluded and five repeats rotate engine order",async()=>{
+    await writeFile(join(bench,"engines/swi_incr.sh"),`#!/usr/bin/env node
+const duration=Number(process.env.BENCH_ROTATION)===0?999:Number(process.env.BENCH_ROTATION)/3;
+process.stderr.write("CSV,swi-incr,402,667,200,"+duration+","+duration+",0,10,N/A,N/A,N/A\\n");
+`,{mode:0o755});
     await writeFile(join(bench,"engines/swipl_pure.sh"),`#!/usr/bin/env bash\necho 'CSV,swipl-pure,402,667,200,3,9,0,20,N/A,N/A,N/A' >&2\n`,{mode:0o755});
     const output=join(crate,"repeats");
     const env={...process.env,LC_ALL:"C",LANG:"C",POSTGRES_SHOOTOUT:"0",DD_SHOOTOUT:"0",SQLITE_SHOOTOUT:"0",
@@ -77,7 +81,8 @@ else process.exit(exit);
     assert.equal(run.status,0,run.stdout+run.stderr);
     assert.equal(await readFile(join(output,"repeat-runs.tsv"),"utf8"),
       "phase\titeration\trotation\texit_status\nwarmup\t0\t0\t0\nmeasured\t1\t3\t0\nmeasured\t2\t6\t0\nmeasured\t3\t9\t0\nmeasured\t4\t12\t0\nmeasured\t5\t15\t0\n");
-    assert.equal(await readFile(join(output,"results.csv"),"utf8"),header+numeric+"swipl-pure,402,667,200,3,9,0,20,N/A,N/A,N/A\n");
+    assert.equal(await readFile(join(output,"results.csv"),"utf8"),header+"swi-incr,402,667,200,3,3,0,10,N/A,N/A,N/A\nswipl-pure,402,667,200,3,9,0,20,N/A,N/A,N/A\n");
+    assert.equal((await readFile(join(output,"repeat-ranges.csv"),"utf8")).split("\n")[1],"swi-incr,402,5,1,3,5,1,3,5,10,10,10");
     for(let i=1;i<=5;i++) {
       const order=(await readFile(join(output,`measured-${i}`,"engine-order.txt"),"utf8")).trim().split("\n").map(line=>line.split("|")[0]);
       assert.deepEqual(order,i%2?["swipl-pure","swi-incr"]:["swi-incr","swipl-pure"]);
