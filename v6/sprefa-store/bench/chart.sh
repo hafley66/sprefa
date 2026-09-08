@@ -41,5 +41,5 @@ EOF
 
 plot_metric "Root-0 retract and survivor recount latency"    2 "retract ms" "retract_ms.png" log
 plot_metric "Setup latency (one-time build)"               3 "setup ms"   "setup_ms.png"   log
-plot_metric "Peak RSS"                                     4 "peak RSS MB" "rss_mb.png"     lin
+plot_metric "RSS (adapter-specific sampling and peak scopes)" 4 "RSS MB"      "rss_mb.png"     lin
 plot_metric "Reported work units per retract"              5 "ops"        "ops.png"        log

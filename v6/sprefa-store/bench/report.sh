@@ -27,6 +27,20 @@ convergence and counting. Complete ordered
 initial and survivor sets are checked against an independent BFS outside the
 timed phases.
 
+The \`swi-incr\` arm uses SWI incremental tabling and wall time. Its clock is
+reset after initial validation and immediately before root deletion. Both
+phases end after table materialization and counting; exact initial-range and
+incremental-versus-cold survivor checks run outside the clocks.
+
+The optional \`swipl-pure\` reference uses CPU time and does not perform an
+exact-set oracle check. Keep it outside a wall-time comparison. RSS combines
+adapter-specific samples and process peaks, including untimed validation;
+the scope receipts describe which processes and limits are included.
+
+Per-cell output and exit codes are retained in \`logs/\`. Failed processes and
+error/timeout/OOM status rows do not contribute numeric measurements. A run
+refuses to overwrite existing CSV/status receipts.
+
 ## Charts
 
 ![retract](retract_ms.png)
