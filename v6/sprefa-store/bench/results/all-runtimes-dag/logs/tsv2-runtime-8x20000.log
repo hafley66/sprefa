@@ -1,0 +1,14 @@
+(node:53720) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+LibsqlError: SQLITE_ERROR: too many SQL variables
+    at mapSqliteError (file:///Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/lib-esm/sqlite3.js:435:16)
+    at executeStmt (file:///Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/lib-esm/sqlite3.js:338:15)
+    at Sqlite3Client.execute (file:///Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/lib-esm/sqlite3.js:83:16)
+    at <anonymous> (/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store/js/src/engine/sqlRunner.ts:20:22)
+    at Observable._subscribe (/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/src/internal/observable/defer.ts:54:15)
+    at Observable.Observable._trySubscribe (/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/src/internal/Observable.ts:235:19)
+    at <anonymous> (/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/src/internal/Observable.ts:225:18)
+    at Object.errorContext (/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/src/internal/util/errorContext.ts:29:5)
+    at Observable.Observable.subscribe (/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/src/internal/Observable.ts:211:5)
+    at Object.mergeInternals (/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/postgres-ivm-crossover/v6/tsv2/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/src/internal/operators/mergeInternals.ts:136:10)
+EXIT_STATUS|1

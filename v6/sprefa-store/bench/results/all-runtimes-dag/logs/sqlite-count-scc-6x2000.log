@@ -1,0 +1,4 @@
+INPUT|sqlite-count-scc|9e396ebb51ac3e3dc339421c7ce611b26ad40c18f915070d7d679bd85d17e4d1
+STATUS|sqlite-count-scc|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3=6035d0f3b9cf2bb5; survivor blake3=979516e118581f07|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB=4096 caps live Rust allocations; SQLite C heap and total RSS are unenforced
+CSV,sqlite-count-scc,12002,22667,2000,22.455,21.201,39,15.1,0.21,1.34,0.79
+EXIT_STATUS|0
