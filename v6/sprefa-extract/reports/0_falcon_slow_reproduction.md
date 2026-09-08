@@ -94,12 +94,43 @@ Cargo metadata fails before rust-analyzer indexes the project.
 The source-tree comparison excludes the Falcon source, rust-analyzer binary,
 45-second budget, and sandbox as causes of this failure. The failing and
 succeeding runs used the same rust-analyzer executable and scratch target
-policy. The remaining runtime change would need to preserve the Cargo path
-dependency topology, either by staging its dependency closure with matching
-relative layout or by indexing in place while redirecting build output. That
-change is outside the authorized telemetry scope and is not implemented here.
+policy. The runtime fix preserves the containing Git worktree's
+repository-relative layout when a nested Cargo project reaches an ancestor
+workspace or uses a parent-relative manifest path. Soopy supplies the worktree
+snapshot and verified reads. Rust-analyzer still runs in the persistent scratch
+stage with a redirected Cargo target, so it does not write into the source
+checkout.
 
-## 5. Scratch receipts
+## 5. Fixed-command verification
+
+The fixed binary identifies commit `044f71bfe010`. The original command was
+repeated from the same hafley-rs root with fresh products under
+`/private/tmp/extract-falcon-fixed.T4YqfZ` and the same 45-second SCIP timeout.
+
+First run:
+
+```text
+CLI status:                 0
+wall time:                  31.33 seconds
+rust-analyzer status:       0
+rust-analyzer duration:     29.258 seconds
+semantic JSONL rows:        2,382
+SCIP documents:             17
+scip_skip rows:             0
+```
+
+The row kinds were 1 `scip_index`, 260 `scip_def`, 446 `scip_ref`, 71
+`scip_edge`, 669 `scip_fn_edge`, 36 `scip_callee_type`, 640 `scip_local`, and
+259 `scip_name`. Structured stderr records the indexer command,
+repository-shaped staged cwd, exit code 0, and duration. The source subtree's
+Git status and file checksums were identical before and after the run.
+
+The same command and cache were then repeated. It exited 0 in 0.04 seconds,
+emitted the same 2,382 semantic rows, and did not spawn the indexer. The decoded
+rows differ only in the expected `scip_index.reused` field, which changes from
+`false` to `true`.
+
+## 6. Scratch receipts
 
 The uncommitted raw receipts remain in `/private/tmp/extract-falcon-repro.inFqyO`:
 
@@ -114,4 +145,16 @@ direct-source.scip                   successful 800,997-byte index
 direct-source.elapsed.txt            33.15-second source comparison
 scip-facts.stdout.jsonl              10,675 decoded semantic rows
 scip-facts.stderr.txt                empty successful decoder stderr
+```
+
+The fixed-run receipts remain in `/private/tmp/extract-falcon-fixed.T4YqfZ`:
+
+```text
+run1.stdout.jsonl / run1.stderr.jsonl  first fixed semantic output and telemetry
+run1.status / run1.time                 first fixed exit status and timing
+run2.stdout.jsonl / run2.stderr.jsonl  cached semantic output and CLI stderr
+run2.status / run2.time                 cached exit status and timing
+source-before.txt / source-after.txt    scoped Git status comparison
+source-before.sha1 / source-after.sha1  source subtree byte comparison
+scip-cache/index.scip                   reusable fixed-run SCIP index
 ```
