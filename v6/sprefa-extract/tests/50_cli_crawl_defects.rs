@@ -484,6 +484,7 @@ fn rust_staging_preserves_nested_workspace_path_dependency_topology() {
          test -f ../../Cargo.lock || { echo 'missing workspace lockfile' >&2; exit 44; }\n\
          test -f ../../.cargo/config.toml || { echo 'missing cargo config' >&2; exit 45; }\n\
          test -f ../../shared/transitive/src/lib.rs || { echo 'missing transitive source' >&2; exit 46; }\n\
+         grep -q 'pub fn transitive() {}' ../../shared/transitive/src/lib.rs || { echo 'wrong transitive source' >&2; exit 47; }\n\
          printf 'index' > \"$4\"\n",
     )
     .unwrap();
@@ -499,4 +500,14 @@ fn rust_staging_preserves_nested_workspace_path_dependency_topology() {
     }
     let index = built.expect("nested Cargo topology reaches rust-analyzer");
     assert_eq!(std::fs::read(index).unwrap(), b"index");
+    assert_eq!(
+        std::fs::read_to_string(repository.join("Cargo.lock")).unwrap(),
+        "version = 4\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(transitive.join("src/lib.rs")).unwrap(),
+        "pub fn transitive() {}\n"
+    );
+    assert!(!repository.join("target").exists());
+    assert!(!app.join("target").exists());
 }
