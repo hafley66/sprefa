@@ -1,0 +1,11 @@
+budget	fanout	rows	batch_size	maintenance	state	repetitions	affected_rows	join_affected_rows	output_rows	output_bytes	update_transaction_median_ms	update_transaction_min_ms	update_transaction_max_ms	query_compute_median_ms	query_compute_min_ms	query_compute_max_ms	update_plus_query_median_ms	update_plus_query_min_ms	update_plus_query_max_ms	client_transfer_median_ms	checksum_median_ms
+constrained	10	400	10	sqlite-template-group	delete_batch	1	10	10	20	245	0.473458	0.473458	0.473458	0.034208	0.034208	0.034208	0.507666	0.507666	0.507666		
+constrained	10	400	10	sqlite-template-group	dimension_fanout	1	1	10	20	246	0.227250	0.227250	0.227250	0.032625	0.032625	0.032625	0.259875	0.259875	0.259875		
+constrained	10	400	10	sqlite-template-group	initial	1	0	0	20	241	0.000000	0.000000	0.000000	0.038916	0.038916	0.038916	0.038916	0.038916	0.038916		
+constrained	10	400	10	sqlite-template-group	insert_batch	1	10	10	20	245	0.551708	0.551708	0.551708	0.042250	0.042250	0.042250	0.593958	0.593958	0.593958		
+constrained	10	400	10	sqlite-template-group	update_batch	1	10	10	20	245	0.478792	0.478792	0.478792	0.043833	0.043833	0.043833	0.522625	0.522625	0.522625		
+constrained	200	400	10	sqlite-template-group	delete_batch	1	10	10	20	249	0.371500	0.371500	0.371500	0.076959	0.076959	0.076959	0.448459	0.448459	0.448459		
+constrained	200	400	10	sqlite-template-group	dimension_fanout	1	1	200	20	249	0.261459	0.261459	0.261459	0.034500	0.034500	0.034500	0.295959	0.295959	0.295959		
+constrained	200	400	10	sqlite-template-group	initial	1	0	0	20	244	0.000000	0.000000	0.000000	0.084834	0.084834	0.084834	0.084834	0.084834	0.084834		
+constrained	200	400	10	sqlite-template-group	insert_batch	1	10	10	20	247	0.458416	0.458416	0.458416	0.040334	0.040334	0.040334	0.498750	0.498750	0.498750		
+constrained	200	400	10	sqlite-template-group	update_batch	1	10	10	20	248	0.475375	0.475375	0.475375	0.040917	0.040917	0.040917	0.516292	0.516292	0.516292		

@@ -103,7 +103,15 @@ export function makeCrossoverOracle(rowCount, batchSize, fanout) {
     return checksumSummary(summary);
   }
 
-  return { apply, snapshot, groupCount };
+  function inputRows() {
+    return {
+      dimension: [...dimensions].sort(([a], [b]) => a - b),
+      fact: [...facts].sort(([a], [b]) => a - b)
+        .map(([id, { groupId, amount }]) => [id, groupId, amount]),
+    };
+  }
+
+  return { apply, snapshot, groupCount, inputRows };
 }
 
 export function crossoverMutationSql(rowCount, batchSize, fanout, groupCount) {

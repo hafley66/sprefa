@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { arch, hostname, platform, release, totalmem } from "node:os";
 import { dirname, join } from "node:path";
+import { crossoverMutationSql, crossoverStates, expectedAffectedRows, makeCrossoverOracle } from "./9_crossover_workload.mjs";
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
@@ -89,8 +90,12 @@ const timeoutMs = Math.min(120_000, Number(argument("timeout-ms", "120000")));
 const deadlineEpochMs = Number(argument("deadline-epoch-ms", String(Date.now() + 20 * 60_000)));
 const warmups = Number(argument("warmups", profile === "full" ? "1" : "0"));
 const repetitions = Number(argument("repetitions", profile === "full" ? "3" : "1"));
-const cases = buildCases(profile, budget);
-const arms = ["query", "pg_ivm"];
+const maxRows = Number(argument("max-rows", "Infinity"));
+const cases = buildCases(profile, budget).filter((testCase) => testCase.rows <= maxRows);
+const arms = argument("arms", "query,pg_ivm").split(",");
+if (arms.some((arm) => !["query", "pg_ivm", "sqlite-template-group"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+const sqliteProgram = argument("sqlite-program", "");
+if (arms.includes("sqlite-template-group") && !sqliteProgram) throw new Error("--sqlite-program is required for sqlite-template-group");
 const records = [];
 const startedAt = Date.now();
 let failed = false;
@@ -127,7 +132,7 @@ append({
     cgroup_page_cache_bytes: null,
     hard_cap_axis: "blocked",
     reason: "Docker daemon unavailable and no existing Podman, Colima, Lima, or other Linux runtime",
-    observed_group_metric: "sum of resident KiB for the disposable PostgreSQL postmaster process tree",
+    observed_group_metric: "PostgreSQL postmaster tree for native arms; Python worker process tree for sqlite-template-group; unavailable samples remain null",
   },
   tuning: {
     shared_buffers: process.env.IVM_SHARED_BUFFERS,
@@ -144,8 +149,9 @@ append({
 });
 
 async function runProcess(testCase, maintenance, runKind, repetition) {
+  const sqlite = maintenance === "sqlite-template-group";
   const context = {
-    arm: `native-${maintenance}`,
+    arm: sqlite ? maintenance : `native-${maintenance}`,
     maintenance,
     run_kind: runKind,
     repetition,
@@ -163,7 +169,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   const processStarted = process.hrtime.bigint();
   const childRoot = join(runRoot, `${budget}-${maintenance}-${caseKey(testCase)}-${runKind}-${repetition}`);
   await mkdir(childRoot, { recursive: true });
-  const args = [
+  let args = [
     "11_crossover_native.mjs",
     "--maintenance", maintenance,
     "--rows", String(testCase.rows),
@@ -172,7 +178,33 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     "--budget", budget,
     "--diagnostic", profile === "diagnostic" ? "1" : "0",
   ];
-  const child = spawn(process.execPath, args, {
+  if (sqlite) {
+    const source = await readFile(sqliteProgram, "utf8");
+    const program = JSON.parse(source.match(/pub const PROGRAM_JSON: &str = r(#+)"\n([\s\S]*?)\n"\1;/)[2]);
+    const oracle = makeCrossoverOracle(testCase.rows, testCase.batch_size, testCase.fanout);
+    const mutations = crossoverMutationSql(testCase.rows, testCase.batch_size, testCase.fanout, oracle.groupCount);
+    const states = crossoverStates.map((name) => {
+      oracle.apply[name]();
+      const inputs = oracle.inputRows();
+      let sql = mutations[name];
+      if (name === "insert_batch") {
+        const additions = inputs.fact.filter(([id]) => id > testCase.rows);
+        sql = `INSERT INTO fact(id,group_id,amount) VALUES ${additions.map((row) => `(${row.join(",")})`).join(",")}`;
+      }
+      for (const rel of program.relations.filter((rel) => program.arrival_targets.includes(rel.rel))) {
+        sql = sql.replace(new RegExp(`\\b${rel.rel}\\b`, "g"), `"${rel.table_name}"`);
+      }
+      return { name, inputs, expected: oracle.snapshot(), mutation_sql: sql,
+        expected_affected_rows: expectedAffectedRows(name, testCase.batch_size),
+        join_affected_rows: name === "dimension_fanout" ? testCase.fanout : expectedAffectedRows(name, testCase.batch_size) };
+    });
+    const fixturePath = join(childRoot, "fixture.json");
+    await writeFile(fixturePath, JSON.stringify({ states }));
+    args = ["19_sqlite_template_adapter.py", "--program", sqliteProgram,
+      "--fixture", fixturePath, "--db", join(childRoot, "maintained.sqlite"),
+      "--sql-output", join(childRoot, "installed.sql")];
+  }
+  const child = spawn(sqlite ? "python3" : process.execPath, args, {
     cwd: labDir,
     env: {
       ...process.env,
@@ -194,15 +226,18 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     child.kill("SIGKILL");
   }, Math.min(timeoutMs, Math.max(1, deadlineEpochMs - Date.now())));
   const memoryTimer = setInterval(() => {
-    const rss = descendantsRss(process.env.IVM_POSTMASTER_PID);
+    const rss = descendantsRss(sqlite ? child.pid : process.env.IVM_POSTMASTER_PID);
     if (rss !== null) observedGroupPeakRssKb = Math.max(observedGroupPeakRssKb, rss);
   }, 50);
   const exit = await new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
   clearTimeout(timer);
   clearInterval(memoryTimer);
+  await writeFile(join(childRoot, "stdout.log"), stdout);
+  await writeFile(join(childRoot, "stderr.log"), stderr);
   const processWallMs = Number(process.hrtime.bigint() - processStarted) / 1_000_000;
   if (timedOut) {
-    append({ event: "case-status", status: "timeout", reason: `process exceeded ${timeoutMs} ms or total benchmark deadline`, postgres_group_observed_peak_rss_kb: observedGroupPeakRssKb, ...context });
+    append({ event: "case-status", status: "timeout", reason: `process exceeded ${timeoutMs} ms or total benchmark deadline`,
+      [sqlite ? "sqlite_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb"]: observedGroupPeakRssKb || null, ...context });
     return false;
   }
   if (exit.code !== 0) {
@@ -216,7 +251,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
       exit_code: exit.code,
       signal: exit.signal,
       stderr: stderr.slice(0, 8_000),
-      postgres_group_observed_peak_rss_kb: observedGroupPeakRssKb,
+      [sqlite ? "sqlite_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb"]: observedGroupPeakRssKb || null,
       ...context,
     });
     return false;
@@ -235,7 +270,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     event: "case-process",
     status: "ok",
     process_wall_ms: processWallMs,
-    postgres_group_observed_peak_rss_kb: observedGroupPeakRssKb,
+    [sqlite ? "sqlite_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb"]: observedGroupPeakRssKb || null,
     ...context,
   });
   return true;
@@ -252,7 +287,7 @@ for (const testCase of cases) {
   }
 }
 
-if (profile !== "diagnostic") {
+if (profile !== "diagnostic" && arms.includes("query") && arms.includes("pg_ivm")) {
   for (const testCase of cases) {
     for (let repetition = 1; repetition <= repetitions; repetition += 1) {
       const matching = records.filter((record) => record.event === "case-total"
