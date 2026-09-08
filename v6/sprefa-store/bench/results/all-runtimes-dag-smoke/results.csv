@@ -1,0 +1,12 @@
+engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb,host_peak_mb,sqlite_hw_mb,db_mb
+swi-incr,402,667,200,1,1,0,13.19,N/A,N/A,N/A
+differential-dataflow,402,667,200,1.209,0.261,200,3.2,N/A,N/A,N/A
+sqlite-count,402,667,200,3.393,0.609,23,5.9,0.11,0.29,0.07
+sqlite-count-scc,402,667,200,2.510,0.880,15,6.4,0.11,0.29,0.07
+sqlite-dred-loop,402,667,200,5.515,0.881,25,6.9,0.11,0.29,0.07
+sqlite-dred-cte,402,667,200,3.252,1.010,6,7.1,0.11,0.29,0.07
+sqlite-signed-delta-v2,402,667,200,3.273,0.384,3,6.8,0.11,0.29,0.07
+tsv2-runtime,402,667,200,16.062,4.107,92,148.4,N/A,N/A,0
+sprefa-engine-rs,402,667,200,6.342,1.136,52,8.9,N/A,N/A,0
+pglite-query,402,667,200,12.238,2.071,N/A,1065.3,N/A,N/A,38.117
+native-postgres-query,402,667,200,5.225,2.317,N/A,141.6,N/A,N/A,7.412
