@@ -5,6 +5,7 @@ typedef struct Env {
   int source_views;
   int references;
   sqlite3_int64 prepares,steps,vm,scans,prepare_ns,step_ns;
+  sqlite3_int64 delta_build_ns,reprepares;
 } Env;
 typedef struct Cached { char *text; sqlite3_stmt *stmt; } Cached;
 typedef struct Tab {
@@ -33,3 +34,4 @@ static int sources(Tab *t) {return t->mode==MULTI||t->mode==CHAIN||t->mode==DIAM
 static int bag(Tab *t) {return t->mode==FILTER||t->mode==BAG||(t->mode>=PROJECT&&t->mode!=REACH);}
 static int sql(Tab *, char *, sqlite3_value **, int);
 static int error(Tab *, const char *);
+static sqlite3_int64 now_ns(void){struct timespec stamp;clock_gettime(CLOCK_MONOTONIC,&stamp);return (sqlite3_int64)stamp.tv_sec*1000000000+stamp.tv_nsec;}

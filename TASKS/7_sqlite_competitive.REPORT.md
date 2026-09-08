@@ -246,3 +246,36 @@ automatic statement-end batching; session capture under exclusive hook ownership
 a custom SQLite variant. Public explicit flush/seal APIs meet the tested boundary
 without a custom patch. The finite option ledger records the concrete experiments
 and the narrower contracts behind unimplemented alternatives.
+
+## Parent cache and query-plan audit
+
+Added three cache lifecycle tests: index drop/savepoint rollback, second-connection
+schema change, and FAIL partial progress/outer rollback. Exact outputs pass.
+Index rollback measured six automatic and six fresh prepares; a second schema
+cookie measured six fresh prepares. Stable subsequent writes need zero new
+prepares. Initial assertions requiring zero fresh prepares across schema changes
+failed; that red log is retained.
+
+EXPLAIN with 1000 rows per side and ANALYZE uses the TEXT primary-key index for
+key access, `result_result_key` for invariant/zero cleanup, `(side,k)` for state
+probes, and the source key index for live views. Dropping the result k index
+produces scans; rollback restores indexed plans. An empty-table plan used the
+`(side,id)` primary key with only side bound; its initial assertion failed.
+
+Two-repetition batch1000 row-event profile medians, ms:
+
+| Cache | Total | Delta SQL construction | Write prepare/cache lookup | Write step |
+|---|---:|---:|---:|---:|
+| Off | 211.286 | 4.029 | 109.308 | 45.030 |
+| On | 83.071 | 3.594 | 1.097 | 36.642 |
+
+Both execute 2517656 measured write VM steps. Construction covers contribute()
+term SQL; invariant/PRAGMA reads remain outside these write counters. No
+row-trigger floor is inferred. Three alternating cached profile pairs measured
+ANALYZE off/on at 83.095/142.986 ms, with 2517656/704428 write VM steps. ANALYZE
+is not enabled in the shared arm by this step. All exact SQL oracle checks pass.
+
+Current gate: 102 test methods plus plan audit, existing 171/143 shared state checks
+unchanged. `/tmp/sprefa-sqlite-competitive/gate-fo4wegz3/receipt.json` exits 0.
+Execution coverage adds cache/schema tests and exact plan assertions. Commands,
+hashes, failures and profiles are preserved in the new audit receipts.

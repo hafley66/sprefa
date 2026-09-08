@@ -1,0 +1,58 @@
+[
+  {
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py",
+      "/tmp/sprefa-sqlite-competitive/cache-audit.dylib",
+      "/tmp/sprefa-sqlite-competitive/batch1000.json",
+      "/tmp/sprefa-sqlite-competitive/construction-0-1.db",
+      "0",
+      "0",
+      "0",
+      "8192"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py",
+      "/tmp/sprefa-sqlite-competitive/cache-audit.dylib",
+      "/tmp/sprefa-sqlite-competitive/batch1000.json",
+      "/tmp/sprefa-sqlite-competitive/construction-0-2.db",
+      "0",
+      "0",
+      "0",
+      "8192"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py",
+      "/tmp/sprefa-sqlite-competitive/cache-audit.dylib",
+      "/tmp/sprefa-sqlite-competitive/batch1000.json",
+      "/tmp/sprefa-sqlite-competitive/construction-1-1.db",
+      "1",
+      "0",
+      "0",
+      "8192"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "python3",
+      "v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py",
+      "/tmp/sprefa-sqlite-competitive/cache-audit.dylib",
+      "/tmp/sprefa-sqlite-competitive/batch1000.json",
+      "/tmp/sprefa-sqlite-competitive/construction-1-2.db",
+      "1",
+      "0",
+      "0",
+      "8192"
+    ],
+    "exit_code": 0
+  }
+]

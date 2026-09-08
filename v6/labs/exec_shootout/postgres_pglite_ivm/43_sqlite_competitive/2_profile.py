@@ -14,6 +14,7 @@ extension,fixture_path,db_path,cache,*rest=sys.argv[1:]
 batch=bool(rest and int(rest[0]))
 views=bool(len(rest)>1 and int(rest[1]))
 pager_kib=int(rest[2]) if len(rest)>2 else 8192
+analyzed=bool(len(rest)>3 and int(rest[3]))
 if not 1<=pager_kib<=32768:raise ValueError('pager cache must be 1..32768 KiB')
 fixture=json.loads(Path(fixture_path).read_text())
 db=oracle.connection(db_path,extension)
@@ -25,6 +26,7 @@ db.execute("SELECT take2_attach('native_result','dimension',1,'group_id','group_
 db.execute('BEGIN')
 for rel,sql in [('dimension','INSERT INTO dimension VALUES(?,?)'),('fact','INSERT INTO fact VALUES(?,?,?)')]:db.executemany(sql,fixture['states'][0]['inputs'][rel])
 db.execute('COMMIT')
+if analyzed:db.execute('ANALYZE')
 if views:db.execute("SELECT take2_control('source_views_on')").fetchall()
 for state in fixture['states'][1:]:
     db.execute("SELECT take2_control('profile_reset')").fetchall()
@@ -37,5 +39,5 @@ for state in fixture['states'][1:]:
     elapsed=time.perf_counter_ns()-start
     metrics=json.loads(db.execute("SELECT take2_control('profile')").fetchone()[0])
     oracle.verify(db,state)
-    print(json.dumps(dict(state=state['name'],cache=bool(int(cache)),batch=batch,source_views=views,pager_kib=pager_kib,extension_sha256=hashlib.sha256(Path(extension).read_bytes()).hexdigest(),elapsed_ns=elapsed,**metrics)),flush=True)
+    print(json.dumps(dict(state=state['name'],cache=bool(int(cache)),batch=batch,source_views=views,pager_kib=pager_kib,analyzed=analyzed,extension_sha256=hashlib.sha256(Path(extension).read_bytes()).hexdigest(),elapsed_ns=elapsed,**metrics)),flush=True)
 db.close()

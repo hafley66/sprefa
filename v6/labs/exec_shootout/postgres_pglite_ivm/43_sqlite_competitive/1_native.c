@@ -58,6 +58,7 @@ static int sql(Tab *t, char *text, sqlite3_value **values, int n) {
     t->env->steps++;
     t->env->vm+=sqlite3_stmt_status(s,SQLITE_STMTSTATUS_VM_STEP,1);
     t->env->scans+=sqlite3_stmt_status(s,SQLITE_STMTSTATUS_FULLSCAN_STEP,1);
+    t->env->reprepares+=sqlite3_stmt_status(s,SQLITE_STMTSTATUS_REPREPARE,1);
   }
   clock_gettime(CLOCK_MONOTONIC,&stamp);t->env->step_ns+=(sqlite3_int64)stamp.tv_sec*1000000000+stamp.tv_nsec-start;
   int end;
@@ -302,8 +303,8 @@ static void control(sqlite3_context *ctx,int argc,sqlite3_value **a) {
   } else if (cmd && !strcmp(cmd,"fail_sync")) e->fail_sync = 1;
   else if (cmd && !strcmp(cmd,"cache_on")) e->cache=1;
   else if (cmd && !strcmp(cmd,"source_views_on")) e->source_views=1;
-  else if (cmd && !strcmp(cmd,"profile_reset")) e->prepares=e->steps=e->vm=e->scans=e->prepare_ns=e->step_ns=0;
-  else if (cmd && !strcmp(cmd,"profile")) sqlite3_result_text(ctx,sqlite3_mprintf("{\"prepares\":%lld,\"steps\":%lld,\"vm_steps\":%lld,\"fullscan_steps\":%lld,\"prepare_ns\":%lld,\"step_ns\":%lld}",e->prepares,e->steps,e->vm,e->scans,e->prepare_ns,e->step_ns),-1,sqlite3_free);
+  else if (cmd && !strcmp(cmd,"profile_reset")) e->prepares=e->steps=e->vm=e->scans=e->prepare_ns=e->step_ns=e->delta_build_ns=e->reprepares=0;
+  else if (cmd && !strcmp(cmd,"profile")) sqlite3_result_text(ctx,sqlite3_mprintf("{\"prepares\":%lld,\"steps\":%lld,\"vm_steps\":%lld,\"fullscan_steps\":%lld,\"prepare_ns\":%lld,\"step_ns\":%lld,\"delta_sql_build_ns\":%lld,\"automatic_reprepares\":%lld}",e->prepares,e->steps,e->vm,e->scans,e->prepare_ns,e->step_ns,e->delta_build_ns,e->reprepares),-1,sqlite3_free);
   else if (cmd && !strcmp(cmd,"log_on")) e->logging = 1;
   else if (cmd && !strcmp(cmd,"log_off")) e->logging = 0;
   else sqlite3_result_error(ctx,"unknown take2 control",-1);

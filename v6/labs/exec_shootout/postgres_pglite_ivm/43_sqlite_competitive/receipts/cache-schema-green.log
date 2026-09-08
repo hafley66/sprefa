@@ -1,0 +1,10 @@
+test_cached_constraint_failure_and_rollback (__main__.Cache.test_cached_constraint_failure_and_rollback) ... ok
+test_index_drop_rollback_and_reprepare (__main__.Cache.test_index_drop_rollback_and_reprepare) ... ok
+test_second_connection_schema_cookie (__main__.Cache.test_second_connection_schema_cookie) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.019s
+
+OK
+{"case": "index_rollback", "prepares": 6, "steps": 28, "vm_steps": 1296, "fullscan_steps": 4, "prepare_ns": 79000, "step_ns": 197000, "delta_sql_build_ns": 13000, "automatic_reprepares": 6}
+{"case": "second_schema_cookie", "prepares": 6, "steps": 14, "vm_steps": 658, "fullscan_steps": 0, "prepare_ns": 76000, "step_ns": 81000, "delta_sql_build_ns": 7000, "automatic_reprepares": 0}

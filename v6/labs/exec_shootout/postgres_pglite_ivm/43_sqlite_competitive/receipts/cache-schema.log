@@ -1,0 +1,26 @@
+test_cached_constraint_failure_and_rollback (__main__.Cache.test_cached_constraint_failure_and_rollback) ... ok
+test_index_drop_rollback_and_reprepare (__main__.Cache.test_index_drop_rollback_and_reprepare) ... FAIL
+test_second_connection_schema_cookie (__main__.Cache.test_second_connection_schema_cookie) ... FAIL
+
+======================================================================
+FAIL: test_index_drop_rollback_and_reprepare (__main__.Cache.test_index_drop_rollback_and_reprepare)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3c_cache_test.py", line 30, in test_index_drop_rollback_and_reprepare
+    self.assertEqual(profile['prepares'],0)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 6 != 0
+
+======================================================================
+FAIL: test_second_connection_schema_cookie (__main__.Cache.test_second_connection_schema_cookie)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3c_cache_test.py", line 37, in test_second_connection_schema_cookie
+    self.assertGreater(profile['automatic_reprepares'],0)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 not greater than 0
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.329s
+
+FAILED (failures=2)

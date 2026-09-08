@@ -32,6 +32,13 @@ Profile counters report attempted work, not committed domain events; `_stats`
 retains transaction-safe event counts. Instrumented write wrappers count prepare,
 step, VM and full-scan work. The separate read-only invariant probes are outside
 those counters, so preparation attribution is a lower bound.
+`delta_sql_build_ns` measures contribute() term construction, and
+`automatic_reprepares` counts SQLite reprepare events on wrapped writes. The
+cache/schema tests in `3c` cover index rollback and a second connection's schema
+cookie. `2a_plan_audit.py` records indexed key probes, the scans after removing
+the k index, and indexed-plan restoration after rollback. The bounded ANALYZE
+comparison reduced VM steps but increased measured elapsed time; shared defaults
+remain unchanged. Exact commands and counts are in the task report.
 
 Optional `SELECT take2_control('source_views_on')` before opening a batch selects
 indexed per-source views instead of duplicate shadow images. Persistent layout

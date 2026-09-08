@@ -7,6 +7,7 @@ static int contribute(Tab *t, sqlite3_value **kv, int side, int sign) {
   int masks = t->mode == SELF ? 3 : 1;
   int rc = SQLITE_OK;
   for (int term=1; term<=masks && rc==SQLITE_OK; term++) {
+    sqlite3_int64 build_start=now_ns();
     int mask = t->mode == SELF ? term : 1 << side;
     sqlite3_str *from = sqlite3_str_new(t->db);
     for (int i=0; i<arity; i++) {
@@ -27,6 +28,7 @@ static int contribute(Tab *t, sqlite3_value **kv, int side, int sign) {
       t->schema,t->name,key,projection,sign,sign,value,sign,value,relations,
       t->mode==FILTER?"WHERE b0.v>=0":"",group);
     sqlite3_free(relations);
+    t->env->delta_build_ns+=now_ns()-build_start;
     rc = sql(t,statement,kv,2);
   }
   if (rc == SQLITE_OK) {

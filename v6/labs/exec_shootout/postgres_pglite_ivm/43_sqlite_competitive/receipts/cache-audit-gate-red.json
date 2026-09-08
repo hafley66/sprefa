@@ -1,0 +1,168 @@
+{
+  "exit_code": 1,
+  "steps": [
+    {
+      "command": [
+        "cc",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fPIC",
+        "-shared",
+        "-I/opt/homebrew/opt/sqlite/include",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/1_native.c",
+        "-o",
+        "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/competitive.dylib"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/3_boundary_test.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/6_semantic_test.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3_batch_test.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3_batch_test.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3b_frontier_test.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3b_frontier_test.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "node",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/12_crossover_runner.mjs",
+        "--profile",
+        "semantic",
+        "--arms",
+        "sqlite-competitive-batch,sqlite-competitive-sourceview",
+        "--competitive-extension",
+        "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/competitive.dylib",
+        "--output",
+        "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/shared.jsonl",
+        "--repetitions",
+        "1",
+        "--warmups",
+        "0"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "node",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/12_crossover_runner.mjs",
+        "--profile",
+        "circuits",
+        "--circuits",
+        "pipeline,join,self_join,chain,semijoin,antijoin,reach_cycle,aggregate_churn,distinct,fanout_fanin,diamond",
+        "--arms",
+        "sqlite-competitive-batch,sqlite-competitive-sourceview,sqlite-competitive-frontier",
+        "--competitive-extension",
+        "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/competitive.dylib",
+        "--output",
+        "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/circuits.jsonl",
+        "--repetitions",
+        "1",
+        "--warmups",
+        "0"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3c_cache_test.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2a_plan_audit.py",
+        "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/competitive.dylib",
+        "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/plans.db"
+      ],
+      "exit_code": 1
+    }
+  ],
+  "hashes": {
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_circuit.py": "f00bac568ebd2d9cd4e27fc7bc746e1d64d977ba1bd6f10710f512de0ac84af1",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0c_batch.h": "64b3655d839ac48745b741c4b198604eadfc9f38f92852557db2ab01b570467f",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2_profile.py": "6609bb683a0df86b6eba6a8d8e24b6bf881cec4db56bb882a96f62e6d9249a75",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3a_circuit_test.py": "1a270bc182ad98594d46ea3d3bada7b3d80acb4a39152f3498d67ea5ba3e7ef6",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0ab_expressions.h": "620ebc96ce34cc026581518ac04a9e045e02b917f376b1eab393cc2b1eea92b7",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0b_delta.h": "0bfaa7c23d136721b2258b3322694735987e7d62a7cc6bc476e530f3a1fef300",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3b_frontier_test.py": "0bf8550a13679f3694d33ee0e5f24eef6797ee46263c2a7349189bda75199ebf",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3c_cache_test.py": "afa051adffe63281d0982e09f50f8a4dcf4c1e7790d88c06bea0e7ead55829ef",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/5_gate.py": "8e5b1d05bb549539ae42f81f0f5b06ccb682e46fc7cad5b2d1de0fa10ef712b9",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0a_state.h": "52e549fa2b9e24cbb549cc4b736db2290c2d5e77f35583f62b7faef7f91ba765",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/1_native.c": "4f33f51d0bfd6fc91dbe4ca52002f955b90abec8cc1fc1ab88c3d05bfb7c0beb",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0_README.md": "c7220d63f039841e6855be8f0b8109e7a998f9dbc45c111f22ab19505a534ec3",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/3_batch_test.py": "365d7b99324ba1e94ae8abde4e154075e86b9d7ecb936a3263927efcd3324d66",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2a_plan_audit.py": "eedffe46266d8a8239360271fbf808836e21fe2d5f62c502b51a69869f06b365",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/0bc_nonmonotone.h": "1172a2c40189cadcac491628a8bf717f3a9255e552dee6a417bdbfffcedf9c50",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/4_shootout.py": "89bf9c86c883abdfedcd085cb1546e2e110fa1dc3997bf18b0cf2992021b59ed",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/4.log": "8b67b2ab32e2b2c8950c54f87de07ee2b8041683176aa172cb6c42969a285d7e",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/5.log": "91a3b1e1eb2db985173703c7c76a203fa36d0d69e1cf3dcacfa87040212a9de1",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/competitive.dylib": "005ccbdcde2053004f7f6a44ca396de103c3883b81b2f56f2d7e97f15e5143ad",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/7.log": "f79031ca5de228cd3b3e4ec8a0a6c2cbf9cf2e369f64c9792a616616c50799b3",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/plans.db": "6fc45da9e92557228879afb969ba1371a526df5d8856f100297e3cf6980ff144",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/6.log": "1fab6b89a722672f0d300f5541d875669854e8007ce164e98e09223b847a847e",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/2.log": "6d898b5c9c6b3c4e91ece78b39405e88cbb243db2ca042b57698250f367499e9",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/3.log": "b2e5bc0514b0b52ef123d06b2aec45c1dce82933aae19dfe4a118687ad757ddb",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/1.log": "84e44d9c667a1d19e0fdcdf5a3f87f4ba4499bffbc875526a9379caf6e9c711d",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/0.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/shared.jsonl": "a9a8ea3b911ae34a4b9c70eb2024b0f2a62575803dc894da79ffbe8ed1cc6e53",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/circuits.jsonl": "69e09b3ade53018d06356fd3c718313fa9ee59debd3713fec3348892f2d8fd81",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/12.log": "4e6234ed3b638cdcb0bf7a42db8e645c66b5f82b2c14f5ae8d5723f5af00a1aa",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/11.log": "e7c860b73c5ff76259980898135a7d8a5511bd22ddb7025f5e2794148718b5a1",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/10.log": "69e09b3ade53018d06356fd3c718313fa9ee59debd3713fec3348892f2d8fd81",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/8.log": "00da31e010047dd83a53319f757a532db258953d9dcdaf11d11b3c461f07151a",
+    "/tmp/sprefa-sqlite-competitive/gate-fgho5zy7/9.log": "a9a8ea3b911ae34a4b9c70eb2024b0f2a62575803dc894da79ffbe8ed1cc6e53"
+  }
+}

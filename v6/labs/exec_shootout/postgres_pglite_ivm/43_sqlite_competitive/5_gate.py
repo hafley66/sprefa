@@ -20,6 +20,8 @@ commands=[['cc','-O2','-Wall','-Wextra','-Werror','-fPIC','-shared','-I/opt/home
           [sys.executable,str(here/'3b_frontier_test.py')],
           ['node',str(here.parent/'12_crossover_runner.mjs'),'--profile','semantic','--arms','sqlite-competitive-batch,sqlite-competitive-sourceview','--competitive-extension',env['TAKE2_EXTENSION'],'--output',str(run/'shared.jsonl'),'--repetitions','1','--warmups','0']]
 commands.append(['node',str(here.parent/'12_crossover_runner.mjs'),'--profile','circuits','--circuits','pipeline,join,self_join,chain,semijoin,antijoin,reach_cycle,aggregate_churn,distinct,fanout_fanin,diamond','--arms','sqlite-competitive-batch,sqlite-competitive-sourceview,sqlite-competitive-frontier','--competitive-extension',env['TAKE2_EXTENSION'],'--output',str(run/'circuits.jsonl'),'--repetitions','1','--warmups','0'])
+commands.append([sys.executable,str(here/'3c_cache_test.py')])
+commands.append([sys.executable,str(here/'2a_plan_audit.py'),env['TAKE2_EXTENSION'],str(run/'plans.db')])
 steps=[];rc=0
 for index,command in enumerate(commands):
     with (run/f'{index}.log').open('wb') as log:
