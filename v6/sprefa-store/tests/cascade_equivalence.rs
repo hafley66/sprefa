@@ -102,12 +102,21 @@ async fn incremental_cascade_equals_from_scratch_recompute() {
     )
     .await;
 
-    assert_eq!(a_not_b, 0, "incremental kept rows the recompute would have dropped");
-    assert_eq!(b_not_a, 0, "incremental dropped rows the recompute would have kept");
+    assert_eq!(
+        a_not_b, 0,
+        "incremental kept rows the recompute would have dropped"
+    );
+    assert_eq!(
+        b_not_a, 0,
+        "incremental dropped rows the recompute would have kept"
+    );
     assert_eq!(a_count, b_count, "same survivor count");
     // and it is a real graph, not everything-lives / everything-dies
     let total = 2 + 3 * W;
-    assert!(a_count > 0 && a_count < total, "a non-trivial subset survived: {a_count}/{total}");
+    assert!(
+        a_count > 0 && a_count < total,
+        "a non-trivial subset survived: {a_count}/{total}"
+    );
     eprintln!(
         "[equiv] incremental cascade == anti-join recompute: {a_count}/{total} survive, symmetric diff 0"
     );

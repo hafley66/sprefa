@@ -20,7 +20,10 @@ const PINNED: &str = "27fa82620cbaa89a7fc11ac3057701d598813e87";
 async fn scalar(store: &Store, sql: &str) -> i64 {
     store
         .db()
-        .query_one_raw(Statement::from_string(DatabaseBackend::Sqlite, sql.to_owned()))
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            sql.to_owned(),
+        ))
         .await
         .unwrap()
         .unwrap()
@@ -36,12 +39,20 @@ fn ingest_files(root: &Path) -> Vec<(String, Vec<u8>)> {
     let mut names: Vec<PathBuf> = fs::read_dir(&mm)
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| matches!(p.extension().and_then(|s| s.to_str()), Some("c") | Some("h")))
+        .filter(|p| {
+            matches!(
+                p.extension().and_then(|s| s.to_str()),
+                Some("c") | Some("h")
+            )
+        })
         .collect();
     names.sort();
     for p in names {
         let bytes = fs::read(&p).unwrap();
-        out.push((format!("mm/{}", p.file_name().unwrap().to_str().unwrap()), bytes));
+        out.push((
+            format!("mm/{}", p.file_name().unwrap().to_str().unwrap()),
+            bytes,
+        ));
     }
     out
 }
@@ -86,12 +97,22 @@ async fn kernel_three_roots_work_vs_head() {
         eprintln!("SKIP: {}", String::from_utf8_lossy(&out.stderr).trim());
         return;
     }
-    assert!(out.status.success(), "fixture setup failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "fixture setup failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let roots_dir = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
 
     let store = Store::open("sqlite::memory:").await.unwrap();
-    let repo = store.repo_upsert("torvalds/linux", "/ext/linux", "https://x/linux").await.unwrap();
-    let head = store.rev_committed(repo, git_sha_bytes(PINNED).unwrap()).await.unwrap();
+    let repo = store
+        .repo_upsert("torvalds/linux", "/ext/linux", "https://x/linux")
+        .await
+        .unwrap();
+    let head = store
+        .rev_committed(repo, git_sha_bytes(PINNED).unwrap())
+        .await
+        .unwrap();
 
     // ---- register the three sibling roots (same repo, distinct paths) --------
     // No RootKind: a root is just (repo, path). All three register identically.
@@ -110,7 +131,11 @@ async fn kernel_three_roots_work_vs_head() {
     // which is exactly the real distinction between the roots.)
     let main_files = ingest_files(&roots_dir.join("main"));
     let distinct_paths = main_files.len() as i64;
-    let distinct_content = main_files.iter().map(|(_, b)| content_hash(b)).collect::<BTreeSet<_>>().len() as i64;
+    let distinct_content = main_files
+        .iter()
+        .map(|(_, b)| content_hash(b))
+        .collect::<BTreeSet<_>>()
+        .len() as i64;
 
     for name in ["main", "worktree"] {
         let files = ingest_files(&roots_dir.join(name));
@@ -118,9 +143,19 @@ async fn kernel_three_roots_work_vs_head() {
     }
 
     let head_files = scalar(&store, "SELECT count(*) FROM files").await;
-    let head_junctions = scalar(&store, &format!("SELECT count(*) FROM revs_files WHERE rev_id = {head}")).await;
-    assert_eq!(head_files, distinct_content, "identical content across the two clean roots dedups to distinct-content rows");
-    assert_eq!(head_junctions, distinct_paths, "two same-rev roots collapse to ONE (rev,path) row per file");
+    let head_junctions = scalar(
+        &store,
+        &format!("SELECT count(*) FROM revs_files WHERE rev_id = {head}"),
+    )
+    .await;
+    assert_eq!(
+        head_files, distinct_content,
+        "identical content across the two clean roots dedups to distinct-content rows"
+    );
+    assert_eq!(
+        head_junctions, distinct_paths,
+        "two same-rev roots collapse to ONE (rev,path) row per file"
+    );
     eprintln!(
         "[HEAD] 2 clean roots x {distinct_paths} files -> {head_files} content rows, {head_junctions} junction rows (roots collapsed)"
     );
@@ -135,44 +170,122 @@ async fn kernel_three_roots_work_vs_head() {
 
     // exactly ONE new content row (the edited util.c); every other WORK file is
     // byte-identical to HEAD and reuses its file_id.
-    assert_eq!(files_after - files_before, 1, "only the edited file is new content at WORK");
-    let work_junctions = scalar(&store, &format!("SELECT count(*) FROM revs_files WHERE rev_id = {work}")).await;
-    assert_eq!(work_junctions, distinct_paths, "WORK places every file, dirty or not");
+    assert_eq!(
+        files_after - files_before,
+        1,
+        "only the edited file is new content at WORK"
+    );
+    let work_junctions = scalar(
+        &store,
+        &format!("SELECT count(*) FROM revs_files WHERE rev_id = {work}"),
+    )
+    .await;
+    assert_eq!(
+        work_junctions, distinct_paths,
+        "WORK places every file, dirty or not"
+    );
 
     // util.c: WORK file_id differs from HEAD; an unedited file shares its file_id.
     let util_path = store.intern("mm/util.c");
     let mmap_path = store.intern("mm/mmap.c");
     store.flush_strings().await.unwrap();
-    let util_head = scalar(&store, &format!("SELECT file_id FROM revs_files WHERE rev_id={head} AND path_string_id={util_path}")).await;
-    let util_work = scalar(&store, &format!("SELECT file_id FROM revs_files WHERE rev_id={work} AND path_string_id={util_path}")).await;
-    let mmap_head = scalar(&store, &format!("SELECT file_id FROM revs_files WHERE rev_id={head} AND path_string_id={mmap_path}")).await;
-    let mmap_work = scalar(&store, &format!("SELECT file_id FROM revs_files WHERE rev_id={work} AND path_string_id={mmap_path}")).await;
-    assert_ne!(util_head, util_work, "the edited file diverges: WORK != HEAD");
-    assert_eq!(mmap_head, mmap_work, "an unedited file shares one content row across HEAD and WORK");
+    let util_head = scalar(
+        &store,
+        &format!(
+            "SELECT file_id FROM revs_files WHERE rev_id={head} AND path_string_id={util_path}"
+        ),
+    )
+    .await;
+    let util_work = scalar(
+        &store,
+        &format!(
+            "SELECT file_id FROM revs_files WHERE rev_id={work} AND path_string_id={util_path}"
+        ),
+    )
+    .await;
+    let mmap_head = scalar(
+        &store,
+        &format!(
+            "SELECT file_id FROM revs_files WHERE rev_id={head} AND path_string_id={mmap_path}"
+        ),
+    )
+    .await;
+    let mmap_work = scalar(
+        &store,
+        &format!(
+            "SELECT file_id FROM revs_files WHERE rev_id={work} AND path_string_id={mmap_path}"
+        ),
+    )
+    .await;
+    assert_ne!(
+        util_head, util_work,
+        "the edited file diverges: WORK != HEAD"
+    );
+    assert_eq!(
+        mmap_head, mmap_work,
+        "an unedited file shares one content row across HEAD and WORK"
+    );
     eprintln!("[WORK] util.c HEAD file_id={util_head} != WORK file_id={util_work}; mmap.c shared file_id={mmap_head}");
 
     // the path "mm/util.c" is stored ONCE though referenced by HEAD and WORK
-    assert_eq!(scalar(&store, &format!("SELECT count(*) FROM strings WHERE string_id={util_path}")).await, 1);
-    assert_eq!(scalar(&store, &format!("SELECT count(*) FROM revs_files WHERE path_string_id={util_path}")).await, 2);
+    assert_eq!(
+        scalar(
+            &store,
+            &format!("SELECT count(*) FROM strings WHERE string_id={util_path}")
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &store,
+            &format!("SELECT count(*) FROM revs_files WHERE path_string_id={util_path}")
+        )
+        .await,
+        2
+    );
 
     // the WORK concept doing its job: which files have unstaged changes? ONE join
     // (v1's `<sha>+` done relationally via base_rev_id), and it is exactly util.c.
     stmt_counter::reset();
     let unstaged = store.unstaged_path_ids(work).await.unwrap();
-    assert_eq!(stmt_counter::get(), 1, "unstaged detection is one join, not per-file");
-    assert_eq!(unstaged, vec![util_path], "exactly mm/util.c has unstaged changes");
-    eprintln!("[WORK] unstaged files detected in 1 query: {} path(s)", unstaged.len());
+    assert_eq!(
+        stmt_counter::get(),
+        1,
+        "unstaged detection is one join, not per-file"
+    );
+    assert_eq!(
+        unstaged,
+        vec![util_path],
+        "exactly mm/util.c has unstaged changes"
+    );
+    eprintln!(
+        "[WORK] unstaged files detected in 1 query: {} path(s)",
+        unstaged.len()
+    );
 
     // ---- normalization on REAL kernel identifiers ----------------------------
     let util_bytes = fs::read(roots_dir.join("main/mm/util.c")).unwrap();
     let idents = real_identifiers(&util_bytes);
-    assert!(idents.len() > 200, "found real identifiers to normalize: {}", idents.len());
+    assert!(
+        idents.len() > 200,
+        "found real identifiers to normalize: {}",
+        idents.len()
+    );
     // idempotent + case/underscore-collapsing on EVERY real identifier
     for id in &idents {
         let n = normalize(id);
         assert_eq!(normalize(&n), n, "normalize idempotent for {id:?}");
-        assert_eq!(normalize(&id.to_uppercase()), n, "case-insensitive for {id:?}");
-        assert_eq!(normalize(&id.replace('_', "")), n, "punct-insensitive for {id:?}");
+        assert_eq!(
+            normalize(&id.to_uppercase()),
+            n,
+            "case-insensitive for {id:?}"
+        );
+        assert_eq!(
+            normalize(&id.replace('_', "")),
+            n,
+            "punct-insensitive for {id:?}"
+        );
     }
     // a concrete real example
     let sample: Vec<_> = idents.iter().filter(|s| s.contains('_')).take(3).collect();
@@ -185,13 +298,20 @@ async fn kernel_three_roots_work_vs_head() {
     // ---- FK integrity + dense ids -------------------------------------------
     let fk = store
         .db()
-        .query_all_raw(Statement::from_string(DatabaseBackend::Sqlite, "PRAGMA foreign_key_check".to_owned()))
+        .query_all_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "PRAGMA foreign_key_check".to_owned(),
+        ))
         .await
         .unwrap();
     assert!(fk.is_empty(), "no dangling foreign keys over real data");
     let max_sid = scalar(&store, "SELECT max(string_id) FROM strings").await;
     let cnt_sid = scalar(&store, "SELECT count(*) FROM strings").await;
-    assert_eq!(max_sid, cnt_sid - 1, "dense string ids over real paths + identifiers");
+    assert_eq!(
+        max_sid,
+        cnt_sid - 1,
+        "dense string ids over real paths + identifiers"
+    );
 
     // ---- the enum verdict, now enacted ---------------------------------------
     // RootKind is GONE. Every root registered and ingested through the identical

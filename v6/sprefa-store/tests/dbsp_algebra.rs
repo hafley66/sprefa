@@ -173,8 +173,15 @@ fn theorem_2_retraction_is_subtraction() {
     let insert = Zset::of(&[("row", 1)]);
     let retract = Zset::of(&[("row", -1)]);
 
-    assert!(insert.add(&retract).is_empty(), "insert + retract = nothing");
-    assert_eq!(retract, insert.negate(), "a retraction is just a negated insert");
+    assert!(
+        insert.add(&retract).is_empty(),
+        "insert + retract = nothing"
+    );
+    assert_eq!(
+        retract,
+        insert.negate(),
+        "a retraction is just a negated insert"
+    );
 }
 
 /// THEOREM 3 — Weight refcounts derivations; a row survives while any refCount
@@ -184,10 +191,18 @@ fn theorem_2_retraction_is_subtraction() {
 #[test]
 fn theorem_3_weight_refcounts_derivations() {
     let derived_twice = Zset::of(&[("fact", 1)]).add(&Zset::of(&[("fact", 1)]));
-    assert_eq!(derived_twice.weight(&"fact"), 2, "two refCounts -> weight 2");
+    assert_eq!(
+        derived_twice.weight(&"fact"),
+        2,
+        "two refCounts -> weight 2"
+    );
 
     let retract_one = derived_twice.add(&Zset::of(&[("fact", -1)]));
-    assert_eq!(retract_one.weight(&"fact"), 1, "one refCount left -> survives");
+    assert_eq!(
+        retract_one.weight(&"fact"),
+        1,
+        "one refCount left -> survives"
+    );
     assert!(!retract_one.is_empty());
 
     let retract_last = retract_one.add(&Zset::of(&[("fact", -1)]));
@@ -202,10 +217,18 @@ fn theorem_4_map_and_filter_are_linear() {
     let b = Zset::of(&[(2, 1), (3, -1)]);
 
     let parity = |n: &i32| n % 2;
-    assert_eq!(a.add(&b).map(parity), a.map(parity).add(&b.map(parity)), "map linear");
+    assert_eq!(
+        a.add(&b).map(parity),
+        a.map(parity).add(&b.map(parity)),
+        "map linear"
+    );
 
     let big = |n: &i32| *n > 1;
-    assert_eq!(a.add(&b).filter(big), a.filter(big).add(&b.filter(big)), "filter linear");
+    assert_eq!(
+        a.add(&b).filter(big),
+        a.filter(big).add(&b.filter(big)),
+        "filter linear"
+    );
 }
 
 /// THEOREM 5 — The linear IVM theorem: for a linear query Q,
@@ -222,7 +245,10 @@ fn theorem_5_linear_queries_never_recompute() {
     let recompute_from_scratch = q(&base.add(&delta));
     let incremental = q(&base).add(&q(&delta)); // old view + Q(delta) only
 
-    assert_eq!(recompute_from_scratch, incremental, "view += Q(delta); base untouched");
+    assert_eq!(
+        recompute_from_scratch, incremental,
+        "view += Q(delta); base untouched"
+    );
 }
 
 /// THEOREM 6 — `join` is BILINEAR, giving the delta rule of incremental joins:
@@ -231,9 +257,7 @@ fn theorem_5_linear_queries_never_recompute() {
 #[test]
 fn theorem_6_join_is_bilinear() {
     let key = |t: &(i32, char)| t.0;
-    let jn = |x: &Zset<(i32, char)>, y: &Zset<(i32, char)>| {
-        join(x, y, key, key, |t, u| (t.1, u.1))
-    };
+    let jn = |x: &Zset<(i32, char)>, y: &Zset<(i32, char)>| join(x, y, key, key, |t, u| (t.1, u.1));
 
     let a = Zset::of(&[((1, 'a'), 1), ((1, 'b'), 1)]);
     let b = Zset::of(&[((1, 'x'), 1)]);
@@ -263,5 +287,9 @@ fn theorem_7_distinct_breaks_linearity_but_is_idempotent() {
     );
 
     let z = Zset::of(&[("r", 3), ("s", -1)]);
-    assert_eq!(z.distinct().distinct(), z.distinct(), "distinct is idempotent");
+    assert_eq!(
+        z.distinct().distinct(),
+        z.distinct(),
+        "distinct is idempotent"
+    );
 }

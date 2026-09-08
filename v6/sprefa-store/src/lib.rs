@@ -15,11 +15,11 @@
 // inlined at the bottom of this file. Back-compat re-exports below keep every
 // existing `crate::cascade`/`crate::unfuck_sqlite`/… path resolving, so no
 // test or example needs a path edit after the fold.
-pub mod spine;
+pub mod algo;
 pub mod engine;
 pub mod measure;
 pub mod oracle;
-pub mod algo;
+pub mod spine;
 
 pub use engine::{cascade, reach, reconcile, temporal};
 pub use measure::{benchgraph, memcap};
@@ -269,10 +269,7 @@ impl Store {
 
     /// Batch-insert content rows, dedup on `content_hash` (identical bytes = one
     /// row). Idempotent.
-    pub async fn files_insert_batch(
-        &self,
-        rows: &[([u8; 16], i64, i64)],
-    ) -> Result<(), DbErr> {
+    pub async fn files_insert_batch(&self, rows: &[([u8; 16], i64, i64)]) -> Result<(), DbErr> {
         for chunk in rows.chunks(CHUNK_ROWS) {
             let models: Vec<files::ActiveModel> = chunk
                 .iter()
@@ -492,470 +489,519 @@ impl FindOrdered for spine::strings::Entity {
 
 // ---- folded from strings.rs (Interner) / relstore.rs ----
 pub mod strings {
-//! Resident string interning, on blast. THE v5 pain point, replaced by a
-//! library (lasso). What v5 did for its string table, itemized so it never
-//! comes back:
-//!
-//!   - `StringId = hash64(text)` (spine.rs:52-57): ids were 64-bit content
-//!     hashes. 8 flat bytes each, defeating SQLite varint, in the `_strings`
-//!     table AND in every rel index that referenced a `sym` column.
-//!   - `SymAlloc` (db.rs): a bespoke in-memory hash->dense-id allocator with
-//!     load-once / single-writer / persist-at-flush. That is exactly what an
-//!     interner IS — reimplemented here by `lasso::Rodeo`.
-//!   - `persisted_strings` + `inflight_strings`: two `RefCell<HashSet<i64>>`
-//!     tracking which hashes had already been committed, because re-interning
-//!     an unchanged corpus offered 1,207,064 rows to accept 146 (db.rs:97-124).
-//!     That whole dance existed only because a hash id had no cheap "have I seen
-//!     this string" — an interner answers that in O(1) by construction.
-//!   - `flush_syms` collision guard: needed because two different texts could
-//!     share one 64-bit hash. Dense sequential assignment cannot collide, so the
-//!     guard is deleted outright.
-//!   - `salt_rev` / `\u{1}` concatenation: rev/repo smuggled into id strings so
-//!     hashed coordinates stayed disjoint across revs. Gone — a rev is a column
-//!     (repo_revs), a node is content-scoped, nothing salts a string.
-//!
-//! v6: `lasso::Rodeo` is the resident arena AND the id authority. `string_id` is
-//! the dense `Spur` index (0-based, contiguous). The `strings` table is the
-//! durable MIRROR of the arena, never the source. New interns queue in `dirty`
-//! for ONE batched insert (the N+1 law). Freeze to `RodeoReader` when a
-//! read-only resident view with no lock is wanted.
+    //! Resident string interning, on blast. THE v5 pain point, replaced by a
+    //! library (lasso). What v5 did for its string table, itemized so it never
+    //! comes back:
+    //!
+    //!   - `StringId = hash64(text)` (spine.rs:52-57): ids were 64-bit content
+    //!     hashes. 8 flat bytes each, defeating SQLite varint, in the `_strings`
+    //!     table AND in every rel index that referenced a `sym` column.
+    //!   - `SymAlloc` (db.rs): a bespoke in-memory hash->dense-id allocator with
+    //!     load-once / single-writer / persist-at-flush. That is exactly what an
+    //!     interner IS — reimplemented here by `lasso::Rodeo`.
+    //!   - `persisted_strings` + `inflight_strings`: two `RefCell<HashSet<i64>>`
+    //!     tracking which hashes had already been committed, because re-interning
+    //!     an unchanged corpus offered 1,207,064 rows to accept 146 (db.rs:97-124).
+    //!     That whole dance existed only because a hash id had no cheap "have I seen
+    //!     this string" — an interner answers that in O(1) by construction.
+    //!   - `flush_syms` collision guard: needed because two different texts could
+    //!     share one 64-bit hash. Dense sequential assignment cannot collide, so the
+    //!     guard is deleted outright.
+    //!   - `salt_rev` / `\u{1}` concatenation: rev/repo smuggled into id strings so
+    //!     hashed coordinates stayed disjoint across revs. Gone — a rev is a column
+    //!     (repo_revs), a node is content-scoped, nothing salts a string.
+    //!
+    //! v6: `lasso::Rodeo` is the resident arena AND the id authority. `string_id` is
+    //! the dense `Spur` index (0-based, contiguous). The `strings` table is the
+    //! durable MIRROR of the arena, never the source. New interns queue in `dirty`
+    //! for ONE batched insert (the N+1 law). Freeze to `RodeoReader` when a
+    //! read-only resident view with no lock is wanted.
 
-use lasso::{Key, Rodeo, Spur};
+    use lasso::{Key, Rodeo, Spur};
 
-/// The resident interner. Owns the string arena and assigns dense ids.
-pub struct Interner {
-    rodeo: Rodeo,
-    dirty: Vec<(i64, String)>,
-}
+    /// The resident interner. Owns the string arena and assigns dense ids.
+    pub struct Interner {
+        rodeo: Rodeo,
+        dirty: Vec<(i64, String)>,
+    }
 
-impl Interner {
-    pub fn new() -> Self {
-        Self {
-            rodeo: Rodeo::default(),
-            dirty: Vec::new(),
+    impl Interner {
+        pub fn new() -> Self {
+            Self {
+                rodeo: Rodeo::default(),
+                dirty: Vec::new(),
+            }
+        }
+
+        /// Intern `text`, returning its dense `string_id`. Queues `(id, text)` for
+        /// the durable flush the first time a string is seen; a repeat returns the
+        /// same id and queues nothing.
+        pub fn intern(&mut self, text: &str) -> i64 {
+            let seen = self.rodeo.get(text).is_some();
+            let spur = self.rodeo.get_or_intern(text);
+            let id = spur.into_usize() as i64;
+            if !seen {
+                self.dirty.push((id, text.to_string()));
+            }
+            id
+        }
+
+        /// `string_id -> text`, straight from the resident arena, no DB round-trip.
+        pub fn resolve(&self, id: i64) -> Option<&str> {
+            let key = Spur::try_from_usize(usize::try_from(id).ok()?)?;
+            self.rodeo.try_resolve(&key)
+        }
+
+        /// Rebuild the arena from the durable mirror on open. Rows MUST arrive in
+        /// ascending `string_id` order so the reconstructed `Spur` equals the stored
+        /// id — asserted, because a mismatch means the mirror and the arena disagree
+        /// on identity, which would silently corrupt every FK into `strings`.
+        pub fn load_row(&mut self, id: i64, content: &str) {
+            let spur = self.rodeo.get_or_intern(content);
+            let got = spur.into_usize() as i64;
+            assert_eq!(
+                got, id,
+                "interner reload out of order: got id {got} for {content:?}, expected {id}"
+            );
+        }
+
+        /// Drain the queued new interns for a batched `strings` insert.
+        pub fn take_dirty(&mut self) -> Vec<(i64, String)> {
+            std::mem::take(&mut self.dirty)
+        }
+
+        pub fn len(&self) -> usize {
+            self.rodeo.len()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.rodeo.is_empty()
         }
     }
 
-    /// Intern `text`, returning its dense `string_id`. Queues `(id, text)` for
-    /// the durable flush the first time a string is seen; a repeat returns the
-    /// same id and queues nothing.
-    pub fn intern(&mut self, text: &str) -> i64 {
-        let seen = self.rodeo.get(text).is_some();
-        let spur = self.rodeo.get_or_intern(text);
-        let id = spur.into_usize() as i64;
-        if !seen {
-            self.dirty.push((id, text.to_string()));
+    impl Default for Interner {
+        fn default() -> Self {
+            Self::new()
         }
-        id
     }
-
-    /// `string_id -> text`, straight from the resident arena, no DB round-trip.
-    pub fn resolve(&self, id: i64) -> Option<&str> {
-        let key = Spur::try_from_usize(usize::try_from(id).ok()?)?;
-        self.rodeo.try_resolve(&key)
-    }
-
-    /// Rebuild the arena from the durable mirror on open. Rows MUST arrive in
-    /// ascending `string_id` order so the reconstructed `Spur` equals the stored
-    /// id — asserted, because a mismatch means the mirror and the arena disagree
-    /// on identity, which would silently corrupt every FK into `strings`.
-    pub fn load_row(&mut self, id: i64, content: &str) {
-        let spur = self.rodeo.get_or_intern(content);
-        let got = spur.into_usize() as i64;
-        assert_eq!(
-            got, id,
-            "interner reload out of order: got id {got} for {content:?}, expected {id}"
-        );
-    }
-
-    /// Drain the queued new interns for a batched `strings` insert.
-    pub fn take_dirty(&mut self) -> Vec<(i64, String)> {
-        std::mem::take(&mut self.dirty)
-    }
-
-    pub fn len(&self) -> usize {
-        self.rodeo.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.rodeo.is_empty()
-    }
-}
-
-impl Default for Interner {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 }
 pub mod relstore {
-//! RelStore — the generic incremental relation store. Lifts the cascade + reconcile
-//! off the bespoke `cx_`/`rx_` scaffolding into one handle keyed by DENSE `(rel, row)`
-//! integer ids (E1: `key = rel*KEY_STRIDE + row`, a rowid-clustered table). One store
-//! holds ANY number of relations; `rel` is the relation discriminator, `row` the tuple.
-//!
-//! Two planes, both generic:
-//!   FACT (Z-set):  add_rows / add_deps / assert / retract / retract_dred / alive
-//!   CONTROL (salsa-in-sql): seed_memo / mark_changed / dirty / verify
-//!
-//! The `cx_*` / `rx_*` tables are just the default on-disk impl; callers speak only in
-//! `(rel, row)` pairs. This is what the harness measures now, instead of a bespoke copy.
+    //! RelStore — the generic incremental relation store. Lifts the cascade + reconcile
+    //! off the bespoke `cx_`/`rx_` scaffolding into one handle keyed by DENSE `(rel, row)`
+    //! integer ids (E1: `key = rel*KEY_STRIDE + row`, a rowid-clustered table). One store
+    //! holds ANY number of relations; `rel` is the relation discriminator, `row` the tuple.
+    //!
+    //! Two planes, both generic:
+    //!   FACT (Z-set):  add_rows / add_deps / assert / retract / retract_dred / alive
+    //!   CONTROL (salsa-in-sql): seed_memo / mark_changed / dirty / verify
+    //!
+    //! The `cx_*` / `rx_*` tables are just the default on-disk impl; callers speak only in
+    //! `(rel, row)` pairs. This is what the harness measures now, instead of a bespoke copy.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr};
+    use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr};
 
-use crate::{cascade, reconcile};
+    use crate::{cascade, reconcile};
 
-pub use cascade::{key, KEY_STRIDE};
+    pub use cascade::{key, KEY_STRIDE};
 
-/// The namespace for one graph store: every persistent table, index, and TEMP
-/// working-table name, built from a prefix. `GraphNs::default()` (empty prefix) is
-/// the live `cx_`/`rx_` set; `GraphNs::new("b_")` is an independent store in the
-/// same db.
-///
-/// PREFIX, not schema-qualify, is the namespace mechanism: SQLite TEMP working
-/// tables live in `temp.` and CANNOT be qualified to an ATTACH'd schema, so prefix
-/// is the only namespace that covers the working set. Epic 2 threaded this through
-/// cascade/reconcile/reach; the retired `Layout` measurement knob is gone (the
-/// frozen collapse-vs-split evidence lives in `measure::stamp_collapsed_evidence`).
-#[derive(Clone, Debug)]
-pub struct GraphNs {
-    pub row: String,          // {p}cx_row    — cascade Z-set nodes
-    pub dep: String,          // {p}cx_dep    — cascade edges
-    pub memo: String,         // {p}rx_memo   — reconcile digests
-    pub rdep: String,         // {p}rx_dep    — reconcile edges
-    pub ix_dep_child: String, // {p}ix_cx_dep_child — reverse-traversal index
-    pub ix_rdep_read: String, // {p}ix_rx_read
-    pub frontier: String,     // TEMP working set ({p}cx_frontier, ...)
-    pub next: String,
-    pub hits: String,
-    pub cone: String,
-    pub scc_scope: String,
-    pub scc_frontier: String,
-    pub scc_next: String,
-    pub scc_live: String,
-}
+    /// The namespace for one graph store: every persistent table, index, and TEMP
+    /// working-table name, built from a prefix. `GraphNs::default()` (empty prefix) is
+    /// the live `cx_`/`rx_` set; `GraphNs::new("b_")` is an independent store in the
+    /// same db.
+    ///
+    /// PREFIX, not schema-qualify, is the namespace mechanism: SQLite TEMP working
+    /// tables live in `temp.` and CANNOT be qualified to an ATTACH'd schema, so prefix
+    /// is the only namespace that covers the working set. Epic 2 threaded this through
+    /// cascade/reconcile/reach; the retired `Layout` measurement knob is gone (the
+    /// frozen collapse-vs-split evidence lives in `measure::stamp_collapsed_evidence`).
+    #[derive(Clone, Debug)]
+    pub struct GraphNs {
+        pub row: String,          // {p}cx_row    — cascade Z-set nodes
+        pub dep: String,          // {p}cx_dep    — cascade edges
+        pub memo: String,         // {p}rx_memo   — reconcile digests
+        pub rdep: String,         // {p}rx_dep    — reconcile edges
+        pub ix_dep_child: String, // {p}ix_cx_dep_child — reverse-traversal index
+        pub ix_rdep_read: String, // {p}ix_rx_read
+        pub frontier: String,     // TEMP working set ({p}cx_frontier, ...)
+        pub next: String,
+        pub hits: String,
+        pub cone: String,
+        pub scc_scope: String,
+        pub scc_frontier: String,
+        pub scc_next: String,
+        pub scc_live: String,
+    }
 
-impl GraphNs {
-    /// `prefix` is prepended verbatim to every base name; pass `"b_"` for a
-    /// namespace, `""` for the live default (include any separator yourself).
-    pub fn new(prefix: &str) -> Self {
-        Self {
-            row: format!("{prefix}cx_row"),
-            dep: format!("{prefix}cx_dep"),
-            memo: format!("{prefix}rx_memo"),
-            rdep: format!("{prefix}rx_dep"),
-            ix_dep_child: format!("{prefix}ix_cx_dep_child"),
-            ix_rdep_read: format!("{prefix}ix_rx_read"),
-            frontier: format!("{prefix}cx_frontier"),
-            next: format!("{prefix}cx_next"),
-            hits: format!("{prefix}cx_hits"),
-            cone: format!("{prefix}cx_cone"),
-            scc_scope: format!("{prefix}cx_scc_scope"),
-            scc_frontier: format!("{prefix}cx_scc_frontier"),
-            scc_next: format!("{prefix}cx_scc_next"),
-            scc_live: format!("{prefix}cx_scc_live"),
+    impl GraphNs {
+        /// `prefix` is prepended verbatim to every base name; pass `"b_"` for a
+        /// namespace, `""` for the live default (include any separator yourself).
+        pub fn new(prefix: &str) -> Self {
+            Self {
+                row: format!("{prefix}cx_row"),
+                dep: format!("{prefix}cx_dep"),
+                memo: format!("{prefix}rx_memo"),
+                rdep: format!("{prefix}rx_dep"),
+                ix_dep_child: format!("{prefix}ix_cx_dep_child"),
+                ix_rdep_read: format!("{prefix}ix_rx_read"),
+                frontier: format!("{prefix}cx_frontier"),
+                next: format!("{prefix}cx_next"),
+                hits: format!("{prefix}cx_hits"),
+                cone: format!("{prefix}cx_cone"),
+                scc_scope: format!("{prefix}cx_scc_scope"),
+                scc_frontier: format!("{prefix}cx_scc_frontier"),
+                scc_next: format!("{prefix}cx_scc_next"),
+                scc_live: format!("{prefix}cx_scc_live"),
+            }
         }
     }
-}
 
-impl Default for GraphNs {
-    fn default() -> Self {
-        Self::new("")
-    }
-}
-
-/// Stamp the split two-plane schema (cascade `cx_*` + reconcile `rx_*` + TEMP
-/// working set + indexes) under the namespace `ns` onto `db` (pragmas first).
-///
-/// `ns = GraphNs::default()` (empty prefix) reproduces the live `cx_`/`rx_` set
-/// byte-for-byte, so the 1.1 schema-equality golden stays green; a custom prefix
-/// yields an independent store in the same db. The collapsed shape (g_node/g_edge)
-/// is measurement evidence only and lives in [`crate::measure::stamp_collapsed_evidence`].
-///
-/// Build-vs-buy: hand-rolled DDL. The lab need is ephemeral schema for a fresh
-/// temp db per run (create_schema already `format!`s); sea-query / refinery /
-/// sqlx-migrations version a LIVE db, which is not this.
-pub async fn stamp(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), DbErr> {
-    db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS).await?;
-    cascade::create_schema(db, ns).await?;
-    reconcile::create_schema(db, ns).await?;
-    Ok(())
-}
-
-pub struct RelStore {
-    db: DatabaseConnection,
-    ns: GraphNs,
-}
-
-impl RelStore {
-    /// Open (or create) a store at `db` stamped for namespace `ns`. The namespace
-    /// lives here; everything above it (RelStore API, measure harness) is fixed.
-    pub async fn attach_with(db: DatabaseConnection, ns: GraphNs) -> Result<Self, DbErr> {
-        stamp(&db, &ns).await?;
-        Ok(Self { db, ns })
+    impl Default for GraphNs {
+        fn default() -> Self {
+            Self::new("")
+        }
     }
 
-    /// Open (or create) a store at `db` with the store's tuning + both schemas.
-    /// The status quo: the default namespace (cx_ + rx_). Delegates to [`attach_with`].
-    pub async fn attach(db: DatabaseConnection) -> Result<Self, DbErr> {
-        Self::attach_with(db, GraphNs::default()).await
+    /// Stamp the split two-plane schema (cascade `cx_*` + reconcile `rx_*` + TEMP
+    /// working set + indexes) under the namespace `ns` onto `db` (pragmas first).
+    ///
+    /// `ns = GraphNs::default()` (empty prefix) reproduces the live `cx_`/`rx_` set
+    /// byte-for-byte, so the 1.1 schema-equality golden stays green; a custom prefix
+    /// yields an independent store in the same db. The collapsed shape (g_node/g_edge)
+    /// is measurement evidence only and lives in [`crate::measure::stamp_collapsed_evidence`].
+    ///
+    /// Build-vs-buy: hand-rolled DDL. The lab need is ephemeral schema for a fresh
+    /// temp db per run (create_schema already `format!`s); sea-query / refinery /
+    /// sqlx-migrations version a LIVE db, which is not this.
+    pub async fn stamp(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), DbErr> {
+        db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS)
+            .await?;
+        cascade::create_schema(db, ns).await?;
+        reconcile::create_schema(db, ns).await?;
+        Ok(())
     }
 
-    pub fn conn(&self) -> &DatabaseConnection {
-        &self.db
+    pub struct RelStore {
+        db: DatabaseConnection,
+        ns: GraphNs,
     }
 
-    /// The namespace this store's `cx_*`/`rx_*` tables live under.
-    pub fn ns(&self) -> &GraphNs {
-        &self.ns
+    impl RelStore {
+        /// Open (or create) a store at `db` stamped for namespace `ns`. The namespace
+        /// lives here; everything above it (RelStore API, measure harness) is fixed.
+        pub async fn attach_with(db: DatabaseConnection, ns: GraphNs) -> Result<Self, DbErr> {
+            stamp(&db, &ns).await?;
+            Ok(Self { db, ns })
+        }
+
+        /// Open (or create) a store at `db` with the store's tuning + both schemas.
+        /// The status quo: the default namespace (cx_ + rx_). Delegates to [`attach_with`].
+        pub async fn attach(db: DatabaseConnection) -> Result<Self, DbErr> {
+            Self::attach_with(db, GraphNs::default()).await
+        }
+
+        pub fn conn(&self) -> &DatabaseConnection {
+            &self.db
+        }
+
+        /// The namespace this store's `cx_*`/`rx_*` tables live under.
+        pub fn ns(&self) -> &GraphNs {
+            &self.ns
+        }
+
+        // ---- FACT plane (generic Z-set over (rel,row)) ----------------------------
+
+        /// Insert `(rel, row, weight)` tuples.
+        pub async fn add_rows(&self, rows: &[(i64, i64, i64)]) -> Result<(), DbErr> {
+            cascade::insert_rows(&self.db, &self.ns, rows).await
+        }
+        /// Insert dependency edges `(parent_rel, parent_row, child_rel, child_row)`.
+        pub async fn add_deps(&self, edges: &[(i64, i64, i64, i64)]) -> Result<(), DbErr> {
+            cascade::insert_deps(&self.db, &self.ns, edges).await
+        }
+        /// Forward add: propagate aliveness from `seeds`. Returns rounds.
+        pub async fn assert(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+            cascade::assert(&self.db, &self.ns, seeds).await
+        }
+        /// Counting retraction (fast, correct on ACYCLIC ref-count graphs). Returns rounds.
+        pub async fn retract(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+            cascade::retract(&self.db, &self.ns, seeds).await
+        }
+        /// Counting retraction with an on-disk SCC-scoped nested fixpoint. Returns rounds.
+        pub async fn retract_scc(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+            cascade::retract_scc(&self.db, &self.ns, seeds).await
+        }
+        /// Cycle-safe retraction (Delete-and-Rederive), Rust-driven round loop. Returns rounds.
+        pub async fn retract_dred(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+            cascade::retract_dred(&self.db, &self.ns, seeds).await
+        }
+        /// Cycle-safe retraction as two recursive CTEs (whole traversal in SQLite's C
+        /// engine, no per-round round-trip). Same result as `retract_dred`; use at scale.
+        pub async fn retract_dred_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+            cascade::retract_dred_cte(&self.db, &self.ns, seeds).await
+        }
+        pub async fn retract_signed_delta_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+            cascade::retract_signed_delta_cte(&self.db, &self.ns, seeds).await
+        }
+        pub async fn retract_delta_fold(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+            cascade::retract_delta_fold(&self.db, &self.ns, seeds).await
+        }
+        /// Count live rows (weight > 0) across all relations.
+        pub async fn alive(&self) -> Result<i64, DbErr> {
+            use sea_orm::{DatabaseBackend, Statement};
+            Ok(self
+                .db
+                .query_one_raw(Statement::from_string(
+                    DatabaseBackend::Sqlite,
+                    format!("SELECT count(*) FROM {} WHERE weight>0", self.ns.row),
+                ))
+                .await?
+                .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+                .unwrap_or(0))
+        }
+
+        /// The live-row survivor SET as sorted encoded keys (`key = rel*KEY_STRIDE + row`).
+        /// This is the answer bytes the head-to-head diffs against the oracle and dd. `key`
+        /// IS the rowid and is stored ordered, so `ORDER BY key` is a no-sort ordered scan.
+        pub async fn alive_keys(&self) -> Result<Vec<i64>, DbErr> {
+            use sea_orm::{DatabaseBackend, Statement};
+            Ok(self
+                .db
+                .query_all_raw(Statement::from_string(
+                    DatabaseBackend::Sqlite,
+                    format!(
+                        "SELECT key FROM {} WHERE weight>0 ORDER BY key",
+                        self.ns.row
+                    ),
+                ))
+                .await?
+                .iter()
+                .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+                .collect())
+        }
+
+        // ---- CONTROL plane (salsa-in-sql over (rel,row) memos) --------------------
+
+        pub async fn seed_memo(
+            &self,
+            rel: i64,
+            row: i64,
+            digest: i64,
+            deps: &[(i64, i64)],
+            rev: i64,
+        ) -> Result<(), DbErr> {
+            let dep_keys: Vec<i64> = deps.iter().map(|&(r, w)| key(r, w)).collect();
+            reconcile::seed(&self.db, &self.ns, key(rel, row), digest, &dep_keys, rev).await
+        }
+        pub async fn mark_changed(&self, cells: &[(i64, i64)], rev: i64) -> Result<(), DbErr> {
+            let ks: Vec<i64> = cells.iter().map(|&(r, w)| key(r, w)).collect();
+            reconcile::mark_changed(&self.db, &self.ns, &ks, rev).await
+        }
+        /// The stale frontier as `(rel, row)` pairs.
+        pub async fn dirty(&self) -> Result<Vec<(i64, i64)>, DbErr> {
+            Ok(reconcile::dirty(&self.db, &self.ns)
+                .await?
+                .into_iter()
+                .map(|k| (k / KEY_STRIDE, k % KEY_STRIDE))
+                .collect())
+        }
+        /// Record a recomputed rel's digest; returns whether it moved (early cutoff).
+        pub async fn verify(
+            &self,
+            rel: i64,
+            row: i64,
+            digest: i64,
+            rev: i64,
+        ) -> Result<bool, DbErr> {
+            reconcile::verify(&self.db, &self.ns, key(rel, row), digest, rev).await
+        }
     }
 
-    // ---- FACT plane (generic Z-set over (rel,row)) ----------------------------
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use sea_orm::{ConnectOptions, Database};
 
-    /// Insert `(rel, row, weight)` tuples.
-    pub async fn add_rows(&self, rows: &[(i64, i64, i64)]) -> Result<(), DbErr> {
-        cascade::insert_rows(&self.db, &self.ns, rows).await
-    }
-    /// Insert dependency edges `(parent_rel, parent_row, child_rel, child_row)`.
-    pub async fn add_deps(&self, edges: &[(i64, i64, i64, i64)]) -> Result<(), DbErr> {
-        cascade::insert_deps(&self.db, &self.ns, edges).await
-    }
-    /// Forward add: propagate aliveness from `seeds`. Returns rounds.
-    pub async fn assert(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::assert(&self.db, &self.ns, seeds).await
-    }
-    /// Counting retraction (fast, correct on ACYCLIC ref-count graphs). Returns rounds.
-    pub async fn retract(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::retract(&self.db, &self.ns, seeds).await
-    }
-    /// Counting retraction with an on-disk SCC-scoped nested fixpoint. Returns rounds.
-    pub async fn retract_scc(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::retract_scc(&self.db, &self.ns, seeds).await
-    }
-    /// Cycle-safe retraction (Delete-and-Rederive), Rust-driven round loop. Returns rounds.
-    pub async fn retract_dred(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::retract_dred(&self.db, &self.ns, seeds).await
-    }
-    /// Cycle-safe retraction as two recursive CTEs (whole traversal in SQLite's C
-    /// engine, no per-round round-trip). Same result as `retract_dred`; use at scale.
-    pub async fn retract_dred_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::retract_dred_cte(&self.db, &self.ns, seeds).await
-    }
-    pub async fn retract_signed_delta_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::retract_signed_delta_cte(&self.db, &self.ns, seeds).await
-    }
-    pub async fn retract_delta_fold(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::retract_delta_fold(&self.db, &self.ns, seeds).await
-    }
-    /// Count live rows (weight > 0) across all relations.
-    pub async fn alive(&self) -> Result<i64, DbErr> {
-        use sea_orm::{DatabaseBackend, Statement};
-        Ok(self
-            .db
-            .query_one_raw(Statement::from_string(
-                DatabaseBackend::Sqlite,
-                format!("SELECT count(*) FROM {} WHERE weight>0", self.ns.row),
-            ))
-            .await?
-            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
-            .unwrap_or(0))
-    }
+        async fn open() -> RelStore {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "relstore_test_{}_{uniq}.sqlite",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&path);
+            let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+            opt.max_connections(1).min_connections(1);
+            RelStore::attach(Database::connect(opt).await.unwrap())
+                .await
+                .unwrap()
+        }
 
-    /// The live-row survivor SET as sorted encoded keys (`key = rel*KEY_STRIDE + row`).
-    /// This is the answer bytes the head-to-head diffs against the oracle and dd. `key`
-    /// IS the rowid and is stored ordered, so `ORDER BY key` is a no-sort ordered scan.
-    pub async fn alive_keys(&self) -> Result<Vec<i64>, DbErr> {
-        use sea_orm::{DatabaseBackend, Statement};
-        Ok(self
-            .db
-            .query_all_raw(Statement::from_string(
-                DatabaseBackend::Sqlite,
-                format!("SELECT key FROM {} WHERE weight>0 ORDER BY key", self.ns.row),
-            ))
-            .await?
-            .iter()
-            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
-            .collect())
-    }
+        // TWO relations in one store: rel 0 (roots/"files"), rel 1 ("derived"). A cross-rel
+        // dep 0:0 -> 1:0, and a cycle inside rel 1 (1:0 ->1:1 ->1:2 ->1:0). Cut the root.
+        // Cycle-safe retraction must kill the whole rel-1 cycle. Proves it's generic + cyclic.
+        #[tokio::test]
+        async fn generic_two_relation_cycle() {
+            let s = open().await;
+            s.add_rows(&[(0, 0, 1), (1, 0, 1), (1, 1, 1), (1, 2, 1)])
+                .await
+                .unwrap();
+            s.add_deps(&[
+                (0, 0, 1, 0), // file 0:0 is the refCount for derived 1:0
+                (1, 0, 1, 1), // cycle in rel 1
+                (1, 1, 1, 2),
+                (1, 2, 1, 0),
+            ])
+            .await
+            .unwrap();
+            assert_eq!(s.alive().await.unwrap(), 4);
 
-    // ---- CONTROL plane (salsa-in-sql over (rel,row) memos) --------------------
+            s.retract_dred(&[(0, 0)]).await.unwrap();
+            assert_eq!(
+                s.alive().await.unwrap(),
+                0,
+                "cutting the cross-rel anchor kills the rel-1 cycle"
+            );
+        }
 
-    pub async fn seed_memo(&self, rel: i64, row: i64, digest: i64, deps: &[(i64, i64)], rev: i64) -> Result<(), DbErr> {
-        let dep_keys: Vec<i64> = deps.iter().map(|&(r, w)| key(r, w)).collect();
-        reconcile::seed(&self.db, &self.ns, key(rel, row), digest, &dep_keys, rev).await
-    }
-    pub async fn mark_changed(&self, cells: &[(i64, i64)], rev: i64) -> Result<(), DbErr> {
-        let ks: Vec<i64> = cells.iter().map(|&(r, w)| key(r, w)).collect();
-        reconcile::mark_changed(&self.db, &self.ns, &ks, rev).await
-    }
-    /// The stale frontier as `(rel, row)` pairs.
-    pub async fn dirty(&self) -> Result<Vec<(i64, i64)>, DbErr> {
-        Ok(reconcile::dirty(&self.db, &self.ns)
-            .await?
-            .into_iter()
-            .map(|k| (k / KEY_STRIDE, k % KEY_STRIDE))
-            .collect())
-    }
-    /// Record a recomputed rel's digest; returns whether it moved (early cutoff).
-    pub async fn verify(&self, rel: i64, row: i64, digest: i64, rev: i64) -> Result<bool, DbErr> {
-        reconcile::verify(&self.db, &self.ns, key(rel, row), digest, rev).await
-    }
-}
+        // ── GraphStore Epic 1 · stamp goldens ──
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sea_orm::{ConnectOptions, Database};
+        async fn raw_db(tag: &str) -> DatabaseConnection {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("stamp_{tag}_{}_{uniq}.sqlite", std::process::id()));
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+            let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+            opt.max_connections(1).min_connections(1);
+            Database::connect(opt).await.unwrap()
+        }
 
-    async fn open() -> RelStore {
-        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("relstore_test_{}_{uniq}.sqlite", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
-        opt.max_connections(1).min_connections(1);
-        RelStore::attach(Database::connect(opt).await.unwrap()).await.unwrap()
-    }
-
-    // TWO relations in one store: rel 0 (roots/"files"), rel 1 ("derived"). A cross-rel
-    // dep 0:0 -> 1:0, and a cycle inside rel 1 (1:0 ->1:1 ->1:2 ->1:0). Cut the root.
-    // Cycle-safe retraction must kill the whole rel-1 cycle. Proves it's generic + cyclic.
-    #[tokio::test]
-    async fn generic_two_relation_cycle() {
-        let s = open().await;
-        s.add_rows(&[(0, 0, 1), (1, 0, 1), (1, 1, 1), (1, 2, 1)]).await.unwrap();
-        s.add_deps(&[
-            (0, 0, 1, 0), // file 0:0 is the refCount for derived 1:0
-            (1, 0, 1, 1), // cycle in rel 1
-            (1, 1, 1, 2),
-            (1, 2, 1, 0),
-        ])
-        .await
-        .unwrap();
-        assert_eq!(s.alive().await.unwrap(), 4);
-
-        s.retract_dred(&[(0, 0)]).await.unwrap();
-        assert_eq!(s.alive().await.unwrap(), 0, "cutting the cross-rel anchor kills the rel-1 cycle");
-    }
-
-    // ── GraphStore Epic 1 · stamp goldens ──
-
-    async fn raw_db(tag: &str) -> DatabaseConnection {
-        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "stamp_{tag}_{}_{uniq}.sqlite",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
-        let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
-        opt.max_connections(1).min_connections(1);
-        Database::connect(opt).await.unwrap()
-    }
-
-    // (type, name, sql) for every persistent schema object (TEMP tables live in
-    // sqlite_temp_master, so this sees only the durable tables + indexes).
-    async fn persistent_master(db: &DatabaseConnection) -> Vec<(String, String, String)> {
-        use sea_orm::{DatabaseBackend, Statement};
-        let rows = db
-            .query_all_raw(Statement::from_string(
-                DatabaseBackend::Sqlite,
-                "SELECT type, name, sql FROM sqlite_master \
+        // (type, name, sql) for every persistent schema object (TEMP tables live in
+        // sqlite_temp_master, so this sees only the durable tables + indexes).
+        async fn persistent_master(db: &DatabaseConnection) -> Vec<(String, String, String)> {
+            use sea_orm::{DatabaseBackend, Statement};
+            let rows = db
+                .query_all_raw(Statement::from_string(
+                    DatabaseBackend::Sqlite,
+                    "SELECT type, name, sql FROM sqlite_master \
                  WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_%' ESCAPE '\\' \
                  ORDER BY type, name"
-                    .to_owned(),
+                        .to_owned(),
+                ))
+                .await
+                .unwrap();
+            rows.iter()
+                .map(|r| {
+                    (
+                        r.try_get_by_index::<String>(0).unwrap_or_default(),
+                        r.try_get_by_index::<String>(1).unwrap_or_default(),
+                        r.try_get_by_index::<String>(2).unwrap_or_default(),
+                    )
+                })
+                .collect()
+        }
+
+        // 1.1 — stamp(Split) reproduces the live schemas byte-for-byte. A db stamped
+        // via RelStore::attach (Split) has the SAME persistent sqlite_master as one
+        // built by cascade::create_schema + reconcile::create_schema directly, and
+        // the object set is exactly the six the engine has shipped since the fold.
+        #[tokio::test]
+        async fn stamp_split_reproduces_the_live_schemas() {
+            let via_attach = raw_db("split_attach").await;
+            RelStore::attach(via_attach.clone()).await.unwrap();
+
+            let via_direct = raw_db("split_direct").await;
+            via_direct
+                .execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS)
+                .await
+                .unwrap();
+            crate::cascade::create_schema(&via_direct, &GraphNs::default())
+                .await
+                .unwrap();
+            crate::reconcile::create_schema(&via_direct, &GraphNs::default())
+                .await
+                .unwrap();
+
+            let master_attach = persistent_master(&via_attach).await;
+            let master_direct = persistent_master(&via_direct).await;
+            assert_eq!(
+                master_attach, master_direct,
+                "stamp(Split) must equal the live create_schema pair, object-for-object"
+            );
+
+            let names: Vec<&str> = master_attach.iter().map(|(_, n, _)| n.as_str()).collect();
+            for required in [
+                "cx_row",
+                "cx_dep",
+                "ix_cx_dep_child",
+                "rx_memo",
+                "rx_dep",
+                "ix_rx_read",
+            ] {
+                assert!(
+                    names.contains(&required),
+                    "schema object {required} missing: {names:?}"
+                );
+            }
+        }
+
+        async fn count_alive(db: &DatabaseConnection, table: &str) -> i64 {
+            use sea_orm::{DatabaseBackend, Statement};
+            db.query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                format!("SELECT count(*) FROM {table} WHERE weight>0"),
             ))
             .await
-            .unwrap();
-        rows.iter()
-            .map(|r| {
-                (
-                    r.try_get_by_index::<String>(0).unwrap_or_default(),
-                    r.try_get_by_index::<String>(1).unwrap_or_default(),
-                    r.try_get_by_index::<String>(2).unwrap_or_default(),
-                )
-            })
-            .collect()
-    }
+            .unwrap()
+            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+            .unwrap_or(0)
+        }
 
-    // 1.1 — stamp(Split) reproduces the live schemas byte-for-byte. A db stamped
-    // via RelStore::attach (Split) has the SAME persistent sqlite_master as one
-    // built by cascade::create_schema + reconcile::create_schema directly, and
-    // the object set is exactly the six the engine has shipped since the fold.
-    #[tokio::test]
-    async fn stamp_split_reproduces_the_live_schemas() {
-        let via_attach = raw_db("split_attach").await;
-        RelStore::attach(via_attach.clone()).await.unwrap();
+        // Epic 3 — two namespaces in ONE db are independent. Stamp the default ns and a
+        // "b_" ns into the same db, load the same little ref-count graph into each, retract
+        // the anchor in the DEFAULT ns only, and assert the b_ ns's survivors are UNTOUCHED
+        // (no cross-talk between cx_row and b_cx_row). Proves the engine is namespace-
+        // generic through the cascade, not just at the DDL.
+        #[tokio::test]
+        async fn two_namespaces_are_independent() {
+            let db = raw_db("twons").await;
+            // Stamp BOTH namespaces into the one db: cx_*/rx_* and b_cx_*/b_rx_*.
+            stamp(&db, &GraphNs::default()).await.unwrap();
+            stamp(&db, &GraphNs::new("b_")).await.unwrap();
 
-        let via_direct = raw_db("split_direct").await;
-        via_direct
-            .execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS)
-            .await
-            .unwrap();
-        crate::cascade::create_schema(&via_direct, &GraphNs::default()).await.unwrap();
-        crate::reconcile::create_schema(&via_direct, &GraphNs::default()).await.unwrap();
+            // Same ref-count graph in each: (0,0) anchors (0,1) via one dep edge.
+            let ns = GraphNs::default();
+            let nb = GraphNs::new("b_");
+            crate::cascade::insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1)])
+                .await
+                .unwrap();
+            crate::cascade::insert_deps(&db, &ns, &[(0, 0, 0, 1)])
+                .await
+                .unwrap();
+            crate::cascade::insert_rows(&db, &nb, &[(0, 0, 1), (0, 1, 1)])
+                .await
+                .unwrap();
+            crate::cascade::insert_deps(&db, &nb, &[(0, 0, 0, 1)])
+                .await
+                .unwrap();
+            assert_eq!(count_alive(&db, &ns.row).await, 2);
+            assert_eq!(count_alive(&db, &nb.row).await, 2);
 
-        let master_attach = persistent_master(&via_attach).await;
-        let master_direct = persistent_master(&via_direct).await;
-        assert_eq!(
-            master_attach, master_direct,
-            "stamp(Split) must equal the live create_schema pair, object-for-object"
-        );
+            // Retract the anchor in the DEFAULT namespace only.
+            crate::cascade::retract(&db, &ns, &[(0, 0)]).await.unwrap();
 
-        let names: Vec<&str> = master_attach.iter().map(|(_, n, _)| n.as_str()).collect();
-        for required in [
-            "cx_row", "cx_dep", "ix_cx_dep_child", "rx_memo", "rx_dep", "ix_rx_read",
-        ] {
-            assert!(names.contains(&required), "schema object {required} missing: {names:?}");
+            // Default ns: anchor + dependent both died. b_ ns: UNTOUCHED (still 2 alive).
+            assert_eq!(
+                count_alive(&db, &ns.row).await,
+                0,
+                "default ns retracted to zero"
+            );
+            assert_eq!(
+                count_alive(&db, &nb.row).await,
+                2,
+                "b_ ns must be untouched by the default ns retract (no cross-talk)"
+            );
         }
     }
-
-    async fn count_alive(db: &DatabaseConnection, table: &str) -> i64 {
-        use sea_orm::{DatabaseBackend, Statement};
-        db.query_one_raw(Statement::from_string(
-            DatabaseBackend::Sqlite,
-            format!("SELECT count(*) FROM {table} WHERE weight>0"),
-        ))
-        .await
-        .unwrap()
-        .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
-        .unwrap_or(0)
-    }
-
-    // Epic 3 — two namespaces in ONE db are independent. Stamp the default ns and a
-    // "b_" ns into the same db, load the same little ref-count graph into each, retract
-    // the anchor in the DEFAULT ns only, and assert the b_ ns's survivors are UNTOUCHED
-    // (no cross-talk between cx_row and b_cx_row). Proves the engine is namespace-
-    // generic through the cascade, not just at the DDL.
-    #[tokio::test]
-    async fn two_namespaces_are_independent() {
-        let db = raw_db("twons").await;
-        // Stamp BOTH namespaces into the one db: cx_*/rx_* and b_cx_*/b_rx_*.
-        stamp(&db, &GraphNs::default()).await.unwrap();
-        stamp(&db, &GraphNs::new("b_")).await.unwrap();
-
-        // Same ref-count graph in each: (0,0) anchors (0,1) via one dep edge.
-        let ns = GraphNs::default();
-        let nb = GraphNs::new("b_");
-        crate::cascade::insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1)]).await.unwrap();
-        crate::cascade::insert_deps(&db, &ns, &[(0, 0, 0, 1)]).await.unwrap();
-        crate::cascade::insert_rows(&db, &nb, &[(0, 0, 1), (0, 1, 1)]).await.unwrap();
-        crate::cascade::insert_deps(&db, &nb, &[(0, 0, 0, 1)]).await.unwrap();
-        assert_eq!(count_alive(&db, &ns.row).await, 2);
-        assert_eq!(count_alive(&db, &nb.row).await, 2);
-
-        // Retract the anchor in the DEFAULT namespace only.
-        crate::cascade::retract(&db, &ns, &[(0, 0)]).await.unwrap();
-
-        // Default ns: anchor + dependent both died. b_ ns: UNTOUCHED (still 2 alive).
-        assert_eq!(count_alive(&db, &ns.row).await, 0, "default ns retracted to zero");
-        assert_eq!(
-            count_alive(&db, &nb.row).await, 2,
-            "b_ ns must be untouched by the default ns retract (no cross-talk)"
-        );
-    }
-}
-
 }

@@ -54,5 +54,8 @@ fn test_dd_batch_updates() {
 
     oracle.batch(&[(0, 2)], &[(0, 1)]);
     let (_, card2) = oracle.reachable();
-    assert_eq!(card2, 2, "After batch (add 0->2, del 0->1), still 2 reachable");
+    assert_eq!(
+        card2, 2,
+        "After batch (add 0->2, del 0->1), still 2 reachable"
+    );
 }

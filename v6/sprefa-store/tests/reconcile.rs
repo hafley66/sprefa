@@ -11,7 +11,9 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement};
+use sea_orm::{
+    ConnectOptions, ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement,
+};
 use sprefa_store::oracle::salsa::{self, Reconciler, SalsaReconciler};
 use sprefa_store::reconcile;
 use sprefa_store::relstore::{stamp, GraphNs};
@@ -19,8 +21,10 @@ use sprefa_store::relstore::{stamp, GraphNs};
 async fn open() -> (DatabaseConnection, GraphNs) {
     static N: AtomicU64 = AtomicU64::new(0);
     let uniq = N.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir()
-        .join(format!("reconcile_parity_{}_{uniq}.sqlite", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "reconcile_parity_{}_{uniq}.sqlite",
+        std::process::id()
+    ));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
     let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
@@ -46,7 +50,9 @@ async fn engine_build(
     for i in 0..n {
         memo[i] = salsa::node_digest(value[i], deps[i].iter().map(|&j| memo[j as usize]));
         let dep_ids: Vec<i64> = deps[i].iter().map(|&j| j as i64).collect();
-        reconcile::seed(db, ns, i as i64, memo[i], &dep_ids, 0).await.unwrap();
+        reconcile::seed(db, ns, i as i64, memo[i], &dep_ids, 0)
+            .await
+            .unwrap();
     }
     (value, 0)
 }
@@ -61,7 +67,8 @@ async fn engine_answer(db: &DatabaseConnection, ns: &GraphNs) -> i64 {
         ))
         .await
         .unwrap();
-    rows.iter().fold(0i64, |a, r| a ^ r.try_get_by_index::<i64>(0).unwrap_or(0))
+    rows.iter()
+        .fold(0i64, |a, r| a ^ r.try_get_by_index::<i64>(0).unwrap_or(0))
 }
 
 /// Over a matrix of (nodes, ticks, edits-per-tick, rng-seed): the SQLite reconcile plane
@@ -111,7 +118,10 @@ async fn reconcile_parity_salsa_vs_sql() {
         }
 
         // 3-way: the durable SQLite memo equals the independent from-scratch oracle.
-        assert_eq!(eng_ans, stream.oracle_answer, "engine != from-scratch oracle (n={n})");
+        assert_eq!(
+            eng_ans, stream.oracle_answer,
+            "engine != from-scratch oracle (n={n})"
+        );
 
         // the early-cutoff proof: salsa and SQL recompute the SAME number of nodes.
         assert_eq!(

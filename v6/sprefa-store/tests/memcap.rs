@@ -95,5 +95,9 @@ fn cap_only_tightens_never_raises() {
     let c = memcap::cap_bytes();
     assert_eq!(a, 4096 * 1024 * 1024);
     assert_eq!(b, 1024 * 1024 * 1024);
-    assert_eq!(c, 1024 * 1024 * 1024, "a looser cap must not raise the limit");
+    assert_eq!(
+        c,
+        1024 * 1024 * 1024,
+        "a looser cap must not raise the limit"
+    );
 }

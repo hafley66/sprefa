@@ -84,17 +84,59 @@ async fn manual_cascade_retracts_by_subtraction_at_scale() {
     let survivors = scalar(&db, "SELECT count(*) FROM cx_row WHERE weight > 0").await;
     // dead = r0 + ODD A (WIDTH/2) + ODD B (WIDTH/2); survivors = the rest
     let expected_dead = 1 + (WIDTH / 2) as i64 + (WIDTH / 2) as i64;
-    assert_eq!(survivors, total - expected_dead, "exact transitive set died");
+    assert_eq!(
+        survivors,
+        total - expected_dead,
+        "exact transitive set died"
+    );
 
     // r0 dead, r1 alive
-    assert_eq!(scalar(&db, "SELECT count(*) FROM cx_row WHERE tag=0 AND id=0 AND weight>0").await, 0);
-    assert_eq!(scalar(&db, "SELECT count(*) FROM cx_row WHERE tag=0 AND id=1 AND weight>0").await, 1);
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT count(*) FROM cx_row WHERE tag=0 AND id=0 AND weight>0"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT count(*) FROM cx_row WHERE tag=0 AND id=1 AND weight>0"
+        )
+        .await,
+        1
+    );
     // ODD A died; EVEN A survived AT WEIGHT 1 (2 - 1) — retraction = subtraction
-    assert_eq!(scalar(&db, "SELECT count(*) FROM cx_row WHERE tag=1 AND id=1 AND weight>0").await, 0);
-    assert_eq!(scalar(&db, "SELECT weight FROM cx_row WHERE tag=1 AND id=0").await, 1);
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT count(*) FROM cx_row WHERE tag=1 AND id=1 AND weight>0"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar(&db, "SELECT weight FROM cx_row WHERE tag=1 AND id=0").await,
+        1
+    );
     // B under dead ODD A died; B under surviving EVEN A lived
-    assert_eq!(scalar(&db, "SELECT count(*) FROM cx_row WHERE tag=2 AND id=1 AND weight>0").await, 0);
-    assert_eq!(scalar(&db, "SELECT count(*) FROM cx_row WHERE tag=2 AND id=0 AND weight>0").await, 1);
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT count(*) FROM cx_row WHERE tag=2 AND id=1 AND weight>0"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT count(*) FROM cx_row WHERE tag=2 AND id=0 AND weight>0"
+        )
+        .await,
+        1
+    );
 
     // ---- it is O(depth), not O(rows) ----------------------------------------
     assert_eq!(rounds, 3, "root -> layer A -> layer B");
@@ -107,7 +149,14 @@ async fn manual_cascade_retracts_by_subtraction_at_scale() {
     //      physically deleted. Every dead row still sits in cx_row; nothing was
     //      DELETEd during the cascade (that is the speed win).
     let dead_retained = scalar(&db, "SELECT count(*) FROM cx_row WHERE weight <= 0").await;
-    assert_eq!(dead_retained, expected_dead, "dead rows retained, not deleted");
-    assert_eq!(scalar(&db, "SELECT count(*) FROM cx_row").await, total, "no row physically removed");
+    assert_eq!(
+        dead_retained, expected_dead,
+        "dead rows retained, not deleted"
+    );
+    assert_eq!(
+        scalar(&db, "SELECT count(*) FROM cx_row").await,
+        total,
+        "no row physically removed"
+    );
     eprintln!("[ok] survivors={survivors}, dead retained={dead_retained}");
 }

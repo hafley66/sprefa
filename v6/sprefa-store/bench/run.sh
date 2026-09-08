@@ -32,6 +32,9 @@ ENGINES=(
   "tsv2-gen|bench/engines/tsv2_gen.sh|"
   "v1-gen|bench/engines/v1_gen.sh|"
 )
+if [[ "${DD_SHOOTOUT:-0}" == "1" ]]; then
+  ENGINES+=("differential-dataflow|dd_reach|")
+fi
 if [[ "${POSTGRES_SHOOTOUT:-0}" == "1" ]]; then
   . bench/engines/0_postgres_cluster.sh
   pg_bench_start bench

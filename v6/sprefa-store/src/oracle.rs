@@ -37,7 +37,11 @@ pub mod dd {
     }
 
     enum Cmd {
-        Batch { edges: Vec<((i64, i64), isize)>, roots: Vec<(i64, isize)>, ack: SyncSender<()> },
+        Batch {
+            edges: Vec<((i64, i64), isize)>,
+            roots: Vec<(i64, isize)>,
+            ack: SyncSender<()>,
+        },
         Stop,
     }
 
@@ -128,12 +132,24 @@ pub mod dd {
                 });
             });
 
-            Self { tx: Some(tx), handle: Some(handle), shared }
+            Self {
+                tx: Some(tx),
+                handle: Some(handle),
+                shared,
+            }
         }
 
         fn feed(&mut self, edges: Vec<((i64, i64), isize)>, roots: Vec<(i64, isize)>) {
             let (ack_tx, ack_rx) = sync_channel(1);
-            self.tx.as_ref().unwrap().send(Cmd::Batch { edges, roots, ack: ack_tx }).unwrap();
+            self.tx
+                .as_ref()
+                .unwrap()
+                .send(Cmd::Batch {
+                    edges,
+                    roots,
+                    ack: ack_tx,
+                })
+                .unwrap();
             ack_rx.recv().unwrap();
         }
 
@@ -170,7 +186,6 @@ pub mod dd {
             }
         }
     }
-
 }
 
 pub mod salsa {
@@ -237,12 +252,20 @@ pub mod salsa {
     /// Deterministic stream: `ticks` rounds, each editing `per` cells. 1 in 4 edits
     /// re-writes the SAME value (exercises early cutoff / backdating). `oracle_answer`
     /// is the from-scratch ascending digest after ALL edits (independent of both engines).
-    pub fn reconcile_stream(n: usize, deps: &[Vec<u32>], seed: u64, ticks: usize, per: usize) -> RStream {
+    pub fn reconcile_stream(
+        n: usize,
+        deps: &[Vec<u32>],
+        seed: u64,
+        ticks: usize,
+        per: usize,
+    ) -> RStream {
         let mut val: Vec<i64> = (0..n as u32).map(|i| cell_hash(i, 0)).collect();
         let init = val.clone();
         let mut rng = seed ^ (n as u64).wrapping_mul(0x9E3779B97F4A7C15);
         let mut next = || {
-            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             rng >> 16
         };
         let mut edits = Vec::with_capacity(ticks);
@@ -253,7 +276,11 @@ pub mod salsa {
                 // 1 in 4 edits re-writes the SAME value: exercises early-cutoff / backdating
                 // (the node re-executes but its digest does not move, so the wave stops).
                 let same = next() % 4 == 0;
-                let nv = if same { val[i] } else { cell_hash(i as u32, next() as i64 | 1) };
+                let nv = if same {
+                    val[i]
+                } else {
+                    cell_hash(i as u32, next() as i64 | 1)
+                };
                 val[i] = nv;
                 e.push((i as u32, nv));
             }
@@ -265,7 +292,11 @@ pub mod salsa {
             memo[i] = node_digest(val[i], deps[i].iter().map(|&j| memo[j as usize]));
         }
         let oracle_answer = memo.iter().fold(0i64, |a, &d| a ^ d);
-        RStream { init, edits, oracle_answer }
+        RStream {
+            init,
+            edits,
+            oracle_answer,
+        }
     }
 
     /// The seam. The parity test runs two impls under it and compares.
@@ -327,7 +358,9 @@ pub mod salsa {
         let deps = world.deps(db);
         node_digest(
             *cells[i].value(db),
-            deps[i].iter().map(|&j| *node_val(db, world, Node::new(db, j))),
+            deps[i]
+                .iter()
+                .map(|&j| *node_val(db, world, Node::new(db, j))),
         )
     }
 
@@ -342,7 +375,13 @@ pub mod salsa {
     }
     impl Default for SalsaReconciler {
         fn default() -> Self {
-            Self { db: Db::default(), cells: Vec::new(), world: None, n: 0, exec_baseline: 0 }
+            Self {
+                db: Db::default(),
+                cells: Vec::new(),
+                world: None,
+                n: 0,
+                exec_baseline: 0,
+            }
         }
     }
     impl Reconciler for SalsaReconciler {
@@ -372,8 +411,9 @@ pub mod salsa {
         }
         fn answer(&mut self) -> i64 {
             let world = self.world.unwrap();
-            (0..self.n as u32)
-                .fold(0i64, |a, i| a ^ *node_val(&self.db, world, Node::new(&self.db, i)))
+            (0..self.n as u32).fold(0i64, |a, i| {
+                a ^ *node_val(&self.db, world, Node::new(&self.db, i))
+            })
         }
     }
 }

@@ -13,7 +13,10 @@ use sprefa_store::measure::{measure_storage_scaled, parents_of};
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
     let (layers, width): (usize, usize) = match args.len() {
-        3 => (args[1].parse().expect("layers"), args[2].parse().expect("width")),
+        3 => (
+            args[1].parse().expect("layers"),
+            args[2].parse().expect("width"),
+        ),
         _ => (40, 40),
     };
     let n: i64 = 2 + (layers * width) as i64;
