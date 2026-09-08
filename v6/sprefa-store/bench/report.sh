@@ -22,8 +22,8 @@ recorded in the status receipt and excluded from \`setup_ms\` and
 \`retract_ms\`. Their rows are full recomputation measurements.
 
 The \`differential-dataflow\` arm is the native Differential Dataflow 0.25
-library over timely 0.31. Its setup and
-retract phases end after fixed-point convergence and counting. Complete ordered
+library over timely 0.31. Its setup and retract phases end after fixed-point
+convergence and counting. Complete ordered
 initial and survivor sets are checked against an independent BFS outside the
 timed phases.
 
