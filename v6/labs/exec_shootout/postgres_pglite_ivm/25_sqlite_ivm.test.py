@@ -94,6 +94,8 @@ class SqliteIvm(unittest.TestCase):
         self.assertEqual(telemetry[1:], ("fact", "DELETE", 2))
         self.assertGreater(telemetry[0], 0)
         self.assertEqual([event["phase"] for event in events], ["bind-lower", "install"])
+        with self.assertRaises(sqlite3.OperationalError):
+            self.db.execute("DELETE FROM summary")
 
     def test_projection_bag_self_join_and_multiway_join(self):
         spec = {
@@ -126,9 +128,9 @@ class SqliteIvm(unittest.TestCase):
         install(self.db, spec)
         self.db.executemany("INSERT INTO edge VALUES(?,?,?)", [(1, 1, 2), (2, 1, 2), (3, 2, 3), (4, 2, 3)])
         self.db.execute("INSERT INTO label VALUES(3,7)")
-        self.assertEqual(self.db.execute("SELECT * FROM pairs ORDER BY rowid").fetchall(), [(1, 3, 7)] * 4)
+        self.assertEqual(self.db.execute("SELECT * FROM pairs").fetchall(), [(1, 3, 7)] * 4)
         self.db.execute("DELETE FROM edge WHERE id=4")
-        self.assertEqual(self.db.execute("SELECT * FROM pairs ORDER BY rowid").fetchall(), [(1, 3, 7)] * 2)
+        self.assertEqual(self.db.execute("SELECT * FROM pairs").fetchall(), [(1, 3, 7)] * 2)
 
     def test_global_aggregate_empty_boundary_multiple_views_reopen_and_drop(self):
         spec = crossover_spec("global_total")

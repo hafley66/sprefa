@@ -72,6 +72,7 @@ def _metadata_ddl(db: sqlite3.Connection) -> None:
         algorithm TEXT NOT NULL,
         plan_json TEXT NOT NULL,
         query_sql TEXT NOT NULL,
+        storage_name TEXT NOT NULL,
         installed_unix_ms INTEGER NOT NULL
       ) STRICT
     """)
@@ -99,6 +100,10 @@ def _metadata_ddl(db: sqlite3.Connection) -> None:
 def _trigger_name(view: str, source: str, operation: str) -> str:
     digest = hashlib.sha256(f"{view}\0{source}\0{operation}".encode()).hexdigest()[:16]
     return f"__sqlite_ivm_{digest}_{operation.lower()}"
+
+
+def _storage_name(view: str) -> str:
+    return "__sqlite_ivm_data_" + hashlib.sha256(view.encode()).hexdigest()[:20]
 
 
 def _literal(value: str) -> str:
@@ -139,15 +144,19 @@ def install(
             elif object_type != "table":
                 raise PlanError("IVM046_SOURCE_KIND", f"source {table['name']!r} is {object_type}, expected table")
             _validate_source(db, table)
+        storage = _storage_name(compiled.name)
         output_ddl = ", ".join(f"{quote(column)} INTEGER" for column in compiled.query.columns)
-        db.execute(f"CREATE TABLE {quote(compiled.name)} ({output_ddl}) STRICT")
-        db.execute(f"INSERT INTO {quote(compiled.name)} ({', '.join(map(quote, compiled.query.columns))}) {compiled.query.sql}")
+        db.execute(f"CREATE TABLE {quote(storage)} ({output_ddl}) STRICT")
+        db.execute(f"INSERT INTO {quote(storage)} ({', '.join(map(quote, compiled.query.columns))}) {compiled.query.sql}")
+        db.execute(
+            f"CREATE VIEW {quote(compiled.name)} AS SELECT {', '.join(map(quote, compiled.query.columns))} FROM {quote(storage)}"
+        )
         installed_ms = time.time_ns() // 1_000_000
         db.execute(
-            "INSERT INTO __sqlite_ivm_views VALUES(?,?,?,?,?,?)",
-            (compiled.name, FORMAT_VERSION, ALGORITHM, canonical, compiled.query.sql, installed_ms),
+            "INSERT INTO __sqlite_ivm_views VALUES(?,?,?,?,?,?,?)",
+            (compiled.name, FORMAT_VERSION, ALGORITHM, canonical, compiled.query.sql, storage, installed_ms),
         )
-        initial_rows = db.execute(f"SELECT count(*) FROM {quote(compiled.name)}").fetchone()[0]
+        initial_rows = db.execute(f"SELECT count(*) FROM {quote(storage)}").fetchone()[0]
         db.execute("INSERT INTO __sqlite_ivm_runtime VALUES(?,?,?,?,?,?)",
                    (compiled.name, 0, None, "install", int(time.time()), initial_rows))
         for source in compiled.query.dependencies:
@@ -173,14 +182,14 @@ def install(
                 trigger_names.append(trigger)
                 sql = f"""
                   CREATE TRIGGER {quote(trigger)} AFTER {operation} ON {quote(source)} BEGIN
-                    DELETE FROM {quote(compiled.name)};
-                    INSERT INTO {quote(compiled.name)} ({', '.join(map(quote, compiled.query.columns))}) {compiled.query.sql};
+                    DELETE FROM {quote(storage)};
+                    INSERT INTO {quote(storage)} ({', '.join(map(quote, compiled.query.columns))}) {compiled.query.sql};
                     UPDATE __sqlite_ivm_runtime
                        SET refresh_count=refresh_count+1,
                            last_source={_literal(source)},
                            last_operation={_literal(operation)},
                            last_changed_unix_s=unixepoch(),
-                           last_output_rows=(SELECT count(*) FROM {quote(compiled.name)})
+                           last_output_rows=(SELECT count(*) FROM {quote(storage)})
                      WHERE view_name={_literal(compiled.name)};
                   END
                 """
@@ -212,9 +221,11 @@ def drop(db: sqlite3.Connection, name: str, *, trace: Callable[[dict[str, Any]],
         )]
         if not triggers:
             raise PlanError("IVM047_NOT_INSTALLED", f"view {name!r} is not installed")
+        storage = db.execute("SELECT storage_name FROM __sqlite_ivm_views WHERE name=?", (name,)).fetchone()[0]
         for trigger in triggers:
             db.execute(f"DROP TRIGGER {quote(trigger)}")
-        db.execute(f"DROP TABLE {quote(name)}")
+        db.execute(f"DROP VIEW {quote(name)}")
+        db.execute(f"DROP TABLE {quote(storage)}")
         db.execute("DELETE FROM __sqlite_ivm_dependencies WHERE view_name=?", (name,))
         db.execute("DELETE FROM __sqlite_ivm_runtime WHERE view_name=?", (name,))
         db.execute("DELETE FROM __sqlite_ivm_views WHERE name=?", (name,))
