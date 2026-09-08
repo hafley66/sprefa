@@ -1,0 +1,131 @@
+{
+  "source_sha": "f3b9f74d81132426dee1ccc07a67fdad2ccfeaa9",
+  "source_license": "public domain",
+  "source_patch": null,
+  "steps": [
+    {
+      "command": [
+        "/tmp/sprefa-sqlite-extension-research.ZsALrZ/sqlite/configure",
+        "--fts5",
+        "--session",
+        "--debug",
+        "--with-tcl=/opt/homebrew/opt/tcl-tk@8/lib"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "make",
+        "-j2",
+        "sqlite3",
+        "libsqlite3.dylib",
+        "testfixture"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri/testfixture",
+        "/tmp/sprefa-sqlite-extension-research.ZsALrZ/sqlite/test/savepoint.test"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri/testfixture",
+        "/tmp/sprefa-sqlite-extension-research.ZsALrZ/sqlite/test/savepoint2.test"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri/testfixture",
+        "/tmp/sprefa-sqlite-extension-research.ZsALrZ/sqlite/test/conflict.test"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri/testfixture",
+        "/tmp/sprefa-sqlite-extension-research.ZsALrZ/sqlite/test/conflict2.test"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri/testfixture",
+        "/tmp/sprefa-sqlite-extension-research.ZsALrZ/sqlite/ext/fts5/test/fts5savepoint.test"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri/testfixture",
+        "/tmp/sprefa-sqlite-extension-research.ZsALrZ/sqlite/ext/fts5/test/fts5conflict.test"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-c",
+        "import sqlite3; d=sqlite3.connect(':memory:'); print(d.execute('select sqlite_source_id()').fetchone()); assert d.execute(\"select sqlite_compileoption_used('DEBUG')\").fetchone()==(1,)"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "exit_code": 0,
+  "hashes": {
+    ".target_source": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "libsqlite3.0.dylib": "2b065e41921cfb478238a4b3fb8076b6d9fc126a7d2740e82ac186b81916180e",
+    "4.log": "7f828cf6d244d8d49f14d87e59232e121b1e41b97c16982ff03b52dcb44530b2",
+    "5.log": "5a742db73f4c3ba0477ad97ad1a9309d0ad79ecf9330d9ccbd00460406c04bde",
+    "mkkeywordhash": "b98ad92b8569fe0cbfc47126a97bfa98eacdb5ea785306500f3f7584517d185d",
+    "fts5parse.c": "ce7c022ef3178ca105ea9b5cfb3898a92a016a88afbe6ff623d3381f383f7bc5",
+    "fts5parse.y": "7f1ff3d5d4bd5b9495addaa0a215f954e1a6d4a3970755b91411ecbcf38df982",
+    "7.log": "8869cc50b45a9ad75e9edde9cbc419cadf7958de3aa9570979b8a132e4af4029",
+    "6.log": "bf7fb7a57291b79d48c45b6a01bc137c284f1981aa27ac74fd25528b575eb920",
+    "tclsqlite-ex.c": "35a680e746053e86a2084a92ce4bf47ccf6f72b59e78fbd16b7b8de2252dfaf5",
+    "2.log": "76b08feccd93d4a8a8155d6413cf59aa2373e6aec4e4d6eacc3c962a58590603",
+    "3.log": "397f7d9b887435d10ca7ac0a45ec1197786a2fcda9d40c99b4b3e1d26040bb09",
+    "src-verify": "2b7fec6acfd4298c48bb5ad2e4d68d6f545a29b61ae61130e1c0bc9d3632f267",
+    "1.log": "9d1ed0aeac426b52fba9a9a8865a3169bc545c493ff5d4e6513f4ddec1f35185",
+    "sqlite3.c": "b427daf5ed4fe983f5da10caf456733aab4b6e96efd24803199f574a63324ca5",
+    "ctime.c": "7077a9b6653186ce32389f2cb2d579b10e6ac5c0b40776d988edd832e37b870a",
+    "lemon": "11ebc4fd02a5df0ae06a76abaac4af53ff025ae3d46f910bf594632636e4f483",
+    "0.log": "e2d05e986fc540a66d4129f75f49d9bc1e2eea3f587619cc5a742ca70b64692f",
+    "Makefile": "7856fba46dfba28744df0e8add91a748b9904a6d8a0e03a0c3da1e059fef489c",
+    "fts5.h": "172dee881fb9905a825d51efaeb903cf9fc247262db54ca4c4b13de580f0fad4",
+    "parse.h": "bf8058d86e0b5fb75168e288a35c88a651fe7ec4fe43bfdaccc3dae9d4e06674",
+    "parse.sql": "5c407957eeae9e85f32bdecca7e11954ace472328d8f870f50b5b79e82e8ec76",
+    "fts5parse.sql": "db7f68a61bc753c9262b10a071f053f112d9a0438fe15fa9d30067e09031b57d",
+    "opcodes.h": "8b94d13f4b2da98bd90d18e3dabc54ab8bab98f040c0ec7a5b51a1ae988f2698",
+    "keywordhash.h": "98cf611a9e4a76b7179d6fba2c62679173e03edfd4786d2b211dcc4b00ef8db4",
+    "shell.c": "e953597dfb5e5112869e92b2abece8e0386193c69b68eb929c20c367a3ae2f46",
+    "fts5parse.h": "ff00411a7cee2961c6d9b499b6cd7b7ccb347b3c5bfa4aa7f828f0f103f8e98f",
+    "sqlite_cfg.h": "0389438f02f8605ecce74e6e9c47b42f23746ce53eb41e9db6aa08baec4b5fe6",
+    "has_tclsh85": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sqlite3": "8c80eb422628f90a7d30cb08b3e83ee405cc3807a86104e2d48301e3914d7940",
+    "parse.out": "09a661320d5f91ec013a92b97668480647574a3d23849d6d18370a5a7beeb6df",
+    "fts5parse.out": "382424fc742b450f6f8cc9d188a1ef28aa1a06d3bc845e4f1c02ad20ca84c5be",
+    "sqlite3.o": "c1a62e610ffecbb44c1cd12476563f70ef33c1cab638387af046a24472a97171",
+    "sqlite3.h": "41923ae842c8c806d86671c57d0eeebdec083f2770199175248d2994784fadbe",
+    "testfixture": "8bdd9b4b4f5eac7758080b39dd91f26f1d84af733b460403b4348210e0f8a2e0",
+    "sqlite3ext.h": "c36b48f03e8d105f42d286e907fb92ebd9a3e64b89d6a215c6d503ba1e62f4e5",
+    "pragma.h": "b8abbc2a89f4f1aa2d613af1ad9089dab5ca1e2b14c074c19dd2dbc8ab70e47a",
+    "config.log": "3d859476e763634e25fd779c81fd72e39db0dc56309cb1fbc24753c93f3eb08d",
+    "lempar.c": "72e998c9c61753acd8d3ee8f6b2057269669dae8aa1bb833c01d793f1a341498",
+    "jimsh": "dbed3d8e495a1bb7f66a836f5d8a5fc991b3f181324cbefd796bba901ebbdd68",
+    "libsqlite3.dylib": "2b065e41921cfb478238a4b3fb8076b6d9fc126a7d2740e82ac186b81916180e",
+    "parse.c": "f43a9900543f05a1b200fb85d78c2ba322b77d79c34ce0eb6292761326e5078b",
+    "sqlite3.pc": "aa07d4dd54d798498174cfea8ccf96ed4cf6fd51d598a39bd6ec79af62ff2bec",
+    "parse.y": "19628d51a728421581e9075c7b4fd2c67218c5ad30718c7ae7ab0717c9e93185",
+    "sqlite3session.h": "430048d1f339995f3f2bec291e37af670e7482a54e2f69b1535e7322d37171aa",
+    ".tclenv.sh": "9a1871c86c4273871842b10b0ed25a6e6aef52c113120ae7d72f08e1b43a195d",
+    "fts5.c": "83a3e9ae31ac837198258aafe8baf657bda3e83b2f1b4e0c050b47186deaf5df",
+    "opcodes.c": "f629711e6b59064c85e524f6c88a0f7ca4c206f3c2a26b0bd8e1692930191092",
+    "8.log": "3ca95a845bddead400c5fe0a219fcef42522f9cb1f17201c03fdadc977e41e99",
+    ".main.mk.checks": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "mksourceid": "c39dc1a0f5dcb0c26b7b34729ad0c63dc81cc13e1a54b475b54e7a2c9ac9eb00"
+  }
+}

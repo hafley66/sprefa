@@ -340,3 +340,24 @@ Every state matches exact shared hashes. `receipts/lazy-paired.jsonl` records th
 complete command, hashes and telemetry; exit 0. The public read/preparation path
 is now executable evidence in the finite ledger. It does not close the measured
 SQLite/pg_ivm gap. A task-local debug SQLite lifecycle probe follows.
+
+## Pinned SQLite debug build probe
+
+`python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/2b_sqlite_build.py`
+builds outside the source tree with --debug --fts5 --session and the existing Tcl
+installation. No source patch or installation occurs. Git source SHA remains
+f3b9f74d81132426dee1ccc07a67fdad2ccfeaa9; SQLite reports fossil source ID
+4021369bc9558fbfcfa83ee4cd6b986734b8c41b6d72bd97064e566ca8189ea8.
+The generated library and build commands are hashed in the receipt.
+
+Upstream savepoint/savepoint2/conflict/conflict2/FTS5 savepoint/FTS5 conflict suites
+pass 140+182+148+140+3+27 = 640 tests with zero errors and no memory leaks reported.
+Python loads the task-local library and asserts SQLITE_DEBUG is enabled.
+
+`DYLD_LIBRARY_PATH=/tmp/sprefa-sqlite-competitive/sqlite-debug-3dwv00ri python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/5_gate.py`
+passes: `/tmp/sprefa-sqlite-competitive/gate-p748v51g/receipt.json`, exit 0.
+This runs the full 135-method competitive gate and shared oracles under the
+debug SQLite runtime, including lazy xFilter/xSync writes. The stock arm remains.
+Source/library hashes and upstream logs are preserved in debug-build receipts.
+This closes the custom-callback necessity question for the tested read/commit
+contract. It does not claim a general statement-end notification API.

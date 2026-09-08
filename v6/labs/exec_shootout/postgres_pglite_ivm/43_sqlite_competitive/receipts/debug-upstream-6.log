@@ -1,0 +1,12 @@
+fts5savepoint-1.0... Ok
+fts5savepoint-2.0... Ok
+SQLite 2026-09-04 14:20:44 4021369bc9558fbfcfa83ee4cd6b986734b8c41b6d72bd97064e566ca8189ea8
+0 errors out of 3 tests on Chriss-MacBook-Pro Darwin 64-bit
+All memory allocations freed - no leaks
+Memory used:          now          0  max     237344  max-size      65544
+Allocation count:     now          0  max        402
+Page-cache used:      now          0  max          0  max-size       1032
+Page-cache overflow:  now          0  max       5120
+Maximum memory usage: 237344 bytes
+Current memory usage: 0 bytes
+Number of malloc()  : -1 calls

@@ -66,7 +66,7 @@ mutations, with exact oracle checks. Paired runner measurements are separate.
 | Explicit SQL batch/flush | Implemented above, with read/missing-flush misuse rejection and savepoint tests. |
 | Public vtab lifecycle batching | `take2_lazy` queues source deltas, flushes on xFilter and xSync, and passes completed-statement reads, conflicts, savepoints and failed-read/source rollback tests. It does not treat xSync as statement end. Explicit batch and epoch variants remain. |
 | Preupdate/session capture + drain | SQLite exports both ENABLE_PREUPDATE_HOOK and ENABLE_SESSION. Its header explicitly declares session objects plus an independently registered preupdate hook undefined behavior. This is not admitted to the shared-module contract without an exclusive-ownership proof; no hook is replaced. An exclusive connection factory remains a separately testable configuration. |
-| Custom statement-boundary callback | Not currently required by the explicit contract. A transparent statement-end API would need separate evidence and a minimal pinned variant; no patch has been made. |
+| Custom statement-boundary callback | The tested read/xSync contract works on public ABI. `2b_sqlite_build.py` builds pinned SQLite with debug assertions, FTS5 and session support; 640 upstream tests and the competitive gate pass. No callback patch is needed for this contract. Materializing immediately at statement end without a read remains a distinct contract. |
 
 This is a finite experiment ledger, not an exhaustion claim. Read order:
 types `0a`, scalar binding `0ab`, SQL lowering `0b`, nonmonotone lowering `0bc`,
