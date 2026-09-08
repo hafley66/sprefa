@@ -44,5 +44,9 @@ class Cache(unittest.TestCase):
   self.db.execute('BEGIN')
   with self.assertRaises(sqlite3.IntegrityError):self.db.execute('INSERT OR FAIL INTO a VALUES(3,1,2),(3,1,3)')
   self.check();self.db.execute('ROLLBACK');self.check();self.mutate()
+ def test_cached_recursive_trigger_toggle(self):
+  self.db.execute('PRAGMA recursive_triggers=OFF')
+  with self.assertRaisesRegex(sqlite3.DatabaseError,'recursive_triggers=ON'):self.db.execute('UPDATE a SET v=v+1')
+  self.check();self.db.execute('PRAGMA recursive_triggers=ON');self.mutate()
 
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -31,7 +31,7 @@ static int error(Tab *t, const char *msg) {
 
 /* Every nested statement targets ordinary shadow storage. NO_VTAB prevents
  * accidental recursive virtual-table access through a substituted view. */
-static int sql(Tab *t, char *text, sqlite3_value **values, int n) {
+static int execute_sql(Tab *t, char *text, sqlite3_value **values, int n,sqlite3_int64 *scalar) {
   sqlite3_stmt *s = 0;
   if (!text) return SQLITE_NOMEM;
   struct timespec stamp;
@@ -54,7 +54,10 @@ static int sql(Tab *t, char *text, sqlite3_value **values, int n) {
   for (int i = 0; rc == SQLITE_OK && i < n; i++) rc = sqlite3_bind_value(s, i+1, values[i]);
   clock_gettime(CLOCK_MONOTONIC,&stamp);start=(sqlite3_int64)stamp.tv_sec*1000000000+stamp.tv_nsec;
   if (rc == SQLITE_OK) {
-    rc = sqlite3_step(s) == SQLITE_DONE ? SQLITE_OK : sqlite3_errcode(t->db);
+    int step=sqlite3_step(s);
+    rc = step == (scalar?SQLITE_ROW:SQLITE_DONE) ? SQLITE_OK : sqlite3_errcode(t->db);
+    if(scalar&&rc==SQLITE_OK){if(sqlite3_column_type(s,0)!=SQLITE_INTEGER)rc=SQLITE_MISMATCH;else *scalar=sqlite3_column_int64(s,0);}
+    if(scalar)t->env->scalar_steps++;
     t->env->steps++;
     t->env->vm+=sqlite3_stmt_status(s,SQLITE_STMTSTATUS_VM_STEP,1);
     t->env->scans+=sqlite3_stmt_status(s,SQLITE_STMTSTATUS_FULLSCAN_STEP,1);
@@ -65,6 +68,8 @@ static int sql(Tab *t, char *text, sqlite3_value **values, int n) {
   if(t->env->cache) {end=sqlite3_reset(s);sqlite3_clear_bindings(s);} else end=sqlite3_finalize(s);
   return rc == SQLITE_OK ? end : rc;
 }
+static int sql(Tab *t,char *text,sqlite3_value **values,int n){return execute_sql(t,text,values,n,0);}
+static int scalar_sql(Tab *t,char *text,sqlite3_value **values,int n,sqlite3_int64 *out){return execute_sql(t,text,values,n,out);}
 
 static int disconnect(sqlite3_vtab *v) {
   Tab *t = (Tab *)v;
@@ -241,9 +246,9 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
       if(type!=SQLITE_NULL && (type!=SQLITE_INTEGER||n < -1000000||n > 1000000)) return error(t,"NULL or integer in [-1000000,1000000] required");
     }
   }
-  sqlite3_stmt *pragma = 0;
-  int rc = sqlite3_prepare_v2(t->db,"PRAGMA recursive_triggers",-1,&pragma,0);
-  int enabled = rc == SQLITE_OK && sqlite3_step(pragma) == SQLITE_ROW && sqlite3_column_int(pragma,0);
+  sqlite3_stmt *pragma=0;
+  int rc=sqlite3_prepare_v2(t->db,"PRAGMA recursive_triggers",-1,&pragma,0);
+  int enabled=rc==SQLITE_OK&&sqlite3_step(pragma)==SQLITE_ROW&&sqlite3_column_int(pragma,0);
   sqlite3_finalize(pragma);
   if (!enabled) return error(t,"recursive_triggers=ON required for REPLACE deletion forwarding");
   int batched=0;
@@ -303,8 +308,8 @@ static void control(sqlite3_context *ctx,int argc,sqlite3_value **a) {
   } else if (cmd && !strcmp(cmd,"fail_sync")) e->fail_sync = 1;
   else if (cmd && !strcmp(cmd,"cache_on")) e->cache=1;
   else if (cmd && !strcmp(cmd,"source_views_on")) e->source_views=1;
-  else if (cmd && !strcmp(cmd,"profile_reset")) e->prepares=e->steps=e->vm=e->scans=e->prepare_ns=e->step_ns=e->delta_build_ns=e->reprepares=0;
-  else if (cmd && !strcmp(cmd,"profile")) sqlite3_result_text(ctx,sqlite3_mprintf("{\"prepares\":%lld,\"steps\":%lld,\"vm_steps\":%lld,\"fullscan_steps\":%lld,\"prepare_ns\":%lld,\"step_ns\":%lld,\"delta_sql_build_ns\":%lld,\"automatic_reprepares\":%lld}",e->prepares,e->steps,e->vm,e->scans,e->prepare_ns,e->step_ns,e->delta_build_ns,e->reprepares),-1,sqlite3_free);
+  else if (cmd && !strcmp(cmd,"profile_reset")) e->prepares=e->steps=e->vm=e->scans=e->prepare_ns=e->step_ns=e->delta_build_ns=e->reprepares=e->scalar_steps=0;
+  else if (cmd && !strcmp(cmd,"profile")) sqlite3_result_text(ctx,sqlite3_mprintf("{\"prepares\":%lld,\"steps\":%lld,\"vm_steps\":%lld,\"fullscan_steps\":%lld,\"prepare_ns\":%lld,\"step_ns\":%lld,\"delta_sql_build_ns\":%lld,\"automatic_reprepares\":%lld,\"scalar_steps\":%lld}",e->prepares,e->steps,e->vm,e->scans,e->prepare_ns,e->step_ns,e->delta_build_ns,e->reprepares,e->scalar_steps),-1,sqlite3_free);
   else if (cmd && !strcmp(cmd,"log_on")) e->logging = 1;
   else if (cmd && !strcmp(cmd,"log_off")) e->logging = 0;
   else sqlite3_result_error(ctx,"unknown take2 control",-1);

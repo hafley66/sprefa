@@ -34,7 +34,7 @@ transport.connection=connection
 original_emit=transport.emit
 def emit(**row):
     if row.get('event')=='case-setup':
-        row['algorithm']='explicit SQL batch; consolidated signed deltas; 32 cached write statements'
+        row['algorithm']='explicit SQL batch; consolidated signed deltas; 32 cached statements'
         row['consistency']='maintained reads fail inside open batch; flush before COMMIT; source and output commit atomically'
         row['source_images']='indexed source views' if source_views else 'shadow copies'
     original_emit(**row)

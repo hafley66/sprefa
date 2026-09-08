@@ -1,13 +1,14 @@
 # Competitive SQLite-native IVM
 
-Current implementation: `5ec333d19`. Gate exit 0: 99 test methods, 171 shared
+Core implementation: `5ec333d19`; cache audit: `c4de80359`. Current gate exit 0:
+103 test methods plus the plan audit, 171 shared
 semantic states for each original competitive layout, and 143 core circuit states
 for each of three competitive variants. All eleven core circuits include actual
 incremental maintenance, with negation, cyclic retraction and a separately
 labeled finite scalar epoch variant. CI execution coverage is additive.
 
 Reproduce: `python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/5_gate.py`.
-Final receipt: `43_sqlite_competitive/receipts/frontier-gate-final.json`.
+Current receipt: `43_sqlite_competitive/receipts/invariant-cache-gate.json`.
 Take 1, Take 2, other worktrees and DL7 sources remain preserved. No push or merge.
 
 | Commit | Tested step |
@@ -19,6 +20,7 @@ Take 1, Take 2, other worktrees and DL7 sources remain preserved. No push or mer
 | `3478a9bbb` | Transactional teardown and three paired sweep cells |
 | `ee7ec0fc3` | Eleven core circuits and pager cache measurements |
 | `5ec333d19` | Persisted scalar input seals and projection type checks |
+| `c4de80359` | Cache schema lifecycle, construction attribution and plan audit |
 
 Expanded authorization: `651913433`, brief `TASKS/7_sqlite_competitive.BRIEF.md`.
 
@@ -279,3 +281,30 @@ Current gate: 102 test methods plus plan audit, existing 171/143 shared state ch
 unchanged. `/tmp/sprefa-sqlite-competitive/gate-fo4wegz3/receipt.json` exits 0.
 Execution coverage adds cache/schema tests and exact plan assertions. Commands,
 hashes, failures and profiles are preserved in the new audit receipts.
+
+## Cached invariant reads
+
+The same bounded 32-entry cache now includes per-event invariant SELECTs. SQL
+execution distinguishes scalar rows from write completion and clears bindings
+after each call. `scalar_steps` identifies reads included in profile counters;
+older write-only counters remain in their original receipts.
+
+The measured candidate that cached both invariant and recursive_triggers reads
+reduced row-event medians from 89.030 to 58.658 ms, while source-view batch medians
+were 26.471 and 27.682 ms. The retained path caches invariants and keeps PRAGMA
+direct. Three alternating pairs measured row-event totals 83.055/53.337 ms and
+source-view batch totals 24.430/25.221 ms. No batch improvement is claimed.
+Both candidate receipts and all exact oracle checks are preserved.
+
+A configuration-toggle regression proves that disabling recursive_triggers after
+warming the cache rejects source writes. Four cache tests, the other 99 test
+methods, the plan audit and shared semantic/circuit checks pass. Gate receipt
+`/tmp/sprefa-sqlite-competitive/gate-cesna0ck/receipt.json`, exit 0.
+
+Final seven-arm Bash batch1000 run, two repetitions, constrained budget, medians:
+DD 1.170 ms (volatile), PG query 24.052, pg_ivm 21.329, Take 1 31.156, Take 2
+206.508, shadow batch 71.902, source views 35.395 ms. Every admitted state matches
+the same input/output hashes. This run is retained separately from prior paired
+runs; no cross-run timing normalization is applied. `invariant-shared.jsonl`
+contains the exact command, extension hashes, durability and memory/disk scope.
+No external blocker occurred. The remaining contracts listed above stay explicit.

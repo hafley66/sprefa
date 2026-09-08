@@ -32,17 +32,10 @@ static int contribute(Tab *t, sqlite3_value **kv, int side, int sign) {
     rc = sql(t,statement,kv,2);
   }
   if (rc == SQLITE_OK) {
-    sqlite3_stmt *s = 0;
     char *q = sqlite3_mprintf("SELECT count(*) FROM \"%w\".\"%w_result\" WHERE k IS ?1 AND (n<0 OR nn<0 OR nn>n OR typeof(n)<>'integer' OR typeof(s)<>'integer' OR typeof(nn)<>'integer' OR (n=0 AND (s<>0 OR nn<>0)))",t->schema,t->name);
-    rc = q ? sqlite3_prepare_v3(t->db,q,-1,SQLITE_PREPARE_NO_VTAB,&s,0) : SQLITE_NOMEM;
-    sqlite3_free(q);
-    if (rc==SQLITE_OK) rc=sqlite3_bind_value(s,1,kv[0]);
-    if (rc==SQLITE_OK) {
-      int step=sqlite3_step(s);
-      if (step!=SQLITE_ROW) rc=step;
-      else if(sqlite3_column_int(s,0)) rc=error(t,"accumulator integer overflow or support invariant");
-    }
-    sqlite3_finalize(s);
+    sqlite3_int64 bad=0;
+    rc=scalar_sql(t,q,kv,1,&bad);
+    if(rc==SQLITE_OK&&bad)rc=error(t,"accumulator integer overflow or support invariant");
   }
   if (rc==SQLITE_OK) rc=sql(t,sqlite3_mprintf("DELETE FROM \"%w\".\"%w_result\" WHERE k IS ?1 AND n=0",t->schema,t->name),kv,1);
   return rc;

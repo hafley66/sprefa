@@ -29,9 +29,10 @@ Self joins repeat the same delta relation for each affected occurrence.
 The prepared statement cache holds at most 32 SQLite statements and their SQL
 text per vtab, never source relations. Bindings are cleared after execution.
 Profile counters report attempted work, not committed domain events; `_stats`
-retains transaction-safe event counts. Instrumented write wrappers count prepare,
-step, VM and full-scan work. The separate read-only invariant probes are outside
-those counters, so preparation attribution is a lower bound.
+retains transaction-safe event counts. Instrumented wrappers count prepare,
+step, VM and full-scan work for writes and cached per-event invariant reads.
+`scalar_steps` distinguishes those reads. Batch-wide validation, scalar-domain
+checks, frontier checks and the direct PRAGMA read remain outside the counters.
 `delta_sql_build_ns` measures contribute() term construction, and
 `automatic_reprepares` counts SQLite reprepare events on wrapped writes. The
 cache/schema tests in `3c` cover index rollback and a second connection's schema
