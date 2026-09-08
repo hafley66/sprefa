@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 const inputPath = process.argv[2] ?? "results/crossover-full.jsonl";
 const pairOutputPath = process.argv[3] ?? "results/crossover-summary.tsv";
 const familyOutputPath = process.argv[4] ?? "results/crossover-family-summary.tsv";
+const threeWayOutputPath = process.argv[5];
 const records = (await readFile(inputPath, "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse);
 
 function median(values) {
@@ -113,12 +114,34 @@ for (const group of [...familyGroups.values()].sort((left, right) => left[0].bud
 
 await writeFile(pairOutputPath, `${pairLines.join("\n")}\n`);
 await writeFile(familyOutputPath, `${familyLines.join("\n")}\n`);
+if (threeWayOutputPath) {
+  const columns = ["budget", "rows", "batch_size", "fanout", "status", "successful_triples", "states_per_arm",
+    "pg_ivm_median_ms", "pg_ivm_min_ms", "pg_ivm_max_ms", "sqlite_affected_group_median_ms", "sqlite_affected_group_min_ms", "sqlite_affected_group_max_ms",
+    "dd_median_ms", "dd_min_ms", "dd_max_ms", "pg_ivm_over_sqlite_median_ratio", "pg_ivm_over_dd_median_ratio", "sqlite_over_dd_median_ratio", "final_input_hash", "final_checksum"];
+  const groups = groupBy(records.filter((row) => row.event === "three-way-run"), cellKey);
+  const lines = [columns.join("\t")];
+  for (const [key, testCase] of planned) {
+    const good = (groups.get(key) ?? []).filter((row) => row.status === "ok" && row.all_input_output_states_match);
+    const values = ["pg_ivm_ms", "sqlite_affected_group_ms", "dd_ms"].flatMap((field) => {
+      const samples = good.map((row) => row[field]);
+      return [number(samples), number(samples, Math.min), number(samples, Math.max)];
+    });
+    lines.push([testCase.budget, testCase.rows, testCase.batch_size, testCase.fanout,
+      good.length ? "measured" : "unmeasured", good.length, good[0]?.state_count_per_arm ?? "", ...values,
+      number(good.map((row) => row.pg_ivm_ms / row.sqlite_affected_group_ms)),
+      number(good.map((row) => row.pg_ivm_ms / row.dd_ms)),
+      number(good.map((row) => row.sqlite_affected_group_ms / row.dd_ms)),
+      good[0]?.final_input_hash ?? "", good[0]?.final_checksum ?? ""].join("\t"));
+  }
+  await writeFile(threeWayOutputPath, lines.join("\n") + "\n");
+}
 console.log(JSON.stringify({
   event: "crossover-summary",
   status: "ok",
   input: inputPath,
   pair_output: pairOutputPath,
   family_output: familyOutputPath,
+  three_way_output: threeWayOutputPath,
   planned_cells: planned.size,
   measured_cells: [...pairGroups.values()].filter((group) => group.some((record) => record.status === "ok")).length,
   mutation_groups: familyGroups.size,

@@ -4,6 +4,12 @@ set -euo pipefail
 lab_dir=$(cd "$(dirname "$0")" && pwd)
 profile=${1:-smoke}
 output=${2:-"$lab_dir/results/crossover-$profile.jsonl"}
+if [[ "$#" -ge 2 ]]; then shift 2; else shift "$#"; fi
+extra_runner_args=("$@")
+if [[ -e "$output" ]]; then printf 'refusing to overwrite receipt: %s\n' "$output" >&2; exit 2; fi
+receipt_root="${output%.jsonl}.artifacts"
+mkdir -p "$receipt_root"
+receipt_root=$(cd "$receipt_root" && pwd)
 postgres_prefix=${IVM_POSTGRES_PREFIX:-"$lab_dir/.work/postgres-18.6"}
 run_root=$(mktemp -d "/tmp/pgx.XXXXXX")
 active_cluster=""
@@ -24,6 +30,9 @@ cleanup() {
   if [[ -n "$active_cluster" ]]; then
     "$postgres_prefix/bin/pg_ctl" -D "$active_cluster" -m immediate stop >/dev/null 2>&1 || true
   fi
+  for postgres_log in "$run_root"/postgres-*.log; do
+    if [[ -f "$postgres_log" ]]; then cp -f "$postgres_log" "$receipt_root/"; fi
+  done
   case "$run_root" in
     /tmp/pgx.*) rm -rf -- "$run_root" ;;
   esac
@@ -32,10 +41,11 @@ cleanup() {
 trap cleanup EXIT
 
 case "$profile" in
-  smoke) budgets=(constrained) ;;
+  smoke|semantic) budgets=(constrained) ;;
   full|diagnostic) budgets=(constrained roomy) ;;
   *) printf 'usage: %s [smoke|full|diagnostic] [output.jsonl]\n' "$0" >&2; exit 2 ;;
 esac
+if [[ -n "${IVM_BUDGETS:-}" ]]; then read -r -a budgets <<< "$IVM_BUDGETS"; fi
 
 if [[ ! -x "$postgres_prefix/bin/postgres" ]]; then
   printf 'missing task-local PostgreSQL at %s\n' "$postgres_prefix" >&2
@@ -52,7 +62,7 @@ mkdir -p "$(dirname "$output")"
 for budget in "${budgets[@]}"; do
   cluster_dir="$run_root/cluster-$budget"
   socket_dir="$run_root/socket-$budget"
-  part="$run_root/$budget.jsonl"
+  part="$receipt_root/$budget.jsonl"
   mkdir -p "$socket_dir"
   "$postgres_prefix/bin/initdb" -D "$cluster_dir" --auth=trust --no-locale --encoding=UTF8 >/dev/null
 
@@ -78,7 +88,7 @@ for budget in "${budgets[@]}"; do
   active_cluster="$cluster_dir"
 
   export IVM_SERVER_STARTUP_MS=$((startup_after - startup_before))
-  export IVM_RUN_ROOT="$run_root/cases-$budget"
+  export IVM_RUN_ROOT="$receipt_root/cases-$budget"
   export IVM_POSTMASTER_PID
   IVM_POSTMASTER_PID=$(sed -n '1p' "$cluster_dir/postmaster.pid")
   export PGHOST="$socket_dir"
@@ -96,6 +106,8 @@ for budget in "${budgets[@]}"; do
   else
     runner_args+=(--warmups 0 --repetitions 1)
   fi
+  # Explicit runner options precede defaults because argument() takes first.
+  runner_args=("${extra_runner_args[@]}" "${runner_args[@]}")
   set +e
   node "$lab_dir/12_crossover_runner.mjs" "${runner_args[@]}"
   runner_status=$?

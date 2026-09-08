@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { arch, hostname, platform, release, totalmem } from "node:os";
 import { dirname, join } from "node:path";
-import { crossoverMutationSql, crossoverStates, expectedAffectedRows, makeCrossoverOracle } from "./9_crossover_workload.mjs";
+import { makeCrossoverFixture } from "./9_crossover_workload.mjs";
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
@@ -15,6 +15,7 @@ function caseKey(testCase) {
 }
 
 function buildCases(profile, budget) {
+  if (profile === "semantic") return [{ stage: "semantic", rows: 400, batch_size: 10, fanout: 10 }];
   if (profile === "smoke") {
     return [
       { stage: "smoke", rows: 400, batch_size: 10, fanout: 10 },
@@ -76,6 +77,14 @@ function hostSwap() {
   }
 }
 
+function memoryFreePercent() {
+  if (platform() !== "darwin") return null;
+  try {
+    const output = execFileSync("/usr/bin/memory_pressure", ["-Q"], { encoding: "utf8" });
+    return Number(output.match(/System-wide memory free percentage: (\d+)%/)[1]);
+  } catch { return null; }
+}
+
 async function fileSha256(path) {
   return createHash("sha256").update(await readFile(path)).digest("hex");
 }
@@ -85,7 +94,7 @@ const budget = argument("budget", "constrained");
 const outputPath = argument("output", "out/crossover.jsonl");
 const runRoot = process.env.IVM_RUN_ROOT;
 if (!runRoot) throw new Error("IVM_RUN_ROOT is required");
-if (!new Set(["smoke", "full", "diagnostic"]).has(profile)) throw new Error(`bad profile: ${profile}`);
+if (!new Set(["smoke", "full", "diagnostic", "semantic"]).has(profile)) throw new Error(`bad profile: ${profile}`);
 const timeoutMs = Math.min(120_000, Number(argument("timeout-ms", "120000")));
 const deadlineEpochMs = Number(argument("deadline-epoch-ms", String(Date.now() + 20 * 60_000)));
 const warmups = Number(argument("warmups", profile === "full" ? "1" : "0"));
@@ -93,12 +102,14 @@ const repetitions = Number(argument("repetitions", profile === "full" ? "3" : "1
 const maxRows = Number(argument("max-rows", "Infinity"));
 const cases = buildCases(profile, budget).filter((testCase) => testCase.rows <= maxRows);
 const arms = argument("arms", "query,pg_ivm").split(",");
-if (arms.some((arm) => !["query", "pg_ivm", "sqlite-template-group"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+if (arms.some((arm) => !["query", "pg_ivm", "sqlite-template-group", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+const ddBinary = argument("dd-bin", new URL("../../../sprefa-store/target/release/examples/crossover_dd", import.meta.url).pathname);
 const sqliteProgram = argument("sqlite-program", "");
 if (arms.includes("sqlite-template-group") && !sqliteProgram) throw new Error("--sqlite-program is required for sqlite-template-group");
 const records = [];
 const startedAt = Date.now();
 let failed = false;
+let resourceBlocked = false;
 
 function append(record) {
   records.push(record);
@@ -122,6 +133,8 @@ append({
   arms,
   warmups,
   repetitions,
+  engine_order: "warmups then measured rounds; deterministic left rotation by round within each case",
+  timing_contract: "ordinary SQL transaction or keyed DD writes, maintenance completion, result materialization and count; exact input/output validation outside timing",
   timeout_ms: timeoutMs,
   total_benchmark_deadline_epoch_ms: deadlineEpochMs,
   memory_control: {
@@ -132,7 +145,7 @@ append({
     cgroup_page_cache_bytes: null,
     hard_cap_axis: "blocked",
     reason: "Docker daemon unavailable and no existing Podman, Colima, Lima, or other Linux runtime",
-    observed_group_metric: "PostgreSQL postmaster tree for native arms; Python worker process tree for sqlite-template-group; unavailable samples remain null",
+    observed_group_metric: "PostgreSQL postmaster tree for SQL server arms; worker process tree for SQLite/DD; unavailable samples remain null",
   },
   tuning: {
     shared_buffers: process.env.IVM_SHARED_BUFFERS,
@@ -150,6 +163,8 @@ append({
 
 async function runProcess(testCase, maintenance, runKind, repetition) {
   const sqlite = maintenance === "sqlite-template-group";
+  const dd = maintenance === "dd";
+  const rssField = sqlite ? "sqlite_process_observed_peak_rss_kb" : dd ? "dd_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb";
   const context = {
     arm: sqlite ? maintenance : `native-${maintenance}`,
     maintenance,
@@ -162,6 +177,12 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     batch_size: testCase.batch_size,
     fanout: testCase.fanout,
   };
+  const freePercent = memoryFreePercent();
+  if (freePercent !== null && freePercent < 15) resourceBlocked = true;
+  if (resourceBlocked) {
+    append({ event: "case-status", status: "resource-blocked", reason: "host free memory below 15%; remaining benchmark cases stopped", memory_free_percent: freePercent, ...context });
+    return false;
+  }
   if (Date.now() >= deadlineEpochMs) {
     append({ event: "case-status", status: "skipped", reason: "20-minute total benchmark execution budget exhausted", ...context });
     return false;
@@ -169,6 +190,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   const processStarted = process.hrtime.bigint();
   const childRoot = join(runRoot, `${budget}-${maintenance}-${caseKey(testCase)}-${runKind}-${repetition}`);
   await mkdir(childRoot, { recursive: true });
+  const fixture = makeCrossoverFixture(testCase.rows, testCase.batch_size, testCase.fanout, profile === "semantic");
   let args = [
     "11_crossover_native.mjs",
     "--maintenance", maintenance,
@@ -181,30 +203,27 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   if (sqlite) {
     const source = await readFile(sqliteProgram, "utf8");
     const program = JSON.parse(source.match(/pub const PROGRAM_JSON: &str = r(#+)"\n([\s\S]*?)\n"\1;/)[2]);
-    const oracle = makeCrossoverOracle(testCase.rows, testCase.batch_size, testCase.fanout);
-    const mutations = crossoverMutationSql(testCase.rows, testCase.batch_size, testCase.fanout, oracle.groupCount);
-    const states = crossoverStates.map((name) => {
-      oracle.apply[name]();
-      const inputs = oracle.inputRows();
-      let sql = mutations[name];
-      if (name === "insert_batch") {
-        const additions = inputs.fact.filter(([id]) => id > testCase.rows);
-        sql = `INSERT INTO fact(id,group_id,amount) VALUES ${additions.map((row) => `(${row.join(",")})`).join(",")}`;
-      }
+    for (const state of fixture.states) {
+      let sql = state.mutation_sql;
+      // Semantic VALUES clauses name columns because emitted SQLite tables
+      // also have private row-id columns; the shared base relation has none.
+      sql = sql.replace(/INSERT INTO fact VALUES/g, "INSERT INTO fact(id,group_id,amount) VALUES")
+        .replace(/INSERT INTO dimension VALUES/g, "INSERT INTO dimension(group_id,factor) VALUES");
       for (const rel of program.relations.filter((rel) => program.arrival_targets.includes(rel.rel))) {
         sql = sql.replace(new RegExp(`\\b${rel.rel}\\b`, "g"), `"${rel.table_name}"`);
       }
-      return { name, inputs, expected: oracle.snapshot(), mutation_sql: sql,
-        expected_affected_rows: expectedAffectedRows(name, testCase.batch_size),
-        join_affected_rows: name === "dimension_fanout" ? testCase.fanout : expectedAffectedRows(name, testCase.batch_size) };
-    });
-    const fixturePath = join(childRoot, "fixture.json");
-    await writeFile(fixturePath, JSON.stringify({ states }));
+      state.mutation_sql = sql;
+    }
+  }
+  const fixturePath = join(childRoot, "fixture.json");
+  await writeFile(fixturePath, JSON.stringify(fixture));
+  if (sqlite) {
     args = ["19_sqlite_template_adapter.py", "--program", sqliteProgram,
       "--fixture", fixturePath, "--db", join(childRoot, "maintained.sqlite"),
       "--sql-output", join(childRoot, "installed.sql")];
-  }
-  const child = spawn(sqlite ? "python3" : process.execPath, args, {
+  } else if (dd) args = [fixturePath];
+  else args.push("--fixture", fixturePath);
+  const child = spawn(sqlite ? "python3" : dd ? ddBinary : process.execPath, args, {
     cwd: labDir,
     env: {
       ...process.env,
@@ -226,10 +245,13 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     child.kill("SIGKILL");
   }, Math.min(timeoutMs, Math.max(1, deadlineEpochMs - Date.now())));
   const memoryTimer = setInterval(() => {
-    const rss = descendantsRss(sqlite ? child.pid : process.env.IVM_POSTMASTER_PID);
+    const rss = descendantsRss(sqlite || dd ? child.pid : process.env.IVM_POSTMASTER_PID);
     if (rss !== null) observedGroupPeakRssKb = Math.max(observedGroupPeakRssKb, rss);
   }, 50);
-  const exit = await new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
+  const exit = await new Promise((resolve) => {
+    child.on("exit", (code, signal) => resolve({ code, signal }));
+    child.on("error", (error) => { stderr += error.stack; resolve({ code: -1, signal: null }); });
+  });
   clearTimeout(timer);
   clearInterval(memoryTimer);
   await writeFile(join(childRoot, "stdout.log"), stdout);
@@ -237,7 +259,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   const processWallMs = Number(process.hrtime.bigint() - processStarted) / 1_000_000;
   if (timedOut) {
     append({ event: "case-status", status: "timeout", reason: `process exceeded ${timeoutMs} ms or total benchmark deadline`,
-      [sqlite ? "sqlite_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb"]: observedGroupPeakRssKb || null, ...context });
+      [rssField]: observedGroupPeakRssKb || null, ...context });
     return false;
   }
   if (exit.code !== 0) {
@@ -251,7 +273,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
       exit_code: exit.code,
       signal: exit.signal,
       stderr: stderr.slice(0, 8_000),
-      [sqlite ? "sqlite_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb"]: observedGroupPeakRssKb || null,
+      [rssField]: observedGroupPeakRssKb || null,
       ...context,
     });
     return false;
@@ -270,20 +292,43 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     event: "case-process",
     status: "ok",
     process_wall_ms: processWallMs,
-    [sqlite ? "sqlite_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb"]: observedGroupPeakRssKb || null,
+    memory_free_percent_before: freePercent,
+    [rssField]: observedGroupPeakRssKb || null,
     ...context,
   });
   return true;
 }
 
 for (const testCase of cases) {
-  for (const maintenance of arms) {
-    for (let warmup = 1; warmup <= warmups; warmup += 1) {
-      if (!await runProcess(testCase, maintenance, "warmup", warmup)) failed = true;
+  for (const [runKind, count] of [["warmup", warmups], ["measured", repetitions]]) {
+    for (let repetition = 1; repetition <= count; repetition += 1) {
+      const offset = (repetition - 1) % arms.length;
+      for (const maintenance of [...arms.slice(offset), ...arms.slice(0, offset)]) {
+        if (!await runProcess(testCase, maintenance, runKind, repetition)) failed = true;
+      }
     }
-    for (let repetition = 1; repetition <= repetitions; repetition += 1) {
-      if (!await runProcess(testCase, maintenance, "measured", repetition)) failed = true;
-    }
+  }
+}
+
+if (["pg_ivm", "sqlite-template-group", "dd"].every((arm) => arms.includes(arm))) {
+  for (const testCase of cases) for (let repetition = 1; repetition <= repetitions; repetition++) {
+    const matching = records.filter((row) => row.run_kind === "measured" && row.repetition === repetition && caseKey(row) === caseKey(testCase));
+    const totals = ["pg_ivm", "sqlite-template-group", "dd"].map((arm) => matching.find((row) => row.event === "case-total" && row.maintenance === arm));
+    const states = matching.filter((row) => row.event === "mutation");
+    const expectedStates = makeCrossoverFixture(testCase.rows, testCase.batch_size, testCase.fanout, profile === "semantic").states;
+    const exact = expectedStates.every((state) => {
+      const rows = states.filter((row) => row.state === state.name);
+      return rows.length === 3 && rows.every((row) => row.status === "ok" && row.exact_input_output_validated
+        && row.input_hash === state.input_hash && row.checksum === state.expected.checksum);
+    });
+    const status = totals.every(Boolean) && exact ? "ok" : "unmeasured-or-mismatch";
+    if (status !== "ok") failed = true;
+    append({ event: "three-way-run", status, ...testCase, budget, profile, repetition,
+      state_count_per_arm: expectedStates.length, all_input_output_states_match: exact,
+      pg_ivm_ms: totals[0]?.update_plus_query_ms ?? null,
+      sqlite_affected_group_ms: totals[1]?.update_plus_query_ms ?? null,
+      dd_ms: totals[2]?.update_plus_query_ms ?? null,
+      final_input_hash: totals[0]?.final_input_hash ?? null, final_checksum: totals[0]?.final_checksum ?? null });
   }
 }
 

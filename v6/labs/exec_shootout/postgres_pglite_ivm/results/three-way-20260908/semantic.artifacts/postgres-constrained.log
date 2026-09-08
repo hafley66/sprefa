@@ -1,0 +1,6 @@
+2026-09-08 12:04:04.677 EDT [70018] LOG:  starting PostgreSQL 18.6 on aarch64-apple-darwin23.6.0, compiled by Apple clang version 16.0.0 (clang-1600.0.26.6), 64-bit
+2026-09-08 12:04:04.677 EDT [70018] LOG:  listening on Unix socket "/tmp/pgx.P9SkCz/socket-constrained/.s.PGSQL.5432"
+2026-09-08 12:04:04.680 EDT [70024] LOG:  database system was shut down at 2026-09-08 12:04:04 EDT
+2026-09-08 12:04:04.681 EDT [70018] LOG:  database system is ready to accept connections
+2026-09-08 12:04:06.221 EDT [70018] LOG:  received immediate shutdown request
+2026-09-08 12:04:06.222 EDT [70018] LOG:  database system is shut down
