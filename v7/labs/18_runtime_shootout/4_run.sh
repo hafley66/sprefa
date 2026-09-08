@@ -2,6 +2,8 @@
 set -euo pipefail
 
 lab_dir=$(cd "$(dirname "$0")" && pwd)
+repo_dir=$(cd "$lab_dir/../../.." && pwd)
+dbsp_runner="$repo_dir/v6/dd-runner/target/release/dd-runner"
 mode=${1:-full}
 n=${2:-48}
 repetitions=5
@@ -20,9 +22,36 @@ case "$mode" in
 esac
 
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dl7-runtime-shootout.XXXXXX")
-trap 'rm -rf "$tmp_dir"' EXIT
+postgres_started=0
+cleanup() {
+  rm -rf "$tmp_dir"
+  if [[ "$postgres_started" -eq 1 ]]; then pg_bench_stop; fi
+}
+trap cleanup EXIT
 raw_file="$tmp_dir/measurements.jsonl"
 : > "$raw_file"
+runtimes=(sbcl swi racket dbsp-kernel dbsp-generated dbsp-sqlite)
+
+if [[ "${POSTGRES_SHOOTOUT:-0}" == "1" ]]; then
+  . "$repo_dir/v6/sprefa-store/bench/engines/0_postgres_cluster.sh"
+  pg_bench_start "$repo_dir/v6/sprefa-store/bench"
+  postgres_started=1
+  printf '%s\n' \
+    '{"kind":"arm-status","runtime":"pglite-pg_ivm","status":"unsupported","reason":"pg_ivm rejects recursive WITH RECURSIVE view definitions"}' \
+    '{"kind":"arm-status","runtime":"native-postgres-pg_ivm","status":"unsupported","reason":"pg_ivm rejects recursive WITH RECURSIVE view definitions"}' \
+    >> "$raw_file"
+  if [[ -d "$PG_DEPENDENCY_DIR/node_modules/@electric-sql/pglite" ]]; then
+    runtimes+=(pglite-query)
+  else
+    printf '%s\n' '{"kind":"arm-status","runtime":"pglite-query","status":"missing","reason":"task-local PGlite package is unavailable"}' >> "$raw_file"
+  fi
+  if [[ "$PG_NATIVE_READY" == "1" ]]; then
+    runtimes+=(native-postgres-query)
+  else
+    jq -cn --arg reason "$PG_NATIVE_REASON" \
+      '{kind:"arm-status",runtime:"native-postgres-query",status:"missing",reason:$reason}' >> "$raw_file"
+  fi
+fi
 
 expected_count() {
   local graph_case=$1
@@ -50,6 +79,10 @@ set_arm_command() {
     sbcl) command_argv=(sbcl --noinform --disable-debugger --script "$lab_dir/1_sbcl.lisp" "$graph_case" "$graph_n") ;;
     swi) command_argv=(swipl -q -s "$lab_dir/2_swi.pl" -- "$graph_case" "$graph_n") ;;
     racket) command_argv=(racket "$lab_dir/3_racket.rkt" "$graph_case" "$graph_n") ;;
+    dbsp-kernel) command_argv=("$dbsp_runner" --shootout "$graph_case" "$graph_n") ;;
+    dbsp-generated) command_argv=("$dbsp_runner" --shootout-generated "$graph_case" "$graph_n") ;;
+    dbsp-sqlite) command_argv=("$dbsp_runner" --shootout-sqlite "$graph_case" "$graph_n") ;;
+    pglite-query|native-postgres-query) command_argv=(node "$lab_dir/3a_postgres_query.mjs" "$runtime" "$graph_case" "$graph_n") ;;
   esac
 }
 
@@ -59,6 +92,10 @@ set_startup_command() {
     sbcl) command_argv=(sbcl --noinform --disable-debugger --script /dev/null) ;;
     swi) command_argv=(swipl -q -s /dev/null -g halt) ;;
     racket) command_argv=(racket -e '(void)') ;;
+    dbsp-kernel) command_argv=("$dbsp_runner" --shootout chain 1) ;;
+    dbsp-generated) command_argv=("$dbsp_runner" --shootout-generated chain 1) ;;
+    dbsp-sqlite) command_argv=("$dbsp_runner" --shootout-sqlite chain 1) ;;
+    pglite-query|native-postgres-query) command_argv=(node "$lab_dir/3a_postgres_query.mjs" "$runtime" chain 1) ;;
   esac
 }
 
@@ -78,6 +115,10 @@ runtime_version() {
     sbcl) sbcl --version | awk '{print $2}' ;;
     swi) swipl --version | sed 's/^SWI-Prolog version \([^ ]*\).*/\1/' ;;
     racket) racket --version | sed 's/^Welcome to Racket v\([^ ]*\).*/\1/' ;;
+    dbsp-kernel) "$dbsp_runner" --shootout chain 1 | jq -r .version ;;
+    dbsp-generated) "$dbsp_runner" --shootout-generated chain 1 | jq -r .version ;;
+    dbsp-sqlite) "$dbsp_runner" --shootout-sqlite chain 1 | jq -r .version ;;
+    pglite-query|native-postgres-query) node "$lab_dir/3a_postgres_query.mjs" "$runtime" chain 1 | jq -r .version ;;
   esac
 }
 
@@ -150,7 +191,7 @@ measure_arm() {
 
 smoke() {
   local runtime graph_case output_file
-  for runtime in sbcl swi racket; do
+  for runtime in "${runtimes[@]}"; do
     for graph_case in chain ring; do
       output_file="$tmp_dir/smoke-${runtime}-${graph_case}.json"
       run_arm "$runtime" "$graph_case" "$n" > "$output_file"
@@ -158,6 +199,7 @@ smoke() {
       jq -c . "$output_file"
     done
   done
+  jq -c 'select(.kind == "arm-status")' "$raw_file"
 }
 
 generate_results() {
@@ -180,6 +222,10 @@ generate_results() {
       | group_by(.runtime)[]
       | "| \(.[0].runtime) | \(.[0].version) | \([.[].process_ms] | median) | \([.[].peak_rss_bytes] | max) |"
     ' "$raw_file"
+    printf '\n## Unsupported or missing arms\n\n'
+    printf '| Runtime | Status | Reason |\n'
+    printf '| --- | --- | --- |\n'
+    jq -r 'select(.kind == "arm-status") | "| \(.runtime) | \(.status) | \(.reason) |"' "$raw_file"
     printf '\n## Closure cases\n\n'
     printf '| Runtime | Case | Edges | Closure pairs | Median setup ms | Median closure ms | Median process ms | Peak RSS bytes |\n'
     printf '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n'
@@ -196,19 +242,21 @@ generate_results() {
 }
 
 if [[ "$mode" == smoke ]]; then
+  cargo build --release --manifest-path "$repo_dir/v6/dd-runner/Cargo.toml" >/dev/null
   smoke
   exit 0
 fi
 
 start_seconds=$SECONDS
-for runtime in sbcl swi racket; do
+cargo build --release --manifest-path "$repo_dir/v6/dd-runner/Cargo.toml" >/dev/null
+for runtime in "${runtimes[@]}"; do
   run_startup "$runtime" >/dev/null
   for repetition in $(seq 1 "$repetitions"); do
     measure_startup "$runtime" "$repetition"
   done
 done
 
-for runtime in sbcl swi racket; do
+for runtime in "${runtimes[@]}"; do
   for graph_case in chain ring; do
     run_arm "$runtime" "$graph_case" "$n" >/dev/null
     for repetition in $(seq 1 "$repetitions"); do
