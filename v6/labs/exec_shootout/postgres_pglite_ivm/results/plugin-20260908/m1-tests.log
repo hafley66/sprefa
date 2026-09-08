@@ -1,0 +1,24 @@
+test_01_bag_join_moves_zero_and_empty (__main__.Plugin.test_01_bag_join_moves_zero_and_empty) ... ok
+test_02_seeded_inputs_and_oracle (__main__.Plugin.test_02_seeded_inputs_and_oracle) ... ok
+test_03_transaction_savepoint (__main__.Plugin.test_03_transaction_savepoint) ... ok
+test_04_conflict_policies (__main__.Plugin.test_04_conflict_policies) ... ok
+test_05_reopen_second_connection_no_extension (__main__.Plugin.test_05_reopen_second_connection_no_extension) ... ok
+test_06_settings_fail_closed (__main__.Plugin.test_06_settings_fail_closed) ... ok
+test_07_numeric_affinity_null_guards (__main__.Plugin.test_07_numeric_affinity_null_guards) ... ok
+test_08_rejection_matrix_no_schema_mutation (__main__.Plugin.test_08_rejection_matrix_no_schema_mutation) ... ok
+test_09_atomic_install_drop_multiple_collisions (__main__.Plugin.test_09_atomic_install_drop_multiple_collisions) ... ok
+test_10_failed_ddl_cleanup_and_caller_preserved (__main__.Plugin.test_10_failed_ddl_cleanup_and_caller_preserved) ... ok
+test_11_renamed_quoted_names_and_using (__main__.Plugin.test_11_renamed_quoted_names_and_using) ... ok
+test_12_storage_variants_and_catalog_rejections (__main__.Plugin.test_12_storage_variants_and_catalog_rejections) ... ok
+test_13_telemetry_counters_rollback_second_writer_disabled (__main__.Plugin.test_13_telemetry_counters_rollback_second_writer_disabled) ... ok
+test_14_stock_cli_load_diagnostics_and_disabled (__main__.Plugin.test_14_stock_cli_load_diagnostics_and_disabled) ... ok
+test_15_injected_corruption_detector (__main__.Plugin.test_15_injected_corruption_detector) ... ok
+test_16_public_result_is_read_only (__main__.Plugin.test_16_public_result_is_read_only) ... ok
+test_17_aggregate_cap_rejects_without_partial_state (__main__.Plugin.test_17_aggregate_cap_rejects_without_partial_state) ... ok
+test_18_catalog_shadow_and_unmanaged_triggers (__main__.Plugin.test_18_catalog_shadow_and_unmanaged_triggers) ... ok
+test_19_telemetry_sink_failure_does_not_fail_install (__main__.Plugin.test_19_telemetry_sink_failure_does_not_fail_install) ... ok
+
+----------------------------------------------------------------------
+Ran 19 tests in 1.009s
+
+OK
