@@ -518,6 +518,10 @@ fn run_child(exe: &std::path::Path, engine: &str, l: usize, w: usize, bs: usize,
 #[tokio::main]
 async fn main() {
     let mut args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--sequence") {
+        sequence(&args[2], &args[3]).await;
+        return;
+    }
     let shared = args.get(1).map(String::as_str) == Some("--shared");
     if shared {
         args.remove(1);
@@ -581,7 +585,12 @@ async fn main() {
                 out.survivors, expected,
                 "shared survivor set mismatch for {name}"
             );
-            eprintln!("STATUS|{name}|ok|native RelStore specialized incremental cascade; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3={ih}; survivor blake3={}|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB={cap_mb} caps live Rust allocations; SQLite C heap and total RSS are unenforced", fingerprint(&out.survivors));
+            let algorithm = if name == "sqlite-signed-delta-v2" {
+                "full recursive recomputation from implicit zero-indegree roots excluding current seeds; validated single deletion only; repeated deletion and disconnected zero-weight cases fail sequence checks"
+            } else {
+                "native RelStore specialized incremental cascade"
+            };
+            eprintln!("STATUS|{name}|ok|{algorithm}; materialize and count inside clocks; exact initial and survivor sets validated outside clocks; tagged-node input blake3={ih}; survivor blake3={}|process peak RSS includes setup and oracle; separate Rust allocation and SQLite C-heap high-water columns|DL_MEMCAP_MB={cap_mb} caps live Rust allocations; SQLite C heap and total RSS are unenforced", fingerprint(&out.survivors));
             eprintln!(
                 "CSV,{name},{nodes},{edges},{},{:.3},{:.3},{},{:.1},{:.2},{:.2},{:.2}",
                 nodes - out.survivors.len(),
@@ -845,5 +854,266 @@ async fn main() {
     eprintln!("[perf] wrote {json_path}");
     if !broke.is_empty() {
         eprintln!("[perf] breakpoints: {}", broke.join(", "));
+    }
+}
+
+async fn sequence(engine: &str, path: &str) {
+    use sea_orm::{DatabaseBackend, Statement};
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    if fixture["cascade"] != true || (engine == "sqlite-count" && fixture["dag"] != true) {
+        println!(
+            "{}",
+            serde_json::json!({"unsupported":"static support graph required; plain counting requires DAG","verified_ticks":0})
+        );
+        return;
+    }
+    let ticks = fixture["ticks"].as_array().unwrap();
+    let initial = &ticks[0]["expected"];
+    let roots: Vec<i64> = initial["root"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r[0].as_i64().unwrap())
+        .collect();
+    let edges: Vec<(i64, i64)> = initial["edge"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e[0].as_i64().unwrap(), e[1].as_i64().unwrap()))
+        .collect();
+    let live: Vec<i64> = initial["alive"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r[0].as_i64().unwrap())
+        .collect();
+    let rows: Vec<_> = (0..fixture["nodes"].as_i64().unwrap())
+        .map(|n| {
+            let weight = i64::from(roots.contains(&n))
+                + edges
+                    .iter()
+                    .filter(|(p, c)| *c == n && live.contains(p))
+                    .count() as i64;
+            (0, n, weight)
+        })
+        .collect();
+    let mut opts = ConnectOptions::new("sqlite::memory:");
+    opts.max_connections(1).min_connections(1);
+    let store = RelStore::attach(Database::connect(opts).await.unwrap())
+        .await
+        .unwrap();
+    store.add_rows(&rows).await.unwrap();
+    store
+        .add_deps(
+            &edges
+                .iter()
+                .map(|(p, c)| (0, *p, 0, *c))
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .unwrap();
+    for (tick, update) in ticks.iter().enumerate() {
+        if tick > 0 {
+            for arrival in update["arrivals"].as_array().unwrap() {
+                if arrival["rel"] != "root" || arrival["sign"] != "del" {
+                    println!(
+                        "{}",
+                        serde_json::json!({"unsupported":"root reinsertion and edge mutation lack equivalent support-count adapter semantics","verified_ticks":tick})
+                    );
+                    return;
+                }
+                let seed = [(0, arrival["row"][0].as_i64().unwrap())];
+                match engine {
+                    "sqlite-count" => {
+                        store.retract(&seed).await.unwrap();
+                    }
+                    "sqlite-count-scc" => {
+                        store.retract_scc(&seed).await.unwrap();
+                    }
+                    "sqlite-dred-loop" => {
+                        store.retract_dred(&seed).await.unwrap();
+                    }
+                    "sqlite-dred-cte" => {
+                        store.retract_dred_cte(&seed).await.unwrap();
+                    }
+                    "sqlite-signed-delta-v2" => {
+                        sprefa_store::cascade::retract_signed_delta_v2(
+                            store.conn(),
+                            store.ns(),
+                            &seed,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    other => panic!("unknown cascade {other}"),
+                }
+            }
+        }
+        let alive = store.alive_keys().await.unwrap();
+        let actual_edges: Vec<Vec<i64>> = store
+            .conn()
+            .query_all_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                format!(
+                    "SELECT parent_key,child_key FROM {} ORDER BY parent_key,child_key",
+                    store.ns().dep
+                ),
+            ))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| {
+                vec![
+                    row.try_get_by_index(0).unwrap(),
+                    row.try_get_by_index(1).unwrap(),
+                ]
+            })
+            .collect();
+        let actual = serde_json::json!({"root":roots.iter().filter(|n|alive.contains(n)).map(|n|vec![*n]).collect::<Vec<_>>(),
+            "edge":actual_edges,"alive":alive.iter().map(|n|vec![*n]).collect::<Vec<_>>()});
+        println!(
+            "{}",
+            serde_json::json!({"tick":tick,"actual":actual,"carry_pending":false})
+        );
+        assert_eq!(
+            actual, update["expected"],
+            "{} tick {tick}",
+            fixture["name"]
+        );
+        if engine == "sqlite-count" {
+            let weights = store
+                .conn()
+                .query_all_raw(Statement::from_string(
+                    DatabaseBackend::Sqlite,
+                    format!("SELECT key,weight FROM {} ORDER BY key", store.ns().row),
+                ))
+                .await
+                .unwrap();
+            let current_roots: Vec<i64> = update["expected"]["root"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r[0].as_i64().unwrap())
+                .collect();
+            for row in weights {
+                let node: i64 = row.try_get_by_index(0).unwrap();
+                let weight: i64 = row.try_get_by_index(1).unwrap();
+                let expected = i64::from(current_roots.contains(&node))
+                    + edges
+                        .iter()
+                        .filter(|(p, c)| *c == node && alive.contains(p))
+                        .count() as i64;
+                assert_eq!(
+                    weight, expected,
+                    "DAG support invariant node {node} tick {tick}"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod sequence_tests {
+    use super::*;
+    use sea_orm::{DatabaseBackend, Statement};
+
+    #[tokio::test]
+    async fn exhaustive_four_node_dag_counting_states_and_weights() {
+        let possible = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
+        let mut snapshots = 0;
+        for edge_mask in 0..64 {
+            let edges: Vec<(i64, i64)> = possible
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| edge_mask & (1 << i) != 0)
+                .map(|(_, e)| *e)
+                .collect();
+            for root_mask in 0..16 {
+                for reverse in [false, true] {
+                    let mut roots: Vec<i64> =
+                        (0..4).filter(|n| root_mask & (1 << n) != 0).collect();
+                    let bfs = |roots: &[i64]| {
+                        let mut live = roots.to_vec();
+                        let mut cursor = 0;
+                        while cursor < live.len() {
+                            for &(p, c) in &edges {
+                                if p == live[cursor] && !live.contains(&c) {
+                                    live.push(c);
+                                }
+                            }
+                            cursor += 1;
+                        }
+                        live.sort_unstable();
+                        live
+                    };
+                    let live = bfs(&roots);
+                    let rows: Vec<_> = (0..4)
+                        .map(|n| {
+                            (
+                                0,
+                                n,
+                                i64::from(roots.contains(&n))
+                                    + edges
+                                        .iter()
+                                        .filter(|(p, c)| *c == n && live.contains(p))
+                                        .count() as i64,
+                            )
+                        })
+                        .collect();
+                    let mut options = ConnectOptions::new("sqlite::memory:");
+                    options.max_connections(1).min_connections(1);
+                    let store = RelStore::attach(Database::connect(options).await.unwrap())
+                        .await
+                        .unwrap();
+                    store.add_rows(&rows).await.unwrap();
+                    store
+                        .add_deps(
+                            &edges
+                                .iter()
+                                .map(|(p, c)| (0, *p, 0, *c))
+                                .collect::<Vec<_>>(),
+                        )
+                        .await
+                        .unwrap();
+                    let mut deletions = roots.clone();
+                    if reverse {
+                        deletions.reverse();
+                    }
+                    for deletion in std::iter::once(None).chain(deletions.into_iter().map(Some)) {
+                        if let Some(root) = deletion {
+                            roots.retain(|n| *n != root);
+                            store.retract(&[(0, root)]).await.unwrap();
+                        }
+                        let live = bfs(&roots);
+                        assert_eq!(store.alive_keys().await.unwrap(),live,"edge_mask={edge_mask} root_mask={root_mask} reverse={reverse} deletion={deletion:?}");
+                        let weights = store
+                            .conn()
+                            .query_all_raw(Statement::from_string(
+                                DatabaseBackend::Sqlite,
+                                format!("SELECT key,weight FROM {} ORDER BY key", store.ns().row),
+                            ))
+                            .await
+                            .unwrap();
+                        for row in weights {
+                            let node: i64 = row.try_get_by_index(0).unwrap();
+                            let weight: i64 = row.try_get_by_index(1).unwrap();
+                            let expected = i64::from(roots.contains(&node))
+                                + edges
+                                    .iter()
+                                    .filter(|(p, c)| *c == node && live.contains(p))
+                                    .count() as i64;
+                            assert_eq!(
+                                weight, expected,
+                                "edge_mask={edge_mask} root_mask={root_mask} node={node}"
+                            );
+                        }
+                        snapshots += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(snapshots, 6144);
+        eprintln!("COUNT_EXHAUSTIVE cases=2048 exact_states=6144 weight_checks=24576 nodes=4 DAG_edge_sets=64 root_sets=16 deletion_orders=2");
     }
 }

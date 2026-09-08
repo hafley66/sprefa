@@ -65,3 +65,4 @@ with-dbsp = ["dep:dbsp"]
 
 [dev-dependencies]
 sha2 = "0.10"
+serde_json = "1"

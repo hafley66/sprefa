@@ -48,7 +48,10 @@ error/timeout/OOM status rows do not contribute numeric measurements. A run
 refuses to overwrite existing CSV/status receipts.
 
 When selected, the \`sqlite-*\` arms call the native store's count, SCC, DRed,
-or signed-delta implementation through \`perf_report --shared\`. The
+or signed-delta implementation through \`perf_report --shared\`. The signed-delta-v2
+name currently executes full recursive recomputation from zero-indegree rows,
+excluding only the current deletion seeds. This one-deletion benchmark passes;
+repeated deletion and disconnected zero-weight sequence cases fail. The
 \`tsv2-runtime\` and \`sprefa-engine-rs\` arms execute compiler-emitted programs
 through their actual runtime tick methods. These adapters validate complete
 initial and survivor sets outside the clocks, and include counting inside.

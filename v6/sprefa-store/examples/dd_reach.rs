@@ -81,6 +81,10 @@ fn main() {
     }
 
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--sequence") {
+        sequence(&args[2]);
+        return;
+    }
     let layers = args
         .get(1)
         .and_then(|value| value.parse().ok())
@@ -225,6 +229,90 @@ fn main() {
         setup.as_secs_f64() * 1e3,
         retract.as_secs_f64() * 1e3
     );
+}
+
+fn sequence(path: &str) {
+    use std::collections::BTreeMap;
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    timely::execute_directly(move |worker| {
+        let alive = Arc::new(Mutex::new(BTreeMap::<i64, isize>::new()));
+        let roots = Arc::new(Mutex::new(BTreeMap::<i64, isize>::new()));
+        let edges = Arc::new(Mutex::new(BTreeMap::<(i64, i64), isize>::new()));
+        let (out_a, out_r, out_e) = (alive.clone(), roots.clone(), edges.clone());
+        let mut probe = ProbeHandle::new();
+        let (mut edge_in, mut root_in) = worker.dataflow::<u64, _, _>(|scope| {
+            let (ei, ec) = scope.new_collection::<(i64, i64), isize>();
+            let (ri, rc) = scope.new_collection::<i64, isize>();
+            ec.clone().inspect(move |(row, _, diff)| {
+                *out_e.lock().unwrap().entry(*row).or_default() += diff
+            });
+            rc.clone().inspect(move |(row, _, diff)| {
+                *out_r.lock().unwrap().entry(*row).or_default() += diff
+            });
+            let loop_edges = ec.clone();
+            let loop_roots = rc.clone();
+            rc.iterate(move |inner_scope, inner| {
+                loop_edges
+                    .enter(inner_scope)
+                    .semijoin(inner)
+                    .map(|(_, child)| child)
+                    .concat(loop_roots.enter(inner_scope))
+                    .distinct()
+            })
+            .consolidate()
+            .inspect(move |(row, _, diff)| *out_a.lock().unwrap().entry(*row).or_default() += diff)
+            .probe_with(&mut probe);
+            (ei, ri)
+        });
+        for (tick, update) in fixture["ticks"].as_array().unwrap().iter().enumerate() {
+            for arrival in update["arrivals"].as_array().unwrap() {
+                let sign = if arrival["sign"] == "add" { 1 } else { -1 };
+                let row = arrival["row"].as_array().unwrap();
+                if arrival["rel"] == "root" {
+                    root_in.update(row[0].as_i64().unwrap(), sign);
+                } else {
+                    edge_in.update((row[0].as_i64().unwrap(), row[1].as_i64().unwrap()), sign);
+                }
+            }
+            edge_in.advance_to(tick as u64 + 1);
+            root_in.advance_to(tick as u64 + 1);
+            edge_in.flush();
+            root_in.flush();
+            worker.step_while(|| probe.less_than(root_in.time()));
+            let root: Vec<_> = roots
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, w)| **w > 0)
+                .map(|(n, _)| vec![*n])
+                .collect();
+            let edge: Vec<_> = edges
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, w)| **w > 0)
+                .map(|((p, c), _)| vec![*p, *c])
+                .collect();
+            let alive: Vec<_> = alive
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, w)| **w > 0)
+                .map(|(n, _)| vec![*n])
+                .collect();
+            let actual = serde_json::json!({"root":root,"edge":edge,"alive":alive});
+            println!(
+                "{}",
+                serde_json::json!({"tick":tick,"actual":actual,"carry_pending":false})
+            );
+            assert_eq!(
+                actual, update["expected"],
+                "{} tick {tick}",
+                fixture["name"]
+            );
+        }
+    });
 }
 
 #[cfg(test)]

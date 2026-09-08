@@ -4,7 +4,7 @@
  * generated program's arrival schedule and measures the existing TickFold.
  */
 
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { concat, forkJoin, lastValueFrom, tap, toArray } from "rxjs";
 
 import { program } from "../gen/scale_generated.ts";
@@ -76,6 +76,7 @@ async function final_table_sizes(seam: ISqlSeam): Promise<Readonly<Record<string
 }
 
 async function main(): Promise<void> {
+  if (process.argv[2] === "reach-sequence") return reach_sequence();
   if (process.argv[2] === "reach") return reach_cell();
   const { shape, rows, record_path, log_path } = parse_args();
   const schedule = schedule_for(shape, rows);
@@ -132,6 +133,30 @@ async function main(): Promise<void> {
   if (record_path !== "/dev/null") appendFileSync(record_path, `${JSON.stringify(result)}\n`);
   const final_rows = Object.values(table_sizes).reduce((sum, value) => sum + value, 0);
   process.stdout.write(`CSV,tsv2-gen,${rows},${arrivals},${final_rows},${total_wall_ms},${mean_tick_ms}\n`);
+}
+
+async function reach_sequence(): Promise<void> {
+  const fixture = JSON.parse(readFileSync(process.argv[3]!, "utf8"));
+  const { program: emitted } = await import("../gen/bench_root_reach.ts");
+  const seam = ScratchStore.open(":memory:");
+  try {
+    await lastValueFrom(ScratchStore.boot(seam, emitted.ddl));
+    for (const statement of emitted.boot) await lastValueFrom(seam.runner.execute(seam.db, {sql:statement.sql,args:[...statement.params]}));
+    for (const [tick, update] of fixture.ticks.entries()) {
+      stmt_counter.reset();
+      const result = await lastValueFrom(emitted.tick(seam, update.arrivals));
+      const statements = stmt_counter.get();
+      const actual: Record<string, number[][]> = {};
+      for (const rel of ["root", "edge", "alive"] as const) {
+        const order = rel === "edge" ? "parent, child" : "node";
+        actual[rel] = (await lastValueFrom(seam.runner.execute(seam.db, `${emitted.final_select[rel]} ORDER BY ${order}`))).rows
+          .map(row => rel === "edge" ? [Number(row.parent),Number(row.child)] : [Number(row.node)]);
+      }
+      process.stdout.write(JSON.stringify({tick, actual, carry_pending:result.carry_pending, statements})+"\n");
+      assert.equal(result.carry_pending,false,`${fixture.name} tick ${tick}`);
+      assert.deepEqual(actual, update.expected, `${fixture.name} tick ${tick}`);
+    }
+  } finally { seam.db.close(); }
 }
 
 async function reach_cell(): Promise<void> {
