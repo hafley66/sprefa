@@ -346,3 +346,30 @@ Current complete gate: `plugin-circuits-20260908/full-gate/status.txt` PASS,
 and DD example. Final focused SQL runner gate `sql-final.jsonl` passes after
 restricting expected plugin rejection messages; 390 exact states and 14
 rejections. This milestone adds lab gate coverage, with no CI workflow edits.
+
+## Native DD circuit milestone
+
+SQL milestone commit: `a1f0d07d3`. Native DD circuit source is
+`34_circuit_dd.rs`, registered as the `circuit_dd` lab example in the existing
+store manifest. All 11 families now execute actual DD operators against the
+same fixture. Semijoin/antijoin use distinct right keys for presence semantics;
+reachability reuses `src/oracle.rs`'s `roots.iterate` / semijoin / distinct
+pattern. No oracle rows enter the operator graph. Observed input collections
+and consolidated output multiplicities are compared exactly after every epoch.
+
+`dd-final.jsonl`: 533 exact engine-state checks (390 SQL plus 143 DD), 14
+explicit unsupported SQL installation cases, 11 matched admitted-family runs,
+and 11 finite scalar frontier checks. `dd-full-gate/status.txt` PASS, 60 tests
+(59 preceding plus the DD catalog/frontier test). The DD adapter is volatile,
+one worker, sequential u64 epochs. A startup check holds c's input frontier
+while advancing a/b, asserts the combined probe remains incomplete, then
+releases c and awaits completion. This covers one scalar frontier boundary;
+partial orders, independent time dimensions and arbitrary DD operators remain
+outside this executable receipt. The fixture's recursive cycle deletion is
+executed inside DD's iteration scope.
+
+Use `--arms query,pg_ivm,sqlite-query,sqlite-plugin-delta,dd` with profile
+`circuits`, existing `--sqlite-extension`, and
+`--circuit-dd-bin /private/tmp/sqlite-ivm-astra-target/release/examples/circuit_dd`.
+The new DD binary is separate from preserved `crossover_dd`. Current circuit
+sizes remain correctness smoke sizes. SWI and scale sweeps remain pending.

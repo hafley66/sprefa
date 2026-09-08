@@ -37,3 +37,15 @@ test('injected wrong expected bag is detected by actual SQL adapter',()=>{
     assert.notEqual(child.status,0);assert.match(child.stderr,/initial: output/);
   }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('native DD catalog and finite frontier check match every fixture state', {skip:!process.env.CIRCUIT_DD_BIN},()=>{
+  const root=mkdtempSync(join(tmpdir(),'ivm-circuit-dd-'));
+  try {for(const family of Object.keys(circuits)) {
+    const path=join(root,family+'.json');writeFileSync(path,JSON.stringify(makeCircuitFixture(family)));
+    const child=spawnSync(process.env.CIRCUIT_DD_BIN,[path],{encoding:'utf8',timeout:120000});
+    assert.equal(child.status,0,child.stderr);
+    const records=child.stdout.trim().split('\n').map(JSON.parse);
+    assert.equal(records.filter(r=>r.event==='mutation'&&r.exact_input_output_validated).length,13);
+    assert.equal(records.filter(r=>r.event==='frontier-check'&&r.completion_after_all_inputs_advanced).length,1);
+  }}finally{rmSync(root,{recursive:true,force:true});}
+});

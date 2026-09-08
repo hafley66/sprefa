@@ -1,0 +1,226 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 1595" width="1050" height="1595" role="img" aria-labelledby="title desc">
+<title id="title">Matched SQLite plugin and existing engine crossover</title>
+<desc id="desc">Shared fixture transitions plus materialization and count, milliseconds on a logarithmic axis. Marks show median and whiskers minimum to maximum across successful exact-state matched repetitions. PostgreSQL and SQLite commit durable writes; DD is volatile.</desc>
+<style>text{font-family:system-ui,sans-serif;fill:currentColor;font-size:12px}.head{font-size:16px}.small{font-size:11px}line,path,rect,circle{stroke:currentColor}.grid{opacity:.15}.mark{fill:currentColor}</style>
+<text class="head" x="16" y="25">Matched circuit states: write through result materialization</text>
+<text x="16" y="48">PG/SQLite durable; DD volatile. Exact validation outside timing. Median [min, max] ms.</text>
+<text x="16" y="76">rows / batch / fanout</text><text x="375" y="76">milliseconds (log scale)</text>
+<line class="grid" x1="375" x2="375" y1="90" y2="1540"/><text class="small" x="375" y="90" text-anchor="middle">0.1</text>
+<line class="grid" x1="500" x2="500" y1="90" y2="1540"/><text class="small" x="500" y="90" text-anchor="middle">1</text>
+<line class="grid" x1="625" x2="625" y1="90" y2="1540"/><text class="small" x="625" y="90" text-anchor="middle">10</text>
+<line class="grid" x1="750" x2="750" y1="90" y2="1540"/><text class="small" x="750" y="90" text-anchor="middle">100</text>
+<text x="16" y="129">pipeline 24 / 3 / 4</text>
+<text class="small" x="16" y="147">constrained; n=1 matched trials</text>
+<text x="174" y="109">query</text>
+<line x1="582.406832069765" x2="582.406832069765" y1="105" y2="105"/>
+<circle class="mark" cx="582.406832069765" cy="105" r="3"/>
+<text x="775" y="109">4.563 [4.563, 4.563]</text>
+<text x="174" y="131">pg_ivm</text>
+<line x1="626.5822327498871" x2="626.5822327498871" y1="127" y2="127"/>
+<circle class="mark" cx="626.5822327498871" cy="127" r="3"/>
+<text x="775" y="131">10.296 [10.296, 10.296]</text>
+<text x="174" y="153">sqlite-query</text>
+<line x1="519.0073509742189" x2="519.0073509742189" y1="149" y2="149"/>
+<circle class="mark" cx="519.0073509742189" cy="149" r="3"/>
+<text x="775" y="153">1.419 [1.419, 1.419]</text>
+<text x="174" y="175">sqlite-plugin-delta</text>
+<text x="375" y="175">unsupported</text>
+<text x="174" y="197">dd</text>
+<line x1="425.1390798889016" x2="425.1390798889016" y1="193" y2="193"/>
+<circle class="mark" cx="425.1390798889016" cy="193" r="3"/>
+<text x="775" y="197">0.252 [0.252, 0.252]</text>
+<text x="16" y="259">fanout_fanin 24 / 3 / 4</text>
+<text class="small" x="16" y="277">constrained; n=1 matched trials</text>
+<text x="174" y="239">query</text>
+<line x1="584.2168769198071" x2="584.2168769198071" y1="235" y2="235"/>
+<circle class="mark" cx="584.2168769198071" cy="235" r="3"/>
+<text x="775" y="239">4.718 [4.718, 4.718]</text>
+<text x="174" y="261">pg_ivm</text>
+<text x="375" y="261">unsupported</text>
+<text x="174" y="283">sqlite-query</text>
+<line x1="520.60752129206" x2="520.60752129206" y1="279" y2="279"/>
+<circle class="mark" cx="520.60752129206" cy="279" r="3"/>
+<text x="775" y="283">1.462 [1.462, 1.462]</text>
+<text x="174" y="305">sqlite-plugin-delta</text>
+<text x="375" y="305">unsupported</text>
+<text x="174" y="327">dd</text>
+<line x1="428.7196404260355" x2="428.7196404260355" y1="323" y2="323"/>
+<circle class="mark" cx="428.7196404260355" cy="323" r="3"/>
+<text x="775" y="327">0.269 [0.269, 0.269]</text>
+<text x="16" y="389">distinct 24 / 3 / 4</text>
+<text class="small" x="16" y="407">constrained; n=1 matched trials</text>
+<text x="174" y="369">query</text>
+<line x1="581.5065939350202" x2="581.5065939350202" y1="365" y2="365"/>
+<circle class="mark" cx="581.5065939350202" cy="365" r="3"/>
+<text x="775" y="369">4.488 [4.488, 4.488]</text>
+<text x="174" y="391">pg_ivm</text>
+<line x1="638.0688862402344" x2="638.0688862402344" y1="387" y2="387"/>
+<circle class="mark" cx="638.0688862402344" cy="387" r="3"/>
+<text x="775" y="391">12.722 [12.722, 12.722]</text>
+<text x="174" y="413">sqlite-query</text>
+<line x1="525.8448426577423" x2="525.8448426577423" y1="409" y2="409"/>
+<circle class="mark" cx="525.8448426577423" cy="409" r="3"/>
+<text x="775" y="413">1.610 [1.610, 1.610]</text>
+<text x="174" y="435">sqlite-plugin-delta</text>
+<text x="375" y="435">unsupported</text>
+<text x="174" y="457">dd</text>
+<line x1="442.27362898730655" x2="442.27362898730655" y1="453" y2="453"/>
+<circle class="mark" cx="442.27362898730655" cy="453" r="3"/>
+<text x="775" y="457">0.345 [0.345, 0.345]</text>
+<text x="16" y="519">join 24 / 3 / 4</text>
+<text class="small" x="16" y="537">constrained; n=1 matched trials</text>
+<text x="174" y="499">query</text>
+<line x1="583.2883933508455" x2="583.2883933508455" y1="495" y2="495"/>
+<circle class="mark" cx="583.2883933508455" cy="495" r="3"/>
+<text x="775" y="499">4.638 [4.638, 4.638]</text>
+<text x="174" y="521">pg_ivm</text>
+<line x1="639.7094828733038" x2="639.7094828733038" y1="517" y2="517"/>
+<circle class="mark" cx="639.7094828733038" cy="517" r="3"/>
+<text x="775" y="521">13.112 [13.112, 13.112]</text>
+<text x="174" y="543">sqlite-query</text>
+<line x1="514.1890330302629" x2="514.1890330302629" y1="539" y2="539"/>
+<circle class="mark" cx="514.1890330302629" cy="539" r="3"/>
+<text x="775" y="543">1.299 [1.299, 1.299]</text>
+<text x="174" y="565">sqlite-plugin-delta</text>
+<text x="375" y="565">unsupported</text>
+<text x="174" y="587">dd</text>
+<line x1="444.1469006527815" x2="444.1469006527815" y1="583" y2="583"/>
+<circle class="mark" cx="444.1469006527815" cy="583" r="3"/>
+<text x="775" y="587">0.357 [0.357, 0.357]</text>
+<text x="16" y="649">self_join 24 / 3 / 4</text>
+<text class="small" x="16" y="667">constrained; n=1 matched trials</text>
+<text x="174" y="629">query</text>
+<line x1="584.9720012940433" x2="584.9720012940433" y1="625" y2="625"/>
+<circle class="mark" cx="584.9720012940433" cy="625" r="3"/>
+<text x="775" y="629">4.784 [4.784, 4.784]</text>
+<text x="174" y="651">pg_ivm</text>
+<line x1="660.4689356583958" x2="660.4689356583958" y1="647" y2="647"/>
+<circle class="mark" cx="660.4689356583958" cy="647" r="3"/>
+<text x="775" y="651">19.220 [19.220, 19.220]</text>
+<text x="174" y="673">sqlite-query</text>
+<line x1="525.3579868244874" x2="525.3579868244874" y1="669" y2="669"/>
+<circle class="mark" cx="525.3579868244874" cy="669" r="3"/>
+<text x="775" y="673">1.595 [1.595, 1.595]</text>
+<text x="174" y="695">sqlite-plugin-delta</text>
+<text x="375" y="695">unsupported</text>
+<text x="174" y="717">dd</text>
+<line x1="449.385334205575" x2="449.385334205575" y1="713" y2="713"/>
+<circle class="mark" cx="449.385334205575" cy="713" r="3"/>
+<text x="775" y="717">0.394 [0.394, 0.394]</text>
+<text x="16" y="779">chain 24 / 3 / 4</text>
+<text class="small" x="16" y="797">constrained; n=1 matched trials</text>
+<text x="174" y="759">query</text>
+<line x1="584.4278830564923" x2="584.4278830564923" y1="755" y2="755"/>
+<circle class="mark" cx="584.4278830564923" cy="755" r="3"/>
+<text x="775" y="759">4.736 [4.736, 4.736]</text>
+<text x="174" y="781">pg_ivm</text>
+<line x1="654.7938068080473" x2="654.7938068080473" y1="777" y2="777"/>
+<circle class="mark" cx="654.7938068080473" cy="777" r="3"/>
+<text x="775" y="781">17.312 [17.312, 17.312]</text>
+<text x="174" y="803">sqlite-query</text>
+<line x1="521.2199830683634" x2="521.2199830683634" y1="799" y2="799"/>
+<circle class="mark" cx="521.2199830683634" cy="799" r="3"/>
+<text x="775" y="803">1.478 [1.478, 1.478]</text>
+<text x="174" y="825">sqlite-plugin-delta</text>
+<text x="375" y="825">unsupported</text>
+<text x="174" y="847">dd</text>
+<line x1="458.09469800286763" x2="458.09469800286763" y1="843" y2="843"/>
+<circle class="mark" cx="458.09469800286763" cy="843" r="3"/>
+<text x="775" y="847">0.462 [0.462, 0.462]</text>
+<text x="16" y="909">diamond 24 / 3 / 4</text>
+<text class="small" x="16" y="927">constrained; n=1 matched trials</text>
+<text x="174" y="889">query</text>
+<line x1="591.2349970171379" x2="591.2349970171379" y1="885" y2="885"/>
+<circle class="mark" cx="591.2349970171379" cy="885" r="3"/>
+<text x="775" y="889">5.369 [5.369, 5.369]</text>
+<text x="174" y="911">pg_ivm</text>
+<text x="375" y="911">unsupported</text>
+<text x="174" y="933">sqlite-query</text>
+<line x1="521.7591126343476" x2="521.7591126343476" y1="929" y2="929"/>
+<circle class="mark" cx="521.7591126343476" cy="929" r="3"/>
+<text x="775" y="933">1.493 [1.493, 1.493]</text>
+<text x="174" y="955">sqlite-plugin-delta</text>
+<text x="375" y="955">unsupported</text>
+<text x="174" y="977">dd</text>
+<line x1="468.6121317595519" x2="468.6121317595519" y1="973" y2="973"/>
+<circle class="mark" cx="468.6121317595519" cy="973" r="3"/>
+<text x="775" y="977">0.561 [0.561, 0.561]</text>
+<text x="16" y="1039">semijoin 24 / 3 / 4</text>
+<text class="small" x="16" y="1057">constrained; n=1 matched trials</text>
+<text x="174" y="1019">query</text>
+<line x1="584.1098260722449" x2="584.1098260722449" y1="1015" y2="1015"/>
+<circle class="mark" cx="584.1098260722449" cy="1015" r="3"/>
+<text x="775" y="1019">4.708 [4.708, 4.708]</text>
+<text x="174" y="1041">pg_ivm</text>
+<line x1="641.8124678899144" x2="641.8124678899144" y1="1037" y2="1037"/>
+<circle class="mark" cx="641.8124678899144" cy="1037" r="3"/>
+<text x="775" y="1041">13.630 [13.630, 13.630]</text>
+<text x="174" y="1063">sqlite-query</text>
+<line x1="515.2154433885836" x2="515.2154433885836" y1="1059" y2="1059"/>
+<circle class="mark" cx="515.2154433885836" cy="1059" r="3"/>
+<text x="775" y="1063">1.323 [1.323, 1.323]</text>
+<text x="174" y="1085">sqlite-plugin-delta</text>
+<text x="375" y="1085">unsupported</text>
+<text x="174" y="1107">dd</text>
+<line x1="454.56625248402645" x2="454.56625248402645" y1="1103" y2="1103"/>
+<circle class="mark" cx="454.56625248402645" cy="1103" r="3"/>
+<text x="775" y="1107">0.433 [0.433, 0.433]</text>
+<text x="16" y="1169">antijoin 24 / 3 / 4</text>
+<text class="small" x="16" y="1187">constrained; n=1 matched trials</text>
+<text x="174" y="1149">query</text>
+<line x1="580.9238860758442" x2="580.9238860758442" y1="1145" y2="1145"/>
+<circle class="mark" cx="580.9238860758442" cy="1145" r="3"/>
+<text x="775" y="1149">4.440 [4.440, 4.440]</text>
+<text x="174" y="1171">pg_ivm</text>
+<text x="375" y="1171">unsupported</text>
+<text x="174" y="1193">sqlite-query</text>
+<line x1="514.688200429963" x2="514.688200429963" y1="1189" y2="1189"/>
+<circle class="mark" cx="514.688200429963" cy="1189" r="3"/>
+<text x="775" y="1193">1.311 [1.311, 1.311]</text>
+<text x="174" y="1215">sqlite-plugin-delta</text>
+<text x="375" y="1215">unsupported</text>
+<text x="174" y="1237">dd</text>
+<line x1="473.65359535787445" x2="473.65359535787445" y1="1233" y2="1233"/>
+<circle class="mark" cx="473.65359535787445" cy="1233" r="3"/>
+<text x="775" y="1237">0.616 [0.616, 0.616]</text>
+<text x="16" y="1299">aggregate_churn 24 / 3 / 4</text>
+<text class="small" x="16" y="1317">constrained; n=1 matched trials</text>
+<text x="174" y="1279">query</text>
+<line x1="582.488562805099" x2="582.488562805099" y1="1275" y2="1275"/>
+<circle class="mark" cx="582.488562805099" cy="1275" r="3"/>
+<text x="775" y="1279">4.570 [4.570, 4.570]</text>
+<text x="174" y="1301">pg_ivm</text>
+<line x1="646.8811111814935" x2="646.8811111814935" y1="1297" y2="1297"/>
+<circle class="mark" cx="646.8811111814935" cy="1297" r="3"/>
+<text x="775" y="1301">14.964 [14.964, 14.964]</text>
+<text x="174" y="1323">sqlite-query</text>
+<line x1="518.7662022029339" x2="518.7662022029339" y1="1319" y2="1319"/>
+<circle class="mark" cx="518.7662022029339" cy="1319" r="3"/>
+<text x="775" y="1323">1.413 [1.413, 1.413]</text>
+<text x="174" y="1345">sqlite-plugin-delta</text>
+<line x1="614.4933648783206" x2="614.4933648783206" y1="1341" y2="1341"/>
+<circle class="mark" cx="614.4933648783206" cy="1341" r="3"/>
+<text x="775" y="1345">8.240 [8.240, 8.240]</text>
+<text x="174" y="1367">dd</text>
+<line x1="453.4045972754297" x2="453.4045972754297" y1="1363" y2="1363"/>
+<circle class="mark" cx="453.4045972754297" cy="1363" r="3"/>
+<text x="775" y="1367">0.424 [0.424, 0.424]</text>
+<text x="16" y="1429">reach_cycle 24 / 3 / 4</text>
+<text class="small" x="16" y="1447">constrained; n=1 matched trials</text>
+<text x="174" y="1409">query</text>
+<line x1="606.0332640916812" x2="606.0332640916812" y1="1405" y2="1405"/>
+<circle class="mark" cx="606.0332640916812" cy="1405" r="3"/>
+<text x="775" y="1409">7.051 [7.051, 7.051]</text>
+<text x="174" y="1431">pg_ivm</text>
+<text x="375" y="1431">unsupported</text>
+<text x="174" y="1453">sqlite-query</text>
+<line x1="514.0144053470775" x2="514.0144053470775" y1="1449" y2="1449"/>
+<circle class="mark" cx="514.0144053470775" cy="1449" r="3"/>
+<text x="775" y="1453">1.295 [1.295, 1.295]</text>
+<text x="174" y="1475">sqlite-plugin-delta</text>
+<text x="375" y="1475">unsupported</text>
+<text x="174" y="1497">dd</text>
+<line x1="509.42247257327097" x2="509.42247257327097" y1="1493" y2="1493"/>
+<circle class="mark" cx="509.42247257327097" cy="1493" r="3"/>
+<text x="775" y="1497">1.190 [1.190, 1.190]</text>
+<text x="16" y="1575">Total memory cap unenforced. Native SQL includes client/server command latency; DD uses keyed in-process writes.</text></svg>

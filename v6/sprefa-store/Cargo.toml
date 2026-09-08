@@ -70,3 +70,7 @@ serde_json = "1"
 [[example]]
 name = "crossover_dd"
 path = "../labs/exec_shootout/postgres_pglite_ivm/22_crossover_dd.rs"
+
+[[example]]
+name = "circuit_dd"
+path = "../labs/exec_shootout/postgres_pglite_ivm/34_circuit_dd.rs"

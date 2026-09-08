@@ -1,0 +1,1 @@
+PASS: loaded plugin, existing SQLite mechanisms/templates, shared DD/plugin integration and store reference tests

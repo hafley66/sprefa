@@ -1,0 +1,23 @@
+    Finished `release` profile [optimized] target(s) in 0.21s
+     Running tests/datalog_ops.rs (/private/tmp/sqlite-ivm-astra-target/release/build/sprefa-store/8d2c2e0f2ecd2959/out/datalog_ops-8d2c2e0f2ecd2959)
+
+running 6 tests
+test antijoin_negation ... ok
+test three_way_join ... ok
+test recursion_transitive_closure ... ok
+test aggregation_group_count ... ok
+test union_distinct ... ok
+test two_way_join ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/oracle_dd.rs (/private/tmp/sqlite-ivm-astra-target/release/build/sprefa-store/a7433d569ff01536/out/oracle_dd-a7433d569ff01536)
+
+running 4 tests
+test test_dd_simple_reach ... ok
+test test_dd_del_edge ... ok
+test test_dd_batch_updates ... ok
+test test_dd_add_edge ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

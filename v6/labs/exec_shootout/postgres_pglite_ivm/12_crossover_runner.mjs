@@ -107,6 +107,8 @@ const arms = argument("arms", (profile === "circuits" ? "query,pg_ivm,sqlite-que
 if (arms.some((arm) => !["query", "pg_ivm", "sqlite-query", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
 if (profile !== "circuits" && arms.includes("sqlite-query")) throw new Error("sqlite-query requires circuits profile");
 const ddBinary = argument("dd-bin", new URL("../../../sprefa-store/target/release/examples/crossover_dd", import.meta.url).pathname);
+const circuitDdBinary = argument("circuit-dd-bin", "");
+if(profile==="circuits" && arms.includes("dd") && !circuitDdBinary) throw new Error("--circuit-dd-bin required");
 const sqliteExtension = argument("sqlite-extension", "");
 if (arms.some((arm) => arm.startsWith("sqlite-plugin")) && !sqliteExtension) throw new Error("--sqlite-extension required");
 const sqliteProgram = argument("sqlite-program", "");
@@ -210,7 +212,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     "--budget", budget,
     "--diagnostic", profile === "diagnostic" ? "1" : "0",
   ];
-  if (testCase.circuit && (template || dd || maintenance === "sqlite-plugin-logged")) {
+  if (testCase.circuit && (template || maintenance === "sqlite-plugin-logged")) {
     append({event:"capability",status:"adapter-missing",reason:"circuit adapter pending",...context});
     return true;
   }
@@ -240,10 +242,10 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
       "--fixture",fixturePath,"--db",join(childRoot,"maintained.sqlite"),"--sql-output",join(childRoot,"installed.sql")];
   } else if (dd) args = [fixturePath];
   else args.push("--fixture", fixturePath);
-  if (testCase.circuit) args = sqlite
+  if (testCase.circuit) args = dd ? [fixturePath] : sqlite
     ? ["31_circuit_sqlite.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),...(plugin?["--extension",sqliteExtension]:[])]
     : ["32_circuit_postgres.mjs",fixturePath,maintenance];
-  const child = spawn(sqlite ? "python3" : dd ? ddBinary : process.execPath, args, {
+  const child = spawn(sqlite ? "python3" : dd ? (testCase.circuit ? circuitDdBinary : ddBinary) : process.execPath, args, {
     cwd: labDir,
     env: {
       ...process.env,
