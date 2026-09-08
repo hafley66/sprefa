@@ -23,12 +23,13 @@ static char *literal(const char *s) {
 static int load_plan(Tab *t,const char *argument) {
   char *json=literal(argument);if(!json||strlen(json)>4096){sqlite3_free(json);return SQLITE_ERROR;}
   sqlite3 *db=0;sqlite3_stmt *s=0;int rc=sqlite3_open(":memory:",&db);
-  const char *query="SELECT json_extract(?1,'$.version'),json_array_length(?1,'$.sides'),json_array_length(?1,'$.aliases'),json_extract(?1,'$.key'),json_extract(?1,'$.value'),json_extract(?1,'$.predicate')";
+  const char *query="SELECT json_extract(?1,'$.version'),json_array_length(?1,'$.sides'),json_array_length(?1,'$.aliases'),json_extract(?1,'$.key'),json_extract(?1,'$.value'),json_extract(?1,'$.predicate'),json_extract(?1,'$.aggregate')";
   if(rc==SQLITE_OK)rc=sqlite3_prepare_v2(db,query,-1,&s,0);
   if(rc==SQLITE_OK)rc=sqlite3_bind_text(s,1,json,-1,SQLITE_STATIC);
   if(rc==SQLITE_OK) {
     if(sqlite3_step(s)!=SQLITE_ROW||sqlite3_column_type(s,0)!=SQLITE_INTEGER||sqlite3_column_int64(s,0)!=1||sqlite3_column_int(s,1)<1||sqlite3_column_int(s,1)>3||sqlite3_column_int(s,1)!=sqlite3_column_int(s,2))rc=SQLITE_ERROR;
     for(int i=3;i<6&&rc==SQLITE_OK;i++)if(sqlite3_column_type(s,i)!=SQLITE_TEXT||memchr(sqlite3_column_text(s,i),0,(size_t)sqlite3_column_bytes(s,i)))rc=SQLITE_ERROR;
+    if(rc==SQLITE_OK&&sqlite3_column_type(s,6)!=SQLITE_NULL){if(sqlite3_column_type(s,6)!=SQLITE_INTEGER||sqlite3_column_int64(s,6)<0||sqlite3_column_int64(s,6)>1)rc=SQLITE_ERROR;else t->plan_group=sqlite3_column_int(s,6);}
     if(rc==SQLITE_OK){t->degree=sqlite3_column_int(s,1);t->key_expression=sqlite3_mprintf("%s",sqlite3_column_text(s,3));t->projection=sqlite3_mprintf("%s",sqlite3_column_text(s,4));t->predicate=sqlite3_mprintf("%s",sqlite3_column_text(s,5));if(!t->key_expression||!t->projection||!t->predicate)rc=SQLITE_NOMEM;}
   }
   sqlite3_finalize(s);s=0;

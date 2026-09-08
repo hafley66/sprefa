@@ -35,14 +35,19 @@ commands.append([sys.executable,str(here/'9_window_test.py')])
 commands.append([sys.executable,str(here/'9_window_test.py')])
 commands.append([sys.executable,str(here/'10_reach_filter_test.py')])
 commands.append([sys.executable,str(here/'10_reach_filter_test.py')])
+commands.append([sys.executable,str(here/'11_group_compile_test.py')])
+commands.append([sys.executable,str(here/'11_group_compile_test.py')])
+commands.append(['node',str(here.parent/'12_crossover_runner.mjs'),'--profile','circuits','--circuits','pipeline,join,self_join,chain,aggregate_churn','--arms','sqlite-competitive-compiled','--competitive-extension',env['TAKE2_EXTENSION'],'--competitive-compiler',env['TAKE2_COMPILER'],'--output',str(run/'compiled.jsonl'),'--repetitions','1','--warmups','0'])
 for command in commands:
     if '--arms' in command:
         position=command.index('--arms')+1
         command[position]+=',sqlite-competitive-fused,sqlite-competitive-counted'
 steps=[];rc=0
 for index,command in enumerate(commands):
+    step_env=dict(env,TAKE2_SOURCE_VIEWS='1') if index in [4,6,8,14,18,20,22,24,26] else dict(env)
+    if index==27:step_env['IVM_RUN_ROOT']=str(run/'compiled-shared')
     with (run/f'{index}.log').open('wb') as log:
-        try:rc=subprocess.run(command,env=dict(env,TAKE2_SOURCE_VIEWS='1') if index in [4,6,8,14,18,20,22,24] else env,stdout=log,stderr=subprocess.STDOUT,timeout=120).returncode
+        try:rc=subprocess.run(command,env=step_env,stdout=log,stderr=subprocess.STDOUT,timeout=120).returncode
         except subprocess.TimeoutExpired:rc=124
     steps.append(dict(command=command,exit_code=rc))
     if rc:break
@@ -53,6 +58,9 @@ if rc==0:
     paired=[r for r in circuits if r['event']=='all-arm-run']
     if len(paired)!=11 or not all(r.get('all_input_output_states_match') and r.get('state_count_per_arm')==13 and len(r['arms'])==6 and not r['excluded_arms'] for r in paired):rc=1
     if sum(r['event']=='frontier-check' and r.get('completion_after_all_inputs_advanced') for r in circuits)!=11:rc=1
+    compiled=[json.loads(s) for s in (run/'compiled.jsonl').read_text().splitlines()]
+    matches=[r for r in compiled if r['event']=='all-arm-run']
+    if len(matches)!=5 or not all(r.get('all_input_output_states_match') and r.get('state_count_per_arm')==13 and len(r['arms'])==3 and not r['excluded_arms'] for r in matches):rc=1
 hashes={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in [*here.glob('*'),*here.glob('6_sql_compile/*'),*run.glob('*')] if p.is_file()}
 (run/'receipt.json').write_text(json.dumps(dict(exit_code=rc,steps=steps,hashes=hashes),indent=2))
 print(json.dumps(dict(receipt=str(run/'receipt.json'),exit_code=rc)));sys.exit(rc)

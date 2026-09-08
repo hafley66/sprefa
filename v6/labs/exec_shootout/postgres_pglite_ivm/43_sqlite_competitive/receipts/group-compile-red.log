@@ -1,0 +1,80 @@
+test_malformed_plan_rejected (__main__.Grouped.test_malformed_plan_rejected) ... ERROR
+test_projection_type_failure_rolls_back (__main__.Grouped.test_projection_type_failure_rolls_back) ... ok
+test_scalar_binding_rejections (__main__.Grouped.test_scalar_binding_rejections) ... ok
+test_shared_select_oracles (__main__.Grouped.test_shared_select_oracles) ... 
+  test_shared_select_oracles (__main__.Grouped.test_shared_select_oracles) (query='SELECT k%2,COUNT(*),SUM(v) FROM a WHERE v>=0 GROUP BY k%2') ... ERROR
+  test_shared_select_oracles (__main__.Grouped.test_shared_select_oracles) (query='SELECT x.k,COUNT(*),SUM(x.v*y.v) FROM a x JOIN b y ON x.k<y.k GROUP BY x.k') ... ERROR
+  test_shared_select_oracles (__main__.Grouped.test_shared_select_oracles) (query='SELECT x.k+1,COUNT(*),SUM(z.v) FROM a x JOIN a y ON x.v=y.k JOIN a z ON y.v=z.k GROUP BY x.k+1') ... ERROR
+  test_shared_select_oracles (__main__.Grouped.test_shared_select_oracles) (query='SELECT k,COUNT(*),SUM(v) FROM a GROUP BY k') ... ERROR
+test_unsupported_aggregate_shapes (__main__.Grouped.test_unsupported_aggregate_shapes) ... ok
+
+======================================================================
+ERROR: test_malformed_plan_rejected (__main__.Grouped.test_malformed_plan_rejected)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 83, in test_malformed_plan_rejected
+    original = compile_sql(QUERIES[0])["plan"]
+               ~~~~~~~~~~~^^^^^^^^^^^^
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 25, in compile_sql
+    process = subprocess.run([COMPILER], input=query, text=True, capture_output=True, check=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/tmp/sprefa-sqlite-competitive/compiler-target/debug/take2-sql-compile']' returned non-zero exit status 2.
+
+======================================================================
+ERROR: test_shared_select_oracles (__main__.Grouped.test_shared_select_oracles) (query='SELECT k%2,COUNT(*),SUM(v) FROM a WHERE v>=0 GROUP BY k%2')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 43, in test_shared_select_oracles
+    plan = compile_sql(query)
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 25, in compile_sql
+    process = subprocess.run([COMPILER], input=query, text=True, capture_output=True, check=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/tmp/sprefa-sqlite-competitive/compiler-target/debug/take2-sql-compile']' returned non-zero exit status 2.
+
+======================================================================
+ERROR: test_shared_select_oracles (__main__.Grouped.test_shared_select_oracles) (query='SELECT x.k,COUNT(*),SUM(x.v*y.v) FROM a x JOIN b y ON x.k<y.k GROUP BY x.k')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 43, in test_shared_select_oracles
+    plan = compile_sql(query)
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 25, in compile_sql
+    process = subprocess.run([COMPILER], input=query, text=True, capture_output=True, check=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/tmp/sprefa-sqlite-competitive/compiler-target/debug/take2-sql-compile']' returned non-zero exit status 2.
+
+======================================================================
+ERROR: test_shared_select_oracles (__main__.Grouped.test_shared_select_oracles) (query='SELECT x.k+1,COUNT(*),SUM(z.v) FROM a x JOIN a y ON x.v=y.k JOIN a z ON y.v=z.k GROUP BY x.k+1')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 43, in test_shared_select_oracles
+    plan = compile_sql(query)
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 25, in compile_sql
+    process = subprocess.run([COMPILER], input=query, text=True, capture_output=True, check=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/tmp/sprefa-sqlite-competitive/compiler-target/debug/take2-sql-compile']' returned non-zero exit status 2.
+
+======================================================================
+ERROR: test_shared_select_oracles (__main__.Grouped.test_shared_select_oracles) (query='SELECT k,COUNT(*),SUM(v) FROM a GROUP BY k')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 43, in test_shared_select_oracles
+    plan = compile_sql(query)
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/7_compile_test.py", line 25, in compile_sql
+    process = subprocess.run([COMPILER], input=query, text=True, capture_output=True, check=True)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/tmp/sprefa-sqlite-competitive/compiler-target/debug/take2-sql-compile']' returned non-zero exit status 2.
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.062s
+
+FAILED (errors=5)

@@ -116,7 +116,7 @@ const maxRows = Number(argument("max-rows", "Infinity"));
 const selectedCase = argument("case", "");
 const cases = buildCases(profile, budget).filter((testCase) => testCase.rows <= maxRows && (!selectedCase || `${testCase.rows}:${testCase.batch_size}:${testCase.fanout}` === selectedCase));
 const arms = argument("arms", (profile === "circuits" ? "query,pg_ivm,sqlite-query" : "query,pg_ivm")).split(",");
-if (arms.some((arm) => !["query", "pg_ivm", "sqlite-query", "swi-circuit", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "sqlite-native-take2", "sqlite-native-take2-logged", "sqlite-competitive-batch", "sqlite-competitive-sourceview", "sqlite-competitive-frontier", "sqlite-competitive-lazy", "sqlite-competitive-fused", "sqlite-competitive-counted", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+if (arms.some((arm) => !["query", "pg_ivm", "sqlite-query", "swi-circuit", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "sqlite-native-take2", "sqlite-native-take2-logged", "sqlite-competitive-batch", "sqlite-competitive-sourceview", "sqlite-competitive-frontier", "sqlite-competitive-lazy", "sqlite-competitive-fused", "sqlite-competitive-counted", "sqlite-competitive-compiled", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
 if (profile !== "circuits" && arms.some(a=>["sqlite-query","swi-circuit"].includes(a))) throw new Error("circuit-only arm requires circuits profile");
 const ddBinary = argument("dd-bin", new URL("../../../sprefa-store/target/release/examples/crossover_dd", import.meta.url).pathname);
 const circuitDdBinary = argument("circuit-dd-bin", "");
@@ -189,6 +189,7 @@ append({
   sqlite_extension_sha256: sqliteExtension ? await fileSha256(sqliteExtension) : null,
   take2_extension_sha256: take2Extension ? await fileSha256(take2Extension) : null,
   competitive_extension_sha256: competitiveExtension ? await fileSha256(competitiveExtension) : null,
+  competitive_compiler_sha256: arms.includes('sqlite-competitive-compiled') ? await fileSha256(argument('competitive-compiler','/tmp/sprefa-sqlite-competitive/compiler-target/debug/take2-sql-compile')) : null,
   workload: profile==="circuits" ? {skew:"a key supports controlled by fanout; right-side key 0 receives duplicate supports",churn:"13 named transitions; batch_key_value_move varies batch_size inputs",cardinality:"recorded per mutation",integer_contract:"generated small values; exact bounded integer output"} : {skew:"fixture hot group plus uniform remainder", churn:"four defined mutation families", cardinality:"recorded per mutation"},
   retained_baseline: baseline,
 });
@@ -198,7 +199,8 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   const plugin = maintenance.startsWith("sqlite-plugin");
   const competitive = maintenance.startsWith("sqlite-competitive");
   const frontier = maintenance === "sqlite-competitive-frontier";
-  const counterMode = maintenance === "sqlite-competitive-counted" ? "counted" : maintenance === "sqlite-competitive-fused" ? "fused" : null;
+  const compiled = maintenance === "sqlite-competitive-compiled";
+  const counterMode = maintenance === "sqlite-competitive-counted" || compiled ? "counted" : maintenance === "sqlite-competitive-fused" ? "fused" : null;
   const lazy = maintenance === "sqlite-competitive-lazy" || counterMode !== null;
   const sourceview = maintenance === "sqlite-competitive-sourceview" || frontier || lazy;
   const take2 = maintenance.startsWith("sqlite-native-take2") || competitive;
@@ -220,6 +222,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     fanout: testCase.fanout,
   };
   const freePercent = memoryFreePercent();
+  if(compiled&&!testCase.circuit){append({event:"capability",status:"unsupported",reason:"compiled SELECT adapter requires canonical circuit source columns",...context});return true;}
   if(frontier&&!testCase.circuit){append({event:"capability",status:"unsupported",reason:"scalar frontier variant requires circuit profile",...context});return true;}
   if (take2 && ((testCase.circuit && !(competitive ? ["aggregate_churn","pipeline","join","self_join","chain","semijoin","antijoin","reach_cycle","distinct","fanout_fanin","diamond"] : ["aggregate_churn"]).includes(testCase.circuit)) || testCase.rows > 12000)) {
     append({event:"capability",status:"unsupported",reason:"Take 2 shared adapter supports bounded crossover aggregate cells through 12000 source rows; other circuit adapters pending",...context});
@@ -284,7 +287,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
       "--fixture",fixturePath,"--db",join(childRoot,"maintained.sqlite"),"--sql-output",join(childRoot,"installed.sql")];
   } else if (dd) args = [fixturePath];
   else args.push("--fixture", fixturePath);
-  if (testCase.circuit) args = take2 ? ["43_sqlite_competitive/0_circuit.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),"--extension",competitive ? competitiveExtension : take2Extension,...(competitive&&!lazy?["--batch"]:[]),...(sourceview?["--source-views"]:[]),...(frontier?["--frontiers"]:[]),...(lazy?["--lazy"]:[]),...(counterMode?["--counter-mode",counterMode]:[])] : swi ? ["-q","-s",fixture.columns?"39_semantic_swi.pl":"35_circuit_swi.pl","--",fixturePath] : dd ? [fixturePath] : sqlite
+  if (testCase.circuit) args = take2 ? ["43_sqlite_competitive/0_circuit.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),"--extension",competitive ? competitiveExtension : take2Extension,...(competitive&&!lazy?["--batch"]:[]),...(sourceview?["--source-views"]:[]),...(frontier?["--frontiers"]:[]),...(lazy?["--lazy"]:[]),...(counterMode?["--counter-mode",counterMode]:[]),...(compiled?["--compiled","--compiler",argument("competitive-compiler","/tmp/sprefa-sqlite-competitive/compiler-target/debug/take2-sql-compile")]:[])] : swi ? ["-q","-s",fixture.columns?"39_semantic_swi.pl":"35_circuit_swi.pl","--",fixturePath] : dd ? [fixturePath] : sqlite
     ? [fixture.columns?"31b_circuit_sqlite.py":"31_circuit_sqlite.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),...(plugin?["--extension",sqliteExtension]:[])]
     : [fixture.columns?"31a_circuit_postgres.mjs":"32_circuit_postgres.mjs",fixturePath,maintenance];
   const child = spawn(swi ? "swipl" : sqlite ? "python3" : dd ? (fixture.columns ? semanticDdBinary : testCase.circuit ? circuitDdBinary : ddBinary) : process.execPath, args, {

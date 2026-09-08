@@ -55,15 +55,15 @@ fn compile(sql: &str) -> Result<Value, String> {
         columns,
         from: Some(from),
         where_clause,
-        group_by: None,
+        group_by,
         having: None,
         window_clause: None,
     } = &s.body.select
     else {
-        return Err("bag SELECT with FROM, without grouping/windows required".into());
+        return Err("SELECT with FROM, without HAVING/windows required".into());
     };
-    if columns.len() != 2 {
-        return Err("exactly two scalar projections required".into());
+    if columns.len() != if group_by.is_some() { 3 } else { 2 } {
+        return Err("two bag projections or key, COUNT(*), SUM(value) required".into());
     }
     let mut projections = Vec::new();
     for column in columns.iter() {
@@ -71,6 +71,45 @@ fn compile(sql: &str) -> Result<Value, String> {
             return Err("star projection unsupported".into());
         };
         projections.push(expr.to_string());
+    }
+    if let Some(groups) = group_by {
+        let ResultColumn::Expr(key, _) = &columns[0] else {
+            unreachable!()
+        };
+        if groups.len() != 1 || &groups[0] != key {
+            return Err("GROUP BY must repeat the one key expression".into());
+        }
+        let ResultColumn::Expr(
+            Expr::FunctionCallStar {
+                name: f,
+                filter_over: None,
+            },
+            _,
+        ) = &columns[1]
+        else {
+            return Err("COUNT(*) required".into());
+        };
+        if !name(f.0).eq_ignore_ascii_case("count") {
+            return Err("COUNT(*) required".into());
+        }
+        let ResultColumn::Expr(
+            Expr::FunctionCall {
+                name: f,
+                distinctness: None,
+                args: Some(args),
+                order_by: None,
+                filter_over: None,
+            },
+            _,
+        ) = &columns[2]
+        else {
+            return Err("plain SUM(value) required".into());
+        };
+        if !name(f.0).eq_ignore_ascii_case("sum") || args.len() != 1 {
+            return Err("SUM(value) required".into());
+        }
+        projections[1] = args[0].to_string();
+        projections.truncate(2);
     }
     let mut tables = vec![source(from.select.ok_or("missing source")?)?];
     let mut predicates = Vec::new();
@@ -113,7 +152,7 @@ fn compile(sql: &str) -> Result<Value, String> {
         };
         sides.push(side);
     }
-    let plan = json!({"version":1,"sides":sides,"aliases":aliases,"key":projections[0],"value":projections[1],"predicate":if predicates.is_empty(){"1".into()}else{predicates.join(" AND ")}});
+    let plan = json!({"version":1,"aggregate":group_by.is_some(),"sides":sides,"aliases":aliases,"key":projections[0],"value":projections[1],"predicate":if predicates.is_empty(){"1".into()}else{predicates.join(" AND ")}});
     let encoded = plan.to_string();
     if encoded.len() > 4096 {
         return Err("compiled plan limit is 4096 bytes".into());
@@ -165,5 +204,14 @@ mod tests {
         ] {
             assert!(compile(sql).is_err(), "{sql}");
         }
+    }
+    #[test]
+    fn grouped_delta_plan() {
+        let out =
+            compile("SELECT x.k+1,COUNT(*),SUM(y.v) FROM a x JOIN a y ON x.v=y.k GROUP BY x.k+1")
+                .unwrap();
+        assert_eq!(out["plan"]["aggregate"], json!(true));
+        assert_eq!(out["plan"]["value"], json!("y.v"));
+        assert_eq!(out["plan"]["sides"], json!([0, 0]));
     }
 }

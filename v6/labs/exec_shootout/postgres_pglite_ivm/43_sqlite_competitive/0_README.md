@@ -10,6 +10,12 @@ occurrences. It emits a versioned JSON plan for `take2_lazy(plan,'...')`.
 SQLite privately binds k/v scalar expressions. The C delta executor maps each
 occurrence to its source side and applies every nonempty inclusion-exclusion
 mask against current source images. No full-query recomputation is used.
+The grouped compiler fragment lowers `key,COUNT(*),SUM(value) GROUP BY key`
+through the same occurrence masks to count/sum/non-NULL accumulators. The shared
+`sqlite-competitive-compiled` arm compiles fixture SQL once during setup and then
+uses counted SQLite-native maintenance. It admits pipeline, join, self_join,
+chain and aggregate_churn; other catalog shapes report unsupported. The compiler
+binary path is `--competitive-compiler`, and its hash is recorded by the runner.
 Projection types must be INTEGER/NULL before affinity; accumulator overflow
 fails atomically. Other SELECT shapes remain explicit compiler errors.
 

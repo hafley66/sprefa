@@ -207,7 +207,7 @@ static int next(sqlite3_vtab_cursor *p) {
   c->ordinal++;
   if(c->repeats>1){c->repeats--;return SQLITE_OK;}
   int rc = sqlite3_step(c->stmt); c->eof = rc != SQLITE_ROW;
-  if(rc==SQLITE_ROW&&((Tab *)p->pVtab)->mode>=PROJECT)c->repeats=sqlite3_column_int64(c->stmt,3);
+  if(rc==SQLITE_ROW&&((Tab *)p->pVtab)->mode>=PROJECT&&bag((Tab *)p->pVtab))c->repeats=sqlite3_column_int64(c->stmt,3);
   if(((Tab *)p->pVtab)->mode==DISTINCT)c->repeats=1;
   return rc == SQLITE_ROW || rc == SQLITE_DONE ? SQLITE_OK : rc;
 }

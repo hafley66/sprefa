@@ -50,7 +50,8 @@ class CompilerOracle(unittest.TestCase):
                     db.execute("SELECT take2_attach('compiled_result',?,?,'id','k','v')", (source, side))
                 db.execute("SELECT take2_prepare('compiled_result')")
                 def check():
-                    self.assertEqual(collections.Counter(db.execute("SELECT id,k FROM compiled_result")), collections.Counter(db.execute(query)))
+                    columns = 'id,k,v' if plan['plan'].get('aggregate') else 'id,k'
+                    self.assertEqual(collections.Counter(db.execute(f"SELECT {columns} FROM compiled_result")), collections.Counter(db.execute(query)))
                 rng = random.Random(711)
                 db.execute("BEGIN")
                 for source in plan["sources"]:

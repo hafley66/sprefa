@@ -1,13 +1,13 @@
 # Competitive SQLite-native IVM
 
-Current gate exit 0: 239 Python test methods, 2 Rust compiler tests, and the plan
+Current gate exit 0: 251 Python test methods, 3 Rust compiler tests, and the plan
 audit, 171 shared semantic states per batch/sourceview/lazy/fused/counted arm,
 and 143 core circuit states per these arms plus frontier. All eleven core circuits include actual
 incremental maintenance, with negation, cyclic retraction and a separately
 labeled finite scalar epoch variant. CI execution coverage is additive.
 
 Reproduce: `python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/5_gate.py`.
-Current receipt: `43_sqlite_competitive/receipts/reach-filter-gate.json`.
+Current receipt: `43_sqlite_competitive/receipts/group-compile-gate.json`.
 Take 1, Take 2, other worktrees and DL7 sources remain preserved. No push or merge.
 
 | Commit | Tested step |
@@ -20,6 +20,15 @@ Take 1, Take 2, other worktrees and DL7 sources remain preserved. No push or mer
 | `ee7ec0fc3` | Eleven core circuits and pager cache measurements |
 | `5ec333d19` | Persisted scalar input seals and projection type checks |
 | `c4de80359` | Cache schema lifecycle, construction attribution and plan audit |
+| `68401f9f4` | Cached invariant reads |
+| `e5827b9f5` | Partial frontier savepoint regression |
+| `ecba6257d` | Public ABI lazy read/xSync flush |
+| `2ceaa5f67` | Pinned debug SQLite lifecycle build |
+| `f516991e5` | SELECT bag compiler and lazy index initialization repair |
+| `5865de603` | Counted delta metadata and nine-arm paired sweeps |
+| `38bd6c2e8` | Executable session capture/drain boundary probe |
+| `7deb46f00` | Scalar event-time window retraction |
+| `e2052d5ae` | Filtered recursive support retraction |
 
 Expanded authorization: `651913433`, brief `TASKS/7_sqlite_competitive.BRIEF.md`.
 
@@ -520,3 +529,48 @@ Command is the earlier combined-baseline Bash command with output
 `/tmp/sprefa-sqlite-competitive/current-combined.jsonl`, `--warmups 0 --repetitions 3`,
 and additional arms `sqlite-competitive-sourceview,sqlite-competitive-lazy,sqlite-competitive-counted`
 using `--competitive-extension /tmp/sprefa-sqlite-competitive/reach-filter-probe.dylib`.
+
+## Grouped SQL compiler and shared compiled arm
+
+The existing pinned SQLite AST compiler now admits
+`SELECT key,COUNT(*),SUM(value) ... GROUP BY key` over one to three source
+occurrences and supported predicates. GROUP BY repeats one key AST; DISTINCT,
+HAVING, ordered/filtered aggregates and other aggregate functions remain typed
+rejections. The C executor reuses current-base delta masks and persistent count,
+sum and non-NULL-count accumulators. Key/SUM expression types are checked before
+aggregation. Empty groups retract; NULL sums remain NULL. The grouped cursor
+emits one row per group rather than expanding the group's count as bag repeats.
+
+Four grouped query oracles pass, including inequality joins, three self-join
+occurrences, NULL groups, multi-row changes, savepoint rollback, reopen and
+retraction. The shared `sqlite-competitive-compiled` arm compiles fixture SQL
+once during setup, then uses the counted C extension. Maintenance contains no
+Python/JS algorithm. Compiler and extension hashes are emitted in the runner.
+Admitted shared compiler circuits are pipeline, join, self_join, chain and
+aggregate_churn; other cells explicitly report unsupported.
+
+Full debug gate `/tmp/sprefa-sqlite-competitive/gate-su9c8gay/receipt.json` passes:
+251 Python test methods, 3 Rust tests, existing shared states, plus 65 states on
+the compiled arm compared with fused/counting arms. The first added gate stage
+reused a previous stage's scratch root and correctly failed the existing-DB
+guard; its receipt is preserved. A distinct stage-local root repaired it.
+CI execution coverage adds grouped compiler tests and the shared compiled stage.
+
+Paired shared Bash circuit measurement, 24 rows, batch 3, fanout 4, constrained
+budget, three repetitions: all 15 six-arm runs match all 13 input/output states.
+Median mutation-plus-query milliseconds follow. DD/SWI remain volatile; SQL arms
+retain durable settings. SWI's algorithm labels are preserved per circuit.
+
+| Circuit | pg_ivm | DD | SWI | Counted fixed mode | Compiled SELECT |
+|---|---:|---:|---:|---:|---:|
+| pipeline | 9.907 | 0.226 | 0.377 | 2.715 | 2.470 |
+| join | 13.535 | 0.369 | 0.364 | 3.068 | 3.311 |
+| self_join | 17.525 | 0.394 | 0.392 | 3.265 | 3.430 |
+| chain | 17.698 | 0.450 | 0.393 | 4.017 | 4.122 |
+| aggregate_churn | 15.156 | 0.409 | 0.500 | 3.388 | 3.801 |
+
+Command: the same task-local PG prefix and `13_crossover_run.sh circuits`, output
+`/tmp/sprefa-sqlite-competitive/compiled-paired.jsonl`,
+`--circuits pipeline,join,self_join,chain,aggregate_churn --arms query,pg_ivm,dd,swi-circuit,sqlite-competitive-counted,sqlite-competitive-compiled --circuit-dd-bin /private/tmp/sqlite-ivm-astra-target/release/examples/circuit_dd --competitive-extension /tmp/sprefa-sqlite-competitive/group-compile-probe.dylib --competitive-compiler /tmp/sprefa-sqlite-competitive/compiler-target/debug/take2-sql-compile --warmups 0 --repetitions 3`.
+Setup includes the one compiler subprocess. `receipts/compiled-paired.jsonl`
+retains setup, mutation, query, memory/disk and hash evidence.

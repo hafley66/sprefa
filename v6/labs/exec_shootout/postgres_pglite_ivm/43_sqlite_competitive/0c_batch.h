@@ -79,12 +79,17 @@ static int flush_batch(Tab *t) {
     if(t->mode==FANOUT){char *prior=w;w=sqlite3_mprintf("(%s*(coalesce(b0.v>=0,0)+coalesce(b0.v%%2=0,0)))",prior);sqlite3_free(prior);}
     const char *value=t->mode==PROJECT||t->mode==PLAN?t->projection:t->mode==SELF_CHAIN||t->mode==DIAMOND?"b1.v":t->mode==CHAIN?"b2.v":degree==3?"b0.v*b1.v*b2.v":degree==2?"b0.v*b1.v":"b0.v";
     const char *key_expr=t->mode==PLAN?t->key_expression:"b0.k";
-    char *key=bag(t)?sqlite3_mprintf("json_array((%s),(%s))",key_expr,value):sqlite3_mprintf("json_array(b0.k)");
-    char *group=bag(t)?sqlite3_mprintf("(%s),(%s)",key_expr,value):sqlite3_mprintf("b0.k");
+    char *key=bag(t)?sqlite3_mprintf("json_array((%s),(%s))",key_expr,value):sqlite3_mprintf("json_array((%s))",key_expr);
+    char *group=bag(t)?sqlite3_mprintf("(%s),(%s)",key_expr,value):t->mode==PLAN?sqlite3_mprintf("(%s) COLLATE BINARY",key_expr):sqlite3_mprintf("b0.k");
     char *where=t->mode==PROJECT||t->mode==PLAN?sqlite3_mprintf("WHERE (%s)",t->predicate):sqlite3_mprintf("%s",t->mode==FILTER?"WHERE b0.v>=0":"");
     if(t->mode==WINDOW){sqlite3_free(where);where=sqlite3_mprintf("WHERE b0.k BETWEEN %lld AND %lld",t->epoch-t->window_size+1,t->epoch);}
     int sign=bits%2?1:-1;
-    rc=sql(t,sqlite3_mprintf(
+    if(t->mode==PLAN&&t->plan_group) {
+      sqlite3_int64 invalid=0;
+      rc=scalar_sql(t,sqlite3_mprintf("SELECT count(*) FROM %s %s AND (typeof((%s)) NOT IN ('integer','null') OR typeof((%s)) NOT IN ('integer','null'))",relations,where,key_expr,value),0,0,&invalid);
+      if(rc==SQLITE_OK&&invalid)rc=error(t,"group key and SUM argument require integer/NULL expressions");
+    }
+    if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf(
       "INSERT INTO \"%w\".\"%w_result\"(key,k,v,n,s,nn) SELECT %s,(%s),(%s),%d*sum(%s),%d*sum(coalesce((%s),0)*%s),%d*sum(((%s) IS NOT NULL)*%s) FROM %s %s GROUP BY %s "
       "ON CONFLICT(key) DO UPDATE SET n=n+excluded.n,s=s+excluded.s,nn=nn+excluded.nn",
       t->schema,t->name,key,key_expr,bag(t)?value:"NULL",

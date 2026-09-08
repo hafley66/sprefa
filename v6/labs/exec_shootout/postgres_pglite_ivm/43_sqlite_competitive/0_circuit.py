@@ -5,6 +5,7 @@ import itertools
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 import time
 
 def emit(**r): print(json.dumps(r),flush=True)
@@ -21,8 +22,13 @@ def main():
     p.add_argument('--frontiers',action='store_true')
     p.add_argument('--lazy',action='store_true')
     p.add_argument('--counter-mode',choices=['fused','counted'])
+    p.add_argument('--compiled',action='store_true')
+    p.add_argument('--compiler',default='/tmp/sprefa-sqlite-competitive/compiler-target/debug/take2-sql-compile')
     args=p.parse_args()
     fixture=json.loads(Path(args.fixture).read_text())
+    if args.compiled and fixture['circuit'] not in ['pipeline','join','self_join','chain','aggregate_churn']:
+        emit(event='capability',status='unsupported',reason='compiled SELECT fragment does not admit this circuit')
+        return
     plans={'aggregate_churn':('join',2,3),'pipeline':('project',1,2),
            'join':('inner',2,2),'self_join':('self_chain',1,2),'chain':('chain',3,2),
            'semijoin':('semi',2,2),'antijoin':('anti',2,2),'reach_cycle':('reach',2,1),
@@ -44,12 +50,18 @@ def main():
     mode,sides,columns=plans[fixture['circuit']]
     module='take2_lazy' if args.lazy else 'take2_epoch' if args.frontiers else 'take2'
     if args.counter_mode:module='take2_'+args.counter_mode
-    db.execute(f'CREATE VIRTUAL TABLE result USING {module}({mode})')
-    for side,table in enumerate(['a','b','c'][:sides]):
+    sources=['a','b','c'][:sides]
+    if args.compiled:
+        compiled=json.loads(subprocess.run([args.compiler],input=fixture['query'],text=True,capture_output=True,check=True,timeout=10).stdout)
+        db.execute(compiled['create_sql'].replace('compiled_result','result').replace('take2_lazy',module))
+        sources=compiled['sources']
+    else:db.execute(f'CREATE VIRTUAL TABLE result USING {module}({mode})')
+    for side,table in enumerate(sources):
         db.execute("SELECT take2_attach('result',?,?, 'id','k','v')",(table,side)).fetchall()
     if args.lazy:db.execute("SELECT take2_prepare('result')").fetchall()
     emit(event='case-setup',status='ok',setup_ms=(time.perf_counter()-start)*1000,
          algorithm=f'public vtab {mode}',batch=args.batch,source_views=args.source_views,durability='durable SQL WAL/FULL',
+         compiled_select=args.compiled,
          sqlite_version=sqlite3.sqlite_version,extension_sha256=hashlib.sha256(Path(args.extension).read_bytes()).hexdigest())
     if args.frontiers:
         db.executescript('BEGIN;INSERT INTO result(op) VALUES(10);INSERT INTO result(op,id,side) VALUES(12,1,0),(12,1,1);')
