@@ -90,7 +90,10 @@ pub struct ScipRust;
 const TS_EXTS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
 
 /// The root-only Rust staging set used for a plain directory or self-contained
-/// Cargo root. Repository snapshots carry every non-ignored source byte.
+/// Cargo root. Repository snapshots carry every non-ignored source byte,
+/// including the workspace lockfile. The lockfile carries the exact dependency
+/// graph rust-analyzer must resolve; omitting it can trigger fresh registry
+/// resolution and a partial SCIP index even when rust-analyzer exits zero.
 const RUST_EXTS: &[&str] = &["rs"];
 const RUST_EXTRA_NAMES: &[&str] = &[
     "Cargo.toml",
@@ -611,7 +614,7 @@ fn fresh_temp_dir(prefix: &str) -> Result<PathBuf, ScipError> {
 
 /// Copy the sources under `src_root` to `dst_root`, preserving relative
 /// structure: files whose extension is in `exts` plus files whose bare name is
-/// in `extra_names` (rust's Cargo.toml manifests).
+/// in `extra_names` (rust's Cargo manifests and lockfiles).
 ///
 /// A CHILD DIRECTORY CARRYING ITS OWN `.git` IS A DIFFERENT CHECKOUT and is
 /// never staged: a nested worktree or submodule is not part of this workspace,
@@ -931,4 +934,16 @@ pub fn definition_of(
     let (def_doc_ix, occ_ix) = map.get(&symbol)?;
     let occ = &index.documents[*def_doc_ix].occurrences[*occ_ix as usize];
     Some((*def_doc_ix, occ.range))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Staging, RUST_EXTRA_NAMES, RUST_SPEC};
+
+    #[test]
+    fn rust_indexer_preserves_the_locked_dependency_graph() {
+        assert!(matches!(RUST_SPEC.staging, Staging::RepositorySnapshot));
+        assert!(RUST_EXTRA_NAMES.contains(&"Cargo.toml"));
+        assert!(RUST_EXTRA_NAMES.contains(&"Cargo.lock"));
+    }
 }

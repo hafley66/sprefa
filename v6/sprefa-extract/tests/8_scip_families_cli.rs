@@ -232,6 +232,14 @@ fn the_discrimination_holds_through_rust_analyzer_too() {
         "rust-analyzer must bind gamma's call to alpha: {real}"
     );
     assert!(
+        !real.lines().any(|line| {
+            line.starts_with(r#"{"record":"scip_fn_edge""#)
+                && line.contains("scip/gamma/before_reexport().")
+                && line.contains("scip/alpha/helper().")
+        }),
+        "the module-level re-export must not become a call from the preceding function: {real}"
+    );
+    assert!(
         !real.contains("scip/beta/helper()\",")
             && !real.contains("callee\":\"rust-analyzer cargo fixtures 0.0.0 scip/beta/helper()."),
         "nothing references beta's helper: {real}"

@@ -25,6 +25,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use crate::scip::{byte_range_at, LineTable};
 use crate::types::{FlatFact, OccurrenceRole, ScipIndex, ScipOccurrence};
 
 /// Project a loaded index to the v5 relation rows, sorted and deduped.
@@ -76,6 +77,8 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
     for document in &index.documents {
         let path = document.relative_path.as_str();
         let callables = fn_defs.get(path);
+        let content = std::fs::read(root.join(path)).ok();
+        let lines = content.as_deref().map(LineTable::build);
         for occurrence in &document.occurrences {
             let symbol = index.symbol(occurrence.symbol);
             // Locals are filtered out of the main path by `usable_symbol` and
@@ -112,9 +115,17 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
             // Both ranges come from the same index, so the 0-based line/col
             // base is internally consistent whatever the consumer's own
             // convention is.
-            if let Some(caller) = callables.and_then(|fns| enclosing_fn(fns, start_of(occurrence)))
-            {
-                fn_edges.insert((caller, symbol));
+            if !is_module_binding_reference(
+                document,
+                occurrence,
+                content.as_deref(),
+                lines.as_ref(),
+            ) {
+                if let Some(caller) =
+                    callables.and_then(|fns| enclosing_fn(fns, start_of(occurrence)))
+                {
+                    fn_edges.insert((caller, symbol));
+                }
             }
         }
     }
@@ -354,16 +365,102 @@ fn is_callable_def(symbol: &str) -> bool {
 ///
 /// SCIP definition occurrences mark only the callable's IDENTIFIER, not its
 /// body, so a containment test cannot work: the enclosing callable is the one
-/// whose definition starts most recently at or before the position. Correct for
-/// any reference inside a body; it mis-attributes the rare module-level
-/// reference that sits after one body and before the next definition, which is
-/// acceptable noise for a call-graph extractor and is v5's own stated tradeoff.
+/// whose definition starts most recently at or before the position. Module
+/// binding references are removed before this predecessor search because an
+/// import or re-export between two bodies belongs to the module, not the
+/// preceding callable.
 fn enclosing_fn<'a>(callables: &[((i32, i32), &'a str)], pos: (i32, i32)) -> Option<&'a str> {
     callables
         .iter()
         .filter(|(start, _)| *start <= pos)
         .max_by_key(|(start, _)| *start)
         .map(|(_, symbol)| *symbol)
+}
+
+/// Whether a reference occurrence is part of a module binding statement.
+///
+/// rust-analyzer currently gives Rust `use` and `pub use` references role 0,
+/// the same role it gives executable references. SCIP also provides identifier
+/// ranges instead of syntax-parent ranges. Read the source statement once per
+/// document and classify that missing distinction before producing call edges.
+/// The reference and file-edge relations still retain these occurrences.
+fn is_module_binding_reference(
+    document: &crate::types::ScipDocument,
+    occurrence: &ScipOccurrence,
+    content: Option<&[u8]>,
+    lines: Option<&LineTable>,
+) -> bool {
+    if document.language != "rust" {
+        return false;
+    }
+    let (Some(content), Some(lines)) = (content, lines) else {
+        return false;
+    };
+    let Some(span) = byte_range_at(content, lines, occurrence.range, document.position_encoding)
+    else {
+        return false;
+    };
+
+    let Ok(start) = usize::try_from(span.start) else {
+        return false;
+    };
+    let Some(prefix) = content.get(..start) else {
+        return false;
+    };
+    let statement_start = prefix
+        .iter()
+        .rposition(|byte| matches!(byte, b';' | b'}'))
+        .map_or(0, |index| index + 1);
+    let statement = String::from_utf8_lossy(&prefix[statement_start..]);
+    rust_binding_prefix(&statement)
+}
+
+/// Recognize the source prefix before a Rust path occurrence in a `use` item.
+/// Attributes and visibility may precede `use`; the keyword must be a complete
+/// token so identifiers such as `reuse` cannot suppress a call edge.
+fn rust_binding_prefix(prefix: &str) -> bool {
+    let code = rust_code_without_comments(prefix);
+    code.split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .any(|token| token == "use")
+}
+
+/// Remove Rust comments before scanning for the `use` keyword. A comment in a
+/// function body can contain that word immediately before an executable
+/// reference and must not change caller attribution.
+fn rust_code_without_comments(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut code = String::with_capacity(source.len());
+    let mut index = 0;
+    let mut block_depth = 0_u32;
+    while index < bytes.len() {
+        if block_depth > 0 {
+            if bytes.get(index..index + 2) == Some(b"/*") {
+                block_depth += 1;
+                index += 2;
+            } else if bytes.get(index..index + 2) == Some(b"*/") {
+                block_depth -= 1;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes.get(index..index + 2) == Some(b"//") {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            code.push('\n');
+            index += usize::from(index < bytes.len());
+        } else if bytes.get(index..index + 2) == Some(b"/*") {
+            block_depth = 1;
+            index += 2;
+        } else {
+            code.push(bytes[index] as char);
+            index += 1;
+        }
+    }
+    code
 }
 
 /// The receiver type of a method moniker. rust-analyzer encodes the impl holder
