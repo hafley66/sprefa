@@ -442,6 +442,14 @@ fn an_explicit_family_index_is_read_directly_without_spawning_an_indexer() {
     .expect("copy indexed source");
     std::fs::write(root.join("package.json"), b"{}\n").expect("typescript marker");
 
+    let environment_index = root.join("environment.scip");
+    std::fs::write(&environment_index, b"invalid environment index")
+        .expect("conflicting environment index");
+    let cache = root.join("cache");
+    std::fs::create_dir_all(&cache).expect("conflicting cache directory");
+    std::fs::write(cache.join("index.scip"), b"invalid cache index")
+        .expect("conflicting cache index");
+
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).expect("sentinel bin dir");
     let sentinel = root.join("indexer-ran");
@@ -456,12 +464,14 @@ fn an_explicit_family_index_is_read_directly_without_spawning_an_indexer() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_extract"))
         .env("PATH", &bin)
-        .env("SPREFA_SCIP_INDEX", root.join("environment.scip"))
+        .env("SPREFA_SCIP_INDEX", &environment_index)
         .args([
             "--family",
             "scip",
             "--scip-index",
             &index.to_string_lossy(),
+            "--scip-cache",
+            &cache.to_string_lossy(),
             &root.to_string_lossy(),
         ])
         .output()
@@ -537,6 +547,35 @@ fn missing_and_invalid_explicit_family_indexes_fail_without_rebuilding() {
         String::from_utf8_lossy(&invalid_output.stderr)
     );
     assert!(!sentinel.exists(), "explicit failures must not rebuild");
+}
+
+#[test]
+fn explicit_index_requires_project_root_outside_the_scip_family() {
+    for args in [
+        vec![
+            "--scip-index",
+            "tests/fixtures/scip_relationship/fixture.scip",
+            TS_TRIO[0],
+        ],
+        vec![
+            "--family",
+            "diet_scip",
+            "--scip-index",
+            "tests/fixtures/scip_relationship/fixture.scip",
+            TS_TRIO[0],
+        ],
+    ] {
+        let output = raw(&args);
+        assert!(
+            !output.status.success(),
+            "{args:?} must reject the missing root"
+        );
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            message.contains("--scip-index") && message.contains("--project-root"),
+            "the error must name the requirement: {message}"
+        );
+    }
 }
 
 #[test]

@@ -614,6 +614,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The two named families are whole-project modes, so they are dispatched
     // before every per-file path below.
     let mode = family_mode(cli.family.as_deref())?;
+    if cli.scip_index.is_some()
+        && cli.project_root.is_none()
+        && !matches!(mode, Some(FamilyMode::Scip))
+    {
+        return Err("--scip-index requires --project-root outside --family scip ROOT".into());
+    }
     // `--family scip`, `--scip-facts` and `--scip-deps` take a ROOT directory;
     // every other mode takes files.
     if !matches!(mode, Some(FamilyMode::Scip)) && !cli.scip_facts && !cli.scip_deps {

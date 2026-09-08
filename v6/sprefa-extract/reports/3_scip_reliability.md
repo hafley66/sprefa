@@ -12,6 +12,9 @@ Base: `cc46e44357dafd618da2c223118bf9ece57e7b0f`
   consulting `SPREFA_SCIP_INDEX`, cache paths, marker detection, or the indexer
   roster. Missing and invalid explicit files return errors. Clap rejects an
   explicit file combined with `--indexer` or `--scip-build`.
+- Outside `--family scip ROOT`, `--scip-index` continues to require
+  `--project-root`; per-file and `diet_scip` invocations reject the missing
+  root instead of ignoring the supplied index.
 - Existing `ScipFamilyRequest` construction remains source-compatible. New
   library functions `scip_family_from_index` and
   `scip_family_from_index_jsonl` expose the direct-read path; existing
@@ -49,19 +52,20 @@ All commands used
 `CARGO_TARGET_DIR=/tmp/sprefa-extract-scip-reliability-target.IuDQPc`.
 
 - Focused staging regression: 1 passed, 0 failed.
-- Focused explicit-index regressions: 3 passed, 0 failed.
+- Focused explicit-index regressions: 4 passed, 0 failed.
 - Focused staleness regression: 1 passed, 0 failed.
 - Full affected binaries: `scip_freshness` 10 passed, 0 failed;
-  `8_scip_families_cli` 21 passed, 0 failed.
+  `8_scip_families_cli` 22 passed, 0 failed.
 - Finished integration gate: `cargo test --features cli --no-fail-fast`, exit
-  0.
+  0. The retained one-shot log contains 171 test-result blocks: 902 passed, 0
+  failed, 16 ignored, and 0 measured.
 
 CI coverage adds deterministic checks for workspace-member directory pruning,
 retained live/target/unrelated staged content, direct explicit-index reads with
-a sentinel indexer, explicit-over-environment precedence, missing and invalid
-explicit files, flag conflicts, all three staleness states, stale-index fact
-emission, missing-source fact emission, and schema/help documentation. No CI
-coverage was removed.
+a sentinel indexer, explicit-over-environment-and-cache precedence, missing and
+invalid explicit files, flag conflicts, missing project roots outside the SCIP
+family, all three staleness states, stale-index fact emission, missing-source
+fact emission, and schema/help documentation. No CI coverage was removed.
 
 ## Limitations
 
