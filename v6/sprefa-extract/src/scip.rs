@@ -87,10 +87,13 @@ pub struct ScipRust;
 /// copy preserves these, directory structure included.
 const TS_EXTS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
 
-/// The rust staging set: the sources + every Cargo.toml (workspace member
-/// manifests carry the crate graph the indexer resolves through).
+/// The rust staging set: the sources + every Cargo.toml and Cargo.lock. The
+/// manifests carry the crate graph; the lockfile carries the exact dependency
+/// graph rust-analyzer must resolve. Omitting an existing workspace lockfile can
+/// make cargo metadata attempt a fresh registry resolution and rust-analyzer can
+/// still exit zero after emitting a partial SCIP index.
 const RUST_EXTS: &[&str] = &["rs"];
-const RUST_EXTRA_NAMES: &[&str] = &["Cargo.toml"];
+const RUST_EXTRA_NAMES: &[&str] = &["Cargo.toml", "Cargo.lock"];
 
 /// The jvm staging set. The build files are what scip-java drives; without
 /// them the staged copy has no project to index.
@@ -397,7 +400,7 @@ fn fresh_temp_dir(prefix: &str) -> Result<PathBuf, ScipError> {
 
 /// Copy the sources under `src_root` to `dst_root`, preserving relative
 /// structure: files whose extension is in `exts` plus files whose bare name is
-/// in `extra_names` (rust's Cargo.toml manifests).
+/// in `extra_names` (rust's Cargo manifests and lockfiles).
 ///
 /// A CHILD DIRECTORY CARRYING ITS OWN `.git` IS A DIFFERENT CHECKOUT and is
 /// never staged: a nested worktree or submodule is not part of this workspace,
@@ -717,4 +720,18 @@ pub fn definition_of(
     let (def_doc_ix, occ_ix) = map.get(&symbol)?;
     let occ = &index.documents[*def_doc_ix].occurrences[*occ_ix as usize];
     Some((*def_doc_ix, occ.range))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Staging, RUST_SPEC};
+
+    #[test]
+    fn rust_indexer_stages_the_locked_dependency_graph() {
+        let Staging::Always { exts, extra_names } = RUST_SPEC.staging else {
+            panic!("rust-analyzer must always run over a staged workspace");
+        };
+        assert_eq!(exts, &["rs"]);
+        assert_eq!(extra_names, &["Cargo.toml", "Cargo.lock"]);
+    }
 }

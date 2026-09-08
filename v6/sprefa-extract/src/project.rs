@@ -1868,13 +1868,24 @@ impl SourceTreeBlobSource {
         let revision = tree
             .resolve_revision(soopy::Revision::Worktree)
             .map_err(|error| error.to_string())?;
+        let mut readable_files = Vec::with_capacity(files.len());
         let mut requests = Vec::with_capacity(files.len());
         for file in files {
+            // Compiler indexes may name generated documents that existed while
+            // indexing and no longer exist in the current worktree. The SCIP
+            // projection already defines an unreadable document as a header
+            // and symbol contributor with no occurrence rows. Keep that
+            // document out of soopy's all-or-error read batch so the readable
+            // documents still reach the projection.
+            if !root.join(file).is_file() {
+                continue;
+            }
             let repo_path = if prefix.is_empty() {
                 file.to_string()
             } else {
                 format!("{prefix}/{file}")
             };
+            readable_files.push(*file);
             requests.push(soopy::ReadRequest {
                 source: soopy::SourceRef {
                     repository: repository.identity.clone(),
@@ -1887,8 +1898,8 @@ impl SourceTreeBlobSource {
         let answers = tree
             .read_many(&requests)
             .map_err(|error| error.to_string())?;
-        let entries = files
-            .iter()
+        let entries = readable_files
+            .into_iter()
             .zip(answers)
             .map(|(file, answer)| {
                 (

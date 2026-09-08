@@ -22,6 +22,7 @@ incomplete.
   <li><a href="#compiler-time">Compiler time</a>
     <ol>
       <li>Pure compiler fixpoint</li>
+      <li><a href="#hosted-relation-declaration">Hosted relation declaration</a></li>
       <li>Ground external observations
         <ol>
           <li>Filesystem and Git through Soopy</li>
@@ -182,11 +183,23 @@ DL7 facts
 8. Structural typing is edge-set comparison. Nominal typing is reachability
    through declared identity edges. Declared implementations can require both
    nominal evidence and a structurally valid witness.
-9. Rejected for this planning arc: implementation of a new DL7 special form.
+9. Hosted declarations use the ordinary prefix call `(Host ...)`; the reader
+   vocabulary remains unchanged. Closed `Hosted` and `HostPort` facts are the
+   compiler planning boundary.
 10. Rejected for this planning arc: a source-specific schema added without a
     concrete consumer and prior discussion.
 11. Authored Markdown can be source data for compiler rules. Generated Markdown
     carries enough provenance to locate and verify the authored source.
+12. A hosted relation is one relation node whose existing `:/4` edges are
+    classified as input or output ports. The host contributes completed rows of
+    that relation.
+13. Host implementations are ordinary graph identities. ABI, symbol,
+    executable, and operation information are edges on those identities.
+14. `ExtractTsi` is the first hosted relation. It receives source identity and
+    extraction mode, then contributes typed TSI record values to the next
+    compiler generation.
+15. Generated demand and response relations are absent from the DL7 semantic
+    contract. A selected runtime may use private queues and collections.
 
 ## Language kernel
 
@@ -217,7 +230,11 @@ implementation:
 - a privileged relation unavailable to userland rules;
 - source-specific vocabulary in the common type graph.
 
-<!-- todo(decision): Discuss and approve the smallest effect boundary only after an executable adapter-shaped prototype demonstrates which current relation or value representation is insufficient. -->
+The hosted-relation boundary below is the approved compiler exception to this
+gate. It consumes closed graph facts after the ordinary compiler fixpoint and
+adds no reader token or top-level form.
+
+<!-- todo(feature): Prove the approved Hosted and HostPort boundary with a hollow ExtractTsi adapter before selecting or implementing an external transport. -->
 
 ## Compiler time
 
@@ -253,6 +270,337 @@ same logical operation
 ```
 
 <!-- todo(decision): Select the first transport after measuring call overhead, process lifetime, memory ownership, failure reporting, and reuse by the Rust runtime. -->
+
+### Hosted relation declaration
+
+The author-facing form describes the relation, its implementation, and its port
+directions together:
+
+```dl7
+(: ExtractTsi
+   (Host SprefaExtract
+      (* (: source Source)
+         (: mode ExtractMode))
+      (* (: record TsiRecord))))
+```
+
+`Host` has the type-level signature:
+
+```text
+Host(
+    Implementation,
+    InputProduct,
+    OutputProduct
+) -> Relation
+```
+
+It lowers to the ordinary relation shape and two compiler relations:
+
+```dl7
+(: ExtractTsi
+   (* (: source Source)
+      (: mode ExtractMode)
+      (: record TsiRecord)))
+
+(Hosted ExtractTsi SprefaExtract)
+
+(HostPort ExtractTsi source Input)
+(HostPort ExtractTsi mode Input)
+(HostPort ExtractTsi record Output)
+```
+
+The corresponding prelude signatures are:
+
+```dl7
+(: Input (*))
+(: Output (*))
+
+(: Hosted
+   (* (: relation type)
+      (: implementation type)))
+
+(: HostPort
+   (* (: relation type)
+      (: label any)
+      (: direction type)))
+```
+
+`HostPort(Relation, Label, Direction)` addresses an existing edge through the
+current unique `(Owner, Label)` key of `:/4`. Reification remains available to
+rules that need the edge as a subject. `edge_ref/3` is a constructive kernel
+relation with input key `[owner, label]` and canonical result
+`edge(Owner, Label)`. It constructs identities only for calls reached by a
+rule, so declaring an edge does not eagerly add a second row for every edge:
+
+```dl7
+(<- (: ?Edge direction ?Direction 0)
+    (HostPort ?Relation ?Label ?Direction)
+    (edge_ref ?Relation ?Label ?Edge))
+```
+
+The closed graph for the first host contains:
+
+```text
+Hosted(ExtractTsi, SprefaExtract)
+
+:(ExtractTsi, source, Source,      0)
+:(ExtractTsi, mode,   ExtractMode, 1)
+:(ExtractTsi, record, TsiRecord,   2)
+
+HostPort(ExtractTsi, source, Input)
+HostPort(ExtractTsi, mode,   Input)
+HostPort(ExtractTsi, record, Output)
+```
+
+Names are opaque graph identities. `ExtractTsi`, `extract_tsi`, and a name
+containing punctuation have identical hosting behavior when they resolve to the
+same node. Host lookup treats the name atomically and never splits on dots.
+
+#### Implemented compiler slice, 2026-09-03
+
+The first bounded slice is present in the V7 compiler:
+
+1. `0_lowerer.pl` recognizes the ordinary prefix form `(Host ...)`, lowers the
+   input and output products into one relation, and emits closed `Hosted` and
+   `HostPort` rules.
+2. `1d_host_planner.pl` validates one implementation, one direction per
+   relation edge, known edge labels, and `Input` or `Output` direction nodes.
+3. `2_compiler.pl` performs validation after compiler closure and removes
+   `Hosted` and `HostPort` relation declarations, rows, producers, and
+   compiler-only consumers before runtime rule checking.
+4. `edge_ref/3` constructs the canonical identity of any `(Owner, Label)` pair.
+   The hosted fixture attaches an ordinary `direction` edge to each of the
+   three selected ports without enumerating every graph edge.
+5. `8_hosted.dl7` and `1_entrypoints.test.pl` record the exact three field
+   ordinals, their directions, distinct edge identities, validation failures,
+   and zero host-planning references in runtime Datalog.
+6. `0_parser.pl` accepts dots inside names as ordinary identifier characters.
+   Reader and host-lowering receipts preserve `rel.with.dot`,
+   `field.with.dot`, and `impl.with.dot` as complete atoms.
+
+The external operator loop remains behind the transport measurement gate.
+
+Verification for this slice:
+
+| Gate | Result |
+| --- | --- |
+| V7 PLUnit battery | 66 of 66 passed |
+| Tree-sitter V7 build gate | 1 of 1 corpus parses passed |
+| Compiler closure | 7 rounds, 12,716 compiler rows |
+| Runtime program | 123 relations, 389 seeds, 129 rules |
+| Compiler performance | 79,441,996 cold inferences; 1,958 warm inferences |
+| Plan index | regenerated and check mode passed |
+
+#### Implementation description
+
+The implementation identity and its binding metadata are also DL7 graph data:
+
+```dl7
+(: NativeHostV1 (*))
+
+(: SprefaExtract
+   (* (: abi NativeHostV1)
+      (: symbol "extract_tsi")))
+```
+
+A process adapter can describe the same logical implementation through a
+different node:
+
+```dl7
+(: ProcessJsonlV1 (*))
+
+(: SprefaExtractProcess
+   (* (: abi ProcessJsonlV1)
+      (: executable "sprefa-extract")
+      (: operation "tsi")))
+
+(Hosted ExtractTsi SprefaExtractProcess)
+```
+
+The host runtime chooses which authorized implementation descriptions it can
+resolve. The callable type, ports, and produced rows stay constant across a
+linked Rust function, C ABI call, resident service, or child process.
+
+#### First hosted types
+
+`ExtractTsi` returns one typed envelope stream. The existing extractor envelope
+categories become a DL7 sum:
+
+```dl7
+(: TsiFact
+   (* (: relation text)
+      (: arguments any)))
+
+(: TsiRun
+   (* (: run type)
+      (: mode ExtractMode)
+      (: tool text)
+      (: version text)
+      (: scope any)))
+
+(: TsiWitness
+   (* (: fact type)
+      (: run type)
+      (: method text)))
+
+(: TsiCoverage
+   (* (: run type)
+      (: relation text)
+      (: coverage text)))
+
+(: TsiDiagnostic
+   (* (: run type)
+      (: relation text)
+      (: detail any)))
+
+(: TsiRecord
+   (+ (: fact TsiFact)
+      (: run TsiRun)
+      (: witness TsiWitness)
+      (: coverage TsiCoverage)
+      (: diagnostic TsiDiagnostic)))
+```
+
+The complete declaration will also include the protocol record already decoded
+by `0c_extract_loader.pl`. Typed record projectors turn the host output into the
+existing common graph relations:
+
+```dl7
+(<- (tsi_type ?Type)
+    (ExtractTsi ?Source ?Mode ?Record)
+    (TsiTypeRecord ?Record ?Type))
+
+(<- (tsi_edge ?Edge ?Owner ?Label ?Target ?Position)
+    (ExtractTsi ?Source ?Mode ?Record)
+    (TsiEdgeRecord
+        ?Record
+        ?Edge
+        ?Owner
+        ?Label
+        ?Target
+        ?Position))
+```
+
+#### Evaluation body
+
+```text
+for each closed Hosted(Relation, Implementation):
+    resolve every HostPort against Relation's :/4 edges
+    compile one operator with input and output column projections
+
+after each pure compiler fixpoint:
+    collect newly present input tuples whose input ports are ground
+    send their positive and negative differences to Implementation
+    collect completed output tuples
+    add those tuples to Relation in the next compiler generation
+    repeat until relation rows and hosted output rows are unchanged
+```
+
+For the first call:
+
+```dl7
+(: imported_type
+   (* (: source Source)
+      (: type type)))
+
+(<- (imported_type ?Source ?Type)
+    (RustSource ?Source)
+    (ExtractTsi ?Source Syntax ?Record)
+    (TsiTypeRecord ?Record ?Type))
+```
+
+The timeline is:
+
+```text
+compiler generation N
+    RustSource(Source)
+    ExtractTsi(Source, Syntax, ?Record) becomes dispatchable
+
+host boundary
+    SprefaExtract receives +[Source, Syntax]
+    SprefaExtract emits +[Source, Syntax, Record] rows
+
+compiler generation N+1
+    ExtractTsi completed rows become visible
+    TSI projection rules derive type nodes and :/4 edges
+    the type graph freezes after closure
+```
+
+#### Instance lifetime
+
+One host implementation instance lives for the compiler run. Each distinct
+input tuple owns one finite extraction operation:
+
+```text
++[Source, Mode]  starts or retains extraction
+-[Source, Mode]  cancels pending extraction and retracts its output rows
+```
+
+Finite extraction completes after publishing its record set. A later Soopy
+watch uses the same host shape and remains active until its input tuple retracts
+or the runtime closes. Completion and retraction provide the lifetime; there is
+no `Once` or `Continuing` field.
+
+#### Storage, reads, writes, and uniqueness
+
+The host runner stores:
+
+```text
+(HostedRelation, InputTuple)
+    -> active execution
+    -> emitted OutputTuple set
+```
+
+For `ExtractTsi`, the input key is:
+
+```text
+(ExtractTsi, Source, Mode)
+```
+
+`Source` carries immutable content identity, so unchanged content addresses the
+same cached extraction. Output uniqueness is the ordinary set identity of the
+completed tuple:
+
+```text
+(ExtractTsi, Source, Mode, Record)
+```
+
+The host runner reads `Hosted`, `HostPort`, the relation's `:/4` edges, and
+input-tuple differences. It writes completed `ExtractTsi` tuples for the next
+compiler generation. TSI projection rules read those tuples and write ordinary
+type, name, application, parameter, origin, and edge relations.
+
+Private queues, tasks, process identifiers, and transport buffers remain
+runtime storage. The emitted compiler program contains no generated
+`ExtractTsiDemand` or `ExtractTsiResponse` relation.
+
+#### Delivery sequence
+
+1. Completed: add hollow `Host`, `Hosted`, `HostPort`, `Input`, and `Output`
+   declarations and lower one `ExtractTsi` declaration to exact graph rows.
+2. Completed: validate that every port names one existing relation edge, every
+   edge has one direction, and every hosted relation has one implementation.
+3. Add a fixture implementation that receives one grounded source and returns
+   a deterministic `TsiRecord` set without external I/O.
+4. Feed those completed tuples into the next compiler generation and project
+   them through the existing TSI loader relations.
+5. Select and connect the external transport after the existing measurement
+   gate.
+6. Make the DBSP emitter consume the same `Hosted` and `HostPort` rows to create
+   operator input and output handles.
+
+The first verification fixture must establish:
+
+```text
+one authored Host declaration
+    -> one Hosted row
+    -> three HostPort rows
+    -> one grounded ExtractTsi input
+    -> one fixture dispatch
+    -> several completed ExtractTsi rows
+    -> one next-generation TSI projection
+    -> zero generated demand/response relations
+```
 
 ## Source intelligence
 
@@ -491,7 +839,8 @@ file is qualified by its known owner when TSI carries that edge, such as
 `Mapper_T`, `User_T`, and `Shape_Circle`. Remaining collisions receive their
 wire id as a suffix. Rust impl blocks have no source name, so their graph edges
 derive names such as `User_Mapper_impl`; anonymous products use their owning
-edge when present. The Rust unit spelling `()` maps to the DL7 name `unit`.
+edge when present. The Rust unit spelling `()` remains the DL7 name `()`; the
+TSI loader maps the wire primitive class `unit` to that prelude product.
 Syntax TSI currently leaves some nested generic applications and associated
 types opaque; semantic TSI supplies the additional application and
 associated-type rows needed for that later projection.
@@ -661,36 +1010,29 @@ identity, stable ordering, complete diagnostics, and an equivalence receipt.
 ## Remaining tasks by section
 
 The labels below distinguish implementation from discussion and optional
-language adapters. They add no kernel form or source-specific schema.
+language adapters. They add no reader token or source-specific schema.
 
-1. **Language kernel**
-   1. Build one host-side compiler-observation prototype using the existing
-      call, value, and relation representations.
-   2. Record the first concrete limitation, if the prototype encounters one.
-   3. Discuss that limitation before proposing a reader, evaluator, scope,
-      phase, or privileged-relation change.
-
-   <!-- todo(feature): Language kernel section: prove one compiler observation through existing calls, values, and relations, then present any concrete representation failure before proposing a kernel change. -->
-
-2. **Compiler time**
-   1. Define a host-internal operation envelope for the prototype, outside the
-      DL7 surface contract.
-   2. Measure direct Rust calls, C ABI calls, Unix-domain sockets, and
+1. **Compiler time**
+   1. Compile each valid hosted relation into one differential operator from
+      its input-edge tuple to its completed relation tuple.
+   2. Implement the hollow `ExtractTsi` fixture adapter and inject its completed
+      tuples into the following compiler generation.
+   3. Measure direct Rust calls, C ABI calls, Unix-domain sockets, and
       subprocess JSONL for startup cost, repeated-call cost, memory ownership,
       cancellation, and diagnostics.
-   3. Select the first transport at the existing decision gate.
-   4. Collect newly grounded operations after each pure fixpoint round.
-   5. Intern operation identity from capability, operation, and arguments.
-   6. Dispatch each operation identity once per compiler generation.
-   7. Convert successful results into provenance-carrying observation facts.
-   8. Convert failures and timeouts into named compiler diagnostics.
-   9. Resume the pure fixpoint until neither rows nor operations grow.
-   10. Add cache ownership, invalidation, and tracing after the uncached loop is
+   4. Select the first transport at the existing decision gate.
+   5. Deduplicate each input tuple through ordinary relation set identity.
+   6. Convert failures and timeouts into named compiler diagnostics.
+   7. Resume the pure fixpoint until neither relation rows nor hosted output
+      rows change.
+   8. Propagate negative input differences into cancellation and output-row
+      retraction.
+   9. Add cache ownership, invalidation, and tracing after the uncached loop is
        correct.
 
-   <!-- todo(feature): Compiler-time section: implement the grounded-operation loop, stable operation identity, one-dispatch-per-generation, observation injection, convergence, diagnostics, tracing, and measured transport selection. -->
+   <!-- todo(feature): Compiler-time section: run the hollow ExtractTsi operator, inject completed tuples in the next generation, propagate retractions, then select a measured transport and add diagnostics, caching, and tracing. -->
 
-3. **Source intelligence**
+2. **Source intelligence**
    1. **Complete:** Put the existing tree-sitter query runner, ast-grep
       pattern runner, and composed `AstRule` runner behind one Rust host facade.
       Preserve each engine's current result shape in a distinct output variant;
@@ -734,7 +1076,7 @@ language adapters. They add no kernel form or source-specific schema.
 
    <!-- todo(feature): Source-intelligence section: connect loaded source facts to the compiler observation loop, project semantic Markdown facts, join syntax captures to semantic identities, derive live task rows, render provenance-carrying Markdown, stage fixes, and batch source parsing. -->
 
-4. **Common type graph**
+3. **Common type graph**
    1. Keep the current TSI intersection as the source-neutral ingestion
       boundary.
    2. Decide the DL7 vocabulary selecting structural, nominal, or
@@ -753,7 +1095,7 @@ language adapters. They add no kernel form or source-specific schema.
 
    <!-- todo(feature): Common-type-graph section: approve conformance policy vocabulary, add nominal reachability and witness validation, then add Go and selected Kotlin semantic adapters with cross-language projection receipts. -->
 
-5. **Relational program**
+4. **Relational program**
    1. Define target-neutral layout and representation rows without naming a
       database or host language in compiler relations.
    2. Derive read, write, dependency, polarity, SCC, and stratum facts from the
@@ -767,7 +1109,7 @@ language adapters. They add no kernel form or source-specific schema.
 
    <!-- todo(feature): Relational-program section: define target-neutral layout and representation rows, emit the first DBSP-style plan, feed SQL and Rust emitters, and prove equal checked programs for authored and generated declarations. -->
 
-6. **Output time**
+5. **Output time**
    1. Approve canonical artifact, source mutation, process, Git, and network
       intention data.
    2. Separate recoverable observations from externally visible mutations.
@@ -786,7 +1128,7 @@ language adapters. They add no kernel form or source-specific schema.
 
    <!-- todo(feature): Output-time section: approve intention data, validate and order mutations, connect Soopy staging, add bounded shell and HTTP adapters, and record applied-output identity. -->
 
-7. **Bootstrap**
+6. **Bootstrap**
    1. Approve the projection used to compare stage-zero and generated schemas.
    2. **Representative syntax slice complete:** Extract Rust implementation
       types into a TSI stream. Whole-protocol and semantic-checker coverage
@@ -803,7 +1145,7 @@ language adapters. They add no kernel form or source-specific schema.
 
    <!-- todo(feature): Bootstrap section: approve the equivalence projection, generate and compile DL7 declarations from Rust implementation types, compare them with stage zero, and decide the authoritative bootstrap source. -->
 
-8. **Delivery and verification**
+7. **Delivery and verification**
    1. Split work at the boundaries above so each slice has one input shape, one
       output shape, and one deterministic receipt.
    2. Run focused tests for each slice and one full V7 battery at each merged
@@ -903,6 +1245,15 @@ Current implementation receipts:
   ownership-shaped fields, and a sum. Two renders are byte-identical, equal the
   checked-in DL7 golden, compile through the ordinary V7 compiler, and expose
   the four source root names through one generated product.
+- `swipl -q -g "load_files(['v7/test/0_reader.test.pl','v7/test/4_extract_loader.test.pl','v7/test/6_rust_type_emitter.test.pl'],[silent(true)]),run_tests,halt"`:
+  22 passed. The added cases compile `()` as the empty-product name, resolve the
+  TSI wire class `unit` to the prelude `()` node, and render the written name
+  byte for byte. A default-stack compile of `2_partial.dl7` produced 11,842
+  compiler rows with zero diagnostics; the isolated prelude addition accounts
+  for 208 rows above the recorded 11,634-row branch state.
+- Current full V7 Prolog battery: 62 passed. The exact compiler-row and runtime
+  shape snapshots now include the one added prelude product. The Rust
+  extraction-to-Soopy owned-region end-to-end test also passed.
 - Full V7 battery: 57 passed in 133.49 s wall time. The established slow cases
   remained the generated type-algebra and forwarding fixtures at 32.737 s and
   31.711 s. The source-fact golden took 0.002 s inside the battery; the

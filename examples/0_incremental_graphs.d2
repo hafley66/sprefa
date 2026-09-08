@@ -1,0 +1,122 @@
+# One shared graph. Parallel edges overlay two update mechanisms.
+# Each sum is one cached computation. Numeric deltas are used here.
+direction: down
+
+classes: {
+  source_a: {
+    style: {fill: "#FCE7F3"; stroke: "#BE185D"; font-color: "#831843"; border-radius: 10}
+  }
+  source_b: {
+    style: {fill: "#DBEAFE"; stroke: "#1D4ED8"; font-color: "#1E3A8A"; border-radius: 10}
+  }
+  source_c: {
+    style: {fill: "#EDE9FE"; stroke: "#7C3AED"; font-color: "#4C1D95"; border-radius: 10}
+  }
+  updated_node: {
+    style: {fill: "#FFF7ED"; stroke: "#C2410C"; font-color: "#7C2D12"; border-radius: 10}
+  }
+  stable_node: {
+    style: {fill: "#DCFCE7"; stroke: "#15803D"; font-color: "#14532D"; border-radius: 10}
+  }
+  invalidation_edge: {
+    style: {stroke: "#C2410C"; font-color: "#C2410C"; stroke-width: 3; stroke-dash: 5}
+  }
+  delta_edge: {
+    style: {stroke: "#2563EB"; font-color: "#1D4ED8"; stroke-width: 3}
+  }
+  quiet_edge: {
+    style: {stroke: "#15803D"; font-color: "#15803D"; stroke-dash: 2}
+  }
+}
+
+shared_graph: "ONE GRAPH · A changes 1 → 5 · B and C stay fixed" {
+  direction: down
+  style.fill: transparent
+  source_group: "INPUTS" {
+    style.fill: transparent
+    value_a: "A: 1 → 5\nΔA = +4" {
+      class: source_a
+      style.double-border: true
+    }
+    value_b: "B = 2\nΔB = 0" {class: source_b}
+    value_c: "C = 3\nΔC = 0" {class: source_c}
+  }
+  sum_ab: "L = A + B\n3 → 7" {class: updated_node}
+  sum_bc: "R = B + C\n5 → 5" {class: stable_node}
+  sum_total: "O = L + R\n8 → 12" {
+    class: updated_node
+    style.double-border: true
+  }
+
+  # Repeated endpoints are intentional: D2 parallel edges.
+  source_group.value_a -> sum_ab: "e1 · possibly stale" {class: invalidation_edge}
+  source_group.value_a -> sum_ab: "e1 · ΔA = +4" {class: delta_edge}
+  source_group.value_b -> sum_ab: "e2 · reuse B / ΔB = 0" {class: quiet_edge}
+  source_group.value_b -> sum_bc: "e3 · unchanged / ΔB = 0" {class: quiet_edge}
+  source_group.value_c -> sum_bc: "e4 · unchanged / ΔC = 0" {class: quiet_edge}
+  sum_ab -> sum_total: "e5 · possibly stale" {class: invalidation_edge}
+  sum_ab -> sum_total: "e5 · ΔL = +4" {class: delta_edge}
+  sum_bc -> sum_total: "e6 · reuse R / ΔR = 0" {class: quiet_edge}
+}
+
+comparison_table: |||md
+  ## Read the overlay
+
+  **Orange dashed:** cached dependency may be stale.
+  **Blue solid:** explicit numeric change.
+  **Green dotted:** unchanged dependency or zero change.
+  Parallel edges are two descriptions of the same logical connection.
+
+  ## What happens at each location
+
+  | ID | Salsa / SWI incremental: cached queries | DBSP: numeric-delta circuit |
+  | --- | --- | --- |
+  | A | Store 5; record input change. | Supply ΔA = +4. |
+  | B, C | Values and dependencies stay unchanged. | ΔB = 0; ΔC = 0. |
+  | e1: A → L | L may be stale because A changed. | Carry +4 into L. |
+  | e2: B → L | Read unchanged B = 2 when L reruns. | Contribute 0. |
+  | L | On demand, rerun 5 + 2 = 7; compare with cached 3. | ΔL = 4 + 0 = 4; accumulated L becomes 7. |
+  | e3: B → R | Dependency unchanged. | Contribute 0. |
+  | e4: C → R | Dependency unchanged. | Contribute 0. |
+  | R | Reuse cached 5; body need not run. | ΔR = 0; accumulated R stays 5. |
+  | e5: L → O | O may be stale; refreshed L = 7 differs from old 3. | Carry +4 into O. |
+  | e6: R → O | Read cached R = 5 when O reruns. | Contribute 0. |
+  | O | On demand, rerun 7 + 5 = 12. | ΔO = 4 + 0 = 4; accumulate 8 + 4 = 12. |
+
+  ## What the algorithms remember
+
+  | Technique | Tracked information | When this example updates |
+  | --- | --- | --- |
+  | Salsa | Query results, observed dependencies, verification/change revisions. | Requested query validates dependencies and reruns affected bodies. |
+  | SWI incremental | Tabled answers, dependency graph, table invalidation state. | A requested invalid table triggers reevaluation. |
+  | DBSP | Circuit operators and state needed by their incremental formulas. | Circuit processes the input batch. |
+
+  ## Code-shaped difference
+
+  Original: `L = A + B; R = B + C; O = L + R`
+
+  Cached refresh: `newL = newA + B; newO = newL + cachedR`
+
+  Delta computation: `dL = dA + dB; dR = dB + dC; dO = dL + dR`
+
+  Materialized values: `L += dL; R += dR; O += dO`
+
+  ## Scope
+
+  Each sum is one cached computation. A, B and C must be separately tracked
+  inputs for the shown cache reuse; coarse shared dependencies can invalidate
+  more work. Salsa and SWI have different internal bookkeeping.
+  Zero deltas do not guarantee skipped operator scheduling.
+  DBSP need not physically materialize every intermediate shown here.
+  The drawing compares update mechanisms, not performance.
+
+  ## Sources
+
+  [Salsa](https://salsa-rs.github.io/salsa/reference/algorithm.html)
+
+  [SWI incremental](https://www.swi-prolog.org/pldoc/man?section=tabling-incremental)
+
+  [DBSP](https://www.vldb.org/pvldb/vol16/p1601-budiu.pdf)
+|||
+
+shared_graph -> comparison_table: {style.opacity: 0}

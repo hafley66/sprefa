@@ -25,14 +25,28 @@ query_source(Extract, ProgramPath, SourcePath, RelationName,
         ExtractDiagnostics, ProgramPath, RelationName, TsiRows,
         Rows, Diagnostics).
 
-%% extract_tsi_rows(+Extract, +SourcePath, -Rows, -Diagnostics) is det.
-extract_tsi_rows(Extract, SourcePath, TsiRows, Diagnostics) :-
-    once(absolute_file_name(SourcePath, AbsoluteSource,
-                            [access(read), file_errors(error)])),
-    run_process(Extract,
-                ['--witness', '--family', type, AbsoluteSource],
-                Exit, StreamText, Error),
+%% extract_tsi_rows(+Extract, +Sources, -Rows, -Diagnostics) is det.
+% Sources is one path or a list of paths; every path goes to one extract run.
+extract_tsi_rows(Extract, Sources, TsiRows, Diagnostics) :-
+    source_list(Sources, SourcePaths),
+    maplist(absolute_source, SourcePaths, AbsoluteSources),
+    resolve_flag(AbsoluteSources, ResolveFlag),
+    append([['--witness', '--family', type], ResolveFlag, AbsoluteSources],
+           Arguments),
+    run_process(Extract, Arguments, Exit, StreamText, Error),
     continue_after_extract(Exit, Error, StreamText, TsiRows, Diagnostics).
+
+source_list(Sources, Sources) :- is_list(Sources), !.
+source_list(Source, [Source]).
+
+% extract accepts several paths only under --resolve; one path keeps the
+% flag-free stream the single-file callers already read.
+resolve_flag([_], []) :- !.
+resolve_flag(_, ['--resolve']).
+
+absolute_source(SourcePath, AbsoluteSource) :-
+    once(absolute_file_name(SourcePath, AbsoluteSource,
+                            [access(read), file_errors(error)])).
 
 continue_after_extract(0, _, StreamText, Rows, Diagnostics) :-
     !,
