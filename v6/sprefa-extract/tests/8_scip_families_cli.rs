@@ -53,6 +53,38 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
+fn rust_reexport_fixture() -> PathBuf {
+    let root = scratch("rust-reexport-root");
+    for relative in [
+        "Cargo.toml",
+        "lib.rs",
+        "docs.rs",
+        "sample.rs",
+        "scip/mod.rs",
+        "scip/alpha.rs",
+        "scip/beta.rs",
+        "scip/gamma.rs",
+    ] {
+        let destination = root.join(relative);
+        std::fs::create_dir_all(destination.parent().expect("fixture parent"))
+            .expect("fixture directory");
+        std::fs::copy(PathBuf::from(RUST_ROOT).join(relative), destination)
+            .expect("copy Rust fixture");
+    }
+    std::fs::write(
+        root.join("scip/gamma.rs"),
+        b"//! Re-export discrimination fixture.\n\
+pub fn before_reexport() -> u32 { 0 }\n\
+pub use crate::scip::alpha::helper;\n\
+pub fn run() -> u32 {\n\
+    // A comment can say use without turning this executable reference into an import.\n\
+    helper()\n\
+}\n",
+    )
+    .expect("write re-export fixture");
+    root
+}
+
 fn raw(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_extract"))
         .args(args)
@@ -197,13 +229,13 @@ fn only_real_scip_resolves_the_cross_file_call_the_heuristic_cannot() {
 #[test]
 fn the_discrimination_holds_through_rust_analyzer_too() {
     let cache = scratch("discriminating-rust");
+    let fixture = rust_reexport_fixture();
+    let alpha = fixture.join("scip/alpha.rs").to_string_lossy().to_string();
+    let beta = fixture.join("scip/beta.rs").to_string_lossy().to_string();
+    let gamma = fixture.join("scip/gamma.rs").to_string_lossy().to_string();
 
     let mut diet: Vec<&str> = vec!["--family", "diet_scip"];
-    let trio = [
-        "tests/fixtures/rust/scip/alpha.rs",
-        "tests/fixtures/rust/scip/beta.rs",
-        "tests/fixtures/rust/scip/gamma.rs",
-    ];
+    let trio = [alpha.as_str(), beta.as_str(), gamma.as_str()];
     diet.extend_from_slice(&trio);
     let heuristic = run(&diet);
     // gamma's `use crate::scip::alpha::helper;` now binds through the rust
@@ -225,7 +257,8 @@ fn the_discrimination_holds_through_rust_analyzer_too() {
         "nothing should still bind to beta's helper: {heuristic}"
     );
 
-    let real = scip_family(RUST_ROOT, &cache, &[]);
+    let fixture = fixture.to_string_lossy().to_string();
+    let real = scip_family(&fixture, &cache, &[]);
     assert!(
         real.lines().any(|line| line
             == r#"{"record":"scip_fn_edge","caller":"rust-analyzer cargo fixtures 0.0.0 scip/gamma/run().","callee":"rust-analyzer cargo fixtures 0.0.0 scip/alpha/helper()."}"#),
