@@ -1,0 +1,54 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: initial
++ actual - expected
+
+  [
+    [
+      0,
+      4,
+      0,
++     4,
++     4
+    ],
+    [
+      1,
+      4,
+      0,
++     4,
++     4
+    ],
+    [
+      2,
+      4,
+      -2,
++     4,
++     4
+    ],
+    [
+      3,
+      4,
+      0,
++     4,
++     4
+    ]
+  ]
+
+    at file:///Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-ivm-astra/v6/labs/exec_shootout/postgres_pglite_ivm/32_circuit_postgres.mjs:39:12
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: [
+    [ 0, 4, 0, 4, 4 ],
+    [ 1, 4, 0, 4, 4 ],
+    [ 2, 4, -2, 4, 4 ],
+    [ 3, 4, 0, 4, 4 ]
+  ],
+  expected: [ [ 0, 4, 0 ], [ 1, 4, 0 ], [ 2, 4, -2 ], [ 3, 4, 0 ] ],
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.15.0

@@ -11,7 +11,7 @@ function median(values) {
 }
 
 function cellKey(record) {
-  return `${record.budget}:${record.fanout}:${record.rows}:${record.batch_size}`;
+  return `${record.circuit ?? "aggregate"}:${record.budget}:${record.fanout}:${record.rows}:${record.batch_size}`;
 }
 
 function escapeXml(value) {
@@ -40,9 +40,9 @@ if (process.argv.includes("--three-way") || process.argv.includes("--all-arms"))
   const planned = records.filter((row) => row.event === "run-metadata")
     .flatMap((row) => row.cases.map((entry) => ({ ...entry, budget: row.budget })));
   const cases = [...new Map(planned.map((row) => [cellKey(row), row])).values()];
-  const triples = records.filter((row) => row.event === (allArms ? "all-arm-run" : "three-way-run") && row.status === "ok" && row.all_input_output_states_match);
+  const triples = records.filter((row) => (allArms ? ["all-arm-run","circuit-admitted-run"].includes(row.event) : row.event === "three-way-run") && row.status === "ok" && row.all_input_output_states_match);
   const arms = allArms ? [...new Set(records.filter((r)=>r.event==="run-metadata").flatMap((r)=>r.arms))].map((a)=>[a,a,"circle"]) : [["pg_ivm_ms", "pg_ivm", "circle"], ["sqlite_affected_group_ms", "SQLite affected-group", "square"], ["dd_ms", "DD volatile", "triangle"]];
-  const all = triples.flatMap((row) => arms.map(([field]) => (allArms ? row.totals[field] : row[field])));
+  const all = triples.flatMap((row) => arms.map(([field]) => (allArms ? row.totals[field] : row[field]))).filter(v=>Number.isFinite(v)&&v>0);
   const lowPower = all.length ? Math.floor(Math.log10(Math.min(...all))) : -1;
   const highPower = all.length ? Math.max(lowPower + 1, Math.ceil(Math.log10(Math.max(...all)))) : 3;
   const left = 375, plotWidth = 375, width = 1050, top = 105, rowHeight = arms.length*22+20;
@@ -50,9 +50,9 @@ if (process.argv.includes("--three-way") || process.argv.includes("--all-arms"))
   const x = (value) => left + (Math.log10(value) - lowPower) / (highPower - lowPower) * plotWidth;
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-labelledby="title desc">`,
     `<title id="title">Matched SQLite plugin and existing engine crossover</title>`,
-    `<desc id="desc">Four mutation transactions plus materialization and count, milliseconds on a logarithmic axis. Marks show median and whiskers minimum to maximum across successful exact-state matched repetitions. PostgreSQL and SQLite commit durable writes; DD is volatile.</desc>`,
+    `<desc id="desc">Shared fixture transitions plus materialization and count, milliseconds on a logarithmic axis. Marks show median and whiskers minimum to maximum across successful exact-state matched repetitions. PostgreSQL and SQLite commit durable writes; DD is volatile.</desc>`,
     `<style>text{font-family:system-ui,sans-serif;fill:currentColor;font-size:12px}.head{font-size:16px}.small{font-size:11px}line,path,rect,circle{stroke:currentColor}.grid{opacity:.15}.mark{fill:currentColor}</style>`,
-    `<text class="head" x="16" y="25">Matched join + count/sum: write through result materialization</text>`,
+    `<text class="head" x="16" y="25">Matched circuit states: write through result materialization</text>`,
     `<text x="16" y="48">PG/SQLite durable; DD volatile. Exact validation outside timing. Median [min, max] ms.</text>`,
     `<text x="16" y="76">rows / batch / fanout</text><text x="${left}" y="76">milliseconds (log scale)</text>`];
   for (let power = lowPower; power <= highPower; power++) {
@@ -62,13 +62,14 @@ if (process.argv.includes("--three-way") || process.argv.includes("--all-arms"))
   cases.forEach((cell, index) => {
     const matched = triples.filter((row) => cellKey(row) === cellKey(cell));
     const base = top + index * rowHeight;
-    parts.push(`<text x="16" y="${base + 24}">${cell.rows} / ${cell.batch_size} / ${cell.fanout}</text>`,
+    parts.push(`<text x="16" y="${base + 24}">${escapeXml(cell.circuit ?? "aggregate")} ${cell.rows} / ${cell.batch_size} / ${cell.fanout}</text>`,
       `<text class="small" x="16" y="${base + 42}">${escapeXml(cell.budget)}; n=${matched.length} matched trials</text>`);
     arms.forEach(([field, label, shape], armIndex) => {
       const y = base + armIndex * 22;
       parts.push(`<text x="174" y="${y + 4}">${label}</text>`);
       if (!matched.length) { parts.push(`<text x="${left}" y="${y + 4}">UNMEASURED</text>`); return; }
-      const values = matched.map((row) => (allArms ? row.totals[field] : row[field]));
+      const values = matched.map((row) => (allArms ? row.totals[field] : row[field])).filter(Number.isFinite);
+      if(!values.length){const capability=records.find(r=>r.event==="capability" && r.maintenance===field && cellKey(r)===cellKey(cell));parts.push(`<text x="${left}" y="${y+4}">${escapeXml(capability?.status ?? "UNMEASURED")}</text>`);return;}
       const mid = median(values), low = Math.min(...values), high = Math.max(...values), center = x(mid);
       parts.push(`<line x1="${x(low)}" x2="${x(high)}" y1="${y}" y2="${y}"/>`);
       if (shape === "circle") parts.push(`<circle class="mark" cx="${center}" cy="${y}" r="3"/>`);

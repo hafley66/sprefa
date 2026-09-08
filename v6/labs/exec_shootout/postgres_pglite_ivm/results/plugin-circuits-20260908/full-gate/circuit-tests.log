@@ -1,0 +1,12 @@
+✔ all circuit SQL baselines validate exact inputs and output bags across 13 transitions (503.215041ms)
+✔ bag fanin doubles qualifying support; distinct removes projected duplicates (0.465458ms)
+✔ cycle loses all reachability on root retraction and regains it on restore (0.613916ms)
+✔ injected wrong expected bag is detected by actual SQL adapter (70.096958ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 619.68675

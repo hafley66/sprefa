@@ -1,0 +1,15 @@
+2026-09-08 14:26:38.768 EDT [81454] LOG:  starting PostgreSQL 18.6 on aarch64-apple-darwin23.6.0, compiled by Apple clang version 16.0.0 (clang-1600.0.26.6), 64-bit
+2026-09-08 14:26:38.768 EDT [81454] LOG:  listening on Unix socket "/tmp/pgx.RY6bkW/socket-constrained/.s.PGSQL.5432"
+2026-09-08 14:26:38.770 EDT [81460] LOG:  database system was shut down at 2026-09-08 14:26:38 EDT
+2026-09-08 14:26:38.771 EDT [81454] LOG:  database system is ready to accept connections
+2026-09-08 14:26:39.733 EDT [81536] ERROR:  UNION/INTERSECT/EXCEPT statements are not supported on incrementally maintainable materialized view
+2026-09-08 14:26:39.733 EDT [81536] STATEMENT:  SELECT pgivm.create_immv($1,$2)
+2026-09-08 14:26:40.902 EDT [81702] ERROR:  UNION/INTERSECT/EXCEPT statements are not supported on incrementally maintainable materialized view
+2026-09-08 14:26:40.902 EDT [81702] STATEMENT:  SELECT pgivm.create_immv($1,$2)
+2026-09-08 14:26:41.338 EDT [81778] ERROR:  this query is not allowed on incrementally maintainable materialized view
+2026-09-08 14:26:41.338 EDT [81778] HINT:  OR or NOT conditions and EXISTS condition can not be used together
+2026-09-08 14:26:41.338 EDT [81778] STATEMENT:  SELECT pgivm.create_immv($1,$2)
+2026-09-08 14:26:41.836 EDT [81830] ERROR:  recursive query is not supported on incrementally maintainable materialized view
+2026-09-08 14:26:41.836 EDT [81830] STATEMENT:  SELECT pgivm.create_immv($1,$2)
+2026-09-08 14:26:41.946 EDT [81454] LOG:  received immediate shutdown request
+2026-09-08 14:26:41.948 EDT [81454] LOG:  database system is shut down

@@ -1,0 +1,1 @@
+{"event":"case-setup","status":"ok","setup_ms":9.287374999999997,"algorithm":"pg_ivm","durability":"fsync synchronous_commit full_page_writes on","version":"PostgreSQL 18.6 on aarch64-apple-darwin23.6.0, compiled by Apple clang version 16.0.0 (clang-1600.0.26.6), 64-bit"}

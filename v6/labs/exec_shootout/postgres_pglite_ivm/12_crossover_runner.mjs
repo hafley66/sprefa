@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { arch, hostname, platform, release, totalmem } from "node:os";
 import { dirname, join } from "node:path";
+import { circuits, makeCircuitFixture } from "./30_circuit_workload.mjs";
 import { makeCrossoverFixture } from "./9_crossover_workload.mjs";
 
 function argument(name, fallback) {
@@ -11,10 +12,11 @@ function argument(name, fallback) {
 }
 
 function caseKey(testCase) {
-  return `${testCase.rows}:${testCase.batch_size}:${testCase.fanout}`;
+  return `${testCase.circuit ?? "aggregate"}:${testCase.rows}:${testCase.batch_size}:${testCase.fanout}`;
 }
 
 function buildCases(profile, budget) {
+  if (profile === "circuits") return Object.keys(circuits).map(circuit=>({circuit,stage:circuit,rows:24,batch_size:3,fanout:4}));
   if (profile === "semantic") return [{ stage: "semantic", rows: 400, batch_size: 10, fanout: 10 }];
   if (profile === "smoke") {
     return [
@@ -94,15 +96,16 @@ const budget = argument("budget", "constrained");
 const outputPath = argument("output", "out/crossover.jsonl");
 const runRoot = process.env.IVM_RUN_ROOT;
 if (!runRoot) throw new Error("IVM_RUN_ROOT is required");
-if (!new Set(["smoke", "full", "diagnostic", "semantic"]).has(profile)) throw new Error(`bad profile: ${profile}`);
+if (!new Set(["smoke", "full", "diagnostic", "semantic", "circuits"]).has(profile)) throw new Error(`bad profile: ${profile}`);
 const timeoutMs = Math.min(120_000, Number(argument("timeout-ms", "120000")));
 const deadlineEpochMs = Number(argument("deadline-epoch-ms", String(Date.now() + 20 * 60_000)));
 const warmups = Number(argument("warmups", profile === "full" ? "1" : "0"));
 const repetitions = Number(argument("repetitions", profile === "full" ? "3" : "1"));
 const maxRows = Number(argument("max-rows", "Infinity"));
 const cases = buildCases(profile, budget).filter((testCase) => testCase.rows <= maxRows);
-const arms = argument("arms", "query,pg_ivm").split(",");
-if (arms.some((arm) => !["query", "pg_ivm", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+const arms = argument("arms", (profile === "circuits" ? "query,pg_ivm,sqlite-query" : "query,pg_ivm")).split(",");
+if (arms.some((arm) => !["query", "pg_ivm", "sqlite-query", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+if (profile !== "circuits" && arms.includes("sqlite-query")) throw new Error("sqlite-query requires circuits profile");
 const ddBinary = argument("dd-bin", new URL("../../../sprefa-store/target/release/examples/crossover_dd", import.meta.url).pathname);
 const sqliteExtension = argument("sqlite-extension", "");
 if (arms.some((arm) => arm.startsWith("sqlite-plugin")) && !sqliteExtension) throw new Error("--sqlite-extension required");
@@ -168,7 +171,7 @@ append({
 async function runProcess(testCase, maintenance, runKind, repetition) {
   const template = maintenance === "sqlite-template-group";
   const plugin = maintenance.startsWith("sqlite-plugin");
-  const sqlite = template || plugin;
+  const sqlite = template || plugin || maintenance === "sqlite-query";
   const dd = maintenance === "dd";
   const rssField = sqlite ? "sqlite_process_observed_peak_rss_kb" : dd ? "dd_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb";
   const context = {
@@ -179,6 +182,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     profile,
     budget,
     stage: testCase.stage,
+    circuit: testCase.circuit,
     rows: testCase.rows,
     batch_size: testCase.batch_size,
     fanout: testCase.fanout,
@@ -196,7 +200,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   const processStarted = process.hrtime.bigint();
   const childRoot = join(runRoot, `${budget}-${maintenance}-${caseKey(testCase)}-${runKind}-${repetition}`);
   await mkdir(childRoot, { recursive: true });
-  const fixture = makeCrossoverFixture(testCase.rows, testCase.batch_size, testCase.fanout, profile === "semantic");
+  const fixture = testCase.circuit ? makeCircuitFixture(testCase.circuit,testCase.rows,testCase.batch_size,testCase.fanout) : makeCrossoverFixture(testCase.rows, testCase.batch_size, testCase.fanout, profile === "semantic");
   let args = [
     "11_crossover_native.mjs",
     "--maintenance", maintenance,
@@ -206,6 +210,10 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     "--budget", budget,
     "--diagnostic", profile === "diagnostic" ? "1" : "0",
   ];
+  if (testCase.circuit && (template || dd || maintenance === "sqlite-plugin-logged")) {
+    append({event:"capability",status:"adapter-missing",reason:"circuit adapter pending",...context});
+    return true;
+  }
   if (template) {
     const source = await readFile(sqliteProgram, "utf8");
     const program = JSON.parse(source.match(/pub const PROGRAM_JSON: &str = r(#+)"\n([\s\S]*?)\n"\1;/)[2]);
@@ -232,6 +240,9 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
       "--fixture",fixturePath,"--db",join(childRoot,"maintained.sqlite"),"--sql-output",join(childRoot,"installed.sql")];
   } else if (dd) args = [fixturePath];
   else args.push("--fixture", fixturePath);
+  if (testCase.circuit) args = sqlite
+    ? ["31_circuit_sqlite.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),...(plugin?["--extension",sqliteExtension]:[])]
+    : ["32_circuit_postgres.mjs",fixturePath,maintenance];
   const child = spawn(sqlite ? "python3" : dd ? ddBinary : process.execPath, args, {
     cwd: labDir,
     env: {
@@ -292,7 +303,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     try {
       const parsed = JSON.parse(line);
       append({ ...parsed, ...context });
-      if (parsed.status !== "ok") failed = true;
+      if (parsed.status !== "ok" && !(parsed.event === "capability" && parsed.status === "unsupported")) failed = true;
     } catch {
       append({ event: "case-status", status: "error", reason: "non-JSON stdout", line: line.slice(0, 2_000), ...context });
       return false;
@@ -325,19 +336,21 @@ for (const testCase of cases) {
 // plugin logging modes. Missing/failed states never count as parity.
 for (const testCase of cases) for (let repetition=1; repetition<=repetitions; repetition++) {
   const matching=records.filter((r)=>r.run_kind==="measured" && r.repetition===repetition && caseKey(r)===caseKey(testCase));
-  const expected=makeCrossoverFixture(testCase.rows,testCase.batch_size,testCase.fanout,profile==="semantic").states;
-  const exact=arms.every((arm)=>expected.every((state)=> {
+  const expected=(testCase.circuit ? makeCircuitFixture(testCase.circuit,testCase.rows,testCase.batch_size,testCase.fanout) : makeCrossoverFixture(testCase.rows,testCase.batch_size,testCase.fanout,profile==="semantic")).states;
+  const excluded=matching.filter(r=>r.event==="capability" && ["unsupported","adapter-missing"].includes(r.status)).map(r=>r.maintenance);
+  const admitted=arms.filter(a=>!excluded.includes(a));
+  const exact=admitted.length>0 && admitted.every((arm)=>expected.every((state)=> {
     const rows=matching.filter((r)=>r.event==="mutation" && r.maintenance===arm && r.state===state.name);
     return rows.length===1 && rows[0].status==="ok" && rows[0].exact_input_output_validated && rows[0].input_hash===state.input_hash && rows[0].checksum===state.expected.checksum;
   }));
-  const totals=Object.fromEntries(arms.map((arm)=>[arm,matching.find((r)=>r.event==="case-total" && r.maintenance===arm)?.update_plus_query_ms ?? null]));
+  const totals=Object.fromEntries(admitted.map((arm)=>[arm,matching.find((r)=>r.event==="case-total" && r.maintenance===arm)?.update_plus_query_ms ?? null]));
   const ok=exact && Object.values(totals).every((v)=>v!==null);
   if(!ok) failed=true;
-  append({event:"all-arm-run",status:ok?"ok":"unmeasured-or-mismatch",...testCase,budget,repetition,arms,totals,
+  append({event:excluded.length?"circuit-admitted-run":"all-arm-run",status:ok?"ok":"unmeasured-or-mismatch",...testCase,budget,repetition,arms:admitted,excluded_arms:excluded,totals,
     state_count_per_arm:expected.length,all_input_output_states_match:exact,final_input_hash:expected.at(-1).input_hash,final_checksum:expected.at(-1).expected.checksum});
 }
 
-if (["pg_ivm", "sqlite-template-group", "dd"].every((arm) => arms.includes(arm))) {
+if (profile !== "circuits" && ["pg_ivm", "sqlite-template-group", "dd"].every((arm) => arms.includes(arm))) {
   for (const testCase of cases) for (let repetition = 1; repetition <= repetitions; repetition++) {
     const matching = records.filter((row) => row.run_kind === "measured" && row.repetition === repetition && caseKey(row) === caseKey(testCase));
     const totals = ["pg_ivm", "sqlite-template-group", "dd"].map((arm) => matching.find((row) => row.event === "case-total" && row.maintenance === arm));

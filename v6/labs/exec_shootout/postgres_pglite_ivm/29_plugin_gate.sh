@@ -17,6 +17,7 @@ cargo build --locked --offline --release --manifest-path "$lab_dir/../../../spre
 python3 "$lab_dir/27_sqlite_ivm.test.py" -v > "$receipt/plugin-tests.log" 2>&1
 python3 "$lab_dir/20_sqlite_template.test.py" -v > "$receipt/template-tests.log" 2>&1
 python3 "$lab_dir/17_sqlite_trigger_capabilities.py" -v > "$receipt/mechanism-tests.log" 2>&1
+node --test "$lab_dir/33_circuit.test.mjs" > "$receipt/circuit-tests.log" 2>&1
 node --test "$lab_dir/23_crossover.test.mjs" > "$receipt/integration-tests.log" 2>&1
 cargo test --locked --offline --release --manifest-path "$lab_dir/../../../sprefa-store/Cargo.toml" --test oracle_dd --test datalog_ops > "$receipt/store-reference-tests.log" 2>&1
 printf 'PASS: loaded plugin, existing SQLite mechanisms/templates, shared DD/plugin integration and store reference tests\n' > "$receipt/status.txt"

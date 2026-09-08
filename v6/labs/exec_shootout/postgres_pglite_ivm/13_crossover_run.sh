@@ -44,7 +44,7 @@ cleanup() {
 trap cleanup EXIT
 
 case "$profile" in
-  smoke|semantic) budgets=(constrained) ;;
+  smoke|semantic|circuits) budgets=(constrained) ;;
   full|diagnostic) budgets=(constrained roomy) ;;
   *) printf 'usage: %s [smoke|full|diagnostic] [output.jsonl]\n' "$0" >&2; exit 2 ;;
 esac
