@@ -115,7 +115,7 @@ const repetitions = Number(argument("repetitions", profile === "full" ? "3" : "1
 const maxRows = Number(argument("max-rows", "Infinity"));
 const cases = buildCases(profile, budget).filter((testCase) => testCase.rows <= maxRows);
 const arms = argument("arms", (profile === "circuits" ? "query,pg_ivm,sqlite-query" : "query,pg_ivm")).split(",");
-if (arms.some((arm) => !["query", "pg_ivm", "sqlite-query", "swi-circuit", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+if (arms.some((arm) => !["query", "pg_ivm", "sqlite-query", "swi-circuit", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "sqlite-native-take2", "sqlite-native-take2-logged", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
 if (profile !== "circuits" && arms.some(a=>["sqlite-query","swi-circuit"].includes(a))) throw new Error("circuit-only arm requires circuits profile");
 const ddBinary = argument("dd-bin", new URL("../../../sprefa-store/target/release/examples/crossover_dd", import.meta.url).pathname);
 const circuitDdBinary = argument("circuit-dd-bin", "");
@@ -123,6 +123,8 @@ if(profile==="circuits" && arms.includes("dd") && !circuitDdBinary) throw new Er
 const semanticDdBinary=argument("semantic-dd-bin","");
 if(arms.includes("dd") && cases.some(c=>Object.hasOwn(semanticCircuits,c.circuit)) && !semanticDdBinary)throw new Error("--semantic-dd-bin required");
 const sqliteExtension = argument("sqlite-extension", "");
+const take2Extension = argument("take2-extension", "");
+if (arms.some(arm => arm.startsWith("sqlite-native-take2")) && !take2Extension) throw new Error("--take2-extension required");
 if (arms.some((arm) => arm.startsWith("sqlite-plugin")) && !sqliteExtension) throw new Error("--sqlite-extension required");
 const sqliteProgram = argument("sqlite-program", "");
 if (arms.includes("sqlite-template-group") && !sqliteProgram) throw new Error("--sqlite-program is required for sqlite-template-group");
@@ -182,6 +184,7 @@ append({
   semantic_dd_sha256: semanticDdBinary ? await fileSha256(semanticDdBinary) : null,
   circuit_dd_sha256: circuitDdBinary ? await fileSha256(circuitDdBinary) : null,
   sqlite_extension_sha256: sqliteExtension ? await fileSha256(sqliteExtension) : null,
+  take2_extension_sha256: take2Extension ? await fileSha256(take2Extension) : null,
   workload: profile==="circuits" ? {skew:"a key supports controlled by fanout; right-side key 0 receives duplicate supports",churn:"13 named transitions; batch_key_value_move varies batch_size inputs",cardinality:"recorded per mutation",integer_contract:"generated small values; exact bounded integer output"} : {skew:"fixture hot group plus uniform remainder", churn:"four defined mutation families", cardinality:"recorded per mutation"},
   retained_baseline: baseline,
 });
@@ -189,7 +192,8 @@ append({
 async function runProcess(testCase, maintenance, runKind, repetition) {
   const template = maintenance === "sqlite-template-group";
   const plugin = maintenance.startsWith("sqlite-plugin");
-  const sqlite = template || plugin || maintenance === "sqlite-query";
+  const take2 = maintenance.startsWith("sqlite-native-take2");
+  const sqlite = template || plugin || take2 || maintenance === "sqlite-query";
   const dd = maintenance === "dd";
   const swi = maintenance === "swi-circuit";
   const rssField = swi ? "swi_process_observed_peak_rss_kb" : sqlite ? "sqlite_process_observed_peak_rss_kb" : dd ? "dd_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb";
@@ -207,6 +211,10 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     fanout: testCase.fanout,
   };
   const freePercent = memoryFreePercent();
+  if (take2 && (testCase.circuit || testCase.rows > 12000)) {
+    append({event:"capability",status:"unsupported",reason:"Take 2 shared adapter supports bounded crossover aggregate cells through 12000 source rows; other circuit adapters pending",...context});
+    return true;
+  }
   if (freePercent !== null && freePercent < 15) resourceBlocked = true;
   if (resourceBlocked) {
     append({ event: "case-status", status: "resource-blocked", reason: "host free memory below 15%; remaining benchmark cases stopped", memory_free_percent: freePercent, ...context });
@@ -254,6 +262,10 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     args = ["19_sqlite_template_adapter.py", "--program", sqliteProgram,
       "--fixture", fixturePath, "--db", join(childRoot, "maintained.sqlite"),
       "--sql-output", join(childRoot, "installed.sql")];
+  } else if (take2) {
+    args = ["42_sqlite_native_take2/7_shootout.py", "--extension", take2Extension,
+      "--logged", maintenance === "sqlite-native-take2-logged" ? "1" : "0",
+      "--fixture",fixturePath,"--db",join(childRoot,"maintained.sqlite")];
   } else if (plugin) {
     args = ["26_sqlite_plugin_adapter.py", "--extension", sqliteExtension, "--metrics", maintenance === "sqlite-plugin-logged" ? "1" : "0",
       "--fixture",fixturePath,"--db",join(childRoot,"maintained.sqlite"),"--sql-output",join(childRoot,"installed.sql")];

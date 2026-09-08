@@ -1,0 +1,738 @@
+{
+  "sweep_sha256": "651f03b6281c0600c0d49faf38707d6e3a01beaa5959241d047b21656c241f41",
+  "case_runs": 36,
+  "mutation_checks": 180,
+  "cells": [
+    {
+      "rows": 400,
+      "batch": 10,
+      "fanout": 10,
+      "arms": {
+        "sqlite-native-take2": {
+          "repetitions": 2,
+          "setup_ms_median": 16.847354476340115,
+          "mutation_ms_sum_per_run": [
+            3.0280009377747774,
+            3.0244591180235147
+          ],
+          "query_ms_sum_per_run": [
+            0.39712584111839533,
+            0.29854103922843933
+          ],
+          "total_ms_median": 3.3041464630514383,
+          "db_bytes": [
+            65536,
+            65536
+          ],
+          "wal_bytes": [
+            243112,
+            243112
+          ],
+          "process_peak_rss_bytes": [
+            24788992,
+            22970368
+          ]
+        },
+        "sqlite-native-take2-logged": {
+          "repetitions": 2,
+          "setup_ms_median": 16.19187497999519,
+          "mutation_ms_sum_per_run": [
+            2.8232509503141046,
+            3.0585419153794646
+          ],
+          "query_ms_sum_per_run": [
+            0.33249997068196535,
+            0.36216701846569777
+          ],
+          "total_ms_median": 3.185625944752246,
+          "db_bytes": [
+            65536,
+            65536
+          ],
+          "wal_bytes": [
+            243112,
+            243112
+          ],
+          "process_peak_rss_bytes": [
+            23396352,
+            23248896
+          ]
+        }
+      }
+    },
+    {
+      "rows": 400,
+      "batch": 10,
+      "fanout": 200,
+      "arms": {
+        "sqlite-native-take2": {
+          "repetitions": 2,
+          "setup_ms_median": 16.80381246842444,
+          "mutation_ms_sum_per_run": [
+            2.536041894927621,
+            2.562374109402299
+          ],
+          "query_ms_sum_per_run": [
+            0.284249079413712,
+            0.27374899946153164
+          ],
+          "total_ms_median": 2.746874059084803,
+          "db_bytes": [
+            57344,
+            57344
+          ],
+          "wal_bytes": [
+            226632,
+            226632
+          ],
+          "process_peak_rss_bytes": [
+            22347776,
+            23560192
+          ]
+        },
+        "sqlite-native-take2-logged": {
+          "repetitions": 2,
+          "setup_ms_median": 15.240499982610345,
+          "mutation_ms_sum_per_run": [
+            2.7677920879796147,
+            2.7348329313099384
+          ],
+          "query_ms_sum_per_run": [
+            0.30887394677847624,
+            0.2970407949760556
+          ],
+          "total_ms_median": 2.979061915539205,
+          "db_bytes": [
+            57344,
+            57344
+          ],
+          "wal_bytes": [
+            226632,
+            226632
+          ],
+          "process_peak_rss_bytes": [
+            22806528,
+            22413312
+          ]
+        }
+      }
+    },
+    {
+      "rows": 1200,
+      "batch": 10,
+      "fanout": 200,
+      "arms": {
+        "sqlite-native-take2": {
+          "repetitions": 2,
+          "setup_ms_median": 40.47279147198424,
+          "mutation_ms_sum_per_run": [
+            2.803790965117514,
+            2.7232920983806252
+          ],
+          "query_ms_sum_per_run": [
+            0.32700016163289547,
+            0.3174998564645648
+          ],
+          "total_ms_median": 3.0090625514276326,
+          "db_bytes": [
+            98304,
+            98304
+          ],
+          "wal_bytes": [
+            292552,
+            292552
+          ],
+          "process_peak_rss_bytes": [
+            24182784,
+            24281088
+          ]
+        },
+        "sqlite-native-take2-logged": {
+          "repetitions": 2,
+          "setup_ms_median": 40.46941647538915,
+          "mutation_ms_sum_per_run": [
+            3.1211668392643332,
+            2.998083014972508
+          ],
+          "query_ms_sum_per_run": [
+            0.4011659184470773,
+            0.3277069190517068
+          ],
+          "total_ms_median": 3.3345198608003557,
+          "db_bytes": [
+            98304,
+            98304
+          ],
+          "wal_bytes": [
+            292552,
+            292552
+          ],
+          "process_peak_rss_bytes": [
+            24363008,
+            24952832
+          ]
+        }
+      }
+    },
+    {
+      "rows": 4000,
+      "batch": 10,
+      "fanout": 200,
+      "arms": {
+        "sqlite-native-take2": {
+          "repetitions": 2,
+          "setup_ms_median": 131.52489601634443,
+          "mutation_ms_sum_per_run": [
+            2.971333102323115,
+            2.973665948957205
+          ],
+          "query_ms_sum_per_run": [
+            0.374582945369184,
+            0.3564161015674472
+          ],
+          "total_ms_median": 3.243623999878764,
+          "db_bytes": [
+            233472,
+            233472
+          ],
+          "wal_bytes": [
+            449112,
+            449112
+          ],
+          "process_peak_rss_bytes": [
+            28737536,
+            27508736
+          ]
+        },
+        "sqlite-native-take2-logged": {
+          "repetitions": 2,
+          "setup_ms_median": 128.36262496421114,
+          "mutation_ms_sum_per_run": [
+            3.4067078959196806,
+            3.391584032215178
+          ],
+          "query_ms_sum_per_run": [
+            0.41629106272011995,
+            0.42941595893353224
+          ],
+          "total_ms_median": 3.705957962665707,
+          "db_bytes": [
+            233472,
+            233472
+          ],
+          "wal_bytes": [
+            449112,
+            449112
+          ],
+          "process_peak_rss_bytes": [
+            28327936,
+            27754496
+          ]
+        }
+      }
+    },
+    {
+      "rows": 12000,
+      "batch": 1,
+      "fanout": 200,
+      "arms": {
+        "sqlite-native-take2": {
+          "repetitions": 2,
+          "setup_ms_median": 398.1612080242485,
+          "mutation_ms_sum_per_run": [
+            1.7254168633371592,
+            1.8947491189464927
+          ],
+          "query_ms_sum_per_run": [
+            0.436333823017776,
+            0.5000830860808492
+          ],
+          "total_ms_median": 2.168186940252781,
+          "db_bytes": [
+            618496,
+            618496
+          ],
+          "wal_bytes": [
+            791072,
+            791072
+          ],
+          "process_peak_rss_bytes": [
+            37240832,
+            37224448
+          ]
+        },
+        "sqlite-native-take2-logged": {
+          "repetitions": 2,
+          "setup_ms_median": 398.31687504192814,
+          "mutation_ms_sum_per_run": [
+            2.0136228995397687,
+            1.9280408741906285
+          ],
+          "query_ms_sum_per_run": [
+            0.4425420193001628,
+            0.44991576578468084
+          ],
+          "total_ms_median": 2.3006023257039487,
+          "db_bytes": [
+            618496,
+            618496
+          ],
+          "wal_bytes": [
+            791072,
+            791072
+          ],
+          "process_peak_rss_bytes": [
+            38305792,
+            35880960
+          ]
+        }
+      }
+    },
+    {
+      "rows": 12000,
+      "batch": 10,
+      "fanout": 10,
+      "arms": {
+        "sqlite-native-take2": {
+          "repetitions": 2,
+          "setup_ms_median": 411.84631205396727,
+          "mutation_ms_sum_per_run": [
+            3.653458086773753,
+            3.611041000112891
+          ],
+          "query_ms_sum_per_run": [
+            0.5211258539929986,
+            0.4800419555976987
+          ],
+          "total_ms_median": 4.029603966046125,
+          "db_bytes": [
+            610304,
+            610304
+          ],
+          "wal_bytes": [
+            848752,
+            848752
+          ],
+          "process_peak_rss_bytes": [
+            38027264,
+            38535168
+          ]
+        },
+        "sqlite-native-take2-logged": {
+          "repetitions": 2,
+          "setup_ms_median": 413.5908334865235,
+          "mutation_ms_sum_per_run": [
+            4.989708075299859,
+            4.042707849293947
+          ],
+          "query_ms_sum_per_run": [
+            0.5183329340070486,
+            0.5139580462127924
+          ],
+          "total_ms_median": 4.922332940623164,
+          "db_bytes": [
+            610304,
+            610304
+          ],
+          "wal_bytes": [
+            848752,
+            848752
+          ],
+          "process_peak_rss_bytes": [
+            38944768,
+            37830656
+          ]
+        }
+      }
+    },
+    {
+      "rows": 12000,
+      "batch": 10,
+      "fanout": 200,
+      "arms": {
+        "sqlite-native-take2": {
+          "repetitions": 2,
+          "setup_ms_median": 409.3685830011964,
+          "mutation_ms_sum_per_run": [
+            3.7244148552417755,
+            4.173250170424581
+          ],
+          "query_ms_sum_per_run": [
+            0.5170839140191674,
+            0.47312467359006405
+          ],
+          "total_ms_median": 4.3392073712311685,
+          "db_bytes": [
+            618496,
+            618496
+          ],
+          "wal_bytes": [
+            861112,
+            861112
+          ],
+          "process_peak_rss_bytes": [
+            39108608,
+            38731776
+          ]
+        },
+        "sqlite-native-take2-logged": {
+          "repetitions": 2,
+          "setup_ms_median": 418.20345853921026,
+          "mutation_ms_sum_per_run": [
+            6.069373921491206,
+            4.209041013382375
+          ],
+          "query_ms_sum_per_run": [
+            0.4850418772548437,
+            0.5224997876212001
+          ],
+          "total_ms_median": 5.529082380235195,
+          "db_bytes": [
+            618496,
+            618496
+          ],
+          "wal_bytes": [
+            861112,
+            861112
+          ],
+          "process_peak_rss_bytes": [
+            39190528,
+            38109184
+          ]
+        }
+      }
+    },
+    {
+      "rows": 12000,
+      "batch": 100,
+      "fanout": 200,
+      "arms": {
+        "sqlite-native-take2": {
+          "repetitions": 2,
+          "setup_ms_median": 403.2188129494898,
+          "mutation_ms_sum_per_run": [
+            25.931708049029112,
+            24.48991604615003
+          ],
+          "query_ms_sum_per_run": [
+            0.471667037345469,
+            0.5491669289767742
+          ],
+          "total_ms_median": 25.609499542042613,
+          "db_bytes": [
+            618496,
+            618496
+          ],
+          "wal_bytes": [
+            1528552,
+            1528552
+          ],
+          "process_peak_rss_bytes": [
+            39305216,
+            37322752
+          ]
+        },
+        "sqlite-native-take2-logged": {
+          "repetitions": 2,
+          "setup_ms_median": 399.9354370171204,
+          "mutation_ms_sum_per_run": [
+            24.241333128884435,
+            23.847625008784235
+          ],
+          "query_ms_sum_per_run": [
+            0.4985429113730788,
+            0.49929111264646053
+          ],
+          "total_ms_median": 24.421021109446883,
+          "db_bytes": [
+            618496,
+            618496
+          ],
+          "wal_bytes": [
+            1528552,
+            1528552
+          ],
+          "process_peak_rss_bytes": [
+            38649856,
+            37339136
+          ]
+        }
+      }
+    },
+    {
+      "rows": 12000,
+      "batch": 1000,
+      "fanout": 200,
+      "arms": {
+        "sqlite-native-take2": {
+          "repetitions": 2,
+          "setup_ms_median": 413.4738755528815,
+          "mutation_ms_sum_per_run": [
+            218.55033305473626,
+            215.87395784445107
+          ],
+          "query_ms_sum_per_run": [
+            0.8310418343171477,
+            0.6131669506430626
+          ],
+          "total_ms_median": 217.81420841580257,
+          "db_bytes": [
+            667648,
+            667648
+          ],
+          "wal_bytes": [
+            1746912,
+            1746912
+          ],
+          "process_peak_rss_bytes": [
+            40534016,
+            40402944
+          ]
+        },
+        "sqlite-native-take2-logged": {
+          "repetitions": 2,
+          "setup_ms_median": 413.76797953853384,
+          "mutation_ms_sum_per_run": [
+            211.8524998659268,
+            193.80908296443522
+          ],
+          "query_ms_sum_per_run": [
+            0.5322069628164172,
+            0.564665999263525
+          ],
+          "total_ms_median": 203.26443639351055,
+          "db_bytes": [
+            667648,
+            667648
+          ],
+          "wal_bytes": [
+            1746912,
+            1746912
+          ],
+          "process_peak_rss_bytes": [
+            41205760,
+            39862272
+          ]
+        }
+      }
+    }
+  ],
+  "stderr": [
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:12000:1000:200-measured-1/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:12000:1000:200-measured-2/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:12000:100:200-measured-1/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:12000:100:200-measured-2/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:12000:10:10-measured-1/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:12000:10:10-measured-2/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:12000:10:200-measured-1/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:12000:10:200-measured-2/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:12000:1:200-measured-1/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:12000:1:200-measured-2/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:1200:10:200-measured-1/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:1200:10:200-measured-2/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:4000:10:200-measured-1/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:4000:10:200-measured-2/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:400:10:10-measured-1/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:400:10:10-measured-2/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:400:10:200-measured-1/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-aggregate:400:10:200-measured-2/stderr.log",
+      "events": 0,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:12000:1000:200-measured-1/stderr.log",
+      "events": 256,
+      "bytes": 8600,
+      "sha256": "aa6fbab09cc139a06282f81c699ec7bd2cdfce7f15a5898fc9f9d1f9f1272414"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:12000:1000:200-measured-2/stderr.log",
+      "events": 256,
+      "bytes": 8600,
+      "sha256": "aa6fbab09cc139a06282f81c699ec7bd2cdfce7f15a5898fc9f9d1f9f1272414"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:12000:100:200-measured-1/stderr.log",
+      "events": 256,
+      "bytes": 8600,
+      "sha256": "aa6fbab09cc139a06282f81c699ec7bd2cdfce7f15a5898fc9f9d1f9f1272414"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:12000:100:200-measured-2/stderr.log",
+      "events": 256,
+      "bytes": 8600,
+      "sha256": "aa6fbab09cc139a06282f81c699ec7bd2cdfce7f15a5898fc9f9d1f9f1272414"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:12000:10:10-measured-1/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:12000:10:10-measured-2/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:12000:10:200-measured-1/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:12000:10:200-measured-2/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:12000:1:200-measured-1/stderr.log",
+      "events": 54,
+      "bytes": 1794,
+      "sha256": "77cc6f3eba00be5f819e6b72cb0a66be4bdb92d63fbe4c5caeeed65b68edfd6e"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:12000:1:200-measured-2/stderr.log",
+      "events": 54,
+      "bytes": 1794,
+      "sha256": "77cc6f3eba00be5f819e6b72cb0a66be4bdb92d63fbe4c5caeeed65b68edfd6e"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:1200:10:200-measured-1/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:1200:10:200-measured-2/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:4000:10:200-measured-1/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:4000:10:200-measured-2/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:400:10:10-measured-1/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:400:10:10-measured-2/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:400:10:200-measured-1/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    },
+    {
+      "path": "/tmp/sprefa-sqlite-native-take2/sweep.artifacts/cases-constrained/constrained-sqlite-native-take2-logged-aggregate:400:10:200-measured-2/stderr.log",
+      "events": 207,
+      "bytes": 6942,
+      "sha256": "fb9f226a845e0eff7608dec7d766ce41c7212cdc2fc985258ff03d58a6b14ecb"
+    }
+  ]
+}

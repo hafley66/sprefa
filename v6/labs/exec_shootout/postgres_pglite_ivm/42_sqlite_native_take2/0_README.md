@@ -8,7 +8,8 @@ Reading order: `0_README.md`, `0a_state.h` (types), `0b_delta.h` (signed SQL
 contributions and transport installer), `1_native.c` (ABI, storage, lifecycle),
 `2_boundary.sql` (forwarding contract), `3_boundary_test.py` (SQL transport and
 oracle), `4_gate.py` (bounded build/test receipts), `5_sources.md`,
-`6_semantic_test.py` (query-family oracles).
+`6_semantic_test.py` (query-family oracles), `7_shootout.py` (bounded shared-fixture
+transport), `8_receipts.py` (performance receipt reduction).
 
 ## API and SQL
 
@@ -72,6 +73,8 @@ enabled; UPSERT forwards UPDATE. Source CHECK failure aborts the statement.
 Missing module rejects source writes. A second loaded connection obeys SQLite
 writer locking and sees committed state. An xSync error rolls back both state and
 source. Diagnostics describe attempts, while SQL counters roll back with data.
+Deferred foreign-key COMMIT failure leaves the transaction open, with matching
+uncommitted state; explicit ROLLBACK removes both source and maintained state.
 
 No batching claim is made. Arbitrary SQL parsing, negation,
 recursive cyclic retraction and DD time/frontiers are unsupported.
@@ -144,3 +147,37 @@ Failures preserve their exit codes. Python transports SQL and compares results.
 Upstream SQLite testfixture uses an isolated archive of the research pin, built
 with `--enable-fts5 --with-tcl=/opt/homebrew/opt/tcl-tk@8/lib`. The local Python
 driver uses SQLite 3.53.2; its boundary result is distinct from upstream FTS5 tests.
+
+## Shared shootout
+
+```sh
+bash v6/labs/exec_shootout/postgres_pglite_ivm/13_crossover_run.sh take2 \
+  /tmp/sprefa-sqlite-native-take2/new-sweep.jsonl \
+  --take2-extension /absolute/path/from/gate/take2.dylib
+```
+
+The new `take2` entry selects the existing runner's bounded full grid through
+12000 rows, two repetitions and both `sqlite-native-take2` and
+`sqlite-native-take2-logged`. Existing profiles and engine arms retain their
+behavior. Direct runner use accepts both new arms and `--take2-extension`.
+The gate also executes the shared 171-state semantic fixture in both modes and
+requires actual exact-oracle completion; resource-blocked skips cannot pass it.
+
+Measured sweep: 9 cells, 36 case runs, 180 mutation-state checks, all passing.
+All timings separate initial incremental loading, source transaction, and query
+materialization. Fresh SQL oracle checks and shared input/output hashes run outside
+timing. Source verification streams SQLite rows; output is capped at 256 groups.
+Transport is capped at 64 MiB fixture JSON, 256 states and 13000 facts per state.
+SQLite's page cache is 8 MiB; runner memory-pressure and deadline guards remain
+active. RSS covers Python, SQLite and the extension. No total-RSS cap is enforced.
+
+Logged mode enables at most 256 callback-only stderr records after setup.
+Unlogged mode writes zero stderr records. SQL event counters are enabled in both
+modes. DB/WAL/SHM bytes are recorded before close and DB bytes again after reopen;
+temporary files are not sampled. This is durable SQLite state. Existing volatile
+DD labels are unchanged; no cross-engine performance comparison was executed.
+
+Antijoin, cyclic reachability and other shared circuit cells are explicitly
+unsupported by this adapter. Local self/multi tests cover equal-key grouped
+products; they do not establish the shared catalog's differently shaped self
+join or chain query. Unsupported-only runs remain unmeasured in the shared runner.

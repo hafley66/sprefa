@@ -43,6 +43,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Additive native-only entry point, using the same runner, oracle and guards.
+# Existing profiles retain their PostgreSQL startup and arm behavior.
+if [[ "$profile" == "take2" ]]; then
+  export IVM_RUN_ROOT="$receipt_root/cases-constrained"
+  node "$lab_dir/12_crossover_runner.mjs" "${extra_runner_args[@]}" \
+    --profile full --budget constrained --max-rows 12000 --warmups 0 --repetitions 2 \
+    --arms sqlite-native-take2,sqlite-native-take2-logged \
+    --output "$output" --deadline-epoch-ms "$deadline_epoch_ms" --timeout-ms 120000
+  exit $?
+fi
+
 case "$profile" in
   smoke|semantic|circuits) budgets=(constrained) ;;
   full|diagnostic) budgets=(constrained roomy) ;;

@@ -33,8 +33,20 @@ if rc == 0:
     rc = execute('boundary', [sys.executable,str(HERE/'3_boundary_test.py')])
 if rc == 0:
     rc = execute('semantic', [sys.executable,str(HERE/'6_semantic_test.py')])
+if rc == 0:
+    env['IVM_RUN_ROOT']=str(run/'shared-cases')
+    rc=execute('shared-semantic',['node',str(HERE.parent/'12_crossover_runner.mjs'),
+        '--profile','semantic','--arms','sqlite-native-take2,sqlite-native-take2-logged',
+        '--take2-extension',env['TAKE2_EXTENSION'],'--output',str(run/'shared.jsonl'),
+        '--warmups','0','--repetitions','1'])
+    if rc==0:
+        rows=[json.loads(line) for line in (run/'shared.jsonl').read_text().splitlines()]
+        matches=[r for r in rows if r['event']=='all-arm-run' and r['status']=='ok'
+                 and r.get('all_input_output_states_match') and r.get('state_count_per_arm')==171]
+        if len(matches)!=1: rc=1
+        steps.append(dict(name='shared-executed-oracle',exit_code=rc,matched_cases=len(matches)))
 hashes = {}
-for path in sorted(HERE.glob('*')) + sorted(run.glob('*')):
+for path in sorted(HERE.glob('*')) + sorted(run.glob('*')) + [HERE.parent/name for name in ['9_crossover_workload.mjs','12_crossover_runner.mjs','13_crossover_run.sh']]:
     if path.is_file(): hashes[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
 receipt = dict(exit_code=rc, steps=steps, sha256=hashes)
 (run/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')

@@ -82,6 +82,7 @@ class Boundary(unittest.TestCase):
         for mode, expected in [('ABORT', []), ('FAIL', [(1,10,100)]), ('IGNORE', [(1,10,100),(3,30,300)]), ('REPLACE', [(2,10,200),(3,30,300)])]:
             with self.subTest(mode=mode):
                 self.db.execute('DELETE FROM source')
+                self.trace()
                 self.db.execute('BEGIN')
                 statement = f'INSERT OR {mode} INTO source VALUES(1,10,100),(2,10,200),(3,30,300)'
                 if mode in ('ABORT','FAIL'):
@@ -90,7 +91,13 @@ class Boundary(unittest.TestCase):
                 self.equal(expected)
                 self.db.execute('COMMIT')
                 self.equal(expected)
-                self.trace()
+                policy={'ABORT':4,'FAIL':3,'IGNORE':2,'REPLACE':5}[mode]
+                count={'ABORT':1,'FAIL':1,'IGNORE':2,'REPLACE':4}[mode]
+                events=[['begin',-1],['savepoint',0]]
+                events += [['update',policy],['savepoint',1],['release',1]] * count
+                if mode=='ABORT': events += [['rollbackto',0]]
+                events += [['release',0],['filter',-1],['sync',-1],['commit',-1],['filter',-1]]
+                self.assertEqual(self.trace(),events)
 
     def test_upsert_check_rollback(self):
         self.db.execute('INSERT INTO source VALUES(1,10,100)')
@@ -120,7 +127,13 @@ class Boundary(unittest.TestCase):
                 self.assertFalse(self.db.in_transaction)
                 self.equal([])
                 self.assertEqual(self.db.execute('SELECT n FROM maintained_stats').fetchone(), (0,))
-                self.assertIn(['rollback',-1], self.trace())
+                expected=[['begin',-1]]
+                if explicit: expected += [['savepoint',0]]
+                depth=1 if explicit else 0
+                expected += [['update',4],['savepoint',depth],['release',depth]]
+                if explicit: expected += [['release',0],['filter',-1]]
+                expected += [['sync',-1],['rollback',-1],['filter',-1]]
+                self.assertEqual(self.trace(),expected)
 
     def test_connections(self):
         self.db.execute('PRAGMA journal_mode=WAL')
@@ -169,6 +182,30 @@ class Boundary(unittest.TestCase):
             self.db.execute('INSERT INTO source VALUES(1,10,100)')
         self.equal([])
         self.assertEqual(self.db.execute('SELECT n FROM maintained_stats').fetchone(),(0,))
+
+    def test_deferred_foreign_key(self):
+        self.db.execute('PRAGMA foreign_keys=ON')
+        self.db.executescript('CREATE TABLE parent(k INTEGER PRIMARY KEY); CREATE TABLE child(id INTEGER PRIMARY KEY,k INTEGER,v INTEGER,FOREIGN KEY(k) REFERENCES parent(k) DEFERRABLE INITIALLY DEFERRED); CREATE VIRTUAL TABLE fk_result USING take2;')
+        self.db.execute("SELECT take2_attach('fk_result','child',0,'id','k','v')").fetchall()
+        self.db.execute('BEGIN')
+        self.db.execute('INSERT INTO child VALUES(1,99,3)')
+        self.assertEqual(self.db.execute('SELECT * FROM fk_result').fetchall(),[(1,99,3)])
+        with self.assertRaisesRegex(sqlite3.IntegrityError,'FOREIGN KEY'):
+            self.db.execute('COMMIT')
+        self.assertTrue(self.db.in_transaction)
+        self.db.execute('ROLLBACK')
+        self.assertEqual(self.db.execute('SELECT * FROM fk_result').fetchall(),[])
+        self.assertEqual(self.db.execute('SELECT * FROM child').fetchall(),[])
+
+    def test_outer_savepoint_release(self):
+        self.db.execute('SAVEPOINT outermost')
+        self.db.execute('INSERT INTO source VALUES(1,10,100)')
+        self.equal([(1,10,100)])
+        self.db.execute('RELEASE outermost')
+        self.assertFalse(self.db.in_transaction)
+        self.db.close()
+        self.db=self.connection()
+        self.equal([(1,10,100)])
 
     def test_trace_bound(self):
         self.db.execute('WITH RECURSIVE x(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM x WHERE i<300) INSERT INTO source SELECT i,i,i FROM x')
