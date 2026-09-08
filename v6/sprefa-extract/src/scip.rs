@@ -595,9 +595,31 @@ fn prune_repository_snapshot(root: &Path, keep: &HashSet<PathBuf>) -> Result<(),
             }
         }
     }
+    prune_empty_directories(root, directories)
+}
+
+/// Remove empty directories discovered under one staging root, deepest first.
+/// `target/` directories are absent from `directories` because both staging
+/// walks stop at them. A nonempty directory is retained, including an indexer
+/// artifact or unrelated path that was already present in the persistent tree.
+fn prune_empty_directories(root: &Path, directories: Vec<PathBuf>) -> Result<(), ScipError> {
     for directory in directories.into_iter().rev() {
-        if directory != root {
-            let _ = std::fs::remove_dir(&directory);
+        if directory == root {
+            continue;
+        }
+        match std::fs::remove_dir(&directory) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(error) => {
+                return Err(ScipError::IndexerFailed(format!(
+                    "prune empty stage directory {}: {error}",
+                    directory.display()
+                )))
+            }
         }
     }
     Ok(())
@@ -668,8 +690,9 @@ pub fn copy_sources(
 }
 
 /// A persistent stage keeps whatever a previous run left, so a source deleted
-/// from the corpus would still be indexed. Only source files are pruned; the
-/// indexer's own `target/` is what the stage exists to keep warm.
+/// from the corpus would still be indexed. Source files are pruned first, then
+/// their empty parent directories are removed bottom-up. The indexer's own
+/// `target/` is what the stage exists to keep warm.
 fn prune_unstaged(
     dst_root: &Path,
     staged: &[PathBuf],
@@ -678,7 +701,9 @@ fn prune_unstaged(
 ) -> Result<(), ScipError> {
     let keep: std::collections::HashSet<&Path> = staged.iter().map(PathBuf::as_path).collect();
     let mut stack = vec![dst_root.to_path_buf()];
+    let mut directories = Vec::new();
     while let Some(dir) = stack.pop() {
+        directories.push(dir.clone());
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -701,7 +726,7 @@ fn prune_unstaged(
             }
         }
     }
-    Ok(())
+    prune_empty_directories(dst_root, directories)
 }
 
 /// The line/col -> byte bridge. SCIP ranges are 0-based (line, col) with cols

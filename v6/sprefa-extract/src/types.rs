@@ -3445,6 +3445,12 @@ pub enum FlatFact {
         tool_name: String,
         tool_version: String,
         documents: u32,
+        /// Index file mtime as milliseconds since the Unix epoch. Null when
+        /// the filesystem does not provide a readable post-epoch mtime.
+        index_mtime_unix_ms: Option<u64>,
+        /// Filesystem evidence only: stale, uncertain, or no_newer_sources.
+        /// Equal/older mtimes do not establish semantic freshness.
+        staleness: String,
     },
     /// A NAMED SKIP: one detected indexer produced no index, and why. This is a
     /// row rather than an exit code on purpose. A root with no toolchain must

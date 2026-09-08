@@ -1059,6 +1059,26 @@ pub fn scip_family(request: &ScipFamilyRequest) -> Result<Vec<FlatFact>, Project
     let Some(index_path) = report.index.as_ref() else {
         return Ok(facts);
     };
+    facts.extend(scip_family_from_path(request, index_path, report.reused)?);
+    Ok(facts)
+}
+
+/// Load one caller-supplied index directly for the `scip` family. This path
+/// does not inspect the cache, marker files, environment override, or indexer
+/// roster, and therefore never spawns an indexer. Existing `ScipFamilyRequest`
+/// construction remains unchanged for cache-backed callers.
+pub fn scip_family_from_index(
+    request: &ScipFamilyRequest,
+    index_path: &Path,
+) -> Result<Vec<FlatFact>, ProjectError> {
+    scip_family_from_path(request, index_path, true)
+}
+
+fn scip_family_from_path(
+    request: &ScipFamilyRequest,
+    index_path: &Path,
+    reused: bool,
+) -> Result<Vec<FlatFact>, ProjectError> {
     // The decode is indexer-agnostic (one prost decode serves every indexer),
     // so any roster entry loads any index, including a merged multi-language one.
     let index = ScipTypescript
@@ -1072,18 +1092,68 @@ pub fn scip_family(request: &ScipFamilyRequest) -> Result<Vec<FlatFact>, Project
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default(),
     };
-    facts.push(FlatFact::ScipIndexRow {
-        reused: report.reused,
+    let (index_mtime_unix_ms, staleness) = scip_index_staleness(index_path, request.root, &index);
+    let mut facts = vec![FlatFact::ScipIndexRow {
+        reused,
         tool_name: index.metadata.tool_name.clone(),
         tool_version: index.metadata.tool_version.clone(),
         documents: index.documents.len() as u32,
-    });
+        index_mtime_unix_ms,
+        staleness: staleness.to_string(),
+    }];
     facts.extend(crate::scip_v5_rels::v5_rel_rows(
         &index,
         request.root,
         &slug,
     ));
     Ok(facts)
+}
+
+/// Compare only filesystem timestamps. `stale` means at least one readable
+/// indexed document has a later mtime than the index. `uncertain` means no
+/// newer document was observed but the index mtime or at least one indexed
+/// document mtime could not be read. `no_newer_sources` means every indexed
+/// document mtime was readable and none was later. No state claims semantic
+/// freshness because matching mtimes do not compare content.
+fn scip_index_staleness(
+    index_path: &Path,
+    project_root: &Path,
+    index: &ScipIndex,
+) -> (Option<u64>, &'static str) {
+    let index_mtime = std::fs::File::open(index_path)
+        .and_then(|file| file.metadata())
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    let index_mtime_unix_ms = index_mtime.and_then(unix_millis);
+    let Some(index_mtime) = index_mtime else {
+        return (index_mtime_unix_ms, "uncertain");
+    };
+
+    let mut uncertain = false;
+    for document in &index.documents {
+        let source_path = project_root.join(&document.relative_path);
+        let source_mtime = std::fs::File::open(&source_path)
+            .and_then(|file| file.metadata())
+            .and_then(|metadata| metadata.modified());
+        match source_mtime {
+            Ok(source_mtime) if source_mtime > index_mtime => {
+                return (index_mtime_unix_ms, "stale")
+            }
+            Ok(_) => {}
+            Err(_) => uncertain = true,
+        }
+    }
+    if uncertain {
+        (index_mtime_unix_ms, "uncertain")
+    } else {
+        (index_mtime_unix_ms, "no_newer_sources")
+    }
+}
+
+fn unix_millis(time: std::time::SystemTime) -> Option<u64> {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
 }
 
 /// Where `scip_family` put or found the index, for the human line the CLI
@@ -1101,6 +1171,15 @@ pub fn scip_index_location(request: &ScipFamilyRequest) -> Option<PathBuf> {
 /// Serialize the `scip` family to sorted JSONL lines.
 pub fn scip_family_jsonl(request: &ScipFamilyRequest) -> Result<Vec<String>, ProjectError> {
     Ok(sorted_lines(scip_family(request)?))
+}
+
+/// Serialize a caller-supplied family index to sorted JSONL without consulting
+/// or mutating any index cache.
+pub fn scip_family_from_index_jsonl(
+    request: &ScipFamilyRequest,
+    index_path: &Path,
+) -> Result<Vec<String>, ProjectError> {
+    Ok(sorted_lines(scip_family_from_index(request, index_path)?))
 }
 
 /// The `diet_scip` FAMILY: the tree-sitter parse plus heuristic resolution,

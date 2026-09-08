@@ -28,9 +28,10 @@ use sprefa_extract::tsi::{ingest, Mode, RunOut};
 use sprefa_extract::{
     cfg_bundle, content_id_of, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact,
     flatten_cfg_each, flatten_each, package_edges_jsonl, query_patterns, resolve_project_jsonl,
-    scip_facts_jsonl, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
-    size_skip_fact, source_for, AstPatternQuery, FamilyMask, FlatFact, IndexBudget, ResolveArms,
-    ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, DEFAULT_MAX_BYTES,
+    scip_facts_jsonl, scip_family_from_index_jsonl, scip_family_jsonl, scip_file_edges_jsonl,
+    scip_index_location, size_skip_fact, source_for, AstPatternQuery, FamilyMask, FlatFact,
+    IndexBudget, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords,
+    DEFAULT_MAX_BYTES,
 };
 
 #[path = "extract/help.rs"]
@@ -89,8 +90,7 @@ struct Cli {
     #[arg(
         long,
         value_name = "FILE",
-        requires = "project_root",
-        conflicts_with = "scip_build",
+        conflicts_with_all = ["scip_build", "indexer"],
         long_help = SCIP_INDEX_LONG,
     )]
     scip_index: Option<PathBuf>,
@@ -417,10 +417,18 @@ fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         },
         slug: None,
     };
-    for line in scip_family_jsonl(&request)? {
+    let lines = match cli.scip_index.as_deref() {
+        Some(index) => scip_family_from_index_jsonl(&request, index)?,
+        None => scip_family_jsonl(&request)?,
+    };
+    for line in lines {
         emit(&line)?;
     }
-    if let Some(path) = scip_index_location(&request) {
+    let index_location = cli
+        .scip_index
+        .clone()
+        .or_else(|| scip_index_location(&request));
+    if let Some(path) = index_location {
         // @eprintln-ok: CLI-UX location line, deliberately off the fact stream.
         eprintln!("extract: scip index {}", path.display());
     }

@@ -89,9 +89,10 @@ pub use move_scip::{
 };
 pub use project::{
     diet_scip, diet_scip_jsonl, extract_pool, resolve_project, resolve_project_jsonl, scip_facts,
-    scip_facts_jsonl, scip_family, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
-    FsBlobSource, ProjectError, ResolveArm, ResolveArms, ResolveRequest, ScipFamilyRequest,
-    ScipMode, SourceTreeBlobSource, RESOLVE_ARMS,
+    scip_facts_jsonl, scip_family, scip_family_from_index, scip_family_from_index_jsonl,
+    scip_family_jsonl, scip_file_edges_jsonl, scip_index_location, FsBlobSource, ProjectError,
+    ResolveArm, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode, SourceTreeBlobSource,
+    RESOLVE_ARMS,
 };
 pub use rename_cx::{RenameCx, RenameRequest};
 pub use rows::{Edge, FamilyBundle, Node};

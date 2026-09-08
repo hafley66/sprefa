@@ -63,6 +63,17 @@ EXACT MODE: --family scip ROOT
   time budget (the indexer's whole process group is killed at the deadline) and
   is cached for next time.
 
+  --scip-index FILE loads that exact file directly, ahead of environment and
+  cache discovery, and never starts an indexer. A missing or invalid explicit
+  file is an error. --indexer and --scip-build conflict with an explicit file.
+
+  The scip_index row carries index_mtime_unix_ms and staleness. The timestamp is
+  milliseconds since the Unix epoch. staleness=stale means a readable indexed
+  document has a later mtime; uncertain means an mtime or indexed document was
+  unreadable; no_newer_sources means every indexed document was readable and no
+  later mtime was observed. These are filesystem observations, not proof that
+  index contents match source contents.
+
   When a root cannot be indexed you get scip_skip rows saying exactly which
   root and why: not_installed comes with the install command, timed_out with
   the budget, and failed with the command, process status, leading diagnostic,
@@ -187,12 +198,19 @@ changes the whole run.";
 
 pub const PROJECT_ROOT_LONG: &str = "\
 The directory SCIP document paths are relative to, and the root --scip-build
-runs the indexer over. Required by --scip-index and --scip-build: without it
-there is no reader to join SCIP documents to their content.";
+runs the indexer over. Required when --resolve or --scip-facts loads an index:
+without it there is no reader to join SCIP documents to their content.
+--family scip already takes ROOT positionally and uses that root for an explicit
+--scip-index.";
 
 pub const SCIP_INDEX_LONG: &str = "\
 Path to an index.scip built earlier. The decode is indexer-agnostic, so an index
-from scip-typescript, scip-go or rust-analyzer all load the same way.";
+from scip-typescript, scip-go or rust-analyzer all load the same way.
+
+Under --family scip ROOT, this exact file takes precedence over environment and
+cache discovery and no indexer subprocess is started. Missing and invalid files
+are errors. It conflicts with --indexer and --scip-build. Other modes also need
+--project-root so indexed document paths can be joined to source files.";
 
 pub const SCIP_BUILD_LONG: &str = "\
 Run the language's own indexer over --project-root, then load the result. One

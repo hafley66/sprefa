@@ -70,7 +70,7 @@ RECORD SHAPES
   record=scip_documentation  symbol=<string>  pos=<u32>  text=<string>
   record=scip_signature  symbol=<string>  language=<string>  text=<string>
   record=scip_signature_occurrence  symbol=<string>  ref_symbol=<string>  start=<u32>  end=<u32>  roles=<i32>
-  record=scip_index  reused=<bool>  tool_name=<string>  tool_version=<string>  documents=<u32>
+  record=scip_index  reused=<bool>  tool_name=<string>  tool_version=<string>  documents=<u32>  index_mtime_unix_ms=<u64|null>  staleness=<stale|uncertain|no_newer_sources>
   record=scip_skip  lang=<string>  bin=<string>  reason=<not_installed|timed_out|failed>  detail=<string>
   record=scip_def  symbol=<string>  file=<string>  repo=<string>
   record=scip_name  symbol=<string>  name=<string>
@@ -390,6 +390,11 @@ THE TWO NAMED FAMILIES (--family scip | --family diet_scip)
   process group killed on the deadline) and streams v5's scip_* relation shapes:
   scip_def, scip_name, scip_ref, scip_edge, scip_fn_edge, scip_callee_type,
   scip_local, scip_impl, behind one scip_index header row. Compiler-resolved.
+  index_mtime_unix_ms is the index file mtime in milliseconds since Unix epoch.
+  staleness=stale means a readable indexed document has a later mtime than the
+  index; uncertain means the index mtime or an indexed document was unreadable;
+  no_newer_sources means every indexed document was readable and no later mtime
+  was observed. Mtime evidence is not proof that index contents match source contents.
   v5's scip_occurrence and scip_binding are NOT in that set. scip_occurrence is
   already a record tag on this wire (the byte-span passthrough row under
   --scip-facts) with different fields, and two shapes under one tag is exactly
