@@ -196,7 +196,7 @@ Verdict: the only origin of unwind edges and types-as-data. Build where ROI is p
 | dependency corpus | index it | walks it | no | yes | partial | yes | yes | server does | yes | index it |
 | languages | 8 | 10 | 30+ | SCIP set + 3 | 10 | 5 | 4 | all servers | 1 each | all grammars |
 | streamable facts | yes | no | no | no | no | yes | yes | per request | yes | yes |
-| open license | Apache | GHAS for commercial | LGPL, pro closed | BSD | Apache | Apache | MIT/Apache | varies | varies | ours |
+| open license | Apache (indexers) | GHAS for commercial | LGPL, pro closed | BSD | Apache | Apache | MIT/Apache | varies | varies | MIT OR Apache-2.0 (sprefa) |
 | cold on 17 files | 1.25 s | 3.61 s | n/a | n/a | minutes | n/a | n/a | ms/request | n/a | ms |
 
 ---

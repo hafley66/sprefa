@@ -138,3 +138,8 @@ CodeQL swing on the same package: stock suite 87 rules / 0 findings / 11 s; five
 ### 2026-09-08T17:42:42Z · @fable
 
 Field test 2026-09-08 follow-ups filed as children of this epic (label review-field-test), in priority order: @extract-cfg-exception-edges (high), @dl6-acquire-release-pairing (high), @extract-dependency-corpus, @extract-go-ssa-door, @extract-rust-mir-door, @extract-lsp-door, @extract-scip-cache-default (low), @extract-resolve-keep-phase1 (low). Rationale and measurements: research/2026-09-08-fact-sources-beyond-scip.md §5.
+
+### 2026-09-08T18:05:39Z · @fable
+
+Q&A on the CodeQL comparison and the decision to put review capabilities into extract proper (scope columns + smell family in Rust, no QL/dl6 dependency; fast tier never spawns a toolchain): @extract-review-capabilities-in-extract. License row in the analysis corrected to MIT OR Apache-2.0.
+
