@@ -1,0 +1,17 @@
+test_bag (__main__.Semantics.test_bag) ... {"test": "__main__.Semantics.test_bag", "trace": [["sync", -1], ["commit", -1]]}
+ok
+test_filter (__main__.Semantics.test_filter) ... {"test": "__main__.Semantics.test_filter", "trace": [["sync", -1], ["commit", -1]]}
+ok
+test_group (__main__.Semantics.test_group) ... {"test": "__main__.Semantics.test_group", "trace": [["sync", -1], ["commit", -1]]}
+ok
+test_join (__main__.Semantics.test_join) ... {"test": "__main__.Semantics.test_join", "trace": [["sync", -1], ["commit", -1]]}
+ok
+test_multi (__main__.Semantics.test_multi) ... {"test": "__main__.Semantics.test_multi", "trace": [["sync", -1], ["commit", -1]]}
+ok
+test_self (__main__.Semantics.test_self) ... {"test": "__main__.Semantics.test_self", "trace": [["sync", -1], ["commit", -1]]}
+ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.208s
+
+OK

@@ -1,0 +1,55 @@
+{
+  "exit_code": 0,
+  "steps": [
+    {
+      "name": "build",
+      "command": [
+        "cc",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fPIC",
+        "-shared",
+        "-I/opt/homebrew/opt/sqlite/include",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/1_native.c",
+        "-o",
+        "/tmp/sprefa-sqlite-native-take2/gate-ae3bh2ij/take2.dylib"
+      ],
+      "exit_code": 0,
+      "seconds": 0.29042362491600215
+    },
+    {
+      "name": "boundary",
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/3_boundary_test.py"
+      ],
+      "exit_code": 0,
+      "seconds": 0.40156858297996223
+    },
+    {
+      "name": "semantic",
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/6_semantic_test.py"
+      ],
+      "exit_code": 0,
+      "seconds": 0.2869064580881968
+    }
+  ],
+  "sha256": {
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/0_README.md": "e808e329efd269e38dc3cfb30041c4bec0f6c7b7e0863e180c2eea8bf9db177d",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/0a_state.h": "c3205b52b4d492070b6abd708524c2e7cfdd5ee319f699285d6c0fca9499257b",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/0b_delta.h": "6cfa67bdf75c93a14299eaddd6f7f16eca15a7bd6704e6c29bb0af475a5b6f9b",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/1_native.c": "226b18a7ca628c987aab55a5e5c7fab27db1d82ae6d53480d961f979676da9ca",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/2_boundary.sql": "843beb8ee9e9ce161ce48a855a8f947402c6c90583b7dbce53de5f5561a758c8",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/3_boundary_test.py": "9af342448757a6cc54f96eb94466e169a0aeac3d1167be6fb76e258d2ad95840",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/4_gate.py": "a9e90b30043ce608f2346d6341565ae71a8800d07d6cf2cef72d63bd2f27ca45",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/5_sources.md": "350e7746528a1eaa3c6dc9c49b492c69e8dd20aa416860a8d9d6e97b517fcf25",
+    "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/6_semantic_test.py": "33d9d108bd0d5bdb55ae1b75e4cbcb9a9781621285f7edfe11b553fcd1bf4c00",
+    "/tmp/sprefa-sqlite-native-take2/gate-ae3bh2ij/boundary.log": "c83a196afecdf83f3253be0fc5322fa8b2dc3370b6951af7b06d99c687a3fe09",
+    "/tmp/sprefa-sqlite-native-take2/gate-ae3bh2ij/build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/sprefa-sqlite-native-take2/gate-ae3bh2ij/semantic.log": "7406d4db4d6cd5358f9a4b734fc1a10daa1ad6792746b1d2320f9c0b637d602d",
+    "/tmp/sprefa-sqlite-native-take2/gate-ae3bh2ij/take2.dylib": "94741d3b8105b8605dfec0e0b76b29fa67008392bcafdf6a250bbea1fd66744a"
+  }
+}

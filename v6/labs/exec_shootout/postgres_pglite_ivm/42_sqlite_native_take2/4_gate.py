@@ -31,6 +31,8 @@ rc = execute('build', ['cc','-Wall','-Wextra','-Werror','-fPIC','-shared',
     str(HERE/'1_native.c'), '-o', env['TAKE2_EXTENSION']])
 if rc == 0:
     rc = execute('boundary', [sys.executable,str(HERE/'3_boundary_test.py')])
+if rc == 0:
+    rc = execute('semantic', [sys.executable,str(HERE/'6_semantic_test.py')])
 hashes = {}
 for path in sorted(HERE.glob('*')) + sorted(run.glob('*')):
     if path.is_file(): hashes[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()

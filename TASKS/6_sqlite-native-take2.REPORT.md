@@ -1,6 +1,7 @@
 # SQLite Native Take 2
 
-Milestone 1 boundary gate: PASS, 10 tests on Python-linked SQLite 3.53.2.
+Current gate: PASS, 11 boundary tests and 6 query-family tests on SQLite 3.53.2.
+Milestone 1 boundary gate at commit: PASS, 10 tests.
 Upstream pinned SQLite FTS5: 3 savepoint tests and 27 conflict tests, zero errors.
 Initial boundary attempt: exit 1, 9 passing tests and one incorrect expected
 callback timeline. Focused repair: exit 0, 2 tests. Green gate: exit 0.
@@ -9,7 +10,7 @@ exact commands in `receipts/receipt.json`. No previous passing lifecycle result
 was inferred from Terra's failed testfixture build.
 
 Worktree base: `46e918dac`; task brief commit: `0aa441195`.
-Implementation commits are recorded below as milestones are committed.
+Milestone 1 commit: `176b45818`.
 
 ## Commands
 
@@ -25,7 +26,9 @@ make -j2 testfixture sqlite3
 The configure, make and testfixture commands run in
 `/tmp/sprefa-sqlite-native-take2/build`. Existing Tcl is used without installation.
 
-CI coverage added: standalone C extension compilation and 10 boundary tests.
+CI coverage added: standalone C extension compilation, 11 boundary tests and
+6 query-family tests. The extra boundary case rejects illegal shadow-trigger
+virtual-table reentry without source/state divergence.
 Existing build/test coverage is unchanged. No repository-wide CI was run or edited.
 
 Boundary covers autocommit multi-row writes, explicit-transaction read visibility,
@@ -35,8 +38,14 @@ writer rejection, second loaded writer and WAL reader isolation, shadow OLD
 mismatch, recursive-trigger enforcement, a separately labeled direct-event probe,
 and bounded diagnostics. SQL counters roll back with SQLite shadow state.
 
-Current gaps: boundary state is a source mirror. Query-family delta maintenance,
-shared shootout arm and performance receipts are next milestones. No batching,
+Milestone 2: filter/projection bag supports, grouped COUNT/SUM, two-source join,
+two-occurrence self join and three-source join pass fresh SQLite oracles through
+duplicates, NULLs, multi-row changes, conflicts, reopen, savepoint churn and xSync
+failure. A three-source accumulator-overflow case checks whole-statement rollback.
+Six constructor-error red cases preceded implementation; their log is retained.
+Green milestone gate receipt: `receipts/m2-receipt.json`.
+
+Current gaps: shared shootout arm and performance receipts are next. No batching,
 arbitrary SQL compiler, negation, cyclic recursive retraction or DD time/frontier
 support is claimed. Exact callback timelines are asserted for autocommit and
 nested savepoints; other lifecycle cases assert result/rollback contracts.

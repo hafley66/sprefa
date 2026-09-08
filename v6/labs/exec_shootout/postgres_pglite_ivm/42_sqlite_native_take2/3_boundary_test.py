@@ -163,6 +163,13 @@ class Boundary(unittest.TestCase):
         with self.assertRaisesRegex(sqlite3.DatabaseError,'only forwarded'):
             self.db.execute('DELETE FROM maintained')
 
+    def test_shadow_callback_reentry_rejected(self):
+        self.db.execute('CREATE TRIGGER bad_shadow AFTER INSERT ON maintained_state BEGIN INSERT INTO maintained(id,k,v,op) VALUES(99,99,99,1); END')
+        with self.assertRaises(sqlite3.DatabaseError):
+            self.db.execute('INSERT INTO source VALUES(1,10,100)')
+        self.equal([])
+        self.assertEqual(self.db.execute('SELECT n FROM maintained_stats').fetchone(),(0,))
+
     def test_trace_bound(self):
         self.db.execute('WITH RECURSIVE x(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM x WHERE i<300) INSERT INTO source SELECT i,i,i FROM x')
         self.assertEqual(len(self.trace()),256)

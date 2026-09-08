@@ -4,22 +4,8 @@ SQLITE_EXTENSION_INIT1
 #include <stdio.h>
 #include <string.h>
 
-typedef struct Env {
-  char trace[16384];
-  int used, events, logging, fail_sync;
-} Env;
-typedef struct Tab {
-  sqlite3_vtab base;
-  sqlite3 *db;
-  Env *env;
-  char *schema, *name;
-  int busy;
-} Tab;
-typedef struct Cursor {
-  sqlite3_vtab_cursor base;
-  sqlite3_stmt *stmt;
-  int eof;
-} Cursor;
+#include "0a_state.h"
+#include "0b_delta.h"
 
 static void trace(Tab *t, const char *event, int depth) {
   Env *e = t->env;
@@ -61,15 +47,21 @@ static int disconnect(sqlite3_vtab *v) {
 static int connect(sqlite3 *db, void *aux, int argc, const char *const *argv,
                    sqlite3_vtab **out, char **err) {
   (void)err;
-  if (argc != 3) return SQLITE_ERROR;
+  if (argc < 3 || argc > 4) return SQLITE_ERROR;
   Tab *t = sqlite3_malloc64(sizeof(*t));
   if (!t) return SQLITE_NOMEM;
   memset(t, 0, sizeof(*t));
   t->db = db; t->env = aux;
+  if(argc==4) {
+    const char *modes[]={"mirror","filter","bag","group","join","self","multi"};
+    int found=0;
+    for(int i=0;i<7;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
+    if(!found) { sqlite3_free(t); return SQLITE_ERROR; }
+  }
   t->schema = sqlite3_mprintf("%s", argv[1]);
   t->name = sqlite3_mprintf("%s", argv[2]);
   if (!t->schema || !t->name) { disconnect(&t->base); return SQLITE_NOMEM; }
-  int rc = sqlite3_declare_vtab(db, "CREATE TABLE x(id INTEGER,k INTEGER,v INTEGER,op HIDDEN,old_id HIDDEN,old_k HIDDEN,old_v HIDDEN)");
+  int rc = sqlite3_declare_vtab(db, "CREATE TABLE x(id INTEGER,k INTEGER,v INTEGER,op HIDDEN,old_id HIDDEN,old_k HIDDEN,old_v HIDDEN,side HIDDEN)");
   if (rc != SQLITE_OK) { disconnect(&t->base); return rc; }
   *out = &t->base;
   return SQLITE_OK;
@@ -80,7 +72,10 @@ static int create(sqlite3 *db, void *aux, int argc, const char *const *argv,
   int rc = connect(db, aux, argc, argv, out, err);
   if (rc != SQLITE_OK) return rc;
   Tab *t = (Tab *)*out;
-  rc = sql(t, sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_state\"(id INTEGER PRIMARY KEY,k INTEGER,v INTEGER)", t->schema,t->name),0,0);
+  rc = sql(t, sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_state\"(id INTEGER,k INTEGER,v INTEGER,side INTEGER NOT NULL,PRIMARY KEY(side,id)) WITHOUT ROWID", t->schema,t->name),0,0);
+  if(rc==SQLITE_OK) rc=sql(t,sqlite3_mprintf("CREATE INDEX \"%w\".\"%w_lookup\" ON \"%w_state\"(side,k)",t->schema,t->name,t->name),0,0);
+  if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_result\"(key TEXT PRIMARY KEY,k INTEGER,v INTEGER,n INTEGER,s INTEGER,nn INTEGER)",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE INDEX \"%w\".\"%w_result_key\" ON \"%w_result\"(k)",t->schema,t->name,t->name),0,0);
   if (rc == SQLITE_OK) rc = sql(t, sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_stats\"(n INTEGER NOT NULL);",t->schema,t->name),0,0);
   if (rc == SQLITE_OK) rc = sql(t, sqlite3_mprintf("INSERT INTO \"%w\".\"%w_stats\" VALUES(0)",t->schema,t->name),0,0);
   if (rc != SQLITE_OK) { disconnect(*out); *out = 0; }
@@ -90,6 +85,7 @@ static int destroy(sqlite3_vtab *v) {
   Tab *t = (Tab *)v;
   int rc = sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_state\"",t->schema,t->name),0,0);
   if (rc == SQLITE_OK) rc = sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_stats\"",t->schema,t->name),0,0);
+  if (rc == SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_result\"",t->schema,t->name),0,0);
   return rc == SQLITE_OK ? disconnect(v) : rc;
 }
 static int best(sqlite3_vtab *v, sqlite3_index_info *i) {
@@ -116,13 +112,17 @@ static int filter(sqlite3_vtab_cursor *p, int idx, const char *str, int n, sqlit
   trace(t,"filter",-1);
   sqlite3_finalize(c->stmt); c->stmt = 0;
   char *q = sqlite3_mprintf("SELECT id,k,v FROM \"%w\".\"%w_state\" ORDER BY id", t->schema,t->name);
+  if(t->mode) {
+    sqlite3_free(q);
+    q=sqlite3_mprintf("SELECT rowid,%s FROM \"%w\".\"%w_result\"",t->mode<=BAG?"k,v,n":"k,n,CASE WHEN nn=0 THEN NULL ELSE s END",t->schema,t->name);
+  }
   if (!q) return SQLITE_NOMEM;
   int rc = sqlite3_prepare_v3(t->db,q,-1,SQLITE_PREPARE_NO_VTAB,&c->stmt,0);
   sqlite3_free(q); return rc == SQLITE_OK ? next(p) : rc;
 }
 static int eof(sqlite3_vtab_cursor *p) { return ((Cursor *)p)->eof; }
 static int column(sqlite3_vtab_cursor *p, sqlite3_context *ctx, int i) {
-  if (i < 3) sqlite3_result_value(ctx,sqlite3_column_value(((Cursor *)p)->stmt,i));
+  if (i < 3) sqlite3_result_value(ctx,sqlite3_column_value(((Cursor *)p)->stmt,i+(((Tab *)p->pVtab)->mode?1:0)));
   else sqlite3_result_null(ctx);
   return SQLITE_OK;
 }
@@ -134,10 +134,23 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
   Tab *t = (Tab *)v;
   trace(t,"update",sqlite3_vtab_on_conflict(t->db));
   if (t->busy) return error(t,"recursive xUpdate rejected");
-  if (argc != 9 || sqlite3_value_type(a[0]) != SQLITE_NULL)
+  if (argc != 10 || sqlite3_value_type(a[0]) != SQLITE_NULL)
     return error(t,"only forwarded event INSERT is supported");
   int op = sqlite3_value_int(a[5]);
   if (op < 1 || op > 3) return error(t,"op must be 1 insert, 2 delete, 3 update");
+  int side=sqlite3_value_int(a[9]);
+  int arity=t->mode==MULTI?3:t->mode==JOIN?2:1;
+  if(side<0||side>=arity) return error(t,"invalid source side");
+  for(int image=0;image<2;image++) {
+    if((image==0 && op==2)||(image==1 && op==1)) continue;
+    int start=image?6:2;
+    if(sqlite3_value_type(a[start])!=SQLITE_INTEGER) return error(t,"integer row identity required");
+    if(t->mode) for(int j=1;j<=2;j++) {
+      int type=sqlite3_value_type(a[start+j]);
+      sqlite3_int64 n=sqlite3_value_int64(a[start+j]);
+      if(type!=SQLITE_NULL && (type!=SQLITE_INTEGER||n < -1000000||n > 1000000)) return error(t,"NULL or integer in [-1000000,1000000] required");
+    }
+  }
   sqlite3_stmt *pragma = 0;
   int rc = sqlite3_prepare_v2(t->db,"PRAGMA recursive_triggers",-1,&pragma,0);
   int enabled = rc == SQLITE_OK && sqlite3_step(pragma) == SQLITE_ROW && sqlite3_column_int(pragma,0);
@@ -145,13 +158,15 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
   if (!enabled) return error(t,"recursive_triggers=ON required for REPLACE deletion forwarding");
   t->busy = 1;
   if (op != 1) {
-    rc = sql(t,sqlite3_mprintf("DELETE FROM \"%w\".\"%w_state\" WHERE id=?1 AND k IS ?2 AND v IS ?3",t->schema,t->name),a+6,3);
+    rc = sql(t,sqlite3_mprintf("DELETE FROM \"%w\".\"%w_state\" WHERE id=?1 AND k IS ?2 AND v IS ?3 AND side=%d",t->schema,t->name,side),a+6,3);
     if (rc == SQLITE_OK && sqlite3_changes(t->db) != 1) rc = error(t,"OLD shadow mismatch");
+    if(rc==SQLITE_OK) rc=contribute(t,a+7,side,-1);
   }
+  if (rc == SQLITE_OK && op != 2) rc=contribute(t,a+3,side,1);
   if (rc == SQLITE_OK && op != 2)
-    rc = sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_state\" VALUES(?1,?2,?3)",t->schema,t->name),a+2,3);
+    rc = sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_state\" VALUES(?1,?2,?3,%d)",t->schema,t->name,side),a+2,3);
   if (rc == SQLITE_OK)
-    rc = sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_stats\" SET n=n+1",t->schema,t->name),0,0);
+    rc = sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_stats\" SET n=min(1000000000000000,n+1)",t->schema,t->name),0,0);
   t->busy = 0; *id = 0;
   return rc;
 }
@@ -166,7 +181,7 @@ static int rollback(sqlite3_vtab *v) { trace((Tab *)v,"rollback",-1); return SQL
 static int savepoint(sqlite3_vtab *v,int i) { trace((Tab *)v,"savepoint",i); return SQLITE_OK; }
 static int release(sqlite3_vtab *v,int i) { trace((Tab *)v,"release",i); return SQLITE_OK; }
 static int rollbackto(sqlite3_vtab *v,int i) { trace((Tab *)v,"rollbackto",i); return SQLITE_OK; }
-static int shadow(const char *suffix) { return !strcmp(suffix,"state") || !strcmp(suffix,"stats"); }
+static int shadow(const char *suffix) { return !strcmp(suffix,"state") || !strcmp(suffix,"stats") || !strcmp(suffix,"result"); }
 
 static const sqlite3_module module = {
   .iVersion=3, .xCreate=create, .xConnect=connect, .xBestIndex=best,
@@ -199,5 +214,6 @@ int sqlite3_extension_init(sqlite3 *db,char **err,const sqlite3_api_routines *ap
   memset(e,0,sizeof(*e));
   int rc = sqlite3_create_module_v2(db,"take2",&module,e,sqlite3_free);
   if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_control",1,SQLITE_UTF8, e,control,0,0,0);
+  if (rc == SQLITE_OK) rc = sqlite3_create_function_v2(db,"take2_attach",6,SQLITE_UTF8|SQLITE_DIRECTONLY,0,attach,0,0,0);
   return rc;
 }

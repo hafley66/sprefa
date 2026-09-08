@@ -1,0 +1,71 @@
+test_bag (__main__.Semantics.test_bag) ... {"test": "__main__.Semantics.test_bag", "trace": [["sync", -1], ["commit", -1]]}
+ERROR
+test_filter (__main__.Semantics.test_filter) ... {"test": "__main__.Semantics.test_filter", "trace": [["sync", -1], ["commit", -1]]}
+ERROR
+test_group (__main__.Semantics.test_group) ... {"test": "__main__.Semantics.test_group", "trace": [["sync", -1], ["commit", -1]]}
+ERROR
+test_join (__main__.Semantics.test_join) ... {"test": "__main__.Semantics.test_join", "trace": [["sync", -1], ["commit", -1]]}
+ERROR
+test_multi (__main__.Semantics.test_multi) ... {"test": "__main__.Semantics.test_multi", "trace": [["sync", -1], ["commit", -1]]}
+ERROR
+test_self (__main__.Semantics.test_self) ... {"test": "__main__.Semantics.test_self", "trace": [["sync", -1], ["commit", -1]]}
+ERROR
+
+======================================================================
+ERROR: test_bag (__main__.Semantics.test_bag)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/6_semantic_test.py", line 30, in test
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING take2({mode})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_filter (__main__.Semantics.test_filter)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/6_semantic_test.py", line 30, in test
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING take2({mode})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_group (__main__.Semantics.test_group)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/6_semantic_test.py", line 30, in test
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING take2({mode})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_join (__main__.Semantics.test_join)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/6_semantic_test.py", line 30, in test
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING take2({mode})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_multi (__main__.Semantics.test_multi)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/6_semantic_test.py", line 30, in test
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING take2({mode})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_self (__main__.Semantics.test_self)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/42_sqlite_native_take2/6_semantic_test.py", line 30, in test
+    self.db.execute(f'CREATE VIRTUAL TABLE result USING take2({mode})')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.021s
+
+FAILED (errors=6)
