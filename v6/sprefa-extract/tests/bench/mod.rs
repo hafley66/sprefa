@@ -18,7 +18,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use sprefa_extract::{resolve_project, FlatFact, ResolveArms, ResolveRequest, ScipMode, ScipRecords};
+use sprefa_extract::{
+    resolve_project, FlatFact, ResolveArms, ResolveRequest, ScipMode, ScipRecords,
+};
 
 /// Where the committed oracle tsvs and RATCHET.tsv live.
 pub const BENCH_DIR: &str = concat!(
@@ -48,15 +50,24 @@ pub fn corpus(lang: &str) -> Corpus {
     match lang {
         "ts5" => Corpus {
             lang: "ts5",
-            root: root("RATCHET_TS_ROOT", "/Users/chrishafley/projects/TypeScript-5.9"),
+            root: root(
+                "RATCHET_TS_ROOT",
+                "/Users/chrishafley/projects/TypeScript-5.9",
+            ),
         },
         "go" => Corpus {
             lang: "go",
-            root: root("RATCHET_GO_ROOT", "/Users/chrishafley/projects/typescript-go"),
+            root: root(
+                "RATCHET_GO_ROOT",
+                "/Users/chrishafley/projects/typescript-go",
+            ),
         },
         "rust" => Corpus {
             lang: "rust",
-            root: root("RATCHET_RUST_ROOT", "/Users/chrishafley/projects/rust-analyzer"),
+            root: root(
+                "RATCHET_RUST_ROOT",
+                "/Users/chrishafley/projects/rust-analyzer",
+            ),
         },
         other => panic!("unknown ratchet corpus '{other}'"),
     }
@@ -171,18 +182,78 @@ struct OracleFile {
 /// where it is dashes in `oracle`.
 fn oracle_files() -> &'static [OracleFile] {
     &[
-        OracleFile { lang: "ts5", family: "call", oracle: "oracle", file: "ts5.oracle.call.tsv" },
-        OracleFile { lang: "ts5", family: "call", oracle: "codeql2", file: "ts.codeql2.call.tsv" },
-        OracleFile { lang: "ts5", family: "module", oracle: "madge", file: "ts.madge.module.tsv" },
-        OracleFile { lang: "ts5", family: "module", oracle: "depcruise", file: "ts.depcruise.module.tsv" },
-        OracleFile { lang: "go", family: "call", oracle: "oracle-vta-bare", file: "go.oracle.call.vta.bare.tsv" },
-        OracleFile { lang: "go", family: "call", oracle: "codeql2", file: "go.codeql2.call.tsv" },
-        OracleFile { lang: "go", family: "module", oracle: "oracle", file: "go.oracle.module.tsv" },
-        OracleFile { lang: "go", family: "type", oracle: "oracle-typedecl", file: "go.oracle.type.typedecl.tsv" },
-        OracleFile { lang: "rust", family: "call", oracle: "oracle", file: "rust.oracle.call.tsv" },
-        OracleFile { lang: "rust", family: "call", oracle: "scip_override", file: "rust.scip_override.call.tsv" },
-        OracleFile { lang: "rust", family: "call", oracle: "codeql", file: "rust.codeql.call.tsv" },
-        OracleFile { lang: "rust", family: "type", oracle: "oracle-typedecl", file: "rust.oracle.type.typedecl.tsv" },
+        OracleFile {
+            lang: "ts5",
+            family: "call",
+            oracle: "oracle",
+            file: "ts5.oracle.call.tsv",
+        },
+        OracleFile {
+            lang: "ts5",
+            family: "call",
+            oracle: "codeql2",
+            file: "ts.codeql2.call.tsv",
+        },
+        OracleFile {
+            lang: "ts5",
+            family: "module",
+            oracle: "madge",
+            file: "ts.madge.module.tsv",
+        },
+        OracleFile {
+            lang: "ts5",
+            family: "module",
+            oracle: "depcruise",
+            file: "ts.depcruise.module.tsv",
+        },
+        OracleFile {
+            lang: "go",
+            family: "call",
+            oracle: "oracle-vta-bare",
+            file: "go.oracle.call.vta.bare.tsv",
+        },
+        OracleFile {
+            lang: "go",
+            family: "call",
+            oracle: "codeql2",
+            file: "go.codeql2.call.tsv",
+        },
+        OracleFile {
+            lang: "go",
+            family: "module",
+            oracle: "oracle",
+            file: "go.oracle.module.tsv",
+        },
+        OracleFile {
+            lang: "go",
+            family: "type",
+            oracle: "oracle-typedecl",
+            file: "go.oracle.type.typedecl.tsv",
+        },
+        OracleFile {
+            lang: "rust",
+            family: "call",
+            oracle: "oracle",
+            file: "rust.oracle.call.tsv",
+        },
+        OracleFile {
+            lang: "rust",
+            family: "call",
+            oracle: "scip_override",
+            file: "rust.scip_override.call.tsv",
+        },
+        OracleFile {
+            lang: "rust",
+            family: "call",
+            oracle: "codeql",
+            file: "rust.codeql.call.tsv",
+        },
+        OracleFile {
+            lang: "rust",
+            family: "type",
+            oracle: "oracle-typedecl",
+            file: "rust.oracle.type.typedecl.tsv",
+        },
     ]
 }
 
@@ -193,7 +264,9 @@ pub fn oracle_path(lang: &str, family: &str, oracle: &str) -> PathBuf {
         .iter()
         .find(|entry| entry.lang == lang && entry.family == family && entry.oracle == oracle)
         .unwrap_or_else(|| {
-            panic!("no oracle file for {lang}.{family}.<tier>.{oracle}; add a row to oracle_files()")
+            panic!(
+                "no oracle file for {lang}.{family}.<tier>.{oracle}; add a row to oracle_files()"
+            )
         });
     Path::new(BENCH_DIR).join(entry.file)
 }
@@ -203,28 +276,160 @@ pub fn oracle_path(lang: &str, family: &str, oracle: &str) -> PathBuf {
 /// No corpus has a scip-tier oracle yet.
 pub fn cases() -> &'static [Case] {
     &[
-        Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "oracle", projection: Projection::Raw },
-        Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "codeql2", projection: Projection::Raw },
-        Case { lang: "ts5", family: "module", tier: Tier::Syntax, oracle: "madge", projection: Projection::Raw },
-        Case { lang: "ts5", family: "module", tier: Tier::Syntax, oracle: "depcruise", projection: Projection::Raw },
-        Case { lang: "ts5", family: "call", tier: Tier::Checker, oracle: "oracle", projection: Projection::Raw },
-        Case { lang: "ts5", family: "call", tier: Tier::Checker, oracle: "codeql2", projection: Projection::Raw },
-        Case { lang: "ts5", family: "module", tier: Tier::Checker, oracle: "madge", projection: Projection::Raw },
-        Case { lang: "ts5", family: "module", tier: Tier::Checker, oracle: "depcruise", projection: Projection::Raw },
-        Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "oracle-vta-bare", projection: Projection::GoImpl },
-        Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "codeql2", projection: Projection::GoMethod },
-        Case { lang: "go", family: "module", tier: Tier::Syntax, oracle: "oracle", projection: Projection::GoScope },
-        Case { lang: "go", family: "type", tier: Tier::Syntax, oracle: "oracle-typedecl", projection: Projection::Raw },
-        Case { lang: "go", family: "call", tier: Tier::Checker, oracle: "codeql2", projection: Projection::GoMethod },
-        Case { lang: "go", family: "type", tier: Tier::Checker, oracle: "oracle-typedecl", projection: Projection::Raw },
-        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "oracle", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "scip_override", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "codeql", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "type", tier: Tier::Syntax, oracle: "oracle-typedecl", projection: Projection::Raw },
-        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "oracle", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "scip_override", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "codeql", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "type", tier: Tier::Checker, oracle: "oracle-typedecl", projection: Projection::Raw },
+        Case {
+            lang: "ts5",
+            family: "call",
+            tier: Tier::Syntax,
+            oracle: "oracle",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "ts5",
+            family: "call",
+            tier: Tier::Syntax,
+            oracle: "codeql2",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "ts5",
+            family: "module",
+            tier: Tier::Syntax,
+            oracle: "madge",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "ts5",
+            family: "module",
+            tier: Tier::Syntax,
+            oracle: "depcruise",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "ts5",
+            family: "call",
+            tier: Tier::Checker,
+            oracle: "oracle",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "ts5",
+            family: "call",
+            tier: Tier::Checker,
+            oracle: "codeql2",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "ts5",
+            family: "module",
+            tier: Tier::Checker,
+            oracle: "madge",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "ts5",
+            family: "module",
+            tier: Tier::Checker,
+            oracle: "depcruise",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "go",
+            family: "call",
+            tier: Tier::Syntax,
+            oracle: "oracle-vta-bare",
+            projection: Projection::GoImpl,
+        },
+        Case {
+            lang: "go",
+            family: "call",
+            tier: Tier::Syntax,
+            oracle: "codeql2",
+            projection: Projection::GoMethod,
+        },
+        Case {
+            lang: "go",
+            family: "module",
+            tier: Tier::Syntax,
+            oracle: "oracle",
+            projection: Projection::GoScope,
+        },
+        Case {
+            lang: "go",
+            family: "type",
+            tier: Tier::Syntax,
+            oracle: "oracle-typedecl",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "go",
+            family: "call",
+            tier: Tier::Checker,
+            oracle: "codeql2",
+            projection: Projection::GoMethod,
+        },
+        Case {
+            lang: "go",
+            family: "type",
+            tier: Tier::Checker,
+            oracle: "oracle-typedecl",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "rust",
+            family: "call",
+            tier: Tier::Syntax,
+            oracle: "oracle",
+            projection: Projection::RustCorpus,
+        },
+        Case {
+            lang: "rust",
+            family: "call",
+            tier: Tier::Syntax,
+            oracle: "scip_override",
+            projection: Projection::RustCorpus,
+        },
+        Case {
+            lang: "rust",
+            family: "call",
+            tier: Tier::Syntax,
+            oracle: "codeql",
+            projection: Projection::RustCorpus,
+        },
+        Case {
+            lang: "rust",
+            family: "type",
+            tier: Tier::Syntax,
+            oracle: "oracle-typedecl",
+            projection: Projection::Raw,
+        },
+        Case {
+            lang: "rust",
+            family: "call",
+            tier: Tier::Checker,
+            oracle: "oracle",
+            projection: Projection::RustCorpus,
+        },
+        Case {
+            lang: "rust",
+            family: "call",
+            tier: Tier::Checker,
+            oracle: "scip_override",
+            projection: Projection::RustCorpus,
+        },
+        Case {
+            lang: "rust",
+            family: "call",
+            tier: Tier::Checker,
+            oracle: "codeql",
+            projection: Projection::RustCorpus,
+        },
+        Case {
+            lang: "rust",
+            family: "type",
+            tier: Tier::Checker,
+            oracle: "oracle-typedecl",
+            projection: Projection::Raw,
+        },
     ]
 }
 
@@ -328,7 +533,13 @@ fn rel(root: &str, path: &str) -> String {
     }
 }
 
-fn edge_row(root: &str, src_path: &str, src_name: Option<&str>, dst_path: &str, dst_name: Option<&str>) -> String {
+fn edge_row(
+    root: &str,
+    src_path: &str,
+    src_name: Option<&str>,
+    dst_path: &str,
+    dst_name: Option<&str>,
+) -> String {
     format!(
         "{}\t{}\t{}\t{}",
         rel(root, src_path),
@@ -439,9 +650,11 @@ pub fn normal_form(root: &Path, facts: &[FlatFact]) -> NormalForms {
                 if *hops > 1 {
                     continue;
                 }
-                forms
-                    .module
-                    .insert(format!("{}\t\t{}\t", rel(root, src_path), rel(root, target_path)));
+                forms.module.insert(format!(
+                    "{}\t\t{}\t",
+                    rel(root, src_path),
+                    rel(root, target_path)
+                ));
             }
             _ => {}
         }
@@ -484,9 +697,10 @@ pub fn go_project(
     let mut rows: BTreeSet<String> = call
         .iter()
         .filter(|row| {
-            projection.scope_oracle.as_ref().is_none_or(|scope| {
-                scope.contains(row.split('\t').next().unwrap_or(""))
-            })
+            projection
+                .scope_oracle
+                .as_ref()
+                .is_none_or(|scope| scope.contains(row.split('\t').next().unwrap_or("")))
         })
         .filter(|row| !projection.closure || !row_cols(row)[1].starts_with("closure@"))
         .cloned()
@@ -503,7 +717,11 @@ pub fn go_project(
             .filter(|row| call_kinds.get(*row).map(String::as_str) == Some("implements"))
             .map(|row| {
                 let cols = row_cols(row);
-                [cols[0].to_string(), cols[1].to_string(), cols[3].to_string()]
+                [
+                    cols[0].to_string(),
+                    cols[1].to_string(),
+                    cols[3].to_string(),
+                ]
             })
             .collect();
         rows.retain(|row| {
@@ -511,7 +729,11 @@ pub fn go_project(
                 return true;
             }
             let cols = row_cols(row);
-            !impl_triples.contains(&[cols[0].to_string(), cols[1].to_string(), cols[3].to_string()])
+            !impl_triples.contains(&[
+                cols[0].to_string(),
+                cols[1].to_string(),
+                cols[3].to_string(),
+            ])
         });
     }
     rows
@@ -634,9 +856,7 @@ pub fn rust_project(
     let oracle_scoped: BTreeSet<String> = oracle
         .iter()
         .filter(|row| {
-            corpus_files.is_none_or(|files| {
-                files.contains(row.split('\t').nth(2).unwrap_or(""))
-            })
+            corpus_files.is_none_or(|files| files.contains(row.split('\t').nth(2).unwrap_or("")))
         })
         .cloned()
         .collect();
@@ -671,7 +891,8 @@ fn closure_enclosing(rows: &BTreeSet<String>) -> BTreeSet<String> {
     rows.iter()
         .filter(|row| {
             let cols = row_cols(row);
-            !cols[1].starts_with("closure@") || !plain_triples.contains(&[cols[0], cols[2], cols[3]])
+            !cols[1].starts_with("closure@")
+                || !plain_triples.contains(&[cols[0], cols[2], cols[3]])
         })
         .cloned()
         .collect()
@@ -751,12 +972,7 @@ pub struct Sides {
 /// rewrite ours into the oracle's own iface shape (GO-PARITY.REPORT.md);
 /// `RustCorpus` scopes both sides to the corpus file list and mirrors closure
 /// rows (RUST-PARITY.REPORT.md); `Raw` compares the normal form as folded.
-pub fn project(
-    kind: Projection,
-    run: &Run,
-    family: &str,
-    oracle: &BTreeSet<String>,
-) -> Sides {
+pub fn project(kind: Projection, run: &Run, family: &str, oracle: &BTreeSet<String>) -> Sides {
     let ours = family_rows(&run.forms, family);
     match kind {
         Projection::Raw => Sides {
@@ -805,7 +1021,8 @@ pub fn project(
 }
 
 pub fn load_tsv(path: &Path) -> BTreeSet<String> {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
     text.lines()
         .filter(|line| !line.is_empty())
         .map(String::from)
@@ -913,8 +1130,14 @@ fn three_buckets_partition_ours_and_split_silence_from_disagreement() {
 
     let verdict = score(&ours, &oracle);
     assert_eq!(verdict.buckets.matched, 1);
-    assert_eq!(verdict.buckets.contradicted, 1, "a.ts/f: oracle says c.ts is wrong");
-    assert_eq!(verdict.buckets.unjudged, 2, "z.ts callers: the oracle is silent");
+    assert_eq!(
+        verdict.buckets.contradicted, 1,
+        "a.ts/f: oracle says c.ts is wrong"
+    );
+    assert_eq!(
+        verdict.buckets.unjudged, 2,
+        "z.ts callers: the oracle is silent"
+    );
     assert_eq!(
         verdict.buckets.matched + verdict.buckets.contradicted + verdict.buckets.unjudged,
         verdict.ours,
@@ -1158,8 +1381,12 @@ pub fn read_ratchet() -> Option<Vec<RatchetRow>> {
             family: cols[1].to_string(),
             tier: Tier::parse(cols[2]),
             oracle: cols[3].to_string(),
-            recall: cols[4].parse().unwrap_or_else(|_| panic!("RATCHET.tsv recall: {line}")),
-            precision: cols[5].parse().unwrap_or_else(|_| panic!("RATCHET.tsv precision: {line}")),
+            recall: cols[4]
+                .parse()
+                .unwrap_or_else(|_| panic!("RATCHET.tsv recall: {line}")),
+            precision: cols[5]
+                .parse()
+                .unwrap_or_else(|_| panic!("RATCHET.tsv precision: {line}")),
             sha: cols[6].to_string(),
         };
         // A duplicate key is a panic, never a last-wins: two rows for one cell
@@ -1211,10 +1438,18 @@ pub fn read_cost_ratchet() -> Option<Vec<CostRow>> {
             lang: cols[0].to_string(),
             tool: cols[1].to_string(),
             tier: Tier::parse(cols[2]),
-            files: cols[3].parse().unwrap_or_else(|_| panic!("RATCHET.cost.tsv files: {line}")),
-            wall_ms: cols[4].parse().unwrap_or_else(|_| panic!("RATCHET.cost.tsv wall_ms: {line}")),
-            rss_mb: cols[5].parse().unwrap_or_else(|_| panic!("RATCHET.cost.tsv rss_mb: {line}")),
-            pid: cols[6].parse().unwrap_or_else(|_| panic!("RATCHET.cost.tsv pid: {line}")),
+            files: cols[3]
+                .parse()
+                .unwrap_or_else(|_| panic!("RATCHET.cost.tsv files: {line}")),
+            wall_ms: cols[4]
+                .parse()
+                .unwrap_or_else(|_| panic!("RATCHET.cost.tsv wall_ms: {line}")),
+            rss_mb: cols[5]
+                .parse()
+                .unwrap_or_else(|_| panic!("RATCHET.cost.tsv rss_mb: {line}")),
+            pid: cols[6]
+                .parse()
+                .unwrap_or_else(|_| panic!("RATCHET.cost.tsv pid: {line}")),
             sha: cols[7].to_string(),
         };
         assert!(
@@ -1299,7 +1534,6 @@ fn print_origin_table(leg: &str, forms: &NormalForms) {
         forms.type_edges.len()
     );
 }
-
 
 /// One (lang, tier) leg: ONE extraction, then every case that names it, then
 /// check (default) or bump (`RATCHET_BUMP=1`). `RATCHET_FORCE=1` alongside a
@@ -1395,7 +1629,12 @@ pub fn ratchet(lang: &str, tier: Tier) {
                     floor.precision - verdict.precision
                 ));
             }
-            line_verdict = if failures.len() == before { "ok" } else { "FAIL" }.to_string();
+            line_verdict = if failures.len() == before {
+                "ok"
+            } else {
+                "FAIL"
+            }
+            .to_string();
         }
         println!(
             "{id:<34} {:>7} {:>7} {:>7} {:>8.2} {:>9.2} {}",
@@ -1486,7 +1725,12 @@ pub fn ratchet(lang: &str, tier: Tier) {
                 (measured.rss_mb as f64 / ceiling.rss_mb as f64 - 1.0) * 100.0
             ));
         }
-        cost_verdict = if failures.len() == before { "ok" } else { "FAIL" }.to_string();
+        cost_verdict = if failures.len() == before {
+            "ok"
+        } else {
+            "FAIL"
+        }
+        .to_string();
     }
     println!(
         "{:<6} {:<8} {:<8} {:>7} {:>9} {:>8} {:>8} {}",
@@ -1516,7 +1760,8 @@ pub fn ratchet(lang: &str, tier: Tier) {
                 let ceiling = &ceilings[index];
                 // Wall and rss swing run to run (go rss 750-833 MB at one sha), so a
                 // bump tightens a ceiling only outside that band; a lucky run must not drag it.
-                let better = (row.wall_ms as f64) < (ceiling.wall_ms as f64) * CEILING_TIGHTEN_MARGIN
+                let better = (row.wall_ms as f64)
+                    < (ceiling.wall_ms as f64) * CEILING_TIGHTEN_MARGIN
                     || (row.rss_mb as f64) < (ceiling.rss_mb as f64) * CEILING_TIGHTEN_MARGIN;
                 let worse = row.wall_ms > ceiling.wall_ms || row.rss_mb > ceiling.rss_mb;
                 if better || (force && worse) {

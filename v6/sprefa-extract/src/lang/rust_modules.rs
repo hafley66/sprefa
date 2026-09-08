@@ -157,20 +157,14 @@ fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts
                     .filter_map(|item| match item {
                         syn::TraitItem::Fn(f) => {
                             let span = match &f.default {
-                                Some(block) => def_span(
-                                    line_starts,
-                                    f.sig.ident.span(),
-                                    block.span(),
-                                ),
+                                Some(block) => {
+                                    def_span(line_starts, f.sig.ident.span(), block.span())
+                                }
                                 // A declared fn has no block: the span must
                                 // match the call facet's def for the fn
                                 // (ident start through the signature end),
                                 // or the emitted edge reads nameless.
-                                None => def_span(
-                                    line_starts,
-                                    f.sig.ident.span(),
-                                    f.sig.span(),
-                                ),
+                                None => def_span(line_starts, f.sig.ident.span(), f.sig.span()),
                             };
                             Some(TraitFn {
                                 name: f.sig.ident.to_string(),
@@ -209,7 +203,9 @@ fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts
                 facts.enums.push((enum_item.ident.to_string(), variants));
             }
             syn::Item::Type(alias) => {
-                facts.aliases.push(syn_span(line_starts, alias.ident.span()));
+                facts
+                    .aliases
+                    .push(syn_span(line_starts, alias.ident.span()));
             }
             _ => {}
         }
@@ -785,7 +781,10 @@ impl RustModuleIndex {
         let Ok(Some(found)) = self.explicit_binding(caller, trait_name) else {
             return None;
         };
-        candidates.iter().find(|c| **c == found.target_blob).cloned()
+        candidates
+            .iter()
+            .find(|c| **c == found.target_blob)
+            .cloned()
     }
 
     /// The trait's own fn def for `fn_name`, declared or defaulted (classes
@@ -829,10 +828,9 @@ impl RustModuleIndex {
         let blob = self.bound_trait_blob(caller, trait_name, &blobs)?;
         let mut hits = sites.iter().filter(|(b, _)| *b == blob);
         let (blob, span) = hits.next()?;
-        hits.next().map(|_| ()).map_or_else(
-            || Some((blob.clone(), *span)),
-            |_| None,
-        )
+        hits.next()
+            .map(|_| ())
+            .map_or_else(|| Some((blob.clone(), *span)), |_| None)
     }
 
     /// The one trait default body providing `fn_name` for a type `type_name`

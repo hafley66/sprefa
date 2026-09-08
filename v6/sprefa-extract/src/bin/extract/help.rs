@@ -7,6 +7,19 @@
 //! Included with `#[path]` rather than living beside a `main.rs`, so cargo's
 //! bin auto-discovery does not see this directory as a second binary.
 
+pub const AFTER_HELP: &str = concat!(
+    "Aliases:\n",
+    "  extract fast PATH...    syntax-only whole-project extraction (diet_scip)\n",
+    "  extract slow ROOT       semantic whole-project extraction (real SCIP/compiler)\n",
+    "\n",
+    "Build:\n",
+    "  git hash: ",
+    env!("SPREFA_BUILD_GIT_HASH"),
+    "\n",
+    "  datetime: ",
+    env!("SPREFA_BUILD_DATETIME"),
+);
+
 /// Self-describing enough that `extract --help` + `extract --schema` are a
 /// complete contract for a fresh caller (human or AI). No outside docs needed.
 pub const LONG_ABOUT: &str = "\
@@ -52,8 +65,16 @@ EXACT MODE: --family scip ROOT
 
   When a root cannot be indexed you get scip_skip rows saying exactly which
   root and why: not_installed comes with the install command, timed_out with
-  the budget, failed with the indexer's own last stderr line. Exit is 0 and the
-  stream continues. You never get a silently empty stream.
+  the budget, and failed with the command, process status, leading diagnostic,
+  and bounded stderr tail. Exit is 0 and the stream continues. You never get a
+  silently empty stream.
+
+TELEMETRY
+  Diagnostics use the shared hafley-observe convention and stay on stderr so
+  stdout remains JSONL facts. Warnings and errors are enabled by default.
+  RUST_LOG selects targets and levels, for example
+  RUST_LOG=sprefa_extract=info. HAFLEY_LOG_FORMAT selects human (also text) or
+  json output. Invalid RUST_LOG falls back to the default warning filter.
 
 FAST MODE: --family diet_scip PATH...
   This binary's own parsers (tree-sitter, oxc, syn) plus name matching across

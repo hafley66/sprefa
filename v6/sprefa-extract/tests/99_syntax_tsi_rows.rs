@@ -318,7 +318,9 @@ fn ts_written_generic_argument_is_a_call_not_a_shape() {
     let argument = as_id(&arguments[0].args[2]).unwrap();
     assert_eq!(probe.origin_text(argument), "User");
     assert!(
-        called.iter().any(|fact| as_id(&fact.args[0]) == Some(argument)),
+        called
+            .iter()
+            .any(|fact| as_id(&fact.args[0]) == Some(argument)),
         "`User<number>` states its own call"
     );
 

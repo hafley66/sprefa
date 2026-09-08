@@ -144,5 +144,7 @@ fn a_module_row_binds_no_name() {
         })
         .collect();
     assert_eq!(shapes.len(), 7);
-    assert!(shapes.iter().all(|shape| *shape == (1, String::new(), true)));
+    assert!(shapes
+        .iter()
+        .all(|shape| *shape == (1, String::new(), true)));
 }

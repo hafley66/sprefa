@@ -153,7 +153,10 @@ fn every_implements_row_names_the_scip_leg() {
         })
         .collect();
     assert!(!origins.is_empty());
-    assert!(origins.iter().all(|origin| *origin == "scip"), "{origins:?}");
+    assert!(
+        origins.iter().all(|origin| *origin == "scip"),
+        "{origins:?}"
+    );
 }
 
 #[test]
@@ -188,14 +191,16 @@ fn witness_mode_carries_the_pairs_as_tsi_conforms() {
     let rows = informed(&["--witness"]);
     let mut pairs: Vec<(String, String, String)> = facts_of(&rows, "tsi.conforms")
         .into_iter()
-        .filter_map(|fact| match (fact.args.first(), fact.args.get(1), fact.args.get(2)) {
-            (Some(Arg::Id(owner)), Some(Arg::Id(target)), Some(Arg::Atom(leg))) => Some((
-                name_of(&rows, *owner)?,
-                name_of(&rows, *target)?,
-                leg.clone(),
-            )),
-            _ => None,
-        })
+        .filter_map(
+            |fact| match (fact.args.first(), fact.args.get(1), fact.args.get(2)) {
+                (Some(Arg::Id(owner)), Some(Arg::Id(target)), Some(Arg::Atom(leg))) => Some((
+                    name_of(&rows, *owner)?,
+                    name_of(&rows, *target)?,
+                    leg.clone(),
+                )),
+                _ => None,
+            },
+        )
         .collect();
     pairs.sort();
     pairs.dedup();

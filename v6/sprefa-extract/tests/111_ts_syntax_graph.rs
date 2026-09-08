@@ -104,9 +104,16 @@ impl Probe {
         let found: Vec<&FactOut> = self
             .rows("tsi.edge")
             .into_iter()
-            .filter(|fact| as_id(&fact.args[1]) == Some(owner) && as_text(&fact.args[2]) == Some(label))
+            .filter(|fact| {
+                as_id(&fact.args[1]) == Some(owner) && as_text(&fact.args[2]) == Some(label)
+            })
             .collect();
-        assert_eq!(found.len(), 1, "owner {owner} has {} `{label}` edges", found.len());
+        assert_eq!(
+            found.len(),
+            1,
+            "owner {owner} has {} `{label}` edges",
+            found.len()
+        );
         found[0]
     }
 
@@ -187,7 +194,17 @@ fn every_written_application_states_its_call() {
     let (map, arguments) = probe.call_of(steps).expect("steps is a call");
     assert_eq!(probe.names()[&map], "Map");
     assert_eq!(arguments.len(), 2);
-    assert_eq!(as_atom(&probe.rows("tsi.primitive").iter().find(|f| as_id(&f.args[0]) == Some(arguments[0])).unwrap().args[1]), Some("string"));
+    assert_eq!(
+        as_atom(
+            &probe
+                .rows("tsi.primitive")
+                .iter()
+                .find(|f| as_id(&f.args[0]) == Some(arguments[0]))
+                .unwrap()
+                .args[1]
+        ),
+        Some("string")
+    );
     let (option, inner) = probe.call_of(arguments[1]).expect("Option<T> is a call");
     assert_eq!(probe.names()[&option], "Option");
     let parameter = probe.rows("tsi.parameter");
@@ -202,7 +219,12 @@ fn every_written_application_states_its_call() {
     let (result, arguments) = probe.call_of(outcome).expect("outcome is a call");
     assert_eq!(probe.names()[&result], "Result");
     assert_eq!(probe.names()[&arguments[1]], "Error");
-    assert_eq!(probe.call_of(probe.id_named("Query")).map(|(callee, _)| probe.names()[&callee].clone()), Some("Partial".to_string()));
+    assert_eq!(
+        probe
+            .call_of(probe.id_named("Query"))
+            .map(|(callee, _)| probe.names()[&callee].clone()),
+        Some("Partial".to_string())
+    );
 }
 
 /// T1: a tuple field is an anonymous product with positional edges.
@@ -229,7 +251,10 @@ fn a_literal_is_an_anonymous_product_with_labels() {
     assert!(probe.carries("tsi.product", failed));
     let code = probe.edge(failed, "code");
     assert!(probe.carries("ts.optional", as_id(&code.args[0]).unwrap()));
-    assert_eq!(probe.names()[&as_id(&probe.edge(failed, "reason").args[3]).unwrap()], "string");
+    assert_eq!(
+        probe.names()[&as_id(&probe.edge(failed, "reason").args[3]).unwrap()],
+        "string"
+    );
 }
 
 /// T1: a function-typed field is an anonymous callable with its inputs and
@@ -264,7 +289,10 @@ fn a_typed_binding_has_a_type() {
         .into_iter()
         .filter_map(|fact| {
             let (start, end) = as_span(&fact.args[0])?;
-            Some((probe.slice(start, end), probe.names()[&as_id(&fact.args[1])?].clone()))
+            Some((
+                probe.slice(start, end),
+                probe.names()[&as_id(&fact.args[1])?].clone(),
+            ))
         })
         .collect();
     found.sort();

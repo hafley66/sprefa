@@ -26,12 +26,10 @@ use super::astgrep::{AstGrepParser, CstProjector};
 use super::ts_resolve::{ImportedName, ResolvedImport, TsModuleIndex};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
-    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
-    SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
-    ResolutionOrigin,
+    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, ResolutionOrigin, SigSlot,
+    Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::types::span_arg;
 use crate::scip::{byte_range_cached, definition_of, join_documents, site_occurrence};
 use crate::seams::{
     containing_def_site_in, corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite,
@@ -41,6 +39,7 @@ use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CO
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::tsi::Arg;
+use crate::types::span_arg;
 use crate::types::LangKind;
 use crate::types::TsiNames;
 use crate::types::{content_id_of, RefPosition, Reference, Unresolved, UnresolvedReason};
@@ -1169,9 +1168,13 @@ fn tsi_rows(
             S::TSInterfaceDeclaration(interface) => {
                 tsi_interface(interface, src, strings, &mut names, &mut state)
             }
-            S::TSTypeAliasDeclaration(alias) => tsi_alias(alias, src, strings, &mut names, &mut state),
+            S::TSTypeAliasDeclaration(alias) => {
+                tsi_alias(alias, src, strings, &mut names, &mut state)
+            }
             S::TSEnumDeclaration(enum_decl) => tsi_enum(enum_decl, src, strings, &mut names),
-            S::FunctionDeclaration(func) => tsi_function(func, src, strings, &mut names, &mut state),
+            S::FunctionDeclaration(func) => {
+                tsi_function(func, src, strings, &mut names, &mut state)
+            }
             S::VariableDeclaration(var) => tsi_var_fn(var, src, strings, &mut names, &mut state),
             _ => {}
         }
@@ -1192,9 +1195,13 @@ fn tsi_decl(
         ts::Declaration::TSInterfaceDeclaration(interface) => {
             tsi_interface(interface, src, strings, names, state)
         }
-        ts::Declaration::TSTypeAliasDeclaration(alias) => tsi_alias(alias, src, strings, names, state),
+        ts::Declaration::TSTypeAliasDeclaration(alias) => {
+            tsi_alias(alias, src, strings, names, state)
+        }
         ts::Declaration::TSEnumDeclaration(enum_decl) => tsi_enum(enum_decl, src, strings, names),
-        ts::Declaration::FunctionDeclaration(func) => tsi_function(func, src, strings, names, state),
+        ts::Declaration::FunctionDeclaration(func) => {
+            tsi_function(func, src, strings, names, state)
+        }
         ts::Declaration::VariableDeclaration(var) => tsi_var_fn(var, src, strings, names, state),
         _ => {}
     }
@@ -1377,7 +1384,11 @@ fn tsi_application(
         return;
     }
     let head = tsi_text(src, reference.type_name.span());
-    let callee = names.named(strings, head, to_span(tsi_type_name_span(&reference.type_name)));
+    let callee = names.named(
+        strings,
+        head,
+        to_span(tsi_type_name_span(&reference.type_name)),
+    );
     let list = names.bare_id();
     names.fact(
         "tsi.called",
@@ -1411,8 +1422,7 @@ fn tsi_members(
                 else {
                     continue;
                 };
-                let target =
-                    tsi_type_id(&ann.type_annotation, scope, src, strings, names, state);
+                let target = tsi_type_id(&ann.type_annotation, scope, src, strings, names, state);
                 let edge = names.edge(owner, &label, target, position);
                 position += 1;
                 if prop.optional {
@@ -1524,7 +1534,14 @@ fn tsi_signature(
         );
     }
     if let Some(returned) = return_type {
-        let target = tsi_type_id(&returned.type_annotation, &scope, src, strings, names, state);
+        let target = tsi_type_id(
+            &returned.type_annotation,
+            &scope,
+            src,
+            strings,
+            names,
+            state,
+        );
         names.fact(
             "tsi.output",
             vec![Arg::Id(callable), Arg::Int(0), Arg::Id(target)],
@@ -1564,7 +1581,13 @@ fn tsi_member_callable(
     );
 }
 
-fn tsi_class(class: &ts::Class, src: &str, strings: &mut Strings, names: &mut TsiNames, state: &mut TsiState) {
+fn tsi_class(
+    class: &ts::Class,
+    src: &str,
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) {
     let Some(id) = &class.id else { return };
     let owner = names.named(strings, &id.name, to_span(id.span));
     names.fact("tsi.product", vec![Arg::Id(owner)]);
@@ -1676,7 +1699,15 @@ fn tsi_interface(
         let target = names.named(strings, &text, to_span(span));
         tsi_conforms(owner, target, names);
     }
-    tsi_members(owner, &interface.body.body, &scope, src, strings, names, state);
+    tsi_members(
+        owner,
+        &interface.body.body,
+        &scope,
+        src,
+        strings,
+        names,
+        state,
+    );
 }
 
 fn tsi_alias(
@@ -1713,8 +1744,11 @@ fn tsi_alias(
                 return;
             };
             let head = tsi_text(src, reference.type_name.span());
-            let callee =
-                names.named(strings, head, to_span(tsi_type_name_span(&reference.type_name)));
+            let callee = names.named(
+                strings,
+                head,
+                to_span(tsi_type_name_span(&reference.type_name)),
+            );
             let list = names.bare_id();
             names.fact(
                 "tsi.called",
@@ -1756,7 +1790,13 @@ fn tsi_enum(
     }
 }
 
-fn tsi_function(func: &ts::Function, src: &str, strings: &mut Strings, names: &mut TsiNames, state: &mut TsiState) {
+fn tsi_function(
+    func: &ts::Function,
+    src: &str,
+    strings: &mut Strings,
+    names: &mut TsiNames,
+    state: &mut TsiState,
+) {
     let Some(id) = &func.id else { return };
     let callable = names.anonymous(to_span(id.span));
     names.name(callable, &id.name);
@@ -1788,8 +1828,14 @@ fn tsi_var_fn(
             continue;
         };
         if let Some(ann) = &declarator.type_annotation {
-            let target =
-                tsi_type_id(&ann.type_annotation, &TsiScope::new(), src, strings, names, state);
+            let target = tsi_type_id(
+                &ann.type_annotation,
+                &TsiScope::new(),
+                src,
+                strings,
+                names,
+                state,
+            );
             names.fact(
                 "tsi.has_type",
                 vec![span_arg(to_span(ident.span)), Arg::Id(target)],
@@ -4151,11 +4197,7 @@ fn resolve_type_dst(
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match sites {
-        [only] => Some((
-            only.blob.clone(),
-            only.span,
-            ResolutionOrigin::CorpusUnique,
-        )),
+        [only] => Some((only.blob.clone(), only.span, ResolutionOrigin::CorpusUnique)),
         _ => None,
     }
 }
@@ -4192,9 +4234,7 @@ impl Resolve<TypeF> for TsSource {
             let zero = || (ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved);
             let name_match = || {
                 modules
-                    .and_then(|(modules, path)| {
-                        module_target(modules, path, referenced, None).ok()
-                    })
+                    .and_then(|(modules, path)| module_target(modules, path, referenced, None).ok())
                     .flatten()
                     .map(|found| {
                         (
@@ -4909,8 +4949,9 @@ impl Resolve<CallF> for TsSource {
                         .map(|(blob, span)| (blob, span, ResolutionOrigin::Receiver))
                         .or_else(name_match)
                 }
-                (None, None) if receiver.is_some() => recv_t
-                    .map(|(blob, span)| (blob, span, ResolutionOrigin::Receiver)),
+                (None, None) if receiver.is_some() => {
+                    recv_t.map(|(blob, span)| (blob, span, ResolutionOrigin::Receiver))
+                }
                 (None, None) => name_match(),
             };
             let own_kind = match (&import_t, &seat_t) {
@@ -4938,26 +4979,25 @@ impl Resolve<CallF> for TsSource {
             };
             // The CHECKER tier: the compiler's own answer for this site wins
             // over the name match, the receiver leg and scip alike.
-            let final_t = match checker
-                .and_then(|(index, path)| index.call_at(path, site.span, callee))
-            {
-                Some(TsCheckerAnswer::Corpus(blob, span)) => {
-                    // The syntax legs already ran; witnessing keeps their answer
-                    // instead of dropping it on the floor.
-                    if cx.witness {
-                        displaced[ix] = syntax_t;
+            let final_t =
+                match checker.and_then(|(index, path)| index.call_at(path, site.span, callee)) {
+                    Some(TsCheckerAnswer::Corpus(blob, span)) => {
+                        // The syntax legs already ran; witnessing keeps their answer
+                        // instead of dropping it on the floor.
+                        if cx.witness {
+                            displaced[ix] = syntax_t;
+                        }
+                        Some((
+                            (blob, span),
+                            CallEdgeKind::CheckerResolve,
+                            ResolutionOrigin::Checker,
+                        ))
                     }
-                    Some((
-                        (blob, span),
-                        CallEdgeKind::CheckerResolve,
-                        ResolutionOrigin::Checker,
-                    ))
-                }
-                // No corpus definition IS this callee, so no name-match leg
-                // may invent one.
-                Some(TsCheckerAnswer::External) => None,
-                None => syntax_t,
-            };
+                    // No corpus definition IS this callee, so no name-match leg
+                    // may invent one.
+                    Some(TsCheckerAnswer::External) => None,
+                    None => syntax_t,
+                };
             // The one-hop return-type inference: a `const x = f()` init call
             // that just resolved hands its declared return type to the var, in
             // source order, keyed by the covering def.

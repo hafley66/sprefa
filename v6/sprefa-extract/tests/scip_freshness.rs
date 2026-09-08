@@ -227,6 +227,28 @@ fn a_nested_checkout_is_never_staged() {
 }
 
 #[test]
+fn rust_staging_copies_and_prunes_the_workspace_lockfile() {
+    let root = temp_root("rust-lock-stage");
+    let stage = temp_root("rust-lock-stage-out");
+    std::fs::write(root.join("Cargo.toml"), b"[workspace]\nmembers=[]\n").expect("manifest");
+    std::fs::write(root.join("Cargo.lock"), b"version = 4\n").expect("lockfile");
+
+    sprefa_extract::copy_sources(&root, &stage, &["rs"], &["Cargo.toml", "Cargo.lock"])
+        .expect("first stage");
+
+    assert_eq!(
+        std::fs::read(stage.join("Cargo.lock")).expect("staged lockfile"),
+        b"version = 4\n"
+    );
+
+    std::fs::remove_file(root.join("Cargo.lock")).expect("remove source lockfile");
+    sprefa_extract::copy_sources(&root, &stage, &["rs"], &["Cargo.toml", "Cargo.lock"])
+        .expect("second stage");
+
+    assert!(!stage.join("Cargo.lock").exists());
+}
+
+#[test]
 fn a_persistent_stage_drops_a_source_the_corpus_deleted() {
     let root = temp_root("prune");
     std::fs::create_dir_all(root.join("src")).expect("src");

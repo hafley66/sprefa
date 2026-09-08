@@ -2,6 +2,11 @@
 //! One test per defect; each ran red before the fix that closed it.
 
 use std::process::Command;
+use std::sync::Mutex;
+
+use sprefa_extract::{ScipRust, ScipSource};
+
+static PROCESS_ENV: Mutex<()> = Mutex::new(());
 
 fn temp_root(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("extract50-{name}-{}", std::process::id()));
@@ -236,24 +241,286 @@ fn fake_path(fake: &std::path::Path) -> String {
     format!("{}:{host}", fake.parent().unwrap().display())
 }
 
-/// Defect 5 (rust.REPORT kink 8): a failed rust-analyzer build carried the
-/// panic's `note: Some details are omitted, run with RUST_BACKTRACE=1` line as
-/// scip_skip.detail instead of the panic line before it.
+fn run_failed_rust_indexer(
+    name: &str,
+    script_body: &str,
+    rust_log: Option<&str>,
+    log_format: &str,
+) -> std::process::Output {
+    let root = temp_root(name);
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='failed-indexer'\nversion='0.0.0'\nedition='2021'\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/lib.rs"), "pub fn probe() {}\n").unwrap();
+    let bin_dir = root.join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let indexer = bin_dir.join("rust-analyzer");
+    std::fs::write(&indexer, format!("#!/bin/sh\n{script_body}\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&indexer, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_extract"));
+    command
+        .env("PATH", fake_path(&indexer))
+        .env("HAFLEY_LOG_FORMAT", log_format)
+        .env("DL_TRAIL", "0")
+        .args([
+            "slow",
+            "--scip-cache",
+            root.join("cache").to_str().unwrap(),
+            root.to_str().unwrap(),
+        ]);
+    if let Some(filter) = rust_log {
+        command.env("RUST_LOG", filter);
+    } else {
+        command.env_remove("RUST_LOG");
+    }
+    command.output().expect("extract binary runs")
+}
+
+/// A failed indexer can put the root cause at the start of stderr and finish
+/// with thousands of stack frames. The skip row retains both bounded ends plus
+/// the command/status, and the default warning telemetry reports the failure
+/// without contaminating stdout's JSONL protocol.
 #[test]
-fn error_line_skips_panic_notes() {
-    let stderr = "thread 'rust-analyzer' panicked at src/x.rs:12:5:\n\
-                  explicit panic at the real call site\n\
-                  note: Some details are omitted, run with `RUST_BACKTRACE=1` \
-                  environment variable to display a backtrace\n";
-    assert_eq!(
-        sprefa_extract::scip_ensure::last_error_line(stderr),
-        "explicit panic at the real call site"
+fn failed_indexer_retains_bounded_root_cause_tail_status_and_telemetry() {
+    let root = temp_root("scip-failed-evidence");
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='failed-evidence'\nversion='0.0.0'\nedition='2021'\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/lib.rs"), "pub fn probe() {}\n").unwrap();
+    let bin_dir = root.join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let indexer = bin_dir.join("rust-analyzer");
+    std::fs::write(
+        &indexer,
+        "#!/bin/sh\n\
+         printf 'root cause: cargo metadata π failed\\n' >&2\n\
+         i=0\n\
+         while [ \"$i\" -lt 12000 ]; do printf 'é' >&2; i=$((i + 1)); done\n\
+         printf '\\n7: worker_pool\\n8: __pthread_joiner_wake\\n' >&2\n\
+         exit 17\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&indexer, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let cache = root.join("cache");
+    let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .env("PATH", fake_path(&indexer))
+        .env_remove("RUST_LOG")
+        .env("HAFLEY_LOG_FORMAT", "json")
+        .env("DL_TRAIL", "0")
+        .args([
+            "slow",
+            "--scip-cache",
+            cache.to_str().unwrap(),
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .expect("extract binary runs");
+
+    assert_eq!(output.status.code(), Some(0));
+    let rows = String::from_utf8(output.stdout).expect("fact stream is UTF-8");
+    let row: serde_json::Value = serde_json::from_str(rows.trim()).expect("one skip row");
+    assert_eq!(row["record"], "scip_skip");
+    assert_eq!(row["reason"], "failed");
+    let detail = row["detail"].as_str().expect("skip detail");
+    assert!(detail.contains("command [\"rust-analyzer\", \"scip\", \".\", \"--output\""));
+    assert!(detail.contains("exited with code 17"));
+    assert!(detail.contains("root cause: cargo metadata π failed"));
+    assert!(detail.contains("stderr bytes omitted"));
+    assert!(detail.ends_with("8: __pthread_joiner_wake"));
+    assert!(
+        !detail.contains('\u{fffd}'),
+        "UTF-8 window boundary was split: {detail}"
     );
-    // No note lines: the last line wins unchanged.
-    assert_eq!(
-        sprefa_extract::scip_ensure::last_error_line("first\nlast\n"),
-        "last"
+    assert!(
+        detail.len() < 17_000,
+        "stderr evidence was not bounded: {}",
+        detail.len()
     );
-    // Only note lines: fall back to the last one rather than empty.
-    assert!(sprefa_extract::scip_ensure::last_error_line("note: only\n").starts_with("note:"));
+
+    let events = String::from_utf8(output.stderr).expect("telemetry is UTF-8");
+    let failed = events
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON event"))
+        .find(|event| event["fields"]["message"] == "indexer process failed")
+        .expect("default warning telemetry");
+    assert_eq!(failed["fields"]["process.command"], "rust-analyzer");
+    assert_eq!(failed["fields"]["process.status"], "exited with code 17");
+    assert!(failed["fields"]["process.pid"].as_u64().is_some());
+    assert!(failed["fields"]["duration_ms"].as_u64().is_some());
+}
+
+#[test]
+fn failed_indexer_with_empty_stderr_keeps_stdout_jsonl_and_human_telemetry_separate() {
+    let output = run_failed_rust_indexer("scip-empty-stderr", "exit 19", None, "human");
+    assert_eq!(output.status.code(), Some(0));
+    let row: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout remains one JSONL value");
+    assert_eq!(row["record"], "scip_skip");
+    assert!(row["detail"]
+        .as_str()
+        .unwrap()
+        .contains("exited with code 19; stderr was empty"));
+    let telemetry = String::from_utf8(output.stderr).expect("human telemetry is UTF-8");
+    assert!(telemetry.contains("indexer process failed"));
+    assert!(serde_json::from_str::<serde_json::Value>(telemetry.trim()).is_err());
+}
+
+#[test]
+fn rust_log_off_suppresses_failure_telemetry_without_suppressing_skip_detail() {
+    let output = run_failed_rust_indexer(
+        "scip-rust-log-off",
+        "printf 'small root cause\\n' >&2\nexit 21",
+        Some("off"),
+        "json",
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let row: serde_json::Value = serde_json::from_slice(&output.stdout).expect("skip JSONL");
+    assert!(row["detail"].as_str().unwrap().contains("small root cause"));
+    assert!(
+        output.stderr.is_empty(),
+        "RUST_LOG=off must suppress stderr"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn signal_terminated_indexer_reports_signal_and_small_stderr() {
+    let output = run_failed_rust_indexer(
+        "scip-signal",
+        "printf 'signal root cause\\n' >&2\nkill -TERM $$",
+        None,
+        "json",
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let row: serde_json::Value = serde_json::from_slice(&output.stdout).expect("skip JSONL");
+    let detail = row["detail"].as_str().unwrap();
+    assert!(detail.contains("terminated by signal 15"), "{detail}");
+    assert!(detail.contains("signal root cause"), "{detail}");
+    let events = String::from_utf8(output.stderr).expect("JSON telemetry is UTF-8");
+    let failed = events
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON event"))
+        .find(|event| event["fields"]["message"] == "indexer process failed")
+        .expect("failure event");
+    assert_eq!(
+        failed["fields"]["process.status"],
+        "terminated by signal 15"
+    );
+}
+
+#[test]
+fn legacy_last_error_line_still_skips_a_trailing_panic_note() {
+    assert_eq!(
+        sprefa_extract::scip_ensure::last_error_line(
+            "panic root\n8: __pthread_joiner_wake\nnote: run with RUST_BACKTRACE=1\n"
+        ),
+        "8: __pthread_joiner_wake"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn rust_staging_preserves_nested_workspace_path_dependency_topology() {
+    let _environment = PROCESS_ENV.lock().unwrap();
+    let scratch = temp_root("nested-rust-topology");
+    let repository = scratch.join("repository");
+    let app = repository.join("packages/app");
+    let dependency = repository.join("packages/dependency");
+    let transitive = repository.join("shared/transitive");
+    for source in [&app, &dependency, &transitive] {
+        std::fs::create_dir_all(source.join("src")).unwrap();
+    }
+    std::fs::create_dir_all(repository.join(".cargo")).unwrap();
+    std::fs::write(
+        repository.join("Cargo.toml"),
+        "[workspace]\nresolver='2'\nmembers=['packages/app','packages/dependency','shared/transitive']\n\
+         [workspace.package]\nedition='2021'\n",
+    )
+    .unwrap();
+    std::fs::write(repository.join("Cargo.lock"), "version = 4\n").unwrap();
+    std::fs::write(
+        repository.join(".cargo/config.toml"),
+        "[build]\nincremental = false\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("Cargo.toml"),
+        "[package]\nname='app'\nversion='0.0.0'\nedition.workspace=true\n\
+         [dependencies]\ndependency={path='../dependency'}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dependency.join("Cargo.toml"),
+        "[package]\nname='dependency'\nversion='0.0.0'\nedition.workspace=true\n\
+         [dependencies]\ntransitive={path='../../shared/transitive'}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        transitive.join("Cargo.toml"),
+        "[package]\nname='transitive'\nversion='0.0.0'\nedition.workspace=true\n",
+    )
+    .unwrap();
+    std::fs::write(app.join("src/lib.rs"), "pub fn app() {}\n").unwrap();
+    std::fs::write(dependency.join("src/lib.rs"), "pub fn dependency() {}\n").unwrap();
+    std::fs::write(transitive.join("src/lib.rs"), "pub fn transitive() {}\n").unwrap();
+    assert!(Command::new("git")
+        .args(["init", "-q", repository.to_str().unwrap()])
+        .status()
+        .unwrap()
+        .success());
+
+    let bin = scratch.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let indexer = bin.join("rust-analyzer");
+    std::fs::write(
+        &indexer,
+        "#!/bin/sh\n\
+         test -f ../dependency/Cargo.toml || { echo 'missing sibling dependency' >&2; exit 41; }\n\
+         test -f ../../shared/transitive/Cargo.toml || { echo 'missing transitive dependency' >&2; exit 42; }\n\
+         test -f ../../Cargo.toml || { echo 'missing workspace manifest' >&2; exit 43; }\n\
+         test -f ../../Cargo.lock || { echo 'missing workspace lockfile' >&2; exit 44; }\n\
+         test -f ../../.cargo/config.toml || { echo 'missing cargo config' >&2; exit 45; }\n\
+         test -f ../../shared/transitive/src/lib.rs || { echo 'missing transitive source' >&2; exit 46; }\n\
+         grep -q 'pub fn transitive() {}' ../../shared/transitive/src/lib.rs || { echo 'wrong transitive source' >&2; exit 47; }\n\
+         printf 'index' > \"$4\"\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&indexer, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let previous_path = std::env::var_os("PATH");
+    std::env::set_var("PATH", format!("{}:/bin:/usr/bin", bin.display()));
+    let built = ScipRust.build(&app);
+    match previous_path {
+        Some(path) => std::env::set_var("PATH", path),
+        None => std::env::remove_var("PATH"),
+    }
+    let index = built.expect("nested Cargo topology reaches rust-analyzer");
+    assert_eq!(std::fs::read(index).unwrap(), b"index");
+    assert_eq!(
+        std::fs::read_to_string(repository.join("Cargo.lock")).unwrap(),
+        "version = 4\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(transitive.join("src/lib.rs")).unwrap(),
+        "pub fn transitive() {}\n"
+    );
+    assert!(!repository.join("target").exists());
+    assert!(!app.join("target").exists());
 }

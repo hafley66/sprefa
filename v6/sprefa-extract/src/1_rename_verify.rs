@@ -208,9 +208,7 @@ fn anchor_sites(
         };
         let lines = LineTable::build(&content);
         for occurrence in &document.occurrences {
-            if index.symbol(occurrence.symbol) != symbol
-                || !is_seat_role(occurrence.roles)
-            {
+            if index.symbol(occurrence.symbol) != symbol || !is_seat_role(occurrence.roles) {
                 continue;
             }
             let Some(span) = byte_range_at(

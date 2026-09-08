@@ -22,7 +22,11 @@ fn dump_rust_syntax_call_rows() {
         panic!("set RUST_SYNTAX_CALL_DUMP=<path>");
     };
     let corpus = bench::corpus("rust");
-    assert!(corpus.root.is_dir(), "corpus root {} missing", corpus.root.display());
+    assert!(
+        corpus.root.is_dir(),
+        "corpus root {} missing",
+        corpus.root.display()
+    );
     let measurement = bench::run("rust", bench::Tier::Syntax);
     let mut body = Vec::with_capacity(measurement.forms.call.len());
     for row in &measurement.forms.call {
@@ -51,13 +55,18 @@ fn rows(names: &[&str]) -> Vec<(String, String, String, String)> {
     let paths: Vec<PathBuf> = names.iter().map(|name| fixture(name)).collect();
     let facts = resolve_project(&ResolveRequest {
         paths: &paths,
-        arms: ResolveArms { call: true, types: false, flow: false },
+        arms: ResolveArms {
+            call: true,
+            types: false,
+            flow: false,
+        },
         scip: Default::default(),
         project_root: None,
         scip_records: Default::default(),
         occurrence_text: false,
         rust_checker: None,
         ts_checker: None,
+        go_checker: None,
         witness: false,
     })
     .expect("the fixture corpus resolves");
@@ -83,7 +92,12 @@ fn rows(names: &[&str]) -> Vec<(String, String, String, String)> {
 }
 
 #[allow(dead_code)]
-fn has(rows: &[(String, String, String, String)], caller: &str, callee_file: &str, callee: &str) -> bool {
+fn has(
+    rows: &[(String, String, String, String)],
+    caller: &str,
+    callee_file: &str,
+    callee: &str,
+) -> bool {
     rows.iter()
         .any(|(_, c, file, name)| c == caller && file == callee_file && name == callee)
 }

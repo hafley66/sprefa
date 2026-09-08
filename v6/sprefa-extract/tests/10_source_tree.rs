@@ -98,6 +98,27 @@ fn worktree_source_reads_dirty_and_untracked_files() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A compiler index can retain a generated path after a clean removed the
+/// generated file. One stale path must not discard the readable source files
+/// that share its batched source-tree request.
+#[test]
+fn exact_file_source_skips_missing_generated_paths() {
+    let root = fixture();
+    let source = SourceTreeBlobSource::open_files(
+        &root,
+        &["src/lib.rs", "target/debug/build/pkg/out/generated.rs"],
+    )
+    .unwrap();
+
+    assert_eq!(
+        source.blob("src/lib.rs").unwrap(),
+        b"pub const VERSION: u8 = 2;\n"
+    );
+    assert_eq!(source.blob("target/debug/build/pkg/out/generated.rs"), None);
+    assert_eq!(source.entries().count(), 1);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// The FAIL-PRE-FIX receipt: soopy's tracked-file surface (`git ls-files`)
 /// omits the untracked file, which is exactly why the default must be the
 /// fs-glob worktree snapshot, not the tracked enumeration.

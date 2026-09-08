@@ -20,7 +20,7 @@ use std::time::Instant;
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 use sprefa_extract::schema::schema_text;
 use sprefa_extract::trail::Trail;
@@ -37,12 +37,10 @@ use sprefa_extract::{
 mod help;
 
 use help::{
-    BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, GO_CHECKER_LONG, LONG_ABOUT, MAX_BYTES_LONG,
-    OCCURRENCE_TEXT_LONG, PACKAGE_DEPS_LONG, PATH_LONG, PROJECT_ROOT_LONG, RUST_CHECKER_LONG,
-    TS_CHECKER_LONG,
-    SCIP_BUILD_LONG,
-    SCIP_CACHE_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG,
-    INDEXER_LONG, SCIP_TIMEOUT_LONG,
+    AFTER_HELP, BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, GO_CHECKER_LONG, INDEXER_LONG,
+    LONG_ABOUT, MAX_BYTES_LONG, OCCURRENCE_TEXT_LONG, PACKAGE_DEPS_LONG, PATH_LONG,
+    PROJECT_ROOT_LONG, RUST_CHECKER_LONG, SCIP_BUILD_LONG, SCIP_CACHE_LONG, SCIP_DEPS_LONG,
+    SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG, TS_CHECKER_LONG,
 };
 
 #[path = "../0_query.rs"]
@@ -63,6 +61,7 @@ mod source_rename;
     version,
     about = "sprefa-extract: one source file -> flat graph facts (JSONL to stdout)",
     long_about = LONG_ABOUT,
+    after_help = AFTER_HELP,
 )]
 struct Cli {
     #[arg(required_unless_present_any = ["schema", "ingest", "trail"], value_name = "PATH", long_help = PATH_LONG)]
@@ -287,6 +286,64 @@ enum FamilyMode {
     DietScip,
 }
 
+#[derive(Clone, Copy)]
+enum AliasMode {
+    Fast,
+    Slow,
+}
+
+impl AliasMode {
+    fn family(self) -> &'static str {
+        match self {
+            Self::Fast => "diet_scip",
+            Self::Slow => "scip",
+        }
+    }
+}
+
+/// Expand the command aliases onto the existing family-mode dispatch. An alias
+/// owns the SCIP/compiler choice, so flags which could name or configure a
+/// different choice are rejected instead of being accepted and then ignored.
+fn alias_args() -> Result<Vec<String>, String> {
+    let mut args: Vec<String> = std::env::args().collect();
+    let alias = match args.get(1).map(String::as_str) {
+        Some("fast") => AliasMode::Fast,
+        Some("slow") => AliasMode::Slow,
+        _ => return Ok(args),
+    };
+    const MODE_FLAGS: [&str; 6] = [
+        "--family",
+        "--scip-index",
+        "--scip-build",
+        "--rust-checker",
+        "--ts-checker",
+        "--go-checker",
+    ];
+    if let Some(flag) = args
+        .iter()
+        .skip(2)
+        .take_while(|arg| arg.as_str() != "--")
+        .find(|arg| {
+            let conflicts_with_alias = MODE_FLAGS
+                .iter()
+                .any(|name| arg.as_str() == *name || arg.starts_with(&format!("{name}=")));
+            let conflicts_with_fast = matches!(alias, AliasMode::Fast)
+                && (arg.as_str() == "--indexer" || arg.starts_with("--indexer="));
+            conflicts_with_alias || conflicts_with_fast
+        })
+    {
+        return Err(format!(
+            "extract {} pins --family {}; {flag} cannot select or configure another mode",
+            args[1],
+            alias.family(),
+        ));
+    }
+    args.remove(1);
+    args.insert(1, alias.family().to_string());
+    args.insert(1, "--family".to_string());
+    Ok(args)
+}
+
 /// Which mode `--family` names, if any. Mixing a mode with a mask name is an
 /// ERROR rather than a silent pick: `--family cst,scip` has no honest reading
 /// (one is a per-file mask over one file, the other a whole-project index run),
@@ -372,8 +429,14 @@ fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Every mode but `--family scip` takes source FILES. A directory or a missing
 /// path reaches the library as an `io::Error` Debug dump that names no cause.
-fn check_file_paths(paths: &[PathBuf]) {
+fn check_file_paths(paths: &[PathBuf], allow_stdin: bool) {
     for path in paths {
+        // `/dev/stdin` is a descriptor symlink rather than an ordinary file.
+        // Under concurrent child-process churn its existence probe can report
+        // false even though the following read from the open descriptor works.
+        if allow_stdin && path == std::path::Path::new("/dev/stdin") {
+            continue;
+        }
         let stop = if path.is_dir() {
             format!(
                 "{} is a directory; --resolve takes files, so expand the tree \
@@ -509,7 +572,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
-    let cli = Cli::parse();
+    let argv = match alias_args() {
+        Ok(argv) => argv,
+        Err(error) => Cli::command()
+            .error(clap::error::ErrorKind::ArgumentConflict, error)
+            .exit(),
+    };
+    let cli = Cli::parse_from(argv);
 
     // `--scip-timeout` must reach the library's `ScipMode::Build` path, whose
     // budget comes from `IndexBudget::from_env` (project.rs). Setting the same
@@ -540,7 +609,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // `--family scip`, `--scip-facts` and `--scip-deps` take a ROOT directory;
     // every other mode takes files.
     if !matches!(mode, Some(FamilyMode::Scip)) && !cli.scip_facts && !cli.scip_deps {
-        check_file_paths(&cli.paths);
+        check_file_paths(&cli.paths, false);
     }
     match mode {
         Some(FamilyMode::Scip) => {
@@ -628,9 +697,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The cfg plane is derived AFTER the flatten, so its rows would land past
     // the coverage rows and outside the numbering.
     if cli.witness && cfg {
-        return Err("--witness does not cover --family cfg: the cfg plane is derived \
+        return Err(
+            "--witness does not cover --family cfg: the cfg plane is derived \
                     after the flatten, so its rows carry no fact ordinal"
-            .into());
+                .into(),
+        );
     }
     if cli.bench {
         bench(&path_str, &content, mask, cfg)?;
@@ -653,9 +724,18 @@ fn scip_request(cli: &Cli) -> Result<ResolveRequest<'_>, String> {
             None => ScipRecords::all(),
         },
         occurrence_text: cli.occurrence_text,
-        rust_checker: cli.rust_checker.then(|| cli.project_root.as_deref()).flatten(),
-        ts_checker: cli.ts_checker.then(|| cli.project_root.as_deref()).flatten(),
-        go_checker: cli.go_checker.then(|| cli.project_root.as_deref()).flatten(),
+        rust_checker: cli
+            .rust_checker
+            .then(|| cli.project_root.as_deref())
+            .flatten(),
+        ts_checker: cli
+            .ts_checker
+            .then(|| cli.project_root.as_deref())
+            .flatten(),
+        go_checker: cli
+            .go_checker
+            .then(|| cli.project_root.as_deref())
+            .flatten(),
         witness: cli.witness,
     })
 }
@@ -944,7 +1024,7 @@ fn print_schema() {
 /// The reverse door. Every file is one stream, so line numbers in a stop run
 /// across the whole argument list rather than restarting per file.
 fn stream_ingest(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
-    check_file_paths(paths);
+    check_file_paths(paths, true);
     let mut lines: Vec<String> = Vec::new();
     for path in paths {
         lines.extend(std::fs::read_to_string(path)?.lines().map(str::to_string));

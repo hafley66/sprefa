@@ -22,8 +22,8 @@ use syn::spanned::Spanned;
 use syn::visit::Visit;
 
 use crate::lang::rust::{build_line_starts, syn_span};
-use crate::seams::ProjectCx;
 use crate::scip::{byte_range_at, definition_of, LineTable};
+use crate::seams::ProjectCx;
 use crate::shape::{ContentId, Span};
 use crate::source::ExtractOutput;
 use crate::types::{
@@ -68,7 +68,10 @@ impl<'ast> Visit<'ast> for InvocationCollector {
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         let span = syn_span(&self.line_starts, mac.span());
         let name = macro_name(mac);
-        self.invocations.push(InvocationSpan { span, macro_name: name });
+        self.invocations.push(InvocationSpan {
+            span,
+            macro_name: name,
+        });
         // The token trees stay opaque: descending would re-find the same
         // invocation's delimiters and nothing else, and a parse walk over
         // unexpanded tokens is exactly the gap this pass exists to close.
@@ -225,12 +228,9 @@ pub(crate) fn mint_macro_edges(
                 continue;
             }
             // The innermost invocation covering the occurrence names the row.
-            let Some(invocation) = invocations
-                .iter()
-                .find(|invocation| {
-                    invocation.span.start <= span.start && span.end() <= invocation.span.end()
-                })
-            else {
+            let Some(invocation) = invocations.iter().find(|invocation| {
+                invocation.span.start <= span.start && span.end() <= invocation.span.end()
+            }) else {
                 continue;
             };
             // scip's word on the target: symbol -> its definition occurrence
@@ -246,12 +246,9 @@ pub(crate) fn mint_macro_edges(
             let def_table = def_lines
                 .entry(def_doc_ix)
                 .or_insert_with(|| LineTable::build(def_content));
-            let Some(ident) = byte_range_at(
-                def_content,
-                def_table,
-                def_range,
-                def_doc.position_encoding,
-            ) else {
+            let Some(ident) =
+                byte_range_at(def_content, def_table, def_range, def_doc.position_encoding)
+            else {
                 continue;
             };
             let Some((_, def_site)) = containing_def_site(def_index, def_blob.clone(), ident)
@@ -271,15 +268,14 @@ pub(crate) fn mint_macro_edges(
                 )
                 .with_call_site(span),
             );
-            rows
-                .last_mut()
+            rows.last_mut()
                 .expect("one row slot per file, pushed above")
                 .push(MacroSiteRow {
-                path: file.path.to_string(),
-                span: invocation.span,
-                macro_name: invocation.macro_name.clone(),
-                source: MACRO_SITE_SOURCE,
-            });
+                    path: file.path.to_string(),
+                    span: invocation.span,
+                    macro_name: invocation.macro_name.clone(),
+                    source: MACRO_SITE_SOURCE,
+                });
         }
     }
     rows

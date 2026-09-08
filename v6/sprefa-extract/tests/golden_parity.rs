@@ -31,11 +31,11 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use sprefa_extract::{
-    build_def_index, byte_range_cached, containing_def_site, content_id_of, covering_def, definition_of,
-    dispatch, flatten, join_documents, site_occurrence, CallEdgeKind, ContentId, ExtractOutput,
-    FamilyMask, FamilyTag, FileSet, FlatFact, GoSource, IndexBag, ManifestMap, ProjectCx,
-    ProjectDigest, PythonSource, Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript,
-    Span, TsSource, TypeF, ZERO_CONTENT_ID,
+    build_def_index, byte_range_cached, containing_def_site, content_id_of, covering_def,
+    definition_of, dispatch, flatten, join_documents, site_occurrence, CallEdgeKind, ContentId,
+    ExtractOutput, FamilyMask, FamilyTag, FileSet, FlatFact, GoSource, IndexBag, ManifestMap,
+    ProjectCx, ProjectDigest, PythonSource, Resolve, RustSource, ScipGo, ScipRust, ScipSource,
+    ScipTypescript, Span, TsSource, TypeF, ZERO_CONTENT_ID,
 };
 
 struct Case {
@@ -1059,7 +1059,12 @@ fn call_resolve_scip_ratchet_ts() {
                 .and_then(|(def_doc_ix, def_range)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident = byte_range_cached(def_doc, def_content, def_range, def_doc.position_encoding)?;
+                    let ident = byte_range_cached(
+                        def_doc,
+                        def_content,
+                        def_range,
+                        def_doc.position_encoding,
+                    )?;
                     containing_def_site(def_index, def_blob.clone(), ident)
                         .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });
@@ -1366,7 +1371,12 @@ fn call_resolve_scip_ratchet_go() {
                 .and_then(|(def_doc_ix, def_range)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident = byte_range_cached(def_doc, def_content, def_range, def_doc.position_encoding)?;
+                    let ident = byte_range_cached(
+                        def_doc,
+                        def_content,
+                        def_range,
+                        def_doc.position_encoding,
+                    )?;
                     containing_def_site(def_index, def_blob.clone(), ident)
                         .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });
@@ -1663,7 +1673,12 @@ fn call_resolve_scip_ratchet_rust() {
                 .and_then(|(def_doc_ix, def_range)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident = byte_range_cached(def_doc, def_content, def_range, def_doc.position_encoding)?;
+                    let ident = byte_range_cached(
+                        def_doc,
+                        def_content,
+                        def_range,
+                        def_doc.position_encoding,
+                    )?;
                     containing_def_site(def_index, def_blob.clone(), ident)
                         .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });

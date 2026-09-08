@@ -69,7 +69,9 @@ pub fn load_index(index_path: &Path) -> Result<ScipIndex, ScipError> {
     };
     // The symbol->def map is a pure function of the decoded documents, so it
     // is built once here, on the decode path, and never re-derived per call.
-    index.defs.get_or_init(|| crate::scip::build_def_map(&index));
+    index
+        .defs
+        .get_or_init(|| crate::scip::build_def_map(&index));
     Ok(index)
 }
 
@@ -85,21 +87,28 @@ fn for_each_message(
     use prost::encoding::{decode_key, decode_varint, skip_field, WireType};
     let mut buf = bytes;
     while !buf.is_empty() {
-        let (field, wire) = decode_key(&mut buf)
-            .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
+        let (field, wire) =
+            decode_key(&mut buf).map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
         match wire {
             WireType::LengthDelimited => {
                 let len = decode_varint(&mut buf)
                     .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
                 let len = len as usize;
                 if buf.len() < len {
-                    return Err(ScipError::Parse("protobuf decode: truncated message".into()));
+                    return Err(ScipError::Parse(
+                        "protobuf decode: truncated message".into(),
+                    ));
                 }
                 visit(field, &buf[..len])?;
                 buf = &buf[len..];
             }
-            _ => skip_field(wire, field, &mut buf, prost::encoding::DecodeContext::default())
-                .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?,
+            _ => skip_field(
+                wire,
+                field,
+                &mut buf,
+                prost::encoding::DecodeContext::default(),
+            )
+            .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?,
         }
     }
     Ok(())
@@ -199,7 +208,11 @@ fn diet_document(doc: &proto::Document, symbols: &mut SymbolInterner) -> ScipDoc
             .iter()
             .filter_map(|occ| occurrence(occ, symbols))
             .collect(),
-        symbols: doc.symbols.iter().map(|si| diet_symbol(si, symbols)).collect(),
+        symbols: doc
+            .symbols
+            .iter()
+            .map(|si| diet_symbol(si, symbols))
+            .collect(),
         language: doc.language.clone(),
         text: doc.text.clone(),
         spans: std::sync::OnceLock::new(),

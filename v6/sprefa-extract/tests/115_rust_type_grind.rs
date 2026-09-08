@@ -89,7 +89,13 @@ fn type_edges() -> Vec<(String, String, String, String, String)> {
     rows
 }
 
-fn row(owner_file: &str, owner: &str, target: &str, target_file: &str, kind: &str) -> (String, String, String, String, String) {
+fn row(
+    owner_file: &str,
+    owner: &str,
+    target: &str,
+    target_file: &str,
+    kind: &str,
+) -> (String, String, String, String, String) {
     (
         owner_file.to_string(),
         owner.to_string(),
@@ -166,29 +172,30 @@ mod checker {
             "{args:?} stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let mut rows: Vec<(String, String, String, String)> = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(|line| serde_json::from_str::<Value>(line).expect("one json fact per line"))
-            .filter(|fact| fact["record"] == "resolved_type_edge")
-            .map(|fact| {
-                (
-                    fact["owner_name"].as_str().unwrap_or_default().to_string(),
-                    fact["target_path"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or_default()
-                        .to_string(),
-                    fact["target_name"].as_str().unwrap_or_default().to_string(),
-                    fact["resolution_origin"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
-                )
-            })
-            .collect();
+        let mut rows: Vec<(String, String, String, String)> =
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| serde_json::from_str::<Value>(line).expect("one json fact per line"))
+                .filter(|fact| fact["record"] == "resolved_type_edge")
+                .map(|fact| {
+                    (
+                        fact["owner_name"].as_str().unwrap_or_default().to_string(),
+                        fact["target_path"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or_default()
+                            .to_string(),
+                        fact["target_name"].as_str().unwrap_or_default().to_string(),
+                        fact["resolution_origin"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                    )
+                })
+                .collect();
         rows.sort();
         rows.dedup();
         rows

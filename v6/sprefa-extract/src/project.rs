@@ -515,8 +515,7 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     }
     if request.witness {
         let mut syntax_tsi = syntax_tsi_rows(request, &inputs, &cx);
-        let (conforms, next_id) =
-            conformance_tsi_rows(&inputs, &conformances, syntax_tsi.next_id);
+        let (conforms, next_id) = conformance_tsi_rows(&inputs, &conformances, syntax_tsi.next_id);
         syntax_tsi.rows.extend(conforms);
         syntax_tsi.next_id = next_id;
         let relations = tsi_relations(&syntax_tsi.rows);
@@ -542,11 +541,7 @@ struct SyntaxTsi {
 
 /// Rides the stream for every language whose checker tier did not answer:
 /// beside a loaded tier the two id spaces name two types with one number.
-fn syntax_tsi_rows(
-    request: &ResolveRequest,
-    inputs: &[ProjectInput],
-    cx: &ProjectCx,
-) -> SyntaxTsi {
+fn syntax_tsi_rows(request: &ResolveRequest, inputs: &[ProjectInput], cx: &ProjectCx) -> SyntaxTsi {
     let mut out = SyntaxTsi {
         rows: Vec::new(),
         next_id: 0,
@@ -567,11 +562,8 @@ fn syntax_tsi_rows(
         let Some(bundle) = input.output.types.as_ref() else {
             continue;
         };
-        let (rows, next) = crate::wire::tsi_rows_rebased(
-            &bundle.aux.tsi,
-            &input.blob.to_string(),
-            out.next_id,
-        );
+        let (rows, next) =
+            crate::wire::tsi_rows_rebased(&bundle.aux.tsi, &input.blob.to_string(), out.next_id);
         out.rows.extend(rows);
         out.next_id = next;
     }
@@ -688,18 +680,20 @@ fn envelope(input: Envelope) -> Vec<FlatFact> {
             if let Some(row) = trail.next() {
                 let mut legs = row.legs;
                 legs.sort();
-                witnesses.extend(legs.into_iter().map(|leg| WitnessOut {
-                    fact: numbered,
-                    // A checker leg is the semantic run's answer; every other
-                    // leg is the parse's.
-                    run: match leg {
-                        ResolutionOrigin::Checker => semantic
-                            .iter()
-                            .find(|(lang, _)| *lang == row.lang)
-                            .map_or(SYNTAX_RUN, |(_, run)| run.run),
-                        _ => SYNTAX_RUN,
-                    },
-                    method: leg.method(),
+                witnesses.extend(legs.into_iter().map(|leg| {
+                    WitnessOut {
+                        fact: numbered,
+                        // A checker leg is the semantic run's answer; every other
+                        // leg is the parse's.
+                        run: match leg {
+                            ResolutionOrigin::Checker => semantic
+                                .iter()
+                                .find(|(lang, _)| *lang == row.lang)
+                                .map_or(SYNTAX_RUN, |(_, run)| run.run),
+                            _ => SYNTAX_RUN,
+                        },
+                        method: leg.method(),
+                    }
                 }));
             }
         }
@@ -779,8 +773,8 @@ fn load_rust_checker(
         .iter()
         .filter(|input| input.path.ends_with(".rs"))
         .map(|input| {
-            let absolute = std::fs::canonicalize(&input.path)
-                .unwrap_or_else(|_| PathBuf::from(&input.path));
+            let absolute =
+                std::fs::canonicalize(&input.path).unwrap_or_else(|_| PathBuf::from(&input.path));
             (input.path.clone(), absolute)
         })
         .collect();
@@ -1630,7 +1624,10 @@ fn resolve_call_edges(
     let leg = crate::trace::phase_span(arm.name, crate::trace::Phase::ResolveLeg);
     let _legging = leg.enter();
     let edges = resolve(output, cx);
-    let asked = output.call.as_ref().map_or(0, |bundle| bundle.aux.sites.len());
+    let asked = output
+        .call
+        .as_ref()
+        .map_or(0, |bundle| bundle.aux.sites.len());
     crate::trace::record_phase(&leg, 0, edges.len() as u64, asked as u64);
     edges
 }
@@ -1652,7 +1649,10 @@ fn resolve_type_edges(
     let leg = crate::trace::phase_span(arm.name, crate::trace::Phase::ResolveLeg);
     let _legging = leg.enter();
     let edges = resolve(output, cx);
-    let asked = output.types.as_ref().map_or(0, |bundle| bundle.aux.candidates.len());
+    let asked = output
+        .types
+        .as_ref()
+        .map_or(0, |bundle| bundle.aux.candidates.len());
     crate::trace::record_phase(&leg, 0, edges.len() as u64, asked as u64);
     edges
 }
@@ -1885,7 +1885,10 @@ fn type_owner(
         TypePlane::Nodes => match types.nodes.get(src.0 as usize) {
             Some(node) => Some((node.span, name_at(names, &input.output, node.span))),
             None => {
-                let owner = types.aux.impl_owners.get(src.0 as usize - types.nodes.len())?;
+                let owner = types
+                    .aux
+                    .impl_owners
+                    .get(src.0 as usize - types.nodes.len())?;
                 let name = input.output.strings.lookup(owner.name).to_string();
                 Some((owner.span, Some(name)))
             }
@@ -2031,7 +2034,11 @@ fn scip_conformances(
             else {
                 continue;
             };
-            for related in info.relationships.iter().filter(|rel| rel.is_implementation) {
+            for related in info
+                .relationships
+                .iter()
+                .filter(|rel| rel.is_implementation)
+            {
                 let target = index.symbol(related.symbol);
                 if !crate::scip_v5_rels::usable_symbol(target) {
                     continue;
@@ -2087,7 +2094,12 @@ fn conformance_edges(inputs: &[ProjectInput], rows: &[ScipConformance]) -> Vec<F
             owner_end: row.owner_span.end(),
             target_path: row.target_path.clone(),
             target_name: Some(row.target_name.clone()),
-            kind: if row.method { "overrides" } else { "implements" }.to_string(),
+            kind: if row.method {
+                "overrides"
+            } else {
+                "implements"
+            }
+            .to_string(),
             resolution_origin: ResolutionOrigin::Scip.as_str().to_string(),
         })
         .collect()
@@ -2157,7 +2169,11 @@ fn conformance_tsi_rows(
             };
             sink.fact(
                 "tsi.conforms",
-                vec![Arg::Id(owner), Arg::Id(target), Arg::Atom("scip".to_string())],
+                vec![
+                    Arg::Id(owner),
+                    Arg::Id(target),
+                    Arg::Atom("scip".to_string()),
+                ],
             );
         }
         let facts: Vec<crate::tsi::FactOut> = sink
@@ -2281,13 +2297,24 @@ impl SourceTreeBlobSource {
         let revision = tree
             .resolve_revision(soopy::Revision::Worktree)
             .map_err(|error| error.to_string())?;
+        let mut readable_files = Vec::with_capacity(files.len());
         let mut requests = Vec::with_capacity(files.len());
         for file in files {
+            // Compiler indexes may name generated documents that existed while
+            // indexing and no longer exist in the current worktree. The SCIP
+            // projection already defines an unreadable document as a header
+            // and symbol contributor with no occurrence rows. Keep that
+            // document out of soopy's all-or-error read batch so the readable
+            // documents still reach the projection.
+            if !root.join(file).is_file() {
+                continue;
+            }
             let repo_path = if prefix.is_empty() {
                 file.to_string()
             } else {
                 format!("{prefix}/{file}")
             };
+            readable_files.push(*file);
             requests.push(soopy::ReadRequest {
                 source: soopy::SourceRef {
                     repository: repository.identity.clone(),
@@ -2300,8 +2327,8 @@ impl SourceTreeBlobSource {
         let answers = tree
             .read_many(&requests)
             .map_err(|error| error.to_string())?;
-        let entries = files
-            .iter()
+        let entries = readable_files
+            .into_iter()
             .zip(answers)
             .map(|(file, answer)| {
                 (
