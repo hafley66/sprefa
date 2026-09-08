@@ -1,5 +1,9 @@
 # SQLite IVM plugin, semantic coverage, and telemetry
 
+## Latest user override
+
+The user explicitly requests gpt-6-astra at medium effort to own and implement this task. This overrides the Sol assignment below. The earlier Sol lane was stopped with a clean worktree and no implementation commits; all starting artifacts remain preserved. Continue the full plugin, semantic parity, telemetry and shared-shootout scope below. Do not spawn additional code workers or use native collaboration tools.
+
 ## Authority and scope
 
 User: keep implementing the SQLite IVM plugin, cover DD/IVM semantics before performance, and add logging throughout. Use Sol for code writing. Work only inside this new lane worktree based on feature/postgres-ivm-crossover, preserving all previous implementations and receipts. Parent handles sampled review and integration. No native collaboration tools; communicate through Boop. No merge, push, global installation, user database mutation, or compiler/kernel semantic changes. Kernel changes require prior user explanation and explicit approval. Current user permission covers this lab/plugin implementation despite historical v6 planning notes.
