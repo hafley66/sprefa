@@ -122,15 +122,15 @@ if (threeWayOutputPath) {
   const lines = [columns.join("\t")];
   for (const [key, testCase] of planned) {
     const good = (groups.get(key) ?? []).filter((row) => row.status === "ok" && row.all_input_output_states_match);
-    const values = ["pg_ivm_ms", "sqlite_affected_group_ms", "dd_ms"].flatMap((field) => {
-      const samples = good.map((row) => row[field]);
+    const values = ["pg_ivm_ms", "sqlite_ms", "dd_ms"].flatMap((field) => {
+      const samples = good.map((row) => field === "sqlite_ms" ? row.sqlite_ms ?? row.sqlite_affected_group_ms : row[field]);
       return [number(samples), number(samples, Math.min), number(samples, Math.max)];
     });
     lines.push([testCase.budget, testCase.rows, testCase.batch_size, testCase.fanout,
       good.length ? "measured" : "unmeasured", good.length, good[0]?.state_count_per_arm ?? "", ...values,
-      number(good.map((row) => row.pg_ivm_ms / row.sqlite_affected_group_ms)),
+      number(good.map((row) => row.pg_ivm_ms / (row.sqlite_ms ?? row.sqlite_affected_group_ms))),
       number(good.map((row) => row.pg_ivm_ms / row.dd_ms)),
-      number(good.map((row) => row.sqlite_affected_group_ms / row.dd_ms)),
+      number(good.map((row) => (row.sqlite_ms ?? row.sqlite_affected_group_ms) / row.dd_ms)),
       good[0]?.final_input_hash ?? "", good[0]?.final_checksum ?? ""].join("\t"));
   }
   await writeFile(threeWayOutputPath, lines.join("\n") + "\n");
