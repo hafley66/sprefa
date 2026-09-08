@@ -1,0 +1,218 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1258" height="798" viewBox="0 0 1258 798" role="img" aria-labelledby="title description">
+<title id="title">PostgreSQL full-query over pg_ivm update-plus-query speedup</title>
+<desc id="description">Receipt-generated heatmaps with row count horizontally, batch size vertically, and separate memory budget and exact join fanout panels. Numeric labels are medians with measured minimum to maximum ranges.</desc>
+<defs><pattern id="unscheduled" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" fill="#f3f4f6"/><line x1="0" y1="0" x2="0" y2="8" stroke="#d1d5db" stroke-width="2"/></pattern></defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<style>text{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#111827}.title{font-size:20px;font-weight:600}.subtitle{font-size:12px;fill:#4b5563}.panel{font-size:15px;font-weight:600}.axis{font-size:11px;fill:#374151}.value{font-size:13px;font-weight:600}.range{font-size:9px}.unm{font-size:10px;fill:#4b5563}.grid{stroke:#ffffff;stroke-width:2}.border{fill:none;stroke:#9ca3af;stroke-width:1}</style>
+<text class="title" x="28" y="30">Full-query / pg_ivm speedup, update + query</text>
+<text class="subtitle" x="28" y="51">Median centered in each measured cell; second line is measured min–max. Values above 1 mean lower pg_ivm time.</text>
+<text class="subtitle" x="28" y="70">Total memory cap: UNENFORCED. PostgreSQL tuning profiles are shown as separate panels.</text>
+<text class="panel" x="28" y="108">constrained budget · exact fanout 10</text>
+<text class="axis" x="366" y="126" text-anchor="middle">base rows</text>
+<text class="axis" x="38" y="254" transform="rotate(-90 38 254)" text-anchor="middle">batch</text>
+<text class="axis" x="171" y="138" text-anchor="middle">400</text>
+<text class="axis" x="249" y="138" text-anchor="middle">1.2k</text>
+<text class="axis" x="327" y="138" text-anchor="middle">4k</text>
+<text class="axis" x="405" y="138" text-anchor="middle">12k</text>
+<text class="axis" x="483" y="138" text-anchor="middle">40k</text>
+<text class="axis" x="561" y="138" text-anchor="middle">160k</text>
+<text class="axis" x="122" y="177" text-anchor="end">1</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="132" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="171" y="177" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="210" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="249" y="177" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="288" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="327" y="177" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="366" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="405" y="177" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="444" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="483" y="177" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="522" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="561" y="177" text-anchor="middle">—</text></g>
+<text class="axis" x="122" y="231" text-anchor="end">10</text>
+<g><title>constrained, fanout 10, 400 rows, batch 10: 0.703x median, 0.697x to 0.738x</title>
+<rect class="grid" x="132" y="200" width="78" height="54" fill="rgb(227,182,185)"/>
+<text class="value" x="171" y="223" text-anchor="middle" style="fill:#111827">0.70×</text>
+<text class="range" x="171" y="239" text-anchor="middle" style="fill:#111827">0.70–0.74</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="210" y="200" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="249" y="231" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="288" y="200" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="327" y="231" text-anchor="middle">—</text></g>
+<g><title>constrained, fanout 10, 12000 rows, batch 10: 1.689x median, 1.613x to 1.804x</title>
+<rect class="grid" x="366" y="200" width="78" height="54" fill="rgb(156,181,235)"/>
+<text class="value" x="405" y="223" text-anchor="middle" style="fill:#111827">1.69×</text>
+<text class="range" x="405" y="239" text-anchor="middle" style="fill:#111827">1.61–1.80</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="444" y="200" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="483" y="231" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="522" y="200" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="561" y="231" text-anchor="middle">—</text></g>
+<text class="axis" x="122" y="285" text-anchor="end">100</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="132" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="171" y="285" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="210" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="249" y="285" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="288" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="327" y="285" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="366" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="405" y="285" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="444" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="483" y="285" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="522" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="561" y="285" text-anchor="middle">—</text></g>
+<text class="axis" x="122" y="339" text-anchor="end">1k</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="132" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="171" y="339" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="210" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="249" y="339" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="288" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="327" y="339" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="366" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="405" y="339" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="444" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="483" y="339" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="522" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="561" y="339" text-anchor="middle">—</text></g>
+<rect class="border" x="132" y="146" width="468" height="216"/>
+<text class="panel" x="646" y="108">constrained budget · exact fanout 200</text>
+<text class="axis" x="984" y="126" text-anchor="middle">base rows</text>
+<text class="axis" x="656" y="254" transform="rotate(-90 656 254)" text-anchor="middle">batch</text>
+<text class="axis" x="789" y="138" text-anchor="middle">400</text>
+<text class="axis" x="867" y="138" text-anchor="middle">1.2k</text>
+<text class="axis" x="945" y="138" text-anchor="middle">4k</text>
+<text class="axis" x="1023" y="138" text-anchor="middle">12k</text>
+<text class="axis" x="1101" y="138" text-anchor="middle">40k</text>
+<text class="axis" x="1179" y="138" text-anchor="middle">160k</text>
+<text class="axis" x="740" y="177" text-anchor="end">1</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="750" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="789" y="177" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="828" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="867" y="177" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="906" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="945" y="177" text-anchor="middle">—</text></g>
+<g><title>constrained, fanout 200, 12000 rows, batch 1: 1.604x median, 1.589x to 1.853x</title>
+<rect class="grid" x="984" y="146" width="78" height="54" fill="rgb(164,186,235)"/>
+<text class="value" x="1023" y="169" text-anchor="middle" style="fill:#111827">1.60×</text>
+<text class="range" x="1023" y="185" text-anchor="middle" style="fill:#111827">1.59–1.85</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1062" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1101" y="177" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1140" y="146" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1179" y="177" text-anchor="middle">—</text></g>
+<text class="axis" x="740" y="231" text-anchor="end">10</text>
+<g><title>constrained, fanout 200, 400 rows, batch 10: 0.825x median, 0.798x to 3.508x</title>
+<rect class="grid" x="750" y="200" width="78" height="54" fill="rgb(228,204,208)"/>
+<text class="value" x="789" y="223" text-anchor="middle" style="fill:#111827">0.83×</text>
+<text class="range" x="789" y="239" text-anchor="middle" style="fill:#111827">0.80–3.51</text></g>
+<g><title>constrained, fanout 200, 1200 rows, batch 10: 0.844x median, 0.759x to 0.899x</title>
+<rect class="grid" x="828" y="200" width="78" height="54" fill="rgb(228,207,211)"/>
+<text class="value" x="867" y="223" text-anchor="middle" style="fill:#111827">0.84×</text>
+<text class="range" x="867" y="239" text-anchor="middle" style="fill:#111827">0.76–0.90</text></g>
+<g><title>constrained, fanout 200, 4000 rows, batch 10: 1.177x median, 1.099x to 1.311x</title>
+<rect class="grid" x="906" y="200" width="78" height="54" fill="rgb(206,215,235)"/>
+<text class="value" x="945" y="223" text-anchor="middle" style="fill:#111827">1.18×</text>
+<text class="range" x="945" y="239" text-anchor="middle" style="fill:#111827">1.10–1.31</text></g>
+<g><title>constrained, fanout 200, 12000 rows, batch 10: 1.555x median, 0.881x to 2.333x</title>
+<rect class="grid" x="984" y="200" width="78" height="54" fill="rgb(168,189,235)"/>
+<text class="value" x="1023" y="223" text-anchor="middle" style="fill:#111827">1.56×</text>
+<text class="range" x="1023" y="239" text-anchor="middle" style="fill:#111827">0.88–2.33</text></g>
+<g><title>constrained, fanout 200, 40000 rows, batch 10: 3.679x median, 2.017x to 3.915x</title>
+<rect class="grid" x="1062" y="200" width="78" height="54" fill="rgb(49,107,235)"/>
+<text class="value" x="1101" y="223" text-anchor="middle" style="fill:#ffffff">3.68×</text>
+<text class="range" x="1101" y="239" text-anchor="middle" style="fill:#ffffff">2.02–3.91</text></g>
+<g><title>constrained, fanout 200, 160000 rows, batch 10: 11.452x median, 11.337x to 11.632x</title>
+<rect class="grid" x="1140" y="200" width="78" height="54" fill="rgb(37,99,235)"/>
+<text class="value" x="1179" y="223" text-anchor="middle" style="fill:#ffffff">11.45×</text>
+<text class="range" x="1179" y="239" text-anchor="middle" style="fill:#ffffff">11.34–11.63</text></g>
+<text class="axis" x="740" y="285" text-anchor="end">100</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="750" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="789" y="285" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="828" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="867" y="285" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="906" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="945" y="285" text-anchor="middle">—</text></g>
+<g><title>constrained, fanout 200, 12000 rows, batch 100: 1.060x median, 0.941x to 1.222x</title>
+<rect class="grid" x="984" y="254" width="78" height="54" fill="rgb(221,225,235)"/>
+<text class="value" x="1023" y="277" text-anchor="middle" style="fill:#111827">1.06×</text>
+<text class="range" x="1023" y="293" text-anchor="middle" style="fill:#111827">0.94–1.22</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1062" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1101" y="285" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1140" y="254" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1179" y="285" text-anchor="middle">—</text></g>
+<text class="axis" x="740" y="339" text-anchor="end">1k</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="750" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="789" y="339" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="828" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="867" y="339" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="906" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="945" y="339" text-anchor="middle">—</text></g>
+<g><title>constrained, fanout 200, 12000 rows, batch 1000: 0.966x median, 0.510x to 1.064x</title>
+<rect class="grid" x="984" y="308" width="78" height="54" fill="rgb(229,226,230)"/>
+<text class="value" x="1023" y="331" text-anchor="middle" style="fill:#111827">0.97×</text>
+<text class="range" x="1023" y="347" text-anchor="middle" style="fill:#111827">0.51–1.06</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1062" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1101" y="339" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1140" y="308" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1179" y="339" text-anchor="middle">—</text></g>
+<rect class="border" x="750" y="146" width="468" height="216"/>
+<text class="panel" x="28" y="444">roomy budget · exact fanout 10</text>
+<text class="axis" x="366" y="462" text-anchor="middle">base rows</text>
+<text class="axis" x="38" y="590" transform="rotate(-90 38 590)" text-anchor="middle">batch</text>
+<text class="axis" x="171" y="474" text-anchor="middle">400</text>
+<text class="axis" x="249" y="474" text-anchor="middle">1.2k</text>
+<text class="axis" x="327" y="474" text-anchor="middle">4k</text>
+<text class="axis" x="405" y="474" text-anchor="middle">12k</text>
+<text class="axis" x="483" y="474" text-anchor="middle">40k</text>
+<text class="axis" x="561" y="474" text-anchor="middle">160k</text>
+<text class="axis" x="122" y="513" text-anchor="end">1</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="132" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="171" y="513" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="210" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="249" y="513" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="288" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="327" y="513" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="366" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="405" y="513" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="444" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="483" y="513" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="522" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="561" y="513" text-anchor="middle">—</text></g>
+<text class="axis" x="122" y="567" text-anchor="end">10</text>
+<g><title>roomy, fanout 10, 400 rows, batch 10: 0.753x median, 0.699x to 0.819x</title>
+<rect class="grid" x="132" y="536" width="78" height="54" fill="rgb(227,191,195)"/>
+<text class="value" x="171" y="559" text-anchor="middle" style="fill:#111827">0.75×</text>
+<text class="range" x="171" y="575" text-anchor="middle" style="fill:#111827">0.70–0.82</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="210" y="536" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="249" y="567" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="288" y="536" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="327" y="567" text-anchor="middle">—</text></g>
+<g><title>roomy, fanout 10, 12000 rows, batch 10: 1.830x median, 1.591x to 1.874x</title>
+<rect class="grid" x="366" y="536" width="78" height="54" fill="rgb(145,173,235)"/>
+<text class="value" x="405" y="559" text-anchor="middle" style="fill:#111827">1.83×</text>
+<text class="range" x="405" y="575" text-anchor="middle" style="fill:#111827">1.59–1.87</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="444" y="536" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="483" y="567" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="522" y="536" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="561" y="567" text-anchor="middle">—</text></g>
+<text class="axis" x="122" y="621" text-anchor="end">100</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="132" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="171" y="621" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="210" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="249" y="621" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="288" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="327" y="621" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="366" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="405" y="621" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="444" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="483" y="621" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="522" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="561" y="621" text-anchor="middle">—</text></g>
+<text class="axis" x="122" y="675" text-anchor="end">1k</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="132" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="171" y="675" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="210" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="249" y="675" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="288" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="327" y="675" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="366" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="405" y="675" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="444" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="483" y="675" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="522" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="561" y="675" text-anchor="middle">—</text></g>
+<rect class="border" x="132" y="482" width="468" height="216"/>
+<text class="panel" x="646" y="444">roomy budget · exact fanout 200</text>
+<text class="axis" x="984" y="462" text-anchor="middle">base rows</text>
+<text class="axis" x="656" y="590" transform="rotate(-90 656 590)" text-anchor="middle">batch</text>
+<text class="axis" x="789" y="474" text-anchor="middle">400</text>
+<text class="axis" x="867" y="474" text-anchor="middle">1.2k</text>
+<text class="axis" x="945" y="474" text-anchor="middle">4k</text>
+<text class="axis" x="1023" y="474" text-anchor="middle">12k</text>
+<text class="axis" x="1101" y="474" text-anchor="middle">40k</text>
+<text class="axis" x="1179" y="474" text-anchor="middle">160k</text>
+<text class="axis" x="740" y="513" text-anchor="end">1</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="750" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="789" y="513" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="828" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="867" y="513" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="906" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="945" y="513" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="984" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1023" y="513" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1062" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1101" y="513" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1140" y="482" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1179" y="513" text-anchor="middle">—</text></g>
+<text class="axis" x="740" y="567" text-anchor="end">10</text>
+<g><title>roomy, fanout 200, 400 rows, batch 10: 0.919x median, 0.448x to 2.185x</title>
+<rect class="grid" x="750" y="536" width="78" height="54" fill="rgb(228,219,223)"/>
+<text class="value" x="789" y="559" text-anchor="middle" style="fill:#111827">0.92×</text>
+<text class="range" x="789" y="575" text-anchor="middle" style="fill:#111827">0.45–2.19</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="828" y="536" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="867" y="567" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="906" y="536" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="945" y="567" text-anchor="middle">—</text></g>
+<g><title>roomy, fanout 200, 12000 rows, batch 10: 1.658x median, 1.500x to 1.677x</title>
+<rect class="grid" x="984" y="536" width="78" height="54" fill="rgb(159,183,235)"/>
+<text class="value" x="1023" y="559" text-anchor="middle" style="fill:#111827">1.66×</text>
+<text class="range" x="1023" y="575" text-anchor="middle" style="fill:#111827">1.50–1.68</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1062" y="536" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1101" y="567" text-anchor="middle">—</text></g>
+<g><title>roomy, fanout 200, 160000 rows, batch 10: 12.100x median, 11.496x to 12.193x</title>
+<rect class="grid" x="1140" y="536" width="78" height="54" fill="rgb(37,99,235)"/>
+<text class="value" x="1179" y="559" text-anchor="middle" style="fill:#ffffff">12.10×</text>
+<text class="range" x="1179" y="575" text-anchor="middle" style="fill:#ffffff">11.50–12.19</text></g>
+<text class="axis" x="740" y="621" text-anchor="end">100</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="750" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="789" y="621" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="828" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="867" y="621" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="906" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="945" y="621" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="984" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1023" y="621" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1062" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1101" y="621" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1140" y="590" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1179" y="621" text-anchor="middle">—</text></g>
+<text class="axis" x="740" y="675" text-anchor="end">1k</text>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="750" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="789" y="675" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="828" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="867" y="675" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="906" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="945" y="675" text-anchor="middle">—</text></g>
+<g><title>roomy, fanout 200, 12000 rows, batch 1000: 1.034x median, 0.268x to 1.104x</title>
+<rect class="grid" x="984" y="644" width="78" height="54" fill="rgb(224,228,235)"/>
+<text class="value" x="1023" y="667" text-anchor="middle" style="fill:#111827">1.03×</text>
+<text class="range" x="1023" y="683" text-anchor="middle" style="fill:#111827">0.27–1.10</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1062" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1101" y="675" text-anchor="middle">—</text></g>
+<g><title>Cell was not scheduled in the staged grid</title><rect class="grid" x="1140" y="644" width="78" height="54" fill="url(#unscheduled)"/><text class="unm" x="1179" y="675" text-anchor="middle">—</text></g>
+<rect class="border" x="750" y="482" width="468" height="216"/>
+<rect x="28" y="744" width="22" height="16" fill="rgb(220,38,38)"/><text class="axis" x="58" y="756">&lt;1 full-query time is lower</text>
+<rect x="238" y="744" width="22" height="16" fill="rgb(229,231,235)"/><text class="axis" x="268" y="756">1 equal</text>
+<rect x="358" y="744" width="22" height="16" fill="rgb(37,99,235)"/><text class="axis" x="388" y="756">&gt;1 pg_ivm time is lower</text>
+<rect x="598" y="744" width="22" height="16" fill="#e5e7eb"/><text class="axis" x="628" y="756">UNMEASURED planned without a pair</text>
+<rect x="918" y="744" width="22" height="16" fill="url(#unscheduled)"/><text class="axis" x="948" y="756">— staged out</text>
+</svg>
