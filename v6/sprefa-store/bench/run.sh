@@ -11,6 +11,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+if [[ -n "${BENCH_CELL_BUDGET_S:-}" ]]; then
+  . ../tools/run-capped.sh
+fi
+
 OUT="${BENCH_OUT:-bench/out}"
 mkdir -p "$OUT"
 CSV="$OUT/results.csv"
@@ -74,7 +78,14 @@ for spec in "${ENGINES[@]}"; do
   for s in $scales; do
     layers="${s%x*}"; width="${s#*x}"
     cell_log=$(mktemp)
-    env $env DL_MEMCAP_MB="$CAP" "$binpath" "$layers" "$width" >/dev/null 2>"$cell_log"
+    command_argv=(env)
+    if [[ -n "$env" ]]; then command_argv+=("$env"); fi
+    command_argv+=(DL_MEMCAP_MB="$CAP" "$binpath" "$layers" "$width")
+    if [[ -n "${BENCH_CELL_BUDGET_S:-}" ]]; then
+      run_capped "$BENCH_CELL_BUDGET_S" "${command_argv[@]}" >/dev/null 2>"$cell_log"
+    else
+      "${command_argv[@]}" >/dev/null 2>"$cell_log"
+    fi
     status=$?
     line=$(grep '^CSV,' "$cell_log" | head -1 | cut -d, -f2-)
     status_count=0
@@ -85,6 +96,11 @@ for spec in "${ENGINES[@]}"; do
         >> "$STATUS_TSV"
       status_count=$((status_count + 1))
     done < <(grep '^STATUS|' "$cell_log" || true)
+    if [[ "$status" -eq 124 || "$status" -eq 142 ]]; then
+      printf '%s\t%s\ttimeout\tcase exceeded %s seconds\tunavailable\tprocess-time bound only\n' \
+        "$label" "$s" "${BENCH_CELL_BUDGET_S:-unknown}" >> "$STATUS_TSV"
+      status_count=$((status_count + 1))
+    fi
     if [[ -n "$line" && "$(awk -F, '{print NF}' <<< "$line")" -eq 8 ]]; then
       line="${line},N/A,N/A,N/A"
     fi
