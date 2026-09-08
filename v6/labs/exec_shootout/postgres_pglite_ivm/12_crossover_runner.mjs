@@ -102,7 +102,7 @@ const repetitions = Number(argument("repetitions", profile === "full" ? "3" : "1
 const maxRows = Number(argument("max-rows", "Infinity"));
 const cases = buildCases(profile, budget).filter((testCase) => testCase.rows <= maxRows);
 const arms = argument("arms", "query,pg_ivm").split(",");
-if (arms.some((arm) => !["query", "pg_ivm", "sqlite-template-group", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+if (arms.some((arm) => !["query", "pg_ivm", "sqlite-template-group", "sqlite-plan-refresh", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
 const ddBinary = argument("dd-bin", new URL("../../../sprefa-store/target/release/examples/crossover_dd", import.meta.url).pathname);
 const sqliteProgram = argument("sqlite-program", "");
 if (arms.includes("sqlite-template-group") && !sqliteProgram) throw new Error("--sqlite-program is required for sqlite-template-group");
@@ -162,7 +162,9 @@ append({
 });
 
 async function runProcess(testCase, maintenance, runKind, repetition) {
-  const sqlite = maintenance === "sqlite-template-group";
+  const sqliteTemplate = maintenance === "sqlite-template-group";
+  const sqlitePlan = maintenance === "sqlite-plan-refresh";
+  const sqlite = sqliteTemplate || sqlitePlan;
   const dd = maintenance === "dd";
   const rssField = sqlite ? "sqlite_process_observed_peak_rss_kb" : dd ? "dd_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb";
   const context = {
@@ -200,7 +202,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     "--budget", budget,
     "--diagnostic", profile === "diagnostic" ? "1" : "0",
   ];
-  if (sqlite) {
+  if (sqliteTemplate) {
     const source = await readFile(sqliteProgram, "utf8");
     const program = JSON.parse(source.match(/pub const PROGRAM_JSON: &str = r(#+)"\n([\s\S]*?)\n"\1;/)[2]);
     for (const state of fixture.states) {
@@ -217,10 +219,13 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   }
   const fixturePath = join(childRoot, "fixture.json");
   await writeFile(fixturePath, JSON.stringify(fixture));
-  if (sqlite) {
+  if (sqliteTemplate) {
     args = ["19_sqlite_template_adapter.py", "--program", sqliteProgram,
       "--fixture", fixturePath, "--db", join(childRoot, "maintained.sqlite"),
       "--sql-output", join(childRoot, "installed.sql")];
+  } else if (sqlitePlan) {
+    args = ["27_sqlite_ivm_adapter.py", "--fixture", fixturePath,
+      "--db", join(childRoot, "maintained.sqlite"), "--sql-output", join(childRoot, "installed.sql")];
   } else if (dd) args = [fixturePath];
   else args.push("--fixture", fixturePath);
   const child = spawn(sqlite ? "python3" : dd ? ddBinary : process.execPath, args, {
@@ -310,11 +315,14 @@ for (const testCase of cases) {
   }
 }
 
-if (["pg_ivm", "sqlite-template-group", "dd"].every((arm) => arms.includes(arm))) {
+const threeWaySqlite = arms.includes("sqlite-plan-refresh") ? "sqlite-plan-refresh"
+  : arms.includes("sqlite-template-group") ? "sqlite-template-group" : null;
+if (threeWaySqlite && ["pg_ivm", "dd"].every((arm) => arms.includes(arm))) {
   for (const testCase of cases) for (let repetition = 1; repetition <= repetitions; repetition++) {
     const matching = records.filter((row) => row.run_kind === "measured" && row.repetition === repetition && caseKey(row) === caseKey(testCase));
-    const totals = ["pg_ivm", "sqlite-template-group", "dd"].map((arm) => matching.find((row) => row.event === "case-total" && row.maintenance === arm));
-    const states = matching.filter((row) => row.event === "mutation" && ["pg_ivm", "sqlite-template-group", "dd"].includes(row.maintenance));
+    const tripleArms = ["pg_ivm", threeWaySqlite, "dd"];
+    const totals = tripleArms.map((arm) => matching.find((row) => row.event === "case-total" && row.maintenance === arm));
+    const states = matching.filter((row) => row.event === "mutation" && tripleArms.includes(row.maintenance));
     const expectedStates = makeCrossoverFixture(testCase.rows, testCase.batch_size, testCase.fanout, profile === "semantic").states;
     const exact = expectedStates.every((state) => {
       const rows = states.filter((row) => row.state === state.name);
@@ -326,7 +334,10 @@ if (["pg_ivm", "sqlite-template-group", "dd"].every((arm) => arms.includes(arm))
     append({ event: "three-way-run", status, ...testCase, budget, profile, repetition,
       state_count_per_arm: expectedStates.length, all_input_output_states_match: exact,
       pg_ivm_ms: totals[0]?.update_plus_query_ms ?? null,
-      sqlite_affected_group_ms: totals[1]?.update_plus_query_ms ?? null,
+      sqlite_ms: totals[1]?.update_plus_query_ms ?? null,
+      sqlite_maintenance: threeWaySqlite,
+      sqlite_affected_group_ms: threeWaySqlite === "sqlite-template-group" ? totals[1]?.update_plus_query_ms ?? null : null,
+      sqlite_durable_commit_ms: totals[1]?.durable_commit_ms ?? null,
       dd_ms: totals[2]?.update_plus_query_ms ?? null,
       final_input_hash: totals[0]?.final_input_hash ?? null, final_checksum: totals[0]?.final_checksum ?? null });
   }
