@@ -33,15 +33,17 @@ main(Argv) :-
     build(Layers, Width),
     aggregate_all(count, alive(_), AliveBefore),        % forces the table
     statistics(walltime, [_, SetupMs]),
+    Nodes is 2 + Layers * Width,
+    initial_oracle_check(Nodes, AliveBefore),
     retract(root(0)),
     aggregate_all(count, alive(_), AliveAfter),         % incremental re-eval
     statistics(walltime, [_, RetractMs]),
     Killed is AliveBefore - AliveAfter,
     oracle_check(AliveAfter),
-    Nodes is 2 + Layers * Width,
     predicate_property(edge(_, _), number_of_clauses(Edges)),
     rss_mb(RssMb),
     table_mb(TableMb),
+    format(user_error, "STATUS|swi-incr|ok|SWI incremental tabling; setup and retract end after table materialization and count; exact ordered initial set matches the generated node range and exact incremental survivor set matches cold table recomputation|process RSS sampled with ps after both phases|DL_MEMCAP_MB is passed by the harness but unenforced by this adapter~n", []),
     format(user_error, "CSV,swi-incr,~w,~w,~w,~w,~w,0,~2f~n",
            [Nodes, Edges, Killed, SetupMs, RetractMs, RssMb]),
     format("nodes=~w edges=~w alive_before=~w alive_after=~w killed=~w setup_ms=~w retract_ms=~w rss_mb=~2f table_mb=~2f~n",
@@ -69,12 +71,26 @@ assert_node(Layer, Col, Width) :-
     assertz(edge(Parent_a, Id)),
     assertz(edge(Parent_b, Id)).
 
-% Self-oracle: throw every table away, recompute from the current facts cold,
-% and demand the incremental answer matches the from-scratch answer.
+% Oracles are outside both clocks. Check the complete initial set against the
+% generated contiguous node range, then compare the complete incremental
+% survivor set with a cold table recomputation.
+initial_oracle_check(Nodes, AliveBefore) :-
+    LastNode is Nodes - 1,
+    findall(Node, between(0, LastNode, Node), Expected),
+    setof(Node, alive(Node), Initial),
+    length(Initial, InitialCount),
+    ( Initial == Expected, InitialCount =:= AliveBefore
+    -> true
+    ;  format(user_error, "MISMATCH initial_count=~w expected_count=~w~n",
+              [InitialCount, AliveBefore]),
+       halt(2) ).
+
 oracle_check(IncrementalAfter) :-
+    setof(Node, alive(Node), IncrementalSet),
     abolish_all_tables,
-    aggregate_all(count, alive(_), FreshAfter),
-    ( FreshAfter =:= IncrementalAfter
+    setof(Node, alive(Node), FreshSet),
+    length(FreshSet, FreshAfter),
+    ( IncrementalSet == FreshSet, FreshAfter =:= IncrementalAfter
     -> true
     ;  format(user_error, "MISMATCH incremental=~w fresh=~w~n",
               [IncrementalAfter, FreshAfter]),

@@ -14,3 +14,5 @@ rm -f "$tmp"
 [[ -z "$line" ]] && exit 1
 rss_mb=$(awk -v b="${rss:-0}" 'BEGIN{printf "%.1f", b/1048576}')
 echo "${line},0,${rss_mb},N/A,N/A,N/A" >&2
+engine=$(cut -d, -f2 <<< "$line")
+printf 'STATUS|%s|ok|pure Prolog semi-naive fixed point; retract phase is full recomputation from root 1 and ends after complete sorted-set materialization and count|child-process peak RSS from /usr/bin/time -l|DL_MEMCAP_MB is passed by the harness but unenforced by this adapter\n' "$engine" >&2
