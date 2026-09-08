@@ -102,6 +102,12 @@ function elapsedMs(started) {
   return Number(process.hrtime.bigint() - started) / 1_000_000;
 }
 
+async function timed(operation) {
+  const started = process.hrtime.bigint();
+  const value = await operation();
+  return { value, ms: elapsedMs(started) };
+}
+
 function postgresTreeRssKb(rootPid) {
   if (!rootPid) return 0;
   try {
@@ -167,7 +173,6 @@ async function openDatabase(runtime, dataDir) {
 
 function reachSnapshotSql() {
   return `
-    DROP TABLE IF EXISTS alive_snapshot;
     CREATE TEMP TABLE alive_snapshot AS
     WITH RECURSIVE alive(node) AS (
       SELECT node FROM root
@@ -180,12 +185,17 @@ function reachSnapshotSql() {
   `;
 }
 
-async function readAndValidate(database, expected, phase) {
+async function materializeAndCount(database) {
   await database.exec(reachSnapshotSql());
-  const result = await database.query("SELECT node FROM alive_snapshot ORDER BY node");
-  const checksum = validateRows(result.rows, expected, phase);
+  const count = await database.query("SELECT count(*) AS count FROM alive_snapshot");
+  return Number(count.rows[0].count);
+}
+
+async function transferAndValidate(database, expected, phase) {
+  const transfer = await timed(() => database.query("SELECT node FROM alive_snapshot ORDER BY node"));
+  const checksum = await timed(() => validateRows(transfer.value.rows, expected, phase));
   await database.exec("DROP TABLE alive_snapshot");
-  return checksum;
+  return { checksum: checksum.value, transferMs: transfer.ms, checksumMs: checksum.ms };
 }
 
 function safeStatus(value) {
@@ -235,13 +245,21 @@ async function run() {
        CROSS JOIN generate_series(0, ${width - 1}) AS column_id;
       CREATE INDEX edge_parent_idx ON edge(parent);
     `);
-    const beforeChecksum = await readAndValidate(database, oracle.before, "before");
+    const beforeCount = await materializeAndCount(database);
     const setupMs = elapsedMs(setupStarted);
+    if (beforeCount !== oracle.before.count) {
+      throw new Error(`before count mismatch: ${beforeCount} != ${oracle.before.count}`);
+    }
+    const before = await transferAndValidate(database, oracle.before, "before");
 
     const retractStarted = process.hrtime.bigint();
     await database.exec("BEGIN; DELETE FROM root WHERE node = 0; COMMIT");
-    const afterChecksum = await readAndValidate(database, oracle.after, "after");
+    const afterCount = await materializeAndCount(database);
     const retractMs = elapsedMs(retractStarted);
+    if (afterCount !== oracle.after.count) {
+      throw new Error(`after count mismatch: ${afterCount} != ${oracle.after.count}`);
+    }
+    const after = await transferAndValidate(database, oracle.after, "after");
 
     const killed = oracle.before.count - oracle.after.count;
     const databaseMb = (await database.diskBytes()) / 1_048_576;
@@ -255,7 +273,7 @@ async function run() {
     const limitScope = runtime === "native"
       ? `DL_MEMCAP_MB=${process.env.DL_MEMCAP_MB ?? "unset"} is unenforced for total PostgreSQL memory`
       : `DL_MEMCAP_MB=${process.env.DL_MEMCAP_MB ?? "unset"} limits Node old-space only; total process RSS is unenforced`;
-    console.log(`STATUS|${label}|ok|ordinary recursive SQL full recomputation; exact before=${beforeChecksum} after=${afterChecksum}; PostgreSQL ${safeStatus(version)}|${memoryScope}|${limitScope}`);
+    console.log(`STATUS|${label}|ok|ordinary recursive SQL full recomputation; timed phases end after materialization and count; exact before=${before.checksum} after=${after.checksum}; untimed transfer_ms before=${before.transferMs.toFixed(3)} after=${after.transferMs.toFixed(3)}; untimed checksum_validation_ms before=${before.checksumMs.toFixed(3)} after=${after.checksumMs.toFixed(3)}; PostgreSQL ${safeStatus(version)}|${memoryScope}|${limitScope}`);
     console.log([
       "CSV", label, oracle.nodes, oracle.edges, killed,
       setupMs.toFixed(3), retractMs.toFixed(3), "N/A",
