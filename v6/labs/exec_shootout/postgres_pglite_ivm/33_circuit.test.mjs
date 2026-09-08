@@ -61,3 +61,26 @@ test('SWI bag predicates and incremental recursive reach validate every circuit 
     assert.equal(records[0].algorithm,family==='reach_cycle'?'SWI incremental tabling':'SWI full predicate recomputation');
   }}finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('circuit plugin logging preserves exact results and bounded redacted stderr', {skip:!process.env.SQLITE_IVM_EXTENSION},()=>{
+  const root=mkdtempSync(join(tmpdir(),'ivm-circuit-logging-'));
+  try {
+    const path=join(root,'fixture.json');writeFileSync(path,JSON.stringify(makeCircuitFixture('aggregate_churn')));
+    const outputs=[];
+    for(const limit of [0,32]) {
+      const child=spawnSync('python3',[new URL('31_circuit_sqlite.py',import.meta.url).pathname,'--fixture',path,'--db',join(root,`${limit}.sqlite`),'--extension',process.env.SQLITE_IVM_EXTENSION],{encoding:'utf8',timeout:120000,env:{...process.env,SQLITE_IVM_LOG_LIMIT:String(limit)}});
+      assert.equal(child.status,0,child.stderr);
+      outputs.push(child.stdout.trim().split('\n').map(JSON.parse).filter(r=>r.event==='mutation').map(r=>[r.input_hash,r.checksum]));
+      const logs=child.stderr.trim().split('\n').filter(Boolean).map(JSON.parse);
+      if(limit===0)assert.equal(logs.length,0);
+      else {
+        assert(logs.length<=45);
+        const maintenance=logs.filter(r=>r.event==='circuit-maintenance-observed');
+        assert.equal(maintenance.length,13);
+        assert(maintenance.every(r=>r.row_values==='redacted'&&r.sqlite_extended_error_code===0));
+        assert(maintenance.at(-1).cumulative_operations>=maintenance[0].cumulative_operations);
+      }
+    }
+    assert.deepEqual(outputs[0],outputs[1]);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});

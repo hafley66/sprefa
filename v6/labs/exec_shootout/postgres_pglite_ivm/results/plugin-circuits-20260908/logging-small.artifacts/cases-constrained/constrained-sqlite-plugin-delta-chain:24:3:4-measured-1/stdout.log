@@ -1,0 +1,1 @@
+{"event": "capability", "status": "unsupported", "reason": "sqlite_ivm: grouped SELECT only; filter/distinct/global/window unsupported", "sqlite_extended_error_code": 1, "installation_atomic": true, "circuit": "chain"}

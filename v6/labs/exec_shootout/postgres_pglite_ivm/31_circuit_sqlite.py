@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
 import time
 
 
@@ -60,6 +61,9 @@ def main():
     emit(event='case-setup', status='ok', setup_ms=(time.perf_counter()-start)*1000,
          sqlite_version=sqlite3.sqlite_version, algorithm='sql-trigger-arithmetic' if args.extension else 'full-query',
          durability='WAL synchronous FULL', logging_limit=os.environ.get('SQLITE_IVM_LOG_LIMIT', '0'))
+    log_limit = min(32, max(0, int(os.environ.get('SQLITE_IVM_LOG_LIMIT', '0'))))
+    if args.extension:
+        db.execute('SELECT sqlite_ivm_metrics(?,?)', ('circuit_view', int(log_limit > 0))).fetchone()
     total = 0
     for state in fixture['states']:
         start = time.perf_counter()
@@ -77,6 +81,16 @@ def main():
         checksum = digest(canonical(output, 'S'))
         assert input_hash == state['input_hash'] and checksum == state['expected']['checksum']
         total += update_ms + query_ms
+        if args.extension and log_limit > 0:
+            meta = '__ivm_' + 'circuit_view'.encode().hex() + '_meta'
+            metrics = db.execute(f'SELECT operations,contributions,groups_touched FROM "{meta}"').fetchone()
+            try:
+                print(json.dumps({'event':'circuit-maintenance-observed','view':'circuit_view','operation':state['name'],
+                      'duration_ms':update_ms,'cumulative_operations':metrics[0],'cumulative_contributions':metrics[1],
+                      'cumulative_groups_touched':metrics[2],'row_values':'redacted','sqlite_extended_error_code':0}),file=sys.stderr)
+            except OSError:
+                pass
+            log_limit -= 1
         emit(event='mutation', status='ok', state=state['name'], exact_input_output_validated=True,
              input_hash=input_hash, checksum=checksum, affected_rows=len(state['writes']), output_rows=len(output),
              output_bytes=len(canonical(output,'S').encode()), update_transaction_ms=update_ms,

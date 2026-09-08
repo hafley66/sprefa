@@ -392,3 +392,29 @@ oracle checks. No SQL durability or SWI concurrency parity is inferred.
 receipt timing was subsequently changed from an unmeasured zero to measured
 fixture decode/setup duration and covered by that gate. Current circuit
 matrices remain finite and separate executable rejection from support.
+
+## Circuit logging and grid controls
+
+SWI milestone commit: `82002ecb9`. Circuit `sqlite-plugin-logged` now executes
+the same SQL installer and maintenance as `sqlite-plugin-delta`, enables the
+existing transactional counters, and emits at most 32 maintenance observations
+to stderr in addition to the extension's separately bounded 32-event stream.
+The 13-state fixture emits 13 maintenance observations. Values remain redacted;
+records expose operation/view IDs, measured write duration, successful SQLite
+code 0, and cumulative operations/contributions/groups_touched. This is an
+adapter observation after commit. It installs no hook or trace callback and
+adds no extension-per-writer requirement. Existing plugin rollback, independent
+writer and disabled/closed-sink tests remain in the gate.
+
+`logging-small.jsonl` passes all 11 families with seven requested arms, including
+both plugin logging modes. `logging-full-gate` passes 62 tests; the new logging
+test compares every input/output hash in disabled/enabled modes, checks zero
+disabled stderr events, and bounds/redaction of enabled events.
+
+The existing Bash entry accepts `--circuit-grid small|12k` and
+`--circuits comma,separated,families`. The 12k grid reuses the existing nine
+constrained size/batch/fanout cells with a hard 12,000-row maximum. Metadata
+pins the five circuit source SHA256 values, DD binary and extension hash.
+`grid-12k` is in progress and is not yet a passing receipt; the existing
+120-second per-process and 20-minute sweep deadline apply. Intermediate files
+from that running sweep are excluded from this implementation commit.

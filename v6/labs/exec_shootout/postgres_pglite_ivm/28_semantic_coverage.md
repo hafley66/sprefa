@@ -63,18 +63,18 @@ Executable identifiers:
 
 | ID / semantic family | DD library and actual DD arm | pg_ivm | Template arm | Loaded plugin / concrete evidence |
 |---|---|---|---|---|
-| 01 Projection / map | DD-C D; fixture map E S | D; E S expression | E S expression | E SUM column/product P11; standalone projection R P08/projection |
-| 02 Filter | DD-C D | D | N general | R P08/filter |
+| 01 Projection / map | DD-C; E S and circuit/pipeline | E circuit/pipeline and S expression | E S expression | E SUM column/product P11; standalone projection R P08/projection |
+| 02 Filter | E circuit/pipeline | E circuit/pipeline | N general | R P08/filter |
 | 03 Multiset duplicate supports | DD-W/joins D; equal projected facts E S | E S | E S | E two-sided duplicates P01/P02/P11; S semantic_duplicate_supports/retract |
-| 04 Set / DISTINCT | DD-C distinct D | D | keyed input set E S | keyed rows E S; DISTINCT R P08/distinct/count_distinct |
+| 04 Set / DISTINCT | E circuit/distinct | E circuit/distinct | keyed input set E S | keyed rows E S; DISTINCT R P08/distinct/count_distinct |
 | 05 Signed multiplicity / consolidation | DD-W/C D; +/- keyed old/new E S | internal E S transitions | staged signs E T/S | arithmetic +/- contributions E P01/P02; no arbitrary signed-row SQL input API |
 | 06 Inner equijoin | DD-C D; E S | E S | E S | E P01/P11/S, both ON and USING bound to catalog |
-| 07 Self join | DD-C C (reuse collection) | D | N | R P08/self |
-| 08 Multiway join | DD-C C (composed joins) | D | N | R P08/multiway; L/three_way_join is reference-only |
+| 07 Self join | E circuit/self_join | E circuit/self_join | N | R P08/self |
+| 08 Multiway join | E circuit/chain and diamond | E circuit/chain; R diamond UNION | N | R P08/multiway; L/three_way_join is reference-only |
 | 09 Left/right/full outer join | DD-C C (matched + presence/absence branches) | D restricted | N | R P08/left/right/full |
-| 10 Semijoin / EXISTS | DD-C D with RHS presence restriction | D restricted | N | R P08/semi |
-| 11 Antijoin / negation | DD-C D with RHS presence restriction | N not exercised | N | R P08/anti; L/antijoin_negation reference-only |
-| 12 UNION ALL / UNION | concat / concat+distinct D/C | N | N | R P08/union_all/union; L/union_distinct reference-only |
+| 10 Semijoin / EXISTS | E circuit/semijoin; RHS distinct | E circuit/semijoin | N | R P08/semi |
+| 11 Antijoin / negation | E circuit/antijoin; RHS distinct | R circuit/antijoin | N | R P08/anti; L/antijoin_negation reference-only |
+| 12 UNION ALL / UNION | E circuit/fanout_fanin UNION ALL; UNION composition C | R circuit/fanout_fanin | N | R P08/union_all/union; L/union_distinct reference-only |
 | 13 EXCEPT / INTERSECT | DD-C C presence/threshold composition | N | N | R P08/except/intersect |
 | 14 COUNT | CountTotal tuple count E S | E S | E S | E COUNT(*) P01/S; COUNT DISTINCT R P08/count_distinct |
 | 15 SUM | DD-W explode tuple E S | E S | E S | E signed integer SUM P01/P07/P17/S |
@@ -85,12 +85,12 @@ Executable identifiers:
 | 20 NULL keys/values/all-NULL SUM | Option-valued SQL semantics need explicit graph C | SQL semantics D | R non-null schema T | R NULL source writes P07/P21; no SQL NULL algebra admitted |
 | 21 Subqueries | operator graph composition C | D restricted | N | R P08/subquery |
 | 22 CTEs | reusable graph composition C | D restricted | N | R P08/cte |
-| 23 Recursion / fixpoints | DD-I D; O executes reach changes | N | N | R P08/recursive; L recursion is store reference-only |
-| 24 Cyclic deletion | DD-I algorithm/consolidation dependent; upstream scc/bfs inventory | N | N | R recursive query P08; no recursive lowering or cycle deletion claim |
+| 23 Recursion / fixpoints | DD-I; E circuit/reach_cycle and O | R circuit/reach_cycle | N | R P08/recursive; L recursion is store reference-only |
+| 24 Cyclic deletion | E circuit/reach_cycle root_retract/root_restore | R circuit/reach_cycle | N | R recursive query P08; no recursive lowering or cycle deletion claim |
 | 25 Ordering | DD-C reduce sees ordered value supports D; SQL row order not collection order | N | N | R P08/order |
 | 26 Top-k | DD-C per-key ordered reduction C | N | N | R P08/topk |
 | 27 Windows | DD-C custom operator composition C, no SQL window frontend | N | N | R P08/window |
-| 28 DD time/frontiers/iteration | DD-T/I D; one u64/probe regime E S | N DD API | N DD API | N DD API; SQL transactions are not arbitrary DD time parity |
+| 28 DD time/frontiers/iteration | DD-T/I D; E scalar held-input frontier circuit check and S | N DD API | N DD API | N DD API; SQL transactions are not arbitrary DD time parity |
 | 29 Transaction / savepoint | no SQL rollback in DD arm | E S transactions | E T/M | E P03/P04/P09/P10/P13; base/support/counters rollback together |
 | 30 Durability / reopen | volatile DD arm, N persistence | durable configured E S | E T/S reopen | E P05/S reopen; crash/power-loss injection untested |
 | 31 Concurrent connections | one DD worker E S | server E S; competing-writer test not run | E T/M | E P05 lock contention/WAL visibility; P06 required writer pragmas |

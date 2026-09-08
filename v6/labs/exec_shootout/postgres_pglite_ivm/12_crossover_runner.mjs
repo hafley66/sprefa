@@ -16,7 +16,14 @@ function caseKey(testCase) {
 }
 
 function buildCases(profile, budget) {
-  if (profile === "circuits") return Object.keys(circuits).map(circuit=>({circuit,stage:circuit,rows:24,batch_size:3,fanout:4}));
+  if (profile === "circuits") {
+    const families=argument("circuits",Object.keys(circuits).join(",")).split(",");
+    if(families.some(f=>!Object.hasOwn(circuits,f))) throw new Error("unknown circuit family");
+    const grid=argument("circuit-grid","small");
+    if(!["small","12k"].includes(grid))throw new Error("circuit-grid must be small or 12k");
+    const cells=grid==="small" ? [{rows:24,batch_size:3,fanout:4}] : buildCases("full",budget).filter(c=>c.rows<=12000);
+    return families.flatMap(circuit=>cells.map(c=>({...c,circuit,stage:circuit})));
+  }
   if (profile === "semantic") return [{ stage: "semantic", rows: 400, batch_size: 10, fanout: 10 }];
   if (profile === "smoke") {
     return [
@@ -165,8 +172,10 @@ append({
   machine: { hostname: hostname(), platform: platform(), release: release(), arch: arch(), total_memory_bytes: totalmem() },
   server_startup_ms: Number(process.env.IVM_SERVER_STARTUP_MS ?? "0"),
   node_version: process.version,
+  circuit_sources: profile === "circuits" ? await Promise.all(["30_circuit_workload.mjs","31_circuit_sqlite.py","32_circuit_postgres.mjs","34_circuit_dd.rs","35_circuit_swi.pl"].map(async file=>({file,sha256:await fileSha256(new URL(file,labDir))}))) : null,
+  circuit_dd_sha256: circuitDdBinary ? await fileSha256(circuitDdBinary) : null,
   sqlite_extension_sha256: sqliteExtension ? await fileSha256(sqliteExtension) : null,
-  workload: {skew:"fixture hot group plus uniform remainder", churn:"four defined mutation families", cardinality:"recorded per mutation"},
+  workload: profile==="circuits" ? {skew:"a key supports controlled by fanout; right-side key 0 receives duplicate supports",churn:"13 named transitions; batch_key_value_move varies batch_size inputs",cardinality:"recorded per mutation",integer_contract:"generated small values; exact bounded integer output"} : {skew:"fixture hot group plus uniform remainder", churn:"four defined mutation families", cardinality:"recorded per mutation"},
   retained_baseline: baseline,
 });
 
@@ -213,7 +222,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     "--budget", budget,
     "--diagnostic", profile === "diagnostic" ? "1" : "0",
   ];
-  if (testCase.circuit && (template || maintenance === "sqlite-plugin-logged")) {
+  if (testCase.circuit && template) {
     append({event:"capability",status:"adapter-missing",reason:"circuit adapter pending",...context});
     return true;
   }
