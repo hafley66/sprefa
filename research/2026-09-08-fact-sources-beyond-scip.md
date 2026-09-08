@@ -154,7 +154,8 @@ Gaps 5 and 6 are already answered. Gaps 1 to 4 are the subject.
 - Gives: incremental, per-file, compiler-free name resolution from graph rules written per grammar; partial paths cache per file, so a one-file change re-resolves one file.
 - Lacks: types, anything beyond names.
 - Languages with rules: JavaScript, TypeScript, Python, Java.
-- Verdict: would replace diet_scip's ambiguity failure ("two files define `helper`"), not SCIP. Check the project's maintenance status first (§6).
+- Status: `github/stack-graphs` was archived read-only on 2025-09-09 ("no longer supported or updated by GitHub"); 1,946 commits, rules for 4 languages, written by hand.
+- Verdict: fork for the partial-path idea only. Its shape (per-grammar resolution rules graded against nothing) is the thing extract's ratchet loop already does with an oracle: diet_scip rows are scored against SCIP (`scip_override`), PyCG, go/types and trace oracles per language on the scoreboard.
 
 ### 2.8 LSP as a fact door
 
@@ -232,7 +233,7 @@ Items 1 and 2 are pure extract + dl6, no new dependency, and would have turned t
 
 ## 6. Uncertainties
 
-- Stack graphs: GitHub's continued investment is unverified here; check the repository's last release before adopting.
+- Stack graphs: verified archived 2025-09-09 (fetched 2026-09-08).
 - `@typescript/api`: preview status as of typescript 7.0.2; the shape may change.
 - CodeQL JS CFG: the exceptional-edge claim comes from its documentation and the shape of its `ControlFlowNode` successors; the exact predicate names were not run here.
 - Joern frontends: language list from the project's README; per-frontend exception-edge fidelity not measured.
