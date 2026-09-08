@@ -373,3 +373,22 @@ Use `--arms query,pg_ivm,sqlite-query,sqlite-plugin-delta,dd` with profile
 `--circuit-dd-bin /private/tmp/sqlite-ivm-astra-target/release/examples/circuit_dd`.
 The new DD binary is separate from preserved `crossover_dd`. Current circuit
 sizes remain correctness smoke sizes. SWI and scale sweeps remain pending.
+
+## SWI circuit milestone
+
+Native DD milestone commit: `6158f4d0c`. `35_circuit_swi.pl` adds the
+`swi-circuit` arm to the same Bash entry and runner. It executes all 11 families,
+with plain predicate recomputation for the 10 nonrecursive families and SWI
+incremental tabling for `reach_cycle`. The source reuses dynamic/incremental
+patterns from `sprefa-store/bench/swi_reach.pl`. Bag projections retain duplicate
+proofs; DISTINCT and tabled reach publish sets. Each mutation transaction is
+followed by materialization, exact stored-input checks and exact output hashes.
+SWI 10.0.2 is volatile. Timings use get_time wall-clock timestamps and exclude
+oracle checks. No SQL durability or SWI concurrency parity is inferred.
+
+`swi-initial.jsonl` records 676 exact state checks across six requested arms,
+14 explicit SQL rejections and 11 admitted-family matches. The complete
+`swi-full-gate` passes 61 tests, including the added SWI catalog test. Setup
+receipt timing was subsequently changed from an unmeasured zero to measured
+fixture decode/setup duration and covered by that gate. Current circuit
+matrices remain finite and separate executable rejection from support.

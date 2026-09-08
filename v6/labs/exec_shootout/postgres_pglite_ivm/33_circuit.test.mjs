@@ -49,3 +49,15 @@ test('native DD catalog and finite frontier check match every fixture state', {s
     assert.equal(records.filter(r=>r.event==='frontier-check'&&r.completion_after_all_inputs_advanced).length,1);
   }}finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('SWI bag predicates and incremental recursive reach validate every circuit state',()=>{
+  const root=mkdtempSync(join(tmpdir(),'ivm-circuit-swi-'));
+  try {for(const family of Object.keys(circuits)) {
+    const path=join(root,family+'.json');writeFileSync(path,JSON.stringify(makeCircuitFixture(family)));
+    const child=spawnSync('swipl',['-q','-s',new URL('35_circuit_swi.pl',import.meta.url).pathname,'--',path],{encoding:'utf8',timeout:120000});
+    assert.equal(child.status,0,child.stderr);
+    const records=child.stdout.trim().split('\n').map(JSON.parse);
+    assert.equal(records.filter(r=>r.event==='mutation'&&r.exact_input_output_validated).length,13);
+    assert.equal(records[0].algorithm,family==='reach_cycle'?'SWI incremental tabling':'SWI full predicate recomputation');
+  }}finally{rmSync(root,{recursive:true,force:true});}
+});

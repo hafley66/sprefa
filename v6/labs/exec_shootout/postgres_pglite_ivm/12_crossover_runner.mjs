@@ -104,8 +104,8 @@ const repetitions = Number(argument("repetitions", profile === "full" ? "3" : "1
 const maxRows = Number(argument("max-rows", "Infinity"));
 const cases = buildCases(profile, budget).filter((testCase) => testCase.rows <= maxRows);
 const arms = argument("arms", (profile === "circuits" ? "query,pg_ivm,sqlite-query" : "query,pg_ivm")).split(",");
-if (arms.some((arm) => !["query", "pg_ivm", "sqlite-query", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
-if (profile !== "circuits" && arms.includes("sqlite-query")) throw new Error("sqlite-query requires circuits profile");
+if (arms.some((arm) => !["query", "pg_ivm", "sqlite-query", "swi-circuit", "sqlite-template-group", "sqlite-plugin-delta", "sqlite-plugin-logged", "dd"].includes(arm))) throw new Error(`bad arms: ${arms}`);
+if (profile !== "circuits" && arms.some(a=>["sqlite-query","swi-circuit"].includes(a))) throw new Error("circuit-only arm requires circuits profile");
 const ddBinary = argument("dd-bin", new URL("../../../sprefa-store/target/release/examples/crossover_dd", import.meta.url).pathname);
 const circuitDdBinary = argument("circuit-dd-bin", "");
 if(profile==="circuits" && arms.includes("dd") && !circuitDdBinary) throw new Error("--circuit-dd-bin required");
@@ -175,7 +175,8 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   const plugin = maintenance.startsWith("sqlite-plugin");
   const sqlite = template || plugin || maintenance === "sqlite-query";
   const dd = maintenance === "dd";
-  const rssField = sqlite ? "sqlite_process_observed_peak_rss_kb" : dd ? "dd_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb";
+  const swi = maintenance === "swi-circuit";
+  const rssField = swi ? "swi_process_observed_peak_rss_kb" : sqlite ? "sqlite_process_observed_peak_rss_kb" : dd ? "dd_process_observed_peak_rss_kb" : "postgres_group_observed_peak_rss_kb";
   const context = {
     arm: sqlite ? maintenance : `native-${maintenance}`,
     maintenance,
@@ -242,10 +243,10 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
       "--fixture",fixturePath,"--db",join(childRoot,"maintained.sqlite"),"--sql-output",join(childRoot,"installed.sql")];
   } else if (dd) args = [fixturePath];
   else args.push("--fixture", fixturePath);
-  if (testCase.circuit) args = dd ? [fixturePath] : sqlite
+  if (testCase.circuit) args = swi ? ["-q","-s","35_circuit_swi.pl","--",fixturePath] : dd ? [fixturePath] : sqlite
     ? ["31_circuit_sqlite.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),...(plugin?["--extension",sqliteExtension]:[])]
     : ["32_circuit_postgres.mjs",fixturePath,maintenance];
-  const child = spawn(sqlite ? "python3" : dd ? (testCase.circuit ? circuitDdBinary : ddBinary) : process.execPath, args, {
+  const child = spawn(swi ? "swipl" : sqlite ? "python3" : dd ? (testCase.circuit ? circuitDdBinary : ddBinary) : process.execPath, args, {
     cwd: labDir,
     env: {
       ...process.env,
@@ -268,7 +269,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
     child.kill("SIGKILL");
   }, Math.min(timeoutMs, Math.max(1, deadlineEpochMs - Date.now())));
   const memoryTimer = setInterval(() => {
-    const rss = descendantsRss(sqlite || dd ? child.pid : process.env.IVM_POSTMASTER_PID);
+    const rss = descendantsRss(sqlite || dd || swi ? child.pid : process.env.IVM_POSTMASTER_PID);
     if (rss !== null) observedGroupPeakRssKb = Math.max(observedGroupPeakRssKb, rss);
   }, 50);
   const exit = await new Promise((resolve) => {

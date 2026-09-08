@@ -131,3 +131,23 @@ Every engine comparison here is restricted to the common S fixture. Library D/C
 cells and successful rejection tests are reported separately from the 855 shared
 semantic validations. Build/test receipts are under results/plugin-20260908/;
 final-gate-3/status.txt is written only after the complete gate succeeds.
+
+## Circuit execution supplement
+
+The original numbered matrix remains the plugin contract inventory. Circuit
+receipts additionally execute rows 01/02/03/04/05/06/07/08/10/11/12 (UNION ALL),
+14/15 and recursive reach/cyclic deletion on actual DD, plus the admitted SQL
+and SWI cases listed in `TASKS/4_sqlite-ivm-plugin.REPORT.md`.
+Concrete IDs are `30_circuit_workload.mjs` catalog keys and its 13 state names;
+`33_circuit.test.mjs` checks literal bag fanin and root-retraction outputs.
+`34_circuit_dd.rs` executes every current catalog key and scalar frontier
+holding/release. `35_circuit_swi.pl` uses ordinary bag predicates and incremental
+reachability only. SQLite full-query is an additional baseline and does not
+expand loaded-plugin admission. The template arm remains its original fixture.
+
+SWI references: local `sprefa-store/bench/swi_reach.pl` and official
+[incremental tabling](https://www.swi-prolog.org/pldoc/man?section=tabling-incremental)
+and [transaction/1](https://www.swi-prolog.org/pldoc/doc_for?object=transaction/1).
+The adapter mirrors the local dynamic/incremental declarations. Each batch
+mutates dynamic predicates in a transaction, then materializes results. SWI
+receipts are volatile and do not establish SQL durability or concurrency parity.
