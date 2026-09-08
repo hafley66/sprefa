@@ -1,0 +1,1 @@
+{"record":"scip_skip","lang":"rust","bin":"rust-analyzer","reason":"failed","detail":"scip indexer failed: 8: __pthread_joiner_wake"}
