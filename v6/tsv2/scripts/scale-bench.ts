@@ -153,7 +153,12 @@ async function reach_cell(): Promise<void> {
     const setup_started = process.hrtime.bigint();
     await lastValueFrom(ScratchStore.boot(seam, emitted.ddl));
     for (const statement of emitted.boot) await lastValueFrom(seam.runner.execute(seam.db, { sql: statement.sql, args: [...statement.params] }));
-    const initial = await lastValueFrom(emitted.tick(seam, arrivals));
+    // Setup batches stay below the SQL bind-variable limit. Roots arrive last,
+    // so closure is materialized after the complete edge relation is loaded.
+    for (let offset = 0; offset < graph.edges.length; offset += 1000) {
+      await lastValueFrom(emitted.tick(seam, arrivals.slice(offset, Math.min(offset + 1000, graph.edges.length))));
+    }
+    const initial = await lastValueFrom(emitted.tick(seam, arrivals.slice(graph.edges.length)));
     const before_count = await count();
     const setup_ms = Number(process.hrtime.bigint() - setup_started) / 1e6;
     assert.equal(initial.carry_pending, false, "root reach must settle inside its tick");
@@ -170,7 +175,7 @@ async function reach_cell(): Promise<void> {
     assert.equal(retracted.carry_pending, false);
     assert.equal(after_count, graph.after.length);
     assert.deepEqual(await rows("alive"), graph.after);
-    process.stderr.write("STATUS|tsv2-runtime|ok|compile_dl6 emitted program.tick through IncrementalRuntime; emitted recursive DRed plan; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|Node process RSS sampled after validation; in-memory libSQL store|DL_MEMCAP_MB limits Node old-space only; SQLite C heap and total RSS unenforced\n");
+    process.stderr.write("STATUS|tsv2-runtime|ok|compile_dl6 emitted program.tick through IncrementalRuntime; emitted recursive DRed plan; setup loads edges in 1000-row batches then roots; exact input edges and before/after sets match shared BFS outside clocks; count inside clocks|Node process RSS sampled after validation; in-memory libSQL store|DL_MEMCAP_MB limits Node old-space only; SQLite C heap and total RSS unenforced\n");
     process.stderr.write(`CSV,tsv2-runtime,${graph.nodes},${graph.edges.length},${before_count-after_count},${setup_ms.toFixed(3)},${retract_ms.toFixed(3)},${statements},${(process.memoryUsage().rss/1048576).toFixed(1)},N/A,N/A,0\n`);
   } finally { seam.db.close(); }
 }
