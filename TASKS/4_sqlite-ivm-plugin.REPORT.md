@@ -418,3 +418,42 @@ pins the five circuit source SHA256 values, DD binary and extension hash.
 `grid-12k` is in progress and is not yet a passing receipt; the existing
 120-second per-process and 20-minute sweep deadline apply. Intermediate files
 from that running sweep are excluded from this implementation commit.
+
+## Additional integer semantics milestone
+
+Logging/grid control commit: `d5d7611c8`. Nine further executable fixture
+families live in `36_semantic_catalog.mjs`, with DD graphs in
+`37_semantic_graphs.rs`, literal graph tests in `38_semantic_graphs.test.rs`,
+the DD consumer `38a_semantic_dd.rs`, SWI predicates `39_semantic_swi.pl`, and
+shared checks `40_semantics.test.mjs`. All use the same 13 source transitions
+and the existing Bash runner. Shared transport cores `31a_circuit_postgres.mjs`,
+`31b_circuit_sqlite.py`, and `33a_dd_host.rs` preserve the existing adapters'
+timers and input/output validation. The running earlier sweep retains its
+original adapter files until completion.
+
+| Additional family | SQLite/PG full query | native DD | SWI recompute | pg_ivm | plugin |
+|---|---|---|---|---|---|
+| grouped MIN/MAX | executed | executed | executed | executed | rejected |
+| COUNT DISTINCT | executed | executed | executed | rejected | rejected |
+| UNION set | executed | executed | executed | rejected | rejected |
+| EXCEPT set | executed | executed | executed | rejected | rejected |
+| INTERSECT set | executed | executed | executed | rejected | rejected |
+| top-3 | executed | executed | executed | rejected | rejected |
+| partitioned ROW_NUMBER | executed | executed | executed | rejected | rejected |
+| FROM subquery | executed | executed | executed | executed | rejected |
+| nonrecursive CTE | executed | executed | executed | executed | rejected |
+
+`semantics-initial.jsonl` passes 507 exact engine-state checks, 15 explicit
+installation rejections and nine admitted-family matches. The complete
+`semantics-full-gate` passes 65 tests, adding a native DD literal/retract-to-empty
+test and two shared acceptance/rejection tests. DD top-k and rank use ordered
+reduce values including unique input ID; projected results are compared as
+bags. The top-k selection order is descending value then ascending ID, and
+window rank orders each group by value then ID. These contracts do not assert
+SQL result ordering for arbitrary DD collections. AVG/float, NULL/outer/global
+aggregates and arbitrary partially ordered time remain separate missing
+contracts or executable plugin rejections in the finite matrix.
+
+Use `--circuits minmax,count_distinct,union_set,except_set,intersect_set,topk,window_rank,subquery,cte`
+and `--semantic-dd-bin /private/tmp/sqlite-ivm-astra-target/release/examples/semantic_dd`.
+No compiler/kernel semantic changes were made.

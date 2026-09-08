@@ -151,3 +151,13 @@ and [transaction/1](https://www.swi-prolog.org/pldoc/doc_for?object=transaction/
 The adapter mirrors the local dynamic/incremental declarations. Each batch
 mutates dynamic predicates in a transaction, then materializes results. SWI
 receipts are volatile and do not establish SQL durability or concurrency parity.
+
+`36_semantic_catalog.mjs` adds executed DD/SQLite/PG-query/SWI cases for
+COUNT DISTINCT, MIN/MAX, UNION set, EXCEPT/INTERSECT, deterministic top-3,
+partitioned ROW_NUMBER, FROM subquery and nonrecursive CTE. Concrete tests are
+`38_semantic_graphs.test.rs` and `40_semantics.test.mjs`; raw six-arm evidence
+is `results/plugin-circuits-20260908/semantics-initial.jsonl`. pg_ivm admits
+MIN/MAX, subquery and CTE and explicitly rejects the other six. The plugin
+explicitly rejects all nine before installation mutation. These update the
+execution evidence for numbered rows 12/13/14/17/21/22/26/27, without expanding
+the plugin contract or the template arm.

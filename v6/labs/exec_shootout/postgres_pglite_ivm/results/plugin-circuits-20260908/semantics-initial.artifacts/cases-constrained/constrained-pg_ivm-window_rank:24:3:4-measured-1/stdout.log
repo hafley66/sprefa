@@ -1,0 +1,1 @@
+{"event":"capability","status":"unsupported","reason":"window functions are not supported on incrementally maintainable materialized view","sqlstate":"0A000","installation_atomic":true}

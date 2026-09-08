@@ -1,0 +1,16 @@
+SQLite 3.53.2; stdlib sqlite3; temporary on-disk DBs; no IVM candidate executed
+test_guard_fails_closed_for_writer_settings (__main__.TriggerCapabilities.test_guard_fails_closed_for_writer_settings) ... ok
+test_outer_conflict_policy_overrides_trigger_ignore (__main__.TriggerCapabilities.test_outer_conflict_policy_overrides_trigger_ignore) ... ok
+test_persistent_triggers_second_connection_and_reopen (__main__.TriggerCapabilities.test_persistent_triggers_second_connection_and_reopen) ... ok
+test_replace_and_upsert_with_recursive_triggers (__main__.TriggerCapabilities.test_replace_and_upsert_with_recursive_triggers) ... ok
+test_replace_without_recursive_triggers_omits_delete (__main__.TriggerCapabilities.test_replace_without_recursive_triggers_omits_delete) ... ok
+test_scalar_callback_error_requires_explicit_atomic_setup (__main__.TriggerCapabilities.test_scalar_callback_error_requires_explicit_atomic_setup) ... ok
+test_scalar_callback_savepoint_removes_partial_setup (__main__.TriggerCapabilities.test_scalar_callback_savepoint_removes_partial_setup) ... ok
+test_scalar_callback_schema_setup_obeys_outer_rollback (__main__.TriggerCapabilities.test_scalar_callback_schema_setup_obeys_outer_rollback) ... ok
+test_statement_abort_rolls_back_trigger_events (__main__.TriggerCapabilities.test_statement_abort_rolls_back_trigger_events) ... ok
+test_transaction_and_savepoint_rollback (__main__.TriggerCapabilities.test_transaction_and_savepoint_rollback) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.036s
+
+OK

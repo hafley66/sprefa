@@ -1,0 +1,15 @@
+✔ all circuit SQL baselines validate exact inputs and output bags across 13 transitions (512.963167ms)
+✔ bag fanin doubles qualifying support; distinct removes projected duplicates (0.468458ms)
+✔ cycle loses all reachability on root retraction and regains it on restore (0.63025ms)
+✔ injected wrong expected bag is detected by actual SQL adapter (45.48175ms)
+✔ native DD catalog and finite frontier check match every fixture state (39.812167ms)
+✔ SWI bag predicates and incremental recursive reach validate every circuit state (301.1455ms)
+✔ circuit plugin logging preserves exact results and bounded redacted stderr (99.510375ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1043.782875

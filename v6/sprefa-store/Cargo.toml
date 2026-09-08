@@ -74,3 +74,11 @@ path = "../labs/exec_shootout/postgres_pglite_ivm/22_crossover_dd.rs"
 [[example]]
 name = "circuit_dd"
 path = "../labs/exec_shootout/postgres_pglite_ivm/34_circuit_dd.rs"
+
+[[test]]
+name = "circuit_semantic_graphs"
+path = "../labs/exec_shootout/postgres_pglite_ivm/38_semantic_graphs.test.rs"
+
+[[example]]
+name = "semantic_dd"
+path = "../labs/exec_shootout/postgres_pglite_ivm/38a_semantic_dd.rs"

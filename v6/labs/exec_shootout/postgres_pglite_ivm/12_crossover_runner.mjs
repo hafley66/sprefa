@@ -3,8 +3,12 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { arch, hostname, platform, release, totalmem } from "node:os";
 import { dirname, join } from "node:path";
+import { semanticCircuits, makeSemanticFixture } from "./36_semantic_catalog.mjs";
 import { circuits, makeCircuitFixture } from "./30_circuit_workload.mjs";
 import { makeCrossoverFixture } from "./9_crossover_workload.mjs";
+
+const circuitCatalog={...circuits,...semanticCircuits};
+function circuitFixture(circuit,rows,batch,fanout){return Object.hasOwn(semanticCircuits,circuit)?makeSemanticFixture(circuit,rows,batch,fanout):makeCircuitFixture(circuit,rows,batch,fanout);}
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
@@ -17,8 +21,8 @@ function caseKey(testCase) {
 
 function buildCases(profile, budget) {
   if (profile === "circuits") {
-    const families=argument("circuits",Object.keys(circuits).join(",")).split(",");
-    if(families.some(f=>!Object.hasOwn(circuits,f))) throw new Error("unknown circuit family");
+    const families=argument("circuits",Object.keys(circuitCatalog).join(",")).split(",");
+    if(families.some(f=>!Object.hasOwn(circuitCatalog,f))) throw new Error("unknown circuit family");
     const grid=argument("circuit-grid","small");
     if(!["small","12k"].includes(grid))throw new Error("circuit-grid must be small or 12k");
     const cells=grid==="small" ? [{rows:24,batch_size:3,fanout:4}] : buildCases("full",budget).filter(c=>c.rows<=12000);
@@ -116,6 +120,8 @@ if (profile !== "circuits" && arms.some(a=>["sqlite-query","swi-circuit"].includ
 const ddBinary = argument("dd-bin", new URL("../../../sprefa-store/target/release/examples/crossover_dd", import.meta.url).pathname);
 const circuitDdBinary = argument("circuit-dd-bin", "");
 if(profile==="circuits" && arms.includes("dd") && !circuitDdBinary) throw new Error("--circuit-dd-bin required");
+const semanticDdBinary=argument("semantic-dd-bin","");
+if(arms.includes("dd") && cases.some(c=>Object.hasOwn(semanticCircuits,c.circuit)) && !semanticDdBinary)throw new Error("--semantic-dd-bin required");
 const sqliteExtension = argument("sqlite-extension", "");
 if (arms.some((arm) => arm.startsWith("sqlite-plugin")) && !sqliteExtension) throw new Error("--sqlite-extension required");
 const sqliteProgram = argument("sqlite-program", "");
@@ -172,7 +178,8 @@ append({
   machine: { hostname: hostname(), platform: platform(), release: release(), arch: arch(), total_memory_bytes: totalmem() },
   server_startup_ms: Number(process.env.IVM_SERVER_STARTUP_MS ?? "0"),
   node_version: process.version,
-  circuit_sources: profile === "circuits" ? await Promise.all(["30_circuit_workload.mjs","31_circuit_sqlite.py","32_circuit_postgres.mjs","34_circuit_dd.rs","35_circuit_swi.pl"].map(async file=>({file,sha256:await fileSha256(new URL(file,labDir))}))) : null,
+  circuit_sources: profile === "circuits" ? await Promise.all(["30_circuit_workload.mjs","31_circuit_sqlite.py","32_circuit_postgres.mjs","34_circuit_dd.rs","35_circuit_swi.pl","36_semantic_catalog.mjs","37_semantic_graphs.rs","31a_circuit_postgres.mjs","31b_circuit_sqlite.py","33a_dd_host.rs","38a_semantic_dd.rs","39_semantic_swi.pl"].map(async file=>({file,sha256:await fileSha256(new URL(file,labDir))}))) : null,
+  semantic_dd_sha256: semanticDdBinary ? await fileSha256(semanticDdBinary) : null,
   circuit_dd_sha256: circuitDdBinary ? await fileSha256(circuitDdBinary) : null,
   sqlite_extension_sha256: sqliteExtension ? await fileSha256(sqliteExtension) : null,
   workload: profile==="circuits" ? {skew:"a key supports controlled by fanout; right-side key 0 receives duplicate supports",churn:"13 named transitions; batch_key_value_move varies batch_size inputs",cardinality:"recorded per mutation",integer_contract:"generated small values; exact bounded integer output"} : {skew:"fixture hot group plus uniform remainder", churn:"four defined mutation families", cardinality:"recorded per mutation"},
@@ -212,7 +219,7 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
   const processStarted = process.hrtime.bigint();
   const childRoot = join(runRoot, `${budget}-${maintenance}-${caseKey(testCase)}-${runKind}-${repetition}`);
   await mkdir(childRoot, { recursive: true });
-  const fixture = testCase.circuit ? makeCircuitFixture(testCase.circuit,testCase.rows,testCase.batch_size,testCase.fanout) : makeCrossoverFixture(testCase.rows, testCase.batch_size, testCase.fanout, profile === "semantic");
+  const fixture = testCase.circuit ? circuitFixture(testCase.circuit,testCase.rows,testCase.batch_size,testCase.fanout) : makeCrossoverFixture(testCase.rows, testCase.batch_size, testCase.fanout, profile === "semantic");
   let args = [
     "11_crossover_native.mjs",
     "--maintenance", maintenance,
@@ -252,10 +259,10 @@ async function runProcess(testCase, maintenance, runKind, repetition) {
       "--fixture",fixturePath,"--db",join(childRoot,"maintained.sqlite"),"--sql-output",join(childRoot,"installed.sql")];
   } else if (dd) args = [fixturePath];
   else args.push("--fixture", fixturePath);
-  if (testCase.circuit) args = swi ? ["-q","-s","35_circuit_swi.pl","--",fixturePath] : dd ? [fixturePath] : sqlite
-    ? ["31_circuit_sqlite.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),...(plugin?["--extension",sqliteExtension]:[])]
-    : ["32_circuit_postgres.mjs",fixturePath,maintenance];
-  const child = spawn(swi ? "swipl" : sqlite ? "python3" : dd ? (testCase.circuit ? circuitDdBinary : ddBinary) : process.execPath, args, {
+  if (testCase.circuit) args = swi ? ["-q","-s",fixture.columns?"39_semantic_swi.pl":"35_circuit_swi.pl","--",fixturePath] : dd ? [fixturePath] : sqlite
+    ? [fixture.columns?"31b_circuit_sqlite.py":"31_circuit_sqlite.py","--fixture",fixturePath,"--db",join(childRoot,"circuit.sqlite"),...(plugin?["--extension",sqliteExtension]:[])]
+    : [fixture.columns?"31a_circuit_postgres.mjs":"32_circuit_postgres.mjs",fixturePath,maintenance];
+  const child = spawn(swi ? "swipl" : sqlite ? "python3" : dd ? (fixture.columns ? semanticDdBinary : testCase.circuit ? circuitDdBinary : ddBinary) : process.execPath, args, {
     cwd: labDir,
     env: {
       ...process.env,
@@ -348,7 +355,7 @@ for (const testCase of cases) {
 // plugin logging modes. Missing/failed states never count as parity.
 for (const testCase of cases) for (let repetition=1; repetition<=repetitions; repetition++) {
   const matching=records.filter((r)=>r.run_kind==="measured" && r.repetition===repetition && caseKey(r)===caseKey(testCase));
-  const expected=(testCase.circuit ? makeCircuitFixture(testCase.circuit,testCase.rows,testCase.batch_size,testCase.fanout) : makeCrossoverFixture(testCase.rows,testCase.batch_size,testCase.fanout,profile==="semantic")).states;
+  const expected=(testCase.circuit ? circuitFixture(testCase.circuit,testCase.rows,testCase.batch_size,testCase.fanout) : makeCrossoverFixture(testCase.rows,testCase.batch_size,testCase.fanout,profile==="semantic")).states;
   const excluded=matching.filter(r=>r.event==="capability" && ["unsupported","adapter-missing"].includes(r.status)).map(r=>r.maintenance);
   const admitted=arms.filter(a=>!excluded.includes(a));
   const exact=admitted.length>0 && admitted.every((arm)=>expected.every((state)=> {
