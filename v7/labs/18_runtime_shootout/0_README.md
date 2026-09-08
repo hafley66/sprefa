@@ -35,6 +35,9 @@ Every arm materializes all distinct reachability pairs, counts them, and validat
 ## Timing contract
 
 - Graph or fact setup is timed separately from closure evaluation and materialization.
+- PostgreSQL-family `closure_ms` ends after recursive-query materialization and
+  `count(*)`. Ordered full transfer and exact checksum validation are recorded
+  separately and excluded from `closure_ms`.
 - Runtime process startup is measured with an empty invocation.
 - `/usr/bin/time -lp` records process elapsed time and peak resident set size.
 - A full run performs one discarded warmup and five measured repetitions for every runtime and graph case.

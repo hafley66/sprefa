@@ -16,7 +16,10 @@ ${CAP} MB/run. Enforcement and accounting scope are adapter-specific and
 recorded below.
 
 Ordinary PostgreSQL and PGlite arms execute the recursive query from scratch
-after the root deletion. Their rows are full recomputation measurements.
+after the root deletion. Their timed phase ends after query materialization and
+\`count(*)\`. Ordered full-result transfer, checksum, and exact validation are
+recorded in the status receipt and excluded from \`setup_ms\` and
+\`retract_ms\`. Their rows are full recomputation measurements.
 
 ## Charts
 

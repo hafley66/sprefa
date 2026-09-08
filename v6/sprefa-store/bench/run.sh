@@ -76,6 +76,12 @@ for spec in "${ENGINES[@]}"; do
     scales="${V1_SCALES:-1x1000 1x10000 1x100000 2x1000 2x10000 2x100000 3x1000 3x10000 3x100000}"
   fi
   for s in $scales; do
+    if [[ " ${BENCH_SKIP_CELLS:-} " == *" $label@$s "* ]]; then
+      printf '%s\t%s\tskipped\t%s\tno process started\tprocess-time bound not entered\n' \
+        "$label" "$s" "${BENCH_SKIP_REASON:-explicit BENCH_SKIP_CELLS entry}" >> "$STATUS_TSV"
+      echo "SKIP $label $s (${BENCH_SKIP_REASON:-explicit BENCH_SKIP_CELLS entry})"
+      continue
+    fi
     layers="${s%x*}"; width="${s#*x}"
     cell_log=$(mktemp)
     command_argv=(env)

@@ -63,6 +63,12 @@ function elapsedMs(started) {
   return Number(process.hrtime.bigint() - started) / 1_000_000;
 }
 
+async function timed(operation) {
+  const started = process.hrtime.bigint();
+  const value = await operation();
+  return { value, ms: elapsedMs(started) };
+}
+
 async function openDatabase(runtime) {
   const dependencyDir = process.env.PG_DEPENDENCY_DIR;
   if (!dependencyDir) throw new Error("PG_DEPENDENCY_DIR is required");
@@ -127,7 +133,8 @@ async function run() {
     const setupMs = elapsedMs(setupStarted);
 
     const closureStarted = process.hrtime.bigint();
-    const result = await database.query(`
+    await database.exec(`
+      CREATE TEMP TABLE closure_snapshot AS
       WITH RECURSIVE reachable(source, target) AS (
         SELECT source, target FROM edge
         UNION
@@ -135,21 +142,32 @@ async function run() {
           FROM reachable
           JOIN edge ON edge.source = reachable.target
       )
-      SELECT source, target FROM reachable ORDER BY source, target
+      SELECT source, target FROM reachable
     `);
-    const checksum = validateClosure(result.rows, oracle.pairs);
+    const countResult = await database.query("SELECT count(*) AS count FROM closure_snapshot");
     const closureMs = elapsedMs(closureStarted);
+    const closureCount = Number(countResult.rows[0].count);
+    if (closureCount !== oracle.pairs.length) {
+      throw new Error(`closure count mismatch: ${closureCount} != ${oracle.pairs.length}`);
+    }
+    const transfer = await timed(() => database.query(
+      "SELECT source, target FROM closure_snapshot ORDER BY source, target",
+    ));
+    const checksum = await timed(() => validateClosure(transfer.value.rows, oracle.pairs));
     console.log(JSON.stringify({
       runtime,
       version,
       case: graphCase,
       n,
       edge_count: oracle.edges,
-      closure_count: oracle.pairs.length,
+      closure_count: closureCount,
       setup_ms: setupMs,
       closure_ms: closureMs,
-      checksum,
+      transfer_ms: transfer.ms,
+      checksum_ms: checksum.ms,
+      checksum: checksum.value,
       evaluation: "ordinary recursive SQL full query",
+      timing_boundary: "recursive query materialization and count; full transfer and exact validation excluded",
     }));
   } finally {
     await database.close();
