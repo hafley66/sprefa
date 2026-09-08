@@ -21,6 +21,12 @@ after the root deletion. Their timed phase ends after query materialization and
 recorded in the status receipt and excluded from \`setup_ms\` and
 \`retract_ms\`. Their rows are full recomputation measurements.
 
+The \`differential-dataflow\` arm is the native Differential Dataflow 0.25
+library over timely 0.31. Its setup and
+retract phases end after fixed-point convergence and counting. Complete ordered
+initial and survivor sets are checked against an independent BFS outside the
+timed phases.
+
 ## Charts
 
 ![retract](retract_ms.png)
@@ -63,9 +69,11 @@ else
 fi
 
 # swi-sqlite retract op-count independence (O(depth)).
-awk -F, 'NR>1 && $1=="swi-sqlite" && $7!="WALL" && $7!="" {print $7}' "$CSV" \
-  | sort -u | paste -sd, - \
-  | awk '{print "- swi-sqlite retract statement count across all scales: {" $0 "} (O(depth), not O(rows))."}'
+sqlite_ops=$(awk -F, 'NR>1 && $1=="swi-sqlite" && $7!="WALL" && $7!="" {print $7}' "$CSV" \
+  | sort -u | paste -sd, -)
+if [[ -n "$sqlite_ops" ]]; then
+  echo "- swi-sqlite retract statement count across all scales: {$sqlite_ops} (O(depth), not O(rows))."
+fi
 
 if [[ -s "$OUT/tsv2-results.jsonl" || -s "$OUT/v1-results.jsonl" ]]; then
   echo

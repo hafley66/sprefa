@@ -112,7 +112,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sqlite_reach_smoke() {
         let store = open().await;
-        store.add_rows(&[(0, 0, 1), (0, 1, 1), (0, 2, 1)]).await.unwrap();
+        store
+            .add_rows(&[(0, 0, 1), (0, 1, 1), (0, 2, 1)])
+            .await
+            .unwrap();
         store
             .add_deps(&[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 0)])
             .await
@@ -121,7 +124,11 @@ mod tests {
         let mut labels = r.scc_labels().await.unwrap();
         labels.sort_unstable();
         assert_eq!(labels, vec![(0, 0), (1, 0), (2, 0)], "one SCC, repr = 0");
-        assert_eq!(r.count_pairs().await.unwrap(), 9, "3-cycle ⇒ 9 reachable pairs");
+        assert_eq!(
+            r.count_pairs().await.unwrap(),
+            9,
+            "3-cycle ⇒ 9 reachable pairs"
+        );
         let mut fwd = r.reaches_from(0).await.unwrap();
         fwd.sort_unstable();
         assert_eq!(fwd, vec![0, 1, 2], "0 reaches all");

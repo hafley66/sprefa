@@ -138,16 +138,21 @@ impl Iterator for StreamIter {
         self.per_tag[tag as usize] += 1;
         self.cur.push((tag, local));
         let base = if l == 0 {
-            if w % 3 == 0 { 2 } else { 1 }
+            if w % 3 == 0 {
+                2
+            } else {
+                1
+            }
         } else {
             2
         };
         let child_g = 2 + (l + 1) * self.width + w;
-        let extra = if self.back_stride != 0 && (l + 1) < self.layers && child_g % self.back_stride == 0 {
-            1
-        } else {
-            0
-        };
+        let extra =
+            if self.back_stride != 0 && (l + 1) < self.layers && child_g % self.back_stride == 0 {
+                1
+            } else {
+                0
+            };
         let row_item = Item::Row(tag, local, base + extra);
         // Deps reference prev = layer l-1 (stable during this node).
         if l == 0 {
@@ -180,8 +185,13 @@ impl Iterator for StreamIter {
     }
 }
 
-fn stream_graph<ROW, DEP>(layers: usize, width: usize, back_stride: usize, mut row: ROW, mut dep: DEP)
-where
+fn stream_graph<ROW, DEP>(
+    layers: usize,
+    width: usize,
+    back_stride: usize,
+    mut row: ROW,
+    mut dep: DEP,
+) where
     ROW: FnMut(u32, i64, i64),
     DEP: FnMut(u32, i64, u32, i64),
 {
@@ -196,9 +206,15 @@ where
 /// Sorted encoded-edge list + blake3, reproducing perf_report's input fingerprint.
 fn stream_input_hash(layers: usize, width: usize, back_stride: usize) -> String {
     let mut e: Vec<(i64, i64)> = Vec::new();
-    stream_graph(layers, width, back_stride, |_t, _i, _w| {}, |pt, pi, ct, ci| {
-        e.push((encode(pt, pi), encode(ct, ci)));
-    });
+    stream_graph(
+        layers,
+        width,
+        back_stride,
+        |_t, _i, _w| {},
+        |pt, pi, ct, ci| {
+            e.push((encode(pt, pi), encode(ct, ci)));
+        },
+    );
     e.shrink_to_fit();
     e.sort_unstable();
     let mut h = blake3::Hasher::new();
@@ -228,9 +244,15 @@ struct Outcome {
 /// arrangements are the only thing that can blow the gun.
 fn dd_measure(l: usize, w: usize, bs: usize) -> Outcome {
     let mut edges: Vec<(i64, i64)> = Vec::new();
-    stream_graph(l, w, bs, |_t, _i, _w| {}, |pt, pi, ct, ci| {
-        edges.push((encode(pt, pi), encode(ct, ci)));
-    });
+    stream_graph(
+        l,
+        w,
+        bs,
+        |_t, _i, _w| {},
+        |pt, pi, ct, ci| {
+            edges.push((encode(pt, pi), encode(ct, ci)));
+        },
+    );
     // Shrink to exact capacity so the harness-held input does not inflate dd's
     // resident footprint (benchgraph's `collect()` sizes exactly; the doubling
     // growth of Vec::new+push would pad ~2x and shift dd's wall artificially).
@@ -256,11 +278,18 @@ fn dd_measure(l: usize, w: usize, bs: usize) -> Outcome {
             let reach = roots_c.iterate(move |scope, inner| {
                 let edges = ec.enter(scope);
                 let roots = rc.enter(scope);
-                edges.semijoin(inner).map(|(_p, c)| c).concat(roots).distinct()
+                edges
+                    .semijoin(inner)
+                    .map(|(_p, c)| c)
+                    .concat(roots)
+                    .distinct()
             });
-            reach.consolidate().inspect(move |(node, _t, diff)| {
-                *acc.lock().unwrap().entry(*node).or_insert(0) += *diff;
-            }).probe_with(&mut probe);
+            reach
+                .consolidate()
+                .inspect(move |(node, _t, diff)| {
+                    *acc.lock().unwrap().entry(*node).or_insert(0) += *diff;
+                })
+                .probe_with(&mut probe);
             (edges_in, roots_in)
         });
         for (p, c) in edges.iter() {
@@ -289,7 +318,10 @@ fn dd_measure(l: usize, w: usize, bs: usize) -> Outcome {
     });
     let mut survivors: Vec<i64> = {
         let map = alive_out.lock().unwrap();
-        map.iter().filter(|(_, wt)| **wt > 0).map(|(d, _)| *d).collect()
+        map.iter()
+            .filter(|(_, wt)| **wt > 0)
+            .map(|(d, _)| *d)
+            .collect()
     };
     survivors.sort_unstable();
     let retract_ms = *ms.lock().unwrap();
@@ -309,7 +341,10 @@ fn drop_stream_edges() {}
 
 fn rand_tag() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos() as u64
 }
 fn cleanup(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
@@ -317,7 +352,11 @@ fn cleanup(path: &std::path::Path) {
     let _ = std::fs::remove_file(format!("{}-shm", path.display()));
 }
 async fn open_store() -> (RelStore, std::path::PathBuf) {
-    let path = std::env::temp_dir().join(format!("ddwall_{}_{}.sqlite", std::process::id(), rand_tag()));
+    let path = std::env::temp_dir().join(format!(
+        "ddwall_{}_{}.sqlite",
+        std::process::id(),
+        rand_tag()
+    ));
     let _ = std::fs::remove_file(&path);
     let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
     opt.max_connections(1).min_connections(1);
@@ -372,7 +411,11 @@ async fn store_stream(engine: &str, l: usize, w: usize, bs: usize) -> Outcome {
     let host_peak = memcap::peak_bytes() as f64 / 1048576.0;
     let stmts = stmt_counter::get();
     let survivors = store.alive_keys().await.unwrap();
-    store.conn().execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE);").await.ok();
+    store
+        .conn()
+        .execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE);")
+        .await
+        .ok();
     let db_mb = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) as f64 / 1048576.0;
     let out = Outcome {
         survivors,
@@ -389,7 +432,9 @@ async fn store_stream(engine: &str, l: usize, w: usize, bs: usize) -> Outcome {
 
 fn oracle_measure(l: usize, w: usize, bs: usize) -> Outcome {
     let g = benchgraph::gen_multi_cyclic(l, w, bs);
-    let survivors: Vec<i64> = benchgraph::oracle_survivors(&g, g.seed).into_iter().collect();
+    let survivors: Vec<i64> = benchgraph::oracle_survivors(&g, g.seed)
+        .into_iter()
+        .collect();
     Outcome {
         survivors,
         peak_rss_mb: peak_rss_mb(),
@@ -399,7 +444,14 @@ fn oracle_measure(l: usize, w: usize, bs: usize) -> Outcome {
 
 // ---- child / driver --------------------------------------------------------
 
-fn run_child(exe: &std::path::Path, engine: &str, l: usize, w: usize, bs: usize, cap: u64) -> Option<(String, Outcome)> {
+fn run_child(
+    exe: &std::path::Path,
+    engine: &str,
+    l: usize,
+    w: usize,
+    bs: usize,
+    cap: u64,
+) -> Option<(String, Outcome)> {
     let out = std::process::Command::new(exe)
         .args([engine, &l.to_string(), &w.to_string(), &bs.to_string()])
         .env("DL_MEMCAP_MB", cap.to_string())
@@ -415,7 +467,9 @@ fn run_child(exe: &std::path::Path, engine: &str, l: usize, w: usize, bs: usize,
             let mut out_hash = String::new();
             let mut o = Outcome::default();
             for tok in line.split_whitespace().skip(1) {
-                let Some((k, v)) = tok.split_once('=') else { continue };
+                let Some((k, v)) = tok.split_once('=') else {
+                    continue;
+                };
                 match k {
                     "count" => o.survivors = vec![0; v.parse().unwrap_or(0)],
                     "in_hash" => in_hash = v.to_string(),
@@ -441,7 +495,10 @@ fn nodes_of(w: usize) -> usize {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let cap_mb: u64 = std::env::var("DL_MEMCAP_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let cap_mb: u64 = std::env::var("DL_MEMCAP_MB")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     if cap_mb != 0 {
         memcap::cap_address_space_mb(cap_mb);
     }
@@ -483,7 +540,10 @@ async fn main() {
 
 async fn driver() {
     let exe = std::env::current_exe().unwrap();
-    let break_cap: u64 = std::env::var("DL_BREAK_CAP").ok().and_then(|s| s.parse().ok()).unwrap_or(700);
+    let break_cap: u64 = std::env::var("DL_BREAK_CAP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(700);
     let widths: Vec<usize> = std::env::var("DL_RAMP_WIDTHS")
         .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
         .unwrap_or_else(|_| vec![480_000, 512_000, 544_000, 576_000, 608_000, 640_000]);
@@ -511,7 +571,9 @@ async fn driver() {
          (input hash `ef153ee39296ef0f`, survivors 800002); the three engines agree on the \
          output hash. Full receipt: `DD_WALL_REPORT.md`.\n\n"
     ));
-    section.push_str("| nodes | dd retract ms | dd host_peak MB | dd rss MB |\n|---:|---:|---:|---:|\n");
+    section.push_str(
+        "| nodes | dd retract ms | dd host_peak MB | dd rss MB |\n|---:|---:|---:|---:|\n",
+    );
 
     // ---- parity receipt @ DAG 960k: banked input hash + banked survivor count ----
     md.push_str("## Parity receipt (streaming generator == benchgraph) @ DAG 960k\n\n");
@@ -542,7 +604,9 @@ async fn driver() {
     md.push('\n');
 
     // ---- isolated dd ramp ----
-    md.push_str(&format!("## Breakpoint ramp, isolated (G6 closed) — dd alone under the {break_cap} MB gun\n\n"));
+    md.push_str(&format!(
+        "## Breakpoint ramp, isolated (G6 closed) — dd alone under the {break_cap} MB gun\n\n"
+    ));
     md.push_str("Host_peak = high-water Rust heap during the retract (what the gun caps); rss = process resident high-water (the true footprint). The store engines below show host_peak ~0.1 MB because their retract runs inside SQLite's C engine with state on disk — that is the resident-vs-disk contrast.\n\n");
     md.push_str("| nodes | dd retract ms | dd host_peak MB | dd rss MB |\n|---:|---:|---:|---:|\n");
 
@@ -553,8 +617,14 @@ async fn driver() {
         match run_child(&exe, "dd", l, w_id, 0, break_cap) {
             Some((_, o)) => {
                 ramp.push((nodes, o.host_peak_mb, o.peak_rss_mb));
-                md.push_str(&format!("| {nodes} | {:.1} | {:.2} | {:.1} |\n", o.retract_ms, o.host_peak_mb, o.peak_rss_mb));
-                section.push_str(&format!("| {nodes} | {:.1} | {:.2} | {:.1} |\n", o.retract_ms, o.host_peak_mb, o.peak_rss_mb));
+                md.push_str(&format!(
+                    "| {nodes} | {:.1} | {:.2} | {:.1} |\n",
+                    o.retract_ms, o.host_peak_mb, o.peak_rss_mb
+                ));
+                section.push_str(&format!(
+                    "| {nodes} | {:.1} | {:.2} | {:.1} |\n",
+                    o.retract_ms, o.host_peak_mb, o.peak_rss_mb
+                ));
             }
             None => {
                 abort_scale = Some((w_id, nodes));
@@ -568,17 +638,27 @@ async fn driver() {
     section.push('\n');
 
     // ---- store contrast at dd's abort scale (or the last ramp step if dd never aborts) ----
-    let contrast_width = abort_scale.map(|(w, _)| w).unwrap_or(*widths.last().unwrap());
+    let contrast_width = abort_scale
+        .map(|(w, _)| w)
+        .unwrap_or(*widths.last().unwrap());
     let contrast_nodes = nodes_of(contrast_width);
     md.push_str(&format!(
         "## Store-engine contrast @ {contrast_nodes} nodes (dd {})\n\n",
-        if abort_scale.is_some() { "aborted above" } else { "still alive (cap not hit yet)" }
+        if abort_scale.is_some() {
+            "aborted above"
+        } else {
+            "still alive (cap not hit yet)"
+        }
     ));
     md.push_str("The same streaming generator feeds the disk store engines at dd's abort scale. Their retract state lives on disk, so host_peak stays ~0.1 MB flat and they complete where the resident engine blows.\n\n");
     md.push_str("| engine | retract ms | stmts | host_peak MB | rss MB | db MB | survivors |\n|---|---:|---:|---:|---:|---:|---:|\n");
     section.push_str(&format!(
         "Store-engine contrast @ **{contrast_nodes} nodes** (dd {}):\n\n",
-        if abort_scale.is_some() { "aborted above" } else { "still alive below the cap" }
+        if abort_scale.is_some() {
+            "aborted above"
+        } else {
+            "still alive below the cap"
+        }
     ));
     section.push_str("| engine | retract ms | stmts | host_peak MB | rss MB | db MB | survivors |\n|---|---:|---:|---:|---:|---:|---:|\n");
     for eng in ["count", "dred"] {
@@ -586,7 +666,12 @@ async fn driver() {
             Some((_, o)) => {
                 let row = format!(
                     "| {eng} | {:.1} | {} | {:.3} | {:.1} | {:.2} | {} |\n",
-                    o.retract_ms, o.statements, o.host_peak_mb, o.peak_rss_mb, o.db_mb, o.survivors.len()
+                    o.retract_ms,
+                    o.statements,
+                    o.host_peak_mb,
+                    o.peak_rss_mb,
+                    o.db_mb,
+                    o.survivors.len()
                 );
                 md.push_str(&row);
                 section.push_str(&row);
@@ -635,7 +720,10 @@ async fn driver() {
         md.push_str("> dd never aborted on this ladder; the isolated wall sits beyond the widest step. Extend DL_RAMP_WIDTHS to find it.\n\n");
     }
 
-    md.push_str(&format!("\n_Generated by `examples/dd_wall.rs`, break gun {break_cap} MB. commit {}._\n", git_head()));
+    md.push_str(&format!(
+        "\n_Generated by `examples/dd_wall.rs`, break gun {break_cap} MB. commit {}._\n",
+        git_head()
+    ));
     std::fs::write(&report_out, &md).unwrap();
     eprintln!("[dd_wall] wrote {report_out}");
 
@@ -653,11 +741,16 @@ fn git_head() -> String {
 /// Append the "## Breakpoint ramp, isolated (G6 closed)" section to PERF-REPORT.md.
 fn append_perf_report(section: &str) {
     let path = format!("{}/PERF-REPORT.md", env!("CARGO_MANIFEST_DIR"));
-    let Ok(existing) = std::fs::read_to_string(&path) else { return };
+    let Ok(existing) = std::fs::read_to_string(&path) else {
+        return;
+    };
     // strip any previous G6-isolated section (idempotent re-run) and the trailing
     // generated marker, then re-stamp after the freshly appended section.
     let mut lines: Vec<&str> = existing.lines().collect();
-    if let Some(i) = lines.iter().position(|l| l.starts_with("## Breakpoint ramp, isolated")) {
+    if let Some(i) = lines
+        .iter()
+        .position(|l| l.starts_with("## Breakpoint ramp, isolated"))
+    {
         lines.truncate(i);
     }
     lines.retain(|l| !l.starts_with("_Report generated in"));
@@ -677,18 +770,36 @@ mod tests {
 
     #[test]
     fn stream_matches_benchgraph_rows_and_deps() {
-        for (l, w, s) in [(6usize, 7usize, 0usize), (6, 7, 3), (3, 5, 2), (6, 10, 7), (5, 4, 1), (4, 6, 6)] {
+        for (l, w, s) in [
+            (6usize, 7usize, 0usize),
+            (6, 7, 3),
+            (3, 5, 2),
+            (6, 10, 7),
+            (5, 4, 1),
+            (4, 6, 6),
+        ] {
             let g = benchgraph::gen_multi_cyclic(l, w, s);
-            let mut b_rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, wt)| (*t as i64, *i, *wt)).collect();
-            let mut b_deps: Vec<(i64, i64, i64, i64)> =
-                g.edges.iter().map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci)).collect();
+            let mut b_rows: Vec<(i64, i64, i64)> = g
+                .rows
+                .iter()
+                .map(|(t, i, wt)| (*t as i64, *i, *wt))
+                .collect();
+            let mut b_deps: Vec<(i64, i64, i64, i64)> = g
+                .edges
+                .iter()
+                .map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci))
+                .collect();
             b_rows.sort_unstable();
             b_deps.sort_unstable();
             let mut s_rows: Vec<(i64, i64, i64)> = Vec::new();
             let mut s_deps: Vec<(i64, i64, i64, i64)> = Vec::new();
-            stream_graph(l, w, s, |t, i, wt| s_rows.push((t as i64, i, wt)), |pt, pi, ct, ci| {
-                s_deps.push((pt as i64, pi, ct as i64, ci))
-            });
+            stream_graph(
+                l,
+                w,
+                s,
+                |t, i, wt| s_rows.push((t as i64, i, wt)),
+                |pt, pi, ct, ci| s_deps.push((pt as i64, pi, ct as i64, ci)),
+            );
             s_rows.sort_unstable();
             s_deps.sort_unstable();
             assert_eq!(b_rows, s_rows, "rows mismatch l={l} w={w} s={s}");

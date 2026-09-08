@@ -3,117 +3,124 @@
 //! SQLite is production; dd/salsa live in `oracle.rs`. See ../AGENTS.md.
 
 pub mod cascade {
-//! ISOLATED experiment: manual, scalable cascade retraction over a generic
-//! `(tag, id)` reference graph, with Z-set weights.
-//!
-//! Not wired into the spine. This proves the mechanism the book calls for:
-//! borrow the DBSP algebra (weights, retraction = subtraction) but keep the
-//! state on disk in SQLite, and cascade by hand so we owe nothing to a resident
-//! engine.
-//!
-//! The polymorphic FK is metadata: a row is addressed by `(tag, id)` — `tag`
-//! is "which logical table", `id` is the row within it — so ONE dep edge table
-//! expresses every cross-table reference without per-relationship cascade
-//! wiring:
-//!
-//!   cx_row(tag, id, weight)              -- every row; weight = refCount (# of derivations)
-//!   cx_dep(parent_tag,parent_id,         -- child depends on parent; deleting
-//!          child_tag, child_id)             the parent decrements the child
-//!
-//! Retraction is a Z-set subtraction: a row's `weight` is how many derivations
-//! hold it. Dropping one decrements it; the row dies only when weight
-//! reaches 0 (its LAST refCount is gone) — so a row derived two ways survives the
-//! loss of one. That is why this is not naive reachability: a child dies when
-//! its last parent dies, never its first.
-//!
-//! Scalability: the cascade runs as a breadth-first fixpoint where each ROUND is
-//! a fixed handful of set-based SQL statements over the whole current frontier.
-//! The number of rounds is the DAG depth, not the row count — a 100k-row graph
-//! of depth 3 retracts in 3 rounds.
+    //! ISOLATED experiment: manual, scalable cascade retraction over a generic
+    //! `(tag, id)` reference graph, with Z-set weights.
+    //!
+    //! Not wired into the spine. This proves the mechanism the book calls for:
+    //! borrow the DBSP algebra (weights, retraction = subtraction) but keep the
+    //! state on disk in SQLite, and cascade by hand so we owe nothing to a resident
+    //! engine.
+    //!
+    //! The polymorphic FK is metadata: a row is addressed by `(tag, id)` — `tag`
+    //! is "which logical table", `id` is the row within it — so ONE dep edge table
+    //! expresses every cross-table reference without per-relationship cascade
+    //! wiring:
+    //!
+    //!   cx_row(tag, id, weight)              -- every row; weight = refCount (# of derivations)
+    //!   cx_dep(parent_tag,parent_id,         -- child depends on parent; deleting
+    //!          child_tag, child_id)             the parent decrements the child
+    //!
+    //! Retraction is a Z-set subtraction: a row's `weight` is how many derivations
+    //! hold it. Dropping one decrements it; the row dies only when weight
+    //! reaches 0 (its LAST refCount is gone) — so a row derived two ways survives the
+    //! loss of one. That is why this is not naive reachability: a child dies when
+    //! its last parent dies, never its first.
+    //!
+    //! Scalability: the cascade runs as a breadth-first fixpoint where each ROUND is
+    //! a fixed handful of set-based SQL statements over the whole current frontier.
+    //! The number of rounds is the DAG depth, not the row count — a 100k-row graph
+    //! of depth 3 retracts in 3 rounds.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr, TransactionTrait};
+    use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr, TransactionTrait};
 
-use crate::relstore::GraphNs;
-use crate::stmt_counter;
+    use crate::relstore::GraphNs;
+    use crate::stmt_counter;
 
-/// Rows per multi-row INSERT. Values are inlined integer literals (injection-
-/// safe — they are numbers), so the bound-parameter ceiling does not apply; the
-/// only limit is SQL length, so we use a big chunk to cut statement count.
-const CHUNK: usize = 4000;
+    /// Rows per multi-row INSERT. Values are inlined integer literals (injection-
+    /// safe — they are numbers), so the bound-parameter ceiling does not apply; the
+    /// only limit is SQL length, so we use a big chunk to cut statement count.
+    const CHUNK: usize = 4000;
 
-/// E1 single-key encoding: `(tag, id)` -> one dense i64 so `cx_row` can be a
-/// rowid table clustered on an INTEGER PRIMARY KEY (the rowid itself, zero PK
-/// storage, fastest possible SQLite lookup) and `cx_dep` a 2-column key instead
-/// of a 4-column composite. `tag`/`id` stay as plain output columns on cx_row.
-/// Stride must exceed any local id (local ids are per-relation, < a few million).
-pub const KEY_STRIDE: i64 = 1_000_000_000;
+    /// E1 single-key encoding: `(tag, id)` -> one dense i64 so `cx_row` can be a
+    /// rowid table clustered on an INTEGER PRIMARY KEY (the rowid itself, zero PK
+    /// storage, fastest possible SQLite lookup) and `cx_dep` a 2-column key instead
+    /// of a 4-column composite. `tag`/`id` stay as plain output columns on cx_row.
+    /// Stride must exceed any local id (local ids are per-relation, < a few million).
+    pub const KEY_STRIDE: i64 = 1_000_000_000;
 
-/// Dense E1 key: (rel, row) -> one i64 so cx_row is a rowid table clustered on an
-/// INTEGER PRIMARY KEY. `rel` (= tag) picks the relation, `row` (= id) the tuple.
-#[inline]
-pub fn key(tag: i64, id: i64) -> i64 {
-    tag * KEY_STRIDE + id
-}
-
-// Helpers take `&impl ConnectionTrait` so they run on either the pooled
-// connection OR a single-connection transaction. The transaction path is the
-// point: it pins every statement to ONE connection (correctness under pooling)
-// and batches all the WAL writes into a single commit (the big speed win).
-/// Per-statement wall-time trace, opt-in via `DL_CASCADE_TRACE=1`. Off by default
-/// (one env read per statement, 29 total — negligible). Prints ms + a SQL prefix
-/// to stderr so an experiment can see which statement in the round dominates.
-fn traced() -> bool {
-    std::env::var("DL_CASCADE_TRACE").map(|v| v != "0" && !v.is_empty()).unwrap_or(false)
-}
-
-async fn exec(db: &impl ConnectionTrait, sql: &str) -> Result<(), DbErr> {
-    stmt_counter::incr();
-    if traced() {
-        let t = std::time::Instant::now();
-        db.execute_unprepared(sql).await?;
-        let head: String = sql.chars().take(50).collect::<String>().replace('\n', " ");
-        eprintln!("[cascade] {:>8.2} ms  {}", t.elapsed().as_secs_f64() * 1e3, head);
-        return Ok(());
+    /// Dense E1 key: (rel, row) -> one i64 so cx_row is a rowid table clustered on an
+    /// INTEGER PRIMARY KEY. `rel` (= tag) picks the relation, `row` (= id) the tuple.
+    #[inline]
+    pub fn key(tag: i64, id: i64) -> i64 {
+        tag * KEY_STRIDE + id
     }
-    db.execute_unprepared(sql).await?;
-    Ok(())
-}
 
-async fn scalar(db: &impl ConnectionTrait, sql: &str) -> Result<i64, DbErr> {
-    stmt_counter::incr();
-    Ok(db
-        .query_one_raw(sea_orm::Statement::from_string(
-            sea_orm::DatabaseBackend::Sqlite,
-            sql.to_owned(),
-        ))
-        .await?
-        .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
-        .unwrap_or(0))
-}
+    // Helpers take `&impl ConnectionTrait` so they run on either the pooled
+    // connection OR a single-connection transaction. The transaction path is the
+    // point: it pins every statement to ONE connection (correctness under pooling)
+    // and batches all the WAL writes into a single commit (the big speed win).
+    /// Per-statement wall-time trace, opt-in via `DL_CASCADE_TRACE=1`. Off by default
+    /// (one env read per statement, 29 total — negligible). Prints ms + a SQL prefix
+    /// to stderr so an experiment can see which statement in the round dominates.
+    fn traced() -> bool {
+        std::env::var("DL_CASCADE_TRACE")
+            .map(|v| v != "0" && !v.is_empty())
+            .unwrap_or(false)
+    }
 
-/// Create the generic cascade schema and apply the traversal tuning.
-///
-/// The store pins to ONE connection (`min=max=1`), so the churny working tables
-/// are `TEMP`: with `temp_store=MEMORY` they live in RAM and are NEVER WAL-logged,
-/// which is the whole per-round cost of the cascade (the labkit DRed proved this —
-/// regular working tables WAL-log every `DELETE`/`INSERT` per round, a ~4x tax).
-/// A real page cache + mmap lets the cone walk read `cx_row`/`cx_dep` from RAM
-/// instead of the disk file. These match the proven feldera-lab DRed tuning.
-pub async fn create_schema(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), DbErr> {
-    // 256 MB page cache (cache_size negative = KiB) + 1 GB read mmap. cache_size is
-    // SQLite's own C heap (the memcap gun is blind to it — measured separately in
-    // sqlite_reach's highwater); mmap is not a heap allocation at all.
-    db.execute_unprepared("PRAGMA cache_size=-262144; PRAGMA mmap_size=1073741824;").await?;
-    // cx_row is a ROWID table clustered on `key` (INTEGER PRIMARY KEY = the
-    // rowid alias): the key costs zero extra bytes and every lookup is a native
-    // rowid search. tag/id ride along as plain output columns. cx_dep collapses
-    // from a 4-column composite to a 2-column (parent_key, child_key) WITHOUT
-    // ROWID, still parent-prefix-ordered for the delta traversal. cx_row/cx_dep
-    // are the persistent corpus; cx_frontier/next/hits/cone are RAM-only churn.
-    // The names come from `ns`; the default ns ("") reproduces the live cx_/rx_
-    // set byte-for-byte, so the 1.1 schema-equality golden stays green.
-    db.execute_unprepared(
-        &format!("CREATE TABLE {row} (
+    async fn exec(db: &impl ConnectionTrait, sql: &str) -> Result<(), DbErr> {
+        stmt_counter::incr();
+        if traced() {
+            let t = std::time::Instant::now();
+            db.execute_unprepared(sql).await?;
+            let head: String = sql.chars().take(50).collect::<String>().replace('\n', " ");
+            eprintln!(
+                "[cascade] {:>8.2} ms  {}",
+                t.elapsed().as_secs_f64() * 1e3,
+                head
+            );
+            return Ok(());
+        }
+        db.execute_unprepared(sql).await?;
+        Ok(())
+    }
+
+    async fn scalar(db: &impl ConnectionTrait, sql: &str) -> Result<i64, DbErr> {
+        stmt_counter::incr();
+        Ok(db
+            .query_one_raw(sea_orm::Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                sql.to_owned(),
+            ))
+            .await?
+            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+            .unwrap_or(0))
+    }
+
+    /// Create the generic cascade schema and apply the traversal tuning.
+    ///
+    /// The store pins to ONE connection (`min=max=1`), so the churny working tables
+    /// are `TEMP`: with `temp_store=MEMORY` they live in RAM and are NEVER WAL-logged,
+    /// which is the whole per-round cost of the cascade (the labkit DRed proved this —
+    /// regular working tables WAL-log every `DELETE`/`INSERT` per round, a ~4x tax).
+    /// A real page cache + mmap lets the cone walk read `cx_row`/`cx_dep` from RAM
+    /// instead of the disk file. These match the proven feldera-lab DRed tuning.
+    pub async fn create_schema(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), DbErr> {
+        // 256 MB page cache (cache_size negative = KiB) + 1 GB read mmap. cache_size is
+        // SQLite's own C heap (the memcap gun is blind to it — measured separately in
+        // sqlite_reach's highwater); mmap is not a heap allocation at all.
+        db.execute_unprepared("PRAGMA cache_size=-262144; PRAGMA mmap_size=1073741824;")
+            .await?;
+        // cx_row is a ROWID table clustered on `key` (INTEGER PRIMARY KEY = the
+        // rowid alias): the key costs zero extra bytes and every lookup is a native
+        // rowid search. tag/id ride along as plain output columns. cx_dep collapses
+        // from a 4-column composite to a 2-column (parent_key, child_key) WITHOUT
+        // ROWID, still parent-prefix-ordered for the delta traversal. cx_row/cx_dep
+        // are the persistent corpus; cx_frontier/next/hits/cone are RAM-only churn.
+        // The names come from `ns`; the default ns ("") reproduces the live cx_/rx_
+        // set byte-for-byte, so the 1.1 schema-equality golden stays green.
+        db.execute_unprepared(&format!(
+            "CREATE TABLE {row} (
             key    INTEGER PRIMARY KEY,
             weight INTEGER NOT NULL DEFAULT 1,
             tag    INTEGER GENERATED ALWAYS AS (key / 1000000000) VIRTUAL,
@@ -156,215 +163,262 @@ pub async fn create_schema(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), 
             ix_dep_child = ns.ix_dep_child,
             refcount = format!("{}cx_refcount", ns.row.trim_end_matches("cx_row")),
             delta = format!("{}cx_delta", ns.row.trim_end_matches("cx_row")),
-        ),
-    )
-    .await?;
-    Ok(())
-}
-
-/// Batch-insert rows `(tag, id, weight)`. One transaction = one WAL commit for
-/// the whole load, instead of a commit per chunk.
-pub async fn insert_rows(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    rows: &[(i64, i64, i64)],
-) -> Result<(), DbErr> {
-    let txn = db.begin().await?;
-    for chunk in rows.chunks(CHUNK) {
-        let vals: Vec<String> = chunk
-            .iter()
-            .map(|(t, i, w)| format!("({},{w})", key(*t, *i)))
-            .collect();
-        exec(&txn, &format!("INSERT INTO {}(key,weight) VALUES {}", ns.row, vals.join(","))).await?;
+        ))
+        .await?;
+        Ok(())
     }
-    txn.commit().await?;
-    Ok(())
-}
 
-/// Batch-insert dependency edges `(parent_tag, parent_id, child_tag, child_id)`.
-pub async fn insert_deps(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    edges: &[(i64, i64, i64, i64)],
-) -> Result<(), DbErr> {
-    let txn = db.begin().await?;
-    for chunk in edges.chunks(CHUNK) {
-        let vals: Vec<String> = chunk
-            .iter()
-            .map(|(pt, pi, ct, ci)| format!("({},{})", key(*pt, *pi), key(*ct, *ci)))
-            .collect();
+    /// Batch-insert rows `(tag, id, weight)`. One transaction = one WAL commit for
+    /// the whole load, instead of a commit per chunk.
+    pub async fn insert_rows(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        rows: &[(i64, i64, i64)],
+    ) -> Result<(), DbErr> {
+        let txn = db.begin().await?;
+        for chunk in rows.chunks(CHUNK) {
+            let vals: Vec<String> = chunk
+                .iter()
+                .map(|(t, i, w)| format!("({},{w})", key(*t, *i)))
+                .collect();
+            exec(
+                &txn,
+                &format!(
+                    "INSERT INTO {}(key,weight) VALUES {}",
+                    ns.row,
+                    vals.join(",")
+                ),
+            )
+            .await?;
+        }
+        txn.commit().await?;
+        Ok(())
+    }
+
+    /// Batch-insert dependency edges `(parent_tag, parent_id, child_tag, child_id)`.
+    pub async fn insert_deps(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        edges: &[(i64, i64, i64, i64)],
+    ) -> Result<(), DbErr> {
+        let txn = db.begin().await?;
+        for chunk in edges.chunks(CHUNK) {
+            let vals: Vec<String> = chunk
+                .iter()
+                .map(|(pt, pi, ct, ci)| format!("({},{})", key(*pt, *pi), key(*ct, *ci)))
+                .collect();
+            exec(
+                &txn,
+                &format!(
+                    "INSERT INTO {}(parent_key,child_key) VALUES {}",
+                    ns.dep,
+                    vals.join(",")
+                ),
+            )
+            .await?;
+        }
+        txn.commit().await?;
+        Ok(())
+    }
+
+    /// Retract `seeds` (each `(tag, id)` loses one unit of weight). Cascade the
+    /// consequence and return the number of rounds (= the depth reached). Every
+    /// round is a fixed set of set-based statements over the whole frontier, so the
+    /// statement count is O(rounds), never O(rows).
+    pub async fn retract(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[(i64, i64)],
+    ) -> Result<u64, DbErr> {
+        // The WHOLE cascade runs in ONE transaction: one connection (correct under
+        // pooling) and one WAL commit for every round, instead of a commit per
+        // statement. This is the largest single retract speedup.
+        let txn = db.begin().await?;
+
+        exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
+        exec(&txn, &format!("DELETE FROM {}", ns.next)).await?;
+
+        // Apply the -1 to each seed, then the frontier is the seeds that hit <= 0.
+        let seed_vals: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+        let seed_in = format!("({})", seed_vals.join(","));
         exec(
             &txn,
-            &format!("INSERT INTO {}(parent_key,child_key) VALUES {}", ns.dep, vals.join(",")),
+            &format!(
+                "UPDATE {} SET weight = weight - 1 WHERE key IN {seed_in}",
+                ns.row
+            ),
         )
         .await?;
-    }
-    txn.commit().await?;
-    Ok(())
-}
+        exec(
+            &txn,
+            &format!(
+                "INSERT INTO {} SELECT key FROM {} WHERE key IN {seed_in} AND weight <= 0",
+                ns.frontier, ns.row
+            ),
+        )
+        .await?;
 
-/// Retract `seeds` (each `(tag, id)` loses one unit of weight). Cascade the
-/// consequence and return the number of rounds (= the depth reached). Every
-/// round is a fixed set of set-based statements over the whole frontier, so the
-/// statement count is O(rounds), never O(rows).
-pub async fn retract(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[(i64, i64)],
-) -> Result<u64, DbErr> {
-    // The WHOLE cascade runs in ONE transaction: one connection (correct under
-    // pooling) and one WAL commit for every round, instead of a commit per
-    // statement. This is the largest single retract speedup.
-    let txn = db.begin().await?;
+        // Each round is DELTA-PROPORTIONAL: every statement is driven from the small
+        // working set (frontier / hits) into the big tables via their PRIMARY KEY, so
+        // work scales with the wavefront, not the corpus. `CROSS JOIN` pins the join
+        // order (the transient working tables have no stats, so the planner would
+        // otherwise scan the corpus). Verified with EXPLAIN QUERY PLAN: every step is
+        // SCAN <small> -> SEARCH <big> USING PRIMARY KEY.
+        //
+        // Frontier ping-pong (2026-07-24 lab, H5): the two physical TEMP tables swap
+        // ROLES each round instead of copying `next` into `frontier`. The SQL is
+        // format!-ed per round anyway, so the swap is free and the old per-round
+        // `DELETE frontier; INSERT frontier SELECT FROM next` full-wavefront copy is
+        // gone. Both tables are cleared at entry by every cascade function, so the
+        // roles ending on either physical table is harmless.
+        let mut frontier_table = ns.frontier.as_str();
+        let mut next_table = ns.next.as_str();
+        let mut rounds = 0u64;
+        loop {
+            if scalar(&txn, &format!("SELECT count(*) FROM {frontier_table}")).await? == 0 {
+                break;
+            }
+            rounds += 1;
 
-    exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
-    exec(&txn, &format!("DELETE FROM {}", ns.next)).await?;
-
-    // Apply the -1 to each seed, then the frontier is the seeds that hit <= 0.
-    let seed_vals: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
-    let seed_in = format!("({})", seed_vals.join(","));
-    exec(
-        &txn,
-        &format!("UPDATE {} SET weight = weight - 1 WHERE key IN {seed_in}", ns.row),
-    )
-    .await?;
-    exec(
-        &txn,
-        &format!(
-            "INSERT INTO {} SELECT key FROM {} WHERE key IN {seed_in} AND weight <= 0",
-            ns.frontier, ns.row
-        ),
-    )
-    .await?;
-
-    // Each round is DELTA-PROPORTIONAL: every statement is driven from the small
-    // working set (frontier / hits) into the big tables via their PRIMARY KEY, so
-    // work scales with the wavefront, not the corpus. `CROSS JOIN` pins the join
-    // order (the transient working tables have no stats, so the planner would
-    // otherwise scan the corpus). Verified with EXPLAIN QUERY PLAN: every step is
-    // SCAN <small> -> SEARCH <big> USING PRIMARY KEY.
-    //
-    // Frontier ping-pong (2026-07-24 lab, H5): the two physical TEMP tables swap
-    // ROLES each round instead of copying `next` into `frontier`. The SQL is
-    // format!-ed per round anyway, so the swap is free and the old per-round
-    // `DELETE frontier; INSERT frontier SELECT FROM next` full-wavefront copy is
-    // gone. Both tables are cleared at entry by every cascade function, so the
-    // roles ending on either physical table is harmless.
-    let mut frontier_table = ns.frontier.as_str();
-    let mut next_table = ns.next.as_str();
-    let mut rounds = 0u64;
-    loop {
-        if scalar(&txn, &format!("SELECT count(*) FROM {frontier_table}")).await? == 0 {
-            break;
-        }
-        rounds += 1;
-
-        // 1. hits = the frontier's children + how many refCounts each loses now.
-        exec(&txn, &format!("DELETE FROM {}", ns.hits)).await?;
-        exec(&txn,
-            &format!("INSERT INTO {hits}(key,dec) \
+            // 1. hits = the frontier's children + how many refCounts each loses now.
+            exec(&txn, &format!("DELETE FROM {}", ns.hits)).await?;
+            exec(
+                &txn,
+                &format!(
+                    "INSERT INTO {hits}(key,dec) \
              SELECT d.child_key, count(*) \
              FROM {frontier_table} f CROSS JOIN {dep} d \
                ON d.parent_key = f.key \
              GROUP BY d.child_key",
-             hits = ns.hits, dep = ns.dep),
-        )
-        .await?;
+                    hits = ns.hits,
+                    dep = ns.dep
+                ),
+            )
+            .await?;
 
-        // 2. decrement each hit child by its lost-refCount count (indexed by rowid).
-        exec(&txn,
-            &format!("UPDATE {row} SET weight = weight - \
+            // 2. decrement each hit child by its lost-refCount count (indexed by rowid).
+            exec(
+                &txn,
+                &format!(
+                    "UPDATE {row} SET weight = weight - \
                 (SELECT dec FROM {hits} h WHERE h.key = {row}.key) \
              WHERE key IN (SELECT key FROM {hits})",
-             row = ns.row, hits = ns.hits),
-        )
-        .await?;
+                    row = ns.row,
+                    hits = ns.hits
+                ),
+            )
+            .await?;
 
-        // 3. next frontier = hits that CROSSED zero THIS round: dead now
-        //    (weight <= 0) but alive before this decrement (weight + dec > 0).
-        //    The transition guard means a node enters the frontier exactly once,
-        //    so we never delete dead rows/edges to avoid re-processing — a re-hit
-        //    of an already-dead node just drives its weight more negative and is
-        //    filtered out here. Killing the two big DELETEs (dead rows + dead
-        //    edges out of the WITHOUT ROWID b-trees) is the retract's dominant
-        //    cost, so this is the main speedup.
-        exec(&txn, &format!("DELETE FROM {next_table}")).await?;
-        exec(&txn,
-            &format!("INSERT INTO {next_table}(key) \
+            // 3. next frontier = hits that CROSSED zero THIS round: dead now
+            //    (weight <= 0) but alive before this decrement (weight + dec > 0).
+            //    The transition guard means a node enters the frontier exactly once,
+            //    so we never delete dead rows/edges to avoid re-processing — a re-hit
+            //    of an already-dead node just drives its weight more negative and is
+            //    filtered out here. Killing the two big DELETEs (dead rows + dead
+            //    edges out of the WITHOUT ROWID b-trees) is the retract's dominant
+            //    cost, so this is the main speedup.
+            exec(&txn, &format!("DELETE FROM {next_table}")).await?;
+            exec(
+                &txn,
+                &format!(
+                    "INSERT INTO {next_table}(key) \
              SELECT h.key FROM {hits} h CROSS JOIN {row} r \
                ON r.key = h.key \
              WHERE r.weight <= 0 AND r.weight + h.dec > 0",
-             hits = ns.hits, row = ns.row),
-        )
-        .await?;
+                    hits = ns.hits,
+                    row = ns.row
+                ),
+            )
+            .await?;
 
-        // 4. role swap: what was `next` IS the new frontier. Dead rows STAY in
-        //    cx_row (weight <= 0); the survivor query filters on weight > 0.
-        std::mem::swap(&mut frontier_table, &mut next_table);
+            // 4. role swap: what was `next` IS the new frontier. Dead rows STAY in
+            //    cx_row (weight <= 0); the survivor query filters on weight > 0.
+            std::mem::swap(&mut frontier_table, &mut next_table);
+        }
+        txn.commit().await?;
+        Ok(rounds)
     }
-    txn.commit().await?;
-    Ok(rounds)
-}
 
-/// Cycle-correct two-pass retraction. The first pass captures and tentatively
-/// removes the affected cone. The second pass republishes cone members reached
-/// from surviving external refCount. PK tables perform deduplication, and each
-/// round fuses its weight, cone, and frontier mutations into one SQLite call.
-///
-/// All graph state, scope, and frontiers live in SQLite tables. Rust only drives
-/// the fixed set of SQL rounds; no adjacency list or SCC partition is resident.
-pub async fn retract_scc(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[(i64, i64)],
-) -> Result<u64, DbErr> {
-    retract_scc_two_pass(db, ns, seeds).await
-}
+    /// Cycle-correct two-pass retraction. The first pass captures and tentatively
+    /// removes the affected cone. The second pass republishes cone members reached
+    /// from surviving external refCount. PK tables perform deduplication, and each
+    /// round fuses its weight, cone, and frontier mutations into one SQLite call.
+    ///
+    /// All graph state, scope, and frontiers live in SQLite tables. Rust only drives
+    /// the fixed set of SQL rounds; no adjacency list or SCC partition is resident.
+    pub async fn retract_scc(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[(i64, i64)],
+    ) -> Result<u64, DbErr> {
+        retract_scc_two_pass(db, ns, seeds).await
+    }
 
-async fn retract_scc_two_pass(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[(i64, i64)],
-) -> Result<u64, DbErr> {
-    let txn = db.begin().await?;
-    let seed_vals: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
-    let seed_in = format!("({})", seed_vals.join(","));
-    exec(&txn,
-        &format!("DELETE FROM {frontier};
+    async fn retract_scc_two_pass(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[(i64, i64)],
+    ) -> Result<u64, DbErr> {
+        let txn = db.begin().await?;
+        let seed_vals: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+        let seed_in = format!("({})", seed_vals.join(","));
+        exec(
+            &txn,
+            &format!(
+                "DELETE FROM {frontier};
                   DELETE FROM {next};
                   DELETE FROM {cone};
                   INSERT INTO {frontier} SELECT key FROM {row} WHERE key IN {seed_in} AND weight>0;
                   UPDATE {row} SET weight=0 WHERE key IN (SELECT key FROM {frontier});
                   INSERT INTO {cone} SELECT key FROM {frontier}",
-                 frontier = ns.frontier, next = ns.next, cone = ns.cone, row = ns.row),
-    ).await?;
+                frontier = ns.frontier,
+                next = ns.next,
+                cone = ns.cone,
+                row = ns.row
+            ),
+        )
+        .await?;
 
-    // Frontier ping-pong: role swap instead of the per-round frontier <- next copy.
-    let mut frontier_table = ns.frontier.as_str();
-    let mut next_table = ns.next.as_str();
-    let mut rounds = 0u64;
-    loop {
-        exec(&txn,
-            &format!("DELETE FROM {next_table};
+        // Frontier ping-pong: role swap instead of the per-round frontier <- next copy.
+        let mut frontier_table = ns.frontier.as_str();
+        let mut next_table = ns.next.as_str();
+        let mut rounds = 0u64;
+        loop {
+            exec(
+                &txn,
+                &format!(
+                    "DELETE FROM {next_table};
              INSERT OR IGNORE INTO {next_table}(key)
              SELECT d.child_key
              FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key
              CROSS JOIN {row} r ON r.key = d.child_key
              WHERE r.weight > 0",
-             dep = ns.dep, row = ns.row),
-        ).await?;
-        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 { break; }
-        rounds += 1;
-        exec(&txn,
-            &format!("UPDATE {row} SET weight=0 WHERE key IN (SELECT key FROM {next_table});
+                    dep = ns.dep,
+                    row = ns.row
+                ),
+            )
+            .await?;
+            if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
+                break;
+            }
+            rounds += 1;
+            exec(
+                &txn,
+                &format!(
+                    "UPDATE {row} SET weight=0 WHERE key IN (SELECT key FROM {next_table});
              INSERT OR IGNORE INTO {cone} SELECT key FROM {next_table}",
-             row = ns.row, cone = ns.cone),
-        ).await?;
-        std::mem::swap(&mut frontier_table, &mut next_table);
-    }
+                    row = ns.row,
+                    cone = ns.cone
+                ),
+            )
+            .await?;
+            std::mem::swap(&mut frontier_table, &mut next_table);
+        }
 
-    exec(&txn,
-        &format!("DELETE FROM {frontier};
+        exec(
+            &txn,
+            &format!(
+                "DELETE FROM {frontier};
          DELETE FROM {next};
          INSERT OR IGNORE INTO {frontier}(key)
          SELECT c.key
@@ -372,215 +426,312 @@ async fn retract_scc_two_pass(
          CROSS JOIN {row} p ON p.key = d.parent_key
          WHERE p.weight > 0;
          UPDATE {row} SET weight=1 WHERE key IN (SELECT key FROM {frontier})",
-         frontier = ns.frontier, next = ns.next, cone = ns.cone, dep = ns.dep, row = ns.row),
-    ).await?;
-    // Roles reset: the fused base statement above cleared both tables and
-    // refilled ns.frontier, so the rederive ping-pong starts fresh.
-    let mut frontier_table = ns.frontier.as_str();
-    let mut next_table = ns.next.as_str();
-    loop {
-        exec(&txn,
-            &format!("DELETE FROM {next_table};
+                frontier = ns.frontier,
+                next = ns.next,
+                cone = ns.cone,
+                dep = ns.dep,
+                row = ns.row
+            ),
+        )
+        .await?;
+        // Roles reset: the fused base statement above cleared both tables and
+        // refilled ns.frontier, so the rederive ping-pong starts fresh.
+        let mut frontier_table = ns.frontier.as_str();
+        let mut next_table = ns.next.as_str();
+        loop {
+            exec(
+                &txn,
+                &format!(
+                    "DELETE FROM {next_table};
              INSERT OR IGNORE INTO {next_table}(key)
              SELECT d.child_key
              FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key
              CROSS JOIN {row} r ON r.key = d.child_key
              CROSS JOIN {cone} c ON c.key = d.child_key
              WHERE r.weight = 0",
-             dep = ns.dep, row = ns.row, cone = ns.cone),
-        ).await?;
-        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 { break; }
-        rounds += 1;
-        exec(&txn,
-            &format!("UPDATE {row} SET weight=1 WHERE key IN (SELECT key FROM {next_table})",
-             row = ns.row),
-        ).await?;
-        std::mem::swap(&mut frontier_table, &mut next_table);
+                    dep = ns.dep,
+                    row = ns.row,
+                    cone = ns.cone
+                ),
+            )
+            .await?;
+            if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
+                break;
+            }
+            rounds += 1;
+            exec(
+                &txn,
+                &format!(
+                    "UPDATE {row} SET weight=1 WHERE key IN (SELECT key FROM {next_table})",
+                    row = ns.row
+                ),
+            )
+            .await?;
+            std::mem::swap(&mut frontier_table, &mut next_table);
+        }
+        txn.commit().await?;
+        Ok(rounds)
     }
-    txn.commit().await?;
-    Ok(rounds)
-}
 
-// ============================================================================
-// CYCLE-SAFE PAIR (backported from the v6 labkit). The counting `retract` above
-// is correct only on an ACYCLIC ref-count graph — on a cycle the members mutually
-// refCount each other and never hit weight 0 (a phantom: cut the anchor and the
-// cycle stays "alive"). These two treat `weight` as a BOOLEAN alive flag (0/1)
-// and compute reachability-from-roots exactly, which is what retraction was
-// always trying to approximate. Use this pair when the graph can contain cycles.
-//   assert       = forward add (monotonic, cycle-safe by nature)
-//   retract_dred = Delete-and-Rederive: over-delete the forward cone, then
-//                  rederive any row still anchored to a surviving row.
-// ============================================================================
+    // ============================================================================
+    // CYCLE-SAFE PAIR (backported from the v6 labkit). The counting `retract` above
+    // is correct only on an ACYCLIC ref-count graph — on a cycle the members mutually
+    // refCount each other and never hit weight 0 (a phantom: cut the anchor and the
+    // cycle stays "alive"). These two treat `weight` as a BOOLEAN alive flag (0/1)
+    // and compute reachability-from-roots exactly, which is what retraction was
+    // always trying to approximate. Use this pair when the graph can contain cycles.
+    //   assert       = forward add (monotonic, cycle-safe by nature)
+    //   retract_dred = Delete-and-Rederive: over-delete the forward cone, then
+    //                  rederive any row still anchored to a surviving row.
+    // ============================================================================
 
-/// Forward add: `seeds` become alive; propagate aliveness to everything reachable
-/// from them that was dead. The opposite of retract. Monotonic, so cycle-safe.
-/// Returns rounds (= depth of the newly-alive wavefront).
-pub async fn assert(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[(i64, i64)],
-) -> Result<u64, DbErr> {
-    let txn = db.begin().await?;
-    exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
-    exec(&txn, &format!("DELETE FROM {}", ns.next)).await?;
-    let seed_in = {
-        let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
-        format!("({})", v.join(","))
-    };
-    // seed the wavefront from the seeds (alive or not), so an already-alive root still
-    // pushes reachability into any newly-added dead children.
-    exec(&txn, &format!("INSERT INTO {} SELECT key FROM {} WHERE key IN {seed_in}", ns.frontier, ns.row)).await?;
-    exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN {seed_in}", ns.row)).await?;
-    // Frontier ping-pong: role swap instead of the per-round frontier <- next copy.
-    let mut frontier_table = ns.frontier.as_str();
-    let mut next_table = ns.next.as_str();
-    let mut rounds = 0u64;
-    loop {
+    /// Forward add: `seeds` become alive; propagate aliveness to everything reachable
+    /// from them that was dead. The opposite of retract. Monotonic, so cycle-safe.
+    /// Returns rounds (= depth of the newly-alive wavefront).
+    pub async fn assert(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[(i64, i64)],
+    ) -> Result<u64, DbErr> {
+        let txn = db.begin().await?;
+        exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
+        exec(&txn, &format!("DELETE FROM {}", ns.next)).await?;
+        let seed_in = {
+            let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+            format!("({})", v.join(","))
+        };
+        // seed the wavefront from the seeds (alive or not), so an already-alive root still
+        // pushes reachability into any newly-added dead children.
         exec(
             &txn,
-            &format!("DELETE FROM {next_table}; \
+            &format!(
+                "INSERT INTO {} SELECT key FROM {} WHERE key IN {seed_in}",
+                ns.frontier, ns.row
+            ),
+        )
+        .await?;
+        exec(
+            &txn,
+            &format!("UPDATE {} SET weight=1 WHERE key IN {seed_in}", ns.row),
+        )
+        .await?;
+        // Frontier ping-pong: role swap instead of the per-round frontier <- next copy.
+        let mut frontier_table = ns.frontier.as_str();
+        let mut next_table = ns.next.as_str();
+        let mut rounds = 0u64;
+        loop {
+            exec(
+                &txn,
+                &format!(
+                    "DELETE FROM {next_table}; \
              INSERT OR IGNORE INTO {next_table}(key) \
              SELECT d.child_key \
              FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key \
                CROSS JOIN {row} r ON r.key = d.child_key \
              WHERE r.weight = 0",
-             dep = ns.dep, row = ns.row),
-        )
-        .await?;
-        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
-            break;
+                    dep = ns.dep,
+                    row = ns.row
+                ),
+            )
+            .await?;
+            if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
+                break;
+            }
+            rounds += 1;
+            exec(
+                &txn,
+                &format!(
+                    "UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {next_table})",
+                    ns.row
+                ),
+            )
+            .await?;
+            std::mem::swap(&mut frontier_table, &mut next_table);
         }
-        rounds += 1;
-        exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {next_table})", ns.row)).await?;
-        std::mem::swap(&mut frontier_table, &mut next_table);
+        txn.commit().await?;
+        Ok(rounds)
     }
-    txn.commit().await?;
-    Ok(rounds)
-}
 
-/// Cycle-safe retraction via Delete-and-Rederive. `seeds` are retracted; then the
-/// forward cone reachable from them is tentatively killed (over-delete), and any
-/// cone row still reachable from a SURVIVING row is brought back (rederive). A dead
-/// cycle has no surviving anchor, so it correctly stays dead. Returns total rounds.
-pub async fn retract_dred(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[(i64, i64)],
-) -> Result<u64, DbErr> {
-    let txn = db.begin().await?;
-    exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
-    exec(&txn, &format!("DELETE FROM {}", ns.next)).await?;
-    exec(&txn, &format!("DELETE FROM {}", ns.cone)).await?;
+    /// Cycle-safe retraction via Delete-and-Rederive. `seeds` are retracted; then the
+    /// forward cone reachable from them is tentatively killed (over-delete), and any
+    /// cone row still reachable from a SURVIVING row is brought back (rederive). A dead
+    /// cycle has no surviving anchor, so it correctly stays dead. Returns total rounds.
+    pub async fn retract_dred(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[(i64, i64)],
+    ) -> Result<u64, DbErr> {
+        let txn = db.begin().await?;
+        exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
+        exec(&txn, &format!("DELETE FROM {}", ns.next)).await?;
+        exec(&txn, &format!("DELETE FROM {}", ns.cone)).await?;
 
-    // over-delete: seeds (alive) start the cone; kill them, walk forward killing the
-    // reachable-and-alive cone. Every statement is driven from the small frontier into
-    // the big tables by PRIMARY KEY (CROSS JOIN pins the order), so work ∝ the cone.
-    let seed_in = {
-        let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
-        format!("({})", v.join(","))
-    };
-    exec(&txn, &format!("INSERT INTO {} SELECT key FROM {} WHERE key IN {seed_in} AND weight>0", ns.frontier, ns.row)).await?;
-    exec(&txn, &format!("UPDATE {} SET weight=0 WHERE key IN (SELECT key FROM {})", ns.row, ns.frontier)).await?;
-    exec(&txn, &format!("INSERT INTO {} SELECT key FROM {}", ns.cone, ns.frontier)).await?;
-    // Frontier ping-pong: role swap instead of the per-round frontier <- next copy.
-    let mut frontier_table = ns.frontier.as_str();
-    let mut next_table = ns.next.as_str();
-    let mut rounds = 0u64;
-    loop {
+        // over-delete: seeds (alive) start the cone; kill them, walk forward killing the
+        // reachable-and-alive cone. Every statement is driven from the small frontier into
+        // the big tables by PRIMARY KEY (CROSS JOIN pins the order), so work ∝ the cone.
+        let seed_in = {
+            let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+            format!("({})", v.join(","))
+        };
         exec(
             &txn,
-            &format!("DELETE FROM {next_table}; \
+            &format!(
+                "INSERT INTO {} SELECT key FROM {} WHERE key IN {seed_in} AND weight>0",
+                ns.frontier, ns.row
+            ),
+        )
+        .await?;
+        exec(
+            &txn,
+            &format!(
+                "UPDATE {} SET weight=0 WHERE key IN (SELECT key FROM {})",
+                ns.row, ns.frontier
+            ),
+        )
+        .await?;
+        exec(
+            &txn,
+            &format!("INSERT INTO {} SELECT key FROM {}", ns.cone, ns.frontier),
+        )
+        .await?;
+        // Frontier ping-pong: role swap instead of the per-round frontier <- next copy.
+        let mut frontier_table = ns.frontier.as_str();
+        let mut next_table = ns.next.as_str();
+        let mut rounds = 0u64;
+        loop {
+            exec(
+                &txn,
+                &format!(
+                    "DELETE FROM {next_table}; \
              INSERT OR IGNORE INTO {next_table}(key) \
              SELECT d.child_key \
              FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key \
                CROSS JOIN {row} r ON r.key = d.child_key \
              WHERE r.weight > 0",
-             dep = ns.dep, row = ns.row),
-        )
-        .await?;
-        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
-            break;
+                    dep = ns.dep,
+                    row = ns.row
+                ),
+            )
+            .await?;
+            if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
+                break;
+            }
+            rounds += 1;
+            exec(
+                &txn,
+                &format!(
+                    "UPDATE {} SET weight=0 WHERE key IN (SELECT key FROM {next_table})",
+                    ns.row
+                ),
+            )
+            .await?;
+            exec(
+                &txn,
+                &format!(
+                    "INSERT OR IGNORE INTO {} SELECT key FROM {next_table}",
+                    ns.cone
+                ),
+            )
+            .await?;
+            std::mem::swap(&mut frontier_table, &mut next_table);
         }
-        rounds += 1;
-        exec(&txn, &format!("UPDATE {} SET weight=0 WHERE key IN (SELECT key FROM {next_table})", ns.row)).await?;
-        exec(&txn, &format!("INSERT OR IGNORE INTO {} SELECT key FROM {next_table}", ns.cone)).await?;
-        std::mem::swap(&mut frontier_table, &mut next_table);
-    }
 
-    // rederive: cone rows with a SURVIVING parent (weight>0, i.e. outside the cone)
-    // come back; propagate forward within the cone. Uses ix_cx_dep_child (child->parent).
-    exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
-    exec(&txn, &format!("DELETE FROM {}", ns.next)).await?;
-    exec(
-        &txn,
-        &format!("INSERT OR IGNORE INTO {frontier}(key) \
+        // rederive: cone rows with a SURVIVING parent (weight>0, i.e. outside the cone)
+        // come back; propagate forward within the cone. Uses ix_cx_dep_child (child->parent).
+        exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
+        exec(&txn, &format!("DELETE FROM {}", ns.next)).await?;
+        exec(
+            &txn,
+            &format!(
+                "INSERT OR IGNORE INTO {frontier}(key) \
          SELECT c.key \
          FROM {cone} c CROSS JOIN {dep} d ON d.child_key = c.key \
            CROSS JOIN {row} p ON p.key = d.parent_key \
          WHERE p.weight > 0",
-         frontier = ns.frontier, cone = ns.cone, dep = ns.dep, row = ns.row),
-    )
-    .await?;
-    exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {})", ns.row, ns.frontier)).await?;
-    // Roles reset here: the base fill above cleared both tables and refilled
-    // ns.frontier, so the ping-pong starts fresh for the rederive loop.
-    let mut frontier_table = ns.frontier.as_str();
-    let mut next_table = ns.next.as_str();
-    loop {
+                frontier = ns.frontier,
+                cone = ns.cone,
+                dep = ns.dep,
+                row = ns.row
+            ),
+        )
+        .await?;
         exec(
             &txn,
-            &format!("DELETE FROM {next_table}; \
+            &format!(
+                "UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {})",
+                ns.row, ns.frontier
+            ),
+        )
+        .await?;
+        // Roles reset here: the base fill above cleared both tables and refilled
+        // ns.frontier, so the ping-pong starts fresh for the rederive loop.
+        let mut frontier_table = ns.frontier.as_str();
+        let mut next_table = ns.next.as_str();
+        loop {
+            exec(
+                &txn,
+                &format!(
+                    "DELETE FROM {next_table}; \
              INSERT OR IGNORE INTO {next_table}(key) \
              SELECT d.child_key \
              FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key \
                CROSS JOIN {row} r ON r.key = d.child_key \
                CROSS JOIN {cone} c ON c.key = d.child_key \
              WHERE r.weight = 0",
-             dep = ns.dep, row = ns.row, cone = ns.cone),
-        )
-        .await?;
-        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
-            break;
+                    dep = ns.dep,
+                    row = ns.row,
+                    cone = ns.cone
+                ),
+            )
+            .await?;
+            if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
+                break;
+            }
+            rounds += 1;
+            exec(
+                &txn,
+                &format!(
+                    "UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {next_table})",
+                    ns.row
+                ),
+            )
+            .await?;
+            std::mem::swap(&mut frontier_table, &mut next_table);
         }
-        rounds += 1;
-        exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {next_table})", ns.row)).await?;
-        std::mem::swap(&mut frontier_table, &mut next_table);
+        txn.commit().await?;
+        Ok(rounds)
     }
-    txn.commit().await?;
-    Ok(rounds)
-}
 
-/// Cycle-safe retraction, Delete-and-Rederive expressed as TWO recursive CTEs so
-/// SQLite runs the whole cone traversal AND the rederive inside its C engine — one
-/// prepared statement each — instead of the Rust-driven round loop of `retract_dred`
-/// (~6 `execute` round-trips per BFS round, ~180 for a depth-15 graph). Identical
-/// semantics and result; the round-trip tax is gone. This is the form to use at
-/// scale. Returns 0 (rounds are not meaningful for the set-at-once CTE form).
-///
-/// Phase 1 (over-delete): the forward cone of currently-alive nodes reachable from
-/// the alive seeds, computed over unchanged weights in one recursive walk, then all
-/// killed. Phase 2 (rederive): cone nodes anchored to a surviving (weight>0, hence
-/// outside-cone) parent come back and propagate forward within the cone; a dead
-/// cycle has no such anchor and stays dead.
-pub async fn retract_dred_cte(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[(i64, i64)],
-) -> Result<u64, DbErr> {
-    let txn = db.begin().await?;
-    let seed_in = {
-        let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
-        format!("({})", v.join(","))
-    };
-    exec(&txn, &format!("DELETE FROM {}", ns.cone)).await?;
-    // Phase 1 — over-delete. `cone` = seeds ∪ everything forward-reachable from them
-    // over still-alive edges. UNION (not UNION ALL) dedups nodes, so work is O(cone),
-    // and the walk reads weights BEFORE the kill below, so every cone node qualifies.
-    exec(
-        &txn,
-        &format!(
-            "INSERT INTO {cone}(key)
+    /// Cycle-safe retraction, Delete-and-Rederive expressed as TWO recursive CTEs so
+    /// SQLite runs the whole cone traversal AND the rederive inside its C engine — one
+    /// prepared statement each — instead of the Rust-driven round loop of `retract_dred`
+    /// (~6 `execute` round-trips per BFS round, ~180 for a depth-15 graph). Identical
+    /// semantics and result; the round-trip tax is gone. This is the form to use at
+    /// scale. Returns 0 (rounds are not meaningful for the set-at-once CTE form).
+    ///
+    /// Phase 1 (over-delete): the forward cone of currently-alive nodes reachable from
+    /// the alive seeds, computed over unchanged weights in one recursive walk, then all
+    /// killed. Phase 2 (rederive): cone nodes anchored to a surviving (weight>0, hence
+    /// outside-cone) parent come back and propagate forward within the cone; a dead
+    /// cycle has no such anchor and stays dead.
+    pub async fn retract_dred_cte(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[(i64, i64)],
+    ) -> Result<u64, DbErr> {
+        let txn = db.begin().await?;
+        let seed_in = {
+            let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+            format!("({})", v.join(","))
+        };
+        exec(&txn, &format!("DELETE FROM {}", ns.cone)).await?;
+        // Phase 1 — over-delete. `cone` = seeds ∪ everything forward-reachable from them
+        // over still-alive edges. UNION (not UNION ALL) dedups nodes, so work is O(cone),
+        // and the walk reads weights BEFORE the kill below, so every cone node qualifies.
+        exec(
+            &txn,
+            &format!(
+                "INSERT INTO {cone}(key)
              WITH RECURSIVE cone(key) AS (
                 SELECT key FROM {row} WHERE key IN {seed_in} AND weight>0
                 UNION
@@ -590,20 +741,28 @@ pub async fn retract_dred_cte(
                  WHERE r.weight>0
              )
              SELECT key FROM cone",
-            cone = ns.cone,
-            row = ns.row,
-            dep = ns.dep,
-        ),
-    )
-    .await?;
-    exec(&txn, &format!("UPDATE {} SET weight=0 WHERE key IN (SELECT key FROM {})", ns.row, ns.cone)).await?;
-    // Phase 2 — rederive. Base: cone nodes with a surviving (weight>0) parent — since
-    // every cone node is now weight=0, weight>0 means the parent is outside the cone.
-    // Step: propagate aliveness forward, staying inside the cone (JOIN cx_cone).
-    exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?; // reused as the alive-set sink
-    exec(
-        &txn,
-        &format!("INSERT INTO {frontier}(key)
+                cone = ns.cone,
+                row = ns.row,
+                dep = ns.dep,
+            ),
+        )
+        .await?;
+        exec(
+            &txn,
+            &format!(
+                "UPDATE {} SET weight=0 WHERE key IN (SELECT key FROM {})",
+                ns.row, ns.cone
+            ),
+        )
+        .await?;
+        // Phase 2 — rederive. Base: cone nodes with a surviving (weight>0) parent — since
+        // every cone node is now weight=0, weight>0 means the parent is outside the cone.
+        // Step: propagate aliveness forward, staying inside the cone (JOIN cx_cone).
+        exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?; // reused as the alive-set sink
+        exec(
+            &txn,
+            &format!(
+                "INSERT INTO {frontier}(key)
          WITH RECURSIVE alive(key) AS (
             SELECT c.key FROM {cone} c
               JOIN {dep} d ON d.child_key = c.key
@@ -615,123 +774,174 @@ pub async fn retract_dred_cte(
               JOIN {cone} c ON c.key = d.child_key
          )
          SELECT key FROM alive",
-         frontier = ns.frontier, cone = ns.cone, dep = ns.dep, row = ns.row),
-    )
-    .await?;
-    exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {})", ns.row, ns.frontier)).await?;
-    txn.commit().await?;
-    Ok(0)
-}
+                frontier = ns.frontier,
+                cone = ns.cone,
+                dep = ns.dep,
+                row = ns.row
+            ),
+        )
+        .await?;
+        exec(
+            &txn,
+            &format!(
+                "UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {})",
+                ns.row, ns.frontier
+            ),
+        )
+        .await?;
+        txn.commit().await?;
+        Ok(0)
+    }
 
-/// One-pass signed-delta retraction: the timestamped-delta sibling to DRed. Per
-/// outer tick there is a single signed pass that recomputes the LEAST-FIXPOINT
-/// reachability from the surviving roots — no over-delete cone, no separate
-/// rederive walk. Retraction is the outer update "these base roots left"; the
-/// reach set re-derives forward from the roots that remain, one derivation round
-/// per step, through `delta(round,key,diff)`. Rewriting the whole survivor set is
-/// the same walk DRed's rederive pass performs, so the single pass lands near the
-/// recon's ~half-cost floor at ~half the SQL statements.
-///
-/// The cycle discipline: aliveness is monotone and thresholded (a key becomes alive
-/// once, at its earliest reaching round; a back-edge into an already-alive member
-/// emits nothing). Root-reachability is a least fixpoint, so a cycle whose only
-/// anchor is retracted collapses — cyclic self-support cannot refresh a key that is
-/// no longer reachable from any surviving root. This is the exact semantics the dd
-/// oracle and DRed argue for; naive support-counting (which weighs cyclic fan-in as
-/// independent support) is the phantom-cycle path this sidesteps. Returns rounds.
-pub async fn retract_signed_delta(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[(i64, i64)],
-) -> Result<u64, DbErr> {
-    let p = ns.row.trim_end_matches("cx_row");
-    let refcount = format!("{p}cx_refcount");
-    let delta = format!("{p}cx_delta");
+    /// One-pass signed-delta retraction: the timestamped-delta sibling to DRed. Per
+    /// outer tick there is a single signed pass that recomputes the LEAST-FIXPOINT
+    /// reachability from the surviving roots — no over-delete cone, no separate
+    /// rederive walk. Retraction is the outer update "these base roots left"; the
+    /// reach set re-derives forward from the roots that remain, one derivation round
+    /// per step, through `delta(round,key,diff)`. Rewriting the whole survivor set is
+    /// the same walk DRed's rederive pass performs, so the single pass lands near the
+    /// recon's ~half-cost floor at ~half the SQL statements.
+    ///
+    /// The cycle discipline: aliveness is monotone and thresholded (a key becomes alive
+    /// once, at its earliest reaching round; a back-edge into an already-alive member
+    /// emits nothing). Root-reachability is a least fixpoint, so a cycle whose only
+    /// anchor is retracted collapses — cyclic self-support cannot refresh a key that is
+    /// no longer reachable from any surviving root. This is the exact semantics the dd
+    /// oracle and DRed argue for; naive support-counting (which weighs cyclic fan-in as
+    /// independent support) is the phantom-cycle path this sidesteps. Returns rounds.
+    pub async fn retract_signed_delta(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[(i64, i64)],
+    ) -> Result<u64, DbErr> {
+        let p = ns.row.trim_end_matches("cx_row");
+        let refcount = format!("{p}cx_refcount");
+        let delta = format!("{p}cx_delta");
 
-    let txn = db.begin().await?;
+        let txn = db.begin().await?;
 
-    // refcount is the persistent alive mask; re-derive it from the current store
-    // (every row starts dead, n=0), then re-seed it per round below.
-    exec(&txn, &format!(
-        "DELETE FROM {refcount};
+        // refcount is the persistent alive mask; re-derive it from the current store
+        // (every row starts dead, n=0), then re-seed it per round below.
+        exec(
+            &txn,
+            &format!(
+                "DELETE FROM {refcount};
          INSERT INTO {refcount}(key,n) SELECT key, 0 FROM {row}",
-        refcount = refcount, row = ns.row,
-    ))
-    .await?;
-    exec(&txn, &format!("DELETE FROM {delta}", delta = delta)).await?;
+                refcount = refcount,
+                row = ns.row,
+            ),
+        )
+        .await?;
+        exec(&txn, &format!("DELETE FROM {delta}", delta = delta)).await?;
 
-    let seed_in = {
-        let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
-        if v.is_empty() { "(-1)".to_string() } else { format!("({})", v.join(",")) }
-    };
-    // Round 0: the surviving roots — rows with no incoming dep edge, minus the
-    // retracted seeds. These seed the +1 reachability wave.
-    exec(&txn, &format!(
-        "INSERT OR IGNORE INTO {delta}(round,key,diff)
+        let seed_in = {
+            let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+            if v.is_empty() {
+                "(-1)".to_string()
+            } else {
+                format!("({})", v.join(","))
+            }
+        };
+        // Round 0: the surviving roots — rows with no incoming dep edge, minus the
+        // retracted seeds. These seed the +1 reachability wave.
+        exec(
+            &txn,
+            &format!(
+                "INSERT OR IGNORE INTO {delta}(round,key,diff)
          SELECT 0, r.key, 1 FROM {row} r
          WHERE r.key NOT IN {seed_in}
            AND NOT EXISTS (SELECT 1 FROM {dep} d WHERE d.child_key = r.key)",
-        delta = delta, row = ns.row, dep = ns.dep,
-    ))
-    .await?;
-    exec(&txn, &format!(
+                delta = delta,
+                row = ns.row,
+                dep = ns.dep,
+            ),
+        )
+        .await?;
+        exec(
+            &txn,
+            &format!(
         "INSERT OR REPLACE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = 0",
         refcount = refcount, delta = delta,
-    ))
-    .await?;
+    ),
+        )
+        .await?;
 
-    let mut rounds = 0u64;
-    let mut r: i64 = 0;
-    loop {
-        if scalar(&txn, &format!("SELECT count(*) FROM {delta} WHERE round={r}", delta = delta)).await? == 0 {
-            break;
-        }
-        rounds += 1;
-        // Read ONLY round r deltas; join through dep. A child not yet alive
-        // becomes alive and fans out into round r+1 (no re-emission once alive).
-        exec(&txn, &format!(
-            "INSERT OR IGNORE INTO {delta}(round,key,diff)
+        let mut rounds = 0u64;
+        let mut r: i64 = 0;
+        loop {
+            if scalar(
+                &txn,
+                &format!(
+                    "SELECT count(*) FROM {delta} WHERE round={r}",
+                    delta = delta
+                ),
+            )
+            .await?
+                == 0
+            {
+                break;
+            }
+            rounds += 1;
+            // Read ONLY round r deltas; join through dep. A child not yet alive
+            // becomes alive and fans out into round r+1 (no re-emission once alive).
+            exec(
+                &txn,
+                &format!(
+                    "INSERT OR IGNORE INTO {delta}(round,key,diff)
              SELECT {rn}, d.child_key, 1
              FROM {delta} t
              JOIN {dep} d ON d.parent_key = t.key
              WHERE t.round = {r}
                AND d.child_key NOT IN (SELECT key FROM {refcount} WHERE n > 0)",
-            delta = delta, dep = ns.dep, refcount = refcount, rn = r + 1,
-        ))
-        .await?;
-        exec(&txn, &format!(
+                    delta = delta,
+                    dep = ns.dep,
+                    refcount = refcount,
+                    rn = r + 1,
+                ),
+            )
+            .await?;
+            exec(&txn, &format!(
             "INSERT OR REPLACE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = {rn}",
             refcount = refcount, delta = delta, rn = r + 1,
         ))
         .await?;
-        r += 1;
-    }
+            r += 1;
+        }
 
-    // Publish the alive mask back to the store's weight so alive_keys matches.
-    exec(&txn, &format!(
+        // Publish the alive mask back to the store's weight so alive_keys matches.
+        exec(&txn, &format!(
         "UPDATE {row} SET weight = COALESCE((SELECT n FROM {refcount} rf WHERE rf.key = {row}.key), 0)",
         row = ns.row, refcount = refcount,
     ))
     .await?;
 
-    txn.commit().await?;
-    Ok(rounds)
-}
+        txn.commit().await?;
+        Ok(rounds)
+    }
 
-/// Recompute the signed survivor set with one distinct recursive walk.
-/// `(round,key)` cannot be carried by the CTE because it defeats `UNION` cycle
-/// suppression, so the CTE owns only survivor reachability.
-pub async fn retract_signed_delta_v2(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[(i64, i64)],
-) -> Result<u64, DbErr> {
-    let txn = db.begin().await?;
-    let values: Vec<String> = seeds.iter().map(|(tag, id)| key(*tag, *id).to_string()).collect();
-    let seed_in = if values.is_empty() { "(-1)".to_string() } else { format!("({})", values.join(",")) };
-    exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
-    exec(&txn, &format!(
-        "INSERT INTO {frontier}(key)
+    /// Recompute the signed survivor set with one distinct recursive walk.
+    /// `(round,key)` cannot be carried by the CTE because it defeats `UNION` cycle
+    /// suppression, so the CTE owns only survivor reachability.
+    pub async fn retract_signed_delta_v2(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[(i64, i64)],
+    ) -> Result<u64, DbErr> {
+        let txn = db.begin().await?;
+        let values: Vec<String> = seeds
+            .iter()
+            .map(|(tag, id)| key(*tag, *id).to_string())
+            .collect();
+        let seed_in = if values.is_empty() {
+            "(-1)".to_string()
+        } else {
+            format!("({})", values.join(","))
+        };
+        exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
+        exec(
+            &txn,
+            &format!(
+                "INSERT INTO {frontier}(key)
          WITH RECURSIVE alive(key) AS (
             SELECT r.key FROM {row} r
              WHERE r.key NOT IN {seed_in}
@@ -739,365 +949,491 @@ pub async fn retract_signed_delta_v2(
             UNION
             SELECT d.child_key FROM alive JOIN {dep} d ON d.parent_key = alive.key
          ) SELECT key FROM alive",
-        frontier = ns.frontier, row = ns.row, dep = ns.dep,
-    )).await?;
-    exec(&txn, &format!(
+                frontier = ns.frontier,
+                row = ns.row,
+                dep = ns.dep,
+            ),
+        )
+        .await?;
+        exec(
+            &txn,
+            &format!(
         "UPDATE {row} SET weight = CASE WHEN key IN (SELECT key FROM {frontier}) THEN 1 ELSE 0 END",
         row = ns.row, frontier = ns.frontier,
-    )).await?;
-    txn.commit().await?;
-    Ok(0)
-}
+    ),
+        )
+        .await?;
+        txn.commit().await?;
+        Ok(0)
+    }
 
-/// Compatibility name retained for the recursive-CSE probe.
-pub async fn retract_signed_delta_cte(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[(i64, i64)],
-) -> Result<u64, DbErr> {
-    retract_signed_delta_v2(db, ns, seeds).await
-}
+    /// Compatibility name retained for the recursive-CSE probe.
+    pub async fn retract_signed_delta_cte(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[(i64, i64)],
+    ) -> Result<u64, DbErr> {
+        retract_signed_delta_v2(db, ns, seeds).await
+    }
 
-/// Probe: append each round to delta and incrementally fold it into refcount.
-pub async fn retract_delta_fold(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[(i64, i64)],
-) -> Result<u64, DbErr> {
-    let prefix = ns.row.trim_end_matches("cx_row");
-    let refcount = format!("{prefix}cx_refcount");
-    let delta = format!("{prefix}cx_delta");
-    let txn = db.begin().await?;
-    exec(&txn, &format!("DELETE FROM {refcount}")).await?;
-    exec(&txn, &format!("DELETE FROM {delta}")).await?;
-    let values: Vec<String> = seeds.iter().map(|(tag, id)| key(*tag, *id).to_string()).collect();
-    let seed_in = if values.is_empty() { "(-1)".to_string() } else { format!("({})", values.join(",")) };
-    exec(&txn, &format!(
-        "INSERT OR IGNORE INTO {delta}(round,key,diff)
+    /// Probe: append each round to delta and incrementally fold it into refcount.
+    pub async fn retract_delta_fold(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[(i64, i64)],
+    ) -> Result<u64, DbErr> {
+        let prefix = ns.row.trim_end_matches("cx_row");
+        let refcount = format!("{prefix}cx_refcount");
+        let delta = format!("{prefix}cx_delta");
+        let txn = db.begin().await?;
+        exec(&txn, &format!("DELETE FROM {refcount}")).await?;
+        exec(&txn, &format!("DELETE FROM {delta}")).await?;
+        let values: Vec<String> = seeds
+            .iter()
+            .map(|(tag, id)| key(*tag, *id).to_string())
+            .collect();
+        let seed_in = if values.is_empty() {
+            "(-1)".to_string()
+        } else {
+            format!("({})", values.join(","))
+        };
+        exec(
+            &txn,
+            &format!(
+                "INSERT OR IGNORE INTO {delta}(round,key,diff)
          SELECT 0, r.key, 1 FROM {row} r WHERE r.key NOT IN {seed_in}
            AND NOT EXISTS (SELECT 1 FROM {dep} d WHERE d.child_key = r.key)",
-        row = ns.row, dep = ns.dep,
-    )).await?;
-    exec(&txn, &format!("INSERT OR IGNORE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = 0")).await?;
-    let mut rounds = 0;
-    let mut round = 0i64;
-    loop {
-        if scalar(&txn, &format!("SELECT count(*) FROM {delta} WHERE round={round}")).await? == 0 { break; }
-        rounds += 1;
-        exec(&txn, &format!(
-            "INSERT OR IGNORE INTO {delta}(round,key,diff)
+                row = ns.row,
+                dep = ns.dep,
+            ),
+        )
+        .await?;
+        exec(&txn, &format!("INSERT OR IGNORE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = 0")).await?;
+        let mut rounds = 0;
+        let mut round = 0i64;
+        loop {
+            if scalar(
+                &txn,
+                &format!("SELECT count(*) FROM {delta} WHERE round={round}"),
+            )
+            .await?
+                == 0
+            {
+                break;
+            }
+            rounds += 1;
+            exec(
+                &txn,
+                &format!(
+                    "INSERT OR IGNORE INTO {delta}(round,key,diff)
              SELECT {next_round}, d.child_key, 1 FROM {delta} current
              JOIN {dep} d ON d.parent_key = current.key WHERE current.round = {round}
                AND d.child_key NOT IN (SELECT key FROM {refcount})",
-            next_round = round + 1, dep = ns.dep,
-        )).await?;
-        exec(&txn, &format!(
+                    next_round = round + 1,
+                    dep = ns.dep,
+                ),
+            )
+            .await?;
+            exec(
+                &txn,
+                &format!(
             "INSERT OR IGNORE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = {}",
             round + 1,
-        )).await?;
-        round += 1;
-    }
-    exec(&txn, &format!(
+        ),
+            )
+            .await?;
+            round += 1;
+        }
+        exec(
+            &txn,
+            &format!(
         "UPDATE {row} SET weight = CASE WHEN key IN (SELECT key FROM {refcount}) THEN 1 ELSE 0 END",
         row = ns.row,
-    )).await?;
-    txn.commit().await?;
-    Ok(rounds)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::relstore::GraphNs;
-    use sea_orm::{ConnectOptions, Database};
-
-    async fn open() -> DatabaseConnection {
-        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = std::env::temp_dir()
-            .join(format!("cx_dred_test_{}_{uniq}.sqlite", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
-        opt.max_connections(1).min_connections(1);
-        let db = Database::connect(opt).await.unwrap();
-        db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS).await.unwrap();
-        create_schema(&db, &GraphNs::default()).await.unwrap();
-        db
+    ),
+        )
+        .await?;
+        txn.commit().await?;
+        Ok(rounds)
     }
 
-    async fn alive(db: &DatabaseConnection) -> i64 {
-        scalar(db, "SELECT count(*) FROM cx_row WHERE weight>0").await.unwrap()
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::relstore::GraphNs;
+        use sea_orm::{ConnectOptions, Database};
+
+        async fn open() -> DatabaseConnection {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("cx_dred_test_{}_{uniq}.sqlite", std::process::id()));
+            let _ = std::fs::remove_file(&path);
+            let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+            opt.max_connections(1).min_connections(1);
+            let db = Database::connect(opt).await.unwrap();
+            db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS)
+                .await
+                .unwrap();
+            create_schema(&db, &GraphNs::default()).await.unwrap();
+            db
+        }
+
+        async fn alive(db: &DatabaseConnection) -> i64 {
+            scalar(db, "SELECT count(*) FROM cx_row WHERE weight>0")
+                .await
+                .unwrap()
+        }
+
+        // root R -> A, cycle A -> B -> C -> A. Cut R. Correct: everything dies (no anchor).
+        // Counting retract would leave A,B,C alive (phantom cycle); DRed must give 0.
+        #[tokio::test]
+        async fn retract_dred_kills_a_cut_cycle() {
+            let db = open().await;
+            let ns = GraphNs::default();
+            // rows R=(0,0) A=(0,1) B=(0,2) C=(0,3), all alive (weight 1)
+            insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1)])
+                .await
+                .unwrap();
+            // R->A, A->B, B->C, C->A
+            insert_deps(
+                &db,
+                &ns,
+                &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1)],
+            )
+            .await
+            .unwrap();
+            assert_eq!(alive(&db).await, 4);
+
+            retract_dred(&db, &ns, &[(0, 0)]).await.unwrap();
+            assert_eq!(
+                alive(&db).await,
+                0,
+                "cutting the root must kill the whole cone, cycle included"
+            );
+        }
+
+        // Same graph but ALSO a second root R2 -> B. Cut R. Now B (and via cycle A,C) stay
+        // alive through R2. DRed must rederive them: survivors = R2,A,B,C = 4 (only R dies).
+        #[tokio::test]
+        async fn retract_dred_rederives_through_alternate_anchor() {
+            let db = open().await;
+            let ns = GraphNs::default();
+            // R=(0,0) A=(0,1) B=(0,2) C=(0,3) R2=(0,4)
+            insert_rows(
+                &db,
+                &ns,
+                &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1), (0, 4, 1)],
+            )
+            .await
+            .unwrap();
+            insert_deps(
+                &db,
+                &ns,
+                &[
+                    (0, 0, 0, 1),
+                    (0, 1, 0, 2),
+                    (0, 2, 0, 3),
+                    (0, 3, 0, 1),
+                    (0, 4, 0, 2),
+                ],
+            )
+            .await
+            .unwrap();
+            assert_eq!(alive(&db).await, 5);
+
+            retract_dred(&db, &ns, &[(0, 0)]).await.unwrap();
+            // R dies; R2 anchors B, and the cycle B->C->A keeps A,C alive. survivors = 4.
+            assert_eq!(
+                alive(&db).await,
+                4,
+                "alternate anchor must rederive the cycle"
+            );
+        }
+
+        // The CTE form must match retract_dred exactly: cut the root, whole cone incl
+        // the cycle dies (no anchor).
+        #[tokio::test]
+        async fn retract_dred_cte_kills_a_cut_cycle() {
+            let db = open().await;
+            let ns = GraphNs::default();
+            insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1)])
+                .await
+                .unwrap();
+            insert_deps(
+                &db,
+                &ns,
+                &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1)],
+            )
+            .await
+            .unwrap();
+            assert_eq!(alive(&db).await, 4);
+            retract_dred_cte(&db, &ns, &[(0, 0)]).await.unwrap();
+            assert_eq!(
+                alive(&db).await,
+                0,
+                "CTE: cutting the root must kill the whole cone, cycle included"
+            );
+        }
+
+        // CTE form: alternate anchor rederives the cycle (only R dies, survivors = 4).
+        #[tokio::test]
+        async fn retract_dred_cte_rederives_through_alternate_anchor() {
+            let db = open().await;
+            let ns = GraphNs::default();
+            insert_rows(
+                &db,
+                &ns,
+                &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1), (0, 4, 1)],
+            )
+            .await
+            .unwrap();
+            insert_deps(
+                &db,
+                &ns,
+                &[
+                    (0, 0, 0, 1),
+                    (0, 1, 0, 2),
+                    (0, 2, 0, 3),
+                    (0, 3, 0, 1),
+                    (0, 4, 0, 2),
+                ],
+            )
+            .await
+            .unwrap();
+            assert_eq!(alive(&db).await, 5);
+            retract_dred_cte(&db, &ns, &[(0, 0)]).await.unwrap();
+            assert_eq!(
+                alive(&db).await,
+                4,
+                "CTE: alternate anchor must rederive the cycle"
+            );
+        }
+
+        // assert is the inverse: bring a dead node alive and propagate forward.
+        #[tokio::test]
+        async fn assert_propagates_forward() {
+            let db = open().await;
+            let ns = GraphNs::default();
+            // R alive, A/B dead; R->A->B. assert R's reach.
+            insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 0), (0, 2, 0)])
+                .await
+                .unwrap();
+            insert_deps(&db, &ns, &[(0, 0, 0, 1), (0, 1, 0, 2)])
+                .await
+                .unwrap();
+            assert_eq!(alive(&db).await, 1);
+            assert(&db, &ns, &[(0, 0)]).await.unwrap();
+            assert_eq!(alive(&db).await, 3, "R->A->B all alive after assert");
+        }
     }
-
-    // root R -> A, cycle A -> B -> C -> A. Cut R. Correct: everything dies (no anchor).
-    // Counting retract would leave A,B,C alive (phantom cycle); DRed must give 0.
-    #[tokio::test]
-    async fn retract_dred_kills_a_cut_cycle() {
-        let db = open().await;
-        let ns = GraphNs::default();
-        // rows R=(0,0) A=(0,1) B=(0,2) C=(0,3), all alive (weight 1)
-        insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1)]).await.unwrap();
-        // R->A, A->B, B->C, C->A
-        insert_deps(&db, &ns, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1)]).await.unwrap();
-        assert_eq!(alive(&db).await, 4);
-
-        retract_dred(&db, &ns, &[(0, 0)]).await.unwrap();
-        assert_eq!(alive(&db).await, 0, "cutting the root must kill the whole cone, cycle included");
-    }
-
-    // Same graph but ALSO a second root R2 -> B. Cut R. Now B (and via cycle A,C) stay
-    // alive through R2. DRed must rederive them: survivors = R2,A,B,C = 4 (only R dies).
-    #[tokio::test]
-    async fn retract_dred_rederives_through_alternate_anchor() {
-        let db = open().await;
-        let ns = GraphNs::default();
-        // R=(0,0) A=(0,1) B=(0,2) C=(0,3) R2=(0,4)
-        insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1), (0, 4, 1)]).await.unwrap();
-        insert_deps(&db, &ns, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1), (0, 4, 0, 2)]).await.unwrap();
-        assert_eq!(alive(&db).await, 5);
-
-        retract_dred(&db, &ns, &[(0, 0)]).await.unwrap();
-        // R dies; R2 anchors B, and the cycle B->C->A keeps A,C alive. survivors = 4.
-        assert_eq!(alive(&db).await, 4, "alternate anchor must rederive the cycle");
-    }
-
-    // The CTE form must match retract_dred exactly: cut the root, whole cone incl
-    // the cycle dies (no anchor).
-    #[tokio::test]
-    async fn retract_dred_cte_kills_a_cut_cycle() {
-        let db = open().await;
-        let ns = GraphNs::default();
-        insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1)]).await.unwrap();
-        insert_deps(&db, &ns, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1)]).await.unwrap();
-        assert_eq!(alive(&db).await, 4);
-        retract_dred_cte(&db, &ns, &[(0, 0)]).await.unwrap();
-        assert_eq!(alive(&db).await, 0, "CTE: cutting the root must kill the whole cone, cycle included");
-    }
-
-    // CTE form: alternate anchor rederives the cycle (only R dies, survivors = 4).
-    #[tokio::test]
-    async fn retract_dred_cte_rederives_through_alternate_anchor() {
-        let db = open().await;
-        let ns = GraphNs::default();
-        insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1), (0, 4, 1)]).await.unwrap();
-        insert_deps(&db, &ns, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1), (0, 4, 0, 2)]).await.unwrap();
-        assert_eq!(alive(&db).await, 5);
-        retract_dred_cte(&db, &ns, &[(0, 0)]).await.unwrap();
-        assert_eq!(alive(&db).await, 4, "CTE: alternate anchor must rederive the cycle");
-    }
-
-    // assert is the inverse: bring a dead node alive and propagate forward.
-    #[tokio::test]
-    async fn assert_propagates_forward() {
-        let db = open().await;
-        let ns = GraphNs::default();
-        // R alive, A/B dead; R->A->B. assert R's reach.
-        insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 0), (0, 2, 0)]).await.unwrap();
-        insert_deps(&db, &ns, &[(0, 0, 0, 1), (0, 1, 0, 2)]).await.unwrap();
-        assert_eq!(alive(&db).await, 1);
-        assert(&db, &ns, &[(0, 0)]).await.unwrap();
-        assert_eq!(alive(&db).await, 3, "R->A->B all alive after assert");
-    }
-}
-
 }
 pub mod reach {
-//! The v5 graph covering set, on-disk over `cx_dep(parent_key, child_key)`.
-//!
-//! Each function here has a resident pure-Rust ORACLE in the repo root
-//! (`src/graph/scc.rs`, `src/graph/walk.rs`) and MUST agree with it byte-for-byte
-//! (partition-canonical for SCC). `tests/covering.rs` is the standing check.
-//!
-//! FROZEN CONTRACT + exact inclusion semantics: `v6/findings/INSIGHTS.md` §3, §A.
-//! Recursive-CTE RAM is NOT guessable — every perf run goes through `measure.rs`.
+    //! The v5 graph covering set, on-disk over `cx_dep(parent_key, child_key)`.
+    //!
+    //! Each function here has a resident pure-Rust ORACLE in the repo root
+    //! (`src/graph/scc.rs`, `src/graph/walk.rs`) and MUST agree with it byte-for-byte
+    //! (partition-canonical for SCC). `tests/covering.rs` is the standing check.
+    //!
+    //! FROZEN CONTRACT + exact inclusion semantics: `v6/findings/INSIGHTS.md` §3, §A.
+    //! Recursive-CTE RAM is NOT guessable — every perf run goes through `measure.rs`.
 
-use sea_orm::{
-    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, Statement, TransactionTrait,
-};
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+    use sea_orm::{
+        ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, Statement, TransactionTrait,
+    };
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::relstore::GraphNs;
+    use crate::relstore::GraphNs;
 
-static WALK_TABLE_ID: AtomicU64 = AtomicU64::new(0);
+    static WALK_TABLE_ID: AtomicU64 = AtomicU64::new(0);
 
-fn statement(sql: String) -> Statement {
-    Statement::from_string(DatabaseBackend::Sqlite, sql)
-}
+    fn statement(sql: String) -> Statement {
+        Statement::from_string(DatabaseBackend::Sqlite, sql)
+    }
 
-/// The recursive-closure CTE over the ns's dep table. `GraphNs::default()` reproduces
-/// the live REACH_CTE byte-for-byte (the `{p}` prefix is "" there).
-fn reach_cte(ns: &GraphNs) -> String {
-    format!("WITH RECURSIVE reach(src,dst) AS (\
+    /// The recursive-closure CTE over the ns's dep table. `GraphNs::default()` reproduces
+    /// the live REACH_CTE byte-for-byte (the `{p}` prefix is "" there).
+    fn reach_cte(ns: &GraphNs) -> String {
+        format!(
+            "WITH RECURSIVE reach(src,dst) AS (\
         SELECT parent_key,child_key FROM {dep} \
         UNION \
         SELECT reach.src, dep.child_key FROM reach \
         JOIN {dep} dep ON dep.parent_key = reach.dst)",
-        dep = ns.dep,
-    )
-}
+            dep = ns.dep,
+        )
+    }
 
-/// Condensation, all component ids expressed as MIN-member representative keys.
-pub struct Condensed {
-    pub comp_of: Vec<(i64, i64)>, // (node_key, comp_repr)
-    pub size: Vec<(i64, i64)>,    // (comp_repr, member_count)
-    pub cyclic: Vec<(i64, bool)>, // (comp_repr, is_cyclic)
-    pub cadj: Vec<(i64, i64)>,    // (parent_comp_repr, child_comp_repr), deduped, no self
-}
+    /// Condensation, all component ids expressed as MIN-member representative keys.
+    pub struct Condensed {
+        pub comp_of: Vec<(i64, i64)>, // (node_key, comp_repr)
+        pub size: Vec<(i64, i64)>,    // (comp_repr, member_count)
+        pub cyclic: Vec<(i64, bool)>, // (comp_repr, is_cyclic)
+        pub cadj: Vec<(i64, i64)>,    // (parent_comp_repr, child_comp_repr), deduped, no self
+    }
 
-/// Forward transitive closure from `start` (strict; includes start iff its SCC is cyclic).
-pub async fn reaches_from(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    start: i64,
-) -> Result<Vec<i64>, DbErr> {
-    let sql = format!(
-        "WITH RECURSIVE reach(key) AS (\
+    /// Forward transitive closure from `start` (strict; includes start iff its SCC is cyclic).
+    pub async fn reaches_from(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        start: i64,
+    ) -> Result<Vec<i64>, DbErr> {
+        let sql = format!(
+            "WITH RECURSIVE reach(key) AS (\
             SELECT child_key FROM {dep} WHERE parent_key = {start} \
             UNION \
             SELECT dep.child_key FROM {dep} dep JOIN reach ON dep.parent_key = reach.key\
         ) SELECT key FROM reach ORDER BY key",
-        dep = ns.dep,
-    );
-    db.query_all_raw(statement(sql))
-        .await?
-        .iter()
-        .map(|row| row.try_get_by_index::<i64>(0))
-        .collect()
-}
+            dep = ns.dep,
+        );
+        db.query_all_raw(statement(sql))
+            .await?
+            .iter()
+            .map(|row| row.try_get_by_index::<i64>(0))
+            .collect()
+    }
 
-/// Reverse transitive closure into `target` (rides ix_cx_dep_child).
-pub async fn reached_by(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    target: i64,
-) -> Result<Vec<i64>, DbErr> {
-    let sql = format!(
-        "WITH RECURSIVE reach(key) AS (\
+    /// Reverse transitive closure into `target` (rides ix_cx_dep_child).
+    pub async fn reached_by(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        target: i64,
+    ) -> Result<Vec<i64>, DbErr> {
+        let sql = format!(
+            "WITH RECURSIVE reach(key) AS (\
             SELECT parent_key FROM {dep} WHERE child_key = {target} \
             UNION \
             SELECT dep.parent_key FROM {dep} dep JOIN reach ON dep.child_key = reach.key\
         ) SELECT key FROM reach ORDER BY key",
-        dep = ns.dep,
-    );
-    db.query_all_raw(statement(sql))
-        .await?
-        .iter()
-        .map(|row| row.try_get_by_index::<i64>(0))
-        .collect()
-}
+            dep = ns.dep,
+        );
+        db.query_all_raw(statement(sql))
+            .await?
+            .iter()
+            .map(|row| row.try_get_by_index::<i64>(0))
+            .collect()
+    }
 
-/// Multi-source min-depth BFS. See INSIGHTS §3 for halt/depth_cap semantics.
-pub async fn multi_source_walk(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    starts: &[(i64, i64, i64)],
-    halt: Option<&[i64]>,
-    depth_cap: Option<i64>,
-) -> Result<Vec<(i64, i64, i64)>, DbErr> {
-    let table_id = WALK_TABLE_ID.fetch_add(1, Ordering::Relaxed);
-    let reached_table = format!("_reached_{table_id}");
-    let halt_table = format!("_halt_{table_id}");
-    let txn = db.begin().await?;
+    /// Multi-source min-depth BFS. See INSIGHTS §3 for halt/depth_cap semantics.
+    pub async fn multi_source_walk(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        starts: &[(i64, i64, i64)],
+        halt: Option<&[i64]>,
+        depth_cap: Option<i64>,
+    ) -> Result<Vec<(i64, i64, i64)>, DbErr> {
+        let table_id = WALK_TABLE_ID.fetch_add(1, Ordering::Relaxed);
+        let reached_table = format!("_reached_{table_id}");
+        let halt_table = format!("_halt_{table_id}");
+        let txn = db.begin().await?;
 
-    txn.execute_unprepared(&format!(
+        txn.execute_unprepared(&format!(
         "CREATE TEMP TABLE {reached_table} (\
             tag INTEGER NOT NULL, node INTEGER NOT NULL, depth INTEGER NOT NULL, round INTEGER NOT NULL,\
             PRIMARY KEY(tag,node)\
         )"
     ))
     .await?;
-    txn.execute_unprepared(&format!("CREATE TEMP TABLE {halt_table} (node INTEGER PRIMARY KEY)"))
+        txn.execute_unprepared(&format!(
+            "CREATE TEMP TABLE {halt_table} (node INTEGER PRIMARY KEY)"
+        ))
         .await?;
 
-    if let Some(halt_nodes) = halt {
-        for &node in halt_nodes {
-            txn.execute_unprepared(&format!("INSERT OR IGNORE INTO {halt_table} VALUES ({node})"))
+        if let Some(halt_nodes) = halt {
+            for &node in halt_nodes {
+                txn.execute_unprepared(&format!(
+                    "INSERT OR IGNORE INTO {halt_table} VALUES ({node})"
+                ))
                 .await?;
+            }
         }
-    }
 
-    let mut ordered_starts = starts.to_vec();
-    ordered_starts.sort_unstable();
-    for (tag, node, depth) in ordered_starts {
-        txn.execute_unprepared(&format!(
+        let mut ordered_starts = starts.to_vec();
+        ordered_starts.sort_unstable();
+        for (tag, node, depth) in ordered_starts {
+            txn.execute_unprepared(&format!(
             "INSERT OR IGNORE INTO {reached_table}(tag,node,depth,round) VALUES ({tag},{node},{depth},0)"
         ))
         .await?;
-    }
+        }
 
-    let mut round = 0i64;
-    loop {
-        let expand_guard = match depth_cap {
-            Some(cap) => format!(" AND reached.depth < {cap}"),
-            None => String::new(),
-        };
-        txn.execute_unprepared(&format!(
-            "INSERT OR IGNORE INTO {reached_table}(tag,node,depth,round) \
+        let mut round = 0i64;
+        loop {
+            let expand_guard = match depth_cap {
+                Some(cap) => format!(" AND reached.depth < {cap}"),
+                None => String::new(),
+            };
+            txn.execute_unprepared(&format!(
+                "INSERT OR IGNORE INTO {reached_table}(tag,node,depth,round) \
              SELECT reached.tag, dep.child_key, reached.depth + 1, {} \
              FROM {reached_table} reached JOIN {dep} dep ON dep.parent_key = reached.node \
              WHERE reached.round = {round} \
              AND NOT EXISTS (SELECT 1 FROM {halt_table} halt WHERE halt.node = reached.node){}",
-            round + 1,
-            expand_guard,
-            dep = ns.dep,
+                round + 1,
+                expand_guard,
+                dep = ns.dep,
+            ))
+            .await?;
+
+            let inserted = txn
+                .query_one_raw(statement(format!(
+                    "SELECT count(*) FROM {reached_table} WHERE round = {}",
+                    round + 1
+                )))
+                .await?
+                .map(|row| row.try_get_by_index::<i64>(0))
+                .transpose()?
+                .unwrap_or(0);
+            if inserted == 0 {
+                break;
+            }
+            round += 1;
+        }
+
+        let rows = txn
+            .query_all_raw(statement(format!(
+                "SELECT tag,node,depth FROM {reached_table} ORDER BY tag,node"
+            )))
+            .await?;
+        let result = rows
+            .iter()
+            .map(|row| {
+                Ok((
+                    row.try_get_by_index::<i64>(0)?,
+                    row.try_get_by_index::<i64>(1)?,
+                    row.try_get_by_index::<i64>(2)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, DbErr>>()?;
+        txn.execute_unprepared(&format!(
+            "DROP TABLE {reached_table}; DROP TABLE {halt_table}"
         ))
         .await?;
-
-        let inserted = txn
-            .query_one_raw(statement(format!(
-                "SELECT count(*) FROM {reached_table} WHERE round = {}",
-                round + 1
-            )))
-            .await?
-            .map(|row| row.try_get_by_index::<i64>(0))
-            .transpose()?
-            .unwrap_or(0);
-        if inserted == 0 {
-            break;
-        }
-        round += 1;
+        txn.commit().await?;
+        Ok(result)
     }
 
-    let rows = txn
-        .query_all_raw(statement(format!(
-            "SELECT tag,node,depth FROM {reached_table} ORDER BY tag,node"
-        )))
-        .await?;
-    let result = rows
-        .iter()
-        .map(|row| {
-            Ok((
-                row.try_get_by_index::<i64>(0)?,
-                row.try_get_by_index::<i64>(1)?,
-                row.try_get_by_index::<i64>(2)?,
-            ))
-        })
-        .collect::<Result<Vec<_>, DbErr>>()?;
-    txn.execute_unprepared(&format!("DROP TABLE {reached_table}; DROP TABLE {halt_table}"))
-        .await?;
-    txn.commit().await?;
-    Ok(result)
-}
+    /// halt-only, depth-agnostic special case of `multi_source_walk`.
+    pub async fn multi_source_halt_bfs(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        starts: &[(i64, i64)],
+        halt: &[i64],
+    ) -> Result<Vec<(i64, i64)>, DbErr> {
+        let starts3: Vec<(i64, i64, i64)> = starts.iter().map(|&(t, n)| (t, n, 0)).collect();
+        Ok(multi_source_walk(db, ns, &starts3, Some(halt), None)
+            .await?
+            .into_iter()
+            .map(|(t, n, _)| (t, n))
+            .collect())
+    }
 
-/// halt-only, depth-agnostic special case of `multi_source_walk`.
-pub async fn multi_source_halt_bfs(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    starts: &[(i64, i64)],
-    halt: &[i64],
-) -> Result<Vec<(i64, i64)>, DbErr> {
-    let starts3: Vec<(i64, i64, i64)> = starts.iter().map(|&(t, n)| (t, n, 0)).collect();
-    Ok(multi_source_walk(db, ns, &starts3, Some(halt), None)
-        .await?
-        .into_iter()
-        .map(|(t, n, _)| (t, n))
-        .collect())
-}
-
-/// SCC partition as (node_key, comp_repr = MIN member key). Compare on the partition.
-pub async fn scc_labels(db: &DatabaseConnection, ns: &GraphNs) -> Result<Vec<(i64, i64)>, DbErr> {
-    let sql = format!(
+    /// SCC partition as (node_key, comp_repr = MIN member key). Compare on the partition.
+    pub async fn scc_labels(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+    ) -> Result<Vec<(i64, i64)>, DbErr> {
+        let sql = format!(
         "{} \
          SELECT node.key, COALESCE(MIN(CASE WHEN backward.src IS NOT NULL THEN forward.dst END), node.key) \
          FROM {} node \
@@ -1107,176 +1443,197 @@ pub async fn scc_labels(db: &DatabaseConnection, ns: &GraphNs) -> Result<Vec<(i6
         reach_cte(ns),
         ns.row
     );
-    db.query_all_raw(statement(sql))
-        .await?
-        .iter()
-        .map(|row| Ok((row.try_get_by_index::<i64>(0)?, row.try_get_by_index::<i64>(1)?)))
-        .collect()
-}
-
-/// Condensation derived from `scc_labels` + cx_dep group-bys.
-pub async fn build_condensed(db: &DatabaseConnection, ns: &GraphNs) -> Result<Condensed, DbErr> {
-    let comp_of = scc_labels(db, ns).await?;
-    let repr_by_node: BTreeMap<i64, i64> = comp_of.iter().copied().collect();
-    let mut member_counts: BTreeMap<i64, i64> = BTreeMap::new();
-    for &(_, repr) in &comp_of {
-        *member_counts.entry(repr).or_default() += 1;
+        db.query_all_raw(statement(sql))
+            .await?
+            .iter()
+            .map(|row| {
+                Ok((
+                    row.try_get_by_index::<i64>(0)?,
+                    row.try_get_by_index::<i64>(1)?,
+                ))
+            })
+            .collect()
     }
 
-    let edges = db
-        .query_all_raw(statement(format!("SELECT parent_key,child_key FROM {}", ns.dep)))
-        .await?;
-    let mut self_loops = BTreeSet::new();
-    let mut condensed_edges = BTreeSet::new();
-    for edge in &edges {
-        let parent = edge.try_get_by_index::<i64>(0)?;
-        let child = edge.try_get_by_index::<i64>(1)?;
-        let parent_repr = repr_by_node[&parent];
-        let child_repr = repr_by_node[&child];
-        if parent == child {
-            self_loops.insert(parent_repr);
+    /// Condensation derived from `scc_labels` + cx_dep group-bys.
+    pub async fn build_condensed(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+    ) -> Result<Condensed, DbErr> {
+        let comp_of = scc_labels(db, ns).await?;
+        let repr_by_node: BTreeMap<i64, i64> = comp_of.iter().copied().collect();
+        let mut member_counts: BTreeMap<i64, i64> = BTreeMap::new();
+        for &(_, repr) in &comp_of {
+            *member_counts.entry(repr).or_default() += 1;
         }
-        if parent_repr != child_repr {
-            condensed_edges.insert((parent_repr, child_repr));
-        }
-    }
 
-    let size: Vec<(i64, i64)> = member_counts.iter().map(|(&repr, &count)| (repr, count)).collect();
-    let cyclic = member_counts
-        .iter()
-        .map(|(&repr, &count)| (repr, count > 1 || self_loops.contains(&repr)))
-        .collect();
-    Ok(Condensed {
-        comp_of,
-        size,
-        cyclic,
-        cadj: condensed_edges.into_iter().collect(),
-    })
-}
-
-/// Reachable ordered-pair count; matches scc::count_pairs byte-for-byte. Counts over
-/// the CONDENSATION (ncomp components, bitset reach) exactly like v5's scc.rs:103 —
-/// it does NOT materialize the Θ(V²) node-pair table. The answer can be Θ(V²) but is
-/// COMPUTED in ncomp²/64 words in Rust; the on-disk graph stays on disk, only the
-/// small condensed structure comes to Rust. (SCC labeling inside build_condensed is
-/// the remaining lever — see INSIGHTS §3.)
-pub async fn count_pairs(db: &DatabaseConnection, ns: &GraphNs) -> Result<i128, DbErr> {
-    let cond = build_condensed(db, ns).await?;
-
-    // dense-index the min-member component reps to 0..ncomp
-    let reprs: BTreeSet<i64> = cond.size.iter().map(|&(repr, _)| repr).collect();
-    let idx: BTreeMap<i64, usize> = reprs.iter().enumerate().map(|(i, &r)| (r, i)).collect();
-    let ncomp = reprs.len();
-    if ncomp == 0 {
-        return Ok(0);
-    }
-    let mut size = vec![0u128; ncomp];
-    for &(repr, n) in &cond.size {
-        size[idx[&repr]] = n as u128;
-    }
-    let mut cyclic = vec![false; ncomp];
-    for &(repr, is_cyclic) in &cond.cyclic {
-        cyclic[idx[&repr]] = is_cyclic;
-    }
-    let mut cadj = vec![Vec::new(); ncomp];
-    for &(parent, child) in &cond.cadj {
-        cadj[idx[&parent]].push(idx[&child]);
-    }
-
-    // v5 scc.rs:103 verbatim in ncomp space: topo order, bitset-propagate reach,
-    // total = Σ cyclic·size² + Σ size·(reachable component sizes).
-    let mut indeg = vec![0u32; ncomp];
-    for cc in 0..ncomp {
-        for &s in &cadj[cc] {
-            indeg[s] += 1;
-        }
-    }
-    let mut topo: Vec<usize> = (0..ncomp).filter(|&x| indeg[x] == 0).collect();
-    let mut qi = 0;
-    while qi < topo.len() {
-        let x = topo[qi];
-        qi += 1;
-        for &s in &cadj[x] {
-            indeg[s] -= 1;
-            if indeg[s] == 0 {
-                topo.push(s);
+        let edges = db
+            .query_all_raw(statement(format!(
+                "SELECT parent_key,child_key FROM {}",
+                ns.dep
+            )))
+            .await?;
+        let mut self_loops = BTreeSet::new();
+        let mut condensed_edges = BTreeSet::new();
+        for edge in &edges {
+            let parent = edge.try_get_by_index::<i64>(0)?;
+            let child = edge.try_get_by_index::<i64>(1)?;
+            let parent_repr = repr_by_node[&parent];
+            let child_repr = repr_by_node[&child];
+            if parent == child {
+                self_loops.insert(parent_repr);
+            }
+            if parent_repr != child_repr {
+                condensed_edges.insert((parent_repr, child_repr));
             }
         }
+
+        let size: Vec<(i64, i64)> = member_counts
+            .iter()
+            .map(|(&repr, &count)| (repr, count))
+            .collect();
+        let cyclic = member_counts
+            .iter()
+            .map(|(&repr, &count)| (repr, count > 1 || self_loops.contains(&repr)))
+            .collect();
+        Ok(Condensed {
+            comp_of,
+            size,
+            cyclic,
+            cadj: condensed_edges.into_iter().collect(),
+        })
     }
-    let words = (ncomp + 63) / 64;
-    let mut reach = vec![0u64; ncomp * words];
-    for &cc in topo.iter().rev() {
-        for si in 0..cadj[cc].len() {
-            let s = cadj[cc][si];
-            reach[cc * words + s / 64] |= 1u64 << (s % 64);
+
+    /// Reachable ordered-pair count; matches scc::count_pairs byte-for-byte. Counts over
+    /// the CONDENSATION (ncomp components, bitset reach) exactly like v5's scc.rs:103 —
+    /// it does NOT materialize the Θ(V²) node-pair table. The answer can be Θ(V²) but is
+    /// COMPUTED in ncomp²/64 words in Rust; the on-disk graph stays on disk, only the
+    /// small condensed structure comes to Rust. (SCC labeling inside build_condensed is
+    /// the remaining lever — see INSIGHTS §3.)
+    pub async fn count_pairs(db: &DatabaseConnection, ns: &GraphNs) -> Result<i128, DbErr> {
+        let cond = build_condensed(db, ns).await?;
+
+        // dense-index the min-member component reps to 0..ncomp
+        let reprs: BTreeSet<i64> = cond.size.iter().map(|&(repr, _)| repr).collect();
+        let idx: BTreeMap<i64, usize> = reprs.iter().enumerate().map(|(i, &r)| (r, i)).collect();
+        let ncomp = reprs.len();
+        if ncomp == 0 {
+            return Ok(0);
+        }
+        let mut size = vec![0u128; ncomp];
+        for &(repr, n) in &cond.size {
+            size[idx[&repr]] = n as u128;
+        }
+        let mut cyclic = vec![false; ncomp];
+        for &(repr, is_cyclic) in &cond.cyclic {
+            cyclic[idx[&repr]] = is_cyclic;
+        }
+        let mut cadj = vec![Vec::new(); ncomp];
+        for &(parent, child) in &cond.cadj {
+            cadj[idx[&parent]].push(idx[&child]);
+        }
+
+        // v5 scc.rs:103 verbatim in ncomp space: topo order, bitset-propagate reach,
+        // total = Σ cyclic·size² + Σ size·(reachable component sizes).
+        let mut indeg = vec![0u32; ncomp];
+        for cc in 0..ncomp {
+            for &s in &cadj[cc] {
+                indeg[s] += 1;
+            }
+        }
+        let mut topo: Vec<usize> = (0..ncomp).filter(|&x| indeg[x] == 0).collect();
+        let mut qi = 0;
+        while qi < topo.len() {
+            let x = topo[qi];
+            qi += 1;
+            for &s in &cadj[x] {
+                indeg[s] -= 1;
+                if indeg[s] == 0 {
+                    topo.push(s);
+                }
+            }
+        }
+        let words = (ncomp + 63) / 64;
+        let mut reach = vec![0u64; ncomp * words];
+        for &cc in topo.iter().rev() {
+            for si in 0..cadj[cc].len() {
+                let s = cadj[cc][si];
+                reach[cc * words + s / 64] |= 1u64 << (s % 64);
+                for w in 0..words {
+                    reach[cc * words + w] |= reach[s * words + w];
+                }
+            }
+        }
+        let mut total: i128 = 0;
+        for cc in 0..ncomp {
+            if cyclic[cc] {
+                total += (size[cc] * size[cc]) as i128;
+            }
+            let mut wsum: u128 = 0;
             for w in 0..words {
-                reach[cc * words + w] |= reach[s * words + w];
+                let mut bits = reach[cc * words + w];
+                while bits != 0 {
+                    let b = w * 64 + bits.trailing_zeros() as usize;
+                    wsum += size[b];
+                    bits &= bits - 1;
+                }
             }
+            total += (size[cc] * wsum) as i128;
         }
+        Ok(total)
     }
-    let mut total: i128 = 0;
-    for cc in 0..ncomp {
-        if cyclic[cc] {
-            total += (size[cc] * size[cc]) as i128;
-        }
-        let mut wsum: u128 = 0;
-        for w in 0..words {
-            let mut bits = reach[cc * words + w];
-            while bits != 0 {
-                let b = w * 64 + bits.trailing_zeros() as usize;
-                wsum += size[b];
-                bits &= bits - 1;
-            }
-        }
-        total += (size[cc] * wsum) as i128;
-    }
-    Ok(total)
-}
-
 }
 pub mod reconcile {
-//! Reconciliation in SQLite — salsa's red-green dirty-check, done as a recursive CTE
-//! over a dep table instead of a resident memo graph. Backported from the v6 labkit.
-//!
-//! This is the "salsa replaced by SQLite" piece: the control plane that decides WHICH
-//! rels are stale after an input moves, without a resident dependency graph. The exact
-//! salsa idea, in tables:
-//!   rx_memo(id, digest, changed_at, verified_at)  -- one row per reactive rel
-//!   rx_dep(reader, read)                           -- reader READS read (the deps array)
-//!
-//! - `mark_changed`  : an input's digest moved at revision `rev` (changed_at = rev).
-//! - `dirty`         : the invalidation query — every rel transitively downstream of
-//!                     something whose changed_at > verified_at. One recursive CTE.
-//! - `verify`        : after the caller recomputes a rel, record its new digest; if the
-//!                     digest actually MOVED, changed_at = rev (its readers stay dirty);
-//!                     if not, changed_at is left (EARLY CUTOFF — the wave stops here).
-//!                     verified_at = rev either way.
-//!
-//! One transaction per batch; every step is set-based (no per-row round trip beyond the
-//! caller's own recompute).
+    //! Reconciliation in SQLite — salsa's red-green dirty-check, done as a recursive CTE
+    //! over a dep table instead of a resident memo graph. Backported from the v6 labkit.
+    //!
+    //! This is the "salsa replaced by SQLite" piece: the control plane that decides WHICH
+    //! rels are stale after an input moves, without a resident dependency graph. The exact
+    //! salsa idea, in tables:
+    //!   rx_memo(id, digest, changed_at, verified_at)  -- one row per reactive rel
+    //!   rx_dep(reader, read)                           -- reader READS read (the deps array)
+    //!
+    //! - `mark_changed`  : an input's digest moved at revision `rev` (changed_at = rev).
+    //! - `dirty`         : the invalidation query — every rel transitively downstream of
+    //!                     something whose changed_at > verified_at. One recursive CTE.
+    //! - `verify`        : after the caller recomputes a rel, record its new digest; if the
+    //!                     digest actually MOVED, changed_at = rev (its readers stay dirty);
+    //!                     if not, changed_at is left (EARLY CUTOFF — the wave stops here).
+    //!                     verified_at = rev either way.
+    //!
+    //! One transaction per batch; every step is set-based (no per-row round trip beyond the
+    //! caller's own recompute).
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, Statement, TransactionTrait};
+    use sea_orm::{
+        ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, Statement, TransactionTrait,
+    };
 
-use crate::relstore::GraphNs;
-use crate::stmt_counter;
+    use crate::relstore::GraphNs;
+    use crate::stmt_counter;
 
-async fn exec(db: &impl ConnectionTrait, sql: &str) -> Result<(), DbErr> {
-    stmt_counter::incr();
-    db.execute_unprepared(sql).await?;
-    Ok(())
-}
+    async fn exec(db: &impl ConnectionTrait, sql: &str) -> Result<(), DbErr> {
+        stmt_counter::incr();
+        db.execute_unprepared(sql).await?;
+        Ok(())
+    }
 
-async fn query_ids(db: &impl ConnectionTrait, sql: &str) -> Result<Vec<i64>, DbErr> {
-    stmt_counter::incr();
-    let rows = db
-        .query_all_raw(Statement::from_string(DatabaseBackend::Sqlite, sql.to_owned()))
-        .await?;
-    Ok(rows.iter().map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0)).collect())
-}
+    async fn query_ids(db: &impl ConnectionTrait, sql: &str) -> Result<Vec<i64>, DbErr> {
+        stmt_counter::incr();
+        let rows = db
+            .query_all_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                sql.to_owned(),
+            ))
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+            .collect())
+    }
 
-pub async fn create_schema(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), DbErr> {
-    db.execute_unprepared(
-        &format!("CREATE TABLE {memo} (
+    pub async fn create_schema(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), DbErr> {
+        db.execute_unprepared(&format!(
+            "CREATE TABLE {memo} (
             id          INTEGER PRIMARY KEY,
             digest      INTEGER NOT NULL,
             changed_at  INTEGER NOT NULL DEFAULT 0,
@@ -1291,126 +1648,154 @@ pub async fn create_schema(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), 
             memo = ns.memo,
             rdep = ns.rdep,
             ix_rdep_read = ns.ix_rdep_read,
-        ),
-    )
-    .await?;
-    Ok(())
-}
+        ))
+        .await?;
+        Ok(())
+    }
 
-/// Seed a rel's memo (its output digest and the deps it read), at revision `rev`.
-pub async fn seed(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    id: i64,
-    digest: i64,
-    deps: &[i64],
-    rev: i64,
-) -> Result<(), DbErr> {
-    let txn = db.begin().await?;
-    exec(
+    /// Seed a rel's memo (its output digest and the deps it read), at revision `rev`.
+    pub async fn seed(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        id: i64,
+        digest: i64,
+        deps: &[i64],
+        rev: i64,
+    ) -> Result<(), DbErr> {
+        let txn = db.begin().await?;
+        exec(
         &txn,
         &format!("INSERT INTO {}(id,digest,changed_at,verified_at) VALUES ({id},{digest},{rev},{rev})", ns.memo),
     )
     .await?;
-    for &d in deps {
-        exec(&txn, &format!("INSERT OR IGNORE INTO {}(reader,read) VALUES ({id},{d})", ns.rdep)).await?;
+        for &d in deps {
+            exec(
+                &txn,
+                &format!(
+                    "INSERT OR IGNORE INTO {}(reader,read) VALUES ({id},{d})",
+                    ns.rdep
+                ),
+            )
+            .await?;
+        }
+        txn.commit().await?;
+        Ok(())
     }
-    txn.commit().await?;
-    Ok(())
-}
 
-/// An input's digest moved at `rev`: bump its changed_at so the CTE sees it stale.
-pub async fn mark_changed(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    ids: &[i64],
-    rev: i64,
-) -> Result<(), DbErr> {
-    let in_list = ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
-    exec(db, &format!("UPDATE {} SET changed_at={rev} WHERE id IN ({in_list})", ns.memo)).await
-}
+    /// An input's digest moved at `rev`: bump its changed_at so the CTE sees it stale.
+    pub async fn mark_changed(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        ids: &[i64],
+        rev: i64,
+    ) -> Result<(), DbErr> {
+        let in_list = ids
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        exec(
+            db,
+            &format!(
+                "UPDATE {} SET changed_at={rev} WHERE id IN ({in_list})",
+                ns.memo
+            ),
+        )
+        .await
+    }
 
-/// The invalidation query, in SQL: the current stale FRONTIER — every derived rel that
-/// READS something whose digest changed after that rel was last verified. This is exactly
-/// salsa's rule (a rel is stale iff a dependency moved past its verified_at). It is a
-/// FRONTIER, not the full closure: a rel one hop further only becomes stale AFTER its dep
-/// recomputes and actually moves (see `verify`) — that lazy step is what gives early
-/// cutoff. The caller loops: `while let frontier = dirty(); recompute+verify each`.
-pub async fn dirty(db: &DatabaseConnection, ns: &GraphNs) -> Result<Vec<i64>, DbErr> {
-    query_ids(
-        db,
-        &format!("SELECT DISTINCT dep.reader
+    /// The invalidation query, in SQL: the current stale FRONTIER — every derived rel that
+    /// READS something whose digest changed after that rel was last verified. This is exactly
+    /// salsa's rule (a rel is stale iff a dependency moved past its verified_at). It is a
+    /// FRONTIER, not the full closure: a rel one hop further only becomes stale AFTER its dep
+    /// recomputes and actually moves (see `verify`) — that lazy step is what gives early
+    /// cutoff. The caller loops: `while let frontier = dirty(); recompute+verify each`.
+    pub async fn dirty(db: &DatabaseConnection, ns: &GraphNs) -> Result<Vec<i64>, DbErr> {
+        query_ids(
+            db,
+            &format!(
+                "SELECT DISTINCT dep.reader
          FROM {rdep} dep
          JOIN {memo} d ON d.id = dep.read
          JOIN {memo} s ON s.id = dep.reader
          WHERE d.changed_at > s.verified_at
          ORDER BY dep.reader",
-            rdep = ns.rdep,
-            memo = ns.memo,
-        ),
-    )
-    .await
-}
+                rdep = ns.rdep,
+                memo = ns.memo,
+            ),
+        )
+        .await
+    }
 
-/// Record a recomputed rel's new digest at `rev`. Returns whether the digest MOVED.
-/// If it moved, changed_at = rev (readers stay dirty). If not, changed_at is untouched
-/// (EARLY CUTOFF: downstream never re-runs). verified_at = rev either way.
-pub async fn verify(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    id: i64,
-    new_digest: i64,
-    rev: i64,
-) -> Result<bool, DbErr> {
-    stmt_counter::incr();
-    let rows = db
-        .query_all_raw(Statement::from_string(
-            DatabaseBackend::Sqlite,
-            format!("SELECT digest FROM {} WHERE id={id}", ns.memo),
-        ))
+    /// Record a recomputed rel's new digest at `rev`. Returns whether the digest MOVED.
+    /// If it moved, changed_at = rev (readers stay dirty). If not, changed_at is untouched
+    /// (EARLY CUTOFF: downstream never re-runs). verified_at = rev either way.
+    pub async fn verify(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        id: i64,
+        new_digest: i64,
+        rev: i64,
+    ) -> Result<bool, DbErr> {
+        stmt_counter::incr();
+        let rows = db
+            .query_all_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                format!("SELECT digest FROM {} WHERE id={id}", ns.memo),
+            ))
+            .await?;
+        let old = rows
+            .first()
+            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+            .unwrap_or(0);
+        let moved = old != new_digest;
+        let set_changed = if moved {
+            format!(", changed_at={rev}")
+        } else {
+            String::new()
+        };
+        exec(
+            db,
+            &format!(
+                "UPDATE {} SET digest={new_digest}, verified_at={rev}{set_changed} WHERE id={id}",
+                ns.memo
+            ),
+        )
         .await?;
-    let old = rows.first().map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0)).unwrap_or(0);
-    let moved = old != new_digest;
-    let set_changed = if moved { format!(", changed_at={rev}") } else { String::new() };
-    exec(
-        db,
-        &format!("UPDATE {} SET digest={new_digest}, verified_at={rev}{set_changed} WHERE id={id}", ns.memo),
-    )
-    .await?;
-    Ok(moved)
-}
+        Ok(moved)
+    }
 
-/// The correct reconcile sweep (the labkit `SqlReconciler` shape, proven byte-identical
-/// to salsa on DAGs with diamonds). Process `seeds` — the edited cells, whose values
-/// already changed — and every transitive reader whose digest actually moves, in
-/// ASCENDING id order. Ascending is a valid topological order here (every rx_dep edge is
-/// parent->child with child > parent), so when a node is recomputed all of its deps are
-/// already current in rx_memo. That is exactly the property the lazy one-hop `dirty()`
-/// loop violates: it walks in hop-distance-from-source order, which is NOT topo order when
-/// a node has deps at different hop distances, so it locks a node stale against a dep
-/// verified later in the same `rev`. Use THIS as the reconcile driver, not the dirty() loop.
-///
-/// `recompute(id, dep_digests)` returns the node's new digest from its value (caller-
-/// owned) and its deps' current digests (read here from rx_memo); the fold is order-
-/// independent (XOR). Each node is persisted via `verify` (early cutoff: readers of an
-/// unmoved node are never enqueued). Returns the recompute count — the early-cutoff meter.
-pub async fn propagate<F>(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    seeds: &[i64],
-    rev: i64,
-    recompute: F,
-) -> Result<u64, DbErr>
-where
-    F: Fn(i64, &[i64]) -> i64,
-{
-    use std::collections::BTreeSet;
-    let mut dirty: BTreeSet<i64> = seeds.iter().copied().collect();
-    let mut count = 0u64;
-    while let Some(&id) = dirty.iter().next() {
-        dirty.remove(&id);
-        // the node's deps' current digests (order-independent: node_digest folds with XOR).
-        let dep_digests = query_ids(
+    /// The correct reconcile sweep (the labkit `SqlReconciler` shape, proven byte-identical
+    /// to salsa on DAGs with diamonds). Process `seeds` — the edited cells, whose values
+    /// already changed — and every transitive reader whose digest actually moves, in
+    /// ASCENDING id order. Ascending is a valid topological order here (every rx_dep edge is
+    /// parent->child with child > parent), so when a node is recomputed all of its deps are
+    /// already current in rx_memo. That is exactly the property the lazy one-hop `dirty()`
+    /// loop violates: it walks in hop-distance-from-source order, which is NOT topo order when
+    /// a node has deps at different hop distances, so it locks a node stale against a dep
+    /// verified later in the same `rev`. Use THIS as the reconcile driver, not the dirty() loop.
+    ///
+    /// `recompute(id, dep_digests)` returns the node's new digest from its value (caller-
+    /// owned) and its deps' current digests (read here from rx_memo); the fold is order-
+    /// independent (XOR). Each node is persisted via `verify` (early cutoff: readers of an
+    /// unmoved node are never enqueued). Returns the recompute count — the early-cutoff meter.
+    pub async fn propagate<F>(
+        db: &DatabaseConnection,
+        ns: &GraphNs,
+        seeds: &[i64],
+        rev: i64,
+        recompute: F,
+    ) -> Result<u64, DbErr>
+    where
+        F: Fn(i64, &[i64]) -> i64,
+    {
+        use std::collections::BTreeSet;
+        let mut dirty: BTreeSet<i64> = seeds.iter().copied().collect();
+        let mut count = 0u64;
+        while let Some(&id) = dirty.iter().next() {
+            dirty.remove(&id);
+            // the node's deps' current digests (order-independent: node_digest folds with XOR).
+            let dep_digests = query_ids(
             db,
             &format!(
                 "SELECT m.digest FROM {rdep} dep JOIN {memo} m ON m.id = dep.read WHERE dep.reader = {id}",
@@ -1419,196 +1804,211 @@ where
             ),
         )
         .await?;
-        let new_digest = recompute(id, &dep_digests);
-        let moved = verify(db, ns, id, new_digest, rev).await?;
-        count += 1;
-        if moved {
-            let readers = query_ids(
-                db,
-                &format!("SELECT reader FROM {rdep} WHERE read = {id}", rdep = ns.rdep),
-            )
-            .await?;
-            for reader in readers {
-                dirty.insert(reader);
+            let new_digest = recompute(id, &dep_digests);
+            let moved = verify(db, ns, id, new_digest, rev).await?;
+            count += 1;
+            if moved {
+                let readers = query_ids(
+                    db,
+                    &format!(
+                        "SELECT reader FROM {rdep} WHERE read = {id}",
+                        rdep = ns.rdep
+                    ),
+                )
+                .await?;
+                for reader in readers {
+                    dirty.insert(reader);
+                }
             }
         }
-    }
-    Ok(count)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::relstore::GraphNs;
-    use sea_orm::{ConnectOptions, Database};
-
-    async fn open() -> DatabaseConnection {
-        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("rx_test_{}_{uniq}.sqlite", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
-        opt.max_connections(1).min_connections(1);
-        let db = Database::connect(opt).await.unwrap();
-        db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS).await.unwrap();
-        create_schema(&db, &GraphNs::default()).await.unwrap();
-        db
+        Ok(count)
     }
 
-    // drive the reconcile loop: while there's a stale frontier, recompute each rel
-    // (digest from `recompute`) and verify it. Returns the ids recomputed, in order —
-    // the count/order is the early-cutoff meter.
-    async fn reconcile_loop(db: &DatabaseConnection, ns: &GraphNs, recompute: impl Fn(i64) -> i64) -> Vec<i64> {
-        let mut order = Vec::new();
-        loop {
-            let front = dirty(db, ns).await.unwrap();
-            if front.is_empty() {
-                break;
-            }
-            for id in front {
-                let dg = recompute(id);
-                verify(db, ns, id, dg, 1).await.unwrap();
-                order.push(id);
-            }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::relstore::GraphNs;
+        use sea_orm::{ConnectOptions, Database};
+
+        async fn open() -> DatabaseConnection {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("rx_test_{}_{uniq}.sqlite", std::process::id()));
+            let _ = std::fs::remove_file(&path);
+            let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+            opt.max_connections(1).min_connections(1);
+            let db = Database::connect(opt).await.unwrap();
+            db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS)
+                .await
+                .unwrap();
+            create_schema(&db, &GraphNs::default()).await.unwrap();
+            db
         }
-        order
-    }
 
-    // chain 1 <- 2 <- 3. Change input 1. The stale FRONTIER is just {2} (one hop).
-    #[tokio::test]
-    async fn dirty_is_the_frontier() {
-        let db = open().await;
-        let ns = GraphNs::default();
-        seed(&db, &ns, 1, 100, &[], 0).await.unwrap();
-        seed(&db, &ns, 2, 200, &[1], 0).await.unwrap();
-        seed(&db, &ns, 3, 300, &[2], 0).await.unwrap();
-        assert_eq!(dirty(&db, &ns).await.unwrap(), Vec::<i64>::new());
-        mark_changed(&db, &ns, &[1], 1).await.unwrap();
-        assert_eq!(dirty(&db, &ns).await.unwrap(), vec![2]);
-    }
+        // drive the reconcile loop: while there's a stale frontier, recompute each rel
+        // (digest from `recompute`) and verify it. Returns the ids recomputed, in order —
+        // the count/order is the early-cutoff meter.
+        async fn reconcile_loop(
+            db: &DatabaseConnection,
+            ns: &GraphNs,
+            recompute: impl Fn(i64) -> i64,
+        ) -> Vec<i64> {
+            let mut order = Vec::new();
+            loop {
+                let front = dirty(db, ns).await.unwrap();
+                if front.is_empty() {
+                    break;
+                }
+                for id in front {
+                    let dg = recompute(id);
+                    verify(db, ns, id, dg, 1).await.unwrap();
+                    order.push(id);
+                }
+            }
+            order
+        }
 
-    // early cutoff: input 1 changes, but recompute of 2 lands the SAME digest -> the wave
-    // stops; 3 is NEVER recomputed. Only {2} runs.
-    #[tokio::test]
-    async fn early_cutoff_stops_the_wave() {
-        let db = open().await;
-        let ns = GraphNs::default();
-        seed(&db, &ns, 1, 100, &[], 0).await.unwrap();
-        seed(&db, &ns, 2, 200, &[1], 0).await.unwrap();
-        seed(&db, &ns, 3, 300, &[2], 0).await.unwrap();
-        mark_changed(&db, &ns, &[1], 1).await.unwrap();
-        let ran = reconcile_loop(&db, &ns, |id| match id {
-            2 => 200, // unchanged -> early cutoff
-            other => other * 1000,
-        })
-        .await;
-        assert_eq!(ran, vec![2], "2 recomputes, 3 never runs (early cutoff)");
-    }
+        // chain 1 <- 2 <- 3. Change input 1. The stale FRONTIER is just {2} (one hop).
+        #[tokio::test]
+        async fn dirty_is_the_frontier() {
+            let db = open().await;
+            let ns = GraphNs::default();
+            seed(&db, &ns, 1, 100, &[], 0).await.unwrap();
+            seed(&db, &ns, 2, 200, &[1], 0).await.unwrap();
+            seed(&db, &ns, 3, 300, &[2], 0).await.unwrap();
+            assert_eq!(dirty(&db, &ns).await.unwrap(), Vec::<i64>::new());
+            mark_changed(&db, &ns, &[1], 1).await.unwrap();
+            assert_eq!(dirty(&db, &ns).await.unwrap(), vec![2]);
+        }
 
-    // real change all the way down: 2 moves, so 3 becomes stale and also runs. {2,3}.
-    #[tokio::test]
-    async fn real_change_propagates() {
-        let db = open().await;
-        let ns = GraphNs::default();
-        seed(&db, &ns, 1, 100, &[], 0).await.unwrap();
-        seed(&db, &ns, 2, 200, &[1], 0).await.unwrap();
-        seed(&db, &ns, 3, 300, &[2], 0).await.unwrap();
-        mark_changed(&db, &ns, &[1], 1).await.unwrap();
-        let ran = reconcile_loop(&db, &ns, |id| id * 7).await; // every recompute moves
-        assert_eq!(ran, vec![2, 3], "2 moves -> 3 runs");
-    }
-}
+        // early cutoff: input 1 changes, but recompute of 2 lands the SAME digest -> the wave
+        // stops; 3 is NEVER recomputed. Only {2} runs.
+        #[tokio::test]
+        async fn early_cutoff_stops_the_wave() {
+            let db = open().await;
+            let ns = GraphNs::default();
+            seed(&db, &ns, 1, 100, &[], 0).await.unwrap();
+            seed(&db, &ns, 2, 200, &[1], 0).await.unwrap();
+            seed(&db, &ns, 3, 300, &[2], 0).await.unwrap();
+            mark_changed(&db, &ns, &[1], 1).await.unwrap();
+            let ran = reconcile_loop(&db, &ns, |id| match id {
+                2 => 200, // unchanged -> early cutoff
+                other => other * 1000,
+            })
+            .await;
+            assert_eq!(ran, vec![2], "2 recomputes, 3 never runs (early cutoff)");
+        }
 
+        // real change all the way down: 2 moves, so 3 becomes stale and also runs. {2,3}.
+        #[tokio::test]
+        async fn real_change_propagates() {
+            let db = open().await;
+            let ns = GraphNs::default();
+            seed(&db, &ns, 1, 100, &[], 0).await.unwrap();
+            seed(&db, &ns, 2, 200, &[1], 0).await.unwrap();
+            seed(&db, &ns, 3, 300, &[2], 0).await.unwrap();
+            mark_changed(&db, &ns, &[1], 1).await.unwrap();
+            let ran = reconcile_loop(&db, &ns, |id| id * 7).await; // every recompute moves
+            assert_eq!(ran, vec![2, 3], "2 moves -> 3 runs");
+        }
+    }
 }
 pub mod temporal {
-//! Append-only bitemporal fact storage backed by SQLite.
+    //! Append-only bitemporal fact storage backed by SQLite.
 
-use sea_orm::{
-    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, Statement, TransactionTrait,
-};
-use std::sync::atomic::{AtomicI64, Ordering};
+    use sea_orm::{
+        ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, Statement, TransactionTrait,
+    };
+    use std::sync::atomic::{AtomicI64, Ordering};
 
-use crate::stmt_counter;
+    use crate::stmt_counter;
 
-const SOFT_HEAP_LIMIT: &str = "PRAGMA soft_heap_limit=4294967296;";
+    const SOFT_HEAP_LIMIT: &str = "PRAGMA soft_heap_limit=4294967296;";
 
-fn mix_key(key: i64) -> i64 {
-    let mut mixed = (key as u64).wrapping_add(0x9E3779B97F4A7C15);
-    mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-    mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D049BB133111EB);
-    (mixed ^ (mixed >> 31)) as i64
-}
+    fn mix_key(key: i64) -> i64 {
+        let mut mixed = (key as u64).wrapping_add(0x9E3779B97F4A7C15);
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D049BB133111EB);
+        (mixed ^ (mixed >> 31)) as i64
+    }
 
-async fn execute(db: &impl ConnectionTrait, sql: &str) -> Result<(), DbErr> {
-    stmt_counter::incr();
-    db.execute_unprepared(sql).await?;
-    Ok(())
-}
+    async fn execute(db: &impl ConnectionTrait, sql: &str) -> Result<(), DbErr> {
+        stmt_counter::incr();
+        db.execute_unprepared(sql).await?;
+        Ok(())
+    }
 
-async fn execute_statement(db: &impl ConnectionTrait, statement: Statement) -> Result<(), DbErr> {
-    stmt_counter::incr();
-    db.execute_raw(statement).await?;
-    Ok(())
-}
+    async fn execute_statement(
+        db: &impl ConnectionTrait,
+        statement: Statement,
+    ) -> Result<(), DbErr> {
+        stmt_counter::incr();
+        db.execute_raw(statement).await?;
+        Ok(())
+    }
 
-async fn scalar(db: &impl ConnectionTrait, sql: &str) -> Result<i64, DbErr> {
-    stmt_counter::incr();
-    Ok(db
-        .query_one_raw(Statement::from_string(DatabaseBackend::Sqlite, sql.to_owned()))
-        .await?
-        .map(|row| row.try_get_by_index::<i64>(0).unwrap_or(0))
-        .unwrap_or(0))
-}
+    async fn scalar(db: &impl ConnectionTrait, sql: &str) -> Result<i64, DbErr> {
+        stmt_counter::incr();
+        Ok(db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                sql.to_owned(),
+            ))
+            .await?
+            .map(|row| row.try_get_by_index::<i64>(0).unwrap_or(0))
+            .unwrap_or(0))
+    }
 
-async fn create_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
-    execute(
-        db,
-        "CREATE TABLE fact(key INTEGER NOT NULL, tt_from INTEGER NOT NULL,
+    async fn create_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
+        execute(
+            db,
+            "CREATE TABLE fact(key INTEGER NOT NULL, tt_from INTEGER NOT NULL,
             tt_to INTEGER, weight INTEGER NOT NULL, PRIMARY KEY(key,tt_from)) WITHOUT ROWID;
          CREATE INDEX ix_live ON fact(key) WHERE tt_to IS NULL;
          CREATE TEMP TABLE d(key INTEGER PRIMARY KEY, dw INTEGER);",
-    )
-    .await
-}
-
-fn delta_json(deltas: &[(i64, i64)]) -> String {
-    let mut json = String::from("[");
-    for (index, (key, weight)) in deltas.iter().enumerate() {
-        if index > 0 {
-            json.push(',');
-        }
-        json.push_str(&format!("[{key},{weight}]"));
-    }
-    json.push(']');
-    json
-}
-
-pub struct TemporalStore {
-    db: DatabaseConnection,
-    revision: AtomicI64,
-}
-
-impl TemporalStore {
-    pub async fn attach(db: DatabaseConnection) -> Result<Self, DbErr> {
-        execute(&db, crate::unfuck_sqlite::OPEN_PRAGMAS).await?;
-        execute(&db, SOFT_HEAP_LIMIT).await?;
-        create_schema(&db).await?;
-        let revision = scalar(&db, "SELECT COALESCE(MAX(tt_from), 0) FROM fact").await?;
-        Ok(Self {
-            db,
-            revision: AtomicI64::new(revision),
-        })
+        )
+        .await
     }
 
-    pub async fn commit(&self, deltas: &[(i64, i64)]) -> Result<(), DbErr> {
-        if deltas.is_empty() {
-            return Ok(());
+    fn delta_json(deltas: &[(i64, i64)]) -> String {
+        let mut json = String::from("[");
+        for (index, (key, weight)) in deltas.iter().enumerate() {
+            if index > 0 {
+                json.push(',');
+            }
+            json.push_str(&format!("[{key},{weight}]"));
         }
-        let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
-        let delta_json = delta_json(deltas);
-        let transaction = self.db.begin().await?;
-        execute(&transaction, "DELETE FROM d").await?;
-        execute_statement(
+        json.push(']');
+        json
+    }
+
+    pub struct TemporalStore {
+        db: DatabaseConnection,
+        revision: AtomicI64,
+    }
+
+    impl TemporalStore {
+        pub async fn attach(db: DatabaseConnection) -> Result<Self, DbErr> {
+            execute(&db, crate::unfuck_sqlite::OPEN_PRAGMAS).await?;
+            execute(&db, SOFT_HEAP_LIMIT).await?;
+            create_schema(&db).await?;
+            let revision = scalar(&db, "SELECT COALESCE(MAX(tt_from), 0) FROM fact").await?;
+            Ok(Self {
+                db,
+                revision: AtomicI64::new(revision),
+            })
+        }
+
+        pub async fn commit(&self, deltas: &[(i64, i64)]) -> Result<(), DbErr> {
+            if deltas.is_empty() {
+                return Ok(());
+            }
+            let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
+            let delta_json = delta_json(deltas);
+            let transaction = self.db.begin().await?;
+            execute(&transaction, "DELETE FROM d").await?;
+            execute_statement(
             &transaction,
             Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
@@ -1618,24 +2018,24 @@ impl TemporalStore {
             ),
         )
         .await?;
-        execute_statement(
-            &transaction,
-            Statement::from_sql_and_values(
-                DatabaseBackend::Sqlite,
-                "INSERT INTO fact(key,tt_from,tt_to,weight)
+            execute_statement(
+                &transaction,
+                Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "INSERT INTO fact(key,tt_from,tt_to,weight)
              SELECT d.key, ?1, NULL, 0 FROM d LEFT JOIN fact f ON f.key=d.key AND f.tt_to IS NULL
              WHERE f.key IS NULL AND d.dw>0",
-                [revision.into()],
-            ),
-        )
-        .await?;
-        execute(
-            &transaction,
-            "UPDATE fact SET weight = weight + (SELECT dw FROM d WHERE d.key=fact.key)
+                    [revision.into()],
+                ),
+            )
+            .await?;
+            execute(
+                &transaction,
+                "UPDATE fact SET weight = weight + (SELECT dw FROM d WHERE d.key=fact.key)
              WHERE tt_to IS NULL AND key IN (SELECT key FROM d)",
-        )
-        .await?;
-        execute_statement(
+            )
+            .await?;
+            execute_statement(
             &transaction,
             Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
@@ -1644,110 +2044,109 @@ impl TemporalStore {
             ),
         )
         .await?;
-        transaction.commit().await?;
-        Ok(())
+            transaction.commit().await?;
+            Ok(())
+        }
+
+        pub async fn live(&self) -> Result<i64, DbErr> {
+            scalar(&self.db, "SELECT count(*) FROM fact WHERE tt_to IS NULL").await
+        }
+
+        pub async fn total_rows(&self) -> Result<i64, DbErr> {
+            scalar(&self.db, "SELECT count(*) FROM fact").await
+        }
+
+        pub async fn digest(&self) -> Result<i64, DbErr> {
+            stmt_counter::incr();
+            let rows = self
+                .db
+                .query_all_raw(Statement::from_string(
+                    DatabaseBackend::Sqlite,
+                    "SELECT key FROM fact WHERE tt_to IS NULL".to_owned(),
+                ))
+                .await?;
+            Ok(rows.into_iter().fold(0, |digest, row| {
+                digest ^ mix_key(row.try_get_by_index::<i64>(0).unwrap_or(0))
+            }))
+        }
+
+        pub fn conn(&self) -> &DatabaseConnection {
+            &self.db
+        }
     }
 
-    pub async fn live(&self) -> Result<i64, DbErr> {
-        scalar(&self.db, "SELECT count(*) FROM fact WHERE tt_to IS NULL").await
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use sea_orm::{ConnectOptions, Database};
+
+        async fn open() -> TemporalStore {
+            static NEXT_TEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let unique = NEXT_TEST.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "temporal_store_test_{}_{unique}.sqlite",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&path);
+            let mut options = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+            options.max_connections(1).min_connections(1);
+            TemporalStore::attach(Database::connect(options).await.unwrap())
+                .await
+                .unwrap()
+        }
+
+        fn statement_lock() -> &'static std::sync::Mutex<()> {
+            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            &LOCK
+        }
+
+        #[tokio::test]
+        async fn commit_opens_live_intervals_for_a_batch() {
+            let _statement_guard = statement_lock().lock().unwrap();
+            let store = open().await;
+            let deltas = [(10, 1), (20, 1), (30, 1)];
+            store.commit(&deltas).await.unwrap();
+            assert_eq!(store.live().await.unwrap(), deltas.len() as i64);
+            assert_eq!(store.total_rows().await.unwrap(), deltas.len() as i64);
+        }
+
+        #[tokio::test]
+        async fn retract_closes_the_live_interval_and_keeps_history() {
+            let _statement_guard = statement_lock().lock().unwrap();
+            let store = open().await;
+            store.commit(&[(10, 1), (20, 1)]).await.unwrap();
+            store.commit(&[(10, -1)]).await.unwrap();
+            assert_eq!(store.live().await.unwrap(), 1);
+            assert_eq!(store.total_rows().await.unwrap(), 2);
+        }
+
+        #[tokio::test]
+        async fn readd_opens_a_new_interval_after_a_close() {
+            let _statement_guard = statement_lock().lock().unwrap();
+            let store = open().await;
+            store.commit(&[(10, 1)]).await.unwrap();
+            store.commit(&[(10, -1)]).await.unwrap();
+            store.commit(&[(10, 1)]).await.unwrap();
+            assert_eq!(store.live().await.unwrap(), 1);
+            assert_eq!(store.total_rows().await.unwrap(), 2);
+        }
+
+        // `commit_statement_count_is_constant` lives in tests/stmt_count.rs (its own
+        // process): stmt_counter is a process-global atomic, so an exact-count assert
+        // races the cascade/reach/reconcile tests in the shared lib binary, and a
+        // failed assert here panics while holding statement_lock — poisoning it and
+        // cascading into every other temporal test.
+
+        #[tokio::test]
+        async fn digest_matches_the_expected_live_key_mix() {
+            let _statement_guard = statement_lock().lock().unwrap();
+            let store = open().await;
+            store.commit(&[(10, 1), (20, 1), (30, 1)]).await.unwrap();
+            store.commit(&[(20, -1), (40, 1)]).await.unwrap();
+            let expected = [10, 30, 40]
+                .into_iter()
+                .fold(0, |digest, key| digest ^ mix_key(key));
+            assert_eq!(store.digest().await.unwrap(), expected);
+        }
     }
-
-    pub async fn total_rows(&self) -> Result<i64, DbErr> {
-        scalar(&self.db, "SELECT count(*) FROM fact").await
-    }
-
-    pub async fn digest(&self) -> Result<i64, DbErr> {
-        stmt_counter::incr();
-        let rows = self
-            .db
-            .query_all_raw(Statement::from_string(
-                DatabaseBackend::Sqlite,
-                "SELECT key FROM fact WHERE tt_to IS NULL".to_owned(),
-            ))
-            .await?;
-        Ok(rows.into_iter().fold(0, |digest, row| {
-            digest ^ mix_key(row.try_get_by_index::<i64>(0).unwrap_or(0))
-        }))
-    }
-
-    pub fn conn(&self) -> &DatabaseConnection {
-        &self.db
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sea_orm::{ConnectOptions, Database};
-
-    async fn open() -> TemporalStore {
-        static NEXT_TEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let unique = NEXT_TEST.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "temporal_store_test_{}_{unique}.sqlite",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&path);
-        let mut options = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
-        options.max_connections(1).min_connections(1);
-        TemporalStore::attach(Database::connect(options).await.unwrap())
-            .await
-            .unwrap()
-    }
-
-    fn statement_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        &LOCK
-    }
-
-    #[tokio::test]
-    async fn commit_opens_live_intervals_for_a_batch() {
-        let _statement_guard = statement_lock().lock().unwrap();
-        let store = open().await;
-        let deltas = [(10, 1), (20, 1), (30, 1)];
-        store.commit(&deltas).await.unwrap();
-        assert_eq!(store.live().await.unwrap(), deltas.len() as i64);
-        assert_eq!(store.total_rows().await.unwrap(), deltas.len() as i64);
-    }
-
-    #[tokio::test]
-    async fn retract_closes_the_live_interval_and_keeps_history() {
-        let _statement_guard = statement_lock().lock().unwrap();
-        let store = open().await;
-        store.commit(&[(10, 1), (20, 1)]).await.unwrap();
-        store.commit(&[(10, -1)]).await.unwrap();
-        assert_eq!(store.live().await.unwrap(), 1);
-        assert_eq!(store.total_rows().await.unwrap(), 2);
-    }
-
-    #[tokio::test]
-    async fn readd_opens_a_new_interval_after_a_close() {
-        let _statement_guard = statement_lock().lock().unwrap();
-        let store = open().await;
-        store.commit(&[(10, 1)]).await.unwrap();
-        store.commit(&[(10, -1)]).await.unwrap();
-        store.commit(&[(10, 1)]).await.unwrap();
-        assert_eq!(store.live().await.unwrap(), 1);
-        assert_eq!(store.total_rows().await.unwrap(), 2);
-    }
-
-    // `commit_statement_count_is_constant` lives in tests/stmt_count.rs (its own
-    // process): stmt_counter is a process-global atomic, so an exact-count assert
-    // races the cascade/reach/reconcile tests in the shared lib binary, and a
-    // failed assert here panics while holding statement_lock — poisoning it and
-    // cascading into every other temporal test.
-
-    #[tokio::test]
-    async fn digest_matches_the_expected_live_key_mix() {
-        let _statement_guard = statement_lock().lock().unwrap();
-        let store = open().await;
-        store.commit(&[(10, 1), (20, 1), (30, 1)]).await.unwrap();
-        store.commit(&[(20, -1), (40, 1)]).await.unwrap();
-        let expected = [10, 30, 40]
-            .into_iter()
-            .fold(0, |digest, key| digest ^ mix_key(key));
-        assert_eq!(store.digest().await.unwrap(), expected);
-    }
-}
-
 }
