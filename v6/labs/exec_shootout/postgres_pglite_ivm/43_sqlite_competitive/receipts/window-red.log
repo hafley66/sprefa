@@ -1,0 +1,55 @@
+test_expiration_and_lateness (__main__.Window.test_expiration_and_lateness) ... ERROR
+test_nested_rollback_and_reopen (__main__.Window.test_nested_rollback_and_reopen) ... ERROR
+test_random_updates_and_advances (__main__.Window.test_random_updates_and_advances) ... ERROR
+test_second_writer_and_drop (__main__.Window.test_second_writer_and_drop) ... ERROR
+test_sync_failure_and_invalid_frontier (__main__.Window.test_sync_failure_and_invalid_frontier) ... ERROR
+
+======================================================================
+ERROR: test_expiration_and_lateness (__main__.Window.test_expiration_and_lateness)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/9_window_test.py", line 16, in setUp
+    self.db.execute("CREATE VIRTUAL TABLE result USING take2_counted(window,'3')")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_nested_rollback_and_reopen (__main__.Window.test_nested_rollback_and_reopen)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/9_window_test.py", line 16, in setUp
+    self.db.execute("CREATE VIRTUAL TABLE result USING take2_counted(window,'3')")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_random_updates_and_advances (__main__.Window.test_random_updates_and_advances)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/9_window_test.py", line 16, in setUp
+    self.db.execute("CREATE VIRTUAL TABLE result USING take2_counted(window,'3')")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_second_writer_and_drop (__main__.Window.test_second_writer_and_drop)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/9_window_test.py", line 16, in setUp
+    self.db.execute("CREATE VIRTUAL TABLE result USING take2_counted(window,'3')")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+======================================================================
+ERROR: test_sync_failure_and_invalid_frontier (__main__.Window.test_sync_failure_and_invalid_frontier)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/sqlite-native-take2/v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/9_window_test.py", line 16, in setUp
+    self.db.execute("CREATE VIRTUAL TABLE result USING take2_counted(window,'3')")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: vtable constructor failed: result
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.007s
+
+FAILED (errors=5)

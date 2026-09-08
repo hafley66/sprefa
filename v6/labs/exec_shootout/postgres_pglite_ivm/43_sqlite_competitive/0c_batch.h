@@ -6,13 +6,13 @@ static int batching(Tab *t,int *flag) {
   sqlite3_int64 started=now_ns();
   int rc=SQLITE_OK;
   if(!t->batch_read) {
-    char *q=t->frontiers?sqlite3_mprintf("SELECT flag,source_views,epoch FROM \"%w\".\"%w_batch\" CROSS JOIN \"%w\".\"%w_clock\"",t->schema,t->name,t->schema,t->name):sqlite3_mprintf("SELECT flag,source_views FROM \"%w\".\"%w_batch\"",t->schema,t->name);
+    char *q=t->frontiers||t->mode==WINDOW?sqlite3_mprintf("SELECT flag,source_views,epoch FROM \"%w\".\"%w_batch\" CROSS JOIN \"%w\".\"%w_clock\"",t->schema,t->name,t->schema,t->name):sqlite3_mprintf("SELECT flag,source_views FROM \"%w\".\"%w_batch\"",t->schema,t->name);
     rc=q?sqlite3_prepare_v3(t->db,q,-1,SQLITE_PREPARE_NO_VTAB|SQLITE_PREPARE_PERSISTENT,&t->batch_read,0):SQLITE_NOMEM;
     sqlite3_free(q);
   }
   if(rc==SQLITE_OK) {
     rc=sqlite3_step(t->batch_read);
-    if(rc==SQLITE_ROW) {*flag=sqlite3_column_int(t->batch_read,0);t->source_view=sqlite3_column_int(t->batch_read,1);if(t->frontiers)t->epoch=sqlite3_column_int64(t->batch_read,2);rc=SQLITE_OK;}
+    if(rc==SQLITE_ROW) {*flag=sqlite3_column_int(t->batch_read,0);t->source_view=sqlite3_column_int(t->batch_read,1);if(t->frontiers||t->mode==WINDOW)t->epoch=sqlite3_column_int64(t->batch_read,2);rc=SQLITE_OK;}
     else if(rc==SQLITE_DONE) rc=error(t,"missing batch flag");
   }
   sqlite3_reset(t->batch_read);
@@ -82,6 +82,7 @@ static int flush_batch(Tab *t) {
     char *key=bag(t)?sqlite3_mprintf("json_array((%s),(%s))",key_expr,value):sqlite3_mprintf("json_array(b0.k)");
     char *group=bag(t)?sqlite3_mprintf("(%s),(%s)",key_expr,value):sqlite3_mprintf("b0.k");
     char *where=t->mode==PROJECT||t->mode==PLAN?sqlite3_mprintf("WHERE (%s)",t->predicate):sqlite3_mprintf("%s",t->mode==FILTER?"WHERE b0.v>=0":"");
+    if(t->mode==WINDOW){sqlite3_free(where);where=sqlite3_mprintf("WHERE b0.k BETWEEN %lld AND %lld",t->epoch-t->window_size+1,t->epoch);}
     int sign=bits%2?1:-1;
     rc=sql(t,sqlite3_mprintf(
       "INSERT INTO \"%w\".\"%w_result\"(key,k,v,n,s,nn) SELECT %s,(%s),(%s),%d*sum(%s),%d*sum(coalesce((%s),0)*%s),%d*sum(((%s) IS NOT NULL)*%s) FROM %s %s GROUP BY %s "
@@ -143,6 +144,18 @@ static int source_view_setup(Tab *t) {
   if(rc==SQLITE_OK)rc=sql(t,q,0,0);else sqlite3_free(q);
   if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_batch\" SET source_views=1",t->schema,t->name),0,0);
   if(rc==SQLITE_OK)t->source_view=1;
+  return rc;
+}
+/* Watermark advance retracts only the expired indexed result range. Sources
+ * remain intact; subsequent OLD images outside the window contribute zero. */
+static int advance_window(Tab *t,sqlite3_value *value) {
+  int flag=0,rc=batching(t,&flag);
+  if(rc!=SQLITE_OK)return rc;
+  sqlite3_int64 next=sqlite3_value_int64(value);
+  if(sqlite3_value_type(value)!=SQLITE_INTEGER||next<=t->epoch||next>1000000)return error(t,"watermark must strictly advance within 0..1000000");
+  if(flag)rc=flush_batch(t);
+  if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("DELETE FROM \"%w\".\"%w_result\" WHERE k<%lld",t->schema,t->name,next-t->window_size+1),0,0);
+  if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_clock\" SET epoch=%lld",t->schema,t->name,next),0,0);
   return rc;
 }
 static int batch_command(Tab *t,int op) {

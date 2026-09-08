@@ -1,0 +1,11 @@
+test_expiration_and_lateness (__main__.Window.test_expiration_and_lateness) ... ok
+test_nested_rollback_and_reopen (__main__.Window.test_nested_rollback_and_reopen) ... ok
+test_random_updates_and_advances (__main__.Window.test_random_updates_and_advances) ... ok
+test_second_writer_and_drop (__main__.Window.test_second_writer_and_drop) ... ok
+test_statement_failure_and_expiration_plan (__main__.Window.test_statement_failure_and_expiration_plan) ... ok
+test_sync_failure_and_invalid_frontier (__main__.Window.test_sync_failure_and_invalid_frontier) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.039s
+
+OK

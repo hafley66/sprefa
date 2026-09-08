@@ -31,6 +31,21 @@ counts survive signed-delta cancellation and roll back with source changes.
 The optional shared arms are `sqlite-competitive-fused` and
 `sqlite-competitive-counted`; existing arm names retain their storage layouts.
 
+Event-time window API: `CREATE VIRTUAL TABLE result USING
+take2_counted(window,'3')`, attach one source with timestamp in k and payload in
+v, then prepare its source-view layout. `_clock(epoch)` persists a watermark
+initially zero. `INSERT INTO result(op,id) VALUES(12, next_watermark)` strictly
+advances it within 0..1000000. Width is fixed at creation, 1..1000000. NEW event
+timestamps must lie in `[watermark-width+1, watermark]`; NULL/future/expired NEW
+timestamps fail. Deleting expired sources is legal. Updating an expired source
+into the admitted interval adds a new active support. Pending data deltas flush
+before watermark advancement; an indexed result-range deletion retracts expired
+supports. Source rows remain persistent. `9_window_test.py` proves actual
+expiration, lateness, rollback, conflict, reopen and second-writer behavior.
+This mode uses scalar event time; it does not implement partial-order antichains
+or arbitrary DD timestamp/frontier programs. It has no shared cross-engine
+window performance claim.
+
 Current SQL boundary:
 
 ```sql

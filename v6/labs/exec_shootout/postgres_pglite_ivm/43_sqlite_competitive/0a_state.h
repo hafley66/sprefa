@@ -23,6 +23,7 @@ typedef struct Tab {
   int frontiers;
   int lazy;
   int fused;
+  int window_size;
   sqlite3_int64 epoch;
   char *predicate,*projection;
   int degree,source_count,side_map[3];
@@ -34,7 +35,7 @@ typedef struct Cursor {
   int eof;
   sqlite3_int64 repeats,ordinal;
 } Cursor;
-enum { MIRROR, FILTER, BAG, GROUP, JOIN, SELF, MULTI, PROJECT, INNER, SELF_CHAIN, CHAIN, SEMI, ANTI, REACH, DISTINCT, FANOUT, DIAMOND, PLAN };
+enum { MIRROR, FILTER, BAG, GROUP, JOIN, SELF, MULTI, PROJECT, INNER, SELF_CHAIN, CHAIN, SEMI, ANTI, REACH, DISTINCT, FANOUT, DIAMOND, PLAN, WINDOW };
 static int arity(Tab *t) {return t->mode==PLAN?t->degree:t->mode==MULTI||t->mode==CHAIN?3:t->mode==JOIN||t->mode==SELF||t->mode==INNER||t->mode==SELF_CHAIN||t->mode==DIAMOND?2:1;}
 static int sources(Tab *t) {return t->mode==PLAN?t->source_count:t->mode==MULTI||t->mode==CHAIN||t->mode==DIAMOND?3:t->mode==JOIN||t->mode==INNER||t->mode==SEMI||t->mode==ANTI||t->mode==REACH?2:1;}
 static int bag(Tab *t) {return t->mode==FILTER||t->mode==BAG||(t->mode>=PROJECT&&t->mode!=REACH);}

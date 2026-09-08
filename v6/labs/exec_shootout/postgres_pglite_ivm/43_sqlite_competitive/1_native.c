@@ -93,13 +93,19 @@ static int connect(sqlite3 *db, void *aux, int argc, const char *const *argv,
   t->fused=!strcmp(argv[0],"take2_counted")?2:!strcmp(argv[0],"take2_fused");
   t->lazy=!strcmp(argv[0],"take2_lazy")||t->fused;
   if(argc>=4) {
-    const char *modes[]={"mirror","filter","bag","group","join","self","multi","project","inner","self_chain","chain","semi","anti","reach","distinct","fanout","diamond","plan"};
+    const char *modes[]={"mirror","filter","bag","group","join","self","multi","project","inner","self_chain","chain","semi","anti","reach","distinct","fanout","diamond","plan","window"};
     int found=0;
-    for(int i=0;i<18;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
+    for(int i=0;i<19;i++) if(!strcmp(argv[3],modes[i])) { t->mode=i; found=1; }
     if(!found) { sqlite3_free(t); return SQLITE_ERROR; }
   }
   if((t->frontiers||t->lazy)&&!t->mode){sqlite3_free(t);*err=sqlite3_mprintf("epoch/lazy module requires a query mode");return SQLITE_ERROR;}
-  if(t->mode==PLAN) {
+  if(t->mode==WINDOW) {
+    char *width=argc==5?literal(argv[4]):0;
+    int valid=width&&*width&&t->lazy;
+    if(valid)for(const char *p=width;*p&&valid;p++){if(*p<'0'||*p>'9'||t->window_size>100000)valid=0;else t->window_size=t->window_size*10+*p-'0';}
+    sqlite3_free(width);
+    if(!valid||t->window_size<1||t->window_size>1000000){disconnect(&t->base);*err=sqlite3_mprintf("window requires lazy module and integer width 1..1000000");return SQLITE_ERROR;}
+  } else if(t->mode==PLAN) {
     if(argc!=5||load_plan(t,argv[4])!=SQLITE_OK){disconnect(&t->base);*err=sqlite3_mprintf("take2: invalid bounded plan or scalar binding");return SQLITE_ERROR;}
   } else if(argc==5){disconnect(&t->base);return SQLITE_ERROR;}
   else if(t->mode==PROJECT) {
@@ -129,8 +135,8 @@ static int create(sqlite3 *db, void *aux, int argc, const char *const *argv,
   if(rc==SQLITE_OK) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_sources\"(side INTEGER PRIMARY KEY,source TEXT UNIQUE,id_col TEXT,k_col TEXT,v_col TEXT)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_batch\"(flag INTEGER NOT NULL,source_views INTEGER NOT NULL)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_batch\" VALUES(0,0)",t->schema,t->name),0,0);
-  if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_clock\"(epoch INTEGER NOT NULL)",t->schema,t->name),0,0);
-  if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_clock\" VALUES(0)",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&(t->frontiers||t->mode==WINDOW))rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_clock\"(epoch INTEGER NOT NULL)",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&(t->frontiers||t->mode==WINDOW))rc=sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_clock\" VALUES(0)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_frontier\"(side INTEGER PRIMARY KEY,t INTEGER NOT NULL)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("INSERT INTO \"%w\".\"%w_frontier\" VALUES(0,0),(1,0),(2,0)",t->schema,t->name),0,0);
   if(rc==SQLITE_OK && t->mode) rc=sql(t,sqlite3_mprintf("CREATE TABLE \"%w\".\"%w_delta\"(key TEXT PRIMARY KEY,side INTEGER,k INTEGER,v INTEGER,w INTEGER%s)",t->schema,t->name,t->fused?",events INTEGER NOT NULL DEFAULT 0":""),0,0);
@@ -172,7 +178,7 @@ static int destroy(sqlite3_vtab *v) {
   }
   if(rc==SQLITE_OK&&t->mode==REACH)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_cone\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_frontier\"",t->schema,t->name),0,0);
-  if(rc==SQLITE_OK&&t->frontiers)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_clock\"",t->schema,t->name),0,0);
+  if(rc==SQLITE_OK&&(t->frontiers||t->mode==WINDOW))rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_clock\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK)rc = sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_state\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK&&t->source_view)rc=sql(t,sqlite3_mprintf("DROP VIEW \"%w\".\"%w_live\"",t->schema,t->name),0,0);
   if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("DROP TABLE \"%w\".\"%w_sources\"",t->schema,t->name),0,0);
@@ -249,7 +255,7 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
     *id=0;return rc;
   }
   if(op==10||op==11) {*id=0;t->busy=1;int rc=batch_command(t,op);t->busy=0;return rc;}
-  if(op==12){*id=0;t->busy=1;int rc=seal_frontier(t,a[2],a[9]);t->busy=0;return rc;}
+  if(op==12){*id=0;t->busy=1;int rc=t->mode==WINDOW?advance_window(t,a[2]):seal_frontier(t,a[2],a[9]);t->busy=0;return rc;}
   if (op < 1 || op > 3) return error(t,"op must be 1 insert, 2 delete, 3 update");
   int side=sqlite3_value_int(a[9]);
   if(side<0||side>=sources(t)) return error(t,"invalid source side");
@@ -274,6 +280,7 @@ static int update(sqlite3_vtab *v, int argc, sqlite3_value **a, sqlite3_int64 *i
   int batched=0;
   rc=batching(t,&batched);
   if(rc!=SQLITE_OK)return rc;
+  if(t->mode==WINDOW&&op!=2&&(sqlite3_value_type(a[3])!=SQLITE_INTEGER||sqlite3_value_int64(a[3])<t->epoch-t->window_size+1||sqlite3_value_int64(a[3])>t->epoch))return error(t,"event timestamp outside admitted window");
   if(t->lazy&&!batched) {
     if(t->env->source_views&&!t->source_view)return error(t,"source-view layout requires take2_prepare before source writes");
     if(rc==SQLITE_OK)rc=sql(t,sqlite3_mprintf("UPDATE \"%w\".\"%w_batch\" SET flag=1",t->schema,t->name),0,0);

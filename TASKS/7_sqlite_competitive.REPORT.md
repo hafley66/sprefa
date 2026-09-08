@@ -1,13 +1,13 @@
 # Competitive SQLite-native IVM
 
-Current gate exit 0: 221 Python test methods, 2 Rust compiler tests, and the plan
+Current gate exit 0: 233 Python test methods, 2 Rust compiler tests, and the plan
 audit, 171 shared semantic states per batch/sourceview/lazy/fused/counted arm,
 and 143 core circuit states per these arms plus frontier. All eleven core circuits include actual
 incremental maintenance, with negation, cyclic retraction and a separately
 labeled finite scalar epoch variant. CI execution coverage is additive.
 
 Reproduce: `python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/5_gate.py`.
-Current receipt: `43_sqlite_competitive/receipts/counters-debug-gate.json`.
+Current receipt: `43_sqlite_competitive/receipts/window-gate.json`.
 Take 1, Take 2, other worktrees and DL7 sources remain preserved. No push or merge.
 
 | Commit | Tested step |
@@ -481,3 +481,21 @@ drain rejection and an admitted memory contract. This probe makes no production
 maintenance or performance claim. The working trigger/counting arms continue.
 CI execution coverage adds this separate reproducible ASan/upstream session gate;
 the stock competitive gate does not require a session-enabled system library.
+
+## Scalar event-time window family
+
+`take2_counted(window,'3')` adds per-record timestamps in source k and persists
+its monotone watermark in `_clock`. New timestamps must be inside the admitted
+window; expired/future/NULL timestamps fail. Advancing with op 12 first flushes
+pending deltas, then retracts only the expired indexed result range. Historical
+source rows remain intact; their later deletion contributes zero. Width is fixed
+and bounded, and this API is separate from the all-input scalar epoch barrier.
+The work does not alter DL7 contracts or claim partial-order DD frontiers.
+
+Six new oracle tests pass in both layouts and in a focused SQLITE_DEBUG run:
+expiration/lateness, nested rollback/reopen, xSync failure and invalid frontier,
+random updates/advances, second writer/drop, and statement failure/conflicts/index
+plan. Initial unsupported-mode failures are retained. CI execution coverage adds
+12 Python executions to the existing gate, now 233 Python methods plus 2 Rust
+tests and all existing shared states. Window performance is not paired yet.
+Run command: `TAKE2_SOURCE_VIEWS=1 TAKE2_EXTENSION=/tmp/sprefa-sqlite-competitive/window-probe.dylib python3 v6/labs/exec_shootout/postgres_pglite_ivm/43_sqlite_competitive/9_window_test.py`.
