@@ -5,7 +5,7 @@ set -uo pipefail
 CSV="$1"; OUT="$2"; CAP="$3"; STATUS_TSV="${4:-}"
 
 cat <<EOF
-# Z-set / IVM head-to-head — feasibility lab
+# Z-set / IVM head-to-head: feasibility lab
 
 Same computation in every engine: reachability from roots {0,1} over a generated
 DAG, then **retract root 0** and recount the survivor set. The PostgreSQL-family
@@ -59,10 +59,10 @@ else
   echo "- No numeric arm emitted a WALL row at these scales."
 fi
 
-# sqlite retract op-count independence (O(depth)).
-awk -F, 'NR>1 && $1=="sqlite-disk" && $7!="WALL" && $7!="" {print $7}' "$CSV" \
+# swi-sqlite retract op-count independence (O(depth)).
+awk -F, 'NR>1 && $1=="swi-sqlite" && $7!="WALL" && $7!="" {print $7}' "$CSV" \
   | sort -u | paste -sd, - \
-  | awk '{print "- sqlite retract statement count across all scales: {" $0 "} (O(depth), not O(rows))."}'
+  | awk '{print "- swi-sqlite retract statement count across all scales: {" $0 "} (O(depth), not O(rows))."}'
 
 if [[ -s "$OUT/tsv2-results.jsonl" || -s "$OUT/v1-results.jsonl" ]]; then
   echo
