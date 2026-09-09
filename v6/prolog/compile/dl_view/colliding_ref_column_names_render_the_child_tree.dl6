@@ -1,0 +1,5 @@
+rel inner_pair(first: int, second: int).
+rel outer_pair(first: inner_pair, second: inner_pair).
+rel holder(id: int, nested: outer_pair).
+
+touched(Id) <- holder(Id, _Nested).

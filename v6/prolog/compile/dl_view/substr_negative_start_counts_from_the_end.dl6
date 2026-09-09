@@ -1,0 +1,3 @@
+tail_two(Text, Out) <-
+  text(Text),
+  Out := substr(Text, -2).

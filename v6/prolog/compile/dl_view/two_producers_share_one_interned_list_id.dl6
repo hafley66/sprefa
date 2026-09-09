@@ -1,0 +1,11 @@
+rel left_text(name: text, body: text).
+rel right_text(name: text, body: text).
+rel left_parts(name: text, parts: list(text)).
+rel right_parts(name: text, parts: list(text)).
+
+left_parts(Name, Parts) <-
+  left_text(Name, Body),
+  Parts := split(Body, ',').
+right_parts(Name, Parts) <-
+  right_text(Name, Body),
+  Parts := split(Body, ',').

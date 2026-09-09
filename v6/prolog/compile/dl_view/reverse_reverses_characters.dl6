@@ -1,0 +1,3 @@
+mirrored(Text, Out) <-
+  text(Text),
+  Out := reverse(Text).

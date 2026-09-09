@@ -1,0 +1,3 @@
+middle(Text, Out) <-
+  text(Text),
+  Out := substr(Text, 2, 2).

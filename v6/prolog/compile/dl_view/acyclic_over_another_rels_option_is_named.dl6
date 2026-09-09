@@ -1,0 +1,2 @@
+rel person(person_id: int, name: text) key(1).
+rel commit(commit_id: int, reviewed_by: acyclic(option(person))) key(1).

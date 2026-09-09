@@ -1,0 +1,6 @@
+interface addressable.
+rel box(T: addressable)(value: T).
+rel file(id: int, path: text) key(1).
+rel holder(id: int, boxed: box(file)) key(1).
+
+carry(Id, Boxed) <- holder(Id, Boxed).

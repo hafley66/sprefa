@@ -1,0 +1,9 @@
+rel sym(name: text).
+rel prefix(text_value: text).
+rel prefixed(name: text, prefix: text).
+
+prefixed(Name, Prefix) <-
+  sym(Name),
+  prefix(Prefix),
+  Head := substr(Name, 1, length(Prefix)),
+  Head == Prefix.

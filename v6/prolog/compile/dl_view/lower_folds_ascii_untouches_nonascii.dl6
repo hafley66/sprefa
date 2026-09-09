@@ -1,0 +1,3 @@
+mumbled(Text, Out) <-
+  text(Text),
+  Out := lower(Text).

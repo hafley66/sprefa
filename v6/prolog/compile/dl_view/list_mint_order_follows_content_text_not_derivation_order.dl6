@@ -1,0 +1,6 @@
+rel fruit_text(name: text, body: text).
+rel fruit_parts(name: text, parts: list(text)).
+
+fruit_parts(Name, Parts) <-
+  fruit_text(Name, Body),
+  Parts := split(Body, '/').

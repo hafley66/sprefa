@@ -1,0 +1,7 @@
+rel link(from_node: int, to_node: int).
+rel reachable(from_node: int, to_node: int).
+
+reachable(FromNode, ToNode) <- link(FromNode, ToNode).
+reachable(FromNode, ToNode) <-
+  reachable(FromNode, MiddleNode),
+  link(MiddleNode, ToNode).

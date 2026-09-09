@@ -1,0 +1,4 @@
+rel review(pending() ; done(verdict: text)).
+rel submission(id: int, verdict: text) key(1).
+
+review_done(SubmissionId, Verdict) <- submission(SubmissionId, Verdict).

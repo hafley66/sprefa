@@ -1,0 +1,7 @@
+rel node(node_id: int, name: text, parent: acyclic(option(node))) key(1).
+rel parent_name(child_name: text, parent_name: text).
+
+parent_name(ChildName, ParentName) <-
+  node(ChildId, ChildName),
+  node__parent(ChildId, ParentId),
+  node(ParentId, ParentName).

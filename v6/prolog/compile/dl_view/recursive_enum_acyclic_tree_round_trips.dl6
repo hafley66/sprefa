@@ -1,0 +1,4 @@
+rel tree(leaf(value: int) ; branch(left: tree, right: tree)).
+rel tree_kind(id: int, kind: text).
+
+tree_kind(Id, Kind) <- tree_tag(Id, Kind).

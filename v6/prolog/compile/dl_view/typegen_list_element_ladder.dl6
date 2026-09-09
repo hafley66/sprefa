@@ -1,0 +1,13 @@
+rel list_of(list_type_id: int, element_type_id: int).
+rel root_type(type_id: int).
+rel list_type(type_id: int, level: int).
+rel element_type(type_id: int, level: int).
+
+list_type(TypeId, 0) <- root_type(TypeId).
+element_type(ElementTypeId, NextLevel) <-
+  list_type(ListTypeId, ListLevel),
+  list_of(ListTypeId, ElementTypeId),
+  NextLevel := ListLevel + 1.
+list_type(TypeId, Level) <-
+  element_type(TypeId, Level),
+  list_of(TypeId, _AnyElement).

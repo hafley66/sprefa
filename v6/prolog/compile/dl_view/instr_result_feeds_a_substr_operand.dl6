@@ -1,0 +1,3 @@
+after_underscore(Text, Out) <-
+  text(Text),
+  Out := substr(Text, instr(Text, '_') + 1).

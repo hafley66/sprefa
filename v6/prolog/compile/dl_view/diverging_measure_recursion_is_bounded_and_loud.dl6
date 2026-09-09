@@ -1,0 +1,7 @@
+rel seed_number(value: int).
+rel counter(value: int).
+
+counter(Value) <- seed_number(Value).
+counter(Next) <-
+  counter(Value),
+  Next := Value + 1.

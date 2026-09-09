@@ -1,0 +1,4 @@
+rel box(T: missing_capability)(value: T).
+rel holder(id: int, boxed: box(text)) key(1).
+
+carry(Id, Boxed) <- holder(Id, Boxed).
