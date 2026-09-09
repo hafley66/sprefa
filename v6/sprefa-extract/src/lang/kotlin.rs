@@ -43,7 +43,7 @@ use crate::family::{
     TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{DefIndex, Parser, Project, Resolve, corpus_defs, covering_def, def_named};
+use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;

@@ -13,7 +13,7 @@ use crate::family::{
 };
 use crate::lang::extract_lang::ExtractLang;
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{ProjectCx, Resolve, corpus_defs, covering_def};
+use crate::seams::{corpus_defs, covering_def, ProjectCx, Resolve};
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
 use crate::trace;
