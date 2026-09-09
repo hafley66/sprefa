@@ -107,6 +107,19 @@ lower_derived_bind_rules(_, [], _, _, ok([], [])).
 lower_derived_bind_rules(
     CallPolicy,
     [reservation(Owner, _,
+                 host_metadata(Implementation, Ports, HostNodeId),
+                 host) | Reservations],
+    Environment, RuleIndex, Result) :-
+    !,
+    host_metadata_rules(
+        Owner, Implementation, Ports, HostNodeId, RuleIndex,
+        HostRules, HostOrigins, NextRuleIndex),
+    lower_derived_bind_rules(
+        CallPolicy, Reservations, Environment, NextRuleIndex, RestResult),
+    prepend_derived_rules(RestResult, HostRules, HostOrigins, Result).
+lower_derived_bind_rules(
+    CallPolicy,
+    [reservation(Owner, _,
                  derived_compound_edge(
                      LabelNode, TargetTerm, BindNodeId, Index),
                  compound_edge) | Reservations],
@@ -315,6 +328,39 @@ prepend_derived_rule(ok(Rules, Origins0), Rule, RuleOrigins,
                      ok([Rule | Rules], Origins)) :-
     append(RuleOrigins, Origins0, Origins).
 
+prepend_derived_rules(error(Diagnostic), _, _, error(Diagnostic)).
+prepend_derived_rules(ok(Rules, Origins0), Prefix, PrefixOrigins,
+                      ok(AllRules, Origins)) :-
+    append(Prefix, Rules, AllRules),
+    append(PrefixOrigins, Origins0, Origins).
+
+host_metadata_rules(
+    Owner, Implementation, Ports, HostNodeId, RuleIndex,
+    [HostedRule | PortRules], Origins, NextRuleIndex) :-
+    HostedRule = rule(
+                     call(name(Owner, 'Hosted'),
+                          [ref(Owner), Implementation]),
+                     []),
+    HostedOrigin = origin(rule(RuleIndex), HostNodeId),
+    PortRuleIndex is RuleIndex + 1,
+    host_port_rules(
+        Owner, Ports, PortRuleIndex,
+        PortRules, PortOrigins, NextRuleIndex),
+    Origins = [HostedOrigin | PortOrigins].
+
+host_port_rules(_, [], RuleIndex, [], [], RuleIndex).
+host_port_rules(
+    Owner, [host_port(Label, Direction, NodeId) | Ports], RuleIndex,
+    [Rule | Rules], [origin(rule(RuleIndex), NodeId) | Origins],
+    NextRuleIndex) :-
+    Rule = rule(
+               call(name(Owner, 'HostPort'),
+                    [ ref(Owner), const(Label), name(Owner, Direction) ]),
+               []),
+    NextIndex is RuleIndex + 1,
+    host_port_rules(
+        Owner, Ports, NextIndex, Rules, Origins, NextRuleIndex).
+
 indexed_goal_origins([], _, _, []).
 indexed_goal_origins([NodeId | NodeIds], RuleIndex, GoalIndex,
                      [origin(goal(RuleIndex, GoalIndex), NodeId) | Origins]) :-
@@ -376,8 +422,10 @@ lower_bind(BindNode, Owner, ModuleIdentity, Index, Result) :-
         Result = error(diagnostic(lower, NodeId, expected_bind))
     ).
 
+expression_bind_target(node(_, form([]))) :- !, fail.
 expression_bind_target(node(_, form([node(_, atom('*')) | _]))) :- !, fail.
 expression_bind_target(node(_, form([node(_, atom('+')) | _]))) :- !, fail.
+expression_bind_target(node(_, form([node(_, atom('Host')) | _]))) :- !, fail.
 expression_bind_target(node(_, form(_))).
 
 finish_derived_bind(BindNodeId, Owner, Name, TargetNode, Index,
@@ -421,14 +469,113 @@ lower_target(node(NodeId, form([node(_, atom('+')) | Bindings])),
     Owner = owner(ModuleIdentity, NodeId),
     lower_bind_list(Bindings, Owner, ModuleIdentity, 0, BindResult),
     finish_constructor_target(BindResult, NodeId, Owner, sum, Result).
+lower_target(node(NodeId,
+                  form([ node(_, atom('Host')),
+                         ImplementationNode,
+                         InputNode,
+                         OutputNode
+                       ])),
+             _ParentOwner, ModuleIdentity, Result) :-
+    !,
+    Owner = owner(ModuleIdentity, NodeId),
+    lower_host_target(
+        ImplementationNode, InputNode, OutputNode,
+        NodeId, Owner, ModuleIdentity, Result).
 lower_target(node(_, atom(Name)), Owner, _,
              ok(name(Owner, Name), reference, [], [], [], [], [])).
+lower_target(node(_, form([])), Owner, _,
+             ok(name(Owner, '()'), reference, [], [], [], [], [])).
 lower_target(node(_, literal(Value)), _, _,
              ok(const(Value), literal, [], [], [], [], [])).
 lower_target(node(NodeId, variable(_, _)), _, _,
              error(diagnostic(lower, NodeId, variable_bind_target))).
 lower_target(node(NodeId, form(_)), _, _,
              error(diagnostic(lower, NodeId, unsupported_bind_target))).
+
+lower_host_target(
+    ImplementationNode, InputNode, OutputNode,
+    HostNodeId, Owner, ModuleIdentity, Result) :-
+    (   host_implementation(ImplementationNode, Owner, Implementation)
+    ->  host_product_bindings(InputNode, InputBindings, InputDiagnostic),
+        host_product_bindings(OutputNode, OutputBindings, OutputDiagnostic),
+        finish_host_bindings(
+            InputDiagnostic, OutputDiagnostic,
+            InputBindings, OutputBindings,
+            Implementation, HostNodeId, Owner, ModuleIdentity, Result)
+    ;   node_id(ImplementationNode, ImplementationNodeId),
+        Result = error(diagnostic(
+                           lower, ImplementationNodeId,
+                           host_implementation_must_be_name))
+    ).
+
+host_implementation(node(_, atom(Name)), Owner, name(Owner, Name)).
+
+host_product_bindings(
+    node(_, form([node(_, atom('*')) | Bindings])), Bindings, none) :-
+    !.
+host_product_bindings(Node, [], diagnostic(
+                                   lower, NodeId,
+                                   host_ports_must_be_product)) :-
+    node_id(Node, NodeId).
+
+finish_host_bindings(
+    diagnostic(Phase, NodeId, Reason), _, _, _, _, _, _, _,
+    error(diagnostic(Phase, NodeId, Reason))) :-
+    !.
+finish_host_bindings(
+    _, diagnostic(Phase, NodeId, Reason), _, _, _, _, _, _,
+    error(diagnostic(Phase, NodeId, Reason))) :-
+    !.
+finish_host_bindings(
+    none, none, InputBindings, OutputBindings,
+    Implementation, HostNodeId, Owner, ModuleIdentity, Result) :-
+    host_port_specs(InputBindings, 'Input', InputPorts, InputPortResult),
+    host_port_specs(OutputBindings, 'Output', OutputPorts, OutputPortResult),
+    finish_host_ports(
+        InputPortResult, OutputPortResult,
+        InputBindings, OutputBindings, InputPorts, OutputPorts,
+        Implementation, HostNodeId, Owner, ModuleIdentity, Result).
+
+host_port_specs([], _, [], ok).
+host_port_specs([Bind | Binds], Direction,
+                [host_port(Label, Direction, LabelNodeId) | Ports], Result) :-
+    edge_bind_form(Bind, _, LabelNode, _),
+    LabelNode = node(LabelNodeId, atom(Label)),
+    !,
+    host_port_specs(Binds, Direction, Ports, Result).
+host_port_specs([Bind | _], _, [],
+                error(diagnostic(
+                          lower, NodeId,
+                          host_port_label_must_be_atom))) :-
+    node_id(Bind, NodeId).
+
+finish_host_ports(
+    error(Diagnostic), _, _, _, _, _, _, _, _, _, error(Diagnostic)) :-
+    !.
+finish_host_ports(
+    _, error(Diagnostic), _, _, _, _, _, _, _, _, error(Diagnostic)) :-
+    !.
+finish_host_ports(
+    ok, ok, InputBindings, OutputBindings, InputPorts, OutputPorts,
+    Implementation, HostNodeId, Owner, ModuleIdentity, Result) :-
+    append(InputBindings, OutputBindings, Bindings),
+    append(InputPorts, OutputPorts, Ports),
+    lower_bind_list(Bindings, Owner, ModuleIdentity, 0, BindResult),
+    finish_constructor_target(
+        BindResult, HostNodeId, Owner, product, ProductResult),
+    add_host_metadata(
+        ProductResult, Implementation, Ports, HostNodeId, Result).
+
+add_host_metadata(error(Diagnostic), _, _, _, error(Diagnostic)).
+add_host_metadata(
+    ok(target(Owner), Kind, Nodes, Edges, Relations, Origins, Reservations0),
+    Implementation, Ports, HostNodeId,
+    ok(target(Owner), Kind, Nodes, Edges, Relations, Origins, Reservations)) :-
+    HostReservation = reservation(
+                          Owner, host_marker(HostNodeId),
+                          host_metadata(Implementation, Ports, HostNodeId),
+                          host),
+    Reservations = [HostReservation | Reservations0].
 
 finish_constructor_target(error(Diagnostic), _, _, _, error(Diagnostic)).
 finish_constructor_target(
@@ -844,6 +991,9 @@ kernel_slot_label(nil, 0, return).
 kernel_slot_label(cons, 0, head).
 kernel_slot_label(cons, 1, tail).
 kernel_slot_label(cons, 2, return).
+kernel_slot_label(edge_ref, 0, owner).
+kernel_slot_label(edge_ref, 1, label).
+kernel_slot_label(edge_ref, 2, return).
 kernel_slot_label(intern, 0, constructor).
 kernel_slot_label(intern, 1, arguments).
 kernel_slot_label(intern, 2, return).
@@ -1029,6 +1179,8 @@ lower_expression(node(NodeId, form([OperatorNode | ArgumentNodes])),
         OperatorDiagnostics, Operator, NodeId, ArgumentNodes,
         Owner, Environment, OperatorGoals, OperatorOrigins,
         Value, Goals, Origins, Diagnostics).
+lower_expression(node(_, form([])), Owner, _,
+                 name(Owner, '()'), [], [], []).
 lower_expression(node(NodeId, form(_)), _, _,
                  none, [], [],
                  [diagnostic(lower, NodeId, unresolved_expression_form)]).
@@ -1111,6 +1263,7 @@ kernel_relation_keys_for_expression(':', [[0, 1], [0, 3]]).
 kernel_relation_keys_for_expression(edge_snapshot, [[0, 1], [0, 3]]).
 kernel_relation_keys_for_expression(nil, [[]]).
 kernel_relation_keys_for_expression(cons, [[0, 1], [2]]).
+kernel_relation_keys_for_expression(edge_ref, [[0, 1]]).
 kernel_relation_keys_for_expression(intern, [[0, 1]]).
 kernel_relation_keys_for_expression(intern_snapshot, [[0, 1]]).
 kernel_relation_keys_for_expression(predecessor, [[0, 1], [0, 2]]).
@@ -1391,6 +1544,7 @@ expression_return_indices(Indices, Callable, NodeId, none,
 
 kernel_return_position(nil, 0).
 kernel_return_position(cons, 2).
+kernel_return_position(edge_ref, 2).
 kernel_return_position(intern, 2).
 kernel_return_position(intern_snapshot, 2).
 
@@ -1429,6 +1583,10 @@ call_contains_var(call(_, Arguments)) :-
 bind_form(node(NodeId,
                form([node(_, atom(':')), node(_, atom(Name)), Target])),
           NodeId, Name, Target).
+% The empty form names the empty product in `(: () (* ))`.
+bind_form(node(NodeId,
+               form([node(_, atom(':')), node(_, form([])), Target])),
+          NodeId, '()', Target).
 
 edge_bind_form(node(NodeId,
                     form([node(_, atom(':')), Label, Target])),
@@ -1448,6 +1606,7 @@ kernel_relation(':', 4).
 kernel_relation(edge_snapshot, 4).
 kernel_relation(nil, 1).
 kernel_relation(cons, 3).
+kernel_relation(edge_ref, 3).
 kernel_relation(intern, 3).
 kernel_relation(intern_snapshot, 3).
 kernel_relation(predecessor, 3).

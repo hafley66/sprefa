@@ -1,0 +1,44 @@
+{
+  "sources": [
+    {
+      "relation": "Node",
+      "table": "node",
+      "columns": [
+        "_input_path",
+        "_content_id",
+        "family",
+        "span__start",
+        "span__end",
+        "kind"
+      ]
+    },
+    {
+      "relation": "Edge",
+      "table": "edge",
+      "columns": [
+        "_input_path",
+        "_content_id",
+        "family",
+        "kind",
+        "from__start",
+        "from__end",
+        "to__start",
+        "to__end"
+      ]
+    }
+  ],
+  "output": {
+    "relation": "CstEdgeKinds",
+    "columns": [
+      "input_path",
+      "content_id",
+      "edge_kind",
+      "from_start",
+      "from_end",
+      "source_kind",
+      "to_start",
+      "to_end",
+      "target_kind"
+    ]
+  }
+}

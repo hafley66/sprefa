@@ -1,0 +1,9 @@
+(: AuthoredBefore
+   (* (: id u64)))
+
+; sprefa:auto-begin rust-types
+(: stale_generated_type (*))
+; sprefa:auto-end rust-types
+
+(: AuthoredAfter
+   (* (: name string)))

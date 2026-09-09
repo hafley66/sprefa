@@ -61,3 +61,6 @@
 (: usize (* ))
 
 (: isize (* ))
+
+; Rust names this primitive class `unit` on the TSI wire.
+(: () (* ))

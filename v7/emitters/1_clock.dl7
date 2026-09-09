@@ -1,0 +1,34 @@
+; Time stratification starts as a comptime query over checked-program rows.
+; The current DL7 reader admits level rules, so both planes are the relation
+; plane and every dependency has grade zero. Edge and sample roles extend this
+; table when their checked forms land.
+(: ClockEmitter (*))
+
+(: level_clock_role
+   (* (: polarity text)
+      (: sign text)
+      (: role text)))
+
+(level_clock_role "positive" "positive" "level_read")
+(level_clock_role "negative" "negative" "level_absence")
+
+(: clock_dependency
+   (* (: rule any)
+      (: from type)
+      (: to type)
+      (: read_plane text)
+      (: write_plane text)
+      (: sign text)
+      (: grade int)
+      (: role text)))
+
+(emits ClockEmitter "dependencies" clock_dependency)
+
+(<- (clock_dependency ?Rule ?From ?To
+                      "relation" "relation" ?Sign 0 ?Role)
+    (program_rule ?Rule ?HeadCall)
+    (program_rule_kind ?Rule "level")
+    (program_apply ?HeadCall ?To)
+    (program_goal ?Rule ?GoalPosition ?Polarity ?BodyCall)
+    (program_apply ?BodyCall ?From)
+    (level_clock_role ?Polarity ?Sign ?Role))

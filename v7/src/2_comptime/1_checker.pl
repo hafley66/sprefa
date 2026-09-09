@@ -311,6 +311,7 @@ kernel_relation_keys(':', [[0, 1], [0, 3]]).
 kernel_relation_keys(edge_snapshot, [[0, 1], [0, 3]]).
 kernel_relation_keys(nil, [[0]]).
 kernel_relation_keys(cons, [[0, 1], [2]]).
+kernel_relation_keys(edge_ref, [[0, 1]]).
 kernel_relation_keys(intern, [[0, 1]]).
 kernel_relation_keys(intern_snapshot, [[0, 1]]).
 kernel_relation_keys(predecessor, [[0, 1], [0, 2]]).
@@ -346,6 +347,7 @@ kernel_graph(
       node(kernel(edge_snapshot)), product(kernel(edge_snapshot)),
       node(kernel(nil)), product(kernel(nil)),
       node(kernel(cons)), product(kernel(cons)),
+      node(kernel(edge_ref)), product(kernel(edge_ref)),
       node(kernel(intern)), product(kernel(intern)),
       node(kernel(intern_snapshot)), product(kernel(intern_snapshot)),
       node(kernel(predecessor)), product(kernel(predecessor)),
@@ -369,6 +371,9 @@ kernel_graph(
       ':'(kernel(cons), head, ref(primitive(any)), 0),
       ':'(kernel(cons), tail, ref(primitive(any)), 1),
       ':'(kernel(cons), return, ref(primitive(any)), 2),
+      ':'(kernel(edge_ref), owner, ref(primitive(type)), 0),
+      ':'(kernel(edge_ref), label, ref(primitive(any)), 1),
+      ':'(kernel(edge_ref), return, ref(primitive(type)), 2),
       ':'(kernel(intern), constructor, ref(primitive(type)), 0),
       ':'(kernel(intern), arguments, ref(primitive(any)), 1),
       ':'(kernel(intern), return, ref(primitive(type)), 2),
@@ -514,6 +519,19 @@ check_goal(Goal, Bound0, Bound, Reason) :-
     ).
 check_goal(Goal, Bound0, Bound, Reason) :-
     goal_call(Goal, positive,
+              call(ref(kernel(edge_ref)), [Owner, Label, _])),
+    !,
+    (   argument_is_bound(Owner, Bound0),
+        argument_is_bound(Label, Bound0)
+    ->  goal_variables(Goal, Variables),
+        add_variables(Variables, Bound0, Bound),
+        Reason = none
+    ;   Bound = Bound0,
+        Reason = underconstrained_kernel_goal(
+                     edge_ref, [[0, 1]])
+    ).
+check_goal(Goal, Bound0, Bound, Reason) :-
+    goal_call(Goal, positive,
               call(ref(kernel(intern)), [Constructor, Arguments, _])),
     !,
     (   argument_is_bound(Constructor, Bound0),
@@ -526,7 +544,7 @@ check_goal(Goal, Bound0, Bound, Reason) :-
     ).
 check_goal(Goal, Bound, Bound, negative_constructive_kernel_goal(Name)) :-
     goal_call(Goal, negative, call(ref(kernel(Name)), _)),
-    memberchk(Name, [cons, intern, nil]),
+    memberchk(Name, [cons, edge_ref, intern, nil]),
     !.
 check_goal(Goal, Bound, Bound, Reason) :-
     goal_call(Goal, negative, _),

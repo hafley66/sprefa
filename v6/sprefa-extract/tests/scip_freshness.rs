@@ -249,6 +249,32 @@ fn rust_staging_copies_and_prunes_the_workspace_lockfile() {
 }
 
 #[test]
+fn a_persistent_stage_drops_a_source_the_corpus_deleted() {
+    let root = temp_root("prune");
+    std::fs::create_dir_all(root.join("src")).expect("src");
+    std::fs::write(root.join("src/a.rs"), b"pub fn a() {}\n").expect("a");
+    std::fs::write(root.join("src/b.rs"), b"pub fn b() {}\n").expect("b");
+    let stage = temp_root("prune-out");
+    sprefa_extract::copy_sources(&root, &stage, &["rs"], &[]).expect("first stage");
+    assert!(stage.join("src/b.rs").is_file());
+
+    std::fs::remove_file(root.join("src/b.rs")).expect("delete b");
+    std::fs::create_dir_all(stage.join("target/debug")).expect("warm target");
+    std::fs::write(stage.join("target/debug/marker.rs"), b"kept\n").expect("target marker");
+    sprefa_extract::copy_sources(&root, &stage, &["rs"], &[]).expect("second stage");
+
+    assert!(stage.join("src/a.rs").is_file());
+    assert!(
+        !stage.join("src/b.rs").exists(),
+        "a deleted source is pruned"
+    );
+    assert!(
+        stage.join("target/debug/marker.rs").is_file(),
+        "the warm target is what the persistent stage exists to keep"
+    );
+}
+
+#[test]
 fn a_persistent_workspace_stage_drops_a_removed_member_directory() {
     let root = temp_root("prune-workspace-member");
     std::fs::write(

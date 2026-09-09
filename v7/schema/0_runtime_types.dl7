@@ -1,0 +1,40 @@
+; Wire and plan vocabulary generated into Rust. Products become structs and
+; sums become enums. Edge order is field and variant order.
+
+(: BatchMode
+   (+ (: Snapshot ())
+      (: Delta ())))
+
+(: SourceCoordinate
+   (* (: repository text)
+      (: worktree text)
+      (: path text)
+      (: content text)))
+
+(: TsiObservation
+   (* (: relation text)
+      (: args any)))
+
+(: WatchChange
+   (* (: generation u64)
+      (: sign i8)
+      (: source SourceCoordinate)
+      (: observation TsiObservation)))
+
+(: DbspRelationShape
+   (* (: name text)
+      (: arity usize)
+      (: input bool)
+      (: output bool)))
+
+(: DbspOperatorShape
+   (* (: id text)
+      (: kind text)
+      (: head text)
+      (: body any)))
+
+(: DbspPlanShape
+   (* (: ir_version u32)
+      (: runtime text)
+      (: relations any)
+      (: operators any)))

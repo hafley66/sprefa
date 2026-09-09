@@ -3,50 +3,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env, error, fs, process,
+    env, error, fs,
+    io::{BufRead, BufReader},
+    process,
 };
 
-mod kernel;
-
-#[derive(Deserialize)]
-struct Plan {
-    ddl: Vec<String>,
-    rels: Vec<Rel>,
-    rules: Vec<Rule>,
-    initial: Vec<Row>,
-    schedule: Vec<Vec<SignedRow>>,
-    tick_order: Vec<String>,
-    #[serde(default)]
-    operators: Vec<Value>,
-}
-
-#[derive(Deserialize)]
-struct Rel {
-    name: String,
-    columns: Vec<String>,
-    select_all: String,
-}
-
-#[derive(Clone, Deserialize, PartialEq)]
-struct Rule {
-    id: String,
-    head: String,
-    delete: String,
-    inserts: Vec<String>,
-}
-
-#[derive(Clone, Deserialize)]
-struct Row {
-    rel: String,
-    values: Vec<Value>,
-}
-
-#[derive(Deserialize)]
-struct SignedRow {
-    sign: i8,
-    #[serde(flatten)]
-    row: Row,
-}
+use dd_runner::{kernel, Plan, Row, Rule, SignedRow};
 
 /// One `edgestmt/9` arm as the JSON twin carries it. `project_sql` binds the
 /// trigger row positionally; `write_sql` binds the projected head row.
@@ -102,20 +64,65 @@ enum Arm {
 }
 
 fn main() {
+    let arguments = env::args().collect::<Vec<_>>();
+    if arguments.get(1).map(String::as_str) == Some("--shootout") {
+        let graph_case = arguments.get(2).map(String::as_str).unwrap_or("");
+        let n = arguments
+            .get(3)
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let result = kernel::shootout(graph_case, n).unwrap_or_else(|error| fail(error));
+        println!("{result}");
+        return;
+    }
+    if arguments.get(1).map(String::as_str) == Some("--shootout-generated") {
+        let graph_case = arguments.get(2).map(String::as_str).unwrap_or("");
+        let n = arguments
+            .get(3)
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let result = dd_runner::generated_reachability::shootout(graph_case, n)
+            .unwrap_or_else(|error| fail(error));
+        println!("{result}");
+        return;
+    }
+    if arguments.get(1).map(String::as_str) == Some("--shootout-sqlite") {
+        let graph_case = arguments.get(2).map(String::as_str).unwrap_or("");
+        let n = arguments
+            .get(3)
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let result = sqlite_shootout(graph_case, n).unwrap_or_else(|error| fail(error));
+        println!("{result}");
+        return;
+    }
     let mut path = None;
     let mut arm = Arm::Sqlite;
     let mut phases_only = false;
-    for argument in env::args().skip(1) {
+    let mut watch_stdin = false;
+    let mut sqlite_state = None;
+    let mut index = 1;
+    while index < arguments.len() {
+        let argument = &arguments[index];
         match argument.as_str() {
             "--dd-diet-rust-sqlite" => arm = Arm::Sqlite,
             "--dd-diet-rust-rust" => arm = Arm::Kernel,
             "--dd-rust-dd" => arm = Arm::RustDd,
             "--phases" => phases_only = true,
+            "--watch-stdin" => watch_stdin = true,
+            "--sqlite-state" => {
+                index += 1;
+                sqlite_state = arguments.get(index).cloned();
+                if sqlite_state.is_none() {
+                    fail("--sqlite-state requires a path");
+                }
+            }
             other => path = Some(other.to_owned()),
         }
+        index += 1;
     }
     let Some(path) = path else {
-        println!("usage: dd-runner PLAN.json [--dd-diet-rust-sqlite|--dd-diet-rust-rust|--dd-rust-dd] [--phases]");
+        println!("usage: dd-runner PLAN.json [--dd-diet-rust-sqlite|--dd-diet-rust-rust|--dd-rust-dd] [--sqlite-state PATH] [--phases] [--watch-stdin]");
         process::exit(2);
     };
     if matches!(arm, Arm::RustDd) {
@@ -130,9 +137,23 @@ fn main() {
         }
         return;
     }
+    if watch_stdin {
+        match arm {
+            Arm::Sqlite => {
+                let conn = open_sqlite(sqlite_state.as_deref()).unwrap_or_else(|error| fail(error));
+                watch_sqlite(&conn, &plan).unwrap_or_else(|error| fail(error));
+            }
+            Arm::Kernel => {
+                let operators = kernel_operators(&plan).unwrap_or_else(|error| fail(error));
+                watch_kernel(&plan, operators).unwrap_or_else(|error| fail(error));
+            }
+            Arm::RustDd => unreachable!("guarded before dispatch"),
+        }
+        return;
+    }
     match arm {
         Arm::Sqlite => {
-            let conn = Connection::open_in_memory().unwrap_or_else(|error| fail(error));
+            let conn = open_sqlite(sqlite_state.as_deref()).unwrap_or_else(|error| fail(error));
             run(&conn, &plan).unwrap_or_else(|error| fail(error));
         }
         Arm::Kernel => {
@@ -141,6 +162,193 @@ fn main() {
                 .unwrap_or_else(|error| fail(error));
         }
         Arm::RustDd => unreachable!("guarded before dispatch"),
+    }
+}
+
+fn open_sqlite(path: Option<&str>) -> rusqlite::Result<Connection> {
+    match path {
+        Some(path) => Connection::open(path),
+        None => Connection::open_in_memory(),
+    }
+}
+
+#[derive(Deserialize)]
+struct WatchSource {
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct WatchRecord {
+    record: String,
+    #[serde(default)]
+    generation: usize,
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    sign: i8,
+    #[serde(default)]
+    relation: String,
+    #[serde(default)]
+    args: Vec<Value>,
+    #[serde(default)]
+    source: Option<WatchSource>,
+}
+
+fn watch_kernel(plan: &Plan, operators: Vec<kernel::Operator>) -> Result<(), String> {
+    let mut runtime = kernel::Runtime::open(&plan.rels, &plan.initial, operators)?;
+    let mut arrivals = Vec::new();
+    let mut generation = 0usize;
+    for line in BufReader::new(std::io::stdin().lock()).lines() {
+        let line = line.map_err(|error| error.to_string())?;
+        let record: WatchRecord =
+            serde_json::from_str(&line).map_err(|error| format!("watch stream: {error}"))?;
+        match record.record.as_str() {
+            "batch_start" => {
+                generation = record.generation;
+                arrivals.clear();
+                if record.mode == "snapshot" {
+                    runtime.reset()?;
+                }
+            }
+            "change" if runtime.accepts(&record.relation) => {
+                let content = record
+                    .source
+                    .as_ref()
+                    .map(|source| source.content.as_str())
+                    .unwrap_or("");
+                arrivals.push(SignedRow {
+                    sign: record.sign,
+                    row: Row {
+                        rel: record.relation,
+                        values: record
+                            .args
+                            .iter()
+                            .map(|argument| tsi_value(argument, content))
+                            .collect(),
+                    },
+                });
+            }
+            "change" => {}
+            "batch_end" => println!("{}", runtime.tick(generation, &arrivals)?),
+            other => return Err(format!("watch stream record {other} is unsupported")),
+        }
+    }
+    Ok(())
+}
+
+fn watch_sqlite(conn: &Connection, plan: &Plan) -> Outcome<()> {
+    setup_sqlite(conn, plan)?;
+    if !edge_arms(plan)?.is_empty() {
+        return Err("SQLite watch currently accepts level operators only".into());
+    }
+    let mut arrivals = Vec::new();
+    let mut generation = 0usize;
+    let mut reset = false;
+    for line in BufReader::new(std::io::stdin().lock()).lines() {
+        let line = line?;
+        let record: WatchRecord = serde_json::from_str(&line)?;
+        match record.record.as_str() {
+            "batch_start" => {
+                generation = record.generation;
+                arrivals.clear();
+                reset = record.mode == "snapshot";
+            }
+            "change" if plan.rels.iter().any(|rel| rel.name == record.relation) => {
+                let content = record
+                    .source
+                    .as_ref()
+                    .map(|source| source.content.as_str())
+                    .unwrap_or("");
+                arrivals.push(SignedRow {
+                    sign: record.sign,
+                    row: Row {
+                        rel: record.relation,
+                        values: record
+                            .args
+                            .iter()
+                            .map(|argument| tsi_value(argument, content))
+                            .collect(),
+                    },
+                });
+            }
+            "change" => {}
+            "batch_end" => {
+                sqlite_watch_tick(conn, plan, generation, &arrivals, reset)?;
+                reset = false;
+            }
+            other => return Err(format!("watch stream record {other} is unsupported").into()),
+        }
+    }
+    Ok(())
+}
+
+fn reset_sqlite(conn: &Connection, plan: &Plan) -> Outcome<()> {
+    for rel in &plan.rels {
+        let table = rel.name.split('/').next().expect("relation name");
+        let table = table.replace('"', "\"\"");
+        conn.execute_batch(&format!("DELETE FROM \"{table}\""))?;
+    }
+    for row in &plan.initial {
+        write_row(conn, plan, row, 1)?;
+    }
+    close_levels(conn, plan)?;
+    Ok(())
+}
+
+fn sqlite_watch_tick(
+    conn: &Connection,
+    plan: &Plan,
+    generation: usize,
+    arrivals: &[SignedRow],
+    reset: bool,
+) -> Outcome<()> {
+    let transaction = conn.unchecked_transaction()?;
+    if reset {
+        reset_sqlite(&transaction, plan)?;
+    }
+    let before = snapshot(&transaction, plan)?;
+    absorb_arrivals(&transaction, plan, arrivals)?;
+    close_levels(&transaction, plan)?;
+    let after = snapshot(&transaction, plan)?;
+    let output = tick_json(generation, &before, &after);
+    transaction.commit()?;
+    println!("{output}");
+    Ok(())
+}
+
+fn tsi_value(argument: &Value, content: &str) -> Value {
+    let Some(object) = argument.as_object() else {
+        return argument.clone();
+    };
+    if let Some(id) = object.get("id") {
+        return json!({"tsi":{"content":content,"id":id}});
+    }
+    for tag in ["text", "atom", "int"] {
+        if let Some(value) = object.get(tag) {
+            return value.clone();
+        }
+    }
+    if let Some(span) = object.get("span") {
+        return json!({"span":span});
+    }
+    argument.clone()
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+
+    #[test]
+    fn tsi_ids_are_scoped_by_source_content() {
+        assert_eq!(
+            tsi_value(&json!({"id":7}), "blake3:abc"),
+            json!({"tsi":{"content":"blake3:abc","id":7}})
+        );
+        assert_eq!(tsi_value(&json!({"text":"Render"}), ""), json!("Render"));
+        assert_eq!(
+            tsi_value(&json!({"span":["blake3:abc", 3, 9]}), ""),
+            json!({"span":["blake3:abc", 3, 9]})
+        );
     }
 }
 
@@ -225,14 +433,104 @@ fn level_bundles(plan: &Plan) -> Vec<&Rule> {
 }
 
 fn run(conn: &Connection, plan: &Plan) -> Outcome<()> {
+    setup_sqlite(conn, plan)?;
+    run_sqlite_ticks(conn, plan, true)
+}
+
+fn setup_sqlite(conn: &Connection, plan: &Plan) -> Outcome<()> {
+    let transaction = conn.unchecked_transaction()?;
+    ensure_runtime_catalog(&transaction, plan)?;
     for ddl in &plan.ddl {
-        conn.execute_batch(ddl)?;
+        transaction.execute_batch(ddl)?;
     }
     for row in &plan.initial {
-        write_row(conn, plan, row, 1)?;
+        write_row(&transaction, plan, row, 1)?;
     }
+    close_levels(&transaction, plan)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_runtime_catalog(conn: &Connection, plan: &Plan) -> Outcome<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS \"__dl7_catalog\" (\"kind\" TEXT NOT NULL, \"position\" INTEGER NOT NULL, \"value\" TEXT NOT NULL, PRIMARY KEY (\"kind\", \"position\"))",
+    )?;
+    let expected = runtime_catalog(plan);
+    let mut statement = conn.prepare(
+        "SELECT \"kind\", \"position\", \"value\" FROM \"__dl7_catalog\" ORDER BY \"kind\", \"position\"",
+    )?;
+    let stored = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    if stored.is_empty() {
+        for (kind, position, value) in expected {
+            conn.execute(
+                "INSERT INTO \"__dl7_catalog\" (\"kind\", \"position\", \"value\") VALUES (?1, ?2, ?3)",
+                params![kind, position, value],
+            )?;
+        }
+    } else if stored != expected {
+        return Err("SQLite runtime catalog differs from the generated DL7 plan".into());
+    }
+    Ok(())
+}
+
+fn runtime_catalog(plan: &Plan) -> Vec<(String, i64, String)> {
+    let mut rows = Vec::new();
+    for (position, ddl) in plan.ddl.iter().enumerate() {
+        rows.push(("ddl".into(), position as i64, ddl.clone()));
+    }
+    for (position, rel) in plan.rels.iter().enumerate() {
+        rows.push((
+            "relation".into(),
+            position as i64,
+            json!({
+                "name":rel.name,
+                "columns":rel.columns,
+                "select_all":rel.select_all,
+            })
+            .to_string(),
+        ));
+    }
+    for (position, rule) in plan.rules.iter().enumerate() {
+        rows.push((
+            "rule".into(),
+            position as i64,
+            json!({
+                "id":rule.id,
+                "head":rule.head,
+                "delete":rule.delete,
+                "inserts":rule.inserts,
+            })
+            .to_string(),
+        ));
+    }
+    for (position, row) in plan.initial.iter().enumerate() {
+        rows.push((
+            "initial".into(),
+            position as i64,
+            json!({"rel":row.rel, "values":row.values}).to_string(),
+        ));
+    }
+    for (position, operator) in plan.operators.iter().enumerate() {
+        rows.push(("operator".into(), position as i64, operator.to_string()));
+    }
+    for (position, phase) in plan.tick_order.iter().enumerate() {
+        rows.push(("tick".into(), position as i64, phase.clone()));
+    }
+    rows.sort();
+    rows
+}
+
+fn run_sqlite_ticks(conn: &Connection, plan: &Plan, emit_ticks: bool) -> Outcome<()> {
     let arms = edge_arms(plan)?;
-    close_levels(conn, plan)?;
     let mut text_before = snapshot(conn, plan)?;
     let mut level_before = storage_snapshot(conn, plan, &level_heads(plan))?;
     let mut carry: Vec<Occurrence> = Vec::new();
@@ -302,10 +600,121 @@ fn run(conn: &Connection, plan: &Plan) -> Outcome<()> {
                 other => return Err(format!("unknown tick phase: {other}").into()),
             }
         }
-        println!("{}", tick_json(tick, &text_before, &text_after));
+        let output = tick_json(tick, &text_before, &text_after);
+        if emit_ticks {
+            println!("{output}");
+        }
         text_before = text_after;
     }
     Ok(())
+}
+
+fn sqlite_shootout(graph_case: &str, n: usize) -> Outcome<Value> {
+    if n == 0 {
+        return Err("shootout N must be greater than zero".into());
+    }
+    let edge_count = match graph_case {
+        "chain" => n - 1,
+        "ring" => n,
+        other => return Err(format!("unknown shootout case {other}").into()),
+    };
+    let mut plan = generated_reachability_plan();
+    let setup_started = std::time::Instant::now();
+    let conn = Connection::open_in_memory()?;
+    setup_sqlite(&conn, &plan)?;
+    let setup_ms = setup_started.elapsed().as_secs_f64() * 1000.0;
+    let mut arrivals = (0..n.saturating_sub(1))
+        .map(|from| SignedRow {
+            sign: 1,
+            row: Row {
+                rel: "edge".into(),
+                values: vec![json!(from), json!(from + 1)],
+            },
+        })
+        .collect::<Vec<_>>();
+    if graph_case == "ring" {
+        arrivals.push(SignedRow {
+            sign: 1,
+            row: Row {
+                rel: "edge".into(),
+                values: vec![json!(n - 1), json!(0)],
+            },
+        });
+    }
+    plan.schedule.push(arrivals);
+    let closure_started = std::time::Instant::now();
+    run_sqlite_ticks(&conn, &plan, false)?;
+    let closure_ms = closure_started.elapsed().as_secs_f64() * 1000.0;
+    let closure_count = conn.query_row("SELECT count(*) FROM \"path\"", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    Ok(json!({
+        "runtime":"dbsp-sqlite",
+        "version":rusqlite::version(),
+        "case":graph_case,
+        "n":n,
+        "edge_count":edge_count,
+        "closure_count":closure_count,
+        "setup_ms":setup_ms,
+        "closure_ms":closure_ms,
+    }))
+}
+
+fn generated_reachability_plan() -> Plan {
+    Plan {
+        ddl: dd_runner::generated_reachability::ddl(),
+        rels: dd_runner::generated_reachability::relations(),
+        rules: dd_runner::generated_reachability::rules(),
+        initial: dd_runner::generated_reachability::initial(),
+        schedule: Vec::new(),
+        tick_order: dd_runner::generated_reachability::tick_order(),
+        operators: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod sqlite_shootout_tests {
+    #[test]
+    fn generated_sql_closes_chain_and_ring_exactly() {
+        assert_eq!(
+            super::sqlite_shootout("chain", 4).unwrap()["closure_count"],
+            6
+        );
+        assert_eq!(
+            super::sqlite_shootout("ring", 4).unwrap()["closure_count"],
+            16
+        );
+    }
+
+    #[test]
+    fn catalog_drift_is_rejected_before_relation_state_changes() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let plan = super::generated_reachability_plan();
+        super::setup_sqlite(&conn, &plan).unwrap();
+        super::write_row(
+            &conn,
+            &plan,
+            &dd_runner::Row {
+                rel: "edge".into(),
+                values: vec![serde_json::json!(0), serde_json::json!(1)],
+            },
+            1,
+        )
+        .unwrap();
+        let mut changed = super::generated_reachability_plan();
+        changed.ddl.push("SELECT 'changed'".into());
+        let error = super::setup_sqlite(&conn, &changed).unwrap_err();
+        let edge_count = conn
+            .query_row("SELECT count(*) FROM \"edge\"", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "SQLite runtime catalog differs from the generated DL7 plan"
+        );
+        assert_eq!(edge_count, 1);
+    }
 }
 
 fn all_rels(plan: &Plan) -> Vec<String> {

@@ -1,1 +1,1 @@
-20260902.1.sprefa-tsi-eight-arcs-landed-trail-pending.md
+20260908.0.stock-sqlite-ivm-extension-and-shared-shootout.md

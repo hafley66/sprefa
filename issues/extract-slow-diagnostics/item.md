@@ -146,4 +146,3 @@ Suggested bounded follow-up:
 - [ ] Bound window sizes, overlap reporting, output volume, and runtime. Avoid claiming corpus-wide precision from the example.
 
 Keep this inside extract's source-fact scope. Git history is used to retrieve the old implementation, not proposed as part of extract's runtime responsibilities. No clone detector or tool code was changed by this report.
-
