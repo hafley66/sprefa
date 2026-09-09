@@ -10,7 +10,7 @@
 % inject the canonical json text and gives the decode plane a real obj term.
 
 :- ensure_loaded('../../../prolog/compile/scripts/dl6_oracle').
-:- use_module('../../../prolog/1_host_expand', [prepare_program/5]).
+:- use_module('../../../prolog/next/1_expand/1_host_expand', [prepare_program/5]).
 :- ensure_loaded('../../../prolog/compile/oracle_dump').
 
 :- initialization(main, main).

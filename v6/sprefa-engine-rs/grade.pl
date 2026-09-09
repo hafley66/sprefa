@@ -1,7 +1,7 @@
 :- module(rust_grade, [ generate/2 ]).
 
 :- use_module('../prolog/compile', [ program_plan/3 ]).
-:- use_module('../prolog/lower', [ lower_program/2, boot_statements/7 ]).
+:- use_module('../prolog/next/2_lower/lower', [ lower_program/2, boot_statements/7 ]).
 :- use_module('../prolog/emit_rust', [ emit_program/5 ]).
 :- use_module('../prolog/sweep').
 :- use_module(library(filesex)).

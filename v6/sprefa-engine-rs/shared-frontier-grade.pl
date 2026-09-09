@@ -1,7 +1,7 @@
 :- module(shared_frontier_grade, [ generate/2 ]).
 
 :- use_module('../prolog/compile', [ program_plan/3 ]).
-:- use_module('../prolog/lower',
+:- use_module('../prolog/next/2_lower/lower',
               [ lower_program/2, boot_statements/7, with_frontier_mode/2 ]).
 :- use_module('../prolog/emit_rust', [ emit_program/5 ]).
 

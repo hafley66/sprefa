@@ -26,7 +26,7 @@
             implementation_step/3
           ]).
 
-:- use_module('../v6/prolog/0_match_expand',
+:- use_module('../v6/prolog/next/1_expand/0_match_expand',
               [expand_match_program_in_context/3]).
 :- use_module('../v6/prolog/conformance/engine',
               [run_program/5, rel_rows/3, rel_deltas/3]).

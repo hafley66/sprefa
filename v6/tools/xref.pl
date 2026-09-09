@@ -9,8 +9,8 @@
 
 :- use_module(library(lists)).
 :- use_module('../prolog/use_resolve', [expand_uses/6]).
-:- use_module('../prolog/analyze', [body_ref_uses/2]).
-:- use_module('../prolog/0_dot_expand', [declared_path/3]).
+:- use_module('../prolog/next/2_lower/analyze', [body_ref_uses/2]).
+:- use_module('../prolog/next/1_expand/0_dot_expand', [declared_path/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
