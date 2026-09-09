@@ -84,6 +84,21 @@ ra_ap_parser = "0.0.349"
 ra_ap_span = "0.0.349"
 ra_ap_syntax-bridge = "0.0.349"
 ra_ap_intern = "0.0.349"
+# @comment-ok: build-vs-buy candidate table, the law every dep comment here carries.
+# The CHECKER tier for rust (user decision 2026-08-30: "rust runs WITH the
+# language's own machinery"). Same 0.0.349 pin as the mbe crates above, so cargo
+# unifies one copy of the shared tree. `load-cargo` reads `cargo metadata` and
+# builds the salsa db with NO cargo build; `hir`/`ide` answer receiver types,
+# trait selection and def targets. REJECTED: rebuilding inference or a trait
+# solver here (the infra-is-bought law); shelling out to rust-analyzer (the
+# zero-shell-in-the-engine decision); scip only (it is an index build per run
+# and the calls/types planes are what this tier is for).
+ra_ap_hir = "0.0.349"
+ra_ap_ide = "0.0.349"
+ra_ap_ide_db = "0.0.349"
+ra_ap_load-cargo = "0.0.349"
+ra_ap_project_model = "0.0.349"
+ra_ap_vfs = "0.0.349"
 salsa = { version = "0.28.2", default-features = false, features = ["macros", "rayon"] }
 # tree-sitter is the Go AST front-end v5 carried (src/graph/typegraph/go.rs).
 # These versions match what ast-grep-language already transitively pulls
