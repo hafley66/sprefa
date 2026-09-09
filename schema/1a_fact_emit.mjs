@@ -1,6 +1,6 @@
-// Adapt the authored nested wire shapes to binding-core's scalar SQL emitter.
+// Adapt authored nested wire shapes to SQL core and rusqlite value writers.
 // Spans stay models in TypeSpec; a nested path becomes e.g. span__start in SQL.
-export function emitFacts(program, emitSQL, rustTarget, emitAll) {
+export function emitFacts(program, emitSQL, emitRusqliteValueWriters, rustTarget, emitAll) {
   const ns = program.getGlobalNamespaceType().namespaces.get("ExtractSql");
   const scalars = program.getGlobalNamespaceType().namespaces.get("TypeSpec").scalars;
   const tables = [];
@@ -71,18 +71,36 @@ export function emitFacts(program, emitSQL, rustTarget, emitAll) {
 
     // This program is private to the generation pass. Decorator state stays on
     // the original PK property; flattened leaves need no new decorator state.
-    model.name = quote(record.value);
+    model.name = record.value;
     model.properties.clear();
     for (const c of columns) {
       const prop = c.path.length === 1 ? c.property : { ...c.property };
-      prop.name = quote(c.name);
-      prop.type = scalars.get(c.kind === "json" ? "string" : c.kind === "uint64" ? "bytes" : c.kind);
+      prop.name = c.name;
+      prop.type = scalars.get(c.kind === "json" ? "string" : c.kind);
       if (c.optional || c.nullable) {
         prop.type = { kind: "Union", variants: new Map([
           ["value", { type: prop.type }],
           ["null", { type: { kind: "Intrinsic", name: "null" } }],
         ]) };
       }
+      model.properties.set(prop.name, prop);
+    }
+  }
+  const writers = emitRusqliteValueWriters(program);
+  for (const [, model] of [...ns.models]) {
+    model.name = quote(model.name);
+    const properties = [...model.properties.values()];
+    model.properties.clear();
+    for (const prop of properties) {
+      prop.name = quote(prop.name);
+      const replaceUint64 = type => {
+        if (type.kind === "Scalar" && type.name === "uint64") return scalars.get("bytes");
+        if (type.kind !== "Union") return type;
+        return { ...type, variants: new Map([...type.variants].map(([name, variant]) => [
+          name, { ...variant, type: replaceUint64(variant.type) },
+        ])) };
+      };
+      prop.type = replaceUint64(prop.type);
       model.properties.set(prop.name, prop);
     }
   }
@@ -96,5 +114,6 @@ export function emitFacts(program, emitSQL, rustTarget, emitAll) {
     ["4_facts.sql", "-- Generated from schema/1_facts.tsp by just gen.\n" + emitSQL(program)],
     ["5_facts.json", JSON.stringify(tables, null, 2) + "\n"],
     ["6_facts.rs", "// Generated SQLite row types from schema/1_facts.tsp.\nuse serde::{Serialize, Deserialize};\n\n" + rust + "\n"],
+    ["7_writers_auto.rs", writers],
   ]);
 }

@@ -58,22 +58,40 @@ test("malformed or unsupported TypeSpec fails before artifact publication", asyn
   }
 });
 
-test("generated Rust compiles and preserves u32 values", async () => {
+test("generated Rust compiles, preserves u32 values, and executes native writers inside the caller transaction", async () => {
   const scratch = await mkdtemp(join(tmpdir(), "sprefa-schema-rust-"));
   try {
     for (const [name, content] of files) if (name.endsWith(".rs")) await writeFile(join(scratch, name), content);
     // Reuse the version already locked by extract. No production dependency change.
     const lock = await readFile(join(repository, "v6/sprefa-extract/Cargo.lock"), "utf8");
     const version = lock.match(/name = "serde"\nversion = "([^"]+)"/)[1];
-    await writeFile(join(scratch, "Cargo.toml"), `[package]\nname = "sprefa-schema-trial"\nversion = "0.0.0"\nedition = "2021"\n[lib]\npath = "lib.rs"\n[dependencies]\nserde = { version = "=${version}", features = ["derive"] }\n[workspace]\n`);
+    const rusqliteVersion = lock.match(/name = "rusqlite"\nversion = "([^"]+)"/)[1];
+    await writeFile(join(scratch, "Cargo.toml"), `[package]\nname = "sprefa-schema-trial"\nversion = "0.0.0"\nedition = "2021"\n[lib]\npath = "lib.rs"\n[dependencies]\nserde = { version = "=${version}", features = ["derive"] }\nrusqlite = { version = "=${rusqliteVersion}", features = ["bundled"] }\n[workspace]\n`);
+    await writeFile(join(scratch, "4_facts.sql"), files.get("4_facts.sql"));
     await writeFile(join(scratch, "lib.rs"), `
       #[path = "0_span.rs"] pub mod local;
       #[path = "1_span_out.rs"] pub mod wire;
       #[path = "6_facts.rs"] pub mod facts;
+      #[path = "7_writers_auto.rs"] pub mod writers;
       #[test] fn values() {
         let local = local::Span { start: u32::MAX, len: 0 };
         let wire = wire::SpanOut { start: local.start, end: local.start + local.len };
         assert_eq!((wire.start, wire.end), (u32::MAX, u32::MAX));
+      }
+      #[test] fn native_writers() {
+        use rusqlite::{Connection, types::Value};
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("4_facts.sql")).unwrap();
+        let tx = conn.transaction().unwrap();
+        let protocol = [Value::Integer(1), Value::Null, Value::Null,
+          Value::Text("protocol".into()), Value::Integer(u32::MAX.into())];
+        assert_eq!(writers::insert_values(&tx, "protocol", &protocol).unwrap(), 1);
+        assert_eq!(tx.query_row("SELECT version FROM protocol", [], |r| r.get::<_, u32>(0)).unwrap(), u32::MAX);
+        assert!(writers::insert_values(&tx, "protocol", &protocol[..4]).is_err());
+        assert!(writers::insert_values(&tx, "unknown", &protocol).is_err());
+        assert!(!tx.is_autocommit());
+        tx.rollback().unwrap();
+        assert_eq!(conn.query_row("SELECT count(*) FROM protocol", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
       }
     `);
     const result = execFileSync("cargo", ["test", "--offline", "--manifest-path", join(scratch, "Cargo.toml")], {
@@ -81,7 +99,7 @@ test("generated Rust compiles and preserves u32 values", async () => {
       env: { ...process.env, CARGO_TARGET_DIR: join(scratch, "target") },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    assert.match(result, /1 passed; 0 failed/);
+    assert.match(result, /2 passed; 0 failed/);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

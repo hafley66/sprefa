@@ -28,19 +28,19 @@ export async function generate(entry = join(schemaDirectory, "1_sql_trial.tsp"))
     throw new Error(`Extract schema requires TypeSpec 1.10.0; found ${compilerPackage.version} in ${root}`);
   }
   const { compile, NodeHost, formatDiagnostic, getDoc } = await import(pathToFileURL(compilerPath));
-  const binding = join(root, "packages/binding-core");
-  const { emitSQL } = await import(pathToFileURL(join(binding, "dist/src/4_emit-sql.js")));
-  const { resolveFieldType, snakeCase } = await import(pathToFileURL(join(binding, "dist/src/2_facts.js")));
+  const sql = join(root, "packages/sql");
+  const { emitSQL, resolveFieldType, snakeCase } = await import(pathToFileURL(join(sql, "dist/src/index.js")));
+  const { emitRusqliteValueWriters } = await import(pathToFileURL(join(root, "packages/rusqlite/dist/src/index.js")));
   const { rustTarget } = await import(pathToFileURL(join(root, "packages/emit-helper/src/3_rust.ts")));
   const { emitAll } = await import(pathToFileURL(join(root, "packages/emit-helper/src/2_walk.ts")));
 
-  // Import declarations and their implementations directly. The library's
-  // main entry has an onValidate hook that writes even when noEmit is true.
+  // Import SQL declarations and implementations directly, with no automatic
+  // driver-emission hook. This pass owns artifact publication.
   const program = await compile(NodeHost, entry, {
     noEmit: true,
     additionalImports: [
-      join(binding, "dist/src/decorators.js"),
-      join(binding, "lib/entity.tsp"),
+      join(sql, "dist/src/1_decorators.js"),
+      join(sql, "lib/entity.tsp"),
     ],
   });
   if (program.diagnostics.length) {
@@ -71,10 +71,10 @@ export async function generate(entry = join(schemaDirectory, "1_sql_trial.tsp"))
   files.set("3_models.json", JSON.stringify(models, null, 2) + "\n");
   const facts = await compile(NodeHost, join(schemaDirectory, "1_facts.tsp"), {
     noEmit: true,
-    additionalImports: [join(binding, "dist/src/decorators.js"), join(binding, "lib/entity.tsp")],
+    additionalImports: [join(sql, "dist/src/1_decorators.js"), join(sql, "lib/entity.tsp")],
   });
   if (facts.diagnostics.length) throw new Error(facts.diagnostics.map(d => formatDiagnostic(d)).join("\n"));
-  for (const [name, content] of emitFacts(facts, emitSQL, rustTarget, emitAll)) files.set(name, content);
+  for (const [name, content] of emitFacts(facts, emitSQL, emitRusqliteValueWriters, rustTarget, emitAll)) files.set(name, content);
   return files;
 }
 

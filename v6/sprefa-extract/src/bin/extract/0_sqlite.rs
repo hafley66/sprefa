@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use rusqlite::{params_from_iter, types::Value as SqlValue, Connection};
+use rusqlite::{types::Value as SqlValue, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -17,6 +17,12 @@ pub const CATALOG: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../schema/generated/5_facts.json"
 ));
+mod writers {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../schema/generated/7_writers_auto.rs"
+    ));
+}
 
 #[derive(Deserialize)]
 pub struct Column {
@@ -35,8 +41,6 @@ pub struct Table {
     pub record: String,
     pub table: String,
     pub columns: Vec<Column>,
-    #[serde(default)]
-    insert: String,
 }
 
 pub struct Database {
@@ -49,9 +53,6 @@ pub struct Database {
     content_id: Option<String>,
 }
 
-fn quote(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
-}
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -114,20 +115,7 @@ impl Database {
         connection.execute_batch(DDL)?;
         let tables = serde_json::from_str::<Vec<Table>>(CATALOG)?
             .into_iter()
-            .map(|mut table| {
-                table.insert = format!(
-                    "INSERT INTO {} ({}) VALUES ({})",
-                    quote(&table.table),
-                    table
-                        .columns
-                        .iter()
-                        .map(|c| quote(&c.name))
-                        .collect::<Vec<_>>()
-                        .join(","),
-                    vec!["?"; table.columns.len()].join(",")
-                );
-                (table.record.clone(), table)
-            })
+            .map(|table| (table.record.clone(), table))
             .collect();
         Ok(Self {
             connection,
@@ -280,9 +268,7 @@ impl Database {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        self.connection
-            .prepare_cached(&table.insert)?
-            .execute(params_from_iter(values))?;
+        writers::insert_values(&self.connection, &table.table, &values)?;
         self.rows = next;
         Ok(())
     }

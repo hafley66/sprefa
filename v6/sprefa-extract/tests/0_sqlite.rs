@@ -537,6 +537,9 @@ fn values_duplicates_unsigned_limits_and_publication_races_are_preserved() {
     let path = scratch.path().join("values.db");
     let rows = vec![
         json!({"record":"size_skip","path":"quotes'\"\nλ","bytes":u64::MAX,"limit":0,"reason":"over_max_bytes"}),
+        json!({"record":"size_skip","path":"signed-max","bytes":i64::MAX as u64,"limit":i64::MAX as u64 + 1,"reason":"over_max_bytes"}),
+        json!({"record":"scip_index","reused":false,"tool_name":"fixture","tool_version":"1","documents":0,"index_mtime_unix_ms":u64::MAX,"staleness":"fixture"}),
+        json!({"record":"scip_index","reused":true,"tool_name":"fixture","tool_version":"1","documents":0,"index_mtime_unix_ms":null,"staleness":"fixture"}),
         json!({"record":"protocol","version":1}),
         json!({"record":"protocol","version":1}),
         json!({"record":"data_doc","family":"data","ordinal":0,"span":{"start":0,"end":4},"format":"json","doc":null}),
