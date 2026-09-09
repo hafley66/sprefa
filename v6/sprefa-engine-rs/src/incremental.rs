@@ -1545,6 +1545,7 @@ pub fn level_sources(
         if let Some(rederive) = statement.support_sql.as_ref().and_then(|sql| sql.get(1)) {
             let Some(spans) = negated_spans(rederive) else {
                 entry.recount_always = true;
+                tracing::warn!(head = %statement.head_rel, "RECOUNT_ALWAYS");
                 continue;
             };
             for relation in relations {
