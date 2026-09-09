@@ -132,6 +132,11 @@ Verdict: extract found real defects in a codebase two other reviewers had alread
 
 CodeQL swing on the same package: stock suite 87 rules / 0 findings / 11 s; five custom QL queries (research/2026-09-08-codeql-review-queries/, fixture included) found all four pre-fix shapes on the fixture (3 duplicated-cleanup rows, 1 acquire-before-try, 1 never-released, 1 require-in-esm) and one leftover duplicate in the refactor, since fixed; ExceptionalEdgeIntoFinally proves the JS CFG has exception edges from the AST alone. Cost: db 3.6 s, first query compile 51 s, warm 2.6 s. Doc §8. The .ql files + fixture are the acceptance test for @extract-cfg-exception-edges and @dl6-acquire-release-pairing.
 
+### 2026-09-09T00:12:55Z · @fable
+
+N+1 field test filed as @extract-n-plus-one-smells: fast tier finds the loop-invariant scan with a 20-line join over df_nest/site/df_loop (0.02 s), spread-accumulate via cst spread_element inside df_loop spans, flow tier reaches the key-gated derivation's first hop. Research: research/2026-09-08-n-plus-one-from-extract/
+
+
 
 ## Decisions
 
