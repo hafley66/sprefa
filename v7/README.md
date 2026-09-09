@@ -11,6 +11,38 @@ outside this arc.
 - [Kernel reconciliation](2_DESIGN/0_KERNEL_RECONCILIATION.md)
 - [Minimal programmable kernel plan](2_DESIGN/1_MINIMAL_VERTICAL_SLICE.PLAN.md)
 
+The application target is local, ref-driven code analysis and effects across
+repositories:
+
+```text
+Soopy observes repository + watched ref: old commit -> new commit
+  -> compare path/content identities in those immutable revisions
+  -> retract removed/replaced file facts; add new/replacement file facts
+  -> DL7 rules maintain cross-repository results in SQLite IVM
+  -> commit the generation, then dispatch its effect changes
+```
+
+An unchanged file retains its extracted facts. Its derived analysis can still
+change when a dependency changes elsewhere. Extraction reuse must include the
+extractor version and configuration; equal bytes alone do not identify results
+from different extraction configurations. Repository, watched-ref membership,
+path, and content identity remain explicit so two repositories can contain the
+same paths or bytes without their source occurrences aliasing. Commit movement
+also updates revision metadata even when the selected files are unchanged.
+
+Soopy already exposes repository ref deltas, immutable revision reads, and
+path/content snapshot differences. The existing `extract watch` adapter selects
+the worktree and sends signed TSI rows to the historical runner below. The newer
+extract SQLite exporter creates a snapshot database. Connecting named-ref
+movement to that durable fact store and committed effect delivery remains
+integration work. External effect retries require durable delivery state and
+effect-specific idempotency; committing analysis alone does not provide that.
+
+DL6's child-first interning is a selectable DL7 userland storage layout: rules
+over the type graph select dictionaries and product references for a renderer.
+Persistent local IDs, semantic identities, and source revision membership have
+separate roles. This storage choice does not change product `apply` semantics.
+
 Initial boundary under examination:
 
 ```text
@@ -66,6 +98,66 @@ The command runs `extract --witness --family type`, exposes its dotted
 one JSON array per result tuple. `0_rust_traits.dl7` derives
 `source_trait(Name)` by joining `rust.trait(Identity)` with
 `tsi.name(Identity, Name)`.
+
+Query an existing extract SQLite fact database through the target-neutral
+logical-program emitter:
+
+```bash
+cd v7
+just sqlite-query \
+  test/fixtures/sqlite_query/0_cst_edge_kinds.dl7 \
+  test/fixtures/sqlite_query/1_cst_edge_kinds.layout.json \
+  /path/to/extract.db --query
+```
+
+Omit `--query` to emit a JSON artifact containing the SQL and source bindings.
+Use `--install cst_edge_kinds` to create a maintained
+SQLite IVM result in that database. The install command requires the native
+extension built from `sqlite_ivm/`; `--ivm-extension PATH` or `IVM_EXTENSION`
+selects its library. `--sqlite3 PATH` or `SQLITE3` selects the SQLite CLI.
+Existing result names are rejected. Future writers must load the extension and
+enable the connection pragmas documented in [sqlite_ivm](../sqlite_ivm/README.md).
+
+The layout binds authored relation names to existing tables and ordered
+columns. The emitter also accepts equivalent relational layout rows directly.
+Bindings assume the extractor has validated field values; this adapter does
+not enforce DL7 field types on arbitrary SQLite contents.
+This cut covers positive, nonrecursive projection, constant filters,
+equijoins, and unions of output rules with set semantics. Mapped rows with NULL
+in any mapped column are excluded from the input relation. Unsupported rule
+shapes produce diagnostics before installation.
+
+The example joins edges to matching node kinds by input path, content identity,
+family, and span boundaries. Distinct kinds can share a span, so an edge can
+produce multiple matching kind pairs. The exported input path must already
+distinguish source occurrences; this example does not add repository or
+watched-ref identity to an export that lacks those columns.
+
+`just sqlite-query-test` exercises the compiler, SQL boundary, and native IVM
+lifecycle. `just interned-storage-test` exercises the separate userland layout
+derivation. Neither command starts the named-ref watcher or dispatches effects.
+
+The storage library is `emitters/2_interned_storage.dl7`. Application-authored
+policy products select `storage_root`, `storage_dictionary`, and optional
+`storage_plain` edges. Its ordinary DL7 rules derive type layouts, ordered
+field layouts, dictionary/reference dependencies, reverse projections, and
+identity-domain metadata from the type graph. The fixture separates moving
+commit SHAs in `RefTransition` from file content identity in `SourceRevision`.
+It includes two references to the same `Span` type and an unselected product.
+These are layout descriptions; persistent value interning is not implemented
+by this library.
+
+The layout test compiles those rules normally, then emits the compiler-closed
+layout rows through a type-graph-only runtime view. It omits unrelated
+executable rules from artifact reification. Full unsliced artifact emission
+returns empty layout artifacts because the `edge_snapshot` inputs are not
+retained for a second evaluation. Reading `:` instead also introduces logical
+rule-occurrence edges that fail functional-key validation. The tested route
+uses the already-derived layout rows; the general second-evaluation route
+requires separate compiler work.
+
+The local extract integration and prepared-statement cache measurements are
+recorded in [the query receipt](receipts/0_sqlite_query.md).
 
 Emit that source-visible relation graph as the operator JSON accepted by the
 resident Rust RAM kernel:

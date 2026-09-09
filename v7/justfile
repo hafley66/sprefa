@@ -32,6 +32,20 @@ query program source relation:
     cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
     swipl -q -s "{{ v7 }}/src/4_tool/0_source_query_mainer.pl" -- "{{ program }}" "{{ source }}" "{{ relation }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract"
 
+# Compile DL7 against an existing SQLite fact layout. Default: emit SQL.
+# Pass --query to read results or --install NAME to create a maintained result.
+[positional-arguments]
+sqlite-query program layout database *options:
+    swipl -q -s "{{ v7 }}/src/4_tool/4_sqlite_query_mainer.pl" -- "$@"
+
+# Verify the compiler-to-SQLite query boundary and native IVM lifecycle.
+sqlite-query-test:
+    swipl -q -s "{{ v7 }}/test/14_sqlite_query_emitter.test.pl" -g run_tests -t halt
+
+# Verify selectable storage layouts derived by ordinary DL7 userland rules.
+interned-storage-test:
+    swipl -q -s "{{ v7 }}/test/15_interned_storage.test.pl" -g run_tests -t halt
+
 # Emit the source-visible positive-rule slice as the operator JSON consumed by
 # dd-runner's pure RAM kernel. The source supplies the hosted TSI relation set.
 dbsp-plan program source:
