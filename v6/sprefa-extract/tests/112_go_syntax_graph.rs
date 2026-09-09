@@ -321,7 +321,10 @@ fn struct_declares_named_fields_and_an_embedding() {
     let base = probe.id_of("tsi.product", "Base");
     let edges = probe.edges_of(node);
     let labels: Vec<&str> = edges.keys().map(String::as_str).collect();
-    assert_eq!(labels, ["Base", "Index", "Len", "Next", "Render", "Tags", "Value"]);
+    assert_eq!(
+        labels,
+        ["Base", "Index", "Len", "Next", "Render", "Tags", "Value"]
+    );
 
     let element = probe.parameter(node, 0);
     assert_eq!(edges["Value"], (element, 0));
@@ -336,7 +339,10 @@ fn struct_declares_named_fields_and_an_embedding() {
     assert_eq!(probe.origin_text(index), "map[K]int64");
     assert_eq!(edges["Index"].1, 3);
     assert_eq!(edges["Base"], (base, 4));
-    assert_eq!(probe.pairs_from("go.embedding", node), BTreeSet::from([base]));
+    assert_eq!(
+        probe.pairs_from("go.embedding", node),
+        BTreeSet::from([base])
+    );
 
     let id_field = probe.edge(base, "ID");
     assert_eq!(
@@ -360,7 +366,11 @@ fn declared_type_origins_at_its_own_name() {
         .filter(|(_, name)| name == "Base")
         .map(|(id, _)| id)
         .collect();
-    assert_eq!(named_base, [base], "one id is written `Base` among {base_rows}");
+    assert_eq!(
+        named_base,
+        [base],
+        "one id is written `Base` among {base_rows}"
+    );
 }
 
 /// `type I interface { M(x T) U; Other }`: a product and `go.interface`, the
@@ -518,7 +528,10 @@ fn alias_denotes_and_defined_type_has_an_underlying() {
     assert_eq!(probe.names()[&label], "Label");
     assert!(!probe.carries("tsi.type", label));
     let string = probe.named("string");
-    assert_eq!(probe.pairs_from("tsi.denotes", label), BTreeSet::from([string]));
+    assert_eq!(
+        probe.pairs_from("tsi.denotes", label),
+        BTreeSet::from([string])
+    );
 
     let meters = probe.id_of("tsi.type", "Meters");
     let int64 = probe.named("int64");
@@ -573,7 +586,10 @@ fn primitives_carry_a_class_and_no_origin() {
     let names = probe.names();
     for (id, class) in &classes {
         assert!(probe.carries("tsi.type", *id));
-        assert!(!probe.has_origin(*id), "primitive {class} carries an origin");
+        assert!(
+            !probe.has_origin(*id),
+            "primitive {class} carries an origin"
+        );
         assert_eq!(&names[id], class);
     }
     let error = probe.named("error");

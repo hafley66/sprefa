@@ -255,7 +255,11 @@ fn qualified_path_spans_its_last_segment() {
 
     for fact in probe.rows("tsi.origin") {
         let (start, end) = as_span(&fact.args[2]).expect("an origin carries a span");
-        assert_ne!(probe.slice(start, end), "std", "an origin spans a qualifier");
+        assert_ne!(
+            probe.slice(start, end),
+            "std",
+            "an origin spans a qualifier"
+        );
     }
 
     let applied = as_id(&probe.edge(trail, "outcome").args[3]).expect("the field names a type");
@@ -293,7 +297,10 @@ fn every_written_application_states_its_call() {
     assert_eq!(probe.origin_text(parts[1].1), "Error");
 
     let label = as_id(&probe.edge(trail, "label").args[3]).expect("the field names a type");
-    assert!(probe.carries("tsi.product", label), "a tuple states no shape");
+    assert!(
+        probe.carries("tsi.product", label),
+        "a tuple states no shape"
+    );
     let members = probe.edges_of(label);
     let labels: Vec<&str> = members.keys().map(String::as_str).collect();
     assert_eq!(labels, vec!["0", "1"]);
@@ -311,7 +318,11 @@ fn every_written_application_states_its_call() {
         .map(str::to_string)
         .collect();
     assert_eq!(callees, wanted);
-    assert_eq!(probe.rows("tsi.called").len(), 4, "one call per written text");
+    assert_eq!(
+        probe.rows("tsi.called").len(),
+        4,
+        "one call per written text"
+    );
 }
 
 /// D3: a tuple variant labels its payload by ordinal, a struct variant by
@@ -328,7 +339,10 @@ fn a_variant_carries_its_payload() {
     assert_eq!(arms["Failed"].1, 2);
 
     let idle = arms["Idle"].0;
-    assert!(!probe.carries("tsi.product", idle), "a unit variant claimed a shape");
+    assert!(
+        !probe.carries("tsi.product", idle),
+        "a unit variant claimed a shape"
+    );
     assert!(probe.edges_of(idle).is_empty());
 
     let retry = arms["Retry"].0;
@@ -440,7 +454,10 @@ fn a_builtin_carries_a_class_and_no_origin() {
         let atom = as_atom(&fact.args[1]).expect("a class is an atom");
         assert!(CLASSES.contains(&atom), "`{atom}` is not a declared class");
         assert!(!probe.has_origin(id), "class `{atom}` claimed an origin");
-        assert!(probe.carries("tsi.type", id), "class `{atom}` declares no id");
+        assert!(
+            probe.carries("tsi.type", id),
+            "class `{atom}` declares no id"
+        );
         classes.entry(atom.to_string()).or_default().push(id);
     }
     let named: Vec<&str> = classes.keys().map(String::as_str).collect();
@@ -498,6 +515,9 @@ fn a_receiver_takes_no_input_slot() {
     assert_eq!(probe.origin_text(written[0].1), "Formatter");
 
     for unstated in ["rust.ownership", "rust.lifetime", "rust.assoc"] {
-        assert!(probe.rows(unstated).is_empty(), "a parse claimed {unstated}");
+        assert!(
+            probe.rows(unstated).is_empty(),
+            "a parse claimed {unstated}"
+        );
     }
 }

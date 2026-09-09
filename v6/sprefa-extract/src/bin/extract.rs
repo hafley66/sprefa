@@ -20,15 +20,16 @@ use std::time::Instant;
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 use sprefa_extract::schema::schema_text;
 use sprefa_extract::trail::Trail;
 use sprefa_extract::tsi::{ingest, Mode, RunOut};
 use sprefa_extract::{
-    cfg_bundle, content_id_of, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact,
-    flatten_cfg_each, flatten_each, package_edges_jsonl, query_patterns, resolve_project_jsonl,
-    scip_facts_jsonl, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
+    cfg_bundle, content_id_of, deps::diet_file_edges_jsonl, diet_scip_jsonl, diet_scip_with_raw,
+    dispatch, file_fact, flatten_cfg_each, flatten_each, package_edges_jsonl, query_patterns,
+    resolve_project_jsonl, resolve_project_with_raw, scip_facts_jsonl,
+    scip_family_from_index_jsonl, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
     size_skip_fact, source_for, AstPatternQuery, FamilyMask, FlatFact, IndexBudget, ResolveArms,
     ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, DEFAULT_MAX_BYTES,
 };
@@ -36,13 +37,14 @@ use sprefa_extract::{
 #[path = "extract/help.rs"]
 mod help;
 
+#[path = "extract/0_sqlite.rs"]
+mod sqlite;
+
 use help::{
-    BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, GO_CHECKER_LONG, LONG_ABOUT, MAX_BYTES_LONG,
-    OCCURRENCE_TEXT_LONG, PACKAGE_DEPS_LONG, PATH_LONG, PROJECT_ROOT_LONG, RUST_CHECKER_LONG,
-    TS_CHECKER_LONG,
-    SCIP_BUILD_LONG,
-    SCIP_CACHE_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG,
-    INDEXER_LONG, SCIP_TIMEOUT_LONG,
+    AFTER_HELP, BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, GO_CHECKER_LONG, INDEXER_LONG,
+    LONG_ABOUT, MAX_BYTES_LONG, OCCURRENCE_TEXT_LONG, PACKAGE_DEPS_LONG, PATH_LONG,
+    PROJECT_ROOT_LONG, RUST_CHECKER_LONG, SCIP_BUILD_LONG, SCIP_CACHE_LONG, SCIP_DEPS_LONG,
+    SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG, TS_CHECKER_LONG,
 };
 
 #[path = "../0_query.rs"]
@@ -63,6 +65,7 @@ mod source_rename;
     version,
     about = "sprefa-extract: one source file -> flat graph facts (JSONL to stdout)",
     long_about = LONG_ABOUT,
+    after_help = AFTER_HELP,
 )]
 struct Cli {
     #[arg(required_unless_present_any = ["schema", "ingest", "trail"], value_name = "PATH", long_help = PATH_LONG)]
@@ -70,6 +73,12 @@ struct Cli {
 
     #[arg(long, value_delimiter = ',', long_help = FAMILY_LONG)]
     family: Option<Vec<String>>,
+
+    /// Write facts to a NEW SQLite database at PATH, then print schema/query commands.
+    /// Tables and inserts are generated from TypeSpec. Fast and resolve exports retain
+    /// each input's syntax facts before their project-wide derived rows.
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["bench", "schema", "trail"])]
+    sqlite: Option<PathBuf>,
 
     /// Time extract + flatten and report per-family counts to stderr.
     #[arg(long, long_help = BENCH_LONG)]
@@ -90,8 +99,7 @@ struct Cli {
     #[arg(
         long,
         value_name = "FILE",
-        requires = "project_root",
-        conflicts_with = "scip_build",
+        conflicts_with_all = ["scip_build", "indexer"],
         long_help = SCIP_INDEX_LONG,
     )]
     scip_index: Option<PathBuf>,
@@ -287,6 +295,64 @@ enum FamilyMode {
     DietScip,
 }
 
+#[derive(Clone, Copy)]
+enum AliasMode {
+    Fast,
+    Slow,
+}
+
+impl AliasMode {
+    fn family(self) -> &'static str {
+        match self {
+            Self::Fast => "diet_scip",
+            Self::Slow => "scip",
+        }
+    }
+}
+
+/// Expand the command aliases onto the existing family-mode dispatch. An alias
+/// owns the SCIP/compiler choice, so flags which could name or configure a
+/// different choice are rejected instead of being accepted and then ignored.
+fn alias_args() -> Result<Vec<String>, String> {
+    let mut args: Vec<String> = std::env::args().collect();
+    let alias = match args.get(1).map(String::as_str) {
+        Some("fast") => AliasMode::Fast,
+        Some("slow") => AliasMode::Slow,
+        _ => return Ok(args),
+    };
+    const MODE_FLAGS: [&str; 6] = [
+        "--family",
+        "--scip-index",
+        "--scip-build",
+        "--rust-checker",
+        "--ts-checker",
+        "--go-checker",
+    ];
+    if let Some(flag) = args
+        .iter()
+        .skip(2)
+        .take_while(|arg| arg.as_str() != "--")
+        .find(|arg| {
+            let conflicts_with_alias = MODE_FLAGS
+                .iter()
+                .any(|name| arg.as_str() == *name || arg.starts_with(&format!("{name}=")));
+            let conflicts_with_fast = matches!(alias, AliasMode::Fast)
+                && (arg.as_str() == "--indexer" || arg.starts_with("--indexer="));
+            conflicts_with_alias || conflicts_with_fast
+        })
+    {
+        return Err(format!(
+            "extract {} pins --family {}; {flag} cannot select or configure another mode",
+            args[1],
+            alias.family(),
+        ));
+    }
+    args.remove(1);
+    args.insert(1, alias.family().to_string());
+    args.insert(1, "--family".to_string());
+    Ok(args)
+}
+
 /// Which mode `--family` names, if any. Mixing a mode with a mask name is an
 /// ERROR rather than a silent pick: `--family cst,scip` has no honest reading
 /// (one is a per-file mask over one file, the other a whole-project index run),
@@ -336,7 +402,10 @@ fn family_mode(families: Option<&[String]>) -> Result<Option<FamilyMode>, String
 /// shapes. Named skips ride the stream as `scip_skip` rows; the index location
 /// is a stderr line because it is machine-dependent and would pin a checkout
 /// path into any golden that captured stdout.
-fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+fn stream_scip_family(
+    cli: &Cli,
+    output: &mut sqlite::Output,
+) -> Result<(), Box<dyn std::error::Error>> {
     if cli.paths.len() != 1 {
         return Err("--family scip takes exactly one ROOT directory".into());
     }
@@ -360,10 +429,18 @@ fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         },
         slug: None,
     };
-    for line in scip_family_jsonl(&request)? {
-        emit(&line)?;
+    let lines = match cli.scip_index.as_deref() {
+        Some(index) => scip_family_from_index_jsonl(&request, index)?,
+        None => scip_family_jsonl(&request)?,
+    };
+    for line in lines {
+        output.line(&line)?;
     }
-    if let Some(path) = scip_index_location(&request) {
+    let index_location = cli
+        .scip_index
+        .clone()
+        .or_else(|| scip_index_location(&request));
+    if let Some(path) = index_location {
         // @eprintln-ok: CLI-UX location line, deliberately off the fact stream.
         eprintln!("extract: scip index {}", path.display());
     }
@@ -372,8 +449,14 @@ fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Every mode but `--family scip` takes source FILES. A directory or a missing
 /// path reaches the library as an `io::Error` Debug dump that names no cause.
-fn check_file_paths(paths: &[PathBuf]) {
+fn check_file_paths(paths: &[PathBuf], allow_stdin: bool) {
     for path in paths {
+        // `/dev/stdin` is a descriptor symlink rather than an ordinary file.
+        // Under concurrent child-process churn its existence probe can report
+        // false even though the following read from the open descriptor works.
+        if allow_stdin && path == std::path::Path::new("/dev/stdin") {
+            continue;
+        }
         let stop = if path.is_dir() {
             format!(
                 "{} is a directory; --resolve takes files, so expand the tree \
@@ -509,7 +592,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
-    let cli = Cli::parse();
+    let argv = match alias_args() {
+        Ok(argv) => argv,
+        Err(error) => Cli::command()
+            .error(clap::error::ErrorKind::ArgumentConflict, error)
+            .exit(),
+    };
+    let cli = Cli::parse_from(argv);
 
     // `--scip-timeout` must reach the library's `ScipMode::Build` path, whose
     // budget comes from `IndexBudget::from_env` (project.rs). Setting the same
@@ -530,26 +619,56 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return print_trail(runs);
     }
 
+    // Path validation can exit with clap-style status 2. Do it before opening
+    // an export so such an exit cannot strand a staging database.
     if !cli.ingest.is_empty() {
-        return stream_ingest(&cli.ingest);
+        check_file_paths(&cli.ingest, true);
+    } else {
+        let mode = family_mode(cli.family.as_deref())?;
+        if cli.scip_index.is_some()
+            && cli.project_root.is_none()
+            && !matches!(mode, Some(FamilyMode::Scip))
+        {
+            return Err("--scip-index requires --project-root outside --family scip ROOT".into());
+        }
+        if !matches!(mode, Some(FamilyMode::Scip)) && !cli.scip_facts && !cli.scip_deps {
+            check_file_paths(&cli.paths, false);
+        }
+    }
+    let mut output = sqlite::Output::new(cli.sqlite.as_deref())?;
+    extract_to(&cli, &mut output)?;
+    output.finish()
+}
+
+fn extract_to(cli: &Cli, output: &mut sqlite::Output) -> Result<(), Box<dyn std::error::Error>> {
+    if !cli.ingest.is_empty() {
+        return stream_ingest(&cli.ingest, output);
     }
 
     // The two named families are whole-project modes, so they are dispatched
     // before every per-file path below.
     let mode = family_mode(cli.family.as_deref())?;
-    // `--family scip`, `--scip-facts` and `--scip-deps` take a ROOT directory;
-    // every other mode takes files.
-    if !matches!(mode, Some(FamilyMode::Scip)) && !cli.scip_facts && !cli.scip_deps {
-        check_file_paths(&cli.paths);
-    }
     match mode {
         Some(FamilyMode::Scip) => {
-            stream_scip_family(&cli)?;
+            stream_scip_family(cli, output)?;
             return Ok(());
         }
         Some(FamilyMode::DietScip) => {
+            if output.database.is_some() {
+                let mut push_raw = |raw: sprefa_extract::RawProjectFact<'_>| {
+                    output
+                        .source_fact(raw.path, raw.content_id, &raw.fact)
+                        .map_err(|error| std::io::Error::other(error.to_string()))
+                };
+                let resolved = diet_scip_with_raw(&cli.paths, &mut push_raw)?;
+                output.clear_source()?;
+                for fact in resolved {
+                    output.fact(&fact)?;
+                }
+                return Ok(());
+            }
             for line in diet_scip_jsonl(&cli.paths)? {
-                emit(&line)?;
+                output.line(&line)?;
             }
             return Ok(());
         }
@@ -557,49 +676,62 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.resolve {
-        stream_resolve(&cli)?;
+        stream_resolve(cli, output)?;
         return Ok(());
     }
 
     if cli.deps {
         for line in diet_file_edges_jsonl(&scip_request(&cli)?)? {
-            emit(&line)?;
+            output.line(&line)?;
         }
         return Ok(());
     }
 
     if cli.package_deps {
         for line in package_edges_jsonl(&scip_request(&cli)?)? {
-            emit(&line)?;
+            output.line(&line)?;
         }
         return Ok(());
     }
 
     if cli.scip_deps {
         for line in scip_file_edges_jsonl(&scip_request(&cli)?)? {
-            emit(&line)?;
+            output.line(&line)?;
         }
         return Ok(());
     }
 
     if cli.scip_facts {
         for line in scip_facts_jsonl(&scip_request(&cli)?)? {
-            emit(&line)?;
+            output.line(&line)?;
         }
         return Ok(());
     }
 
-    if cli.paths.len() != 1 {
+    if cli.paths.len() != 1 && output.database.is_none() {
         return Err("exactly one PATH is required unless --resolve is given".into());
     }
 
-    let path = &cli.paths[0];
+    for path in &cli.paths {
+        extract_file(cli, path, output)?;
+    }
+    Ok(())
+}
+
+fn extract_file(
+    cli: &Cli,
+    path: &std::path::Path,
+    output: &mut sqlite::Output,
+) -> Result<(), Box<dyn std::error::Error>> {
     let content = std::fs::read(path)?;
     let path_str = path.to_string_lossy();
+    if let Some(db) = &mut output.database {
+        db.source(&path_str, content_id_of(&content).to_string())?;
+    }
     // The file row rides the SAME read as extraction: counting lines must never
     // cost a second pass over the file, let alone a second subprocess.
-    if cli.file_fact {
-        emit(&serde_json::to_string(&file_fact(&path_str, &content))?)?;
+    if cli.file_fact || output.database.is_some() {
+        output.fact(&file_fact(&path_str, &content))?;
     }
     // Before any parse, so the ceiling bounds the cost it exists to bound. The
     // file row above is a digest over bytes already read, not that cost.
@@ -607,14 +739,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = content.len() as u64;
     if limit > 0 && bytes > limit {
         tracing::warn!(path = %path_str, bytes, limit, "input over the byte ceiling");
-        emit(&serde_json::to_string(&size_skip_fact(
-            &path_str, bytes, limit,
-        ))?)?;
+        output.fact(&size_skip_fact(&path_str, bytes, limit))?;
         return Ok(());
     }
     if !cli.ast_pattern.is_empty() {
         let queries = parse_ast_queries(&cli.ast_pattern, &cli.ast_selector, &cli.ast_capture)?;
-        stream_ast_queries(&path_str, &content, &queries)?;
+        stream_ast_queries(&path_str, &content, &queries, output)?;
         return Ok(());
     }
     let mask = match cli.family.as_deref() {
@@ -628,14 +758,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The cfg plane is derived AFTER the flatten, so its rows would land past
     // the coverage rows and outside the numbering.
     if cli.witness && cfg {
-        return Err("--witness does not cover --family cfg: the cfg plane is derived \
+        return Err(
+            "--witness does not cover --family cfg: the cfg plane is derived \
                     after the flatten, so its rows carry no fact ordinal"
-            .into());
+                .into(),
+        );
     }
     if cli.bench {
         bench(&path_str, &content, mask, cfg)?;
     } else {
-        stream(&path_str, &content, mask, cfg, cli.witness)?;
+        output.flush()?;
+        stream(&path_str, &content, mask, cfg, cli.witness, output)?;
     }
     Ok(())
 }
@@ -653,9 +786,18 @@ fn scip_request(cli: &Cli) -> Result<ResolveRequest<'_>, String> {
             None => ScipRecords::all(),
         },
         occurrence_text: cli.occurrence_text,
-        rust_checker: cli.rust_checker.then(|| cli.project_root.as_deref()).flatten(),
-        ts_checker: cli.ts_checker.then(|| cli.project_root.as_deref()).flatten(),
-        go_checker: cli.go_checker.then(|| cli.project_root.as_deref()).flatten(),
+        rust_checker: cli
+            .rust_checker
+            .then(|| cli.project_root.as_deref())
+            .flatten(),
+        ts_checker: cli
+            .ts_checker
+            .then(|| cli.project_root.as_deref())
+            .flatten(),
+        go_checker: cli
+            .go_checker
+            .then(|| cli.project_root.as_deref())
+            .flatten(),
         witness: cli.witness,
     })
 }
@@ -728,9 +870,10 @@ fn stream_ast_queries(
     path: &str,
     content: &[u8],
     queries: &[AstPatternQuery],
+    output: &mut sqlite::Output,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for fact in query_patterns(path, content, queries)? {
-        emit(&serde_json::to_string(&fact)?)?;
+        output.fact(&fact)?;
     }
     Ok(())
 }
@@ -738,7 +881,10 @@ fn stream_ast_queries(
 /// Project mode: translate flags to a `ResolveRequest`, call the library, print.
 /// Every decision below is argument shaping; the recipe itself is
 /// `sprefa_extract::project`.
-fn stream_resolve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+fn stream_resolve(
+    cli: &Cli,
+    output: &mut sqlite::Output,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Under --resolve, --family names the phase-2 arms. Absent, the default is
     // `call` alone, which keeps pre-existing --resolve output byte-identical.
     let arms = match cli.family.as_deref() {
@@ -753,8 +899,21 @@ fn stream_resolve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         arms,
         ..scip_request(cli)?
     };
-    for line in resolve_project_jsonl(&request)? {
-        emit(&line)?;
+    if output.database.is_some() {
+        let mut push_raw = |raw: sprefa_extract::RawProjectFact<'_>| {
+            output
+                .source_fact(raw.path, raw.content_id, &raw.fact)
+                .map_err(|error| std::io::Error::other(error.to_string()))
+        };
+        let resolved = resolve_project_with_raw(&request, &mut push_raw)?;
+        output.clear_source()?;
+        for fact in resolved {
+            output.fact(&fact)?;
+        }
+    } else {
+        for line in resolve_project_jsonl(&request)? {
+            output.line(&line)?;
+        }
     }
     Ok(())
 }
@@ -812,6 +971,7 @@ fn stream(
     mask: FamilyMask,
     cfg: bool,
     witness: bool,
+    output: &mut sqlite::Output,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // ONE BufWriter held for the whole run: a per-row println! goes through
     // LineWriter, which flushes on every newline and turns 2M-row streams
@@ -827,6 +987,13 @@ fn stream(
     // Each row is written and dropped: collecting them first held a second copy
     // of the whole stream, which on a 13 MB bundle is 800 MB of the 1,094 MB peak.
     let mut write = |fact: FlatFact| -> Result<(), std::io::Error> {
+        if output.database.is_some() {
+            output
+                .fact(&fact)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            lines += 1;
+            return Ok(());
+        }
         serde_json::to_writer(&mut out, &fact)?;
         lines += 1;
         out.write_all(b"\n")
@@ -943,8 +1110,10 @@ fn print_schema() {
 
 /// The reverse door. Every file is one stream, so line numbers in a stop run
 /// across the whole argument list rather than restarting per file.
-fn stream_ingest(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
-    check_file_paths(paths);
+fn stream_ingest(
+    paths: &[PathBuf],
+    output: &mut sqlite::Output,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut lines: Vec<String> = Vec::new();
     for path in paths {
         lines.extend(std::fs::read_to_string(path)?.lines().map(str::to_string));
@@ -952,14 +1121,13 @@ fn stream_ingest(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
     match ingest(lines.into_iter()) {
         Ok(rows) => {
             for row in rows {
-                emit(&row)?;
+                output.line(&row)?;
             }
             Ok(())
         }
         Err(error) => {
             // @eprintln-ok: CLI-UX stop, off the fact stream, exit 1.
-            eprintln!("extract: {error}");
-            std::process::exit(1);
+            Err(format!("extract: {error}").into())
         }
     }
 }

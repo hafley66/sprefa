@@ -28,8 +28,24 @@ struct TsiState {
 /// The type names go declares in the universe scope as primitives. `error`
 /// and `any` are an interface and an alias there, so they are not listed.
 const PRIMITIVE_CLASSES: &[&str] = &[
-    "bool", "string", "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16",
-    "uint32", "uint64", "uintptr", "float32", "float64", "complex64", "complex128", "byte",
+    "bool",
+    "string",
+    "int",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "uintptr",
+    "float32",
+    "float64",
+    "complex64",
+    "complex128",
+    "byte",
     "rune",
 ];
 

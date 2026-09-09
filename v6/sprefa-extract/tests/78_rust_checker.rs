@@ -57,7 +57,11 @@ fn call_edges(facts: &[Value]) -> Vec<(String, String, String, String)> {
             let callee_path = fact["callee_path"].as_str().unwrap_or_default();
             (
                 fact["caller_name"].as_str().unwrap_or_default().to_string(),
-                callee_path.rsplit('/').next().unwrap_or_default().to_string(),
+                callee_path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
                 fact["callee_name"].as_str().unwrap_or_default().to_string(),
                 fact["kind"].as_str().unwrap_or_default().to_string(),
             )

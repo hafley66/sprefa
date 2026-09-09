@@ -227,28 +227,71 @@ fn a_nested_checkout_is_never_staged() {
 }
 
 #[test]
-fn a_persistent_stage_drops_a_source_the_corpus_deleted() {
-    let root = temp_root("prune");
-    std::fs::create_dir_all(root.join("src")).expect("src");
-    std::fs::write(root.join("src/a.rs"), b"pub fn a() {}\n").expect("a");
-    std::fs::write(root.join("src/b.rs"), b"pub fn b() {}\n").expect("b");
-    let stage = temp_root("prune-out");
-    sprefa_extract::copy_sources(&root, &stage, &["rs"], &[]).expect("first stage");
-    assert!(stage.join("src/b.rs").is_file());
+fn rust_staging_copies_and_prunes_the_workspace_lockfile() {
+    let root = temp_root("rust-lock-stage");
+    let stage = temp_root("rust-lock-stage-out");
+    std::fs::write(root.join("Cargo.toml"), b"[workspace]\nmembers=[]\n").expect("manifest");
+    std::fs::write(root.join("Cargo.lock"), b"version = 4\n").expect("lockfile");
 
-    std::fs::remove_file(root.join("src/b.rs")).expect("delete b");
+    sprefa_extract::copy_sources(&root, &stage, &["rs"], &["Cargo.toml", "Cargo.lock"])
+        .expect("first stage");
+
+    assert_eq!(
+        std::fs::read(stage.join("Cargo.lock")).expect("staged lockfile"),
+        b"version = 4\n"
+    );
+
+    std::fs::remove_file(root.join("Cargo.lock")).expect("remove source lockfile");
+    sprefa_extract::copy_sources(&root, &stage, &["rs"], &["Cargo.toml", "Cargo.lock"])
+        .expect("second stage");
+
+    assert!(!stage.join("Cargo.lock").exists());
+}
+
+#[test]
+fn a_persistent_workspace_stage_drops_a_removed_member_directory() {
+    let root = temp_root("prune-workspace-member");
+    std::fs::write(
+        root.join("Cargo.toml"),
+        b"[workspace]\nmembers = [\"crates/*\"]\nresolver = \"2\"\n",
+    )
+    .expect("workspace manifest");
+    for member in ["live", "removed"] {
+        let member_root = root.join("crates").join(member);
+        std::fs::create_dir_all(member_root.join("src")).expect("member src");
+        std::fs::write(
+            member_root.join("Cargo.toml"),
+            format!("[package]\nname = \"{member}\"\nversion = \"0.0.0\"\n"),
+        )
+        .expect("member manifest");
+        std::fs::write(member_root.join("src/lib.rs"), b"pub fn member() {}\n")
+            .expect("member source");
+    }
+    let stage = temp_root("prune-out");
+    sprefa_extract::copy_sources(&root, &stage, &["rs"], &["Cargo.toml"]).expect("first stage");
+    assert!(stage.join("crates/removed/src/lib.rs").is_file());
+
+    std::fs::remove_dir_all(root.join("crates/removed")).expect("remove workspace member");
     std::fs::create_dir_all(stage.join("target/debug")).expect("warm target");
     std::fs::write(stage.join("target/debug/marker.rs"), b"kept\n").expect("target marker");
-    sprefa_extract::copy_sources(&root, &stage, &["rs"], &[]).expect("second stage");
+    std::fs::create_dir_all(stage.join("indexer-state")).expect("unrelated state directory");
+    std::fs::write(stage.join("indexer-state/cache.bin"), b"kept\n")
+        .expect("unrelated state artifact");
+    sprefa_extract::copy_sources(&root, &stage, &["rs"], &["Cargo.toml"]).expect("second stage");
 
-    assert!(stage.join("src/a.rs").is_file());
     assert!(
-        !stage.join("src/b.rs").exists(),
-        "a deleted source is pruned"
+        !stage.join("crates/removed").exists(),
+        "Cargo's crates/* expansion must not see a removed workspace member"
     );
+    assert!(stage.join("crates/live/Cargo.toml").is_file());
+    assert!(stage.join("crates/live/src/lib.rs").is_file());
     assert!(
         stage.join("target/debug/marker.rs").is_file(),
         "the warm target is what the persistent stage exists to keep"
+    );
+    assert!(
+        stage.join("indexer-state/cache.bin").is_file(),
+        "unrelated nonempty staged paths are retained"
     );
 }
 

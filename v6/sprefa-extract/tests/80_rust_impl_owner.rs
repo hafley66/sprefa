@@ -157,7 +157,9 @@ fn an_impl_owner_never_declares_the_type() {
     assert_eq!(declared_in("decl.rs"), vec!["Widget", "Holder"]);
     let impls = declared_in("impls.rs");
     assert!(
-        !impls.iter().any(|name| name == "Widget" || name == "Holder"),
+        !impls
+            .iter()
+            .any(|name| name == "Widget" || name == "Holder"),
         "impls.rs declares neither type it impls: {impls:?}"
     );
 }

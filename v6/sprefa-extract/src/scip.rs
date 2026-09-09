@@ -18,7 +18,9 @@
 //! the redirected output, so no staging copy exists on the go side.
 //! Commit 4d-ii-rust adds `ScipRust`: `rust-analyzer scip` (v5's rust INDEXERS
 //! row), PATH-only, ALWAYS staged (cargo metadata writes `target/` under the
-//! project root unconditionally). The indexer's symbol model differs from
+//! project root unconditionally). Nested Cargo projects retain their enclosing
+//! repository topology so sibling path dependencies still resolve. The
+//! indexer's symbol model differs from
 //! scip-typescript's: symbols are qualified (`rust-analyzer cargo <crate>
 //! <version> <path>`), locals are `local N` DOCUMENT-scoped, and position
 //! encoding is UTF-8. `load` is shared — the wire is indexer-agnostic.
@@ -31,15 +33,15 @@
 //! EVERY SPAWN HERE IS BUDGETED. The child runs in its own process group and
 //! the whole group dies on the deadline: these indexers fork.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::scip_decode::load_index;
 use crate::scip_ensure::{run_capped, Capped};
 use crate::shape::Span;
 use crate::types::{
-    DefMap, OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, SymbolId,
-    ScipSource,
+    DefMap, OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, ScipSource,
+    SymbolId,
 };
 
 /// One budgeted indexer attempt, translated to the seam's error vocabulary.
@@ -87,10 +89,20 @@ pub struct ScipRust;
 /// copy preserves these, directory structure included.
 const TS_EXTS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
 
-/// The rust staging set: the sources + every Cargo.toml (workspace member
-/// manifests carry the crate graph the indexer resolves through).
+/// The root-only Rust staging set used for a plain directory or self-contained
+/// Cargo root. Repository snapshots carry every non-ignored source byte,
+/// including the workspace lockfile. The lockfile carries the exact dependency
+/// graph rust-analyzer must resolve; omitting it can trigger fresh registry
+/// resolution and a partial SCIP index even when rust-analyzer exits zero.
 const RUST_EXTS: &[&str] = &["rs"];
-const RUST_EXTRA_NAMES: &[&str] = &["Cargo.toml"];
+const RUST_EXTRA_NAMES: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "config",
+    "config.toml",
+];
 
 /// The jvm staging set. The build files are what scip-java drives; without
 /// them the staged copy has no project to index.
@@ -233,6 +245,11 @@ pub enum Staging {
         exts: &'static [&'static str],
         extra_names: &'static [&'static str],
     },
+    /// Snapshot the containing Git worktree at repository-relative paths, then
+    /// run from the selected root's matching position inside that snapshot.
+    /// Cargo path dependencies and workspace inheritance can cross the selected
+    /// root, so Rust needs the enclosing topology rather than a flattened crate.
+    RepositorySnapshot,
     /// Run in place when `marker` is present, else stage: the indexer writes
     /// the marker when it is missing (scip-typescript's `--infer-tsconfig`).
     Conditional {
@@ -267,10 +284,7 @@ pub static RUST_SPEC: IndexerSpec = IndexerSpec {
     bin: "rust-analyzer",
     args: &["scip", ".", "--output", "{out}"],
     fallback: Fallback::None,
-    staging: Staging::Always {
-        exts: RUST_EXTS,
-        extra_names: RUST_EXTRA_NAMES,
-    },
+    staging: Staging::RepositorySnapshot,
 };
 
 pub static GO_SPEC: IndexerSpec = IndexerSpec {
@@ -322,6 +336,10 @@ fn build_indexer(spec: &IndexerSpec, root: &Path) -> Result<PathBuf, ScipError> 
             let work = persistent_stage(spec.bin, root)?;
             copy_sources(root, &work, exts, extra_names)?;
             work
+        }
+        Staging::RepositorySnapshot => {
+            let work = persistent_stage(spec.bin, root)?;
+            copy_repository_snapshot(root, &work)?
         }
         Staging::Conditional {
             marker,
@@ -383,6 +401,230 @@ fn persistent_stage(bin: &str, root: &Path) -> Result<PathBuf, ScipError> {
     Ok(work)
 }
 
+/// Copy one worktree coordinate into a persistent stage without changing its
+/// repository-relative layout. Soopy supplies repository discovery, ignore and
+/// nested-checkout boundaries, worktree identity, enumeration, and verified
+/// batched reads. A plain directory retains the original root-only staging
+/// behavior because it has no repository topology to preserve.
+fn copy_repository_snapshot(root: &Path, stage: &Path) -> Result<PathBuf, ScipError> {
+    let repository = match soopy::discover(root) {
+        Ok(repository) => repository,
+        Err(_) => {
+            copy_sources(root, stage, RUST_EXTS, RUST_EXTRA_NAMES)?;
+            return Ok(stage.to_path_buf());
+        }
+    };
+    let selected = std::fs::canonicalize(root)
+        .map_err(|error| ScipError::IndexerFailed(format!("canonicalize root: {error}")))?;
+    let relative = selected.strip_prefix(&repository.root).map_err(|_| {
+        ScipError::IndexerFailed(format!(
+            "{} is outside repository root {}",
+            selected.display(),
+            repository.root.display()
+        ))
+    })?;
+    if !requires_repository_snapshot(&selected, &repository.root)? {
+        copy_sources(root, stage, RUST_EXTS, RUST_EXTRA_NAMES)?;
+        return Ok(stage.to_path_buf());
+    }
+    let snapshot_root = stage.join("repository");
+    std::fs::create_dir_all(&snapshot_root)
+        .map_err(|error| ScipError::IndexerFailed(format!("stage repository: {error}")))?;
+
+    let mut tree = soopy::SourceTree::open(repository.clone());
+    let snapshot = tree
+        .snapshot(&soopy::SourceQuery {
+            revision: soopy::Revision::Worktree,
+            patterns: vec![soopy::Pattern("**".to_string())],
+        })
+        .map_err(|error| ScipError::IndexerFailed(format!("snapshot repository: {error}")))?;
+    let requests: Vec<soopy::ReadRequest> = snapshot
+        .files
+        .iter()
+        .map(|entry| soopy::ReadRequest {
+            source: entry.source.clone(),
+            expected: Some(entry.content.clone()),
+        })
+        .collect();
+    let keep: HashSet<PathBuf> = snapshot
+        .files
+        .iter()
+        .map(|entry| snapshot_root.join(entry.source.path.0.as_ref()))
+        .collect();
+    let mut buffer = Vec::new();
+    tree.read_each(&requests, &mut buffer, |answer| {
+        let source = repository.root.join(answer.source.path.0.as_ref());
+        let destination = snapshot_root.join(answer.source.path.0.as_ref());
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&destination, answer.bytes)?;
+        if let Ok(metadata) = std::fs::metadata(source) {
+            std::fs::set_permissions(&destination, metadata.permissions())?;
+        }
+        Ok(())
+    })
+    .map_err(|error| ScipError::IndexerFailed(format!("copy repository snapshot: {error}")))?;
+    prune_repository_snapshot(&snapshot_root, &keep)?;
+
+    let work = snapshot_root.join(relative);
+    if !work.is_dir() {
+        return Err(ScipError::IndexerFailed(format!(
+            "staged project root is missing: {}",
+            work.display()
+        )));
+    }
+    Ok(work)
+}
+
+/// A self-contained Cargo root keeps the smaller historical stage. An ancestor
+/// workspace or any manifest path reaching through `..` needs repository
+/// topology. This selects a snapshot boundary; Cargo remains the resolver.
+fn requires_repository_snapshot(root: &Path, repository_root: &Path) -> Result<bool, ScipError> {
+    if root == repository_root {
+        return Ok(false);
+    }
+    let root_manifest = read_manifest(&root.join("Cargo.toml"));
+    if cargo_manifests_below(root)?.iter().any(|manifest| {
+        read_manifest(manifest)
+            .as_ref()
+            .is_some_and(manifest_uses_parent_path)
+    }) {
+        return Ok(true);
+    }
+    let owns_workspace = root_manifest
+        .as_ref()
+        .and_then(|manifest| manifest.get("workspace"))
+        .is_some_and(serde_json::Value::is_object);
+    if owns_workspace {
+        return Ok(false);
+    }
+    let mut ancestor = root.parent();
+    while let Some(directory) = ancestor {
+        if !directory.starts_with(repository_root) {
+            break;
+        }
+        if directory.join("Cargo.toml").is_file() {
+            return Ok(true);
+        }
+        if directory == repository_root {
+            break;
+        }
+        ancestor = directory.parent();
+    }
+    Ok(false)
+}
+
+fn cargo_manifests_below(root: &Path) -> Result<Vec<PathBuf>, ScipError> {
+    let mut manifests = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .map_err(|error| ScipError::IndexerFailed(format!("read Cargo tree: {error}")))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_type = entry.file_type().ok();
+            if file_type
+                .as_ref()
+                .is_some_and(std::fs::FileType::is_symlink)
+            {
+                continue;
+            }
+            if path.is_dir() {
+                let name = entry.file_name();
+                if !matches!(name.to_str(), Some(".git" | "target" | "node_modules"))
+                    && !path.join(".git").exists()
+                {
+                    stack.push(path);
+                }
+            } else if entry.file_name() == "Cargo.toml" {
+                manifests.push(path);
+            }
+        }
+    }
+    Ok(manifests)
+}
+
+fn read_manifest(path: &Path) -> Option<serde_json::Value> {
+    let text = std::fs::read_to_string(path).ok()?;
+    basic_toml::from_str(&text).ok()
+}
+
+fn manifest_uses_parent_path(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(fields) => fields.iter().any(|(key, value)| {
+            let path_field = matches!(key.as_str(), "path" | "workspace")
+                && value.as_str().is_some_and(has_parent_component);
+            let members_field = matches!(key.as_str(), "members" | "default-members")
+                && value.as_array().is_some_and(|members| {
+                    members
+                        .iter()
+                        .any(|member| member.as_str().is_some_and(has_parent_component))
+                });
+            path_field || members_field || manifest_uses_parent_path(value)
+        }),
+        serde_json::Value::Array(values) => values.iter().any(manifest_uses_parent_path),
+        _ => false,
+    }
+}
+
+fn has_parent_component(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .any(|component| component == std::path::Component::ParentDir)
+}
+
+/// Drop files deleted from the source snapshot while retaining Cargo's warm
+/// target directories. Snapshot paths are absolute stage paths.
+fn prune_repository_snapshot(root: &Path, keep: &HashSet<PathBuf>) -> Result<(), ScipError> {
+    let mut stack = vec![root.to_path_buf()];
+    let mut directories = Vec::new();
+    while let Some(directory) = stack.pop() {
+        directories.push(directory.clone());
+        let entries = std::fs::read_dir(&directory)
+            .map_err(|error| ScipError::IndexerFailed(format!("read stage: {error}")))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if entry.file_name() != "target" {
+                    stack.push(path);
+                }
+            } else if !keep.contains(&path) {
+                std::fs::remove_file(&path)
+                    .map_err(|error| ScipError::IndexerFailed(format!("prune stage: {error}")))?;
+            }
+        }
+    }
+    prune_empty_directories(root, directories)
+}
+
+/// Remove empty directories discovered under one staging root, deepest first.
+/// `target/` directories are absent from `directories` because both staging
+/// walks stop at them. A nonempty directory is retained, including an indexer
+/// artifact or unrelated path that was already present in the persistent tree.
+fn prune_empty_directories(root: &Path, directories: Vec<PathBuf>) -> Result<(), ScipError> {
+    for directory in directories.into_iter().rev() {
+        if directory == root {
+            continue;
+        }
+        match std::fs::remove_dir(&directory) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(error) => {
+                return Err(ScipError::IndexerFailed(format!(
+                    "prune empty stage directory {}: {error}",
+                    directory.display()
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A fresh uniquely-named temp dir (no tempfile dep): base + pid + nanos.
 fn fresh_temp_dir(prefix: &str) -> Result<PathBuf, ScipError> {
     let nanos = std::time::SystemTime::now()
@@ -397,7 +639,7 @@ fn fresh_temp_dir(prefix: &str) -> Result<PathBuf, ScipError> {
 
 /// Copy the sources under `src_root` to `dst_root`, preserving relative
 /// structure: files whose extension is in `exts` plus files whose bare name is
-/// in `extra_names` (rust's Cargo.toml manifests).
+/// in `extra_names` (rust's Cargo manifests and lockfiles).
 ///
 /// A CHILD DIRECTORY CARRYING ITS OWN `.git` IS A DIFFERENT CHECKOUT and is
 /// never staged: a nested worktree or submodule is not part of this workspace,
@@ -448,8 +690,9 @@ pub fn copy_sources(
 }
 
 /// A persistent stage keeps whatever a previous run left, so a source deleted
-/// from the corpus would still be indexed. Only source files are pruned; the
-/// indexer's own `target/` is what the stage exists to keep warm.
+/// from the corpus would still be indexed. Source files are pruned first, then
+/// their empty parent directories are removed bottom-up. The indexer's own
+/// `target/` is what the stage exists to keep warm.
 fn prune_unstaged(
     dst_root: &Path,
     staged: &[PathBuf],
@@ -458,7 +701,9 @@ fn prune_unstaged(
 ) -> Result<(), ScipError> {
     let keep: std::collections::HashSet<&Path> = staged.iter().map(PathBuf::as_path).collect();
     let mut stack = vec![dst_root.to_path_buf()];
+    let mut directories = Vec::new();
     while let Some(dir) = stack.pop() {
+        directories.push(dir.clone());
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -481,7 +726,7 @@ fn prune_unstaged(
             }
         }
     }
-    Ok(())
+    prune_empty_directories(dst_root, directories)
 }
 
 /// The line/col -> byte bridge. SCIP ranges are 0-based (line, col) with cols
@@ -717,4 +962,16 @@ pub fn definition_of(
     let (def_doc_ix, occ_ix) = map.get(&symbol)?;
     let occ = &index.documents[*def_doc_ix].occurrences[*occ_ix as usize];
     Some((*def_doc_ix, occ.range))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Staging, RUST_EXTRA_NAMES, RUST_SPEC};
+
+    #[test]
+    fn rust_indexer_preserves_the_locked_dependency_graph() {
+        assert!(matches!(RUST_SPEC.staging, Staging::RepositorySnapshot));
+        assert!(RUST_EXTRA_NAMES.contains(&"Cargo.toml"));
+        assert!(RUST_EXTRA_NAMES.contains(&"Cargo.lock"));
+    }
 }

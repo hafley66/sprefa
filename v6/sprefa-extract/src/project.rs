@@ -216,6 +216,7 @@ impl LegTrail {
 pub(crate) struct ProjectInput {
     pub(crate) path: String,
     blob: ContentId,
+    file: Option<FlatFact>,
     pub(crate) output: Arc<ExtractOutput>,
     /// This file's module facts, built while its bytes are in hand so the
     /// plane costs no second read. `None` outside a module-plane run.
@@ -234,6 +235,72 @@ pub(crate) struct ProjectInput {
 /// facts, sorted by their serialized form so callers get a byte-stable stream.
 pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, ProjectError> {
     let inputs = read_inputs_with_modules(request.paths)?;
+    resolve_project_inputs(request, inputs)
+}
+
+/// One phase-1 fact retained beside a project resolve, with the source
+/// coordinates that identify which input produced it.
+pub struct RawProjectFact<'a> {
+    pub path: &'a str,
+    pub content_id: &'a ContentId,
+    pub fact: FlatFact,
+}
+
+/// A project read/resolve failure or a failure reported by its raw-fact sink.
+#[derive(Debug)]
+pub enum ResolveWithRawError<E> {
+    Project(ProjectError),
+    RawSink(E),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for ResolveWithRawError<E> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Project(error) => error.fmt(formatter),
+            Self::RawSink(error) => write!(formatter, "raw fact sink: {error}"),
+        }
+    }
+}
+
+impl<E: std::fmt::Debug + std::fmt::Display + 'static> std::error::Error
+    for ResolveWithRawError<E>
+{
+}
+
+/// Extract each input once, send its file row and phase-1 rows to `push_raw`,
+/// then resolve over those same retained outputs.
+pub fn resolve_project_with_raw<E>(
+    request: &ResolveRequest,
+    push_raw: &mut impl FnMut(RawProjectFact<'_>) -> Result<(), E>,
+) -> Result<Vec<FlatFact>, ResolveWithRawError<E>> {
+    let mut inputs =
+        read_inputs_with_modules(request.paths).map_err(ResolveWithRawError::Project)?;
+    for input in &mut inputs {
+        push_raw(RawProjectFact {
+            path: &input.path,
+            content_id: &input.blob,
+            fact: input
+                .file
+                .take()
+                .expect("fresh project input has its file row"),
+        })
+        .map_err(ResolveWithRawError::RawSink)?;
+        crate::wire::flatten_each(input.output.as_ref(), None, &mut |fact| {
+            push_raw(RawProjectFact {
+                path: &input.path,
+                content_id: &input.blob,
+                fact,
+            })
+        })
+        .map_err(ResolveWithRawError::RawSink)?;
+    }
+    resolve_project_inputs(request, inputs).map_err(ResolveWithRawError::Project)
+}
+
+fn resolve_project_inputs(
+    request: &ResolveRequest,
+    inputs: Vec<ProjectInput>,
+) -> Result<Vec<FlatFact>, ProjectError> {
     let scip_index = load_scip(request, &inputs)?;
 
     let pairs: Vec<(ContentId, &ExtractOutput)> = inputs
@@ -515,8 +582,7 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     }
     if request.witness {
         let mut syntax_tsi = syntax_tsi_rows(request, &inputs, &cx);
-        let (conforms, next_id) =
-            conformance_tsi_rows(&inputs, &conformances, syntax_tsi.next_id);
+        let (conforms, next_id) = conformance_tsi_rows(&inputs, &conformances, syntax_tsi.next_id);
         syntax_tsi.rows.extend(conforms);
         syntax_tsi.next_id = next_id;
         let relations = tsi_relations(&syntax_tsi.rows);
@@ -542,11 +608,7 @@ struct SyntaxTsi {
 
 /// Rides the stream for every language whose checker tier did not answer:
 /// beside a loaded tier the two id spaces name two types with one number.
-fn syntax_tsi_rows(
-    request: &ResolveRequest,
-    inputs: &[ProjectInput],
-    cx: &ProjectCx,
-) -> SyntaxTsi {
+fn syntax_tsi_rows(request: &ResolveRequest, inputs: &[ProjectInput], cx: &ProjectCx) -> SyntaxTsi {
     let mut out = SyntaxTsi {
         rows: Vec::new(),
         next_id: 0,
@@ -567,11 +629,8 @@ fn syntax_tsi_rows(
         let Some(bundle) = input.output.types.as_ref() else {
             continue;
         };
-        let (rows, next) = crate::wire::tsi_rows_rebased(
-            &bundle.aux.tsi,
-            &input.blob.to_string(),
-            out.next_id,
-        );
+        let (rows, next) =
+            crate::wire::tsi_rows_rebased(&bundle.aux.tsi, &input.blob.to_string(), out.next_id);
         out.rows.extend(rows);
         out.next_id = next;
     }
@@ -688,18 +747,20 @@ fn envelope(input: Envelope) -> Vec<FlatFact> {
             if let Some(row) = trail.next() {
                 let mut legs = row.legs;
                 legs.sort();
-                witnesses.extend(legs.into_iter().map(|leg| WitnessOut {
-                    fact: numbered,
-                    // A checker leg is the semantic run's answer; every other
-                    // leg is the parse's.
-                    run: match leg {
-                        ResolutionOrigin::Checker => semantic
-                            .iter()
-                            .find(|(lang, _)| *lang == row.lang)
-                            .map_or(SYNTAX_RUN, |(_, run)| run.run),
-                        _ => SYNTAX_RUN,
-                    },
-                    method: leg.method(),
+                witnesses.extend(legs.into_iter().map(|leg| {
+                    WitnessOut {
+                        fact: numbered,
+                        // A checker leg is the semantic run's answer; every other
+                        // leg is the parse's.
+                        run: match leg {
+                            ResolutionOrigin::Checker => semantic
+                                .iter()
+                                .find(|(lang, _)| *lang == row.lang)
+                                .map_or(SYNTAX_RUN, |(_, run)| run.run),
+                            _ => SYNTAX_RUN,
+                        },
+                        method: leg.method(),
+                    }
                 }));
             }
         }
@@ -779,8 +840,8 @@ fn load_rust_checker(
         .iter()
         .filter(|input| input.path.ends_with(".rs"))
         .map(|input| {
-            let absolute = std::fs::canonicalize(&input.path)
-                .unwrap_or_else(|_| PathBuf::from(&input.path));
+            let absolute =
+                std::fs::canonicalize(&input.path).unwrap_or_else(|_| PathBuf::from(&input.path));
             (input.path.clone(), absolute)
         })
         .collect();
@@ -1065,6 +1126,26 @@ pub fn scip_family(request: &ScipFamilyRequest) -> Result<Vec<FlatFact>, Project
     let Some(index_path) = report.index.as_ref() else {
         return Ok(facts);
     };
+    facts.extend(scip_family_from_path(request, index_path, report.reused)?);
+    Ok(facts)
+}
+
+/// Load one caller-supplied index directly for the `scip` family. This path
+/// does not inspect the cache, marker files, environment override, or indexer
+/// roster, and therefore never spawns an indexer. Existing `ScipFamilyRequest`
+/// construction remains unchanged for cache-backed callers.
+pub fn scip_family_from_index(
+    request: &ScipFamilyRequest,
+    index_path: &Path,
+) -> Result<Vec<FlatFact>, ProjectError> {
+    scip_family_from_path(request, index_path, true)
+}
+
+fn scip_family_from_path(
+    request: &ScipFamilyRequest,
+    index_path: &Path,
+    reused: bool,
+) -> Result<Vec<FlatFact>, ProjectError> {
     // The decode is indexer-agnostic (one prost decode serves every indexer),
     // so any roster entry loads any index, including a merged multi-language one.
     let index = ScipTypescript
@@ -1078,18 +1159,68 @@ pub fn scip_family(request: &ScipFamilyRequest) -> Result<Vec<FlatFact>, Project
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default(),
     };
-    facts.push(FlatFact::ScipIndexRow {
-        reused: report.reused,
+    let (index_mtime_unix_ms, staleness) = scip_index_staleness(index_path, request.root, &index);
+    let mut facts = vec![FlatFact::ScipIndexRow {
+        reused,
         tool_name: index.metadata.tool_name.clone(),
         tool_version: index.metadata.tool_version.clone(),
         documents: index.documents.len() as u32,
-    });
+        index_mtime_unix_ms,
+        staleness: staleness.to_string(),
+    }];
     facts.extend(crate::scip_v5_rels::v5_rel_rows(
         &index,
         request.root,
         &slug,
     ));
     Ok(facts)
+}
+
+/// Compare only filesystem timestamps. `stale` means at least one readable
+/// indexed document has a later mtime than the index. `uncertain` means no
+/// newer document was observed but the index mtime or at least one indexed
+/// document mtime could not be read. `no_newer_sources` means every indexed
+/// document mtime was readable and none was later. No state claims semantic
+/// freshness because matching mtimes do not compare content.
+fn scip_index_staleness(
+    index_path: &Path,
+    project_root: &Path,
+    index: &ScipIndex,
+) -> (Option<u64>, &'static str) {
+    let index_mtime = std::fs::File::open(index_path)
+        .and_then(|file| file.metadata())
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    let index_mtime_unix_ms = index_mtime.and_then(unix_millis);
+    let Some(index_mtime) = index_mtime else {
+        return (index_mtime_unix_ms, "uncertain");
+    };
+
+    let mut uncertain = false;
+    for document in &index.documents {
+        let source_path = project_root.join(&document.relative_path);
+        let source_mtime = std::fs::File::open(&source_path)
+            .and_then(|file| file.metadata())
+            .and_then(|metadata| metadata.modified());
+        match source_mtime {
+            Ok(source_mtime) if source_mtime > index_mtime => {
+                return (index_mtime_unix_ms, "stale")
+            }
+            Ok(_) => {}
+            Err(_) => uncertain = true,
+        }
+    }
+    if uncertain {
+        (index_mtime_unix_ms, "uncertain")
+    } else {
+        (index_mtime_unix_ms, "no_newer_sources")
+    }
+}
+
+fn unix_millis(time: std::time::SystemTime) -> Option<u64> {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
 }
 
 /// Where `scip_family` put or found the index, for the human line the CLI
@@ -1109,6 +1240,15 @@ pub fn scip_family_jsonl(request: &ScipFamilyRequest) -> Result<Vec<String>, Pro
     Ok(sorted_lines(scip_family(request)?))
 }
 
+/// Serialize a caller-supplied family index to sorted JSONL without consulting
+/// or mutating any index cache.
+pub fn scip_family_from_index_jsonl(
+    request: &ScipFamilyRequest,
+    index_path: &Path,
+) -> Result<Vec<String>, ProjectError> {
+    Ok(sorted_lines(scip_family_from_index(request, index_path)?))
+}
+
 /// The `diet_scip` FAMILY: the tree-sitter parse plus heuristic resolution,
 /// under an honest label.
 ///
@@ -1125,7 +1265,20 @@ pub fn scip_family_jsonl(request: &ScipFamilyRequest) -> Result<Vec<String>, Pro
 /// default; this family is the labelled entry, not a replacement.
 // @comment-ok: one pre-existing diet_scip design note, edited by one line.
 pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
-    resolve_project(&ResolveRequest {
+    resolve_project(&diet_scip_request(paths))
+}
+
+/// The diet/fast family with the phase-1 rows retained through the same sink
+/// used by `resolve_project_with_raw`.
+pub fn diet_scip_with_raw<E>(
+    paths: &[PathBuf],
+    push_raw: &mut impl FnMut(RawProjectFact<'_>) -> Result<(), E>,
+) -> Result<Vec<FlatFact>, ResolveWithRawError<E>> {
+    resolve_project_with_raw(&diet_scip_request(paths), push_raw)
+}
+
+fn diet_scip_request(paths: &[PathBuf]) -> ResolveRequest<'_> {
+    ResolveRequest {
         paths,
         arms: ResolveArms {
             call: true,
@@ -1140,7 +1293,7 @@ pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
         ts_checker: None,
         go_checker: None,
         witness: false,
-    })
+    }
 }
 
 /// Serialize the `diet_scip` family to sorted JSONL lines.
@@ -1278,15 +1431,21 @@ fn read_inputs_plain(paths: &[PathBuf], modules: bool) -> Result<Vec<ProjectInpu
                 let go_module = go_module_facts_of(&path, &content, modules);
                 let py_module = py_module_facts_of(&path, &content, modules);
                 let kt_module = kt_module_facts_of(&path, &content, modules);
-                Ok(output.map(|output| ProjectInput {
-                    blob: content_id_of(&content),
-                    path,
-                    output,
-                    module,
-                    rust_module,
-                    go_module,
-                    py_module,
-                    kt_module,
+                Ok(output.map(|output| {
+                    let blob = content_id_of(&content);
+                    ProjectInput {
+                        file: Some(crate::wire::file_fact_with_content_id(
+                            &path, &content, &blob,
+                        )),
+                        blob,
+                        path,
+                        output,
+                        module,
+                        rust_module,
+                        go_module,
+                        py_module,
+                        kt_module,
+                    }
                 }))
             })
             .collect()
@@ -1332,15 +1491,21 @@ fn read_inputs_batched(
                 let go_module = go_module_facts_of(&path, content, modules);
                 let py_module = py_module_facts_of(&path, content, modules);
                 let kt_module = kt_module_facts_of(&path, content, modules);
-                Ok(output.map(|output| ProjectInput {
-                    blob: content_id_of(content),
-                    path,
-                    output,
-                    module,
-                    rust_module,
-                    go_module,
-                    py_module,
-                    kt_module,
+                Ok(output.map(|output| {
+                    let blob = content_id_of(content);
+                    ProjectInput {
+                        file: Some(crate::wire::file_fact_with_content_id(
+                            &path, content, &blob,
+                        )),
+                        blob,
+                        path,
+                        output,
+                        module,
+                        rust_module,
+                        go_module,
+                        py_module,
+                        kt_module,
+                    }
                 }))
             })
             .collect()
@@ -1630,7 +1795,10 @@ fn resolve_call_edges(
     let leg = crate::trace::phase_span(arm.name, crate::trace::Phase::ResolveLeg);
     let _legging = leg.enter();
     let edges = resolve(output, cx);
-    let asked = output.call.as_ref().map_or(0, |bundle| bundle.aux.sites.len());
+    let asked = output
+        .call
+        .as_ref()
+        .map_or(0, |bundle| bundle.aux.sites.len());
     crate::trace::record_phase(&leg, 0, edges.len() as u64, asked as u64);
     edges
 }
@@ -1652,7 +1820,10 @@ fn resolve_type_edges(
     let leg = crate::trace::phase_span(arm.name, crate::trace::Phase::ResolveLeg);
     let _legging = leg.enter();
     let edges = resolve(output, cx);
-    let asked = output.types.as_ref().map_or(0, |bundle| bundle.aux.candidates.len());
+    let asked = output
+        .types
+        .as_ref()
+        .map_or(0, |bundle| bundle.aux.candidates.len());
     crate::trace::record_phase(&leg, 0, edges.len() as u64, asked as u64);
     edges
 }
@@ -1885,7 +2056,10 @@ fn type_owner(
         TypePlane::Nodes => match types.nodes.get(src.0 as usize) {
             Some(node) => Some((node.span, name_at(names, &input.output, node.span))),
             None => {
-                let owner = types.aux.impl_owners.get(src.0 as usize - types.nodes.len())?;
+                let owner = types
+                    .aux
+                    .impl_owners
+                    .get(src.0 as usize - types.nodes.len())?;
                 let name = input.output.strings.lookup(owner.name).to_string();
                 Some((owner.span, Some(name)))
             }
@@ -2031,7 +2205,11 @@ fn scip_conformances(
             else {
                 continue;
             };
-            for related in info.relationships.iter().filter(|rel| rel.is_implementation) {
+            for related in info
+                .relationships
+                .iter()
+                .filter(|rel| rel.is_implementation)
+            {
                 let target = index.symbol(related.symbol);
                 if !crate::scip_v5_rels::usable_symbol(target) {
                     continue;
@@ -2087,7 +2265,12 @@ fn conformance_edges(inputs: &[ProjectInput], rows: &[ScipConformance]) -> Vec<F
             owner_end: row.owner_span.end(),
             target_path: row.target_path.clone(),
             target_name: Some(row.target_name.clone()),
-            kind: if row.method { "overrides" } else { "implements" }.to_string(),
+            kind: if row.method {
+                "overrides"
+            } else {
+                "implements"
+            }
+            .to_string(),
             resolution_origin: ResolutionOrigin::Scip.as_str().to_string(),
         })
         .collect()
@@ -2157,7 +2340,11 @@ fn conformance_tsi_rows(
             };
             sink.fact(
                 "tsi.conforms",
-                vec![Arg::Id(owner), Arg::Id(target), Arg::Atom("scip".to_string())],
+                vec![
+                    Arg::Id(owner),
+                    Arg::Id(target),
+                    Arg::Atom("scip".to_string()),
+                ],
             );
         }
         let facts: Vec<crate::tsi::FactOut> = sink
@@ -2281,13 +2468,24 @@ impl SourceTreeBlobSource {
         let revision = tree
             .resolve_revision(soopy::Revision::Worktree)
             .map_err(|error| error.to_string())?;
+        let mut readable_files = Vec::with_capacity(files.len());
         let mut requests = Vec::with_capacity(files.len());
         for file in files {
+            // Compiler indexes may name generated documents that existed while
+            // indexing and no longer exist in the current worktree. The SCIP
+            // projection already defines an unreadable document as a header
+            // and symbol contributor with no occurrence rows. Keep that
+            // document out of soopy's all-or-error read batch so the readable
+            // documents still reach the projection.
+            if !root.join(file).is_file() {
+                continue;
+            }
             let repo_path = if prefix.is_empty() {
                 file.to_string()
             } else {
                 format!("{prefix}/{file}")
             };
+            readable_files.push(*file);
             requests.push(soopy::ReadRequest {
                 source: soopy::SourceRef {
                     repository: repository.identity.clone(),
@@ -2300,8 +2498,8 @@ impl SourceTreeBlobSource {
         let answers = tree
             .read_many(&requests)
             .map_err(|error| error.to_string())?;
-        let entries = files
-            .iter()
+        let entries = readable_files
+            .into_iter()
             .zip(answers)
             .map(|(file, answer)| {
                 (

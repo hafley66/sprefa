@@ -23,8 +23,10 @@ fn db_of(home: &Path) -> PathBuf {
 }
 
 fn count(conn: &Connection, table: &str) -> i64 {
-    conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
-        .expect("count the trail")
+    conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+        row.get(0)
+    })
+    .expect("count the trail")
 }
 
 #[test]
@@ -53,7 +55,10 @@ fn bench_writes_one_run_row_and_its_phases() {
         .expect("read the run row");
     assert!(wall_ms >= 0, "wall_ms is not a duration");
     assert!(load_start > 0.0, "no load average beside the timing");
-    assert!(argv.contains("--bench"), "argv did not reach the row: {argv}");
+    assert!(
+        argv.contains("--bench"),
+        "argv did not reach the row: {argv}"
+    );
     let _ = std::fs::remove_dir_all(&home);
 }
 

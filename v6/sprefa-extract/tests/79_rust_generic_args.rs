@@ -7,8 +7,8 @@
 //! `rust.REPORT.md` prices class D at 387 rows (D1 362, D2's generic-argument
 //! half 25).
 //!
-//! The impl self type's own HEAD stays unwalked: it names the owner, and the
-//! owner-to-itself row is the excluded X2 class.
+//! Current main also emits the impl self type's own head as a uses edge from
+//! the impl owner. The generic-argument coverage stays distinct from that row.
 //!
 //! SABOTAGE RECEIPT (fail-pre-fix, at 0e29983b7): all three tests red against
 //! the same three rows, `[("Boxed","Carrier"),("Boxed","Plain"),
@@ -98,7 +98,7 @@ fn impl_trait_generic_argument_is_named() {
 }
 
 #[test]
-fn impl_self_type_generic_argument_is_named() {
+fn impl_self_type_head_and_generic_argument_are_named() {
     let rows = type_edges();
     assert!(
         rows.iter()
@@ -106,9 +106,9 @@ fn impl_self_type_generic_argument_is_named() {
         "`impl .. for Boxed<Other>` names Other: {rows:?}"
     );
     assert!(
-        !rows
-            .iter()
-            .any(|(owner, target, _)| owner == "Boxed" && target == "Boxed"),
-        "the self type's own head is the owner, never a target: {rows:?}"
+        rows.iter().any(|(owner, target, stem)| {
+            owner == "Boxed" && target == "Boxed" && stem == "holder"
+        }),
+        "the self type's own head is a uses edge on current main: {rows:?}"
     );
 }

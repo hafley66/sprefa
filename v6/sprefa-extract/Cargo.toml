@@ -11,6 +11,7 @@ members = [
 name = "sprefa-extract"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 description = "v6 extraction leaf: a corpus at a version -> normalized graph facts. Sync, rayon-parallel, arena-mastered. No DB, no async."
 license = "MIT OR Apache-2.0"
 publish = false
@@ -183,7 +184,10 @@ prost = "0.13"
 # (run.rs:289) - it already depends on this one (its Cargo.toml:31), so reuse is
 # a cycle; sprefa-store's sea-orm/sqlx reader - async, banned above the SqlRunner
 # seam. `trace` is what the once-per-run statement count is measured on.
-rusqlite = { version = "0.40", features = ["bundled", "trace"] }
+rusqlite = { version = "0.40", features = ["bundled", "limits", "trace"] }
+# Atomic, no-clobber publication of a CLI SQLite export. Reuses the tempfile
+# version already in this lock through rust-analyzer; no custom temp-file protocol.
+tempfile = { version = "3", optional = true }
 # rayon drives the per-file extraction pool. A dedicated pool (never the global
 # one) so nothing else in the process inherits the cap.
 rayon = "1"
@@ -214,7 +218,7 @@ features = ["env-filter", "json"]
 optional = true
 
 [features]
-cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe", "dep:libc", "mimalloc"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe", "dep:libc", "dep:tempfile", "mimalloc"]
 # Optional global allocator; measured in plans/extract-bench-2026-08-29/SPEED.REPORT.md.
 mimalloc = ["dep:mimalloc"]
 # The rust checker tier, `--features cli,rust-checker`. Off by default and out
@@ -250,10 +254,9 @@ required-features = ["cli"]
 libc = "0.2"
 # The trail test reads back the two tables the bin wrote. Same pin and features
 # as the dependency above, so cargo unifies one SQLite into the test binary.
-rusqlite = { version = "0.40", features = ["bundled", "trace"] }
+rusqlite = { version = "0.40", features = ["bundled", "limits", "trace"] }
 
 # cargo-dist builds with this profile; mirrors the root workspace's.
 [profile.dist]
 inherits = "release"
 lto = "thin"
-

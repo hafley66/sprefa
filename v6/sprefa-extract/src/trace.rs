@@ -237,13 +237,7 @@ mod sink {
             row.facts += facts;
         }
 
-        fn fold_phase(
-            &self,
-            lang: String,
-            phase: Phase,
-            busy: Duration,
-            counts: (u64, u64, u64),
-        ) {
+        fn fold_phase(&self, lang: String, phase: Phase, busy: Duration, counts: (u64, u64, u64)) {
             let mut phases = self.phases.lock().expect("summary phases");
             let row = phases.entry((lang, phase)).or_default();
             row.micros += busy.as_micros();
@@ -543,12 +537,10 @@ mod sink {
             // `parse` and `family` predate the phase axis, so they feed both
             // tables: the family one keeps its shape, the phase one is complete.
             match counts.name {
-                "parse" => self.state.fold_phase(
-                    counts.lang.clone(),
-                    Phase::Parse,
-                    counts.busy,
-                    (1, 0, 0),
-                ),
+                "parse" => {
+                    self.state
+                        .fold_phase(counts.lang.clone(), Phase::Parse, counts.busy, (1, 0, 0))
+                }
                 "family" => self.state.fold_phase(
                     counts.lang.clone(),
                     Phase::Family,
@@ -564,20 +556,23 @@ mod sink {
     }
 
     /// stdout is the fact stream and is diffed byte for byte, so every span goes
-    /// to stderr, and stderr stays empty unless RUST_LOG or DL_TRACE_SUMMARY asks.
+    /// to stderr. The shared executable convention is warn by default, with
+    /// `RUST_LOG` selecting more or less detail and `HAFLEY_LOG_FORMAT` selecting
+    /// human or JSON rendering. `DL_TRACE_SUMMARY` remains an independent summary
+    /// layer over the same spans.
     pub fn install() -> Option<Arc<SummaryState>> {
         // `--bench` is read off argv because the subscriber must exist before
         // clap parses: a span opened earlier than the layer is a span lost.
         let want_summary = matches!(std::env::var("DL_TRACE_SUMMARY").as_deref(), Ok("1"))
             || std::env::args().any(|arg| arg == "--bench");
-        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off"));
         let observability = hafley_observe::Config::from_env(
             "sprefa-extract",
             env!("CARGO_PKG_VERSION"),
-            "off",
-            false,
+            "warn",
+            std::io::IsTerminal::is_terminal(&std::io::stderr()),
         )
         .expect("observability configuration");
+        let filter = hafley_observe::env_filter(observability.default_filter);
         let printer = hafley_observe::format_layer(
             hafley_observe::FormatConfig {
                 format: observability.format,

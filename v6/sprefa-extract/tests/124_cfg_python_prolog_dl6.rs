@@ -126,8 +126,12 @@ fn python_if_elif_for_while_try_match_edge_set() {
 fn python_match_arms_are_not_a_sequence() {
     let (path, source) = fixture("cfg/walk.py");
     let edges = cfg_edges(&path, &source);
-    assert!(!edges.iter().any(|edge| edge.starts_with("ret(return -1) -next->")));
-    assert!(!edges.iter().any(|edge| edge.ends_with("-next-> stmt(case _:)")));
+    assert!(!edges
+        .iter()
+        .any(|edge| edge.starts_with("ret(return -1) -next->")));
+    assert!(!edges
+        .iter()
+        .any(|edge| edge.ends_with("-next-> stmt(case _:)")));
 }
 
 /// Clause 1 is a fact and mints nothing. Clause 2: `(C1 -> T1 ; C2 -> T2 ; E)`

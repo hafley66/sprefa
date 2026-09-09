@@ -104,7 +104,10 @@ fn checker_rows_need_the_flag() {
         .filter(|((_, origin), _)| origin == "checker")
         .map(|(_, count)| *count)
         .sum();
-    assert_eq!(checker, 0, "the syntax leg alone names no checker: {census:?}");
+    assert_eq!(
+        checker, 0,
+        "the syntax leg alone names no checker: {census:?}"
+    );
 }
 
 #[cfg(feature = "go-checker")]
@@ -153,7 +156,11 @@ fn the_walk_emits_the_semantic_tsi_rows() {
     let names: Vec<String> = of_record(&rows, "fact")
         .into_iter()
         .filter(|row| word(row, "relation") == "tsi.name")
-        .filter_map(|row| row["args"].as_array()?.get(1)?["text"].as_str().map(str::to_string))
+        .filter_map(|row| {
+            row["args"].as_array()?.get(1)?["text"]
+                .as_str()
+                .map(str::to_string)
+        })
         .collect();
     for spelling in ["Drawer", "Square", "Circle", "Tag"] {
         assert!(
@@ -173,12 +180,19 @@ fn go_tier_off_path_is_a_diagnostic() {
         .into_iter()
         .filter(|row| word(row, "relation").starts_with("tier."))
         .collect();
-    assert_eq!(declined.len(), 1, "one declined tier, one row: {declined:?}");
+    assert_eq!(
+        declined.len(),
+        1,
+        "one declined tier, one row: {declined:?}"
+    );
     assert_eq!(declined[0]["run"], 0, "a decline is the syntax run's news");
     assert_eq!(word(declined[0], "relation"), "tier.go-types");
     let detail = word(declined[0], "detail");
     #[cfg(feature = "go-checker")]
-    assert!(detail.contains("go"), "the reason names the driver: {detail}");
+    assert!(
+        detail.contains("go"),
+        "the reason names the driver: {detail}"
+    );
     #[cfg(not(feature = "go-checker"))]
     assert!(
         detail.contains("--features go-checker"),

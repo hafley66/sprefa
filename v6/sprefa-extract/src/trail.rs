@@ -36,7 +36,10 @@ impl std::fmt::Display for TrailError {
         match self {
             Self::Open(error) => write!(formatter, "open the trail: {error}"),
             Self::Write(error) => write!(formatter, "write the trail: {error}"),
-            Self::Home => write!(formatter, "HOME is unset, so {DL6_DB_RELATIVE_PATH} has no path"),
+            Self::Home => write!(
+                formatter,
+                "HOME is unset, so {DL6_DB_RELATIVE_PATH} has no path"
+            ),
         }
     }
 }
@@ -70,8 +73,9 @@ impl Trail {
     /// The same door on an explicit path, so a test names its own store.
     pub fn open_at(path: &Path) -> Result<Trail, TrailError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| TrailError::Open(rusqlite::Error::ToSqlConversionFailure(Box::new(error))))?;
+            std::fs::create_dir_all(parent).map_err(|error| {
+                TrailError::Open(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+            })?;
         }
         let conn = Connection::open(path).map_err(TrailError::Open)?;
         conn.busy_timeout(std::time::Duration::from_secs(2))
@@ -89,7 +93,9 @@ impl Trail {
     ) -> Result<u64, TrailError> {
         let started = format_utc(run.started);
         let wall_ms = run.wall.as_millis() as u64;
-        self.conn.execute_batch("BEGIN").map_err(TrailError::Write)?;
+        self.conn
+            .execute_batch("BEGIN")
+            .map_err(TrailError::Write)?;
         let outcome = self.write_rows(&started, wall_ms, run, argv, git_sha);
         match outcome {
             Ok(id) => {

@@ -172,8 +172,5 @@ fn a_pick_runs_only_the_named_indexer() {
         vec!["go"],
         "scip-typescript must not be started at all"
     );
-    assert!(
-        waited.as_secs() < 10,
-        "one budget, not two: {waited:?}"
-    );
+    assert!(waited.as_secs() < 10, "one budget, not two: {waited:?}");
 }

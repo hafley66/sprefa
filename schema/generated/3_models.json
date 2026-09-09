@@ -1,0 +1,44 @@
+[
+  {
+    "kind": "model",
+    "name": "Span",
+    "doc": "Local byte range, matching extract::types::Span. End is start + len.",
+    "fields": [
+      {
+        "name": "start",
+        "type": {
+          "kind": "scalar",
+          "name": "uint32"
+        }
+      },
+      {
+        "name": "len",
+        "type": {
+          "kind": "scalar",
+          "name": "uint32"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "model",
+    "name": "SpanOut",
+    "doc": "Wire byte range, matching extract::types::SpanOut. End is exclusive.",
+    "fields": [
+      {
+        "name": "start",
+        "type": {
+          "kind": "scalar",
+          "name": "uint32"
+        }
+      },
+      {
+        "name": "end",
+        "type": {
+          "kind": "scalar",
+          "name": "uint32"
+        }
+      }
+    ]
+  }
+]

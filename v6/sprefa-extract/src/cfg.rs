@@ -248,7 +248,12 @@ pub fn build_cfg(
     let mut build = CfgBuild::new(roles, cst, strings, content);
     let callables: Vec<NodeRef> = (0..cst.nodes.len())
         .map(|ix| NodeRef(ix as u32))
-        .filter(|node| matches!(build.roles_by_node[node.0 as usize], Some(Callable | Clause)))
+        .filter(|node| {
+            matches!(
+                build.roles_by_node[node.0 as usize],
+                Some(Callable | Clause)
+            )
+        })
         .collect();
     for callable in callables {
         match build.roles_by_node[callable.0 as usize] {
@@ -669,7 +674,8 @@ impl<'a> CfgBuild<'a> {
         let arms: Vec<NodeRef> = kids.iter().skip(1).chain(else_arms).copied().collect();
         let mut flow = self.link_arms(span, &arms);
         if else_arms.is_empty() {
-            flow.exits.insert(0, flow.entry.expect("link_arms mints the branch node"));
+            flow.exits
+                .insert(0, flow.entry.expect("link_arms mints the branch node"));
         }
         flow
     }
@@ -702,7 +708,8 @@ impl<'a> CfgBuild<'a> {
         }
         let mut flow = self.link_arms(span, &kids);
         if flow.exits.is_empty() {
-            flow.exits.push(flow.entry.expect("link_arms mints the fork node"));
+            flow.exits
+                .push(flow.entry.expect("link_arms mints the fork node"));
         }
         flow
     }
@@ -767,14 +774,19 @@ fn leading_word(content: &[u8], span: Span) -> &str {
 /// The leading identifier of a node's own source text: the head or goal name
 /// a self-call compares (`walk_2` is one name, not `walk`).
 fn leading_name(content: &[u8], span: Span) -> &str {
-    leading_run(content, span, |byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    leading_run(content, span, |byte| {
+        byte.is_ascii_alphanumeric() || byte == b'_'
+    })
 }
 
 fn leading_run(content: &[u8], span: Span, keep: impl Fn(u8) -> bool) -> &str {
     let start = (span.start as usize).min(content.len());
     let end = (span.end() as usize).min(content.len());
     let text = &content[start..end];
-    let cut = text.iter().position(|byte| !keep(*byte)).unwrap_or(text.len());
+    let cut = text
+        .iter()
+        .position(|byte| !keep(*byte))
+        .unwrap_or(text.len());
     std::str::from_utf8(&text[..cut]).unwrap_or("")
 }
 

@@ -33,7 +33,9 @@
 //! here carries detection, the PATH probe and the install hint; the spawn lives
 //! where the staging already is.
 
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
 use crate::types::{ScipError, ScipSource};
@@ -529,8 +531,8 @@ thread_local! {
 
 /// What one capped subprocess did.
 pub enum Capped {
-    /// It exited on its own. `success` is its exit status, `stderr_tail` its
-    /// last nonempty stderr line.
+    /// It exited on its own. `success` is its exit status. On failure,
+    /// `stderr_tail` contains command, status and bounded stderr evidence.
     Exited { success: bool, stderr_tail: String },
     /// The deadline passed and the whole process group was killed.
     Killed { secs: u64 },
@@ -566,10 +568,24 @@ pub fn run_capped(argv: &[&str], cwd: &Path, log_dir: &Path) -> Capped {
     ) else {
         return Capped::NotLaunched;
     };
-    // Every spawn is visible: an indexer run is the one operation allowed past
-    // the ten-second law, so its wall must be attributable to a named process.
-    let span = tracing::warn_span!("process_spawn", bin = program, args = args.len());
+    // The shared telemetry shape: one operation span with result fields filled
+    // before close, plus a warning event carrying the same identifying fields
+    // when the default warn filter suppresses info spans.
+    let span = tracing::info_span!(
+        "process.run",
+        operation = "indexer",
+        process.command = program,
+        process.args = ?args,
+        process.cwd = %cwd.display(),
+        timeout_ms = budget.secs.saturating_mul(1_000),
+        process.pid = tracing::field::Empty,
+        process.outcome = tracing::field::Empty,
+        process.exit_code = tracing::field::Empty,
+        process.signal = tracing::field::Empty,
+        duration_ms = tracing::field::Empty,
+    );
     let _entered = span.enter();
+    let started = Instant::now();
     let mut command = std::process::Command::new(program);
     command
         .args(args)
@@ -578,26 +594,80 @@ pub fn run_capped(argv: &[&str], cwd: &Path, log_dir: &Path) -> Capped {
         .stdout(std::process::Stdio::from(out_file))
         .stderr(std::process::Stdio::from(err_file));
     new_process_group(&mut command);
-    let Ok(mut child) = command.spawn() else {
-        return Capped::NotLaunched;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            span.record("process.outcome", "launch_failed");
+            span.record("duration_ms", elapsed_ms(started));
+            tracing::warn!(
+                process.command = program,
+                process.args = ?args,
+                process.cwd = %cwd.display(),
+                %error,
+                "indexer process could not be launched"
+            );
+            return Capped::NotLaunched;
+        }
     };
     let pid = child.id();
+    span.record("process.pid", pid as u64);
     let deadline = Instant::now() + Duration::from_secs(budget.secs);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                let stderr = stderr_evidence(&err_path);
+                let duration_ms = elapsed_ms(started);
+                span.record("duration_ms", duration_ms);
+                record_exit_status(&span, status);
+                if status.success() {
+                    span.record("process.outcome", "success");
+                    tracing::debug!(process.pid = pid, duration_ms, "indexer process completed");
+                } else {
+                    span.record("process.outcome", "failed");
+                    tracing::warn!(
+                        process.command = program,
+                        process.args = ?args,
+                        process.cwd = %cwd.display(),
+                        process.pid = pid,
+                        process.status = %status_description(status),
+                        duration_ms,
+                        stderr = %stderr,
+                        "indexer process failed"
+                    );
+                }
                 return Capped::Exited {
                     success: status.success(),
-                    stderr_tail: stderr_tail(&err_path),
-                }
+                    stderr_tail: if status.success() {
+                        stderr
+                    } else {
+                        process_failure(argv, status, &stderr)
+                    },
+                };
             }
             Ok(None) => {}
-            Err(_) => return Capped::NotLaunched,
+            Err(error) => {
+                span.record("process.outcome", "wait_failed");
+                span.record("duration_ms", elapsed_ms(started));
+                tracing::warn!(
+                    process.command = program,
+                    process.pid = pid,
+                    %error,
+                    "indexer process status could not be read"
+                );
+                return Capped::NotLaunched;
+            }
         }
         if Instant::now() >= deadline {
+            let duration_ms = elapsed_ms(started);
+            span.record("process.outcome", "timed_out");
+            span.record("duration_ms", duration_ms);
             tracing::warn!(
-                pid,
-                secs = budget.secs,
+                process.command = program,
+                process.args = ?args,
+                process.cwd = %cwd.display(),
+                process.pid = pid,
+                timeout_ms = budget.secs.saturating_mul(1_000),
+                duration_ms,
                 "indexer exceeded its budget; sending SIGKILL to its process group"
             );
             kill_process_group(pid);
@@ -607,6 +677,55 @@ pub fn run_capped(argv: &[&str], cwd: &Path, log_dir: &Path) -> Capped {
             return Capped::Killed { secs: budget.secs };
         }
         std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn record_exit_status(span: &tracing::Span, status: ExitStatus) {
+    if let Some(code) = status.code() {
+        span.record("process.exit_code", i64::from(code));
+    }
+    if let Some(signal) = exit_signal(status) {
+        span.record("process.signal", i64::from(signal));
+    }
+}
+
+#[cfg(unix)]
+fn exit_signal(status: ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn exit_signal(_status: ExitStatus) -> Option<i32> {
+    None
+}
+
+/// Command, process status and bounded stderr evidence for a failed child.
+fn process_failure(argv: &[&str], status: ExitStatus, stderr: &str) -> String {
+    let command = format!("{argv:?}");
+    if stderr.trim().is_empty() {
+        format!(
+            "command {command} {}; stderr was empty",
+            status_description(status)
+        )
+    } else {
+        format!(
+            "command {command} {}; stderr:\n{}",
+            status_description(status),
+            stderr.trim()
+        )
+    }
+}
+
+fn status_description(status: ExitStatus) -> String {
+    match (status.code(), exit_signal(status)) {
+        (Some(code), _) => format!("exited with code {code}"),
+        (None, Some(signal)) => format!("terminated by signal {signal}"),
+        (None, None) => format!("ended with {status}"),
     }
 }
 
@@ -638,23 +757,62 @@ fn kill_process_group(pid: u32) {
 #[cfg(not(unix))]
 fn kill_process_group(_pid: u32) {}
 
-/// The last nonempty line of a log file, trimmed: the indexer's own error line.
-fn stderr_tail(path: &Path) -> String {
-    last_error_line(&std::fs::read_to_string(path).unwrap_or_default())
+const STDERR_WINDOW_BYTES: usize = 8 * 1_024;
+
+/// Read at most two fixed windows from an indexer log. The leading diagnostic
+/// and terminal frames both survive, while a chatty child cannot make the
+/// failure path allocate in proportion to its entire stderr file.
+fn stderr_evidence(path: &Path) -> String {
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) => return format!("stderr unavailable: {error}"),
+    };
+    let len = file.metadata().map(|meta| meta.len()).unwrap_or_default();
+    let window = STDERR_WINDOW_BYTES as u64;
+    if len <= window.saturating_mul(2) {
+        let mut bytes = Vec::with_capacity(usize::try_from(len).unwrap_or(STDERR_WINDOW_BYTES * 2));
+        if let Err(error) = file.take(window.saturating_mul(2)).read_to_end(&mut bytes) {
+            return format!("stderr unavailable: {error}");
+        }
+        return String::from_utf8_lossy(&bytes).trim().to_string();
+    }
+
+    let mut head = vec![0; STDERR_WINDOW_BYTES];
+    if let Err(error) = file.read_exact(&mut head) {
+        return format!("stderr unavailable: {error}");
+    }
+    if let Err(error) = file.seek(SeekFrom::End(-(window as i64))) {
+        return format!("stderr unavailable: {error}");
+    }
+    let mut tail = vec![0; STDERR_WINDOW_BYTES];
+    if let Err(error) = file.read_exact(&mut tail) {
+        return format!("stderr unavailable: {error}");
+    }
+    let omitted = len.saturating_sub(window.saturating_mul(2));
+    let head = String::from_utf8_lossy(&head);
+    let tail = String::from_utf8_lossy(&tail);
+    format!(
+        "{}\n... {omitted} stderr bytes omitted ...\n{}",
+        head.trim_end_matches('\u{fffd}').trim_end(),
+        tail.trim_start_matches('\u{fffd}').trim_start()
+    )
 }
 
-/// The last line of `text` that is not a `note:` line, trimmed. A rust panic's
-/// tail is the panic line followed by `note: Some details are omitted, run
-/// with RUST_BACKTRACE=1 ...`; the panic line is the detail a skip row should
-/// carry, and the note names only the runtime's own behavior.
+/// The last line of `text` that is not a trailing Rust panic `note:` line.
+/// Retained as a public helper for callers that want the legacy one-line view.
 pub fn last_error_line(text: &str) -> String {
-    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     let picked = lines
         .iter()
         .rev()
-        .find(|l| !l.trim_start().starts_with("note:"))
+        .find(|line| !line.trim_start().starts_with("note:"))
         .or(lines.last());
-    picked.map(|l| l.trim().to_string()).unwrap_or_default()
+    picked
+        .map(|line| line.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Every marker file the roster looks for, as one comma-separated list. Named

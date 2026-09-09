@@ -7,12 +7,24 @@
 //! Included with `#[path]` rather than living beside a `main.rs`, so cargo's
 //! bin auto-discovery does not see this directory as a second binary.
 
+pub const AFTER_HELP: &str = concat!(
+    "Aliases:\n",
+    "  extract fast PATH...    syntax-only whole-project extraction (diet_scip)\n",
+    "  extract slow ROOT       semantic whole-project extraction (real SCIP/compiler)\n",
+    "\n",
+    "Build:\n",
+    "  git hash: ",
+    env!("SPREFA_BUILD_GIT_HASH"),
+    "\n",
+    "  datetime: ",
+    env!("SPREFA_BUILD_DATETIME"),
+);
+
 /// Self-describing enough that `extract --help` + `extract --schema` are a
 /// complete contract for a fresh caller (human or AI). No outside docs needed.
 pub const LONG_ABOUT: &str = "\
-Read source files and print facts about the code as JSONL (one JSON object per
-line) on stdout. No daemon, no database, no network: point it at files, get
-facts, pipe them anywhere.
+Read source files and emit facts about the code. JSONL goes to stdout;
+--sqlite PATH writes a new SQLite database with TypeSpec-generated tables.
 
 QUICK START
   extract src/app.ts                       every fact kind for one file
@@ -21,6 +33,22 @@ QUICK START
   extract --family scip .                  whole-project facts from the real
                                            compiler index (exact, slower)
   extract --schema                         every record shape this can emit
+  extract --sqlite facts.db a.ts b.ts      write per-file facts to SQLite
+  extract fast --sqlite fast.db a.ts b.ts  syntax-resolved facts to SQLite
+  extract slow --sqlite slow.db .         compiler-derived facts to SQLite
+
+SQLITE OUTPUT
+  --sqlite requires an explicit new database path. Existing files are refused.
+  Extraction writes a private staging database; success publishes it and prints
+  sqlite3 commands for listing tables, reading the schema, and querying rows.
+  No SQLite CLI or IVM extension is needed to write the database.
+  Each record kind has its own table. Nested spans become span__start/span__end
+  (and from__start/to__start for edges). _row preserves emission order and
+  duplicates; _input_path/_content_id qualify per-file rows using the same
+  bytes extraction read. Per-file exports also include the file metadata row.
+  Project-mode records retain their existing path/digest fields. JSON payloads
+  and arrays occupy JSON TEXT columns; SQL NULL represents absent/null fields.
+  This is a new-file export. It does not merge, refresh, watch, or install IVM.
 
 WHAT --family MEANS
   One flag, two jobs; the second grew out of the first.
@@ -50,10 +78,29 @@ EXACT MODE: --family scip ROOT
   time budget (the indexer's whole process group is killed at the deadline) and
   is cached for next time.
 
+  --scip-index FILE loads that exact file directly, ahead of environment and
+  cache discovery, and never starts an indexer. A missing or invalid explicit
+  file is an error. --indexer and --scip-build conflict with an explicit file.
+
+  The scip_index row carries index_mtime_unix_ms and staleness. The timestamp is
+  milliseconds since the Unix epoch. staleness=stale means a readable indexed
+  document has a later mtime; uncertain means an mtime or indexed document was
+  unreadable; no_newer_sources means every indexed document was readable and no
+  later mtime was observed. These are filesystem observations, not proof that
+  index contents match source contents.
+
   When a root cannot be indexed you get scip_skip rows saying exactly which
   root and why: not_installed comes with the install command, timed_out with
-  the budget, failed with the indexer's own last stderr line. Exit is 0 and the
-  stream continues. You never get a silently empty stream.
+  the budget, and failed with the command, process status, leading diagnostic,
+  and bounded stderr tail. Exit is 0 and the stream continues. You never get a
+  silently empty stream.
+
+TELEMETRY
+  Diagnostics use the shared hafley-observe convention and stay on stderr so
+  stdout remains JSONL facts. Warnings and errors are enabled by default.
+  RUST_LOG selects targets and levels, for example
+  RUST_LOG=sprefa_extract=info. HAFLEY_LOG_FORMAT selects human (also text) or
+  json output. Invalid RUST_LOG falls back to the default warning filter.
 
 FAST MODE: --family diet_scip PATH...
   This binary's own parsers (tree-sitter, oxc, syn) plus name matching across
@@ -166,12 +213,19 @@ changes the whole run.";
 
 pub const PROJECT_ROOT_LONG: &str = "\
 The directory SCIP document paths are relative to, and the root --scip-build
-runs the indexer over. Required by --scip-index and --scip-build: without it
-there is no reader to join SCIP documents to their content.";
+runs the indexer over. Required when --resolve or --scip-facts loads an index:
+without it there is no reader to join SCIP documents to their content.
+--family scip already takes ROOT positionally and uses that root for an explicit
+--scip-index.";
 
 pub const SCIP_INDEX_LONG: &str = "\
 Path to an index.scip built earlier. The decode is indexer-agnostic, so an index
-from scip-typescript, scip-go or rust-analyzer all load the same way.";
+from scip-typescript, scip-go or rust-analyzer all load the same way.
+
+Under --family scip ROOT, this exact file takes precedence over environment and
+cache discovery and no indexer subprocess is started. Missing and invalid files
+are errors. It conflicts with --indexer and --scip-build. Other modes also need
+--project-root so indexed document paths can be joined to source files.";
 
 pub const SCIP_BUILD_LONG: &str = "\
 Run the language's own indexer over --project-root, then load the result. One

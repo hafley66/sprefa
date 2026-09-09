@@ -1,4 +1,4 @@
-//! The tracing seam: stderr silence by default, and the summary layer's table.
+//! The tracing seam: shared warn-by-default telemetry and the summary table.
 #![cfg(feature = "cli")]
 
 use std::process::Command;
@@ -72,10 +72,10 @@ fn phases_of(path: &str) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-// FAIL-FIRST RECEIPT: a subscriber installed with a default-on filter put a
-// CLOSE line per span on stderr for every file, under no flag at all.
+// Ordinary extraction emits debug spans only, so the standard warn default
+// remains silent until a warning or error occurs.
 #[test]
-fn no_rust_log_means_no_stderr_byte() {
+fn the_warn_default_keeps_an_ordinary_run_off_stderr() {
     let output = Command::new(BIN)
         .args(["--family", "call", FIXTURE])
         .env_remove("RUST_LOG")
@@ -252,8 +252,8 @@ fn phase_calls_per_file_are_pinned() {
         }
     }
     let table = phases_of("tests/fixtures/go_residual/callers.go");
-    let (_, chain_calls, _) = phase_row(&table, "go", "chain")
-        .unwrap_or_else(|| panic!("no go chain row in\n{table}"));
+    let (_, chain_calls, _) =
+        phase_row(&table, "go", "chain").unwrap_or_else(|| panic!("no go chain row in\n{table}"));
     assert_eq!(
         chain_calls, GO_RESIDUAL_CHAIN_SITES,
         "the go chain walk entered {chain_calls} sites\n{table}"
@@ -264,7 +264,11 @@ fn phase_calls_per_file_are_pinned() {
 fn the_phase_table_names_only_phases_that_ran() {
     let table = phases_of("tests/fixtures/rust/sample.rs");
     for phase in ["hash", "parse", "family", "tsi_syntax", "write"] {
-        let lang = if matches!(phase, "write") { "-" } else { "rust" };
+        let lang = if matches!(phase, "write") {
+            "-"
+        } else {
+            "rust"
+        };
         assert!(
             phase_row(&table, lang, phase).is_some(),
             "no {lang}/{phase} row in\n{table}"
@@ -315,5 +319,9 @@ fn the_default_run_creates_no_file_under_home() {
         .output()
         .expect("run extract");
     assert!(output.status.success(), "extract failed: {output:?}");
-    assert!(!home.exists(), "a default run wrote under {}", home.display());
+    assert!(
+        !home.exists(),
+        "a default run wrote under {}",
+        home.display()
+    );
 }

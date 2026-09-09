@@ -68,8 +68,7 @@ pub use family::{
     flow_edges, CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF,
     DfFAux, DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, Family, FlowEdge, FlowEdgeKind,
     FlowF, MethodOwner, ProjectEdge, ResolutionOrigin, SigSlot, Specifier, SpecifierKind,
-    TypeEdgeCandidate,
-    TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
+    TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
     build_paths, compiled_spellings, decode_ast_rule_yaml, dl6_db_path, open_dl6_readonly,
@@ -89,10 +88,12 @@ pub use move_scip::{
     UNKNOWN_TO_SCIP,
 };
 pub use project::{
-    diet_scip, diet_scip_jsonl, extract_pool, resolve_project, resolve_project_jsonl, scip_facts,
-    scip_facts_jsonl, scip_family, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
-    FsBlobSource, ProjectError, ResolveArm, ResolveArms, ResolveRequest, ScipFamilyRequest,
-    ScipMode, SourceTreeBlobSource, RESOLVE_ARMS,
+    diet_scip, diet_scip_jsonl, diet_scip_with_raw, extract_pool, resolve_project,
+    resolve_project_jsonl, resolve_project_with_raw, scip_facts, scip_facts_jsonl, scip_family,
+    scip_family_from_index, scip_family_from_index_jsonl, scip_family_jsonl, scip_file_edges_jsonl,
+    scip_index_location, FsBlobSource, ProjectError, RawProjectFact, ResolveArm, ResolveArms,
+    ResolveRequest, ResolveWithRawError, ScipFamilyRequest, ScipMode, SourceTreeBlobSource,
+    RESOLVE_ARMS,
 };
 pub use rename_cx::{RenameCx, RenameRequest};
 pub use rows::{Edge, FamilyBundle, Node};
@@ -103,9 +104,9 @@ pub use scip::{
 };
 pub use scip_ensure::{
     default_cache_dir, detect, detect_picked, ensure_index, ensure_index_for_set,
-    ensure_index_picked, external_cache_dir, indexer_langs, pick_cache_dir, IndexerPick,
-    fresh_index_for_set, index_path, index_path_for_set, record_index_set, root_key, EnsureReport,
-    IndexBudget, IndexSet, Indexer, IndexerSkip, SkipReason, INDEXERS,
+    ensure_index_picked, external_cache_dir, fresh_index_for_set, index_path, index_path_for_set,
+    indexer_langs, pick_cache_dir, record_index_set, root_key, EnsureReport, IndexBudget, IndexSet,
+    Indexer, IndexerPick, IndexerSkip, SkipReason, INDEXERS,
 };
 pub use scip_rows::{flatten_scip_records, ScipRecords, SCIP_RECORD_KINDS};
 pub use scip_v5_rels::v5_rel_rows;

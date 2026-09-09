@@ -53,6 +53,38 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
+fn rust_reexport_fixture() -> PathBuf {
+    let root = scratch("rust-reexport-root");
+    for relative in [
+        "Cargo.toml",
+        "lib.rs",
+        "docs.rs",
+        "sample.rs",
+        "scip/mod.rs",
+        "scip/alpha.rs",
+        "scip/beta.rs",
+        "scip/gamma.rs",
+    ] {
+        let destination = root.join(relative);
+        std::fs::create_dir_all(destination.parent().expect("fixture parent"))
+            .expect("fixture directory");
+        std::fs::copy(PathBuf::from(RUST_ROOT).join(relative), destination)
+            .expect("copy Rust fixture");
+    }
+    std::fs::write(
+        root.join("scip/gamma.rs"),
+        b"//! Re-export discrimination fixture.\n\
+pub fn before_reexport() -> u32 { 0 }\n\
+pub use crate::scip::alpha::helper;\n\
+pub fn run() -> u32 {\n\
+    // A comment can say use without turning this executable reference into an import.\n\
+    helper()\n\
+}\n",
+    )
+    .expect("write re-export fixture");
+    root
+}
+
 fn raw(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_extract"))
         .args(args)
@@ -86,6 +118,31 @@ fn records<'a>(stream: &'a str, kind: &str) -> Vec<&'a str> {
         .lines()
         .filter(|line| line.starts_with(&tag))
         .collect()
+}
+
+fn without_index_evidence(stream: &str) -> String {
+    let mut normalized = stream
+        .lines()
+        .map(|line| match line.find(",\"index_mtime_unix_ms\":") {
+            Some(start) if line.starts_with("{\"record\":\"scip_index\",") => {
+                format!("{}}}", &line[..start])
+            }
+            _ => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    normalized.push('\n');
+    normalized
+}
+
+fn set_mtime_unix_ms(path: &std::path::Path, unix_ms: u64) {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("open timestamp fixture");
+    let modified = std::time::UNIX_EPOCH + std::time::Duration::from_millis(unix_ms);
+    file.set_times(std::fs::FileTimes::new().set_modified(modified))
+        .expect("set fixture mtime");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -197,13 +254,13 @@ fn only_real_scip_resolves_the_cross_file_call_the_heuristic_cannot() {
 #[test]
 fn the_discrimination_holds_through_rust_analyzer_too() {
     let cache = scratch("discriminating-rust");
+    let fixture = rust_reexport_fixture();
+    let alpha = fixture.join("scip/alpha.rs").to_string_lossy().to_string();
+    let beta = fixture.join("scip/beta.rs").to_string_lossy().to_string();
+    let gamma = fixture.join("scip/gamma.rs").to_string_lossy().to_string();
 
     let mut diet: Vec<&str> = vec!["--family", "diet_scip"];
-    let trio = [
-        "tests/fixtures/rust/scip/alpha.rs",
-        "tests/fixtures/rust/scip/beta.rs",
-        "tests/fixtures/rust/scip/gamma.rs",
-    ];
+    let trio = [alpha.as_str(), beta.as_str(), gamma.as_str()];
     diet.extend_from_slice(&trio);
     let heuristic = run(&diet);
     // gamma's `use crate::scip::alpha::helper;` now binds through the rust
@@ -225,11 +282,20 @@ fn the_discrimination_holds_through_rust_analyzer_too() {
         "nothing should still bind to beta's helper: {heuristic}"
     );
 
-    let real = scip_family(RUST_ROOT, &cache, &[]);
+    let fixture = fixture.to_string_lossy().to_string();
+    let real = scip_family(&fixture, &cache, &[]);
     assert!(
         real.lines().any(|line| line
             == r#"{"record":"scip_fn_edge","caller":"rust-analyzer cargo fixtures 0.0.0 scip/gamma/run().","callee":"rust-analyzer cargo fixtures 0.0.0 scip/alpha/helper()."}"#),
         "rust-analyzer must bind gamma's call to alpha: {real}"
+    );
+    assert!(
+        !real.lines().any(|line| {
+            line.starts_with(r#"{"record":"scip_fn_edge""#)
+                && line.contains("scip/gamma/before_reexport().")
+                && line.contains("scip/alpha/helper().")
+        }),
+        "the module-level re-export must not become a call from the preceding function: {real}"
     );
     assert!(
         !real.contains("scip/beta/helper()\",")
@@ -251,7 +317,8 @@ fn the_discrimination_holds_through_rust_analyzer_too() {
 #[test]
 fn the_scip_family_stream_is_the_v5_relation_vocabulary() {
     let cache = scratch("golden-scip");
-    assert_eq!(scip_family(SCIP_REL_ROOT, &cache, &[]), SCIP_REL_GOLDEN);
+    let stream = scip_family(SCIP_REL_ROOT, &cache, &[]);
+    assert_eq!(without_index_evidence(&stream), SCIP_REL_GOLDEN);
 }
 
 /// The whole `--family diet_scip` stream over four ts files, pinned. Every row
@@ -358,6 +425,242 @@ fn the_rust_plane_produces_the_relations_only_a_real_index_carries() {
 // ════════════════════════════════════════════════════════════════════════════
 // ENSURE-INDEX: REUSE, AND THE THREE NAMED SKIPS
 // ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+#[cfg(unix)]
+fn an_explicit_family_index_is_read_directly_without_spawning_an_indexer() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = scratch("explicit-index-root");
+    let index = root.join("supplied.scip");
+    std::fs::copy("tests/fixtures/scip_relationship/fixture.scip", &index)
+        .expect("copy supplied index");
+    std::fs::copy(
+        "tests/fixtures/scip_relationship/animal.ts",
+        root.join("animal.ts"),
+    )
+    .expect("copy indexed source");
+    std::fs::write(root.join("package.json"), b"{}\n").expect("typescript marker");
+
+    let environment_index = root.join("environment.scip");
+    std::fs::write(&environment_index, b"invalid environment index")
+        .expect("conflicting environment index");
+    let cache = root.join("cache");
+    std::fs::create_dir_all(&cache).expect("conflicting cache directory");
+    std::fs::write(cache.join("index.scip"), b"invalid cache index")
+        .expect("conflicting cache index");
+
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).expect("sentinel bin dir");
+    let sentinel = root.join("indexer-ran");
+    let indexer = bin.join("scip-typescript");
+    std::fs::write(
+        &indexer,
+        format!("#!/bin/sh\n: > '{}'\nexit 91\n", sentinel.display()),
+    )
+    .expect("sentinel indexer");
+    std::fs::set_permissions(&indexer, std::fs::Permissions::from_mode(0o755))
+        .expect("executable sentinel");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .env("PATH", &bin)
+        .env("SPREFA_SCIP_INDEX", &environment_index)
+        .args([
+            "--family",
+            "scip",
+            "--scip-index",
+            &index.to_string_lossy(),
+            "--scip-cache",
+            &cache.to_string_lossy(),
+            &root.to_string_lossy(),
+        ])
+        .output()
+        .expect("extract binary runs");
+    assert!(
+        output.status.success(),
+        "explicit index failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stream = String::from_utf8(output.stdout).expect("utf-8 facts");
+    assert!(stream.contains("\"record\":\"scip_relationship\""));
+    assert!(stream.contains("\"record\":\"scip_index\",\"reused\":true"));
+    assert!(
+        !sentinel.exists(),
+        "the explicit read must not spawn an indexer"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn missing_and_invalid_explicit_family_indexes_fail_without_rebuilding() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = scratch("bad-explicit-index-root");
+    std::fs::write(root.join("package.json"), b"{}\n").expect("typescript marker");
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).expect("sentinel bin dir");
+    let sentinel = root.join("indexer-ran");
+    let indexer = bin.join("scip-typescript");
+    std::fs::write(
+        &indexer,
+        format!("#!/bin/sh\n: > '{}'\nexit 91\n", sentinel.display()),
+    )
+    .expect("sentinel indexer");
+    std::fs::set_permissions(&indexer, std::fs::Permissions::from_mode(0o755))
+        .expect("executable sentinel");
+
+    let missing = root.join("missing.scip");
+    let missing_output = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .env("PATH", &bin)
+        .args([
+            "--family",
+            "scip",
+            "--scip-index",
+            &missing.to_string_lossy(),
+            &root.to_string_lossy(),
+        ])
+        .output()
+        .expect("missing-index command runs");
+    assert!(!missing_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_output.stderr).contains(&*missing.to_string_lossy()),
+        "the read error must name the explicit path"
+    );
+
+    let invalid = root.join("invalid.scip");
+    std::fs::write(&invalid, b"\x0a\x05x").expect("invalid index");
+    let invalid_output = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .env("PATH", &bin)
+        .args([
+            "--family",
+            "scip",
+            "--scip-index",
+            &invalid.to_string_lossy(),
+            &root.to_string_lossy(),
+        ])
+        .output()
+        .expect("invalid-index command runs");
+    assert!(!invalid_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&invalid_output.stderr).contains("protobuf decode"),
+        "invalid protobuf must be a decode error: {}",
+        String::from_utf8_lossy(&invalid_output.stderr)
+    );
+    assert!(!sentinel.exists(), "explicit failures must not rebuild");
+}
+
+#[test]
+fn explicit_index_requires_project_root_outside_the_scip_family() {
+    for args in [
+        vec![
+            "--scip-index",
+            "tests/fixtures/scip_relationship/fixture.scip",
+            TS_TRIO[0],
+        ],
+        vec![
+            "--family",
+            "diet_scip",
+            "--scip-index",
+            "tests/fixtures/scip_relationship/fixture.scip",
+            TS_TRIO[0],
+        ],
+    ] {
+        let output = raw(&args);
+        assert!(
+            !output.status.success(),
+            "{args:?} must reject the missing root"
+        );
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            message.contains("--scip-index") && message.contains("--project-root"),
+            "the error must name the requirement: {message}"
+        );
+    }
+}
+
+#[test]
+fn explicit_index_conflicts_with_indexer_selection_and_build() {
+    let root = scratch("explicit-index-conflicts");
+    let index = root.join("supplied.scip");
+    std::fs::copy("tests/fixtures/scip_relationship/fixture.scip", &index)
+        .expect("copy supplied index");
+    for conflicting in ["--indexer", "--scip-build"] {
+        let mut args = vec![
+            "--family",
+            "scip",
+            "--scip-index",
+            index.to_str().expect("utf-8 temp path"),
+        ];
+        if conflicting == "--indexer" {
+            args.extend([conflicting, "typescript"]);
+        } else {
+            args.push(conflicting);
+        }
+        args.push(root.to_str().expect("utf-8 temp root"));
+        let output = raw(&args);
+        assert!(!output.status.success(), "{conflicting} must conflict");
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            message.contains("--scip-index") && message.contains(conflicting),
+            "the conflict must name both flags: {message}"
+        );
+    }
+}
+
+#[test]
+fn scip_index_header_reports_stale_and_missing_source_evidence() {
+    const INDEX_MTIME_MS: u64 = 1_700_000_000_000;
+    let root = scratch("index-staleness");
+    let index = root.join("supplied.scip");
+    let source = root.join("animal.ts");
+    std::fs::copy("tests/fixtures/scip_relationship/fixture.scip", &index)
+        .expect("copy supplied index");
+    std::fs::copy("tests/fixtures/scip_relationship/animal.ts", &source)
+        .expect("copy indexed source");
+    set_mtime_unix_ms(&index, INDEX_MTIME_MS);
+
+    let args = [
+        "--family",
+        "scip",
+        "--scip-index",
+        index.to_str().expect("utf-8 temp path"),
+        root.to_str().expect("utf-8 temp root"),
+    ];
+    set_mtime_unix_ms(&source, INDEX_MTIME_MS - 5_000);
+    let no_newer = run(&args);
+    assert!(
+        no_newer.contains(&format!(
+            "\"index_mtime_unix_ms\":{INDEX_MTIME_MS},\"staleness\":\"no_newer_sources\""
+        )),
+        "all readable sources at older mtimes produce bounded evidence: {no_newer}"
+    );
+
+    set_mtime_unix_ms(&source, INDEX_MTIME_MS + 5_000);
+    let stale = run(&args);
+    assert!(
+        stale.contains(&format!(
+            "\"index_mtime_unix_ms\":{INDEX_MTIME_MS},\"staleness\":\"stale\""
+        )),
+        "a newer readable source is stale evidence: {stale}"
+    );
+    assert!(
+        stale.contains("\"record\":\"scip_relationship\""),
+        "stale explicit indexes are still used"
+    );
+
+    std::fs::remove_file(&source).expect("remove indexed source");
+    let uncertain = run(&args);
+    assert!(
+        uncertain.contains(&format!(
+            "\"index_mtime_unix_ms\":{INDEX_MTIME_MS},\"staleness\":\"uncertain\""
+        )),
+        "a missing indexed source is explicit uncertainty: {uncertain}"
+    );
+    assert!(
+        uncertain.contains("\"record\":\"scip_relationship\""),
+        "missing sources do not suppress explicit-index facts"
+    );
+}
 
 /// AN EXISTING INDEX WINS UNTOUCHED (v5's first move). The second run over the
 /// same cache reuses, and the assertion is not just the `reused` flag: the rows
@@ -607,6 +910,12 @@ fn the_binary_states_what_diet_means() {
     const HELP_SENTENCE: &str = "\"diet\" names the technique";
     let help = String::from_utf8_lossy(&raw(&["--help"]).stdout).to_string();
     assert!(help.contains(HELP_SENTENCE), "missing from --help: {help}");
+    assert!(help.contains("index_mtime_unix_ms"));
+    assert!(schema.contains("index_mtime_unix_ms"));
+    assert!(help.contains("milliseconds since the Unix epoch"));
+    assert!(help.contains("filesystem observations"));
+    assert!(schema.contains("milliseconds since Unix epoch"));
+    assert!(schema.contains("Mtime evidence is not proof"));
 
     // And the record vocabulary the scip family emits is documented, so a
     // consumer can decode the stream without reading this crate.

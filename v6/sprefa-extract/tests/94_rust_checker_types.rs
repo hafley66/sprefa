@@ -89,10 +89,12 @@ fn type_edges(facts: &[Value]) -> Vec<(String, String, String, String)> {
 fn the_syntax_leg_alone_binds_a_std_name_to_its_decoy() {
     let edges = type_edges(&run(false));
     assert!(
-        edges.iter().any(|(owner, file, name, origin)| owner == "Located"
-            && file == "decoys.rs"
-            && name == "PathBuf"
-            && origin == "corpus_unique"),
+        edges
+            .iter()
+            .any(|(owner, file, name, origin)| owner == "Located"
+                && file == "decoys.rs"
+                && name == "PathBuf"
+                && origin == "corpus_unique"),
         "the syntax leg binds the decoy PathBuf, got {edges:?}"
     );
 }
@@ -152,11 +154,9 @@ fn a_name_one_file_resolves_two_ways_still_binds_both_declarations() {
     let edges = type_edges(&run(true));
     for file in ["widget.rs", "decoys.rs"] {
         assert!(
-            edges
-                .iter()
-                .any(|(owner, target, name, _)| owner == "Mixed"
-                    && name == "Config"
-                    && target == file),
+            edges.iter().any(|(owner, target, name, _)| owner == "Mixed"
+                && name == "Config"
+                && target == file),
             "Mixed -> {file} Config binds, got {edges:?}"
         );
     }

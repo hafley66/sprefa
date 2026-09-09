@@ -216,13 +216,22 @@ fn dangling_id_is_named() {
 #[test]
 fn a_symbol_declares_the_denotes_subject() {
     let mut lines = fixture();
-    lines.push(r#"{"record":"fact","fact":90,"relation":"tsi.symbol","args":[{"id":300}]}"#.to_string());
-    lines.push(r#"{"record":"fact","fact":91,"relation":"tsi.denotes","args":[{"id":300},{"id":40}]}"#.to_string());
+    lines.push(
+        r#"{"record":"fact","fact":90,"relation":"tsi.symbol","args":[{"id":300}]}"#.to_string(),
+    );
+    lines.push(
+        r#"{"record":"fact","fact":91,"relation":"tsi.denotes","args":[{"id":300},{"id":40}]}"#
+            .to_string(),
+    );
     let run = ingest(&lines.join("\n"));
     assert!(run.ok, "stderr: {}", run.stderr);
-    let undeclared = fixture().into_iter().chain(std::iter::once(
-        r#"{"record":"fact","fact":91,"relation":"tsi.denotes","args":[{"id":301},{"id":40}]}"#.to_string(),
-    )).collect::<Vec<_>>();
+    let undeclared = fixture()
+        .into_iter()
+        .chain(std::iter::once(
+            r#"{"record":"fact","fact":91,"relation":"tsi.denotes","args":[{"id":301},{"id":40}]}"#
+                .to_string(),
+        ))
+        .collect::<Vec<_>>();
     let run = ingest(&undeclared.join("\n"));
     assert!(!run.ok, "an undeclared symbol id was accepted");
     assert!(run.stderr.contains("id 301"), "stderr: {}", run.stderr);
@@ -233,14 +242,21 @@ fn a_symbol_declares_the_denotes_subject() {
 #[test]
 fn a_value_declares_itself_and_feeds_value_argument() {
     let mut lines = fixture();
-    lines.push(r#"{"record":"fact","fact":93,"relation":"tsi.value","args":[{"id":320},{"id":40}]}"#.to_string());
-    lines.push(r#"{"record":"fact","fact":98,"relation":"tsi.type","args":[{"id":321}]}"#.to_string());
+    lines.push(
+        r#"{"record":"fact","fact":93,"relation":"tsi.value","args":[{"id":320},{"id":40}]}"#
+            .to_string(),
+    );
+    lines.push(
+        r#"{"record":"fact","fact":98,"relation":"tsi.type","args":[{"id":321}]}"#.to_string(),
+    );
     lines.push(r#"{"record":"fact","fact":94,"relation":"tsi.called","args":[{"id":321},{"id":40},{"id":322}]}"#.to_string());
     lines.push(r#"{"record":"fact","fact":95,"relation":"tsi.value_argument","args":[{"id":322},{"int":0},{"id":320}]}"#.to_string());
     let run = ingest(&lines.join("\n"));
     assert!(run.ok, "stderr: {}", run.stderr);
     let mut undeclared = fixture();
-    undeclared.push(r#"{"record":"fact","fact":98,"relation":"tsi.type","args":[{"id":321}]}"#.to_string());
+    undeclared.push(
+        r#"{"record":"fact","fact":98,"relation":"tsi.type","args":[{"id":321}]}"#.to_string(),
+    );
     undeclared.push(r#"{"record":"fact","fact":94,"relation":"tsi.called","args":[{"id":321},{"id":40},{"id":322}]}"#.to_string());
     undeclared.push(r#"{"record":"fact","fact":95,"relation":"tsi.value_argument","args":[{"id":322},{"int":0},{"id":330}]}"#.to_string());
     let run = ingest(&undeclared.join("\n"));
@@ -256,7 +272,10 @@ fn scip_bridge_does_not_declare_the_symbol() {
     lines.push(r#"{"record":"fact","fact":96,"relation":"tsi.scip_symbol","args":[{"id":340},{"text":"scip-typescript npm probe 1.0.0 src/`probe.ts`/User#"}]}"#.to_string());
     let run = ingest(&lines.join("\n"));
     assert!(!run.ok, "a bridge row declared a symbol");
-    lines.insert(2, r#"{"record":"fact","fact":97,"relation":"tsi.symbol","args":[{"id":340}]}"#.to_string());
+    lines.insert(
+        2,
+        r#"{"record":"fact","fact":97,"relation":"tsi.symbol","args":[{"id":340}]}"#.to_string(),
+    );
     let run = ingest(&lines.join("\n"));
     assert!(run.ok, "stderr: {}", run.stderr);
 }

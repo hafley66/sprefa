@@ -358,10 +358,12 @@ impl<'a> ReceiverWalk<'a> {
                     .cloned()
                     .and_then(|ty| self.resolve_self(&ty))
             }
-            syn::Expr::Call(_) | syn::Expr::MethodCall(_) | syn::Expr::Paren(_)
-            | syn::Expr::Reference(_) | syn::Expr::Try(_) | syn::Expr::Await(_) => {
-                self.init_type(Some(expr))
-            }
+            syn::Expr::Call(_)
+            | syn::Expr::MethodCall(_)
+            | syn::Expr::Paren(_)
+            | syn::Expr::Reference(_)
+            | syn::Expr::Try(_)
+            | syn::Expr::Await(_) => self.init_type(Some(expr)),
             _ => None,
         }
     }
@@ -507,9 +509,7 @@ fn tables(
                         if let Some(ty) = output_ty(&f.sig) {
                             let ty = if ty == "Self" { self_type.clone() } else { ty };
                             rets.entry(name.clone()).or_insert(ty.clone());
-                            assoc_rets
-                                .entry((self_type.clone(), name))
-                                .or_insert(ty);
+                            assoc_rets.entry((self_type.clone(), name)).or_insert(ty);
                         }
                     }
                 }

@@ -100,7 +100,10 @@ fn call_edges(rows: &[serde_json::Value]) -> Vec<(String, String, String)> {
 fn one_edge(edges: &[(String, String, String)], src: &str, dst: &str, file: &str) {
     let hit: Vec<_> = edges.iter().filter(|e| e.0 == src && e.1 == dst).collect();
     assert_eq!(hit.len(), 1, "one {src} -> {dst} edge: {hit:?}");
-    assert!(hit[0].2.ends_with(file), "{src} -> {dst} bound in {file}: {hit:?}");
+    assert!(
+        hit[0].2.ends_with(file),
+        "{src} -> {dst} bound in {file}: {hit:?}"
+    );
 }
 
 #[test]

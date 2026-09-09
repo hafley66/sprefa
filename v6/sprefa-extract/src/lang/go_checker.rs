@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use crate::shape::{FamilyTag, NodeRef};
 use crate::types::{
-    CallEdgeKind, CallF, ContentId, DefIndex, DefSite, ExtractOutput, ProjectEdge, ResolutionOrigin,
-    Span, TypeF,
+    CallEdgeKind, CallF, ContentId, DefIndex, DefSite, ExtractOutput, ProjectEdge,
+    ResolutionOrigin, Span, TypeF,
 };
 
 /// One resolved reference. Offsets are the UTF-8 byte offset `to_span` writes,
@@ -144,11 +144,13 @@ impl GoCheckerIndex {
             coverage: answers
                 .coverage
                 .into_iter()
-                .map(|(relation, complete, diagnostic)| crate::tsi::CoverageClaim {
-                    relation,
-                    complete,
-                    diagnostic,
-                })
+                .map(
+                    |(relation, complete, diagnostic)| crate::tsi::CoverageClaim {
+                        relation,
+                        complete,
+                        diagnostic,
+                    },
+                )
                 .collect(),
             ..GoCheckerIndex::default()
         };
@@ -352,10 +354,11 @@ pub fn apply_types(
         return;
     }
     edges.retain(|edge| {
-        match index
-            .def_names
-            .get(&(edge.dst_blob.clone(), edge.dst_span.start, edge.dst_span.end()))
-        {
+        match index.def_names.get(&(
+            edge.dst_blob.clone(),
+            edge.dst_span.start,
+            edge.dst_span.end(),
+        )) {
             Some(name) => !replaced.contains(name),
             None => true,
         }
@@ -527,14 +530,16 @@ enum WireLine {
 #[cfg(feature = "go-checker")]
 fn into_refs(rows: Vec<WireRow>) -> Vec<GoCheckerRef> {
     rows.into_iter()
-        .map(|(start, end, name, dst_path, dst_name, dst_offset)| GoCheckerRef {
-            start,
-            end,
-            name,
-            dst_path,
-            dst_name,
-            dst_offset,
-        })
+        .map(
+            |(start, end, name, dst_path, dst_name, dst_offset)| GoCheckerRef {
+                start,
+                end,
+                name,
+                dst_path,
+                dst_name,
+                dst_offset,
+            },
+        )
         .collect()
 }
 
@@ -568,10 +573,9 @@ fn staged_binary() -> Result<PathBuf, GoCheckerError> {
     use crate::scip_ensure::{run_capped, Capped};
 
     let stage = GoCheckerError::NoDriver;
-    let digest = ContentId::blake3(
-        format!("{DRIVER_MAIN}\u{0}{DRIVER_MOD}\u{0}{DRIVER_SUM}").as_bytes(),
-    )
-    .to_string();
+    let digest =
+        ContentId::blake3(format!("{DRIVER_MAIN}\u{0}{DRIVER_MOD}\u{0}{DRIVER_SUM}").as_bytes())
+            .to_string();
     let short: String = digest.chars().rev().take(16).collect();
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -611,12 +615,13 @@ pub fn answer(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.subsec_nanos())
         .unwrap_or_default();
-    let dir = std::env::temp_dir().join(format!("sprefa-go-checker-{}-{nanos}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("sprefa-go-checker-{}-{nanos}", std::process::id()));
     let stage = GoCheckerError::NoDriver;
     std::fs::create_dir_all(&dir).map_err(|err| stage(err.to_string()))?;
     let request = dir.join("request.json");
-    let body =
-        serde_json::to_vec(&DriverRequest { root, files, tsi }).map_err(|err| stage(err.to_string()))?;
+    let body = serde_json::to_vec(&DriverRequest { root, files, tsi })
+        .map_err(|err| stage(err.to_string()))?;
     std::fs::write(&request, body).map_err(|err| stage(err.to_string()))?;
 
     let (Some(binary), Some(request)) = (binary.to_str(), request.to_str()) else {

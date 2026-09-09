@@ -146,7 +146,10 @@ fn a_pair_result_binds_only_its_own_slot() {
         .into_iter()
         .find(|e| e.1 == "Ring")
         .expect("t, err := MightFail(); t.Ring() must resolve");
-    assert!(ring.2.ends_with("lib.go"), "Ring bound outside lib.go: {ring:?}");
+    assert!(
+        ring.2.ends_with("lib.go"),
+        "Ring bound outside lib.go: {ring:?}"
+    );
     // `err` holds error, which declares no corpus method: stays unresolved.
     let unresolved = unresolved_rows(&inferred_dir());
     assert!(
@@ -167,12 +170,18 @@ fn a_multi_assign_binds_by_result_index() {
         .into_iter()
         .find(|e| e.1 == "Ring")
         .expect("a.Ring() must resolve through slot 0");
-    assert!(ring.2.ends_with("lib.go"), "Ring bound outside lib.go: {ring:?}");
+    assert!(
+        ring.2.ends_with("lib.go"),
+        "Ring bound outside lib.go: {ring:?}"
+    );
     let bell = edges_of_caller(&edges, "fromMultiAssignIndex")
         .into_iter()
         .find(|e| e.1 == "Bell")
         .expect("b.Bell() must resolve through slot 1");
-    assert!(bell.2.ends_with("lib.go"), "Bell bound outside lib.go: {bell:?}");
+    assert!(
+        bell.2.ends_with("lib.go"),
+        "Bell bound outside lib.go: {bell:?}"
+    );
 }
 
 #[test]
@@ -184,7 +193,10 @@ fn a_chain_resolves_in_source_order_within_one_pass() {
         .into_iter()
         .find(|e| e.1 == "Ring")
         .expect("b.Ring() through the chained binding must resolve");
-    assert!(ring.2.ends_with("lib.go"), "Ring bound outside lib.go: {ring:?}");
+    assert!(
+        ring.2.ends_with("lib.go"),
+        "Ring bound outside lib.go: {ring:?}"
+    );
     assert_eq!(
         edges_of_caller(&edges, "chainResolvesInSourceOrder").len(),
         3,
@@ -196,7 +208,9 @@ fn a_chain_resolves_in_source_order_within_one_pass() {
 fn an_unbound_callee_keeps_the_site_inferred() {
     let edges = resolved_edges(&inferred_dir());
     assert!(
-        !edges.iter().any(|e| e.0 == "unboundCalleeStaysInferred" && e.1 == "Ring"),
+        !edges
+            .iter()
+            .any(|e| e.0 == "unboundCalleeStaysInferred" && e.1 == "Ring"),
         "x := undefinedCallee() binds nothing, so x.Ring() must not resolve: {edges:?}"
     );
     let unresolved = unresolved_rows(&inferred_dir());
@@ -212,7 +226,9 @@ fn an_unbound_callee_keeps_the_site_inferred() {
 fn an_interface_result_keeps_the_site_inferred() {
     let edges = resolved_edges(&inferred_dir());
     assert!(
-        !edges.iter().any(|e| e.0 == "interfaceResultStaysInferred" && e.1 == "Error"),
+        !edges
+            .iter()
+            .any(|e| e.0 == "interfaceResultStaysInferred" && e.1 == "Error"),
         "e := NewErr() binds error, which has no corpus decl: {edges:?}"
     );
     let unresolved = unresolved_rows(&inferred_dir());
@@ -230,7 +246,11 @@ fn an_interface_result_keeps_the_site_inferred() {
 /// work is linear in files, never per site x corpus.
 fn generated_callers(dir: &std::path::Path, n: usize) -> Vec<String> {
     std::fs::create_dir_all(dir).unwrap();
-    std::fs::write(dir.join("go.mod"), "module example.com/inferscale\n\ngo 1.22\n").unwrap();
+    std::fs::write(
+        dir.join("go.mod"),
+        "module example.com/inferscale\n\ngo 1.22\n",
+    )
+    .unwrap();
     std::fs::write(
         dir.join("lib.go"),
         "package inferscale\n\ntype Thing struct{}\n\nfunc (t *Thing) Ring() string { return \"r\" }\n\nfunc NewThing() *Thing { return &Thing{} }\n",

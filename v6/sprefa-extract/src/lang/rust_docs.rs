@@ -135,4 +135,3 @@ fn doc_sections(text: &str, strings: &mut Strings) -> Vec<DocTag> {
         })
         .collect()
 }
-

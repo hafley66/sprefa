@@ -23,12 +23,7 @@ pub trait SemanticRows {
 /// Append one run's rows to a stream that already numbered its own. Ordinals
 /// continue the stream's, so a witness names exactly one fact. `ids` is the
 /// first id free in the stream; the returned one is free after these rows.
-pub fn emit_semantic(
-    run: u32,
-    rows: &dyn SemanticRows,
-    ids: u32,
-    out: &mut Vec<FlatFact>,
-) -> u32 {
+pub fn emit_semantic(run: u32, rows: &dyn SemanticRows, ids: u32, out: &mut Vec<FlatFact>) -> u32 {
     let span = crate::trace::phase_span("-", crate::trace::Phase::TsiSemantic);
     let _entered = span.enter();
     crate::trace::record_phase(

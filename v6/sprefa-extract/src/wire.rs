@@ -572,11 +572,21 @@ pub fn flatten_flow(edges: &[FlowEdge]) -> Vec<FlatFact> {
 /// with no trailing newline still counts its last partial line, and an empty
 /// file has zero lines.
 pub fn file_fact(path: &str, content: &[u8]) -> FlatFact {
+    let content_id = content_id_of(content);
+    file_fact_with_content_id(path, content, &content_id)
+}
+
+/// The `file_fact` construction for a caller that already hashed `content`.
+pub(crate) fn file_fact_with_content_id(
+    path: &str,
+    content: &[u8],
+    content_id: &crate::shape::ContentId,
+) -> FlatFact {
     let newlines = content.iter().filter(|byte| **byte == b'\n').count();
     let unterminated = !content.is_empty() && !content.ends_with(b"\n");
     FlatFact::FileRow {
         path: path.to_string(),
-        digest: content_id_of(content).to_string(),
+        digest: content_id.to_string(),
         bytes: content.len() as u32,
         lines: (newlines + usize::from(unterminated)) as u32,
     }
