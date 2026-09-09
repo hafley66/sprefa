@@ -3130,6 +3130,7 @@ dependencies = [
  "serde_yaml",
  "soopy",
  "syn 2.0.119",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
  "tree-sitter",

@@ -1,0 +1,92 @@
+# Extract TypeSpec and SQLite output
+
+```sh
+just gen
+just gen-check
+cargo run --manifest-path v6/sprefa-extract/Cargo.toml --features cli --bin extract -- \
+  --sqlite facts.db v6/sprefa-extract/src/wire.rs
+sqlite3 facts.db '.tables'
+sqlite3 facts.db '.schema'
+sqlite3 -header -column facts.db 'SELECT _input_path, family, kind, name FROM node LIMIT 20;'
+```
+
+`--sqlite PATH` requires a new database path. It also works with existing
+`fast`, `slow`, `--resolve`, `--scip-facts`, dependency, pattern, and ingest
+modes. Syntax/semantic computation and existing JSONL contracts are unchanged.
+Plain per-file SQLite output accepts multiple explicit source file paths.
+
+## Authored contracts, in reading order
+
+- `0_spans.tsp`: existing extract `Span { start, len }` and
+  `SpanOut { start, end }`, both using unsigned 32-bit byte coordinates.
+- `0_wire_types.tsp`: family, mode, coverage and method enums; the TSI argument
+  union, including its fixed `[digest, start, end]` tuple.
+- `1_facts.tsp`: every `FlatFact` variant and the separate pattern capture
+  record, plus the export-coordinate fields shared by their tables.
+- `1_sql_trial.tsp`: retained span fixtures for the original generator trial.
+- `1a_fact_emit.mjs`: nested-field lowering into the existing binding-core
+  SQL emitter and emit-helper Rust target.
+- `2_gen.mjs`: generation entrypoint. `2_gen.test.mjs` checks generated files,
+  span parity, SQLite execution and generated Rust compilation.
+
+## Generated artifacts
+
+`generated/4_facts.sql` defines the fact tables. `5_facts.json` describes their
+typed columns and original wire paths. The native CLI includes both at build
+time. `6_facts.rs` provides generated storage-row structs for Rust consumers.
+The original span artifacts and fixtures remain available alongside them.
+
+TypeSpec owns the SQL storage declarations. Existing extractor domain structs,
+methods and serializers remain in place. The Rust SQLite integration tests
+check every FlatFact variant and field against the generated catalog, deserialize
+a specimen of every fact table through the existing Rust wire types, and compare
+real extracted values to SQL columns. A new unknown record/field is an export
+error; no runtime schema guessing or silent dropping occurs.
+
+## Storage rules
+
+- Tables use the existing `record` names: `node`, `edge`, `resolved_edge`,
+  `scip_occurrence`, etc. Family and kind remain ordinary columns.
+- Structured spans stay named models in TypeSpec. SQL expands their fields
+  with `__`: `span__start`, `span__end`, `owner__start`, `from__start`, etc.
+  This preserves the separate existing `sig.owner_start` wire field too.
+- `_row` is the export-wide emission ordinal. Duplicate facts are retained.
+  It is an export coordinate, not a graph node ID.
+- `_input_path` and `_content_id` qualify per-file rows. The latter comes from
+  extract's existing content hashing. These columns do not redefine soopy
+  repository, revision, worktree or source identities. They are NULL for
+  whole-project/foreign streams, whose existing payload paths/digests remain.
+- Per-file exports include a `file` row from the same input bytes. Witness
+  counters remain scoped to their original run/file; `_row` is independent.
+- Nullable or omitted fields become SQL NULL. JSON arrays and the `data_doc`
+  payload become JSON TEXT. A JSON `null` payload is stored as the text `null`.
+  Typed arrays and TSI argument variants are checked against TypeSpec metadata.
+- SQLite INTEGER is signed. `uint64` columns have BLOB affinity to avoid
+  SQLite's automatic lossy REAL conversion: values through i64::MAX are
+  INTEGER, larger values are exact decimal TEXT. Generated Rust uses u64.
+- The CLI validates scalar types and ranges before inserting. Direct SQL
+  writers must enforce those contracts themselves; DDL does not add CHECKs
+  for unsigned ranges or span ordering.
+
+All writes occur in one transaction in a private temporary database beside the
+requested destination. Success commits, closes and synchronizes it, then
+publishes without replacing an existing file. Errors drop the staging file.
+An existing destination, including a symlink or a concurrent creator, is refused.
+There is no implicit overwrite, append, update, migration, watcher or IVM install.
+The other session's SQLite IVM plugin remains independent of this exporter.
+
+## Toolchain
+
+Uses Node 22.18+ (native TypeScript stripping), TypeSpec **1.10.0**, and the
+already-built `hafley-tsp/packages/binding-core` SQL emitter. Rust generation
+reuses `hafley-tsp/packages/emit-helper`. The CLI reuses its existing rusqlite
+dependency and adds a direct dependency on its already-locked tempfile version
+for atomic no-clobber publication. No ORM is involved.
+
+The driver resolves `hafley-tsp` beside the original checkout, including from
+linked worktrees. `HAFLEY_TSP_ROOT` overrides that location. The sibling
+toolchain remains read-only. No package installation is performed.
+
+Direct imports bypass binding-core's automatic `$onValidate` writer. Compiler
+diagnostics abort before artifact publication. `just gen` writes only
+`schema/generated/`; tests use temporary databases and Cargo build directories.

@@ -1,0 +1,6073 @@
+[
+  {
+    "record": "protocol",
+    "table": "protocol",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "protocol"
+      },
+      {
+        "name": "version",
+        "path": [
+          "version"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "run",
+    "table": "run",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "run"
+      },
+      {
+        "name": "run",
+        "path": [
+          "run"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "mode",
+        "path": [
+          "mode"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "syntax",
+          "semantic"
+        ]
+      },
+      {
+        "name": "tool",
+        "path": [
+          "tool"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "version",
+        "path": [
+          "version"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "scope",
+        "path": [
+          "scope"
+        ],
+        "kind": "json",
+        "optional": false,
+        "nullable": false,
+        "json_type": {
+          "kind": "array",
+          "items": [
+            {
+              "kind": "string"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "record": "fact",
+    "table": "fact",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "fact"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "relation",
+        "path": [
+          "relation"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "args",
+        "path": [
+          "args"
+        ],
+        "kind": "json",
+        "optional": false,
+        "nullable": false,
+        "json_type": {
+          "kind": "array",
+          "items": [
+            {
+              "kind": "union",
+              "items": [
+                {
+                  "kind": "object",
+                  "properties": [
+                    {
+                      "name": "id",
+                      "type": {
+                        "kind": "uint32"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "object",
+                  "properties": [
+                    {
+                      "name": "span",
+                      "type": {
+                        "kind": "tuple",
+                        "items": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "uint32"
+                          },
+                          {
+                            "kind": "uint32"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "object",
+                  "properties": [
+                    {
+                      "name": "text",
+                      "type": {
+                        "kind": "string"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "object",
+                  "properties": [
+                    {
+                      "name": "int",
+                      "type": {
+                        "kind": "int64"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "object",
+                  "properties": [
+                    {
+                      "name": "atom",
+                      "type": {
+                        "kind": "string"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "record": "witness",
+    "table": "witness",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "witness"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "run",
+        "path": [
+          "run"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "method",
+        "path": [
+          "method"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "same_file",
+          "corpus_unique",
+          "module_plane",
+          "checker",
+          "alias_chain",
+          "param",
+          "receiver",
+          "self_type",
+          "iface_impl",
+          "decorator",
+          "subscript",
+          "return_call",
+          "scip",
+          "unresolved",
+          "parse",
+          "checker_walk",
+          "foreign"
+        ]
+      }
+    ]
+  },
+  {
+    "record": "coverage",
+    "table": "coverage",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "coverage"
+      },
+      {
+        "name": "run",
+        "path": [
+          "run"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "relation",
+        "path": [
+          "relation"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "coverage",
+        "path": [
+          "coverage"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "partial",
+          "complete"
+        ]
+      }
+    ]
+  },
+  {
+    "record": "diagnostic",
+    "table": "diagnostic",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "diagnostic"
+      },
+      {
+        "name": "run",
+        "path": [
+          "run"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "relation",
+        "path": [
+          "relation"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "detail",
+        "path": [
+          "detail"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "node",
+    "table": "node",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "node"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "path": [
+          "name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      }
+    ]
+  },
+  {
+    "record": "edge",
+    "table": "edge",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "edge"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "from__start",
+        "path": [
+          "from",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "from__end",
+        "path": [
+          "from",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "from_kind",
+        "path": [
+          "from_kind"
+        ],
+        "kind": "string",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "to__start",
+        "path": [
+          "to",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "to__end",
+        "path": [
+          "to",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "to_kind",
+        "path": [
+          "to_kind"
+        ],
+        "kind": "string",
+        "optional": true,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "param",
+    "table": "param",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "param"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "pos",
+        "path": [
+          "pos"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "arg",
+    "table": "arg",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "arg"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "call__start",
+        "path": [
+          "call",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "call__end",
+        "path": [
+          "call",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "pos",
+        "path": [
+          "pos"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "arg__start",
+        "path": [
+          "arg",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "arg__end",
+        "path": [
+          "arg",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "df_field",
+    "table": "df_field",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "df_field"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "owner__start",
+        "path": [
+          "owner",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner__end",
+        "path": [
+          "owner",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "path": [
+          "name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "value__start",
+        "path": [
+          "value",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "value__end",
+        "path": [
+          "value",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "df_lit",
+    "table": "df_lit",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "df_lit"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "node__start",
+        "path": [
+          "node",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "node__end",
+        "path": [
+          "node",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "df_loop",
+    "table": "df_loop",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "df_loop"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "var",
+        "path": [
+          "var"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "collection",
+        "path": [
+          "collection"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      }
+    ]
+  },
+  {
+    "record": "df_nest",
+    "table": "df_nest",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "df_nest"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "call__start",
+        "path": [
+          "call",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "call__end",
+        "path": [
+          "call",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "loop__start",
+        "path": [
+          "loop",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "loop__end",
+        "path": [
+          "loop",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "depth",
+        "path": [
+          "depth"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "collection",
+        "path": [
+          "collection"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      }
+    ]
+  },
+  {
+    "record": "df_allocates",
+    "table": "df_allocates",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "df_allocates"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "owner__start",
+        "path": [
+          "owner",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner__end",
+        "path": [
+          "owner",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "sig",
+    "table": "sig",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "sig"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "owner__start",
+        "path": [
+          "owner",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner__end",
+        "path": [
+          "owner",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner_start",
+        "path": [
+          "owner_start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner_end",
+        "path": [
+          "owner_end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "slot",
+        "path": [
+          "slot"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "pos",
+        "path": [
+          "pos"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "ty",
+        "path": [
+          "ty"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "site",
+    "table": "site",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "site"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "callee",
+        "path": [
+          "callee"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "callee_path",
+        "path": [
+          "callee_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      }
+    ]
+  },
+  {
+    "record": "const",
+    "table": "const",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "const"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "owner__start",
+        "path": [
+          "owner",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner__end",
+        "path": [
+          "owner",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "field",
+        "path": [
+          "field"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "doc",
+    "table": "doc",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "doc"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "owner__start",
+        "path": [
+          "owner",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner__end",
+        "path": [
+          "owner",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "parent",
+        "path": [
+          "parent"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "doc_tag",
+    "table": "doc_tag",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "doc_tag"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "owner__start",
+        "path": [
+          "owner",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner__end",
+        "path": [
+          "owner",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "tag",
+        "path": [
+          "tag"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "arg",
+        "path": [
+          "arg"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "doc_node",
+    "table": "doc_node",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "doc_node"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "path": [
+          "name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "parent",
+        "path": [
+          "parent"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "target",
+        "path": [
+          "target"
+        ],
+        "kind": "string",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "title",
+        "path": [
+          "title"
+        ],
+        "kind": "string",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "body__start",
+        "path": [
+          "body",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "body__end",
+        "path": [
+          "body",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "data_doc",
+    "table": "data_doc",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "data_doc"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "ordinal",
+        "path": [
+          "ordinal"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "format",
+        "path": [
+          "format"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "doc",
+        "path": [
+          "doc"
+        ],
+        "kind": "json",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "data_value",
+    "table": "data_value",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "data_value"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "ordinal",
+        "path": [
+          "ordinal"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "path",
+        "path": [
+          "path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "specifier",
+    "table": "specifier",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "specifier"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "path": [
+          "name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "module",
+        "path": [
+          "module"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "imported",
+        "path": [
+          "imported"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      }
+    ]
+  },
+  {
+    "record": "method_owner",
+    "table": "method_owner",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "method_owner"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "owner__start",
+        "path": [
+          "owner",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner__end",
+        "path": [
+          "owner",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "self_type",
+        "path": [
+          "self_type"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "trait",
+        "path": [
+          "trait"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      }
+    ]
+  },
+  {
+    "record": "cfg_scope",
+    "table": "cfg_scope",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "cfg_scope"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "cfg",
+        "path": [
+          "cfg"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "test_only_call",
+    "table": "test_only_call",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "test_only_call"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "callee",
+        "path": [
+          "callee"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "cfg",
+        "path": [
+          "cfg"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "macro_site",
+    "table": "macro_site",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "macro_site"
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "macro_name",
+        "path": [
+          "macro_name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "source",
+        "path": [
+          "source"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "reference",
+    "table": "reference",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "reference"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "functor",
+        "path": [
+          "functor"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "position",
+        "path": [
+          "position"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "unresolved",
+    "table": "unresolved",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "unresolved"
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "path",
+        "path": [
+          "path"
+        ],
+        "kind": "string",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "span__start",
+        "path": [
+          "span",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "span__end",
+        "path": [
+          "span",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "reason",
+        "path": [
+          "reason"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "detail",
+        "path": [
+          "detail"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "projectedge",
+    "table": "projectedge",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "projectedge"
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "from__start",
+        "path": [
+          "from",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "from__end",
+        "path": [
+          "from",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "to_blob",
+        "path": [
+          "to_blob"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "to__start",
+        "path": [
+          "to",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "to__end",
+        "path": [
+          "to",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "flow_edge",
+    "table": "flow_edge",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "flow_edge"
+      },
+      {
+        "name": "family",
+        "path": [
+          "family"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "values": [
+          "df",
+          "flow",
+          "call",
+          "type",
+          "module",
+          "cst",
+          "cfg",
+          "data"
+        ]
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "from_blob",
+        "path": [
+          "from_blob"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "from__start",
+        "path": [
+          "from",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "from__end",
+        "path": [
+          "from",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "to_blob",
+        "path": [
+          "to_blob"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "to__start",
+        "path": [
+          "to",
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "to__end",
+        "path": [
+          "to",
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "resolved_edge",
+    "table": "resolved_edge",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "resolved_edge"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "caller_path",
+        "path": [
+          "caller_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "caller_name",
+        "path": [
+          "caller_name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "callee_path",
+        "path": [
+          "callee_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "callee_name",
+        "path": [
+          "callee_name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "caller_site_start",
+        "path": [
+          "caller_site_start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "caller_site_end",
+        "path": [
+          "caller_site_end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "resolution_origin",
+        "path": [
+          "resolution_origin"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "resolved_type_edge",
+    "table": "resolved_type_edge",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "resolved_type_edge"
+      },
+      {
+        "name": "fact",
+        "path": [
+          "fact"
+        ],
+        "kind": "uint32",
+        "optional": true,
+        "nullable": false
+      },
+      {
+        "name": "owner_path",
+        "path": [
+          "owner_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner_name",
+        "path": [
+          "owner_name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "owner_start",
+        "path": [
+          "owner_start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "owner_end",
+        "path": [
+          "owner_end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "target_path",
+        "path": [
+          "target_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "target_name",
+        "path": [
+          "target_name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "resolution_origin",
+        "path": [
+          "resolution_origin"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "resolved_import",
+    "table": "resolved_import",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "resolved_import"
+      },
+      {
+        "name": "src_path",
+        "path": [
+          "src_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "path": [
+          "name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "local",
+        "path": [
+          "local"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "target_path",
+        "path": [
+          "target_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "target_name",
+        "path": [
+          "target_name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "hops",
+        "path": [
+          "hops"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "file_edge",
+    "table": "file_edge",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "file_edge"
+      },
+      {
+        "name": "src_path",
+        "path": [
+          "src_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "dst_path",
+        "path": [
+          "dst_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "symbols",
+        "path": [
+          "symbols"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "file_unresolved",
+    "table": "file_unresolved",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "file_unresolved"
+      },
+      {
+        "name": "src_path",
+        "path": [
+          "src_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "module",
+        "path": [
+          "module"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "reason",
+        "path": [
+          "reason"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "package_edge",
+    "table": "package_edge",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "package_edge"
+      },
+      {
+        "name": "src_manifest",
+        "path": [
+          "src_manifest"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "dst_manifest",
+        "path": [
+          "dst_manifest"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "file",
+    "table": "file",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "file"
+      },
+      {
+        "name": "path",
+        "path": [
+          "path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "digest",
+        "path": [
+          "digest"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "bytes",
+        "path": [
+          "bytes"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "lines",
+        "path": [
+          "lines"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "size_skip",
+    "table": "size_skip",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "size_skip"
+      },
+      {
+        "name": "path",
+        "path": [
+          "path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "bytes",
+        "path": [
+          "bytes"
+        ],
+        "kind": "uint64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "limit",
+        "path": [
+          "limit"
+        ],
+        "kind": "uint64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "reason",
+        "path": [
+          "reason"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "capture",
+    "table": "capture",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "capture"
+      },
+      {
+        "name": "query",
+        "path": [
+          "query"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "capture",
+        "path": [
+          "capture"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "start",
+        "path": [
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "end",
+        "path": [
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "match_start",
+        "path": [
+          "match_start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "match_end",
+        "path": [
+          "match_end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_def",
+    "table": "scip_def",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_def"
+      },
+      {
+        "name": "symbol",
+        "path": [
+          "symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "file",
+        "path": [
+          "file"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "repo",
+        "path": [
+          "repo"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_name",
+    "table": "scip_name",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_name"
+      },
+      {
+        "name": "symbol",
+        "path": [
+          "symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "path": [
+          "name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_ref",
+    "table": "scip_ref",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_ref"
+      },
+      {
+        "name": "file",
+        "path": [
+          "file"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "symbol",
+        "path": [
+          "symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "def_file",
+        "path": [
+          "def_file"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "repo",
+        "path": [
+          "repo"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_edge",
+    "table": "scip_edge",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_edge"
+      },
+      {
+        "name": "src",
+        "path": [
+          "src"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "dst",
+        "path": [
+          "dst"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "repo",
+        "path": [
+          "repo"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_fn_edge",
+    "table": "scip_fn_edge",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_fn_edge"
+      },
+      {
+        "name": "caller",
+        "path": [
+          "caller"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "callee",
+        "path": [
+          "callee"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_callee_type",
+    "table": "scip_callee_type",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_callee_type"
+      },
+      {
+        "name": "sym",
+        "path": [
+          "sym"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "type",
+        "path": [
+          "type"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_local",
+    "table": "scip_local",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_local"
+      },
+      {
+        "name": "fn",
+        "path": [
+          "fn"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "path": [
+          "name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_impl",
+    "table": "scip_impl",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_impl"
+      },
+      {
+        "name": "impl",
+        "path": [
+          "impl"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "iface",
+        "path": [
+          "iface"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_index",
+    "table": "scip_index",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_index"
+      },
+      {
+        "name": "reused",
+        "path": [
+          "reused"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "tool_name",
+        "path": [
+          "tool_name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "tool_version",
+        "path": [
+          "tool_version"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "documents",
+        "path": [
+          "documents"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "index_mtime_unix_ms",
+        "path": [
+          "index_mtime_unix_ms"
+        ],
+        "kind": "uint64",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "staleness",
+        "path": [
+          "staleness"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_skip",
+    "table": "scip_skip",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_skip"
+      },
+      {
+        "name": "lang",
+        "path": [
+          "lang"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "bin",
+        "path": [
+          "bin"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "reason",
+        "path": [
+          "reason"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "detail",
+        "path": [
+          "detail"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_occurrence",
+    "table": "scip_occurrence",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_occurrence"
+      },
+      {
+        "name": "path",
+        "path": [
+          "path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "symbol",
+        "path": [
+          "symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "start",
+        "path": [
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "end",
+        "path": [
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "roles",
+        "path": [
+          "roles"
+        ],
+        "kind": "int32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "definition",
+        "path": [
+          "definition"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "import",
+        "path": [
+          "import"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "write_access",
+        "path": [
+          "write_access"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "read_access",
+        "path": [
+          "read_access"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "generated",
+        "path": [
+          "generated"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "test",
+        "path": [
+          "test"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "forward_definition",
+        "path": [
+          "forward_definition"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "syntax_kind",
+        "path": [
+          "syntax_kind"
+        ],
+        "kind": "int32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "enclosing_start",
+        "path": [
+          "enclosing_start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "enclosing_end",
+        "path": [
+          "enclosing_end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": true,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_occurrence_doc",
+    "table": "scip_occurrence_doc",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_occurrence_doc"
+      },
+      {
+        "name": "path",
+        "path": [
+          "path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "start",
+        "path": [
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "end",
+        "path": [
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "pos",
+        "path": [
+          "pos"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_diagnostic",
+    "table": "scip_diagnostic",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_diagnostic"
+      },
+      {
+        "name": "path",
+        "path": [
+          "path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "start",
+        "path": [
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "end",
+        "path": [
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "severity",
+        "path": [
+          "severity"
+        ],
+        "kind": "int32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "code",
+        "path": [
+          "code"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "message",
+        "path": [
+          "message"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "source",
+        "path": [
+          "source"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "tags",
+        "path": [
+          "tags"
+        ],
+        "kind": "json",
+        "optional": false,
+        "nullable": false,
+        "json_type": {
+          "kind": "array",
+          "items": [
+            {
+              "kind": "int32"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "record": "scip_symbol",
+    "table": "scip_symbol",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_symbol"
+      },
+      {
+        "name": "path",
+        "path": [
+          "path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "symbol",
+        "path": [
+          "symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "display_name",
+        "path": [
+          "display_name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "kind",
+        "path": [
+          "kind"
+        ],
+        "kind": "int32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "enclosing_symbol",
+        "path": [
+          "enclosing_symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_documentation",
+    "table": "scip_documentation",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_documentation"
+      },
+      {
+        "name": "symbol",
+        "path": [
+          "symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "pos",
+        "path": [
+          "pos"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_signature",
+    "table": "scip_signature",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_signature"
+      },
+      {
+        "name": "symbol",
+        "path": [
+          "symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "language",
+        "path": [
+          "language"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_signature_occurrence",
+    "table": "scip_signature_occurrence",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_signature_occurrence"
+      },
+      {
+        "name": "symbol",
+        "path": [
+          "symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "ref_symbol",
+        "path": [
+          "ref_symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "start",
+        "path": [
+          "start"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "end",
+        "path": [
+          "end"
+        ],
+        "kind": "uint32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "roles",
+        "path": [
+          "roles"
+        ],
+        "kind": "int32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_metadata",
+    "table": "scip_metadata",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_metadata"
+      },
+      {
+        "name": "version",
+        "path": [
+          "version"
+        ],
+        "kind": "int32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "tool_name",
+        "path": [
+          "tool_name"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "tool_version",
+        "path": [
+          "tool_version"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "tool_arguments",
+        "path": [
+          "tool_arguments"
+        ],
+        "kind": "json",
+        "optional": false,
+        "nullable": false,
+        "json_type": {
+          "kind": "array",
+          "items": [
+            {
+              "kind": "string"
+            }
+          ]
+        }
+      },
+      {
+        "name": "project_root",
+        "path": [
+          "project_root"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "text_document_encoding",
+        "path": [
+          "text_document_encoding"
+        ],
+        "kind": "int32",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  },
+  {
+    "record": "scip_document",
+    "table": "scip_document",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_document"
+      },
+      {
+        "name": "path",
+        "path": [
+          "path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "language",
+        "path": [
+          "language"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "position_encoding",
+        "path": [
+          "position_encoding"
+        ],
+        "kind": "int32",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "text",
+        "path": [
+          "text"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      }
+    ]
+  },
+  {
+    "record": "scip_relationship",
+    "table": "scip_relationship",
+    "columns": [
+      {
+        "name": "_row",
+        "path": [
+          "_row"
+        ],
+        "kind": "int64",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "_input_path",
+        "path": [
+          "_input_path"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "_content_id",
+        "path": [
+          "_content_id"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": true
+      },
+      {
+        "name": "record",
+        "path": [
+          "record"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false,
+        "literal": "scip_relationship"
+      },
+      {
+        "name": "symbol",
+        "path": [
+          "symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "related_symbol",
+        "path": [
+          "related_symbol"
+        ],
+        "kind": "string",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "is_reference",
+        "path": [
+          "is_reference"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "is_implementation",
+        "path": [
+          "is_implementation"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "is_type_definition",
+        "path": [
+          "is_type_definition"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      },
+      {
+        "name": "is_definition",
+        "path": [
+          "is_definition"
+        ],
+        "kind": "boolean",
+        "optional": false,
+        "nullable": false
+      }
+    ]
+  }
+]

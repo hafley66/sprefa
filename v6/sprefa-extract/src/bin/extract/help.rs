@@ -23,9 +23,8 @@ pub const AFTER_HELP: &str = concat!(
 /// Self-describing enough that `extract --help` + `extract --schema` are a
 /// complete contract for a fresh caller (human or AI). No outside docs needed.
 pub const LONG_ABOUT: &str = "\
-Read source files and print facts about the code as JSONL (one JSON object per
-line) on stdout. No daemon, no database, no network: point it at files, get
-facts, pipe them anywhere.
+Read source files and emit facts about the code. JSONL goes to stdout;
+--sqlite PATH writes a new SQLite database with TypeSpec-generated tables.
 
 QUICK START
   extract src/app.ts                       every fact kind for one file
@@ -34,6 +33,22 @@ QUICK START
   extract --family scip .                  whole-project facts from the real
                                            compiler index (exact, slower)
   extract --schema                         every record shape this can emit
+  extract --sqlite facts.db a.ts b.ts      write per-file facts to SQLite
+  extract fast --sqlite fast.db a.ts b.ts  syntax-resolved facts to SQLite
+  extract slow --sqlite slow.db .         compiler-derived facts to SQLite
+
+SQLITE OUTPUT
+  --sqlite requires an explicit new database path. Existing files are refused.
+  Extraction writes a private staging database; success publishes it and prints
+  sqlite3 commands for listing tables, reading the schema, and querying rows.
+  No SQLite CLI or IVM extension is needed to write the database.
+  Each record kind has its own table. Nested spans become span__start/span__end
+  (and from__start/to__start for edges). _row preserves emission order and
+  duplicates; _input_path/_content_id qualify per-file rows using the same
+  bytes extraction read. Per-file exports also include the file metadata row.
+  Project-mode records retain their existing path/digest fields. JSON payloads
+  and arrays occupy JSON TEXT columns; SQL NULL represents absent/null fields.
+  This is a new-file export. It does not merge, refresh, watch, or install IVM.
 
 WHAT --family MEANS
   One flag, two jobs; the second grew out of the first.

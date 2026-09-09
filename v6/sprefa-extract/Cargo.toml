@@ -185,6 +185,9 @@ prost = "0.13"
 # a cycle; sprefa-store's sea-orm/sqlx reader - async, banned above the SqlRunner
 # seam. `trace` is what the once-per-run statement count is measured on.
 rusqlite = { version = "0.40", features = ["bundled", "trace"] }
+# Atomic, no-clobber publication of a CLI SQLite export. Reuses the tempfile
+# version already in this lock through rust-analyzer; no custom temp-file protocol.
+tempfile = { version = "3", optional = true }
 # rayon drives the per-file extraction pool. A dedicated pool (never the global
 # one) so nothing else in the process inherits the cap.
 rayon = "1"
@@ -215,7 +218,7 @@ features = ["env-filter", "json"]
 optional = true
 
 [features]
-cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe", "dep:libc", "mimalloc"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe", "dep:libc", "dep:tempfile", "mimalloc"]
 # Optional global allocator; measured in plans/extract-bench-2026-08-29/SPEED.REPORT.md.
 mimalloc = ["dep:mimalloc"]
 # The rust checker tier, `--features cli,rust-checker`. Off by default and out
