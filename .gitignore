@@ -113,3 +113,7 @@ node_modules
 .issuectl/write.lock
 !.cargo/config.toml
 *.qlf
+
+# boop-start recreates these two; v6/*/Cargo.toml path deps resolve through them.
+/hafley-rs
+/sprefa-v6

@@ -192,6 +192,17 @@ boop-start:
     #!/usr/bin/env bash
     set -euo pipefail
     started=$SECONDS
+    # v6/*/Cargo.toml reach two sibling repos by relative path. A lane worktree
+    # sits at .boop-worktrees/<kind>/<lane>, so a path counted from outside this
+    # repo lands somewhere different per lane and per category dir. The deps
+    # count from this repo root instead, and the two links are recreated in
+    # whatever tree the recipe runs in. Both are gitignored.
+    root=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
+    siblings=$(dirname "$root")
+    for repo in hafley-rs sprefa-v6; do
+      ln -sfn "$siblings/$repo" "$repo"
+    done
+    echo "boop-start: sibling links -> $siblings"
     cache="${BOOP_START_CACHE:-$HOME/.cache/boop}"
     shared="${BOOP_CARGO_TARGET_DIR:-$cache/cargo-target}"
     binary=v6/sprefa-extract/target/release/extract
