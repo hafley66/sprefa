@@ -1,1 +1,1 @@
-20260908.0.stock-sqlite-ivm-extension-and-shared-shootout.md
+20260908.1.sqlite-native-ivm-recovery-and-boop-handoff.md
