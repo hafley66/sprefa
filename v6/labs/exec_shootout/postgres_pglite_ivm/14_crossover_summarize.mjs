@@ -154,7 +154,7 @@ if (process.argv[6]) {
     const arms=[...new Set(records.filter((r)=>r.event==="run-metadata").flatMap((r)=>r.arms ?? []))];
     for(const arm of arms) {
       const samples=good.map((r)=>r.totals[arm]).filter(Number.isFinite);
-      lines.push([cell.budget,cell.rows,cell.batch_size,cell.fanout,arm,samples.length,number(samples),number(samples,Math.min),number(samples,Math.max),good[0]?.state_count_per_arm ?? "",good[0]?.final_input_hash ?? "",good[0]?.final_checksum ?? "",cell.circuit ?? "aggregate",samples.length ? "executed" : records.find(r=>r.event==="capability" && r.maintenance===arm && cellKey(r)===key)?.status ?? "unmeasured"].join("\t"));
+      lines.push([cell.budget,cell.rows,cell.batch_size,cell.fanout,arm,samples.length,number(samples),number(samples,Math.min),number(samples,Math.max),samples.length ? good[0]?.state_count_per_arm ?? "" : 0,samples.length ? good[0]?.final_input_hash ?? "" : "",samples.length ? good[0]?.final_checksum ?? "" : "",cell.circuit ?? "aggregate",samples.length ? "executed" : records.find(r=>r.event==="capability" && r.maintenance===arm && cellKey(r)===key)?.status ?? "unmeasured"].join("\t"));
     }
   }
   await writeFile(process.argv[6],lines.join("\n")+"\n");

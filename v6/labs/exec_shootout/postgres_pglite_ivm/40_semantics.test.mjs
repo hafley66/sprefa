@@ -29,3 +29,13 @@ test('loaded plugin explicitly rejects all nine additional query families atomic
   assert.equal(records.length,1);assert.equal(records[0].status,'unsupported');assert.equal(records[0].installation_atomic,true);
  }}finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('native semantic graph receipt detects a removed keyed write',{skip:!process.env.SEMANTIC_DD_BIN},()=>{
+ const root=mkdtempSync(join(tmpdir(),'ivm-semantic-fault-'));
+ try {
+  const fixture=makeSemanticFixture('minmax');fixture.states[0].writes.shift();
+  const path=join(root,'fault.json');writeFileSync(path,JSON.stringify(fixture));
+  const child=spawnSync(process.env.SEMANTIC_DD_BIN,[path],{encoding:'utf8',timeout:120000});
+  assert.notEqual(child.status,0);assert.match(child.stderr,/assertion.*failed/s);
+ }finally{rmSync(root,{recursive:true,force:true});}
+});

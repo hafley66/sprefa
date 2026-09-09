@@ -1,0 +1,1 @@
+{"event": "capability", "status": "unsupported", "reason": "sqlite_ivm: one inner join required", "sqlite_extended_error_code": 1, "installation_atomic": true, "circuit": "count_distinct"}

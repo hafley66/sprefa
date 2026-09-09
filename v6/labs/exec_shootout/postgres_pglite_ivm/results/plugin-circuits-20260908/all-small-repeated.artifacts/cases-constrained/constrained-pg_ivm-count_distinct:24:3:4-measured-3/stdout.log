@@ -1,0 +1,1 @@
+{"event":"capability","status":"unsupported","reason":"aggregate function with DISTINCT arguments is not supported on incrementally maintainable materialized view","sqlstate":"0A000","installation_atomic":true}

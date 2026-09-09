@@ -1,0 +1,1 @@
+{"event":"capability","status":"unsupported","reason":"this query is not allowed on incrementally maintainable materialized view","sqlstate":"0A000","installation_atomic":true}

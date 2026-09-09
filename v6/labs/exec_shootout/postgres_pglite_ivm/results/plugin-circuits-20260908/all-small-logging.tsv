@@ -1,0 +1,21 @@
+budget	rows	batch_size	fanout	paired_trials	logged_over_disabled_median	ratio_min	ratio_max	process_wall_logged_over_disabled_median
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	3	1.050615	0.968532	1.080349	1.000380
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
+constrained	24	3	4	0				
