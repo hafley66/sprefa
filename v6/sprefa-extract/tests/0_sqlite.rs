@@ -680,12 +680,13 @@ fn values_duplicates_unsigned_limits_and_publication_races_are_preserved() {
 }
 
 #[test]
-fn batches_cross_256_and_source_boundaries_without_secondary_indexes() {
+fn batches_cross_runtime_ceiling_and_source_boundaries_without_secondary_indexes() {
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("batched.db");
+    let row_cap = sqlite::writers::max_batch_rows(&Connection::open_in_memory().unwrap()).unwrap();
     let mut db = sqlite::Database::create(&path).unwrap();
     db.source("a.rs", "digest-a".to_owned()).unwrap();
-    for _ in 0..257 {
+    for _ in 0..=row_cap {
         db.insert(json!({"record":"protocol","version":1})).unwrap();
     }
     db.source("b.rs", "digest-b".to_owned()).unwrap();
@@ -698,16 +699,24 @@ fn batches_cross_256_and_source_boundaries_without_secondary_indexes() {
     let coordinates = connection
         .prepare(
             "SELECT _row, _input_path, _content_id FROM protocol \
-             WHERE _row IN (1, 256, 257, 258, 301) ORDER BY _row",
+             WHERE _row IN (1, ?1, ?2, ?3, ?4) ORDER BY _row",
         )
         .unwrap()
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })
+        .query_map(
+            rusqlite::params![
+                row_cap as i64,
+                row_cap as i64 + 1,
+                row_cap as i64 + 2,
+                row_cap as i64 + 45
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
         .unwrap()
         .collect::<rusqlite::Result<Vec<_>>>()
         .unwrap();
@@ -715,10 +724,14 @@ fn batches_cross_256_and_source_boundaries_without_secondary_indexes() {
         coordinates,
         vec![
             (1, "a.rs".to_owned(), "digest-a".to_owned()),
-            (256, "a.rs".to_owned(), "digest-a".to_owned()),
-            (257, "a.rs".to_owned(), "digest-a".to_owned()),
-            (258, "b.rs".to_owned(), "digest-b".to_owned()),
-            (301, "b.rs".to_owned(), "digest-b".to_owned()),
+            (row_cap as i64, "a.rs".to_owned(), "digest-a".to_owned()),
+            (row_cap as i64 + 1, "a.rs".to_owned(), "digest-a".to_owned()),
+            (row_cap as i64 + 2, "b.rs".to_owned(), "digest-b".to_owned()),
+            (
+                row_cap as i64 + 45,
+                "b.rs".to_owned(),
+                "digest-b".to_owned()
+            ),
         ]
     );
 
@@ -755,4 +768,40 @@ fn batches_cross_256_and_source_boundaries_without_secondary_indexes() {
             .unwrap();
         assert_eq!(secondary_indexes, 0, "{}", table.table);
     }
+
+    let oversized_path = scratch.path().join("oversized.db");
+    let mut oversized = sqlite::Database::create(&oversized_path).unwrap();
+    let text = "x".repeat(8 * 1024 * 1024 + 1);
+    oversized
+        .insert(json!({
+            "record":"data_doc",
+            "family":"data",
+            "ordinal":0,
+            "span":{"start":0,"end":1},
+            "format":"json",
+            "doc":text,
+        }))
+        .unwrap();
+    oversized
+        .insert(json!({"record":"protocol","version":1}))
+        .unwrap();
+    oversized.finish().unwrap();
+    let oversized = Connection::open(oversized_path).unwrap();
+    assert_eq!(
+        oversized
+            .query_row(
+                "SELECT length(json_extract(doc, '$')) FROM data_doc",
+                [],
+                |row| { row.get::<_, i64>(0) }
+            )
+            .unwrap(),
+        (8 * 1024 * 1024 + 1) as i64
+    );
+    assert_eq!(
+        oversized
+            .query_row("SELECT count(*) FROM protocol", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
 }

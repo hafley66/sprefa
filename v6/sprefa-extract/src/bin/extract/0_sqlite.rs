@@ -28,9 +28,11 @@ pub struct Database {
     input_path: Option<String>,
     content_id: Option<String>,
     pending: Vec<writers::Fact>,
+    pending_bytes: usize,
+    max_batch_rows: usize,
 }
 
-const BATCH_ROWS: usize = 256;
+const BATCH_BYTES: usize = 8 * 1024 * 1024;
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
@@ -62,6 +64,7 @@ impl Database {
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; BEGIN IMMEDIATE;",
         )?;
         connection.execute_batch(DDL)?;
+        let max_batch_rows = writers::max_batch_rows(&connection)?;
         Ok(Self {
             connection,
             temporary,
@@ -69,7 +72,9 @@ impl Database {
             rows: 0,
             input_path: None,
             content_id: None,
-            pending: Vec::with_capacity(BATCH_ROWS),
+            pending: Vec::with_capacity(max_batch_rows),
+            pending_bytes: 0,
+            max_batch_rows,
         })
     }
 
@@ -94,16 +99,30 @@ impl Database {
     }
 
     pub fn insert(&mut self, value: Value) -> Result<()> {
-        self.insert_fact(serde_json::from_value(value)?)
+        let encoded = serde_json::to_vec(&value)?;
+        self.insert_fact(serde_json::from_slice(&encoded)?, encoded.len())
     }
 
-    pub fn insert_fact(&mut self, fact: writers::Fact) -> Result<()> {
+    pub fn insert_fact(&mut self, fact: writers::Fact, encoded_bytes: usize) -> Result<()> {
+        let pending_with_fact = self
+            .pending_bytes
+            .checked_add(encoded_bytes)
+            .ok_or("SQLite batch byte counter overflow")?;
+        if !self.pending.is_empty()
+            && (self.pending.len() == self.max_batch_rows || pending_with_fact > BATCH_BYTES)
+        {
+            self.flush_pending()?;
+        }
         self.rows = self
             .rows
             .checked_add(1)
             .ok_or("SQLite row counter overflow")?;
         self.pending.push(fact);
-        if self.pending.len() == BATCH_ROWS {
+        self.pending_bytes = self
+            .pending_bytes
+            .checked_add(encoded_bytes)
+            .ok_or("SQLite batch byte counter overflow")?;
+        if self.pending.len() == self.max_batch_rows || self.pending_bytes >= BATCH_BYTES {
             self.flush_pending()?;
         }
         Ok(())
@@ -124,6 +143,7 @@ impl Database {
             &self.pending,
         )?;
         self.pending.clear();
+        self.pending_bytes = 0;
         Ok(())
     }
 
@@ -162,8 +182,8 @@ impl Output {
     }
     pub fn line(&mut self, line: &str) -> Result<()> {
         if let Some(db) = &mut self.database {
-            let fact = serde_json::from_str::<writers::Fact>(line)?;
-            return db.insert_fact(fact);
+            let fact = serde_json::from_slice::<writers::Fact>(line.as_bytes())?;
+            return db.insert_fact(fact, line.len());
         }
         self.stdout.write_all(line.as_bytes())?;
         self.stdout.write_all(b"\n")?;
@@ -182,7 +202,8 @@ impl Output {
         if db.input_path.as_deref() != Some(path) {
             db.source(path, content_id.to_string())?;
         }
-        db.insert_fact(serde_json::from_value(serde_json::to_value(fact)?)?)
+        let encoded = serde_json::to_vec(fact)?;
+        db.insert_fact(serde_json::from_slice(&encoded)?, encoded.len())
     }
     pub fn clear_source(&mut self) -> Result<()> {
         if let Some(db) = &mut self.database {
@@ -192,7 +213,8 @@ impl Output {
     }
     pub fn fact(&mut self, fact: &impl Serialize) -> Result<()> {
         if let Some(db) = &mut self.database {
-            return db.insert_fact(serde_json::from_value(serde_json::to_value(fact)?)?);
+            let encoded = serde_json::to_vec(fact)?;
+            return db.insert_fact(serde_json::from_slice(&encoded)?, encoded.len());
         }
         serde_json::to_writer(&mut self.stdout, fact)?;
         self.stdout.write_all(b"\n")?;
@@ -211,5 +233,52 @@ impl Output {
             db.finish()?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn protocol(version: u32) -> writers::Fact {
+        serde_json::from_value(serde_json::json!({"record": "protocol", "version": version}))
+            .unwrap()
+    }
+    fn stored_rows(database: &Database) -> i64 {
+        database
+            .connection
+            .query_row("SELECT count(*) FROM protocol", [], |row| row.get(0))
+            .unwrap()
+    }
+    #[test]
+    fn byte_budget_accounting_flushes_without_large_allocations() {
+        // Declared encoded sizes exercise accounting; facts stay small.
+        let directory = tempfile::tempdir().unwrap();
+        let mut database = Database::create(&directory.path().join("facts.db")).unwrap();
+        database.insert_fact(protocol(1), 7).unwrap();
+        assert_eq!((database.pending.len(), database.pending_bytes), (1, 7));
+        assert_eq!(stored_rows(&database), 0);
+
+        database.insert_fact(protocol(2), BATCH_BYTES + 1).unwrap();
+        assert_eq!((database.pending.len(), database.pending_bytes), (0, 0));
+        assert_eq!(stored_rows(&database), 2);
+
+        let sub_cap = BATCH_BYTES / 2 + 1;
+        database.insert_fact(protocol(3), sub_cap).unwrap();
+        assert_eq!(
+            (database.pending.len(), database.pending_bytes),
+            (1, sub_cap)
+        );
+        assert_eq!(stored_rows(&database), 2);
+
+        database.insert_fact(protocol(4), sub_cap).unwrap();
+        assert_eq!(
+            (database.pending.len(), database.pending_bytes),
+            (1, sub_cap)
+        );
+        assert_eq!(stored_rows(&database), 3);
+
+        database.flush_pending().unwrap();
+        assert_eq!((database.pending.len(), database.pending_bytes), (0, 0));
+        assert_eq!(stored_rows(&database), 4);
     }
 }

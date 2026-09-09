@@ -1,7 +1,7 @@
 # Typed SQLite storage checkpoint
 
 Worktree branch: `feature/extract-tsp-rusqlite-20260909`.
-TypeSpec toolchain: `hafley-tsp` local `main`, commit `834b4c5`.
+TypeSpec toolchain: `hafley-tsp` local `main`, commit `1af0853`.
 
 ## Acceptance
 
@@ -53,38 +53,56 @@ single-blob adapter calls `read_many` with one request. These paths expose
 current-worktree freshness behavior, so changing their caching needs a
 separate contract review.
 
-After integration, extract scanned the generated Rust writer and the CLI
+At the previous checkpoint, extract scanned the generated Rust writer and the CLI
 storage module into 4,257 rows in
 `/private/tmp/extract-nplus1.qiMHVE/generated-writer.db`. Queries reported
 61 static `prepare_cached` sites, 61 `execute` sites, one `insert_all` call
-site and one row-insert loop. The writer performs one SQLite step per row
-inside the caller's transaction. It does not generate multi-row `VALUES`
-statements or per-row commits. The CLI statement cache covers all 61 tables.
+site and one row-insert loop. That checkpoint performed one SQLite step per row
+inside the caller's transaction. The current generator groups typed references
+by table and emits multi-row `VALUES` statements bounded by runtime variable
+and SQL-length limits. The CLI statement cache has 61 entries; different chunk
+sizes can occupy distinct entries.
 The resulting database passed `PRAGMA integrity_check`.
 
-The CLI storage module changed from 335 to 215 handwritten lines.
 Generated bindings replace the runtime catalog walker.
 Source hash formatting occurs on source changes, and file metadata reuses
 the reader's existing hash. The legacy reader now also computes line-count
 metadata, but does not flatten raw facts unless the raw sink is requested.
 
-## Verification
+## Runtime-bounded batching
 
-- Complete extract Rust suite: 913 passed, 0 failed, 16 ignored across 173
-  result blocks, exit 0. Log:
-  `/private/tmp/extract-typed-full-gate-20260909.log`.
-- SQLite integration: 9 passed, including a 301-row batch fixture, source
-  boundaries, final partial-batch flush, duplicate preservation, unsigned
-  limits, all 61 single-integer primary keys and zero secondary indexes.
-- Raw retention: exact fact-and-coordinate parity for two paths containing
-  identical bytes, unchanged resolved answers, and immediate sink-error stop.
-- Existing DDL and catalog are byte-identical to the prior commit.
-- `just gen-check`: 5 passed, 0 failed, including deterministic generation and
-  compilation/execution of 3 generated-Rust tests. Log:
-  `/private/tmp/extract-typed-gen-check-20260909.log`.
-- Final `@hafley/typespec-rusqlite` package suite: 9 passed, 0 failed. The
-  added emitter test uses different model, discriminant and source names.
-  Log: `/private/tmp/tsp-typed-package-tests-20260909.log`.
+The generated writer preserves original ordinals after grouping and preflights
+ordinal overflow and all present-table capacities before writes. It inserts
+each table chunk with one `raw_execute`, leaving rollback to its caller.
+The CLI buffers against a runtime-derived row ceiling and an 8 MiB serialized
+input budget. Oversized individual facts flush alone. Source changes, explicit
+flushes and completion flush the remaining rows. Serialized bytes are an
+accounting bound, not an exact heap-size measurement.
 
-CI coverage adds the batch/index test and two raw-retention tests, and extends
-existing generated-Rust and package tests. No CI coverage is removed.
+The generated Rust test lowers the variable limit to 10. Five mixed records
+produce four traced INSERT executions: protocol ordinals 10,12,13 and size_skip
+ordinals 11,14. It also tests exact one-row and two-row SQL-length capacities,
+below-one-row rejection, all-present-table preflight without partial writes,
+later-chunk failure followed by caller rollback, and ordinal overflow.
+
+The CLI accounting test uses small facts with declared encoded sizes. Pending
+rows/bytes and stored-row counts prove the immediate oversized flush, a flush
+when two individually fitting facts exceed the combined budget, and final flush.
+The integration test separately writes and reads an actual oversized JSON value.
+
+## Current focused verification
+
+- Complete extract suite: 915 passed, 0 failed, 16 ignored across 173 result
+  blocks, exit 0. `/private/tmp/extract-takeover-full-gate-20260909.log`.
+- `just gen-check`: 5 passed, including 3 generated Rust tests.
+  `/private/tmp/extract-gen-check-20260909.log`.
+- TypeSpec rusqlite package: 9 passed.
+  `/private/tmp/rusqlite-package-test-20260909.log`.
+- Extract SQLite integration target: 10 passed.
+  `/private/tmp/extract-sqlite-integration-20260909.log`.
+- Explicit CLI byte-accounting unit test: 1 passed.
+  `/private/tmp/extract-sqlite-bin-unit-rerun-20260909.log`.
+
+CI coverage adds byte-buffer accounting assertions and extends generated SQL
+execution-count, limit-boundary, preflight and rollback assertions. No coverage
+is removed by this increment.
