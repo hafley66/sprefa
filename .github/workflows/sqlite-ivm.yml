@@ -20,11 +20,11 @@ jobs:
           persist-credentials: false
       - name: Install Linux SQLite
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev swi-prolog-nox
+        run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev swi-prolog-nox gnuplot-nox time
       - name: Select macOS SQLite
         if: runner.os == 'macOS'
         run: |
-          HOMEBREW_NO_AUTO_UPDATE=1 brew install sqlite swi-prolog
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install sqlite swi-prolog gnuplot
           echo "SQLITE3_LIB_DIR=$(brew --prefix sqlite)/lib" >> "$GITHUB_ENV"
           echo "SQLITE3_INCLUDE_DIR=$(brew --prefix sqlite)/include" >> "$GITHUB_ENV"
           echo "SQLITE3=$(brew --prefix sqlite)/bin/sqlite3" >> "$GITHUB_ENV"
@@ -36,8 +36,20 @@ jobs:
         run: bash sqlite_ivm/scripts/9_verify.sh
       - name: Unified semantic and performance command
         run: bash sqlite_ivm/scripts/16_shootout.sh smoke --engines sqlite-ivm,dd,prolog,sqlite-query --out "$RUNNER_TEMP/sqlite-ivm-shootout"
+      - name: Verify real storage and resident-memory receipts
+        run: |
+          node --input-type=module - "$RUNNER_TEMP/sqlite-ivm-shootout/performance.jsonl" <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const records=fs.readFileSync(process.argv[2],'utf8').trim().split('\n').map(JSON.parse);
+          const mutations=records.filter(r=>r.event==='mutation'&&r.run_kind==='measured');
+          const processes=records.filter(r=>r.event==='case-process'&&r.run_kind==='measured');
+          assert.ok(mutations.length>0&&processes.length>0,'Missing measured receipts');
+          for(const row of mutations)assert.equal(row.state_inventory?.outside_timed_region,true,`${row.maintenance}/${row.circuit}/${row.state}: missing inventory`);
+          for(const row of processes)assert.ok(row.process_resources?.peak_rss_bytes?.value>0,`${row.maintenance}/${row.circuit}: missing kernel RSS`);
+          NODE
       - name: Receipt rejection and independent oracle tests
-        run: node --test sqlite_ivm/bench/52_shootout.test.mjs
+        run: node --test sqlite_ivm/bench/52_shootout.test.mjs sqlite_ivm/bench/55_shootout_plot.test.mjs
       - uses: actions/upload-artifact@v7
         with:
           name: sqlite-ivm-features-${{ runner.os }}-${{ runner.arch }}
@@ -63,6 +75,8 @@ jobs:
             ${{ runner.temp }}/sqlite-ivm-shootout/coverage.tsv
             ${{ runner.temp }}/sqlite-ivm-shootout/circuits.jsonl
             ${{ runner.temp }}/sqlite-ivm-shootout/performance.jsonl
+            ${{ runner.temp }}/sqlite-ivm-shootout/charts/
+            ${{ runner.temp }}/sqlite-ivm-shootout/performance-artifacts/**/process-resources.txt
           if-no-files-found: error
   postgres-features:
     needs: verify
