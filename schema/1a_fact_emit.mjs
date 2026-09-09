@@ -1,12 +1,22 @@
 // Adapt authored nested wire shapes to SQL core and rusqlite value writers.
 // Spans stay models in TypeSpec; a nested path becomes e.g. span__start in SQL.
-export function emitFacts(program, emitSQL, emitRusqliteValueWriters, rustTarget, emitAll) {
+export function emitFacts(program, emitSQL, emitRusqliteTaggedRowWriter) {
   const ns = program.getGlobalNamespaceType().namespaces.get("ExtractSql");
   const scalars = program.getGlobalNamespaceType().namespaces.get("TypeSpec").scalars;
   const tables = [];
-  const rustModels = [];
   const quote = name => `"${name.replaceAll('"', '""')}"`;
   const supported = new Set(["string", "boolean", "uint32", "uint64", "int32", "int64"]);
+  const writers = emitRusqliteTaggedRowWriter(program, {
+    namespace: "ExtractSql",
+    discriminator: "record",
+    ordinalSourceField: "_row",
+    sourceFields: [
+      { property: "_row", rustName: "row" },
+      { property: "_input_path", rustName: "input_path" },
+      { property: "_content_id", rustName: "content_id" },
+    ],
+    jsonScalars: ["Json"],
+  });
 
   function jsonType(type) {
     switch (type.kind) {
@@ -63,12 +73,6 @@ export function emitFacts(program, emitSQL, emitRusqliteValueWriters, rustTarget
     }
     tables.push({ record: record.value, table: record.value,
       columns: columns.map(({ property, ...column }) => column) });
-    rustModels.push({ kind: "model", name, fields: columns.map(c => ({
-      name: c.name,
-      type: { kind: "scalar", name: c.kind === "json" ? "string" : c.kind },
-      optional: c.optional || c.nullable,
-    })) });
-
     // This program is private to the generation pass. Decorator state stays on
     // the original PK property; flattened leaves need no new decorator state.
     model.name = record.value;
@@ -86,7 +90,6 @@ export function emitFacts(program, emitSQL, emitRusqliteValueWriters, rustTarget
       model.properties.set(prop.name, prop);
     }
   }
-  const writers = emitRusqliteValueWriters(program);
   for (const [, model] of [...ns.models]) {
     model.name = quote(model.name);
     const properties = [...model.properties.values()];
@@ -104,16 +107,9 @@ export function emitFacts(program, emitSQL, emitRusqliteValueWriters, rustTarget
       model.properties.set(prop.name, prop);
     }
   }
-  const rawIdentifiers = new Set(["type", "ref", "const", "fn", "impl", "loop", "trait", "mod", "use", "match", "self", "in", "move", "where", "as", "async", "await"]);
-  const target = { ...rustTarget, fieldName(name) {
-    const mapped = rustTarget.fieldName(name);
-    return rawIdentifiers.has(mapped) ? `r#${mapped}` : mapped;
-  } };
-  const rust = emitAll(rustModels, target).map(d => d.code.replace(/^use .*;\n/gm, "").trim()).join("\n\n");
   return new Map([
     ["4_facts.sql", "-- Generated from schema/1_facts.tsp by just gen.\n" + emitSQL(program)],
     ["5_facts.json", JSON.stringify(tables, null, 2) + "\n"],
-    ["6_facts.rs", "// Generated SQLite row types from schema/1_facts.tsp.\nuse serde::{Serialize, Deserialize};\n\n" + rust + "\n"],
     ["7_writers_auto.rs", writers],
   ]);
 }

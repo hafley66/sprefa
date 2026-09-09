@@ -5,6 +5,7 @@
 mod sqlite;
 
 use rusqlite::{types::Value as SqlValue, Connection};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -19,14 +20,61 @@ fn run(args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
-fn tables() -> Vec<sqlite::Table> {
-    serde_json::from_str(sqlite::CATALOG).unwrap()
+const CATALOG: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../schema/generated/5_facts.json"
+));
+
+#[derive(Deserialize)]
+struct Column {
+    name: String,
+    path: Vec<String>,
+    kind: String,
+    optional: bool,
+    nullable: bool,
+    literal: Option<String>,
+    values: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct Table {
+    record: String,
+    table: String,
+    columns: Vec<Column>,
+}
+
+fn tables() -> Vec<Table> {
+    serde_json::from_str(CATALOG).unwrap()
 }
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 
+fn sql_values(value: &Value, columns: &[&Column]) -> Vec<SqlValue> {
+    columns
+        .iter()
+        .map(|c| {
+            let value = c.path.iter().try_fold(value, |v, k| v.get(k));
+            match value {
+                None => SqlValue::Null,
+                Some(v) if c.kind == "json" => SqlValue::Text(v.to_string()),
+                Some(Value::Null) => SqlValue::Null,
+                Some(Value::String(s)) => SqlValue::Text(s.clone()),
+                Some(Value::Bool(b)) => SqlValue::Integer(i64::from(*b)),
+                Some(Value::Number(n)) => n
+                    .as_i64()
+                    .map_or_else(|| SqlValue::Text(n.to_string()), SqlValue::Integer),
+                other => panic!("Unhandled {other:?}"),
+            }
+        })
+        .collect()
+}
+
 fn assert_rows(db: &Connection, expected: &[Value]) {
+    assert_rows_at(db, expected, 1, true);
+}
+
+fn assert_rows_at(db: &Connection, expected: &[Value], first_row: i64, exact: bool) {
     let catalog = tables();
     for (i, value) in expected.iter().enumerate() {
         let table = catalog
@@ -48,30 +96,14 @@ fn assert_rows(db: &Connection, expected: &[Value]) {
             quote(&table.table)
         );
         let got = db
-            .query_row(&sql, [(i + 1) as i64], |r| {
+            .query_row(&sql, [first_row + i as i64], |r| {
                 (0..columns.len())
                     .map(|col| r.get::<_, SqlValue>(col))
                     .collect::<rusqlite::Result<Vec<_>>>()
             })
             .unwrap_or_else(|e| panic!("{sql}: {e}"));
-        let want: Vec<SqlValue> = columns
-            .iter()
-            .map(|c| {
-                let value = c.path.iter().try_fold(value, |v, k| v.get(k));
-                match value {
-                    None => SqlValue::Null,
-                    Some(v) if c.kind == "json" => SqlValue::Text(v.to_string()),
-                    Some(Value::Null) => SqlValue::Null,
-                    Some(Value::String(s)) => SqlValue::Text(s.clone()),
-                    Some(Value::Bool(b)) => SqlValue::Integer(i64::from(*b)),
-                    Some(Value::Number(n)) => n
-                        .as_i64()
-                        .map_or_else(|| SqlValue::Text(n.to_string()), SqlValue::Integer),
-                    other => panic!("Unhandled {other:?}"),
-                }
-            })
-            .collect();
-        assert_eq!(got, want, "row {}: {}", i + 1, value);
+        let want = sql_values(value, &columns);
+        assert_eq!(got, want, "row {}: {}", first_row + i as i64, value);
     }
     let count: i64 = catalog
         .iter()
@@ -84,12 +116,52 @@ fn assert_rows(db: &Connection, expected: &[Value]) {
             .unwrap()
         })
         .sum();
-    assert_eq!(count, expected.len() as i64);
+    if exact {
+        assert_eq!(count, expected.len() as i64);
+    }
     assert_eq!(
         db.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
             .unwrap(),
         "ok"
     );
+}
+
+fn assert_uncoordinated_rows(db: &Connection, expected: &[Value]) {
+    for table in tables() {
+        let columns: Vec<_> = table
+            .columns
+            .iter()
+            .filter(|column| !column.name.starts_with('_'))
+            .collect();
+        let sql = format!(
+            "SELECT {} FROM {} WHERE _input_path IS NULL AND _content_id IS NULL ORDER BY _row",
+            columns
+                .iter()
+                .map(|column| quote(&column.name))
+                .collect::<Vec<_>>()
+                .join(","),
+            quote(&table.table),
+        );
+        let mut got = db
+            .prepare(&sql)
+            .unwrap()
+            .query_map([], |row| {
+                (0..columns.len())
+                    .map(|column| row.get::<_, SqlValue>(column))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        let mut want: Vec<_> = expected
+            .iter()
+            .filter(|value| value["record"] == table.record)
+            .map(|value| sql_values(value, &columns))
+            .collect();
+        got.sort_by_key(|row| format!("{row:?}"));
+        want.sort_by_key(|row| format!("{row:?}"));
+        assert_eq!(got, want, "{}", table.table);
+    }
 }
 
 #[test]
@@ -417,6 +489,7 @@ fn project_scip_dependency_and_pattern_modes_match_their_existing_jsonl() {
             .map(|s| serde_json::from_str(s).unwrap())
             .collect();
         assert!(!expected.is_empty(), "Empty test input: {args:?}");
+        let retains_raw = args.first() == Some(&"fast") || args.contains(&"--resolve");
         if args.contains(&"--ast-pattern") {
             assert!(expected.iter().any(|v| v["record"] == "capture"));
             let source = args.last().unwrap();
@@ -438,7 +511,55 @@ fn project_scip_dependency_and_pattern_modes_match_their_existing_jsonl() {
             "{args:?}: {}",
             String::from_utf8_lossy(&exported.stderr)
         );
-        assert_rows(&Connection::open(path).unwrap(), &expected);
+        let db = Connection::open(path).unwrap();
+        if retains_raw {
+            let total: i64 = tables()
+                .iter()
+                .map(|table| {
+                    db.query_row(
+                        &format!("SELECT count(*) FROM {}", quote(&table.table)),
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap()
+                })
+                .sum();
+            assert!(total > expected.len() as i64);
+            let first_resolved = total - expected.len() as i64 + 1;
+            assert_uncoordinated_rows(&db, &expected);
+            let sourced: i64 = tables()
+                .iter()
+                .map(|table| {
+                    db.query_row(
+                        &format!(
+                            "SELECT count(*) FROM {} WHERE _row < ? AND _input_path IS NOT NULL AND _content_id IS NOT NULL",
+                            quote(&table.table)
+                        ),
+                        [first_resolved],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap()
+                })
+                .sum();
+            assert_eq!(sourced, first_resolved - 1);
+            let inherited: i64 = tables()
+                .iter()
+                .map(|table| {
+                    db.query_row(
+                        &format!(
+                            "SELECT count(*) FROM {} WHERE _row >= ? AND (_input_path IS NOT NULL OR _content_id IS NOT NULL)",
+                            quote(&table.table)
+                        ),
+                        [first_resolved],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap()
+                })
+                .sum();
+            assert_eq!(inherited, 0);
+        } else {
+            assert_rows(&db, &expected);
+        }
     }
 }
 
@@ -556,4 +677,82 @@ fn values_duplicates_unsigned_limits_and_publication_races_are_preserved() {
     std::fs::write(&race, "concurrent owner").unwrap();
     assert!(db.finish().is_err());
     assert_eq!(std::fs::read(race).unwrap(), b"concurrent owner");
+}
+
+#[test]
+fn batches_cross_256_and_source_boundaries_without_secondary_indexes() {
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("batched.db");
+    let mut db = sqlite::Database::create(&path).unwrap();
+    db.source("a.rs", "digest-a".to_owned()).unwrap();
+    for _ in 0..257 {
+        db.insert(json!({"record":"protocol","version":1})).unwrap();
+    }
+    db.source("b.rs", "digest-b".to_owned()).unwrap();
+    for _ in 0..44 {
+        db.insert(json!({"record":"protocol","version":1})).unwrap();
+    }
+    db.finish().unwrap();
+
+    let connection = Connection::open(path).unwrap();
+    let coordinates = connection
+        .prepare(
+            "SELECT _row, _input_path, _content_id FROM protocol \
+             WHERE _row IN (1, 256, 257, 258, 301) ORDER BY _row",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        coordinates,
+        vec![
+            (1, "a.rs".to_owned(), "digest-a".to_owned()),
+            (256, "a.rs".to_owned(), "digest-a".to_owned()),
+            (257, "a.rs".to_owned(), "digest-a".to_owned()),
+            (258, "b.rs".to_owned(), "digest-b".to_owned()),
+            (301, "b.rs".to_owned(), "digest-b".to_owned()),
+        ]
+    );
+
+    for table in tables() {
+        let columns = connection
+            .prepare(&format!("PRAGMA table_info({})", quote(&table.table)))
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        let primary_keys: Vec<_> = columns
+            .iter()
+            .filter(|(_, _, primary_key)| *primary_key != 0)
+            .cloned()
+            .collect();
+        assert_eq!(
+            primary_keys,
+            vec![("_row".to_owned(), "INTEGER".to_owned(), 1)]
+        );
+
+        let secondary_indexes: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM pragma_index_list(?)",
+                [&table.table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(secondary_indexes, 0, "{}", table.table);
+    }
 }

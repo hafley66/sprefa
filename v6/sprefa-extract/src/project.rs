@@ -216,6 +216,7 @@ impl LegTrail {
 pub(crate) struct ProjectInput {
     pub(crate) path: String,
     blob: ContentId,
+    file: Option<FlatFact>,
     pub(crate) output: Arc<ExtractOutput>,
     /// This file's module facts, built while its bytes are in hand so the
     /// plane costs no second read. `None` outside a module-plane run.
@@ -234,6 +235,72 @@ pub(crate) struct ProjectInput {
 /// facts, sorted by their serialized form so callers get a byte-stable stream.
 pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, ProjectError> {
     let inputs = read_inputs_with_modules(request.paths)?;
+    resolve_project_inputs(request, inputs)
+}
+
+/// One phase-1 fact retained beside a project resolve, with the source
+/// coordinates that identify which input produced it.
+pub struct RawProjectFact<'a> {
+    pub path: &'a str,
+    pub content_id: &'a ContentId,
+    pub fact: FlatFact,
+}
+
+/// A project read/resolve failure or a failure reported by its raw-fact sink.
+#[derive(Debug)]
+pub enum ResolveWithRawError<E> {
+    Project(ProjectError),
+    RawSink(E),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for ResolveWithRawError<E> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Project(error) => error.fmt(formatter),
+            Self::RawSink(error) => write!(formatter, "raw fact sink: {error}"),
+        }
+    }
+}
+
+impl<E: std::fmt::Debug + std::fmt::Display + 'static> std::error::Error
+    for ResolveWithRawError<E>
+{
+}
+
+/// Extract each input once, send its file row and phase-1 rows to `push_raw`,
+/// then resolve over those same retained outputs.
+pub fn resolve_project_with_raw<E>(
+    request: &ResolveRequest,
+    push_raw: &mut impl FnMut(RawProjectFact<'_>) -> Result<(), E>,
+) -> Result<Vec<FlatFact>, ResolveWithRawError<E>> {
+    let mut inputs =
+        read_inputs_with_modules(request.paths).map_err(ResolveWithRawError::Project)?;
+    for input in &mut inputs {
+        push_raw(RawProjectFact {
+            path: &input.path,
+            content_id: &input.blob,
+            fact: input
+                .file
+                .take()
+                .expect("fresh project input has its file row"),
+        })
+        .map_err(ResolveWithRawError::RawSink)?;
+        crate::wire::flatten_each(input.output.as_ref(), None, &mut |fact| {
+            push_raw(RawProjectFact {
+                path: &input.path,
+                content_id: &input.blob,
+                fact,
+            })
+        })
+        .map_err(ResolveWithRawError::RawSink)?;
+    }
+    resolve_project_inputs(request, inputs).map_err(ResolveWithRawError::Project)
+}
+
+fn resolve_project_inputs(
+    request: &ResolveRequest,
+    inputs: Vec<ProjectInput>,
+) -> Result<Vec<FlatFact>, ProjectError> {
     let scip_index = load_scip(request, &inputs)?;
 
     let pairs: Vec<(ContentId, &ExtractOutput)> = inputs
@@ -1198,7 +1265,20 @@ pub fn scip_family_from_index_jsonl(
 /// default; this family is the labelled entry, not a replacement.
 // @comment-ok: one pre-existing diet_scip design note, edited by one line.
 pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
-    resolve_project(&ResolveRequest {
+    resolve_project(&diet_scip_request(paths))
+}
+
+/// The diet/fast family with the phase-1 rows retained through the same sink
+/// used by `resolve_project_with_raw`.
+pub fn diet_scip_with_raw<E>(
+    paths: &[PathBuf],
+    push_raw: &mut impl FnMut(RawProjectFact<'_>) -> Result<(), E>,
+) -> Result<Vec<FlatFact>, ResolveWithRawError<E>> {
+    resolve_project_with_raw(&diet_scip_request(paths), push_raw)
+}
+
+fn diet_scip_request(paths: &[PathBuf]) -> ResolveRequest<'_> {
+    ResolveRequest {
         paths,
         arms: ResolveArms {
             call: true,
@@ -1213,7 +1293,7 @@ pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
         ts_checker: None,
         go_checker: None,
         witness: false,
-    })
+    }
 }
 
 /// Serialize the `diet_scip` family to sorted JSONL lines.
@@ -1351,15 +1431,21 @@ fn read_inputs_plain(paths: &[PathBuf], modules: bool) -> Result<Vec<ProjectInpu
                 let go_module = go_module_facts_of(&path, &content, modules);
                 let py_module = py_module_facts_of(&path, &content, modules);
                 let kt_module = kt_module_facts_of(&path, &content, modules);
-                Ok(output.map(|output| ProjectInput {
-                    blob: content_id_of(&content),
-                    path,
-                    output,
-                    module,
-                    rust_module,
-                    go_module,
-                    py_module,
-                    kt_module,
+                Ok(output.map(|output| {
+                    let blob = content_id_of(&content);
+                    ProjectInput {
+                        file: Some(crate::wire::file_fact_with_content_id(
+                            &path, &content, &blob,
+                        )),
+                        blob,
+                        path,
+                        output,
+                        module,
+                        rust_module,
+                        go_module,
+                        py_module,
+                        kt_module,
+                    }
                 }))
             })
             .collect()
@@ -1405,15 +1491,21 @@ fn read_inputs_batched(
                 let go_module = go_module_facts_of(&path, content, modules);
                 let py_module = py_module_facts_of(&path, content, modules);
                 let kt_module = kt_module_facts_of(&path, content, modules);
-                Ok(output.map(|output| ProjectInput {
-                    blob: content_id_of(content),
-                    path,
-                    output,
-                    module,
-                    rust_module,
-                    go_module,
-                    py_module,
-                    kt_module,
+                Ok(output.map(|output| {
+                    let blob = content_id_of(content);
+                    ProjectInput {
+                        file: Some(crate::wire::file_fact_with_content_id(
+                            &path, content, &blob,
+                        )),
+                        blob,
+                        path,
+                        output,
+                        module,
+                        rust_module,
+                        go_module,
+                        py_module,
+                        kt_module,
+                    }
                 }))
             })
             .collect()

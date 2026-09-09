@@ -30,7 +30,7 @@ export async function generate(entry = join(schemaDirectory, "1_sql_trial.tsp"))
   const { compile, NodeHost, formatDiagnostic, getDoc } = await import(pathToFileURL(compilerPath));
   const sql = join(root, "packages/sql");
   const { emitSQL, resolveFieldType, snakeCase } = await import(pathToFileURL(join(sql, "dist/src/index.js")));
-  const { emitRusqliteValueWriters } = await import(pathToFileURL(join(root, "packages/rusqlite/dist/src/index.js")));
+  const { emitRusqliteTaggedRowWriter } = await import(pathToFileURL(join(root, "packages/rusqlite/dist/src/index.js")));
   const { rustTarget } = await import(pathToFileURL(join(root, "packages/emit-helper/src/3_rust.ts")));
   const { emitAll } = await import(pathToFileURL(join(root, "packages/emit-helper/src/2_walk.ts")));
 
@@ -74,7 +74,7 @@ export async function generate(entry = join(schemaDirectory, "1_sql_trial.tsp"))
     additionalImports: [join(sql, "dist/src/1_decorators.js"), join(sql, "lib/entity.tsp")],
   });
   if (facts.diagnostics.length) throw new Error(facts.diagnostics.map(d => formatDiagnostic(d)).join("\n"));
-  for (const [name, content] of emitFacts(facts, emitSQL, emitRusqliteValueWriters, rustTarget, emitAll)) files.set(name, content);
+  for (const [name, content] of emitFacts(facts, emitSQL, emitRusqliteTaggedRowWriter)) files.set(name, content);
   return files;
 }
 

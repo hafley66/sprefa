@@ -26,12 +26,12 @@ use sprefa_extract::schema::schema_text;
 use sprefa_extract::trail::Trail;
 use sprefa_extract::tsi::{ingest, Mode, RunOut};
 use sprefa_extract::{
-    cfg_bundle, content_id_of, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact,
-    flatten_cfg_each, flatten_each, package_edges_jsonl, query_patterns, resolve_project_jsonl,
-    scip_facts_jsonl, scip_family_from_index_jsonl, scip_family_jsonl, scip_file_edges_jsonl,
-    scip_index_location, size_skip_fact, source_for, AstPatternQuery, FamilyMask, FlatFact,
-    IndexBudget, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords,
-    DEFAULT_MAX_BYTES,
+    cfg_bundle, content_id_of, deps::diet_file_edges_jsonl, diet_scip_jsonl, diet_scip_with_raw,
+    dispatch, file_fact, flatten_cfg_each, flatten_each, package_edges_jsonl, query_patterns,
+    resolve_project_jsonl, resolve_project_with_raw, scip_facts_jsonl,
+    scip_family_from_index_jsonl, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
+    size_skip_fact, source_for, AstPatternQuery, FamilyMask, FlatFact, IndexBudget, ResolveArms,
+    ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, DEFAULT_MAX_BYTES,
 };
 
 #[path = "extract/help.rs"]
@@ -75,7 +75,8 @@ struct Cli {
     family: Option<Vec<String>>,
 
     /// Write facts to a NEW SQLite database at PATH, then print schema/query commands.
-    /// Tables and columns are generated from TypeSpec. Existing paths are refused.
+    /// Tables and inserts are generated from TypeSpec. Fast and resolve exports retain
+    /// each input's syntax facts before their project-wide derived rows.
     #[arg(long, value_name = "PATH", conflicts_with_all = ["bench", "schema", "trail"])]
     sqlite: Option<PathBuf>,
 
@@ -653,6 +654,19 @@ fn extract_to(cli: &Cli, output: &mut sqlite::Output) -> Result<(), Box<dyn std:
             return Ok(());
         }
         Some(FamilyMode::DietScip) => {
+            if output.database.is_some() {
+                let mut push_raw = |raw: sprefa_extract::RawProjectFact<'_>| {
+                    output
+                        .source_fact(raw.path, raw.content_id, &raw.fact)
+                        .map_err(|error| std::io::Error::other(error.to_string()))
+                };
+                let resolved = diet_scip_with_raw(&cli.paths, &mut push_raw)?;
+                output.clear_source()?;
+                for fact in resolved {
+                    output.fact(&fact)?;
+                }
+                return Ok(());
+            }
             for line in diet_scip_jsonl(&cli.paths)? {
                 output.line(&line)?;
             }
@@ -712,7 +726,7 @@ fn extract_file(
     let content = std::fs::read(path)?;
     let path_str = path.to_string_lossy();
     if let Some(db) = &mut output.database {
-        db.source(&path_str, content_id_of(&content).to_string());
+        db.source(&path_str, content_id_of(&content).to_string())?;
     }
     // The file row rides the SAME read as extraction: counting lines must never
     // cost a second pass over the file, let alone a second subprocess.
@@ -885,8 +899,21 @@ fn stream_resolve(
         arms,
         ..scip_request(cli)?
     };
-    for line in resolve_project_jsonl(&request)? {
-        output.line(&line)?;
+    if output.database.is_some() {
+        let mut push_raw = |raw: sprefa_extract::RawProjectFact<'_>| {
+            output
+                .source_fact(raw.path, raw.content_id, &raw.fact)
+                .map_err(|error| std::io::Error::other(error.to_string()))
+        };
+        let resolved = resolve_project_with_raw(&request, &mut push_raw)?;
+        output.clear_source()?;
+        for fact in resolved {
+            output.fact(&fact)?;
+        }
+    } else {
+        for line in resolve_project_jsonl(&request)? {
+            output.line(&line)?;
+        }
     }
     Ok(())
 }
