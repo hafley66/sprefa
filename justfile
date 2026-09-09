@@ -266,3 +266,7 @@ dl6-build prog out="":
     else
       ./target/debug/dl6 build "$source"
     fi
+
+# Native SQLite, DD, Prolog, PostgreSQL/pg_ivm and PGlite: semantics then timing.
+ivm-shootout profile="quick" *args:
+    @bash "{{repo}}/sqlite_ivm/scripts/16_shootout.sh" "{{profile}}" {{args}}
