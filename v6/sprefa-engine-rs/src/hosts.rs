@@ -967,6 +967,7 @@ fn resolve_request<'a>(
         occurrence_text: false,
         rust_checker: None,
         ts_checker: None,
+        go_checker: None,
         witness: false,
     }
 }
