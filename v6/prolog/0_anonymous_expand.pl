@@ -160,6 +160,22 @@ anonymous_mint(Decls, Owner, Path, sum_type(Variants0), Type,
              derived_from(GeneratedId, Id)
            | VariantRows ],
     Type = GeneratedName.
+% Keep the carrier as the annotation site while descending through its type
+% operand.  Application arguments are traversed only when they contain a
+% type-shaped anonymous term, preserving application order and values.
+anonymous_mint(Decls, Owner, Path, annotated_type(Type0, Applications0),
+               annotated_type(Type, Applications), ExtraDecls, Rows) :-
+    !,
+    ( type_contains_anonymous(Type0)
+    -> append(Path, [annotation], TypePath),
+       anonymous_mint(Decls, Owner, TypePath, Type0, Type,
+                      TypeDecls, TypeRows)
+    ;  Type = Type0, TypeDecls = [], TypeRows = []
+    ),
+    mint_annotation_applications(Decls, Owner, Path, Applications0,
+                                 Applications, AppDecls, AppRows),
+    append(TypeDecls, AppDecls, ExtraDecls),
+    append(TypeRows, AppRows, Rows).
 % A wrapper (list/option/json_list) or a generic application: descend into each
 % argument with its ordinal appended to the path.
 anonymous_mint(Decls, Owner, Path, Type0, Type, ExtraDecls, Rows) :-
@@ -187,6 +203,43 @@ mint_arguments(Decls, Owner, Path, Ordinal, [Arg0 | Rest],
     mint_arguments(Decls, Owner, Path, Next, Rest, More, RestDecls, RestRows),
     append(ArgDecls, RestDecls, Decls1),
     append(ArgRows, RestRows, Rows).
+
+mint_annotation_applications(_, _, _, [], [], [], []).
+mint_annotation_applications(Decls, Owner, Path, [Application0 | Rest0],
+                             [Application | Rest], DeclsOut, RowsOut) :-
+    Application0 =.. [Name | Arguments0],
+    mint_annotation_arguments(Decls, Owner, Path, Arguments0, Arguments,
+                              ArgDecls, ArgRows),
+    Application =.. [Name | Arguments],
+    mint_annotation_applications(Decls, Owner, Path, Rest0, Rest,
+                                 RestDecls, RestRows),
+    append(ArgDecls, RestDecls, DeclsOut),
+    append(ArgRows, RestRows, RowsOut).
+
+mint_annotation_arguments(_, _, _, [], [], [], []).
+mint_annotation_arguments(Decls, Owner, Path, [named(Name, Value0) | Rest0],
+                          [named(Name, Value) | Rest], DeclsOut, RowsOut) :-
+    mint_annotation_argument(Decls, Owner, Path, Value0, Value,
+                             ArgDecls, ArgRows),
+    mint_annotation_arguments(Decls, Owner, Path, Rest0, Rest,
+                              RestDecls, RestRows),
+    append(ArgDecls, RestDecls, DeclsOut),
+    append(ArgRows, RestRows, RowsOut).
+mint_annotation_arguments(Decls, Owner, Path, [pos(Value0) | Rest0],
+                          [pos(Value) | Rest], DeclsOut, RowsOut) :-
+    mint_annotation_argument(Decls, Owner, Path, Value0, Value,
+                             ArgDecls, ArgRows),
+    mint_annotation_arguments(Decls, Owner, Path, Rest0, Rest,
+                              RestDecls, RestRows),
+    append(ArgDecls, RestDecls, DeclsOut),
+    append(ArgRows, RestRows, RowsOut).
+
+mint_annotation_argument(Decls, Owner, Path, Value0, Value, DeclsOut, Rows) :-
+    ( type_contains_anonymous(Value0)
+    -> append(Path, [annotation_argument], ValuePath),
+       anonymous_mint(Decls, Owner, ValuePath, Value0, Value, DeclsOut, Rows)
+    ;  Value = Value0, DeclsOut = [], Rows = []
+    ).
 
 mint_fields(_, _, _, [], [], [], []).
 mint_fields(Decls, Owner, Path, [field(Name, Type0) | Rest],

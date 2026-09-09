@@ -89,7 +89,9 @@ rel annotated(id: @(int, []), configured: @(int, [key(), min(Value: 1)])).
         parser.set_language(&lang).unwrap();
         let tree = parser.parse(src, None).unwrap();
         let sexp = tree.root_node().to_sexp();
-        assert!(sexp.contains("type_annotation"));
-        assert!(sexp.contains("annotation_application"));
+        assert_eq!(
+            sexp,
+            "(source_file (statement (relation_declaration name: (path (identifier)) columns: (declaration_parameter name: (identifier) type: (type (type_annotation type: (type name: (identifier)) applications: (annotation_list)))) columns: (declaration_parameter name: (identifier) type: (type (type_annotation type: (type name: (identifier)) applications: (annotation_list (annotation_application name: (identifier)) (annotation_application name: (identifier) (annotation_named_argument name: (variable) value: (expression (literal (integer))))))))))))"
+        );
     }
 }

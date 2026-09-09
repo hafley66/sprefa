@@ -12,6 +12,7 @@
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
+:- discontiguous classify_relation/3.
 
 %! partition_compiler_relations(+Decls, -CompilerDecls, -RuntimeDecls) is det.
 %
@@ -37,11 +38,16 @@ classify_relation(Decls, Ref, Ref-compiler_relation(Ref, Arity, Keys)) :-
     findall(Type, member(col_type(Ref, _, Type), Decls), Types),
     memberchk(type, Types),
     !,
-    ( forall(member(Type, Types), Type == type)
+    ( memberchk(type, Types), memberchk(type, Types),
+      ( memberchk(type, Types), compiler_relation_has_return(Decls, Ref) ;
+        forall(member(Type, Types), Type == type) )
     -> true
     ;  throw(unsupported_construct(compiler_relation_mixed_domain(Ref)))
     ),
     ( memberchk(keyed(Ref, Keys0), Decls) -> Keys = Keys0 ; Keys = [] ).
+
+compiler_relation_has_return(Decls, Ref) :-
+    memberchk(col_type(Ref, return, type), Decls).
 classify_relation(_, Ref, Ref-runtime).
 
 compiler_classification(_-compiler_relation(_, _, _)).

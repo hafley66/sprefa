@@ -16,7 +16,8 @@
             schema_member_rows/2,
             type_relation_rows/2,
             schema_member_transport_rows/3,
-            expand_generic_program_with_bindings/3
+            expand_generic_program_with_bindings/3,
+            semantic_type_id/3
           ]).
 
 :- use_module(library(apply)).
@@ -26,6 +27,8 @@
 :- use_module('0_enum_expand', [enum_type_rows/2]).
 :- use_module('0_type_plane', [unwrapped_column_type/2]).
 :- use_module('0_anonymous_expand', [expand_anonymous_decls/2]).
+:- use_module('0_annotation_expand', [prepare_annotations/2,
+                                      evaluate_annotation_requests/4]).
 :- use_module('0_type_ids',
               [ decl_id/4, primitive_id/2, param_id/4, member_id/4,
                 constraint_id/3, impl_id/3, app_id/3, arg_id/3,
@@ -56,7 +59,8 @@ expand_generic_program_with_bindings(prog(Decls0, Rules0), Bindings,
     expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     expand_anonymous_decls(RewrittenDecls, AnonymousDecls),
-    merge_anonymous_enum_type_rows(AnonymousDecls, AnonymousEnumRowedDecls),
+    prepare_annotations(AnonymousDecls, AnnotationPreparedDecls),
+    merge_anonymous_enum_type_rows(AnnotationPreparedDecls, AnonymousEnumRowedDecls),
     normalize_key_wrappers(AnonymousEnumRowedDecls, KeyNormalizedDecls),
     generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
@@ -75,7 +79,8 @@ expand_generic_program_raw(prog(Decls0, Rules0), prog(Decls, Rules)) :-
     expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     expand_anonymous_decls(RewrittenDecls, AnonymousDecls),
-    merge_anonymous_enum_type_rows(AnonymousDecls, AnonymousEnumRowedDecls),
+    prepare_annotations(AnonymousDecls, AnnotationPreparedDecls),
+    merge_anonymous_enum_type_rows(AnnotationPreparedDecls, AnonymousEnumRowedDecls),
     normalize_key_wrappers(AnonymousEnumRowedDecls, KeyNormalizedDecls),
     generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
@@ -210,8 +215,12 @@ elaborate_and_erase_compiler_relations(Decls0, Rules0, Bindings, Decls, Rules) :
                                 CompilerRules, SeedRows),
        evaluate_compiler_relations(compiler_relations(Relations, CompilerRules),
                                    SeedRows, ClosureRows),
+       findall(Request, member(Request, Decls0), Requests),
+       evaluate_annotation_requests(Decls0, Requests, ClosureRows,
+                                    AnnotationRows),
+       append(MetadataRows, AnnotationRows, AllMetadataRows),
        append(RuntimeDecls,
-              [compiler_type_metadata(MetadataRows, ClosureRows)], Decls),
+              [compiler_type_metadata(AllMetadataRows, ClosureRows)], Decls),
        Rules = RuntimeRules
     ).
 
@@ -250,8 +259,41 @@ elaborate_compiler_body(Decls, Bindings, Atom0, Atom) :-
 
 elaborate_compiler_atom(Decls, Bindings, Atom0, Atom) :-
     Atom0 =.. [Name | Arguments0],
-    maplist(elaborate_compiler_argument(Decls, Bindings), Arguments0, Arguments),
+    elaborate_compiler_arguments(Decls, Bindings, Name, Arguments0, Arguments),
     Atom =.. [Name | Arguments].
+
+elaborate_compiler_arguments(_, _, _, [], []).
+elaborate_compiler_arguments(Decls, Bindings, Name, [Argument0 | Rest0],
+                             [Argument | Rest]) :-
+    elaborate_compiler_arguments_at(Decls, Bindings, Name, 1,
+                                    [Argument0 | Rest0], [Argument | Rest]).
+
+elaborate_compiler_arguments_at(_, _, _, _, [], []).
+elaborate_compiler_arguments_at(Decls, Bindings, Name, Position,
+                                [Argument0 | Rest0], [Argument | Rest]) :-
+    elaborate_compiler_argument_at(Decls, Bindings, Name, Position, Argument0,
+                                   Argument),
+    Next is Position + 1,
+    elaborate_compiler_arguments_at(Decls, Bindings, Name, Next, Rest0, Rest).
+
+elaborate_compiler_argument_at(Decls, _Bindings, Name, Position, Argument,
+                               Elaborated) :-
+    ( compiler_declared_column_type(Decls, Name, Position, int), integer(Argument)
+    ; compiler_declared_column_type(Decls, Name, Position, float), number(Argument)
+    ; compiler_declared_column_type(Decls, Name, Position, bool), boolean(Argument)
+    ),
+    !,
+    Elaborated = Argument.
+elaborate_compiler_argument_at(Decls, Bindings, _, _, Argument, Elaborated) :-
+    elaborate_compiler_argument(Decls, Bindings, Argument, Elaborated).
+
+compiler_declared_column_type(Decls, Name, Position, Type) :-
+    findall(ColumnType,
+            ( member(col_type(Name/_, _, ColumnType), Decls) ), Types),
+    nth1(Position, Types, Type).
+
+boolean(true).
+boolean(false).
 
 elaborate_compiler_argument(Decls, Bindings, Argument, Elaborated) :-
     var(Argument),
@@ -2017,12 +2059,24 @@ replace_generic_type(annotated_type(Type0, Applications0), Instances,
     maplist(replace_annotation_application(Instances), Applications0,
             Applications).
 
-replace_annotation_application(Instances, Application0, Application) :-
-    Application0 =.. [Name | Arguments0],
-    Application =.. [Name | Arguments],
-    maplist(replace_annotation_argument(Instances), Arguments0, Arguments).
-replace_annotation_argument(_, named(Name, Value), named(Name, Value)).
-replace_annotation_argument(_, pos(Value), pos(Value)).
+replace_annotation_application(_, Application, Application).
+replace_annotation_argument(Instances, named(Name, Value0), named(Name, Value)) :-
+    replace_annotation_value(Instances, Value0, Value).
+replace_annotation_argument(Instances, pos(Value0), pos(Value)) :-
+    replace_annotation_value(Instances, Value0, Value).
+
+replace_annotation_value(Instances, Value0, Value) :-
+    ( nonvar(Value0), generic_type(Value0)
+    -> replace_generic_type(Value0, Instances, Value)
+    ;  compound(Value0), contains_generic_type(Value0)
+    -> Value0 =.. [Functor | Args0],
+        maplist(replace_annotation_value(Instances), Args0, Args),
+        Value =.. [Functor | Args]
+    ;  Value = Value0
+    ).
+
+contains_generic_type(Term) :-
+    sub_term(Subterm, Term), generic_type(Subterm), !.
 
 replace_generic_type(Type, Instances, int) :-
     list_flavor(Type),
