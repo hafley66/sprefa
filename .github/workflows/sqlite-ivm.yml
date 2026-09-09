@@ -20,11 +20,11 @@ jobs:
           persist-credentials: false
       - name: Install Linux SQLite
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev
+        run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev swi-prolog-nox
       - name: Select macOS SQLite
         if: runner.os == 'macOS'
         run: |
-          HOMEBREW_NO_AUTO_UPDATE=1 brew install sqlite
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install sqlite swi-prolog
           echo "SQLITE3_LIB_DIR=$(brew --prefix sqlite)/lib" >> "$GITHUB_ENV"
           echo "SQLITE3_INCLUDE_DIR=$(brew --prefix sqlite)/include" >> "$GITHUB_ENV"
           echo "SQLITE3=$(brew --prefix sqlite)/bin/sqlite3" >> "$GITHUB_ENV"
@@ -34,23 +34,23 @@ jobs:
           cargo fetch --locked --manifest-path sqlite_ivm/bench/Cargo.toml
       - name: Rust and native acceptance tests
         run: bash sqlite_ivm/scripts/9_verify.sh
-      - name: Shared SQLite and DD circuit acceptance
-        env:
-          IVM_ARMS: sqlite-plugin-delta,dd,sqlite-query
-        run: bash sqlite_ivm/scripts/11_shootout.sh "$RUNNER_TEMP/sqlite-ivm-ci.jsonl"
-      - name: Typed feature combinations against SQLite and DD
-        run: bash sqlite_ivm/scripts/12_features.sh "$RUNNER_TEMP/sqlite-ivm-features"
-      - name: Native values, cascades, concurrency, and rollback
-        run: |
-          case "$(uname -s)" in Darwin) library=libsqlite_ivm.dylib;; *) library=libsqlite_ivm.so;; esac
-          bash sqlite_ivm/scripts/14_native_values.sh "$GITHUB_WORKSPACE/sqlite_ivm/target/release/$library"
+      - name: Unified semantic and performance command
+        run: bash sqlite_ivm/scripts/16_shootout.sh smoke --engines sqlite-ivm,dd,prolog,sqlite-query --out "$RUNNER_TEMP/sqlite-ivm-shootout"
+      - name: Receipt rejection and independent oracle tests
+        run: node --test sqlite_ivm/bench/52_shootout.test.mjs
       - uses: actions/upload-artifact@v7
         with:
           name: sqlite-ivm-features-${{ runner.os }}-${{ runner.arch }}
           path: |
-            ${{ runner.temp }}/sqlite-ivm-features/*.jsonl
-            ${{ runner.temp }}/sqlite-ivm-features/cases/*.json
+            ${{ runner.temp }}/sqlite-ivm-shootout/features/*.jsonl
+            ${{ runner.temp }}/sqlite-ivm-shootout/features/cases/*.json
           if-no-files-found: error
+      - name: Preserve command logs and failure receipts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sqlite-ivm-failed-command-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/sqlite-ivm-shootout
       - name: Build release archive
         run: bash sqlite_ivm/scripts/10_package.sh
       - uses: actions/upload-artifact@v7
@@ -58,7 +58,11 @@ jobs:
           name: sqlite-ivm-${{ runner.os }}-${{ runner.arch }}
           path: |
             sqlite_ivm/dist/*
-            ${{ runner.temp }}/sqlite-ivm-ci.jsonl
+            ${{ runner.temp }}/sqlite-ivm-shootout/report.json
+            ${{ runner.temp }}/sqlite-ivm-shootout/report.txt
+            ${{ runner.temp }}/sqlite-ivm-shootout/coverage.tsv
+            ${{ runner.temp }}/sqlite-ivm-shootout/circuits.jsonl
+            ${{ runner.temp }}/sqlite-ivm-shootout/performance.jsonl
           if-no-files-found: error
   postgres-features:
     needs: verify
@@ -76,16 +80,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-16 postgresql-server-dev-16 build-essential
           git clone --depth 1 --branch v1.15 https://github.com/sraoss/pg_ivm.git "$RUNNER_TEMP/pg_ivm"
-          make -C "$RUNNER_TEMP/pg_ivm" PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config
-          sudo make -C "$RUNNER_TEMP/pg_ivm" PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config install
+          make -C "$RUNNER_TEMP/pg_ivm" PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config with_llvm=no
+          sudo make -C "$RUNNER_TEMP/pg_ivm" PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config with_llvm=no install
           npm ci --prefix sqlite_ivm/bench/shared --ignore-scripts
       - name: PostgreSQL query semantics and recorded pg_ivm behavior
         env:
           IVM_POSTGRES_PREFIX: /usr/lib/postgresql/16
         run: bash sqlite_ivm/scripts/15_pg_baseline.sh "$RUNNER_TEMP/sqlite-ivm-features"
+      - name: PGlite query semantics and recorded bundled pg_ivm behavior
+        run: |
+          status=0
+          node sqlite_ivm/bench/42_feature_run.mjs pglite "$RUNNER_TEMP/sqlite-ivm-features/cases" "$RUNNER_TEMP/pglite-features" > "$RUNNER_TEMP/sqlite-ivm-features/pglite.jsonl" || status=$?
+          if [ "$status" -gt 1 ]; then exit "$status"; fi
+          node sqlite_ivm/bench/45_feature_report.mjs pglite-baseline "$RUNNER_TEMP/sqlite-ivm-features"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: sqlite-ivm-pg-feature-results
-          path: ${{ runner.temp }}/sqlite-ivm-features/pg.jsonl
+          path: |
+            ${{ runner.temp }}/sqlite-ivm-features/pg.jsonl
+            ${{ runner.temp }}/sqlite-ivm-features/pglite.jsonl
           if-no-files-found: error
