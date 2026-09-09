@@ -92,19 +92,65 @@ Same single failure as the known-red baseline
 
 ### byte identity, flag off
 
-- tiny probe: compiled `sf`-shape program with the branch stashed vs applied,
-  `diff` empty (`BYTE-IDENTICAL` receipt in commit 4cecf2e11's message).
-- corpus: PENDING sweep receipts below.
+- tiny probe at base 942cf1443: branch vs base compile, `diff` empty.
+- tiny probe after the rebase onto 65607a8d5: `BYTE-IDENTICAL-AT-NEW-BASE`,
+  same command pair.
+- corpus: delegated to PR CI (below).
 
-### sweep.sh (3 runs, flag off)
+### sweep.sh: wedged LOCALLY at three heads, not by this branch
 
-PENDING - run 1 in flight at save; runs recorded here when complete, plus
-`git diff --stat v6/prolog/compile/out` after each (empty = corpus-wide byte
-identity).
+Two whole-sweep attempts on this machine hit the stage-1 cap inside
+`recursive_enum_cyclic_values_store_and_render` (RSS 845MB climbing, ~98%
+CPU, corpus pace 41/min -> 2/min at fixture ~135). Single-file repro,
+`swipl -l sweep.pl -g "sweep:sweep_file([], 'conformance/fixtures/17_recursive_enum.pl', ...)"`
+under `timeout`:
+
+| head | branch commits present | 120-180s cap |
+| --- | --- | --- |
+| feature/shared-frontier-fable | yes | hang |
+| 65607a8d5 (origin/main) | no | hang |
+| 942cf1443 (prior main) | no | hang |
+
+942cf1443's own push CI is `success` (run 32312920646, 1h01m), so the same
+tree completes on a clean runner. The hang is machine-state (a `dl --lsp`
+process pinned at ~99% CPU all session, post-sleep memory pressure), present
+with the branch absent; flag-off inertness is proven by the byte probes and
+the plunit/conformance/gate baselines, and the corpus legs are delegated to
+this PR's CI, which runs the same sweep inside green-all. If PR CI's sweep
+leg diverges from main's, that verdict outranks this table.
 
 ### grade.sh
 
-PENDING - queued after sweep to avoid measuring under load.
+Delegated to PR CI with sweep, same reason: the wedge above makes any local
+whole-corpus number unreadable today (repo law: never measure from the whole
+gate under lane load).
+
+### rebase
+
+origin/main moved to 65607a8d5 (relational type applications) mid-arc; the
+branch was rebased onto it. One conflict, `plunit_tests.pl` include list:
+65607a8d5 deletes the `dl6c.test.pl` include, this branch adds
+`shared_frontier.test.pl`; resolution keeps both changes. A transient
+`git diff origin/main` reading of 1210 files / 133k deletions during the
+wedged sweep was stage 1's `clear_stale_compiled_outputs` mid-flight
+(tracked `compile/out/` cleared before regeneration); `git checkout --
+v6/prolog/compile/out` restored it and the final branch diff is 23 files,
++1031/-29, every file this arc's own.
+
+### fast gates re-run on the rebased head (65607a8d5 + 6)
+
+```
+PASS sf_arrivals ticks=true final=true search=true statements per_rel=60 shared=48 pinned=true
+PASS sf_keyed_replace ticks=true final=true search=true statements per_rel=37 shared=37 pinned=true
+PASS sf_join ticks=true final=true search=true statements per_rel=61 shared=45 pinned=true
+PASS sf_guard ticks=true final=true search=true statements per_rel=46 shared=38 pinned=true
+PASS sf_arrivals rust ticks identical (3 lines)
+PASS sf_guard rust ticks identical (2 lines)
+PASS sf_join rust ticks identical (2 lines)
+PASS sf_keyed_replace rust ticks identical (3 lines)
+cargo test --test shared_frontier: ok. 1 passed
+plunit shared_frontier block: 7 passed
+```
 
 ## Statement counts
 
