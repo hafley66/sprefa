@@ -163,7 +163,7 @@ gomod-parser = "0.5"
 regex = "1"
 # Repository/revision/path enumeration and Git batch reads live in the
 # standalone hafley-rs crate. Extract consumes its source coordinates and bytes.
-soopy = { path = "../../../hafley-rs/crates/soopy" }
+soopy = { path = "../../hafley-rs/crates/soopy" }
 # prost decodes index.scip for the ScipSource seam (commit 4c). v5's pairing
 # (scip = "0.7.1" + protobuf = "3.7"; src/scip_import.rs) was REJECTED here:
 # protobuf 3.7.2 hard-deps thiserror 1, a NEW dup against this tree's
@@ -194,7 +194,7 @@ quick_cache = "0.7"
 # and versions the engine crate carries (sprefa-engine-rs/Cargo.toml:36-37), so
 # one process linking both installs one subscriber that sees both crates.
 tracing = "0.1"
-hafley-observe = { path = "../../../hafley-rs/crates/hafley-observe", optional = true }
+hafley-observe = { path = "../../hafley-rs/crates/hafley-observe", optional = true }
 # getloadavg beside every timing, so a wall number reports the machine it was
 # taken on. Already unified in this lock through soopy -> rustix -> errno.
 libc = { version = "0.2", optional = true }
