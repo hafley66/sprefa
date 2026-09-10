@@ -1235,24 +1235,6 @@ lower_expression(node(NodeId, atom(Name)), Owner,
     lexical_atom_value(Reservation, NodeId, Owner, Value, Goals, Origins).
 lower_expression(node(_, atom(Name)), Owner, _,
                  name(Owner, Name), [], [], []).
-
-% The nearest binding is taken first and only then classified, so an outer
-% binding of a kind this position wants can never bypass a nearer one.
-lexical_atom_value(
-    reservation(BindOwner, Name, deferred_expression(_, _, Index), expression),
-    NodeId, Owner, Value, Goals, [NodeId]) :-
-    !,
-    Value = var(derived_lookup(NodeId)),
-    Goals = [pending_goal(
-                 positive,
-                 call(name(Owner, ':'),
-                      [ ref(BindOwner), const(Name), Value, const(Index)
-                      ]))].
-lexical_atom_value(reservation(_, _, target(Target), _), _, _,
-                   ref(Target), [], []) :-
-    !.
-lexical_atom_value(reservation(_, Name, _, _), _, Owner,
-                   name(Owner, Name), [], []).
 lower_expression(
     node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
     Owner, Environment, Value, Goals, Origins, Diagnostics) :-
@@ -1277,6 +1259,24 @@ lower_expression(node(_, form([])), Owner, _,
 lower_expression(node(NodeId, form(_)), _, _,
                  none, [], [],
                  [diagnostic(lower, NodeId, unresolved_expression_form)]).
+
+% The nearest binding is taken first and only then classified, so an outer
+% binding of a kind this position wants can never bypass a nearer one.
+lexical_atom_value(
+    reservation(BindOwner, Name, deferred_expression(_, _, Index), expression),
+    NodeId, Owner, Value, Goals, [NodeId]) :-
+    !,
+    Value = var(derived_lookup(NodeId)),
+    Goals = [pending_goal(
+                 positive,
+                 call(name(Owner, ':'),
+                      [ ref(BindOwner), const(Name), Value, const(Index)
+                      ]))].
+lexical_atom_value(reservation(_, _, target(Target), _), _, _,
+                   ref(Target), [], []) :-
+    !.
+lexical_atom_value(reservation(_, Name, _, _), _, Owner,
+                   name(Owner, Name), [], []).
 
 expression_callable(Name, Owner,
                     expression_environment(Reservations, Relations, _),
