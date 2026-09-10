@@ -25,6 +25,11 @@
               [assemble_generated_program/5]).
 :- use_module('../src/2_comptime/1d_host_planner',
               [validate_hosted_relations/4]).
+:- use_module('../src/2_comptime/1b_compiler_tracer',
+              [ reset_compile_trace/0,
+                with_compile_trace/2,
+                collected_compile_steps/1
+              ]).
 :- use_module('../src/3_emit/0_logical_program_reifier',
               [logical_program_rows/2]).
 :- use_module('../src/3_emit/1_artifact_emitter',
@@ -1339,6 +1344,374 @@ test(final_closure_rejects_declared_functional_key_conflicts) :-
                              [ref(owner), const(name), ref(second), const(1)]))
                    )].
 
+functional_key_diagnostics(KeySets, Rows, Diagnostics) :-
+    Relation = ref(kernel(':')),
+    validate_functional_rows([relation(Relation, 2, KeySets)], Rows,
+                             Diagnostics).
+
+test(functional_validation_empty_rows_has_no_diagnostics) :-
+    functional_key_diagnostics([[0]], [], Diagnostics),
+    Diagnostics == [].
+
+test(functional_validation_distinct_keys_has_no_diagnostics) :-
+    Relation = ref(kernel(':')),
+    Rows = [ call(Relation, [const(a), const(1)]),
+             call(Relation, [const(b), const(2)])
+           ],
+    functional_key_diagnostics([[0]], Rows, Diagnostics),
+    Diagnostics == [].
+
+test(functional_validation_equal_key_conflict_keeps_row_orientation) :-
+    Relation = ref(kernel(':')),
+    Left = call(Relation, [const(a), const(1)]),
+    Right = call(Relation, [const(a), const(2)]),
+    functional_key_diagnostics([[0]], [Left, Right], Diagnostics),
+    Diagnostics ==
+        [diagnostic(evaluate, none,
+                    functional_key_conflict(
+                        Relation, [0], [const(a)], Left, Right)) ].
+
+test(functional_validation_checks_every_declared_key) :-
+    Relation = ref(kernel(':')),
+    First = call(Relation, [const(a), const(1)]),
+    Second = call(Relation, [const(a), const(2)]),
+    Third = call(Relation, [const(b), const(1)]),
+    functional_key_diagnostics([[0], [1]], [First, Second, Third],
+                               Diagnostics),
+    Diagnostics ==
+        [ diagnostic(evaluate, none,
+                     functional_key_conflict(
+                         Relation, [0], [const(a)], First, Second)),
+          diagnostic(evaluate, none,
+                     functional_key_conflict(
+                         Relation, [1], [const(1)], First, Third))
+        ].
+
+test(functional_validation_reports_every_ordered_equal_key_pair) :-
+    Relation = ref(kernel(':')),
+    First = call(Relation, [const(a), const(1)]),
+    Second = call(Relation, [const(a), const(2)]),
+    Third = call(Relation, [const(a), const(3)]),
+    functional_key_diagnostics([[0]], [First, Second, Third], Diagnostics),
+    Diagnostics ==
+        [ diagnostic(evaluate, none,
+                     functional_key_conflict(
+                         Relation, [0], [const(a)], First, Second)),
+          diagnostic(evaluate, none,
+                     functional_key_conflict(
+                         Relation, [0], [const(a)], First, Third)),
+          diagnostic(evaluate, none,
+                     functional_key_conflict(
+                         Relation, [0], [const(a)], Second, Third))
+        ].
+
+test(functional_validation_scopes_conflicts_per_relation) :-
+    Keyed = ref(kernel(':')),
+    Unkeyed = ref(kernel(other)),
+    Relations = [ relation(Keyed, 2, [[0]]),
+                  relation(Unkeyed, 2, []) ],
+    Rows = [ call(Keyed, [const(a), const(1)]),
+             call(Unkeyed, [const(a), const(1)]),
+             call(Keyed, [const(a), const(2)]),
+             call(Unkeyed, [const(a), const(2)])
+           ],
+    validate_functional_rows(Relations, Rows, Diagnostics),
+    Diagnostics ==
+        [diagnostic(evaluate, none,
+                    functional_key_conflict(
+                        Keyed, [0], [const(a)],
+                        call(Keyed, [const(a), const(1)]),
+                        call(Keyed, [const(a), const(2)]))) ].
+
+test(functional_validation_missing_relation_has_no_rows) :-
+    Present = ref(kernel(':')),
+    Absent = ref(kernel(absent)),
+    Relations = [relation(Absent, 2, [[0]])],
+    Rows = [ call(Present, [const(a), const(1)]),
+             call(Present, [const(a), const(2)])
+           ],
+    validate_functional_rows(Relations, Rows, Diagnostics),
+    Diagnostics == [].
+
+test(functional_validation_relation_without_keys_is_skipped) :-
+    Relation = ref(kernel(':')),
+    Relations = [relation(Relation, 2, [])],
+    Rows = [ call(Relation, [const(a), const(1)]),
+             call(Relation, [const(a), const(2)])
+           ],
+    validate_functional_rows(Relations, Rows, Diagnostics),
+    Diagnostics == [].
+
+test(functional_validation_orientation_follows_sorted_rows) :-
+    Relation = ref(kernel(':')),
+    Left = call(Relation, [const(a), const(1)]),
+    Right = call(Relation, [const(a), const(2)]),
+    functional_key_diagnostics([[0]], [Right, Left], Diagnostics),
+    Diagnostics ==
+        [diagnostic(evaluate, none,
+                    functional_key_conflict(
+                        Relation, [0], [const(a)], Left, Right)) ].
+
+test(functional_validation_deduplicates_repeated_rows) :-
+    Relation = ref(kernel(':')),
+    Row = call(Relation, [const(a), const(1)]),
+    functional_key_diagnostics([[0]], [Row, Row], Diagnostics),
+    Diagnostics == [].
+
+test(functional_validation_repeated_rows_do_not_hide_conflicts) :-
+    Relation = ref(kernel(':')),
+    First = call(Relation, [const(a), const(1)]),
+    Second = call(Relation, [const(a), const(2)]),
+    functional_key_diagnostics([[0]], [First, Second, First], Diagnostics),
+    Diagnostics ==
+        [diagnostic(evaluate, none,
+                    functional_key_conflict(
+                        Relation, [0], [const(a)], First, Second)) ].
+
+with_indexed_rows(EvaluationId, Rows, Goal) :-
+    dl7_evaluator:install_lower_rows(Rows, EvaluationId, References),
+    setup_call_cleanup(true, call(Goal), maplist(erase, References)).
+
+test(evaluation_index_enumerates_free_row_and_relation) :-
+    EvaluationId = test_index_enumerate,
+    Relation = ref(kernel(indexed)),
+    Rows = [ call(Relation, [const(a)]),
+             call(Relation, [const(b)]),
+             call(Relation, [const(a), const(c)]) ],
+    with_indexed_rows(
+        EvaluationId, Rows,
+        once(( findall(Row,
+                       dl7_evaluator:evaluation_lower(EvaluationId, _, Row),
+                       FreeRows),
+               findall(Rel-Row,
+                       dl7_evaluator:evaluation_lower(EvaluationId, Rel, Row),
+                       FreePairs)
+             ))),
+    sort(Rows, SortedRows),
+    sort(FreeRows, SortedFreeRows),
+    SortedFreeRows == SortedRows,
+    findall(Relation-Row, member(Row, Rows), ExpectedPairs0),
+    sort(ExpectedPairs0, ExpectedPairs),
+    sort(FreePairs, SortedPairs),
+    SortedPairs == ExpectedPairs.
+
+test(evaluation_index_matches_partial_and_ground_arguments) :-
+    EvaluationId = test_index_partial,
+    Relation = ref(kernel(partial)),
+    First = call(Relation, [const(a), const(b)]),
+    Second = call(Relation, [const(a), const(c)]),
+    with_indexed_rows(
+        EvaluationId, [First, Second],
+        once(( findall(Found,
+                       ( Found = call(Relation, [const(a), _Tail]),
+                         dl7_evaluator:evaluation_lower(
+                             EvaluationId, Relation, Found) ),
+                       Partial),
+               findall(Found,
+                       ( Found = call(Relation, [const(a), const(b)]),
+                         dl7_evaluator:evaluation_lower(
+                             EvaluationId, Relation, Found) ),
+                       Ground)
+             ))),
+    Partial == [First, Second],
+    Ground == [First].
+
+test(evaluation_index_retains_arity_zero_and_extra_arguments) :-
+    EvaluationId = test_index_arities,
+    Zero = call(ref(kernel(zero)), []),
+    One = call(ref(kernel(one)), [const(a)]),
+    Five = call(ref(kernel(five)),
+                [const(a), const(b), const(c), const(d), const(e)]),
+    with_indexed_rows(
+        EvaluationId, [Zero, One, Five],
+        once(( findall(Row,
+                       dl7_evaluator:evaluation_lower(
+                           EvaluationId, ref(kernel(five)), Row),
+                       Fives),
+               dl7_evaluator:evaluation_lower(EvaluationId, _, Zero),
+               dl7_evaluator:evaluation_lower(
+                   EvaluationId, ref(kernel(five)),
+                   call(ref(kernel(five)),
+                        [const(a), const(b), const(c), const(d), const(e)])),
+               \+ dl7_evaluator:evaluation_lower(
+                      EvaluationId, ref(kernel(five)),
+                      call(ref(kernel(five)),
+                           [const(a), const(b), const(c), const(d),
+                            const(z)]))
+             ))),
+    Fives == [Five].
+
+test(evaluation_index_exact_unification_rejects_forced_collision) :-
+    EvaluationId = test_index_collision,
+    Relation = ref(kernel(collide)),
+    RealRow = call(Relation, [const(payload)]),
+    FakeRow = call(Relation, [const(other)]),
+    term_hash(const(payload), ForcedHash),
+    dl7_evaluator:install_lower_rows([RealRow], EvaluationId, [RealRef]),
+    assertz(dl7_evaluator:evaluation_lower_index(
+                EvaluationId, Relation,
+                ForcedHash, _, _, _, FakeRow),
+            FakeRef),
+    setup_call_cleanup(
+        true,
+        once(( findall(Found,
+                       ( Found = call(Relation, [const(payload)]),
+                         dl7_evaluator:evaluation_lower(
+                             EvaluationId, Relation, Found) ),
+                       PayloadRows),
+               findall(Found,
+                       dl7_evaluator:evaluation_lower(
+                           EvaluationId, Relation, Found),
+                       AllRows)
+             )),
+        ( erase(RealRef), erase(FakeRef) )),
+    PayloadRows == [RealRow],
+    sort(AllRows, SortedAll),
+    sort([RealRow, FakeRow], SortedExpected),
+    SortedAll == SortedExpected.
+
+test(evaluation_index_is_cleared_across_lifecycle_paths) :-
+    AggregateRules =
+        [ rule(call(ref(region_count),
+                    [var(region), aggregate(count, var(region))]),
+               [ checked_goal(positive,
+                              call(ref(sale), [var(region), var(item)])) ])
+        ],
+    AggregateSeeds = [ call(ref(sale), [const(east), const(one)]),
+                       call(ref(sale), [const(east), const(two)]) ],
+    evaluate(AggregateRules, AggregateSeeds, _, AggregateDiagnostics),
+    aggregate_all(count,
+                  dl7_evaluator:evaluation_lower_index(_, _, _, _, _, _, _),
+                  SuccessLeaks),
+    FailureRules =
+        [ rule(call(ref(left), [var(value)]),
+               [checked_goal(negative, call(ref(right), [var(value)]))]),
+          rule(call(ref(right), [var(value)]),
+               [checked_goal(positive, call(ref(left), [var(value)]))])
+        ],
+    evaluate(FailureRules, [], _, FailureDiagnostics),
+    aggregate_all(count,
+                  dl7_evaluator:evaluation_lower_index(_, _, _, _, _, _, _),
+                  FailureLeaks),
+    Observed = index_lifecycle(AggregateDiagnostics, SuccessLeaks,
+                               FailureDiagnostics, FailureLeaks),
+    Observed == index_lifecycle(
+                    [],
+                    0,
+                    [diagnostic(
+                         stratify, none,
+                         strict_dependency_cycle([ref(left), ref(right)]))],
+                    0).
+
+test(evaluation_index_isolates_simultaneous_evaluation_ids) :-
+    IdA = test_index_isolate_first,
+    IdB = test_index_isolate_second,
+    Relation = ref(kernel(isolated)),
+    RowA = call(Relation, [const(a)]),
+    RowB = call(Relation, [const(b)]),
+    dl7_evaluator:install_lower_rows([RowA], IdA, [ReferenceA]),
+    dl7_evaluator:install_lower_rows([RowB], IdB, [ReferenceB]),
+    setup_call_cleanup(
+        true,
+        once(( findall(Row, dl7_evaluator:evaluation_lower(IdA, Relation, Row),
+                       BeforeA),
+               findall(Row, dl7_evaluator:evaluation_lower(IdB, Relation, Row),
+                       BeforeB),
+               erase(ReferenceA),
+               findall(Row, dl7_evaluator:evaluation_lower(IdA, Relation, Row),
+                       AfterA),
+               findall(Row, dl7_evaluator:evaluation_lower(IdB, Relation, Row),
+                       AfterB)
+             )),
+        ( ( catch(erase(ReferenceA), _, true) ; true ),
+          ( catch(erase(ReferenceB), _, true) ; true ) )),
+    BeforeA == [RowA],
+    BeforeB == [RowB],
+    AfterA == [],
+    AfterB == [RowB].
+
+evaluator_trace_probe(Rules, Seeds) :-
+    Rules = [ rule(call(ref(derived), [var(x)]),
+                   [ checked_goal(positive, call(ref(seed), [var(x)])) ]) ],
+    Seeds = [ call(ref(seed), [const(a)]),
+              call(ref(seed), [const(b)]) ].
+
+with_dl7_trace(Value, Goal) :-
+    (   getenv('DL7_TRACE', Prior)
+    ->  true
+    ;   Prior = none
+    ),
+    setup_call_cleanup(
+        setenv('DL7_TRACE', Value),
+        call(Goal),
+        ( restore_dl7_trace(Prior),
+          reset_compile_trace )).
+
+restore_dl7_trace(none) :-
+    unsetenv('DL7_TRACE').
+restore_dl7_trace(Prior) :-
+    setenv('DL7_TRACE', Prior).
+
+trace_phase_steps(Steps, PhaseSteps) :-
+    findall(Phase-Step,
+            member(step(_, Phase, Step, _, _), Steps),
+            PhaseSteps0),
+    msort(PhaseSteps0, PhaseSteps).
+
+integer_metric(Metrics, Name, Value) :-
+    memberchk(metric(Name, Value), Metrics),
+    integer(Value).
+
+test(evaluator_trace_is_gated_on_an_active_compile_trace) :-
+    evaluator_trace_probe(Rules, Seeds),
+    with_dl7_trace('steps', (
+        reset_compile_trace,
+        once(evaluate([], [], _, _)),
+        aggregate_all(count,
+                      dl7_compiler_tracer:compile_step_row(_, _, _, _, _),
+                      StandaloneRows),
+        with_compile_trace(
+            dl7_evaluator_trace_gate_probe,
+            ( evaluate(Rules, Seeds, _, _),
+              collected_compile_steps(Steps) ))
+    )),
+    StandaloneRows == 0,
+    trace_phase_steps(Steps, PhaseSteps),
+    PhaseSteps == [ evaluator-evaluate_cleanup(0),
+                    evaluator-evaluate_collect(0),
+                    evaluator-evaluate_install(0)
+                  ],
+    memberchk(step(_, evaluator, evaluate_install(0), _, InstallMetrics), Steps),
+    memberchk(metric(stratum_rules, 1), InstallMetrics),
+    memberchk(metric(stratum_seeds, 2), InstallMetrics),
+    memberchk(metric(stratum_lower_rows, 0), InstallMetrics),
+    memberchk(step(_, evaluator, evaluate_cleanup(0), _, CleanupMetrics), Steps),
+    memberchk(metric(erased_clauses, 3), CleanupMetrics),
+    memberchk(metric(leftover_lower_rows, 0), CleanupMetrics).
+
+test(evaluator_trace_reports_stratum_metrics) :-
+    evaluator_trace_probe(Rules, Seeds),
+    with_dl7_trace('collect', (
+        with_compile_trace(
+            dl7_evaluator_metric_probe,
+            ( evaluate(Rules, Seeds, _, _),
+              collected_compile_steps(Steps) ))
+    )),
+    memberchk(step(_, evaluator, evaluate_install(0), _, InstallMetrics), Steps),
+    InstallMetrics == [ metric(stratum_rules, 1),
+                        metric(stratum_seeds, 2),
+                        metric(stratum_lower_rows, 0)
+                      ],
+    memberchk(step(_, evaluator, evaluate_collect(0), _, CollectMetrics), Steps),
+    memberchk(metric(stratum_closure_rows, 5), CollectMetrics),
+    integer_metric(CollectMetrics, global_table_answers, _),
+    integer_metric(CollectMetrics, global_complete_calls, _),
+    integer_metric(CollectMetrics, global_table_space_bytes, _),
+    memberchk(step(_, evaluator, evaluate_cleanup(0), _, CleanupMetrics), Steps),
+    CleanupMetrics == [ metric(erased_clauses, 3),
+                        metric(leftover_lower_rows, 0)
+                      ].
+
 test(generated_program_rejects_identity_collisions_and_orphan_bodies) :-
     Existing = ref(existing),
     BaseRelations = [relation(Existing, 1, [])],
@@ -2246,7 +2619,8 @@ evaluator_snapshot(
               temporary_requests(RequestFacts))) :-
     aggregate_all(count, dl7_evaluator:evaluation_rule(_, _, _), RuleFacts),
     aggregate_all(count, dl7_evaluator:evaluation_seed(_, _, _), SeedFacts),
-    aggregate_all(count, dl7_evaluator:evaluation_lower(_, _, _), LowerFacts),
+    aggregate_all(count, dl7_evaluator:evaluation_lower_index(_, _, _, _, _, _, _),
+                  LowerFacts),
     aggregate_all(count, dl7_evaluator:evaluation_request(_, _),
                   RequestFacts).
 

@@ -532,6 +532,25 @@ compound_edge_target(deferred_expression(TargetNode), Owner, Environment,
                      TargetValue, TargetGoals, GoalNodes, Diagnostics),
     compound_edge_target_outcome(
         Diagnostics, TargetValue, TargetGoals, GoalNodes, Outcome).
+% An atom target under a compound label stays structural unless the nearest
+% binding it names is a deferred expression, which is then read through the
+% same deferred lookup the atom-label path uses. A nearer non-deferred binding
+% wins, so an ordinary primitive, product or literal target is unchanged.
+compound_edge_target(name(LookupOwner, Name), _, Environment,
+                     Outcome, []) :-
+    Environment = expression_environment(Reservations, _, _),
+    scoped_reservation(
+        LookupOwner, Name, Reservations, [],
+        reservation(BindOwner, Name,
+                    deferred_expression(_, _, Index), expression)),
+    !,
+    Value = var(derived_lookup(compound_target(Name))),
+    TargetGoals = [pending_goal(
+                       positive,
+                       call(name(LookupOwner, ':'),
+                            [ref(BindOwner), const(Name), Value,
+                             const(Index)]))],
+    compound_edge_target_outcome([], Value, TargetGoals, [], Outcome).
 compound_edge_target(TargetTerm, _, _, structural(RuleTarget), []) :-
     edge_rule_target(TargetTerm, RuleTarget).
 
@@ -895,10 +914,7 @@ lower_edge_bind(BindNode, Owner, ModuleIdentity, Index, Result) :-
 % expression_bind_target/1 is the same test the atom-label path applies at
 % lower_bind/5, so both label forms accept the same target forms.
 compound_bind_target_result(TargetNode, Owner, ModuleIdentity, Result) :-
-    (   TargetNode = node(_, atom(_))
-    ->  Result = ok(deferred_expression(TargetNode), reference,
-                    [], [], [], [], [])
-    ;   expression_bind_target(TargetNode)
+    (   expression_bind_target(TargetNode)
     ->  Result = ok(deferred_expression(TargetNode), reference,
                     [], [], [], [], [])
     ;   lower_target(TargetNode, Owner, ModuleIdentity, Result)
