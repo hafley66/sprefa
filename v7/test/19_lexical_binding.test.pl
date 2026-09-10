@@ -111,11 +111,72 @@ test(same_owner_product_precedence_is_unchanged) :-
     Reservation == reservation(owner(scope), 'Name',
                                target(owner(product)), product).
 
-test(deferred_expression_alias_measurement_remains_unresolved) :-
-    compiled_fixture('6_deferred_alias_measure.dl7', _, Diagnostics),
-    fixture_path('6_deferred_alias_measure.dl7', Path),
-    Diagnostics == [diagnostic(check, reader_node(Path, 11),
-                               unresolved_name(field))].
+test(deferred_expression_aliases_reuse_final_identity) :-
+    compiled_fixture('6_deferred_alias_measure.dl7', Rows, []),
+    named_owner(Rows, 'Holder', Holder),
+    named_owner(Rows, 'Option', Option),
+    named_owner(Rows, 'Key', Key),
+    named_owner(Rows, 'KeyOptions', KeyOptions),
+    Expected = ref(application(Option, [primitive(text)])),
+    owner_edges(Rows, Holder, Edges),
+    Edges == [ edge(0, const(direct), Expected),
+               edge(1, const(alias_a), Expected),
+               edge(2, const(alias_b), Expected),
+               edge(3, const(chain), Expected),
+               edge(4,
+                    ref(application(Key, ["compound", KeyOptions])),
+                    Expected)
+             ].
+
+test(promoted_alias_uses_nearest_owner_index_and_alias_origins) :-
+    Alias = reservation(holder, field, name(holder, 'Name'), reference),
+    Parent = reservation(module, 'Holder', target(holder), product),
+    Terminal = reservation(
+                   module, 'Name',
+                   deferred_expression(target_node, terminal_bind, 4),
+                   expression),
+    Local = [Alias, Parent],
+    Visible = [Alias, Parent, Terminal],
+    AliasEdge = pending_edge(holder, field, name(holder, 'Name'), 7),
+    ParentEdge = pending_edge(module, 'Holder', target(holder), 2),
+    TerminalEdge = pending_edge(
+                       module, 'Name', deferred_expression(target_node), 4),
+    Edges = [AliasEdge, ParentEdge],
+    VisibleEdges = [AliasEdge, ParentEdge, TerminalEdge],
+    Origins = [origin(edge(holder, field, 7), alias_bind)],
+    dl7_lowerer:promote_deferred_aliases(
+        Local, Visible, Edges, VisibleEdges, Origins,
+        Work, Promoted, PromotedEdges, Promotions),
+    dl7_lowerer:promoted_alias_rules(
+        Promotions, 0, Rules, RuleOrigins, Next),
+    Work == [Parent],
+    Promoted == [ reservation(
+                       holder, field,
+                       deferred_expression(
+                           node(alias_bind, atom('Name')), alias_bind, 7),
+                       expression),
+                  Parent
+                ],
+    PromotedEdges == [ pending_edge(
+                           holder, field,
+                           deferred_expression(
+                               node(alias_bind, atom('Name'))), 7),
+                       ParentEdge
+                     ],
+    Rules == [rule(
+                   call(name(holder, ':'),
+                        [ref(holder), const(field),
+                         var(derived_bind(alias_bind)), const(7)]),
+                   [pending_goal(
+                        positive,
+                        call(name(holder, ':'),
+                             [ ref(module), const('Name'),
+                               var(derived_bind(alias_bind)), const(4)
+                             ]))])],
+    RuleOrigins == [ origin(rule(0), alias_bind),
+                     origin(goal(0, 0), alias_bind)
+                   ],
+    Next == 1.
 
 fixture_path(Name, Path) :-
     test_directory(TestDirectory),
