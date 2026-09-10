@@ -71,23 +71,170 @@ lower_after_declarations(
     append(Reservations, ImportedReservations, VisibleReservations),
     append(Relations, ImportedRelations, VisibleRelations),
     append(Edges, ImportedEdges, VisibleEdges),
+    promote_deferred_aliases(
+        Reservations, VisibleReservations, Edges, VisibleEdges,
+        DeclarationOrigins,
+        DerivedReservations, PromotedReservations, PromotedEdges,
+        Promotions),
+    append(PromotedReservations, ImportedReservations,
+           PromotedVisibleReservations),
+    append(PromotedEdges, ImportedEdges, PromotedVisibleEdges),
     Environment = expression_environment(
-                      VisibleReservations, VisibleRelations, VisibleEdges),
-    lower_derived_bind_rules(CallPolicy, Reservations, Environment, 0,
+                      PromotedVisibleReservations, VisibleRelations,
+                      PromotedVisibleEdges),
+    lower_derived_bind_rules(CallPolicy, DerivedReservations, Environment,
+                             0,
                              DerivedResult),
-    (   DerivedResult = ok(DerivedRules, DerivedOrigins)
-    ->  length(DerivedRules, RuleIndex),
+    (   DerivedResult = ok(OtherDerivedRules, OtherDerivedOrigins)
+    ->  length(OtherDerivedRules, AliasRuleIndex),
+        promoted_alias_rules(
+            Promotions, AliasRuleIndex,
+            AliasRules, AliasOrigins, _),
+        append(OtherDerivedRules, AliasRules, DerivedRules),
+        append(OtherDerivedOrigins, AliasOrigins, DerivedOrigins),
+        length(DerivedRules, RuleIndex),
         lower_executables(CallPolicy, Forms, ModuleOwner, Environment,
                           RuleIndex, ExecutableResult),
         finish_lowered_executables(
             ExecutableResult, DerivedRules, DerivedOrigins,
-            Nodes0, Edges, Relations, DeclarationOrigins, ModuleOwner,
+            Nodes0, PromotedEdges, Relations, DeclarationOrigins, ModuleOwner,
             Program, Origins, Diagnostics)
     ;   DerivedResult = error(Diagnostic),
         Program = [],
         Origins = [],
         Diagnostics = [Diagnostic]
     ).
+
+promote_deferred_aliases(
+    Reservations, VisibleReservations, Edges, VisibleEdges,
+    DeclarationOrigins,
+    DerivedReservations, PromotedReservations, PromotedEdges,
+    Promotions) :-
+    findall(Promotion,
+            deferred_alias_promotion(
+                Reservations, VisibleReservations, VisibleEdges,
+                DeclarationOrigins, Promotion),
+            Promotions),
+    promote_alias_reservations(
+        Reservations, Promotions,
+        DerivedReservations, PromotedReservations),
+    promote_alias_edges(Edges, Promotions, PromotedEdges).
+
+deferred_alias_promotion(
+    Reservations, VisibleReservations, VisibleEdges, DeclarationOrigins,
+    promoted_alias(Owner, Name, ReferenceOwner, ReferenceName, Index,
+                   BindNodeId, ImmediateOwner, ImmediateIndex,
+                   TerminalNode)) :-
+    member(reservation(Owner, Name,
+                       name(ReferenceOwner, ReferenceName), reference),
+           Reservations),
+    memberchk(pending_edge(Owner, Name,
+                           name(ReferenceOwner, ReferenceName), Index),
+              VisibleEdges),
+    memberchk(origin(edge(Owner, Name, Index), BindNodeId),
+              DeclarationOrigins),
+    scoped_alias_target(
+        ReferenceOwner, ReferenceName,
+        VisibleReservations, VisibleEdges, [],
+        ImmediateOwner, ImmediateIndex, TerminalNode).
+
+scoped_alias_target(
+    Owner, Name, Reservations, Edges, Visited,
+    ImmediateOwner, ImmediateIndex, TerminalNode) :-
+    scoped_reservation(Owner, Name, Reservations, [], Immediate),
+    Immediate = reservation(ImmediateOwner, Name, _, _),
+    reservation_edge_index(Immediate, Edges, ImmediateIndex),
+    alias_terminal_deferred(
+        Immediate, Reservations, Edges,
+        [ImmediateOwner-Name | Visited], TerminalNode).
+
+alias_terminal_deferred(
+    reservation(_, _, deferred_expression(Node, _, _), expression),
+    _, _, _, Node) :-
+    !.
+alias_terminal_deferred(
+    reservation(_, _, name(Owner, Name), reference),
+    Reservations, Edges, Visited, TerminalNode) :-
+    \+ memberchk(Owner-Name, Visited),
+    scoped_reservation(Owner, Name, Reservations, [], Reservation),
+    Reservation = reservation(NextOwner, Name, _, _),
+    alias_terminal_deferred(
+        Reservation, Reservations, Edges,
+        [NextOwner-Name | Visited], TerminalNode).
+
+reservation_edge_index(
+    reservation(Owner, Name, ReservationTarget, _), Edges, Index) :-
+    reservation_pending_target(ReservationTarget, EdgeTarget),
+    memberchk(pending_edge(Owner, Name, EdgeTarget, Index), Edges).
+
+reservation_pending_target(
+    deferred_expression(Node, _, _), deferred_expression(Node)) :-
+    !.
+reservation_pending_target(Target, Target).
+
+promote_alias_reservations([], _, [], []).
+promote_alias_reservations(
+    [Reservation | Reservations], Promotions,
+    DerivedReservations, [Promoted | PromotedReservations]) :-
+    (   Reservation = reservation(Owner, Name, _, reference),
+        memberchk(
+            promoted_alias(Owner, Name, _, ReferenceName, Index,
+                           BindNodeId, _, _, _),
+            Promotions)
+    ->  Promoted = reservation(
+                       Owner, Name,
+                       deferred_expression(
+                           node(BindNodeId, atom(ReferenceName)),
+                           BindNodeId, Index),
+                       expression),
+        DerivedReservations = RestDerived
+    ;   Promoted = Reservation,
+        DerivedReservations = [Reservation | RestDerived]
+    ),
+    promote_alias_reservations(
+        Reservations, Promotions, RestDerived, PromotedReservations).
+
+promote_alias_edges([], _, []).
+promote_alias_edges([Edge | Edges], Promotions,
+                    [Promoted | PromotedEdges]) :-
+    (   Edge = pending_edge(Owner, Name, name(_, _), Index),
+        memberchk(
+            promoted_alias(Owner, Name, _, ReferenceName, Index, BindNodeId,
+                           _, _, _),
+            Promotions)
+    ->  Promoted = pending_edge(
+                       Owner, Name,
+                       deferred_expression(
+                           node(BindNodeId, atom(ReferenceName))),
+                       Index)
+    ;   Promoted = Edge
+    ),
+    promote_alias_edges(Edges, Promotions, PromotedEdges).
+
+promoted_alias_rules([], RuleIndex, [], [], RuleIndex).
+promoted_alias_rules(
+    [promoted_alias(Owner, Name, ReferenceOwner, ReferenceName, Index,
+                    BindNodeId,
+                    ImmediateOwner, ImmediateIndex, _) | Promotions],
+    RuleIndex, [Rule | Rules], RuleOrigins, NextRuleIndex) :-
+    Value = var(derived_bind(BindNodeId)),
+    Rule = rule(
+               call(name(Owner, ':'),
+                    [ref(Owner), const(Name), Value, const(Index)]),
+               [pending_goal(
+                    positive,
+                    call(name(ReferenceOwner, ':'),
+                         [ ref(ImmediateOwner), const(ReferenceName),
+                           Value, const(ImmediateIndex)
+                         ]))]),
+    OwnOrigins = [ origin(rule(RuleIndex), BindNodeId),
+                   origin(goal(RuleIndex, 0), BindNodeId)
+                 ],
+    FollowingRuleIndex is RuleIndex + 1,
+    promoted_alias_rules(
+        Promotions, FollowingRuleIndex,
+        Rules, RestOrigins, NextRuleIndex),
+    append(OwnOrigins, RestOrigins, RuleOrigins).
 
 finish_lowered_executables(
     ok(Seeds, AuthoredRules, ExecutableOrigins),
@@ -385,6 +532,25 @@ compound_edge_target(deferred_expression(TargetNode), Owner, Environment,
                      TargetValue, TargetGoals, GoalNodes, Diagnostics),
     compound_edge_target_outcome(
         Diagnostics, TargetValue, TargetGoals, GoalNodes, Outcome).
+% An atom target under a compound label stays structural unless the nearest
+% binding it names is a deferred expression, which is then read through the
+% same deferred lookup the atom-label path uses. A nearer non-deferred binding
+% wins, so an ordinary primitive, product or literal target is unchanged.
+compound_edge_target(name(LookupOwner, Name), _, Environment,
+                     Outcome, []) :-
+    Environment = expression_environment(Reservations, _, _),
+    scoped_reservation(
+        LookupOwner, Name, Reservations, [],
+        reservation(BindOwner, Name,
+                    deferred_expression(_, _, Index), expression)),
+    !,
+    Value = var(derived_lookup(compound_target(Name))),
+    TargetGoals = [pending_goal(
+                       positive,
+                       call(name(LookupOwner, ':'),
+                            [ref(BindOwner), const(Name), Value,
+                             const(Index)]))],
+    compound_edge_target_outcome([], Value, TargetGoals, [], Outcome).
 compound_edge_target(TargetTerm, _, _, structural(RuleTarget), []) :-
     edge_rule_target(TargetTerm, RuleTarget).
 
@@ -1230,24 +1396,9 @@ lower_expression(node(_, literal(Value)), _, _,
 lower_expression(node(NodeId, atom(Name)), Owner,
                  expression_environment(Reservations, _, _),
                  Value, Goals, Origins, []) :-
-    scoped_deferred_reservation(
-        Owner, Name, Reservations, [],
-        reservation(BindOwner, Name,
-                    deferred_expression(_, _, Index), expression)),
+    scoped_reservation(Owner, Name, Reservations, [], Reservation),
     !,
-    Value = var(derived_lookup(NodeId)),
-    Goals = [pending_goal(
-                 positive,
-                 call(name(Owner, ':'),
-                      [ ref(BindOwner), const(Name), Value, const(Index)
-                      ]))],
-    Origins = [NodeId].
-lower_expression(node(_, atom(Name)), Owner,
-                 expression_environment(Reservations, _, _),
-                 ref(Target), [], [], []) :-
-    scoped_reservation(Owner, Name, Reservations, [],
-                       reservation(_, Name, target(Target), _)),
-    !.
+    lexical_atom_value(Reservation, NodeId, Owner, Value, Goals, Origins).
 lower_expression(node(_, atom(Name)), Owner, _,
                  name(Owner, Name), [], [], []).
 lower_expression(
@@ -1275,49 +1426,33 @@ lower_expression(node(NodeId, form(_)), _, _,
                  none, [], [],
                  [diagnostic(lower, NodeId, unresolved_expression_form)]).
 
+% The nearest binding is taken first and only then classified, so an outer
+% binding of a kind this position wants can never bypass a nearer one.
+lexical_atom_value(
+    reservation(BindOwner, Name, deferred_expression(_, _, Index), expression),
+    NodeId, Owner, Value, Goals, [NodeId]) :-
+    !,
+    Value = var(derived_lookup(NodeId)),
+    Goals = [pending_goal(
+                 positive,
+                 call(name(Owner, ':'),
+                      [ ref(BindOwner), const(Name), Value, const(Index)
+                      ]))].
+lexical_atom_value(reservation(_, _, target(Target), _), _, _,
+                   ref(Target), [], []) :-
+    !.
+lexical_atom_value(reservation(_, Name, _, _), _, Owner,
+                   name(Owner, Name), [], []).
+
 expression_callable(Name, Owner,
                     expression_environment(Reservations, Relations, _),
                     Result) :-
-    (   scoped_callable_reservation(
-            Owner, Name, Reservations, Relations, [], Reservation)
-    ->  expression_reserved_callable(Reservation, Relations, Name, Result)
-    ;   scoped_reservation(Owner, Name, Reservations, [], Reservation)
+    (   scoped_reservation(Owner, Name, Reservations, [], Reservation)
     ->  expression_reserved_callable(Reservation, Relations, Name, Result)
     ;   kernel_relation(Name, Arity)
     ->  kernel_relation_keys_for_expression(Name, KeySets),
         Result = ok(kernel(Name), Arity, KeySets)
     ;   Result = error(undeclared_relation(Name))
-    ).
-
-scoped_deferred_reservation(
-    Owner, Name, Reservations, Visited, Reservation) :-
-    \+ memberchk(Owner, Visited),
-    (   memberchk(
-            reservation(Owner, Name,
-                        deferred_expression(Target, NodeId, Index),
-                        expression),
-            Reservations)
-    ->  Reservation = reservation(
-                           Owner, Name,
-                           deferred_expression(Target, NodeId, Index),
-                           expression)
-    ;   reservation_parent(Owner, Reservations, Parent),
-        scoped_deferred_reservation(
-            Parent, Name, Reservations, [Owner | Visited], Reservation)
-    ).
-
-scoped_callable_reservation(
-    Owner, Name, Reservations, Relations, Visited, Reservation) :-
-    \+ memberchk(Owner, Visited),
-    (   member(reservation(Owner, Name, target(Callable), Kind),
-               Reservations),
-        callable_reservation_kind(Kind),
-        memberchk(relation(Callable, _, _), Relations)
-    ->  Reservation = reservation(Owner, Name, target(Callable), Kind)
-    ;   reservation_parent(Owner, Reservations, Parent),
-        scoped_callable_reservation(
-            Parent, Name, Reservations, Relations, [Owner | Visited],
-            Reservation)
     ).
 
 callable_reservation_kind(product).

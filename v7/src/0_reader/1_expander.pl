@@ -33,6 +33,16 @@ expansion_result(ok(Forms, GeneratedRows, ExpansionRows), SourceRows,
 expansion_result(error(Diagnostic), _,
                  [], [], [], [Diagnostic]).
 
+% AvailableRows is the full reader row set threaded to every node so a minted
+% node can recover its input source row. Appending an empty generated set to it
+% at every node is O(nodes x rows), so the empty case is the identity and skips
+% the traversal. A non-empty set (a real rewrite) still appends in order.
+append_rows(Base, Extra, Combined) :-
+    (   Extra == []
+    ->  Combined = Base
+    ;   append(Base, Extra, Combined)
+    ).
+
 expand_nodes([], _, ok([], [], [])).
 expand_nodes([Node | Nodes], AvailableRows, Result) :-
     expand_node(Node, AvailableRows, NodeResult),
@@ -41,7 +51,7 @@ expand_nodes([Node | Nodes], AvailableRows, Result) :-
 continue_nodes(_, _, error(Diagnostic), error(Diagnostic)).
 continue_nodes(Nodes, AvailableRows,
                ok(Node, NodeRows, NodeExpansions), Result) :-
-    append(AvailableRows, NodeRows, RowsForRest),
+    append_rows(AvailableRows, NodeRows, RowsForRest),
     expand_nodes(Nodes, RowsForRest, RestResult),
     (   RestResult = ok(RestNodes, RestRows, RestExpansions)
     ->  append(NodeRows, RestRows, GeneratedRows),
@@ -53,7 +63,7 @@ continue_nodes(Nodes, AvailableRows,
 expand_node(Node0, AvailableRows, Result) :-
     expand_node_children(Node0, AvailableRows, ChildResult),
     (   ChildResult = ok(Node, ChildRows, ChildExpansions)
-    ->  append(AvailableRows, ChildRows, RowsForRewrite),
+    ->  append_rows(AvailableRows, ChildRows, RowsForRewrite),
         node_tree(Node, Tree),
         rewrite_fixpoint(Node, Tree, RowsForRewrite, 1, [Tree], [],
                          RewriteResult),
@@ -99,7 +109,7 @@ apply_rewrite(node(InputNodeId, _), Replacement, MacroIdentity, AvailableRows,
               Wave, Seen, MacroTrace, Result) :-
     mint_tree(Replacement, InputNodeId, MacroIdentity, Wave, 0,
               AvailableRows, MintedNode, MintedRows, MintedExpansions, _),
-    append(AvailableRows, MintedRows, RowsWithMinted),
+    append_rows(AvailableRows, MintedRows, RowsWithMinted),
     expand_node_children(MintedNode, RowsWithMinted, ChildResult),
     continue_rewrite(ChildResult, MintedRows, MintedExpansions,
                      MacroIdentity, Wave, Seen, MacroTrace,
@@ -110,8 +120,8 @@ continue_rewrite(error(Diagnostic), _, _, _, _, _, _, _,
 continue_rewrite(ok(Node, ChildRows, ChildExpansions),
                  MintedRows, MintedExpansions,
                  MacroIdentity, Wave, Seen, MacroTrace,
-                 AvailableRows, Result) :-
-    append(AvailableRows, ChildRows, RowsForNext),
+                  AvailableRows, Result) :-
+    append_rows(AvailableRows, ChildRows, RowsForNext),
     node_tree(Node, NextTree),
     NextWave is Wave + 1,
     rewrite_fixpoint(Node, NextTree, RowsForNext, NextWave,

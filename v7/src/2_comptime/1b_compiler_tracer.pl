@@ -96,8 +96,9 @@ run_compile_step(Phase, Step, Goal, MetricsGoal) :-
 
 finish_compile_step(Phase, Step, Before, MetricsGoal) :-
     capture_measurement(Before, Measurement),
-    (   catch(call(MetricsGoal, Metrics), _, fail)
-    ->  true
+    (   catch(call(MetricsGoal, Collected), _, fail),
+        is_list(Collected)
+    ->  Metrics = Collected
     ;   Metrics = []
     ),
     next_compile_trace_sequence(Sequence),
@@ -105,6 +106,7 @@ finish_compile_step(Phase, Step, Before, MetricsGoal) :-
                 Sequence, Phase, Step, Measurement, Metrics)).
 
 compile_step_trace_on :-
+    active_compile_trace(_),
     compile_trace_mode(Mode),
     memberchk(Mode, [steps, json, collect]).
 

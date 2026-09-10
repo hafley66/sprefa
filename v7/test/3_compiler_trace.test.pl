@@ -63,4 +63,46 @@ test(json_trace_preserves_phase_step_and_metric_fields) :-
         ),
         ( exists_file(TraceFile) -> delete_file(TraceFile) ; true )).
 
+with_dl7_trace(Value, Goal) :-
+    (   getenv('DL7_TRACE', Prior)
+    ->  true
+    ;   Prior = none
+    ),
+    setup_call_cleanup(
+        setenv('DL7_TRACE', Value),
+        call(Goal),
+        ( restore_dl7_trace(Prior),
+          reset_compile_trace )).
+
+restore_dl7_trace(none) :-
+    unsetenv('DL7_TRACE').
+restore_dl7_trace(Prior) :-
+    setenv('DL7_TRACE', Prior).
+
+metrics_collected(MetricsGoal, Metrics) :-
+    with_compile_trace(
+        metrics_probe,
+        ( run_compile_step(comptime, metric_case, true, MetricsGoal),
+          collected_compile_steps([step(_, comptime, metric_case, _, Metrics)])
+        )).
+
+metrics_throw(_) :-
+    throw(metrics_throw).
+metrics_fail(_) :-
+    fail.
+metrics_malformed(not_a_list).
+metrics_value([metric(kept, 1)]).
+
+test(step_metrics_fallback_covers_throw_fail_and_malformed) :-
+    with_dl7_trace('collect', (
+        metrics_collected(metrics_throw, ThrowMetrics),
+        metrics_collected(metrics_fail, FailMetrics),
+        metrics_collected(metrics_malformed, MalformedMetrics),
+        metrics_collected(metrics_value, ValueMetrics)
+    )),
+    ThrowMetrics == [],
+    FailMetrics == [],
+    MalformedMetrics == [],
+    ValueMetrics == [metric(kept, 1)].
+
 :- end_tests(dl7_compiler_trace).

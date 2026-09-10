@@ -279,11 +279,12 @@ resolve_target(name(Owner, Name), Edges, Nodes, Visited, Resolved) :-
 % Local owner edge first, then the reverse binding edge to the containing
 % owner; a module owner resolves the four pinned primitive names.
 resolve_name(Owner, Name, Edges, Nodes, Visited, Resolved) :-
-    \+ memberchk(Owner, Visited),
+    \+ memberchk(Owner-Name, Visited),
     (   memberchk(pending_edge(Owner, Name, Target, _), Edges)
-    ->  resolve_target(Target, Edges, Nodes, [Owner | Visited], Resolved)
+    ->  resolve_target(Target, Edges, Nodes, [Owner-Name | Visited], Resolved)
     ;   parent_owner(Owner, Edges, Parent),
-        resolve_name(Parent, Name, Edges, Nodes, [Owner | Visited], Resolved)
+        resolve_name(Parent, Name, Edges, Nodes, [Owner-Name | Visited],
+                     Resolved)
     ;   memberchk(module(Owner), Nodes),
         kernel_relation(Name, _),
         Resolved = ref(kernel(Name))
