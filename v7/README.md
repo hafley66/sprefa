@@ -43,6 +43,11 @@ over the type graph select dictionaries and product references for a renderer.
 Persistent local IDs, semantic identities, and source revision membership have
 separate roles. This storage choice does not change product `apply` semantics.
 
+The [DL6 userland catalog](applications/dl6/README.md) exercises selective
+`Interned text` fields, shared dictionary identity, and reference layouts.
+Run `cd v7 && just dl6-demo` to print its derived fields and wrapper mapping.
+Its artifacts describe storage; this example does not allocate persistent IDs.
+
 Initial boundary under examination:
 
 ```text

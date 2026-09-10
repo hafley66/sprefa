@@ -46,6 +46,20 @@ sqlite-query-test:
 interned-storage-test:
     swipl -q -s "{{ v7 }}/test/15_interned_storage.test.pl" -g run_tests -t halt
 
+# Verify one storage row per field when a plain-selected target has no
+# dictionary maps its target.
+storage-plain-field-test:
+    swipl -q -s "{{ v7 }}/test/16_storage_plain_field.test.pl" -g run_tests -t halt
+
+# Verify the DL6 catalog: one wrapper specialization across two owners,
+# selective dictionary storage, and full-versus-closed artifact equality.
+dl6-interned-test:
+    swipl -q -s "{{ v7 }}/test/17_dl6_interned.test.pl" -g run_tests -t halt
+
+# Print the DL6 catalog's storage layout as one readable row per field.
+dl6-demo:
+    swipl -q -s "{{ v7 }}/applications/dl6/1_demo.pl" -- "{{ v7 }}"
+
 # Emit the source-visible positive-rule slice as the operator JSON consumed by
 # dd-runner's pure RAM kernel. The source supplies the hosted TSI relation set.
 dbsp-plan program source:

@@ -167,13 +167,16 @@
     (storage_policy_dictionary ?Policy ?Scalar ?Dictionary)
     (not (storage_plain_field ?Policy ?Owner ?Label)))
 
+; A plain-selected field claims its own row. Without this guard the fallback
+; also fires whenever no dictionary maps the target, giving two rows.
 (<- (storage_field_layout
        ?Policy ?Owner ?Label ?Position ?Target "scalar" ?Target)
     (storage_reachable ?Policy ?Owner ?OwnerKind)
     (edge_snapshot ?Owner ?Label ?Target ?Position)
     (not (product ?Target))
     (not (sum ?Target))
-    (not (storage_dictionary_target ?Policy ?Target)))
+    (not (storage_dictionary_target ?Policy ?Target))
+    (not (storage_plain_field ?Policy ?Owner ?Label)))
 
 (<- (storage_field_layout
        ?Policy ?Owner ?Label ?Position ?Target "inline" ?Target)
