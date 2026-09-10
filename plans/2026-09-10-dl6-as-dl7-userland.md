@@ -42,6 +42,39 @@ remains preserved. Legacy Rust engine structs impose no userland requirements.
 
 ## Signatures, lifetime and storage
 
+### User-approved binding symmetry, September 10 checkpoint
+
+After reviewing direct fields, compound Key labels and named application aliases,
+Chris approved two compiler-binding corrections: compound labels accept the same
+type-expression targets as ordinary labels; references to named expressions
+resolve to the expression result with the same canonical target identity.
+Examples `(name : (Option text))`, `((Key "name" Options) : (Option text))`
+and `(name : Name)` after `(Name : (Option text))` must resolve symmetrically.
+Colon retains its existing sole-infix surface convention. No new reader form.
+
+This is the specific exception to the compiler edit hold above. The binding
+lane must propose its minimal implementation for independent review first.
+Arbitrary callable-value dispatch, multiple-output expression syntax, modes,
+new functional-key enforcement, Option shape and phase changes remain separate
+design questions. Existing full relation calls retain all tuple positions.
+
+Integration scope: compound-label expression targets, including partial targets,
+are implemented. Inspection found separate nearest-binding and reference-chain
+contracts, subsequently approved by Chris after concrete examples:
+`Name` in a nearer scope must not be skipped to find an outer expression, and
+reference traversal needs to distinguish visited bindings rather than rejecting
+another name in a visited scope. Both are a follow-up to the integrated Fix 1
+checkpoint. Bindings require explicit existing colon declarations; unknown bare
+names stay errors. Cycle termination retains existing diagnostics. No implicit
+declaration, lookup opt-out or new inline-binding syntax was authorized by this
+choice. A dedicated cycle diagnostic remains a separate choice.
+
+Measured handoff correction: the existing storage fixture emits exactly the same
+six artifacts through full and compiler-closed views, with zero differences and
+zero diagnostics. Snapshot stripping does not require an artifact workaround for
+this fixture. A separate measured userland bug is the scalar fallback missing
+the plain-field exclusion, allowing both scalar and inline layouts for one int.
+
 Existing kernel: intern(+Constructor,+Arguments,-Identity), cons/3, :/4 and
 edge_snapshot/4. Intern builds application(Constructor,Arguments) symbolically.
 Proposed userland: Interned(+LogicalType,-SpecializedType), using the existing

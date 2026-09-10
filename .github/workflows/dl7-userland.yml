@@ -1,0 +1,31 @@
+name: DL7 userland
+
+on:
+  push:
+    paths: ['v7/**', '.github/workflows/dl7-userland.yml']
+  pull_request:
+    paths: ['v7/**', '.github/workflows/dl7-userland.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compiler-and-userland:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install SWI-Prolog
+        run: sudo apt-get update && sudo apt-get install -y swi-prolog-nox
+      - name: Module, storage, application and binding tests
+        run: >-
+          swipl -q -g
+          "load_files(['v7/test/2_module_system.test.pl',
+          'v7/test/15_interned_storage.test.pl',
+          'v7/test/16_storage_plain_field.test.pl',
+          'v7/test/17_dl6_interned.test.pl',
+          'v7/test/18_binding_symmetry.test.pl']),
+          (run_tests -> halt(0); halt(1))"

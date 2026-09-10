@@ -101,6 +101,6 @@ whether one exists.
 | gap | state |
 | --- | --- |
 | compound `Key` label over an application target | covered by binding-symmetry test 18 in the integration branch |
-| named alias as a field target | implementation held pending nearest-binding and reference-chain decisions |
+| named alias as a field target | approved follow-up; absent from this checkpoint |
 | physical dictionary writes | design only; storage rows are target-neutral |
 | SQLite IVM / DD / Rust consumers | not wired to these artifacts |
