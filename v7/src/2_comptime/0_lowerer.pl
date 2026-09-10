@@ -126,27 +126,52 @@ lower_derived_bind_rules(
     Environment, RuleIndex, Result) :-
     !,
     lower_expression(LabelNode, Owner, Environment,
-                     LabelValue, Goals, GoalNodes, Diagnostics),
+                     LabelValue, Goals, GoalNodes, LabelDiagnostics),
+    compound_edge_target(TargetTerm, Owner, Environment,
+                         TargetOutcome, TargetDiagnostics),
+    append(LabelDiagnostics, TargetDiagnostics, Diagnostics),
+    DerivedLabel = var(derived_label(BindNodeId)),
     (   Diagnostics == [],
         LabelValue = partial_application(_, _)
     ->  Result = error(diagnostic(
                            lower, BindNodeId,
                            partial_edge_label_requires_more_arguments))
-    ;   Diagnostics == []
-    ->  DerivedLabel = var(derived_label(BindNodeId)),
-        replace_expression_value(
+    ;   Diagnostics == [],
+        TargetOutcome = partial(Callable, Bound)
+    ->  replace_expression_value(
             LabelValue, DerivedLabel, Goals, LabelGoals),
-        edge_rule_target(TargetTerm, RuleTarget),
+        partial_bind_rules(
+            Owner,
+            derived_label(DerivedLabel, LabelGoals, GoalNodes,
+                          compound_label(BindNodeId)),
+            BindNodeId, Index, Callable, Bound, Environment,
+            RuleIndex, PartialResult),
+        continue_partial_bind_rules(
+            PartialResult, CallPolicy, Reservations, Environment, Result)
+    ;   Diagnostics == []
+    ->  replace_expression_value(
+            LabelValue, DerivedLabel, Goals, LabelGoals),
+        compound_edge_rule_target(
+            TargetOutcome, BindNodeId, RuleTarget, TargetGoals,
+            TargetGoalNodes),
+        append(LabelGoals, TargetGoals, EdgeGoals),
+        append(GoalNodes, TargetGoalNodes, EdgeGoalNodes),
         Head = call(name(Owner, ':'),
                     [ref(Owner), DerivedLabel, RuleTarget, const(Index)]),
-        Rule = rule(Head, LabelGoals),
-        indexed_goal_origins(GoalNodes, RuleIndex, 0, GoalOrigins),
+        Rule = rule(Head, EdgeGoals),
+        indexed_goal_origins(EdgeGoalNodes, RuleIndex, 0, GoalOrigins),
         RuleOrigins = [origin(rule(RuleIndex), BindNodeId) | GoalOrigins],
         NextRuleIndex is RuleIndex + 1,
         lower_derived_bind_rules(CallPolicy, Reservations, Environment,
                                  NextRuleIndex, RestResult),
         prepend_derived_rule(RestResult, Rule, RuleOrigins, Result)
-    ;   Diagnostics = [Diagnostic | _],
+    ;   CallPolicy == defer_unknown_calls,
+        Diagnostics \== [],
+        forall(member(Deferrable, Diagnostics),
+               deferred_call_diagnostic(Deferrable))
+    ->  lower_derived_bind_rules(
+            CallPolicy, Reservations, Environment, RuleIndex, Result)
+    ;   compound_edge_diagnostic(Diagnostics, Diagnostic),
         Result = error(Diagnostic)
     ).
 lower_derived_bind_rules(
@@ -161,8 +186,8 @@ lower_derived_bind_rules(
     (   Diagnostics == [],
         Value = partial_application(Callable, Bound)
     ->  partial_bind_rules(
-            Owner, Name, BindNodeId, Index, Callable, Bound, Environment,
-            RuleIndex, PartialResult),
+            Owner, const_label(Name), BindNodeId, Index, Callable, Bound,
+            Environment, RuleIndex, PartialResult),
         continue_partial_bind_rules(
             PartialResult, CallPolicy,
             Reservations, Environment, Result)
@@ -191,8 +216,10 @@ lower_derived_bind_rules(CallPolicy, [_ | Reservations], Environment,
     lower_derived_bind_rules(
         CallPolicy, Reservations, Environment, RuleIndex, Result).
 
+% Both label forms share every Curry row; only the final edge rule differs, so
+% a constant label keeps an empty body and a derived label carries its goals.
 partial_bind_rules(
-    Owner, Name, BindNodeId, Index,
+    Owner, LabelSpec, BindNodeId, Index,
     callable(_, _, Callable0, Arity, _, ReturnIndex), Bound,
     Environment, RuleIndex,
     Result) :-
@@ -225,25 +252,44 @@ partial_bind_rules(
                                     const(ReturnIndex)
                                   ]),
                              []),
-        EdgeRule = rule(
-                       call(name(Owner, ':'),
-                            [ ref(Owner), const(Name), ref(Partial),
-                              const(Index)
-                            ]),
-                       []),
+        partial_edge_rule(LabelSpec, Owner, Partial, Index,
+                          EdgeRule, EdgeGoalNodes),
         append([[ApplyRule, PartialCallRule], CallEdgeRules,
                 [ReturnEdgeRule, EdgeRule]],
                Rules),
         length(Rules, RuleCount),
         indexed_empty_rule_origins(
-            RuleCount, RuleIndex, BindNodeId, Origins),
+            RuleCount, RuleIndex, BindNodeId, CommonOrigins),
+        EdgeRuleIndex is RuleIndex + RuleCount - 1,
+        indexed_goal_origins(EdgeGoalNodes, EdgeRuleIndex, 0, GoalOrigins),
+        append(CommonOrigins, GoalOrigins, Origins),
         NextRuleIndex is RuleIndex + RuleCount,
         Result = ok(Rules, Origins, NextRuleIndex)
-    ;   Result = error(diagnostic(
+    ;   partial_label_description(LabelSpec, Description),
+        Result = error(diagnostic(
                            lower, BindNodeId,
                            partial_application_requires_more_arguments(
-                               Name)))
+                               Description)))
     ).
+
+partial_edge_rule(const_label(Name), Owner, Partial, Index,
+                  rule(call(name(Owner, ':'),
+                            [ ref(Owner), const(Name), ref(Partial),
+                              const(Index)
+                            ]),
+                       []),
+                  []).
+partial_edge_rule(derived_label(LabelValue, LabelGoals, GoalNodes, _),
+                  Owner, Partial, Index,
+                  rule(call(name(Owner, ':'),
+                            [ ref(Owner), LabelValue, ref(Partial),
+                              const(Index)
+                            ]),
+                       LabelGoals),
+                  GoalNodes).
+
+partial_label_description(const_label(Name), Name).
+partial_label_description(derived_label(_, _, _, Description), Description).
 
 callable_identity(target(Identity), Identity).
 callable_identity(kernel(Name), kernel(Name)).
@@ -322,6 +368,40 @@ continue_partial_bind_rules(
 
 edge_rule_target(target(Target), ref(Target)).
 edge_rule_target(Target, Target).
+
+% A deferrable diagnostic sitting beside a real one is not the failure worth
+% reporting, so the label's unknown call never masks the target's own error.
+compound_edge_diagnostic(Diagnostics, Diagnostic) :-
+    (   member(Candidate, Diagnostics),
+        \+ deferred_call_diagnostic(Candidate)
+    ->  Diagnostic = Candidate
+    ;   Diagnostics = [Diagnostic | _]
+    ).
+
+compound_edge_target(deferred_expression(TargetNode), Owner, Environment,
+                     Outcome, Diagnostics) :-
+    !,
+    lower_expression(TargetNode, Owner, Environment,
+                     TargetValue, TargetGoals, GoalNodes, Diagnostics),
+    compound_edge_target_outcome(
+        Diagnostics, TargetValue, TargetGoals, GoalNodes, Outcome).
+compound_edge_target(TargetTerm, _, _, structural(RuleTarget), []) :-
+    edge_rule_target(TargetTerm, RuleTarget).
+
+compound_edge_target_outcome([], partial_application(Callable, Bound), _, _,
+                             partial(Callable, Bound)) :-
+    !.
+compound_edge_target_outcome([], TargetValue, TargetGoals, GoalNodes,
+                             expression(TargetValue, TargetGoals,
+                                        GoalNodes)) :-
+    !.
+compound_edge_target_outcome(_, _, _, _, none).
+
+compound_edge_rule_target(structural(RuleTarget), _, RuleTarget, [], []).
+compound_edge_rule_target(expression(TargetValue, TargetGoals, GoalNodes),
+                          BindNodeId, RuleTarget, Goals, GoalNodes) :-
+    RuleTarget = var(derived_edge_target(BindNodeId)),
+    replace_expression_value(TargetValue, RuleTarget, TargetGoals, Goals).
 
 prepend_derived_rule(error(Diagnostic), _, _, error(Diagnostic)).
 prepend_derived_rule(ok(Rules, Origins0), Rule, RuleOrigins,
@@ -652,7 +732,8 @@ lower_edge_bind(BindNode, Owner, ModuleIdentity, Index, Result) :-
     ->  (   LabelNode = node(_, atom(_))
         ->  lower_bind(BindNode, Owner, ModuleIdentity, Index, Result)
         ;   LabelNode = node(_, form(_))
-        ->  lower_target(TargetNode, Owner, ModuleIdentity, TargetResult),
+        ->  compound_bind_target_result(
+                TargetNode, Owner, ModuleIdentity, TargetResult),
             finish_compound_edge_bind(
                 TargetResult, BindNodeId, Owner, LabelNode, Index, Result)
         ;   node_id(LabelNode, LabelNodeId),
@@ -662,6 +743,15 @@ lower_edge_bind(BindNode, Owner, ModuleIdentity, Index, Result) :-
         )
     ;   node_id(BindNode, NodeId),
         Result = error(diagnostic(lower, NodeId, expected_bind))
+    ).
+
+% expression_bind_target/1 is the same test the atom-label path applies at
+% lower_bind/5, so both label forms accept the same target forms.
+compound_bind_target_result(TargetNode, Owner, ModuleIdentity, Result) :-
+    (   expression_bind_target(TargetNode)
+    ->  Result = ok(deferred_expression(TargetNode), reference,
+                    [], [], [], [], [])
+    ;   lower_target(TargetNode, Owner, ModuleIdentity, Result)
     ).
 
 finish_compound_edge_bind(error(Diagnostic), _, _, _, _,

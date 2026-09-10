@@ -1,6 +1,5 @@
 > Historical read-only report. Proposals are superseded by 2026-09-10-dl6-as-dl7-userland.md; this is evidence, not implementation authority.
 
-/opt/homebrew/bin/bash: warning: setlocale: LC_ALL: cannot change locale (C.UTF-8): No such file or directory
 # Extract binding contract checkpoint
 Source-read only. Claims are IMPL (at the cited line), PROP or OPEN.
 

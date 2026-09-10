@@ -1,0 +1,10 @@
+; A two-deep application under both label forms. Both fields must carry the
+; same nested term, so nesting is not flattened on either path.
+(: KeyOptions (*))
+
+(: Base
+   (* (: id int)))
+
+(: Nested
+   (* (: atom_label (Option (Partial Base)))
+      (: (Key "compound_label" KeyOptions) (Option (Partial Base)))))
