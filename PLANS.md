@@ -86,6 +86,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-09-02-dl7-programmable-source-intelligence-vision.md:943 — Decide the user-authored DL7 vocabulary for choosing structural, nominal, or declared-plus-witness conformance before adding a checker rule.
 - `decision` plans/2026-09-02-dl7-programmable-source-intelligence-vision.md:982 — Approve the artifact and mutation data model before connecting shell, filesystem, Git, or network writes.
 - `decision` plans/2026-09-03-dl7-tsi-recovery.md:189 — Review and fix the compiler-effect relation signatures, tuple representation, provenance fields, and effect-id inputs before adding a dispatcher module.
+- `decision` plans/2026-09-10-dl6-as-dl7-userland.md:80 — Yield before any kernel, binding, phase, enforced-key or new hosted-facility change; record the exact failing example.
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -206,6 +207,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-09-03-dl7-tsi-recovery.md:204 — After Task 2 approval, add the hollow host boundary and deterministic contract tests without dispatching an external tool.
 - `feature` plans/2026-09-03-dl7-tsi-recovery.md:213 — Connect one grounded Extract call to one returned TSI observation batch and prove that the rows re-enter the next compiler generation once.
 - `feature` plans/2026-09-03-dl7-tsi-recovery.md:221 — Project one converged owned-region intention through Soopy check and apply while retaining stale-content refusal and exact outside-byte preservation.
+- `feature` plans/2026-09-10-dl6-as-dl7-userland.md:79 — Implement DL6-compatible authoring and type-directed storage behavior using existing DL7 userland primitives, with executable examples.
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -491,6 +493,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-09-03-dl7-tsi-recovery.md:204 `feature` — After Task 2 approval, add the hollow host boundary and deterministic contract tests without dispatching an external tool.
 - plans/2026-09-03-dl7-tsi-recovery.md:213 `feature` — Connect one grounded Extract call to one returned TSI observation batch and prove that the rows re-enter the next compiler generation once.
 - plans/2026-09-03-dl7-tsi-recovery.md:221 `feature` — Project one converged owned-region intention through Soopy check and apply while retaining stale-content refusal and exact outside-byte preservation.
+- plans/2026-09-10-dl6-as-dl7-userland.md:79 `feature` — Implement DL6-compatible authoring and type-directed storage behavior using existing DL7 userland primitives, with executable examples.
+- plans/2026-09-10-dl6-as-dl7-userland.md:80 `decision` — Yield before any kernel, binding, phase, enforced-key or new hosted-facility change; record the exact failing example.
 <!-- END: plans-by-plan -->
 
 ## By code file
