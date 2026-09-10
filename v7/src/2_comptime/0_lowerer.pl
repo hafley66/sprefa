@@ -1230,26 +1230,29 @@ lower_expression(node(_, literal(Value)), _, _,
 lower_expression(node(NodeId, atom(Name)), Owner,
                  expression_environment(Reservations, _, _),
                  Value, Goals, Origins, []) :-
-    scoped_deferred_reservation(
-        Owner, Name, Reservations, [],
-        reservation(BindOwner, Name,
-                    deferred_expression(_, _, Index), expression)),
+    scoped_reservation(Owner, Name, Reservations, [], Reservation),
+    !,
+    lexical_atom_value(Reservation, NodeId, Owner, Value, Goals, Origins).
+lower_expression(node(_, atom(Name)), Owner, _,
+                 name(Owner, Name), [], [], []).
+
+% The nearest binding is taken first and only then classified, so an outer
+% binding of a kind this position wants can never bypass a nearer one.
+lexical_atom_value(
+    reservation(BindOwner, Name, deferred_expression(_, _, Index), expression),
+    NodeId, Owner, Value, Goals, [NodeId]) :-
     !,
     Value = var(derived_lookup(NodeId)),
     Goals = [pending_goal(
                  positive,
                  call(name(Owner, ':'),
                       [ ref(BindOwner), const(Name), Value, const(Index)
-                      ]))],
-    Origins = [NodeId].
-lower_expression(node(_, atom(Name)), Owner,
-                 expression_environment(Reservations, _, _),
-                 ref(Target), [], [], []) :-
-    scoped_reservation(Owner, Name, Reservations, [],
-                       reservation(_, Name, target(Target), _)),
+                      ]))].
+lexical_atom_value(reservation(_, _, target(Target), _), _, _,
+                   ref(Target), [], []) :-
     !.
-lower_expression(node(_, atom(Name)), Owner, _,
-                 name(Owner, Name), [], [], []).
+lexical_atom_value(reservation(_, Name, _, _), _, Owner,
+                   name(Owner, Name), [], []).
 lower_expression(
     node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
     Owner, Environment, Value, Goals, Origins, Diagnostics) :-
@@ -1278,46 +1281,12 @@ lower_expression(node(NodeId, form(_)), _, _,
 expression_callable(Name, Owner,
                     expression_environment(Reservations, Relations, _),
                     Result) :-
-    (   scoped_callable_reservation(
-            Owner, Name, Reservations, Relations, [], Reservation)
-    ->  expression_reserved_callable(Reservation, Relations, Name, Result)
-    ;   scoped_reservation(Owner, Name, Reservations, [], Reservation)
+    (   scoped_reservation(Owner, Name, Reservations, [], Reservation)
     ->  expression_reserved_callable(Reservation, Relations, Name, Result)
     ;   kernel_relation(Name, Arity)
     ->  kernel_relation_keys_for_expression(Name, KeySets),
         Result = ok(kernel(Name), Arity, KeySets)
     ;   Result = error(undeclared_relation(Name))
-    ).
-
-scoped_deferred_reservation(
-    Owner, Name, Reservations, Visited, Reservation) :-
-    \+ memberchk(Owner, Visited),
-    (   memberchk(
-            reservation(Owner, Name,
-                        deferred_expression(Target, NodeId, Index),
-                        expression),
-            Reservations)
-    ->  Reservation = reservation(
-                           Owner, Name,
-                           deferred_expression(Target, NodeId, Index),
-                           expression)
-    ;   reservation_parent(Owner, Reservations, Parent),
-        scoped_deferred_reservation(
-            Parent, Name, Reservations, [Owner | Visited], Reservation)
-    ).
-
-scoped_callable_reservation(
-    Owner, Name, Reservations, Relations, Visited, Reservation) :-
-    \+ memberchk(Owner, Visited),
-    (   member(reservation(Owner, Name, target(Callable), Kind),
-               Reservations),
-        callable_reservation_kind(Kind),
-        memberchk(relation(Callable, _, _), Relations)
-    ->  Reservation = reservation(Owner, Name, target(Callable), Kind)
-    ;   reservation_parent(Owner, Reservations, Parent),
-        scoped_callable_reservation(
-            Parent, Name, Reservations, Relations, [Owner | Visited],
-            Reservation)
     ).
 
 callable_reservation_kind(product).
