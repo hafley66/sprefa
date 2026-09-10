@@ -35,42 +35,46 @@
 evaluate(Rules, Seeds, Closure, Diagnostics) :-
     must_be(ground, Rules),
     must_be(ground, Seeds),
-    stratify_rules(Rules, Strata, StrataDiagnostics),
-    evaluate_after_stratify(StrataDiagnostics, Strata, Rules, Seeds,
-                            Closure, Diagnostics).
+    rule_dependencies(Rules, Dependencies),
+    stratify_rules_with_dependencies(
+        Rules, Dependencies, Strata, StrataDiagnostics),
+    evaluate_after_stratify(
+        StrataDiagnostics, Strata, Dependencies, Rules, Seeds,
+        Closure, Diagnostics).
 
-evaluate_after_stratify([], Strata, Rules, Seeds, Closure, Diagnostics) :-
+evaluate_after_stratify(
+    [], Strata, Dependencies, Rules, Seeds, Closure, Diagnostics) :-
     !,
     max_stratum(Strata, MaxStratum),
-    evaluate_strata(0, MaxStratum, Strata, Rules, Seeds, [],
+    evaluate_strata(0, MaxStratum, Strata, Dependencies, Rules, Seeds, [],
                     Closure, Diagnostics).
-evaluate_after_stratify(Diagnostics, _, _, _, [], Diagnostics).
+evaluate_after_stratify(Diagnostics, _, _, _, _, [], Diagnostics).
 
 max_stratum([], 0).
 max_stratum(Strata, MaxStratum) :-
     findall(Level, member(stratum(_, Level), Strata), Levels),
     max_list(Levels, MaxStratum).
 
-evaluate_strata(Level, MaxStratum, _, _, _, Closure, Closure, []) :-
+evaluate_strata(Level, MaxStratum, _, _, _, _, Closure, Closure, []) :-
     Level > MaxStratum,
     !.
-evaluate_strata(Level, MaxStratum, Strata, Rules, Seeds, LowerRows,
+evaluate_strata(Level, MaxStratum, Strata, Dependencies, Rules, Seeds, LowerRows,
                 Closure, Diagnostics) :-
     include(rule_at_level(Strata, Level), Rules, CurrentRules),
     include(seed_at_level(Strata, Level), Seeds, CurrentSeeds),
     include(aggregate_rule, CurrentRules, AggregateRules),
-    include(rule_through_level(Strata, Level), Rules, AvailableRules),
-    exclude(aggregate_rule, AvailableRules, PlainRules),
+    demand_cone_rules(
+        Strata, Level, Rules, Dependencies, CurrentRules, PlainRules),
     derive_aggregate_rule_rows(LowerRows, AggregateRules,
                                AggregateSeeds, AggregateDiagnostics),
     evaluate_stratum_after_aggregates(
         AggregateDiagnostics, AggregateSeeds,
-        Level, MaxStratum, Strata, Rules, Seeds, LowerRows,
+        Level, MaxStratum, Strata, Dependencies, Rules, Seeds, LowerRows,
         PlainRules, CurrentSeeds, Closure, Diagnostics).
 
 evaluate_stratum_after_aggregates(
     [], AggregateSeeds,
-    Level, MaxStratum, Strata, Rules, Seeds, LowerRows,
+    Level, MaxStratum, Strata, Dependencies, Rules, Seeds, LowerRows,
     PlainRules, CurrentSeeds, Closure, Diagnostics) :-
     !,
     append(CurrentSeeds, AggregateSeeds, Seeds0),
@@ -91,17 +95,52 @@ evaluate_stratum_after_aggregates(
             clear_evaluation(EvaluationId, ClauseReferences),
             evaluate_cleanup_metrics(EvaluationId, ClauseReferences))),
     NextLevel is Level + 1,
-    evaluate_strata(NextLevel, MaxStratum, Strata, Rules, Seeds,
+    evaluate_strata(NextLevel, MaxStratum, Strata, Dependencies, Rules, Seeds,
                     CompletedRows, Closure, Diagnostics).
 evaluate_stratum_after_aggregates(
-    Diagnostics, _, _, _, _, _, _, _, _, _, [], Diagnostics).
+    Diagnostics, _, _, _, _, _, _, _, _, _, _, [], Diagnostics).
 
 rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
     memberchk(stratum(Relation, Level), Strata).
 
-rule_through_level(Strata, Level, rule(call(Relation, _), _)) :-
+%% demand_cone_rules(+Strata, +Level, +Rules, +Dependencies,
+%%                   +CurrentRules, -PlainRules) is det.
+%
+% Install every current plain rule and the transitive definitions reached by
+% its plain positive goals. Aggregate and negative goals read the completed
+% lower-row snapshot, so their definitions do not enter this demand cone.
+demand_cone_rules(
+    Strata, Level, Rules, Dependencies, CurrentRules, PlainRules) :-
+    exclude(aggregate_rule, CurrentRules, CurrentPlainRules),
+    sort(CurrentPlainRules, Roots),
+    demand_cone_fixpoint(
+        Strata, Level, Rules, Dependencies, Roots, PlainRules).
+
+demand_cone_fixpoint(
+    Strata, Level, Rules, Dependencies, Selected, PlainRules) :-
+    findall(BodyRelation,
+            ( member(rule(call(HeadRelation, _), _), Selected),
+              member(dependency(HeadRelation, BodyRelation,
+                                positive, 0, positive), Dependencies)
+            ),
+            BodyRelations0),
+    sort(BodyRelations0, BodyRelations),
+    include(plain_definition_for(Strata, Level, BodyRelations),
+            Rules, DependencyRules),
+    append(Selected, DependencyRules, Next0),
+    sort(Next0, Next),
+    (   Next == Selected
+    ->  PlainRules = Next
+    ;   demand_cone_fixpoint(
+            Strata, Level, Rules, Dependencies, Next, PlainRules)
+    ).
+
+plain_definition_for(Strata, Level, Relations, Rule) :-
+    Rule = rule(call(Relation, _), _),
+    memberchk(Relation, Relations),
     memberchk(stratum(Relation, RuleLevel), Strata),
-    RuleLevel =< Level.
+    RuleLevel =< Level,
+    \+ aggregate_rule(Rule).
 
 seed_at_level(Strata, Level, call(Relation, _)) :-
     relation_level(Strata, Relation, Level).
@@ -305,6 +344,11 @@ argument_at(Arguments, Position, Value) :- nth0(Position, Arguments, Value).
 stratify_rules(Rules, DerivedStrata, Diagnostics) :-
     must_be(ground, Rules),
     rule_dependencies(Rules, Dependencies),
+    stratify_rules_with_dependencies(
+        Rules, Dependencies, DerivedStrata, Diagnostics).
+
+stratify_rules_with_dependencies(
+    Rules, Dependencies, DerivedStrata, Diagnostics) :-
     rule_relations(Rules, Relations),
     strict_cycle_diagnostics(Relations, Dependencies, CycleDiagnostics),
     (   CycleDiagnostics == []

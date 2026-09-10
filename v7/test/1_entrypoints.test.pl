@@ -1719,6 +1719,49 @@ assert_evaluation_closure(Rules, Seeds, ExpectedRows) :-
     Closure == ExpectedClosure,
     Diagnostics == [].
 
+test(demand_cone_selects_transitive_plain_definitions_as_exact_rules) :-
+    LowerA = rule(call(lower, [const(a)]), []),
+    LowerB = rule(call(lower, [const(b)]), []),
+    Middle = rule(call(middle, [var(value)]),
+                  [checked_goal(positive, call(lower, [var(value)]))]),
+    Current = rule(call(current, [var(value)]),
+                   [checked_goal(positive, call(middle, [var(value)])),
+                    checked_goal(negative, call(blocked, [var(value)]))]),
+    Blocked = rule(call(blocked, [const(b)]), []),
+    Future = rule(call(future, [var(value)]),
+                  [checked_goal(positive, call(current, [var(value)]))]),
+    Rules = [LowerA, LowerB, Middle, Current, Blocked, Future],
+    Strata = [ stratum(lower, 0), stratum(middle, 1),
+               stratum(blocked, 1), stratum(current, 2),
+               stratum(future, 3) ],
+    dl7_evaluator:rule_dependencies(Rules, Dependencies),
+    dl7_evaluator:demand_cone_rules(
+        Strata, 2, Rules, Dependencies, [Current], Selected),
+    sort([LowerA, LowerB, Middle, Current], Expected),
+    Selected == Expected.
+
+test(demand_cone_does_not_follow_aggregate_edges_from_a_shared_head) :-
+    Plain = rule(call(shared, [var(value)]),
+                 [checked_goal(positive, call(needed, [var(value)]))]),
+    Aggregate = rule(call(shared,
+                          [aggregate(count, var(value))]),
+                     [checked_goal(positive,
+                                   call(aggregate_only, [var(value)]))]),
+    Needed = rule(call(needed, [const(kept)]), []),
+    AggregateOnly = rule(call(aggregate_only, [const(dropped)]), []),
+    Rules = [Plain, Aggregate, Needed, AggregateOnly],
+    Strata = [ stratum(needed, 0), stratum(aggregate_only, 0),
+               stratum(shared, 1) ],
+    dl7_evaluator:rule_dependencies(Rules, Dependencies),
+    memberchk(dependency(shared, needed, positive, 0, positive),
+              Dependencies),
+    memberchk(dependency(shared, aggregate_only, positive, 1, aggregate),
+              Dependencies),
+    dl7_evaluator:demand_cone_rules(
+        Strata, 1, Rules, Dependencies, [Plain, Aggregate], Selected),
+    sort([Plain, Needed], Expected),
+    Selected == Expected.
+
 test(evaluator_current_stratum_reads_completed_positive_dependency) :-
     Source = ref(source),
     Lower = ref(lower),
