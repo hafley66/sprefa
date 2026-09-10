@@ -13,13 +13,17 @@ permissions:
 jobs:
   compiler-and-userland:
     runs-on: ubuntu-latest
+    # Official swipl:10.0.2 linux/amd64 image, matching the local test runtime.
+    container: swipl@sha256:ecae24e505a5216612361cacbc50b55a54bee333d5d54335bab5cf58b415f6bd
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Install SWI-Prolog
-        run: sudo apt-get update && sudo apt-get install -y swi-prolog-nox
+      - name: Verify compiler runtime
+        run: |
+          swipl --version
+          swipl -q -g "use_module(library(tableutil), [table_statistics/2]), halt"
       - name: Module, storage, application and binding tests
         run: >-
           swipl -q -g

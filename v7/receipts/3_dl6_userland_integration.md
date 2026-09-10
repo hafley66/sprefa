@@ -71,8 +71,14 @@ just --justfile v7/justfile dl6-demo
 Integrated execution on September 10: 22/22 tests passed, process exit 0.
 The demo exited 0 and printed 16 layout rows plus the Interned(text) mapping.
 
-The new GitHub Actions job installs SWI-Prolog and runs those module, storage,
-application and binding tests. It performs no Rust or extractor build.
+The new GitHub Actions job runs those tests in the official SWI-Prolog 10.0.2
+linux/amd64 container, pinned by manifest digest. Its initial Ubuntu package
+setup failed because `library(tableutil)` was absent. The container matches the
+locally tested version and explicitly checks this import before running tests.
+It performs no Rust or extractor build. Remote execution after the pin is pending.
+
+The separate release plan job failed to read the `hafley-observe` dependency
+manifest under `hafley-rs`. This checkpoint does not change release dependencies.
 
 The binding worker also ran the source-query suite: two tests passed and one
 failed because its required `v6/sprefa-extract/target/debug/extract` binary was
