@@ -1,6 +1,5 @@
 > Historical read-only report. Proposals are superseded by 2026-09-10-dl6-as-dl7-userland.md; this is evidence, not implementation authority.
 
-/opt/homebrew/bin/bash: warning: setlocale: LC_ALL: cannot change locale (C.UTF-8): No such file or directory
 # DL7 layout to persistent value interning: adapter design
 
 0. Scope boundary · 1. Finding · 2. Signatures · 3. Bridge · 4. Ownership · 5. Example · 6. Encodings · 7. Sums and unsupported shapes · 8. Compatibility checks · 9. Files · 10. Slice · 11. Unpreservable semantics
