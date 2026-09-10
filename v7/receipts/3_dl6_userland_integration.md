@@ -75,7 +75,9 @@ The new GitHub Actions job runs those tests in the official SWI-Prolog 10.0.2
 linux/amd64 container, pinned by manifest digest. Its initial Ubuntu package
 setup failed because `library(tableutil)` was absent. The container matches the
 locally tested version and explicitly checks this import before running tests.
-It performs no Rust or extractor build. Remote execution after the pin is pending.
+It performs no Rust or extractor build. The corrected PR job passed in
+[GitHub run 34504391866](https://github.com/hafley66/sprefa/actions/runs/34504391866),
+5m38s. The separate push-triggered execution was still running at this checkpoint.
 
 The separate release plan job failed to read the `hafley-observe` dependency
 manifest under `hafley-rs`. This checkpoint does not change release dependencies.

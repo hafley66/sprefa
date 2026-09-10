@@ -124,8 +124,11 @@ No repository-wide repeated builds or unrelated code generation.
 ## Staffing
 
 Coordinator codex-2344 owns checkpoint, boundaries, integration, review and PR.
-Implementation and independent challenge use Claude Opus 5 medium via Boop's
-Claude harness only. No native Codex/Sol or OpenCode agents; no worker delegation.
+Initial implementation and independent challenge used Claude Opus 5 medium via
+Boop's Claude harness. Chris subsequently requested Sol at low effort; remaining
+work uses `gpt-5.6-sol` low through Boop's Codex harness. Opus lanes were stopped
+with their worktrees preserved. No native collaboration agents, OpenCode or
+worker delegation.
 Each lane owns its worktree and bounded files, sends ACK/evidence/final hails,
 and stops at its assigned gate. Base SHA is the main documentation checkpoint.
 Budgets are one focused proof then bounded implementation, followed by review;
