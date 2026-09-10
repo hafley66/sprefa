@@ -31,5 +31,10 @@ jobs:
           'v7/test/15_interned_storage.test.pl',
           'v7/test/16_storage_plain_field.test.pl',
           'v7/test/17_dl6_interned.test.pl',
-          'v7/test/18_binding_symmetry.test.pl']),
+          'v7/test/18_binding_symmetry.test.pl',
+          'v7/test/19_lexical_binding.test.pl']),
           (run_tests -> halt(0); halt(1))"
+      - name: Verify compiler performance gate
+        run: |
+          timeout 20 swipl -q -s v7/test/20_compiler_performance.test.pl -g run_tests -t halt
+          timeout 20 swipl -q -s v7/bench/0_compiler_performance.pl -g main -t halt -- v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7
