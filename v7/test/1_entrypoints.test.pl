@@ -1712,6 +1712,152 @@ test(evaluator_trace_reports_stratum_metrics) :-
                         metric(leftover_lower_rows, 0)
                       ].
 
+assert_evaluation_closure(Rules, Seeds, ExpectedRows) :-
+    evaluate(Rules, Seeds, Closure, Diagnostics),
+    sort([call(ref(kernel(nil)), [const([])]) | ExpectedRows],
+         ExpectedClosure),
+    Closure == ExpectedClosure,
+    Diagnostics == [].
+
+test(evaluator_current_stratum_reads_completed_positive_dependency) :-
+    Source = ref(source),
+    Lower = ref(lower),
+    Blocked = ref(blocked),
+    Upper = ref(upper),
+    Application = ref(application(option, [primitive(text)])),
+    Rules =
+        [ rule(call(Lower, [var(source), var(result)]),
+               [ checked_goal(
+                     positive,
+                     call(ref(kernel(nil)), [var(empty)])),
+                 checked_goal(
+                     positive,
+                     call(ref(kernel(cons)),
+                          [var(source), var(empty), var(arguments)])),
+                 checked_goal(
+                     positive,
+                     call(ref(kernel(intern)),
+                          [ref(option), var(arguments), var(result)]))
+               ]),
+          rule(call(Upper, [var(result)]),
+               [ checked_goal(positive, call(Source, [var(source)])),
+                 checked_goal(negative, call(Blocked, [var(source)])),
+                 checked_goal(
+                     positive,
+                     call(Lower, [var(source), var(result)]))
+               ])
+        ],
+    Seeds = [ call(Source, [ref(primitive(text))]),
+              call(Blocked, [ref(primitive(int))]) ],
+    Expected = [ call(Source, [ref(primitive(text))]),
+                 call(Blocked, [ref(primitive(int))]),
+                 call(Upper, [Application]),
+                 call(ref(kernel(intern)),
+                      [ ref(option), const([ref(primitive(text))]),
+                        Application
+                      ]) ],
+    assert_evaluation_closure(Rules, Seeds, Expected).
+
+test(evaluator_current_stratum_reads_completed_strict_negation) :-
+    Candidate = ref(candidate),
+    Blocked = ref(blocked),
+    Allowed = ref(allowed),
+    Rules =
+        [ rule(call(Allowed, [var(value)]),
+               [ checked_goal(positive, call(Candidate, [var(value)])),
+                 checked_goal(negative, call(Blocked, [var(value)]))
+               ])
+        ],
+    Seeds = [ call(Candidate, [const(a)]),
+              call(Candidate, [const(b)]),
+              call(Blocked, [const(b)]) ],
+    Expected = [ call(Candidate, [const(a)]),
+                 call(Candidate, [const(b)]),
+                 call(Blocked, [const(b)]),
+                 call(Allowed, [const(a)]) ],
+    assert_evaluation_closure(Rules, Seeds, Expected).
+
+test(evaluator_current_stratum_counts_completed_lower_relation) :-
+    Sale = ref(sale),
+    RegionCount = ref(region_count),
+    Rules =
+        [ rule(call(RegionCount,
+                    [var(region), aggregate(count, var(item))]),
+               [checked_goal(
+                    positive,
+                    call(Sale, [var(region), var(item)]))])
+        ],
+    Seeds = [ call(Sale, [const(east), const(one)]),
+              call(Sale, [const(east), const(two)]),
+              call(Sale, [const(west), const(three)]) ],
+    Expected = [ call(Sale, [const(east), const(one)]),
+                 call(Sale, [const(east), const(two)]),
+                 call(Sale, [const(west), const(three)]),
+                 call(RegionCount, [const(east), const(2)]),
+                 call(RegionCount, [const(west), const(1)]) ],
+    assert_evaluation_closure(Rules, Seeds, Expected).
+
+test(evaluator_current_stratum_keeps_transitive_recursion) :-
+    Edge = ref(edge),
+    Path = ref(path),
+    Rules =
+        [ rule(call(Path, [var(from), var(to)]),
+               [checked_goal(
+                    positive,
+                    call(Edge, [var(from), var(to)]))]),
+          rule(call(Path, [var(from), var(to)]),
+               [ checked_goal(
+                     positive,
+                     call(Path, [var(from), var(via)])),
+                 checked_goal(
+                     positive,
+                     call(Edge, [var(via), var(to)]))
+               ])
+        ],
+    Seeds = [ call(Edge, [const(a), const(b)]),
+              call(Edge, [const(b), const(c)]),
+              call(Edge, [const(c), const(d)]) ],
+    Expected = [ call(Edge, [const(a), const(b)]),
+                 call(Edge, [const(b), const(c)]),
+                 call(Edge, [const(c), const(d)]),
+                 call(Path, [const(a), const(b)]),
+                 call(Path, [const(a), const(c)]),
+                 call(Path, [const(a), const(d)]),
+                 call(Path, [const(b), const(c)]),
+                 call(Path, [const(b), const(d)]),
+                 call(Path, [const(c), const(d)]) ],
+    assert_evaluation_closure(Rules, Seeds, Expected).
+
+test(evaluator_current_stratum_mixes_lower_facts_with_recursion) :-
+    Base = ref(base),
+    Link = ref(link),
+    Blocked = ref(blocked),
+    Path = ref(path),
+    Rules =
+        [ rule(call(Path, [var(value)]),
+               [ checked_goal(positive, call(Base, [var(value)])),
+                 checked_goal(negative, call(Blocked, [var(value)]))
+               ]),
+          rule(call(Path, [var(next)]),
+               [ checked_goal(positive, call(Path, [var(value)])),
+                 checked_goal(
+                     positive,
+                     call(Link, [var(value), var(next)]))
+               ])
+        ],
+    Seeds = [ call(Base, [const(a)]),
+              call(Link, [const(a), const(b)]),
+              call(Link, [const(b), const(c)]),
+              call(Blocked, [const(z)]) ],
+    Expected = [ call(Base, [const(a)]),
+                 call(Link, [const(a), const(b)]),
+                 call(Link, [const(b), const(c)]),
+                 call(Blocked, [const(z)]),
+                 call(Path, [const(a)]),
+                 call(Path, [const(b)]),
+                 call(Path, [const(c)]) ],
+    assert_evaluation_closure(Rules, Seeds, Expected).
+
 test(generated_program_rejects_identity_collisions_and_orphan_bodies) :-
     Existing = ref(existing),
     BaseRelations = [relation(Existing, 1, [])],
