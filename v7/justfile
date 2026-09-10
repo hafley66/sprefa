@@ -24,7 +24,18 @@ build: tree-sitter-test
 # Compile the representative type-program fixture cold and warm. Structural
 # budgets use inference, closure-round, and row counts; wall time is reported.
 compiler-perf:
-    swipl -q -s "{{ v7 }}/bench/0_compiler_performance.pl" -- "{{ v7 }}/test/fixtures/2_partial.dl7"
+    swipl -q -s "{{ v7 }}/bench/0_compiler_performance.pl" -g main -t halt -- "{{ v7 }}/test/fixtures/2_partial.dl7"
+
+# One-command local regression gate: nearest-shadow cold TRACE OFF must stay
+# under 3000 ms wall and 16,000,000 inferences with rows 14586, empty
+# diagnostics, and warm exact-output parity. Bounded by timeout 20.
+compiler-perf-gate:
+    timeout 20 swipl -q -s "{{ v7 }}/bench/0_compiler_performance.pl" -g main -t halt -- "{{ v7 }}/test/fixtures/lexical_binding/7_nearest_shadow.dl7"
+
+# Verify the performance budget comparator and its exact boundaries with
+# injected measurements (no compile).
+compiler-perf-test:
+    timeout 20 swipl -q -s "{{ v7 }}/test/20_compiler_performance.test.pl" -g run_tests -t halt
 
 # Extract one source file, run a DL7 analysis over its TSI rows, and print the
 # selected program relation as one JSON array per tuple.
