@@ -1,0 +1,146 @@
+{
+  "receipt": "42_prolog_arena_inventory",
+  "date": "2026-09-11",
+  "head": "95983d120df81d368c7eeac8f3b1273081525f97",
+  "mode": "read-only",
+  "fixtures": {
+    "nearest_shadow": "v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7",
+    "partial": "v7/test/fixtures/2_partial.dl7"
+  },
+  "probes": {
+    "P1_reader": "/private/tmp/dl7_probe_reader.pl",
+    "P2_debug": "/private/tmp/dl7_probe_debug.pl",
+    "P3_entities": "/private/tmp/dl7_probe_entities.pl",
+    "P4_wrap": "/private/tmp/dl7_probe_wrap.pl",
+    "P5_scope": "/private/tmp/dl7_probe_scope.pl",
+    "P6_profile": "v7/bench/1_compiler_profile.pl",
+    "R39": "v7/receipts/39_current_hotspots.md"
+  },
+  "reader_cardinality": {
+    "prelude": {"top_forms": 231, "reader_nodes": 3929, "source_rows": 3929, "expansion_rows": 0, "syntax_rows": 15716, "digest": "content_sha256(fd4565938c6785e60f54d49649af548a5be67d3fac1d5e2f255215b5b5a40f37)"},
+    "nearest_shadow_source": {"top_forms": 3, "reader_nodes": 28, "source_rows": 28, "expansion_rows": 0, "syntax_rows": 112, "digest": "content_sha256(d7b421c9bdbcc3f7bab3aa01a9affe9447dcbe4bebe32c5ae51002191468f100)"},
+    "partial_source": {"top_forms": 14, "reader_nodes": 192, "source_rows": 192, "expansion_rows": 0, "syntax_rows": 768, "digest": "content_sha256(0017cbb33c90d1439e525078faf48a6e559a3c591c5913035b2ab9d92acd2bbd)"},
+    "nearest_shadow_syntax_histogram": {"':'/4": 25, "node/1": 28, "source/8": 28, "syntax_atom/2": 19, "syntax_form/1": 9, "syntax_frontier/2": 3},
+    "partial_syntax_histogram": {"':'/4": 178, "node/1": 192, "source/8": 192, "syntax_atom/2": 95, "syntax_form/1": 56, "syntax_frontier/2": 14, "syntax_literal/2": 9, "syntax_variable/3": 32}
+  },
+  "phase_cardinality_scope3": {
+    "nearest_shadow": {
+      "lowerer_output": {"nodes": 234, "edges": 484, "relations": 114, "seeds": 0, "rules": 120},
+      "checker_input": {"nodes": 234, "pending_edges": 484, "relations": 114, "seeds": 0, "rules": 120, "origins": 1124},
+      "checker_output": {"nodes": 278, "edges": 528, "relations": 134, "seeds": 0, "rules": 120, "depends": 209, "strata": 134},
+      "stratification_input": {"rules": 120, "dependencies": 292, "relations": 76, "positive": 279, "negative": 13, "gap_zero": 272, "gap_one": 20},
+      "comptime_round_events": 2,
+      "closure_rows_final": 810,
+      "runtime_program": {"relations": 132, "rules": 120, "seeds": 0}
+    },
+    "partial": {
+      "lowerer_output": {"nodes": 246, "edges": 501, "relations": 120, "seeds": 1, "rules": 126},
+      "checker_input": {"nodes": 246, "pending_edges": 501, "relations": 120, "seeds": 1, "rules": 126, "origins": 1177},
+      "checker_output": {"nodes": 290, "edges": 542, "relations": 140, "seeds": 1, "rules": 126, "depends": 221, "strata": 140},
+      "stratification_input": {"rules": 126, "dependencies": 309, "relations": 79, "positive": 296, "negative": 13, "gap_zero": 289, "gap_one": 20},
+      "comptime_round_events": 7,
+      "benchmark_closure_rounds": 8,
+      "benchmark_cold_inferences": 4285811,
+      "closure_rows_final": 910,
+      "runtime_program": {"relations": 139, "rules": 127, "seeds": 1}
+    }
+  },
+  "closure_facts": {
+    "nearest_shadow": {"fact_rows": 810, "distinct_relations": 7, "distinct_variable_identities": 0, "distinct_owners": 7, "arity_histogram": {"1": 280, "2": 1, "4": 529}},
+    "partial": {"fact_rows": 910, "distinct_relations": 40, "distinct_variable_identities": 0, "distinct_owners": 39, "arity_histogram": {"1": 310, "2": 13, "3": 14, "4": 564, "5": 7, "6": 2}}
+  },
+  "entity_count": 20,
+  "entities": [
+    {"id": 1, "constructor": "dl7_unit/5", "fields": ["Origin", "Digest", "Forms", "SourceRows", "ExpansionRows"], "producer": "dl7_text_unit/6 (2_embedder.pl:38)", "consumers": ["reify_syntax/4", "expand_dl7/6", "materialize_syntax/4", "lowerer"], "ns": "1 source + 1 prelude + 1 macrotime", "partial": "same"},
+    {"id": 2, "constructor": "node/2 (reader)", "fields": ["NodeId", "Payload=atom/literal/variable/form"], "producer": "read_dl7/5 (0_parser.pl)", "consumers": ["reify_syntax/4", "expand_dl7/6", "materialize_syntax/4"], "ns": {"source": 28, "prelude": 3929}, "partial": {"source": 192, "prelude": 3929}},
+    {"id": 3, "constructor": "source/8", "fields": ["NodeId", "Path", "StartOffset", "EndOffset", "StartLine", "StartColumn", "EndLine", "EndColumn"], "producer": "read_dl7/5", "consumers": ["install_source_row_index/1", "source_for_node/3", "source_result/4"], "ns": 28, "partial": 192},
+    {"id": 4, "constructor": "syntax_rows", "fields": ["node/1", "syntax_atom/2", "syntax_literal/2", "syntax_variable/3", "syntax_form/1", "syntax_frontier/2", "':'/4"], "producer": "reify_syntax/4 (1a_syntax_grapher.pl:31)", "consumers": ["materialize_syntax/4"], "ns": 112, "partial": 768},
+    {"id": 5, "constructor": "expansion/4", "fields": ["InputNodeId", "MacroIdentity", "Wave", "NodeId"], "producer": "mint_tree/10 (1_expander.pl:176)", "consumers": [], "ns": 0, "partial": 0},
+    {"id": 6, "constructor": "pending_edge/4", "fields": ["Owner", "Name", "Target", "Index"], "producer": "lowerer", "consumers": ["bind_diagnostics/3", "resolve_edges/6", "resolve_name/6"], "ns": 484, "partial": 501},
+    {"id": 7, "constructor": "module_basement/2", "fields": ["Owner", "basement_program/2"], "producer": "lower_units_*", "consumers": ["merge_module_basements/4"], "ns": 2, "partial": 2},
+    {"id": 8, "constructor": "basement_program/2", "fields": ["root_graph/2", "datalog_program/3"], "producer": "merge_module_basements/4", "consumers": ["check_datalog/4"], "ns": 1, "partial": 1},
+    {"id": 9, "constructor": "relation/3", "fields": ["Ref/Target", "Arity", "KeySets"], "producer": "lowerer; relations_refs/2; kernel_relation_rows/1; add_generated_relations/3", "consumers": ["resolved_call_diagnostics/3", "strata_rows/3", "validate_functional_rows/3"], "ns": {"input": 114, "checked": 134}, "partial": {"input": 120, "checked": 140}},
+    {"id": 10, "constructor": "rule/2", "fields": ["Head call/2", "Body list checked_goal/2"], "producer": "lower_rule/7; resolve_rules/8", "consumers": ["resolved_rule_diagnostics/3", "evaluator"], "ns": 120, "partial": 126},
+    {"id": 11, "constructor": "checked_goal/2", "fields": ["Polarity", "call/2"], "producer": "resolve_goals/8", "consumers": ["proves_body/2"], "ns": "in rule bodies", "partial": "in rule bodies"},
+    {"id": 12, "constructor": "call/2", "fields": ["Ref", "Arguments"], "producer": "lowerer, evaluator", "consumers": ["checker", "evaluator", "emitters"], "ns": 810, "partial": 910},
+    {"id": 13, "constructor": "ref/1", "fields": ["kernel/1", "owner/2", "primitive/1", "application/2"], "producer": "lowerer, checker", "consumers": ["all phases"], "ns": 7, "partial": 40},
+    {"id": 14, "constructor": "dependency/5", "fields": ["HeadRel", "BodyRel", "Polarity", "Gap", "Cause"], "producer": "rule_dependencies/2", "consumers": ["stratify_rules/3", "strict_cycle_diagnostics/3"], "ns": 292, "partial": 309},
+    {"id": 15, "constructor": "stratum/2", "fields": ["Relation", "Level"], "producer": "strata_rows/3", "consumers": ["rule_at_level/3", "seed_at_level/3"], "ns": 134, "partial": 140},
+    {"id": 16, "constructor": "origin/2", "fields": ["edge/3|seed/1|rule/1|goal/2", "NodeId"], "producer": "lowerer", "consumers": ["edge_origin/5", "seed_origin/3", "rule_origin/3", "goal_origin/4"], "ns": 1124, "partial": 1177},
+    {"id": 17, "constructor": "diagnostic/3", "fields": ["Phase", "NodeId", "Reason"], "producer": "every phase", "consumers": ["compiler output"], "ns": 0, "partial": 0},
+    {"id": 18, "constructor": "checked_datalog/4", "fields": ["root_graph/2", "datalog_program/3", "Depends", "Strata"], "producer": "check_datalog/4", "consumers": ["evaluator", "compiler"], "ns": 1, "partial": 1},
+    {"id": 19, "constructor": "evaluation_rule/3", "fields": ["EvaluationId", "Relation", "Rule"], "producer": "install_rules/3", "consumers": ["proves/2"], "ns": {"installs_total": 452, "distinct": 238, "max_per_scope_installs": 220, "max_per_scope_distinct": 113, "redundant_per_scope": 107}, "partial": {"installs_total": 1599, "distinct": 850, "max_per_scope_installs": 227, "max_per_scope_distinct": 120, "redundant_per_scope": 107}},
+    {"id": 20, "constructor": "evaluation_seed/3, evaluation_lower_index/7, evaluation_request/2", "fields": ["Id", "Relation", "hashes/args", "Row/Request"], "producer": "install_seeds/3, install_lower_rows/3, record_evaluation_request/2", "consumers": ["proves/2", "evaluation_lower/3", "collect_closure/4"], "ns": {"seed_max_scope": 1336, "redundant_within_scope": 0}, "partial": {"seed_max_scope": 1407, "redundant_within_scope": 0}}
+  ],
+  "lookup_count": 15,
+  "lookups": [
+    {"id": 1, "predicate": "memberchk/2", "mode": "+Elem,+List det", "mechanism": "linear list scan", "collections": ["Relations", "Nodes", "Edges", "Origins"], "calls_ns": 94438, "calls_partial": 198296, "scanned_total_ns": 13545263, "max_scan_ns": 1124, "mean_scan_ns": 143.43, "scanned_total_partial": 18997001, "max_scan_partial": 1177, "mean_scan_partial": 95.8, "solutions_per_call": "<=1", "choicepoints": "none", "probe": "P4"},
+    {"id": 2, "predicate": "member/2", "mode": "?Elem,+List nondet", "mechanism": "linear list scan", "collections": ["argument and origin lists"], "calls_ns": 11622, "calls_partial": 20610, "scanned_total_ns": 87361, "max_scan_ns": 3929, "mean_scan_ns": 7.52, "scanned_total_partial": 279449, "max_scan_partial": 4250, "mean_scan_partial": 13.56, "solutions_per_call": "many", "choicepoints": "leaves choicepoints (redo 33637 ns / 58878 partial)", "probe": "P4+P6-profiler"},
+    {"id": 3, "predicate": "get_assoc/3", "mode": "+Key,+Assoc,?Value det", "mechanism": "AVL assoc", "collections": ["owner count index", "relation/rule/level indexes"], "calls_ns": 5421, "calls_partial": 12270, "scanned_total_ns": null, "max_scan_ns": null, "mean_scan_ns": null, "solutions_per_call": "<=1", "choicepoints": "none (redo 0)", "probe": "P4"},
+    {"id": 4, "predicate": "put_assoc/4", "mode": "+,+,-,+ det", "mechanism": "AVL assoc", "collections": ["demand cone indexes", "level index"], "calls_ns": 675, "calls_partial": 2068, "scanned_total_ns": null, "max_scan_ns": null, "mean_scan_ns": null, "solutions_per_call": "1", "choicepoints": "none", "probe": "P4"},
+    {"id": 5, "predicate": "list_to_assoc/2", "mode": "+Pairs,-Assoc det", "mechanism": "AVL build", "collections": ["demand cone dependency/rule/relation indexes"], "calls_ns": 52, "calls_partial": 134, "scanned_total_ns": 971, "max_scan_ns": 85, "mean_scan_ns": 18.67, "scanned_total_partial": 2278, "max_scan_partial": 92, "mean_scan_partial": 17.0, "solutions_per_call": "1", "choicepoints": "none", "probe": "P4"},
+    {"id": 6, "predicate": "group_pairs_by_key/2", "mode": "+Pairs,-Groups det", "mechanism": "keysort then group", "collections": ["keyed compiler rows"], "calls_ns": 3226, "calls_partial": 4250, "scanned_total_ns": 637514, "max_scan_ns": 811, "mean_scan_ns": 197.62, "scanned_total_partial": 772796, "max_scan_partial": 924, "mean_scan_partial": 181.83, "solutions_per_call": "1", "choicepoints": "none", "probe": "P4"},
+    {"id": 7, "predicate": "ord_subtract/3, ord_union/3", "mode": "+,+,- det", "mechanism": "ordered-set merge", "collections": ["completed row snapshots", "exact-key groups"], "calls_ns": 9060, "calls_partial": 28444, "scanned_total_ns": 2269833, "max_scan_ns": 1341, "mean_scan_ns": 250.53, "scanned_total_partial": 9753092, "max_scan_partial": 1494, "mean_scan_partial": 342.89, "solutions_per_call": "1", "choicepoints": "none", "probe": "P4"},
+    {"id": 8, "predicate": "term_hash/2", "mode": "+Term,-Hash det", "mechanism": "term hash", "collections": ["lower row arguments", "memo keys"], "calls_ns": 10553, "calls_partial": 42646, "scanned_total_ns": null, "max_scan_ns": null, "mean_scan_ns": null, "solutions_per_call": "1", "choicepoints": "none", "probe": "P4"},
+    {"id": 9, "predicate": "evaluation_lower_index/7", "mode": "Store,Rel,?,?,?,?,Row nondet", "mechanism": "dynamic clause index over 4 argument hashes", "collections": ["evaluate-scope lower store"], "calls_ns": 1103, "calls_partial": 5480, "scanned_total_ns": null, "max_scan_ns": null, "mean_scan_ns": null, "solutions_per_call": "varies", "choicepoints": "dynamic index, nondet", "probe": "P4"},
+    {"id": 10, "predicate": "evaluation_lower/3", "mode": "wrapper over id 9", "mechanism": "index_argument_hashes/5 then evaluation_lower_index/7", "collections": ["evaluate-scope lower store"], "calls_ns": 1103, "calls_partial": 5480, "scanned_total_ns": null, "max_scan_ns": null, "mean_scan_ns": null, "solutions_per_call": "varies", "choicepoints": "nondet", "probe": "P4"},
+    {"id": 11, "predicate": "proves/2", "mode": "+EvaluationId,?Call nondet", "mechanism": "variant SLG table", "collections": ["stratum proof table"], "calls_ns": 3806, "calls_partial": null, "outer_calls_ns": 167, "scanned_total_ns": null, "max_scan_ns": null, "mean_scan_ns": null, "solutions_per_call": "varies", "choicepoints": "tabled", "probe": "R39"},
+    {"id": 12, "predicate": "sort/2", "mode": "+List,-Sorted det", "mechanism": "C merge sort", "collections": ["rows", "refs", "vars", "origins", "diagnostics"], "calls_ns": 6437, "calls_partial": null, "scanned_total_ns": null, "max_scan_ns": null, "mean_scan_ns": null, "solutions_per_call": "1", "choicepoints": "none", "probe": "R39"},
+    {"id": 13, "predicate": "msort/2", "mode": "+List,-Sorted det", "mechanism": "C merge sort", "collections": ["edges", "relations", "histogram keys"], "calls_ns": 892, "calls_partial": null, "scanned_total_ns": null, "max_scan_ns": null, "mean_scan_ns": null, "solutions_per_call": "1", "choicepoints": "none", "probe": "R39"},
+    {"id": 14, "predicate": "keysort/2", "mode": "+Pairs,-Sorted det", "mechanism": "C key sort", "collections": ["keyed pairs before grouping"], "calls_ns": 159, "calls_partial": null, "scanned_total_ns": null, "max_scan_ns": null, "mean_scan_ns": null, "solutions_per_call": "1", "choicepoints": "none", "probe": "R39"},
+    {"id": 15, "predicate": "sub_term/2", "mode": "?Sub,+Term nondet", "mechanism": "structure decomposition inside argument_variables/2", "collections": ["head and body argument terms"], "calls_ns": 4648, "calls_partial": null, "scanned_total_ns": null, "max_scan_ns": null, "mean_scan_ns": null, "solutions_per_call": "many", "choicepoints": "leaves choicepoints", "probe": "R39 (argument_variables/2 calls)"}
+  ],
+  "repeated_values": [
+    {"value": "stratified rule input", "producer_ns": 12, "producer_partial": 22, "unique_ns": 4, "unique_partial": 5, "duplicate_ns": 8, "duplicate_partial": 17, "duplicate_pct_ns": 66.67, "duplicate_pct_partial": 77.27, "consumers": ["stratify_rules/3"], "cost_basis": "P6", "removable": false},
+    {"value": "checker input basement", "producer_ns": 9, "producer_partial": 14, "unique_ns": 5, "unique_partial": 7, "duplicate_ns": 4, "duplicate_partial": 7, "duplicate_pct_ns": 44.44, "duplicate_pct_partial": 50.0, "consumers": ["check_datalog/4"], "cost_basis": "P6; R39 check_datalog/4 276176 incl", "removable": false},
+    {"value": "installed rule term", "producer_ns": 452, "producer_partial": 1599, "unique_ns": 238, "unique_partial": 850, "duplicate_ns": 327, "duplicate_partial": 1467, "duplicate_pct_ns": 72.35, "duplicate_pct_partial": 91.74, "consumers": ["proves/2"], "cost_basis": "P6 cross-round; P5 107 redundant asserts per main scope", "removable": true},
+    {"value": "installed seed term", "producer_ns": 2901, "producer_partial": 10014, "unique_ns": 2901, "unique_partial": 10014, "duplicate_ns": 1468, "duplicate_partial": 8510, "duplicate_pct_ns": 50.6, "duplicate_pct_partial": 84.98, "consumers": ["proves/2"], "cost_basis": "P6 cross-round; P5 redundant within scope = 0", "removable": false},
+    {"value": "installed lower row", "producer_ns": 2679, "producer_partial": 10257, "unique_ns": 1341, "unique_partial": 1494, "duplicate_ns": 1338, "duplicate_partial": 8763, "duplicate_pct_ns": 49.94, "duplicate_pct_partial": 85.43, "consumers": ["collect_closure/4"], "cost_basis": "P6 cross-round; P5 shared store dedups within scope", "removable": false},
+    {"value": "checker head/argument variables", "producer_ns": 1296, "producer_partial": null, "unique_ns": 648, "unique_partial": null, "duplicate_ns": 648, "duplicate_partial": null, "duplicate_pct_ns": null, "duplicate_pct_partial": null, "consumers": ["mode and safety checks"], "cost_basis": "R40 removed 648 second collections; -67218 inferences", "removable": false},
+    {"value": "checker goal variables", "producer_ns": 4629, "producer_partial": null, "unique_ns": 321, "unique_partial": null, "duplicate_ns": 1477, "duplicate_partial": null, "duplicate_pct_ns": null, "duplicate_pct_partial": null, "consumers": ["mode transition"], "cost_basis": "R41 removed 1477 duplicate collections; -27209 inferences", "removable": false}
+  ],
+  "identities": [
+    {"kind": "source node id", "shape": "reader_node(Origin, Index); expansion_node(InputNodeId, MacroIdentity, Wave, Index)", "producer": "read_dl7/5; mint_tree/10", "equality_sites": ["memberchk", "sort"], "repeated": "node ids reused across syntax and materialization"},
+    {"kind": "owner id", "shape": "owner(Origin, reader_node(...)); module(Origin)", "producer": "lowerer", "equality_sites": ["sort/2", "memberchk/2"], "repeated": "7 NS / 39 partial distinct owners in facts"},
+    {"kind": "semantic reference", "shape": "ref(kernel(Name)); ref(owner(...)); ref(primitive(Name)); ref(application(Constructor, Args))", "producer": "lowerer, checker", "equality_sites": ["sort/2", "term_hash/2"], "repeated": "7 NS / 40 partial distinct refs in closure"},
+    {"kind": "application term", "shape": "call(Ref, Arguments)", "producer": "lowerer, evaluator", "equality_sites": ["sort/2", "== in proves/2"], "repeated": "all closure rows"},
+    {"kind": "argument vector", "shape": "list of const/1, var/1, ref/1, aggregate/2", "producer": "lowerer", "equality_sites": ["term_hash/2 per position"], "repeated": "index_argument_hashes/5 3782 calls / 81173 incl NS"},
+    {"kind": "relation id", "shape": "relation(Ref, Arity, KeySets)", "producer": "lowerer, checker", "equality_sites": ["sort/2", "memberchk"], "repeated": "114->134 NS, 120->140 partial"},
+    {"kind": "row term", "shape": "call(Ref, Arguments) ground", "producer": "evaluator", "equality_sites": ["sort/2", "msort/2", "keysort/2"], "repeated": "810 NS / 910 partial closure rows"}
+  ],
+  "arena": {
+    "status": "proposed",
+    "shape": "compiler_arena(units, nodes, sources, syntax_rows, edges, relations, rules, seeds, origins, facts, diagnostics)",
+    "arrays_by_key": {"nodes": "NodeId", "sources": "NodeId", "edges": "Owner,Name", "relations": "Ref", "rules": "RuleSeq", "seeds": "SeedSeq", "origins": "Kind", "facts": "Ref"},
+    "indexes": ["arena_node_index(NodeId, Position)", "arena_relation_index(Ref, Position)", "arena_edge_index(Owner, Name, Position)", "arena_origin_index(Kind, Position)"],
+    "signatures": [
+      {"predicate": "arena_new/2", "mode": "+Units,-Arena", "determinism": "det"},
+      {"predicate": "arena_node/3", "mode": "+Arena,+NodeId,-Payload", "determinism": "semidet"},
+      {"predicate": "arena_source/3", "mode": "+Arena,+NodeId,-SourceRow", "determinism": "semidet"},
+      {"predicate": "arena_relation/4", "mode": "+Arena,+Ref,-Arity,-KeySets", "determinism": "semidet"},
+      {"predicate": "arena_edge/5", "mode": "+Arena,+Owner,+Name,-Target,-Index", "determinism": "semidet"},
+      {"predicate": "arena_origin/3", "mode": "+Arena,+Kind,-NodeId", "determinism": "semidet"},
+      {"predicate": "arena_rule/3", "mode": "+Arena,?RuleSeq,-Rule", "determinism": "nondet"},
+      {"predicate": "arena_seed/3", "mode": "+Arena,?SeedSeq,-Call", "determinism": "nondet"},
+      {"predicate": "arena_fact/3", "mode": "+Arena,?Ref,-Call", "determinism": "nondet"},
+      {"predicate": "arena_fact_at/4", "mode": "+Arena,+Ref,+Position,-Call", "determinism": "semidet"}
+    ],
+    "phase_boundary_terms_unchanged": ["basement_program/2", "checked_datalog/4", "generated_program/4", "dl7_unit/5"]
+  },
+  "candidates": [
+    {"rank": 1, "candidate": "Share immutable evaluation_rule/3 clauses within one evaluate/4 scope, mirroring install_shared_lower_rows/3", "measured_removable": {"redundant_rule_asserts_per_main_scope_ns": 107, "redundant_rule_asserts_per_main_scope_partial": 107, "total_ns": 214, "total_partial": 642, "seed_or_lower_redundant_within_scope": 0}, "blast_radius": ["v7/src/1_libtime/0_evaluator.pl"], "semantics_unchanged": true, "basis": "P5", "note": "save is assertz/clause-space events, not charged Prolog inferences"},
+    {"rank": 2, "candidate": "Precompute per-argument variable identity sets once per resolve_rules/8 and thread into mode and safety checks", "measured_removable": {"argument_variables_calls_ns": 4648, "argument_variables_inclusive_ns": 118406}, "blast_radius": ["v7/src/2_comptime/1_checker.pl"], "semantics_unchanged": true, "basis": "R39"},
+    {"rank": 3, "candidate": "Replace index_argument_hashes/5 four-position hashing with one canonical nested-vector key in the arena", "measured_removable": {"index_argument_hashes_calls_ns": 3782, "index_argument_hashes_inclusive_ns": 81173, "term_hash_calls_ns": 10553, "term_hash_calls_partial": 42646}, "blast_radius": ["v7/src/1_libtime/0_evaluator.pl"], "semantics_unchanged": true, "basis": "R39, P4"},
+    {"rank": 4, "candidate": "Arena-backed relation/origin/edge indexes to remove linear memberchk scans", "measured_removable": {"memberchk_calls_ns": 94438, "memberchk_calls_partial": 198296, "scanned_total_ns": 13545263, "scanned_total_partial": 18997001}, "blast_radius": ["v7/src/2_comptime/1_checker.pl", "v7/src/2_comptime/0_lowerer.pl"], "semantics_unchanged": true, "basis": "P4"}
+  ],
+  "phase_graph_ascii": ".dl7 text -> [reader] dl7_unit/5 + node/2 + source/8 -> [expander] expand_dl7/6 + expansion/4 -> [lowerer] module_basement/2 + pending_edge/4 + rule/2 + relation/3 -> [checker] checked_datalog/4 + dependency/5 + stratum/2 -> [comptime] evaluate/4 (evaluation_rule/3, evaluation_seed/3, evaluation_lower_index/7, evaluation_request/2, proves/2) -> [freeze] generated_program/4 -> [emit] runtime checked_datalog/4",
+  "cross_checks": {
+    "entity_count_matches_md": true,
+    "lookup_count_matches_md": true,
+    "entity_count_matches_array": true,
+    "lookup_count_matches_array": true
+  },
+  "stop_conditions_hit": [],
+  "kernel_change_proposed": false,
+  "files_owned": ["v7/receipts/42_prolog_arena_inventory.md", "v7/receipts/42_prolog_arena_inventory.json"]
+}
