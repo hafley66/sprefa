@@ -173,6 +173,21 @@ test(dense_index_diagnostics_preserves_nonground_scan_mode) :-
     dl7_checker:dense_index_diagnostics(Edges, Edges, [], Diagnostics),
     Diagnostics == [].
 
+test(head_safety_precomputed_variables_matches_wrapper) :-
+    Head = call(ref(head), [var(b), var(a), var(a)]),
+    Body = [checked_goal(positive, call(ref(body), [var(a)]))],
+    dl7_checker:head_variables(Head, HeadVariables),
+    dl7_checker:head_safety_diagnostics(
+        Head, Body, [origin(rule(0), head_origin)], 0, WrapperDiagnostics),
+    dl7_checker:head_safety_diagnostics_with_variables(
+        HeadVariables, Body, [origin(rule(0), head_origin)], 0,
+        WorkerDiagnostics),
+    Observed = safety(HeadVariables, WrapperDiagnostics, WorkerDiagnostics),
+    Observed == safety(
+                    [a, b],
+                    [diagnostic(check, head_origin, unsafe_head_var(b))],
+                    [diagnostic(check, head_origin, unsafe_head_var(b))]).
+
 test(split_prelude_loads_all_existing_type_algebra_declarations) :-
     compile_dl7('v7/test/fixtures/2_partial.dl7', Rows, _Runtime, Diagnostics),
     once(type_operator_snapshot(Rows, Snapshot)),

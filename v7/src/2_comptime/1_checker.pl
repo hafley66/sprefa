@@ -199,7 +199,8 @@ resolved_rule_diagnostic(rule(Head, Body), Relations, Diagnostics) :-
     check_goal_sequence_failures(Body, 0, HeadVariables, [],
                                  _, _, ModeFailures),
     maplist(unlocated_mode_diagnostic, ModeFailures, ModeDiagnostics),
-    head_safety_diagnostics(Head, Body, [], 0, SafetyDiagnostics),
+    head_safety_diagnostics_with_variables(HeadVariables, Body, [], 0,
+                                           SafetyDiagnostics),
     append([HeadDiagnostics, BodyDiagnostics,
             ModeDiagnostics, SafetyDiagnostics], Diagnostics).
 resolved_rule_diagnostic(Rule, _,
@@ -593,8 +594,9 @@ resolve_rules([Rule | Rest], RuleIndex, Edges, Nodes, Relations, Origins,
         check_goal_sequence_failures(ResolvedBody, 0, HeadVariables, [],
                                      _, _, ModeFailures),
         mode_failure_diagnostics(ModeFailures, RuleIndex, Origins, ModeDiags),
-        head_safety_diagnostics(ResolvedHead, ResolvedBody, Origins,
-                                RuleIndex, SafetyDiags),
+        head_safety_diagnostics_with_variables(HeadVariables, ResolvedBody,
+                                               Origins, RuleIndex,
+                                               SafetyDiags),
         append([GoalDiags, ModeDiags, SafetyDiags], OwnDiags)
     ;   ResolvedRule = Rule,
         (   HeadResult = error(Reason)
@@ -863,8 +865,16 @@ resolve_argument(Argument, _, _, ok(Argument)).
 
 %% Every head var(Identity) must occur in a positive body call.
 head_safety_diagnostics(call(_, HeadArgs), Body, Origins, RuleIndex, Diags) :-
-    rule_origin(Origins, RuleIndex, NodeId),
     head_variables(call(_, HeadArgs), HeadVars),
+    head_safety_diagnostics_with_variables(HeadVars, Body, Origins, RuleIndex,
+                                           Diags).
+
+head_safety_diagnostics_with_variables(HeadVars, Body, Origins, RuleIndex,
+                                       Diags) :-
+    rule_origin(Origins, RuleIndex, NodeId),
+    head_safety_from_variables(HeadVars, Body, NodeId, Diags).
+
+head_safety_from_variables(HeadVars, Body, NodeId, Diags) :-
     findall(Var, (member(Goal, Body),
                   goal_variables(Goal, GoalVars),
                   member(Var, GoalVars)), BodyVars),
