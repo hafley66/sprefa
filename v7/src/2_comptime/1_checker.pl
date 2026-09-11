@@ -1,12 +1,15 @@
 :- module(dl7_checker,
           [ check_datalog/4,
             check_goal_sequence/4,
-            check_resolved_rules/5
+            check_resolved_rules/5,
+            open_checker_origin_arena/1,
+            close_checker_origin_arena/0
           ]).
 
 :- use_module(library(assoc), [get_assoc/3, list_to_assoc/2]).
 :- use_module(library(aggregate), [aggregate_all/3]).
 :- use_module(library(error), [must_be/2]).
+:- use_module(library(gensym), [gensym/2]).
 :- use_module(library(pairs), [group_pairs_by_key/2]).
 :- use_module('../1_libtime/0_evaluator',
               [integer_comparison/3, stratify_rules/3]).
@@ -18,6 +21,150 @@
                 profile_occurrence/2
               ]).
 
+:- dynamic arena_edge_origin/6.
+:- dynamic arena_seed_origin/4.
+:- dynamic arena_rule_origin/4.
+:- dynamic arena_goal_origin/5.
+
+:- thread_local checker_origin_arena_scope/1.
+:- thread_local checker_origin_lookup_scope/1.
+
+:- meta_predicate with_checker_origin_lookup(+, 0).
+
+%% open_checker_origin_arena(+ModuleOrigins) is det.
+%
+% Materialize one owning compile's checker-keyed origins in source-list order.
+% The explicit arena id keeps nested compiles and compiles in other threads
+% disjoint while the four flattened dynamic predicates remain JITI-indexed.
+open_checker_origin_arena(ModuleOrigins) :-
+    gensym(dl7_checker_origin_arena_, ArenaId),
+    asserta(checker_origin_arena_scope(ArenaId)),
+    catch(
+        (   install_module_origin_facts(ModuleOrigins, ArenaId, 0, _)
+        ->  true
+        ;   close_checker_origin_arena,
+            fail
+        ),
+        Error,
+        ( close_checker_origin_arena,
+          throw(Error)
+        )).
+
+install_module_origin_facts([], _, Sequence, Sequence).
+install_module_origin_facts(
+    [module_origins(_, Origins) | ModuleOrigins], ArenaId,
+    Sequence0, Sequence) :-
+    install_checker_origin_facts(
+        Origins, ArenaId, Sequence0, Sequence1),
+    install_module_origin_facts(
+        ModuleOrigins, ArenaId, Sequence1, Sequence).
+
+install_checker_origin_facts([], _, Sequence, Sequence).
+install_checker_origin_facts(
+    [Origin | Origins], ArenaId, Sequence0, Sequence) :-
+    install_checker_origin_fact(Origin, ArenaId, Sequence0, Sequence1),
+    install_checker_origin_facts(
+        Origins, ArenaId, Sequence1, Sequence).
+
+install_checker_origin_fact(
+    origin(edge(Owner, Name, Index), NodeId), ArenaId,
+    Sequence0, Sequence) :-
+    !,
+    assertz(arena_edge_origin(
+                Owner, Name, Index, ArenaId, Sequence0, NodeId)),
+    Sequence is Sequence0 + 1.
+install_checker_origin_fact(
+    origin(seed(SeedIndex), NodeId), ArenaId, Sequence0, Sequence) :-
+    !,
+    assertz(arena_seed_origin(SeedIndex, ArenaId, Sequence0, NodeId)),
+    Sequence is Sequence0 + 1.
+install_checker_origin_fact(
+    origin(rule(RuleIndex), NodeId), ArenaId, Sequence0, Sequence) :-
+    !,
+    assertz(arena_rule_origin(RuleIndex, ArenaId, Sequence0, NodeId)),
+    Sequence is Sequence0 + 1.
+install_checker_origin_fact(
+    origin(goal(RuleIndex, GoalIndex), NodeId), ArenaId,
+    Sequence0, Sequence) :-
+    !,
+    assertz(arena_goal_origin(
+                RuleIndex, GoalIndex, ArenaId, Sequence0, NodeId)),
+    Sequence is Sequence0 + 1.
+install_checker_origin_fact(
+    origin(node(_), _), _, Sequence, Sequence) :- !.
+install_checker_origin_fact(
+    origin(relation(_), _), _, Sequence, Sequence) :- !.
+
+%% close_checker_origin_arena is det.
+%
+% Pop and erase exactly the innermost compile arena. The owning compiler wraps
+% its checker/comptime lifetime in setup_call_cleanup/3.
+close_checker_origin_arena :-
+    (   retract(checker_origin_arena_scope(ArenaId))
+    ->  retractall(arena_edge_origin(_, _, _, ArenaId, _, _)),
+        retractall(arena_seed_origin(_, ArenaId, _, _)),
+        retractall(arena_rule_origin(_, ArenaId, _, _)),
+        retractall(arena_goal_origin(_, _, ArenaId, _, _))
+    ;   true
+    ).
+
+with_checker_origin_lookup(Origins, Goal) :-
+    checker_origin_lookup(Origins, Lookup),
+    setup_call_cleanup(
+        asserta(checker_origin_lookup_scope(Lookup)),
+        call(Goal),
+        retract(checker_origin_lookup_scope(Lookup))).
+
+checker_origin_lookup(Origins, arena(ArenaId)) :-
+    checker_origin_arena_scope(ArenaId),
+    checker_origin_sequence(Origins, ArenaId, 0, Sequence),
+    \+ checker_origin_at_sequence(ArenaId, Sequence),
+    !.
+checker_origin_lookup(_, list).
+
+checker_origin_sequence([], _, Sequence, Sequence).
+checker_origin_sequence(
+    [origin(edge(Owner, Name, Index), NodeId) | Origins],
+    ArenaId, Sequence0, Sequence) :-
+    !,
+    arena_edge_origin(
+        Owner, Name, Index, ArenaId, Sequence0, NodeId),
+    Sequence1 is Sequence0 + 1,
+    checker_origin_sequence(Origins, ArenaId, Sequence1, Sequence).
+checker_origin_sequence(
+    [origin(seed(SeedIndex), NodeId) | Origins],
+    ArenaId, Sequence0, Sequence) :-
+    !,
+    arena_seed_origin(SeedIndex, ArenaId, Sequence0, NodeId),
+    Sequence1 is Sequence0 + 1,
+    checker_origin_sequence(Origins, ArenaId, Sequence1, Sequence).
+checker_origin_sequence(
+    [origin(rule(RuleIndex), NodeId) | Origins],
+    ArenaId, Sequence0, Sequence) :-
+    !,
+    arena_rule_origin(RuleIndex, ArenaId, Sequence0, NodeId),
+    Sequence1 is Sequence0 + 1,
+    checker_origin_sequence(Origins, ArenaId, Sequence1, Sequence).
+checker_origin_sequence(
+    [origin(goal(RuleIndex, GoalIndex), NodeId) | Origins],
+    ArenaId, Sequence0, Sequence) :-
+    !,
+    arena_goal_origin(
+        RuleIndex, GoalIndex, ArenaId, Sequence0, NodeId),
+    Sequence1 is Sequence0 + 1,
+    checker_origin_sequence(Origins, ArenaId, Sequence1, Sequence).
+checker_origin_sequence([_ | Origins], ArenaId, Sequence0, Sequence) :-
+    checker_origin_sequence(Origins, ArenaId, Sequence0, Sequence).
+
+checker_origin_at_sequence(ArenaId, Sequence) :-
+    arena_edge_origin(_, _, _, ArenaId, Sequence, _).
+checker_origin_at_sequence(ArenaId, Sequence) :-
+    arena_seed_origin(_, ArenaId, Sequence, _).
+checker_origin_at_sequence(ArenaId, Sequence) :-
+    arena_rule_origin(_, ArenaId, Sequence, _).
+checker_origin_at_sequence(ArenaId, Sequence) :-
+    arena_goal_origin(_, _, ArenaId, Sequence, _).
+
 %% check_datalog(+BasementProgram, +Origins, -Checked, -Diagnostics) is det.
 %
 % Resolve every pending name through owner edges and reverse binding edges,
@@ -28,7 +175,9 @@
 check_datalog(Basement, Origins, Checked, Diagnostics) :-
     profile_occurrence(checker_input, check_datalog(Basement, Origins)),
     debug_checker_input(Basement, Origins),
-    check_datalog_body(Basement, Origins, Checked, Diagnostics),
+    with_checker_origin_lookup(
+        Origins,
+        check_datalog_body(Basement, Origins, Checked, Diagnostics)),
     debug_checker_output(Checked, Diagnostics).
 
 check_datalog_body(basement_program(root_graph(Nodes, PendingEdges),
@@ -936,21 +1085,33 @@ relations_refs([relation(Target, Arity, KeySets) | Rest],
     relations_refs(Rest, Refs).
 
 edge_origin(Origins, Owner, Name, Index, NodeId) :-
-    memberchk(origin(edge(Owner, Name, Index), NodeId), Origins),
+    (   checker_origin_lookup_scope(arena(ArenaId))
+    ->  arena_edge_origin(Owner, Name, Index, ArenaId, _, NodeId)
+    ;   memberchk(origin(edge(Owner, Name, Index), NodeId), Origins)
+    ),
     !.
 edge_origin(_, _, _, _, none).
 
 seed_origin(Origins, SeedIndex, NodeId) :-
-    memberchk(origin(seed(SeedIndex), NodeId), Origins),
+    (   checker_origin_lookup_scope(arena(ArenaId))
+    ->  arena_seed_origin(SeedIndex, ArenaId, _, NodeId)
+    ;   memberchk(origin(seed(SeedIndex), NodeId), Origins)
+    ),
     !.
 seed_origin(_, _, none).
 
 rule_origin(Origins, RuleIndex, NodeId) :-
-    memberchk(origin(rule(RuleIndex), NodeId), Origins),
+    (   checker_origin_lookup_scope(arena(ArenaId))
+    ->  arena_rule_origin(RuleIndex, ArenaId, _, NodeId)
+    ;   memberchk(origin(rule(RuleIndex), NodeId), Origins)
+    ),
     !.
 rule_origin(_, _, none).
 
 goal_origin(Origins, RuleIndex, GoalIndex, NodeId) :-
-    memberchk(origin(goal(RuleIndex, GoalIndex), NodeId), Origins),
+    (   checker_origin_lookup_scope(arena(ArenaId))
+    ->  arena_goal_origin(RuleIndex, GoalIndex, ArenaId, _, NodeId)
+    ;   memberchk(origin(goal(RuleIndex, GoalIndex), NodeId), Origins)
+    ),
     !.
 goal_origin(_, _, _, none).

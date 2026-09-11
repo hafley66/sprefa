@@ -1985,6 +1985,257 @@ assert_evaluation_closure(Rules, Seeds, ExpectedRows) :-
     Closure == ExpectedClosure,
     Diagnostics == [].
 
+checker_origin_arena_clause_count(Count) :-
+    aggregate_all(
+        count,
+        ( dl7_checker:arena_edge_origin(_, _, _, _, _, _)
+        ; dl7_checker:arena_seed_origin(_, _, _, _)
+        ; dl7_checker:arena_rule_origin(_, _, _, _)
+        ; dl7_checker:arena_goal_origin(_, _, _, _, _)
+        ),
+        Count).
+
+checker_origin_arena_scope_count(Count) :-
+    aggregate_all(
+        count, dl7_checker:checker_origin_arena_scope(_), Count).
+
+checker_origin_variants(
+    [ module_origins(
+          module(test),
+          [ origin(edge(owner, name, 3), edge_first),
+            origin(edge(owner, name, 3), edge_second),
+            origin(seed(4), seed_first),
+            origin(seed(4), seed_second),
+            origin(rule(5), rule_first),
+            origin(rule(5), rule_second),
+            origin(goal(5, 6), goal_first),
+            origin(goal(5, 6), goal_second),
+            origin(node(owner), retained_node_origin),
+            origin(relation(target), retained_relation_origin)
+          ])
+    ]).
+
+test(checker_origin_arena_preserves_first_list_match_for_every_key_shape) :-
+    checker_origin_variants(ModuleOrigins),
+    ModuleOrigins = [module_origins(_, Origins)],
+    setup_call_cleanup(
+        dl7_checker:open_checker_origin_arena(ModuleOrigins),
+        dl7_checker:with_checker_origin_lookup(
+            Origins,
+            ( dl7_checker:edge_origin(
+                  Origins, owner, name, 3, EdgeOrigin),
+              dl7_checker:seed_origin(Origins, 4, SeedOrigin),
+              dl7_checker:rule_origin(Origins, 5, RuleOrigin),
+              dl7_checker:goal_origin(Origins, 5, 6, GoalOrigin)
+            )),
+        dl7_checker:close_checker_origin_arena),
+    Observed = origins(EdgeOrigin, SeedOrigin, RuleOrigin, GoalOrigin),
+    Observed == origins(edge_first, seed_first, rule_first, goal_first).
+
+test(checker_origin_arena_preserves_missing_none_fallback) :-
+    checker_origin_variants(ModuleOrigins),
+    ModuleOrigins = [module_origins(_, Origins)],
+    setup_call_cleanup(
+        dl7_checker:open_checker_origin_arena(ModuleOrigins),
+        dl7_checker:with_checker_origin_lookup(
+            Origins,
+            ( dl7_checker:edge_origin(
+                  Origins, missing, name, 0, EdgeOrigin),
+              dl7_checker:seed_origin(Origins, 99, SeedOrigin),
+              dl7_checker:rule_origin(Origins, 99, RuleOrigin),
+              dl7_checker:goal_origin(Origins, 99, 99, GoalOrigin)
+            )),
+        dl7_checker:close_checker_origin_arena),
+    Observed = origins(EdgeOrigin, SeedOrigin, RuleOrigin, GoalOrigin),
+    Observed == origins(none, none, none, none).
+
+test(checker_origin_arena_uses_list_when_checker_provenance_changes) :-
+    ModuleOrigins =
+        [module_origins(module(initial),
+                        [origin(goal(1, 0), initial_node)])],
+    CurrentOrigins = [origin(goal(1, 0), final_node)],
+    setup_call_cleanup(
+        dl7_checker:open_checker_origin_arena(ModuleOrigins),
+        dl7_checker:with_checker_origin_lookup(
+            CurrentOrigins,
+            ( dl7_checker:checker_origin_lookup_scope(list),
+              dl7_checker:goal_origin(
+                  CurrentOrigins, 1, 0, ObservedNode)
+            )),
+        dl7_checker:close_checker_origin_arena),
+    ObservedNode == final_node.
+
+test(checker_origin_arena_lifecycle_clears_after_success) :-
+    checker_origin_variants(ModuleOrigins),
+    setup_call_cleanup(
+        dl7_checker:open_checker_origin_arena(ModuleOrigins),
+        ( checker_origin_arena_clause_count(DuringClauses),
+          checker_origin_arena_scope_count(DuringScopes)
+        ),
+        dl7_checker:close_checker_origin_arena),
+    checker_origin_arena_clause_count(AfterClauses),
+    checker_origin_arena_scope_count(AfterScopes),
+    Observed = lifecycle(
+                   during(DuringClauses, DuringScopes),
+                   after(AfterClauses, AfterScopes)),
+    Observed == lifecycle(during(8, 1), after(0, 0)).
+
+test(checker_origin_arena_cleanup_runs_after_failure_and_exception) :-
+    FailureOrigins =
+        [module_origins(module(failed),
+                        [origin(edge(owner, failed, 0), failed)])],
+    (   setup_call_cleanup(
+            dl7_checker:open_checker_origin_arena(FailureOrigins),
+            fail,
+            dl7_checker:close_checker_origin_arena)
+    ->  FailureOutcome = unexpected_success
+    ;   FailureOutcome = failed
+    ),
+    checker_origin_arena_clause_count(AfterFailureClauses),
+    checker_origin_arena_scope_count(AfterFailureScopes),
+    ExceptionOrigins =
+        [module_origins(module(thrown),
+                        [origin(rule(0), thrown)])],
+    catch(
+        setup_call_cleanup(
+            dl7_checker:open_checker_origin_arena(ExceptionOrigins),
+            throw(checker_origin_arena_probe),
+            dl7_checker:close_checker_origin_arena),
+        checker_origin_arena_probe,
+        ExceptionOutcome = caught),
+    checker_origin_arena_clause_count(AfterExceptionClauses),
+    checker_origin_arena_scope_count(AfterExceptionScopes),
+    Observed = cleanup(
+                   FailureOutcome,
+                   after_failure(AfterFailureClauses, AfterFailureScopes),
+                   ExceptionOutcome,
+                   after_exception(
+                       AfterExceptionClauses, AfterExceptionScopes)),
+    Observed == cleanup(failed, after_failure(0, 0), caught,
+                        after_exception(0, 0)).
+
+test(checker_origin_arena_open_cleans_partially_installed_facts_on_failure) :-
+    ModuleOrigins =
+        [ module_origins(
+              module(partial),
+              [ origin(edge(owner, installed, 0), installed),
+                malformed_origin
+              ])
+        ],
+    (   dl7_checker:open_checker_origin_arena(ModuleOrigins)
+    ->  Outcome = unexpected_success
+    ;   Outcome = failed
+    ),
+    checker_origin_arena_clause_count(Clauses),
+    checker_origin_arena_scope_count(Scopes),
+    Observed = partial_open(Outcome, Clauses, Scopes),
+    Observed == partial_open(failed, 0, 0).
+
+test(checker_origin_arena_nested_compiles_are_isolated) :-
+    OuterOrigins =
+        [module_origins(module(outer),
+                        [origin(edge(shared, name, 0), outer)])],
+    InnerOrigins =
+        [module_origins(module(inner),
+                        [origin(edge(shared, name, 0), inner)])],
+    setup_call_cleanup(
+        dl7_checker:open_checker_origin_arena(OuterOrigins),
+        ( dl7_checker:with_checker_origin_lookup(
+              [origin(edge(shared, name, 0), outer)],
+              dl7_checker:edge_origin(
+                  [], shared, name, 0, OuterBefore)),
+          setup_call_cleanup(
+              dl7_checker:open_checker_origin_arena(InnerOrigins),
+              dl7_checker:with_checker_origin_lookup(
+                  [origin(edge(shared, name, 0), inner)],
+                  dl7_checker:edge_origin(
+                      [], shared, name, 0, Inner)),
+              dl7_checker:close_checker_origin_arena),
+          dl7_checker:with_checker_origin_lookup(
+              [origin(edge(shared, name, 0), outer)],
+              dl7_checker:edge_origin(
+                  [], shared, name, 0, OuterAfter))
+        ),
+        dl7_checker:close_checker_origin_arena),
+    Observed = nested(OuterBefore, Inner, OuterAfter),
+    Observed == nested(outer, inner, outer).
+
+create_checker_origin_arena_queues(Ready, Release, Results) :-
+    message_queue_create(Ready),
+    message_queue_create(Release),
+    message_queue_create(Results).
+
+destroy_checker_origin_arena_queues(Ready, Release, Results) :-
+    message_queue_destroy(Ready),
+    message_queue_destroy(Release),
+    message_queue_destroy(Results).
+
+checker_origin_arena_thread(Name, NodeId, Ready, Release, Results) :-
+    ModuleOrigins =
+        [module_origins(module(Name),
+                        [origin(edge(shared, name, 0), NodeId)])],
+    setup_call_cleanup(
+        dl7_checker:open_checker_origin_arena(ModuleOrigins),
+        ( thread_send_message(Ready, ready(Name)),
+          thread_get_message(Release, continue, [timeout(2)]),
+          dl7_checker:with_checker_origin_lookup(
+              [origin(edge(shared, name, 0), NodeId)],
+              dl7_checker:edge_origin(
+                  [], shared, name, 0, ObservedNodeId)),
+          thread_send_message(Results, result(Name, ObservedNodeId))
+        ),
+        dl7_checker:close_checker_origin_arena).
+
+test(checker_origin_arena_simultaneous_compiles_are_isolated) :-
+    setup_call_cleanup(
+        create_checker_origin_arena_queues(Ready, Release, Results),
+        ( thread_create(
+              checker_origin_arena_thread(
+                  a, first, Ready, Release, Results),
+              ThreadA, []),
+          thread_create(
+              checker_origin_arena_thread(
+                  b, second, Ready, Release, Results),
+              ThreadB, []),
+          thread_get_message(Ready, ReadyA, [timeout(2)]),
+          thread_get_message(Ready, ReadyB, [timeout(2)]),
+          checker_origin_arena_clause_count(DuringClauses),
+          thread_send_message(Release, continue),
+          thread_send_message(Release, continue),
+          thread_get_message(Results, ResultA, [timeout(2)]),
+          thread_get_message(Results, ResultB, [timeout(2)]),
+          thread_join(ThreadA, StatusA),
+          thread_join(ThreadB, StatusB),
+          checker_origin_arena_clause_count(AfterClauses)
+        ),
+        destroy_checker_origin_arena_queues(Ready, Release, Results)),
+    sort([ReadyA, ReadyB], ReadyObserved),
+    sort([ResultA, ResultB], ResultObserved),
+    Observed = simultaneous(
+                   ReadyObserved, DuringClauses, ResultObserved,
+                   statuses(StatusA, StatusB), AfterClauses),
+    Observed == simultaneous(
+                    [ready(a), ready(b)], 2,
+                    [result(a, first), result(b, second)],
+                    statuses(true, true), 0).
+
+test(checker_origin_arena_matches_nearest_shadow_initial_check) :-
+    dl7_compiler:load_type_prelude(PreludeUnit, []),
+    load_dl7('v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7',
+             ProgramUnit, []),
+    lower_units_with_exporter_deferred(
+        PreludeUnit, [ProgramUnit], ModuleBasements, ModuleOrigins, []),
+    merge_module_basements(
+        ModuleBasements, ModuleOrigins, Basement, Origins),
+    check_datalog(Basement, Origins, ListChecked, ListDiagnostics),
+    setup_call_cleanup(
+        dl7_checker:open_checker_origin_arena(ModuleOrigins),
+        check_datalog(
+            Basement, Origins, ArenaChecked, ArenaDiagnostics),
+        dl7_checker:close_checker_origin_arena),
+    ListChecked == ArenaChecked,
+    ListDiagnostics == ArenaDiagnostics.
+
 stratum_arena_clause_count(Count) :-
     aggregate_all(count, dl7_evaluator:arena_stratum(_, _, _), Count).
 
