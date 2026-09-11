@@ -7,29 +7,39 @@ read_dl7(Path, Text, Forms, SourceRows, Diagnostics) :-
     must_be(text, Text),
     text_to_string(Text, String),
     string_codes(String, Codes),
-    once(read_top_forms(Path, Codes, position(0, 1, 1), 0, Result)),
+    once(read_top_forms_dl(Path, Codes, position(0, 1, 1), 0, DListResult)),
+    close_top_rows(DListResult, Result),
     reader_result(Result, Forms, SourceRows, Diagnostics).
 
 reader_result(ok(Forms, SourceRows), Forms, SourceRows, []).
 reader_result(error(Diagnostic), [], [], [Diagnostic]).
 
 read_top_forms(Path, Codes0, Position0, Index0, Result) :-
+    read_top_forms_dl(Path, Codes0, Position0, Index0, DListResult),
+    close_top_rows(DListResult, Result).
+
+read_top_forms_dl(Path, Codes0, Position0, Index0, Result) :-
     skip_layout(Codes0, Position0, Codes, Position),
     (   Codes == []
-    ->  Result = ok([], [])
+    ->  Result = ok([], Rows, Rows)
     ;   TopNodeId = reader_node(Path, Index0),
         read_term(Path, TopNodeId, Codes, Position, Index0, [], TermResult),
-        continue_top_forms(Path, TermResult, Result)
+        continue_top_forms_dl(Path, TermResult, Result)
     ).
 
-continue_top_forms(_, error(Diagnostic), error(Diagnostic)).
-continue_top_forms(Path,
-                   ok(Form, FormRows, Codes, Position, Index, _Variables),
-                   Result) :-
-    read_top_forms(Path, Codes, Position, Index, RestResult),
-    (   RestResult = ok(RestForms, RestRows)
-    ->  append(FormRows, RestRows, SourceRows),
-        Result = ok([Form | RestForms], SourceRows)
+close_top_rows(error(Diagnostic), error(Diagnostic)).
+close_top_rows(ok(Forms, Rows0, Rows), ok(Forms, Rows0)) :-
+    Rows = [].
+
+continue_top_forms_dl(_, error(Diagnostic), error(Diagnostic)).
+continue_top_forms_dl(Path,
+                      ok(Form, FormRows0, FormRows,
+                         Codes, Position, Index, _Variables),
+                      Result) :-
+    read_top_forms_dl(Path, Codes, Position, Index, RestResult),
+    (   RestResult = ok(RestForms, RestRows0, RestRows)
+    ->  FormRows = RestRows0,
+        Result = ok([Form | RestForms], FormRows0, RestRows)
     ;   Result = RestResult
     ).
 
@@ -43,8 +53,8 @@ read_term_kind([0'( | Codes0], Path, TopNodeId, NodeId, Start, Index,
                Variables0, Result) :-
     !,
     advance(0'(, Start, Position),
-    read_form_items(Path, TopNodeId, NodeId, Codes0, Position, Index,
-                    Variables0, ItemResult),
+    read_form_items_dl(Path, TopNodeId, NodeId, Codes0, Position, Index,
+                       Variables0, ItemResult),
     finish_form(Path, NodeId, Start, ItemResult, Result).
 read_term_kind([0'{ | Codes0], Path, _, NodeId, Start, Index,
                Variables, Result) :-
@@ -91,8 +101,8 @@ read_term_kind(Codes0, Path, _, NodeId, Start, Index, Variables, Result) :-
     finish_token(Path, NodeId, Start, End, Index, TokenCodes, Codes,
                  Variables, Result).
 
-read_form_items(Path, TopNodeId, FormNodeId, Codes0, Position0, Index0,
-                Variables0, Result) :-
+read_form_items_dl(Path, TopNodeId, FormNodeId, Codes0, Position0, Index0,
+                   Variables0, Result) :-
     skip_layout(Codes0, Position0, Codes, Position),
     (   Codes == []
     ->  reader_diagnostic(Path, FormNodeId, unterminated_form,
@@ -100,31 +110,33 @@ read_form_items(Path, TopNodeId, FormNodeId, Codes0, Position0, Index0,
         Result = error(Diagnostic)
     ;   Codes = [0') | Rest]
     ->  advance(0'), Position, End),
-        Result = ok([], [], Rest, End, Index0, Variables0)
+        Result = ok([], Rows, Rows, Rest, End, Index0, Variables0)
     ;   read_term(Path, TopNodeId, Codes, Position, Index0,
                   Variables0, ItemResult),
-        continue_form_items(Path, TopNodeId, FormNodeId, ItemResult, Result)
+        continue_form_items_dl(Path, TopNodeId, FormNodeId,
+                               ItemResult, Result)
     ).
 
-continue_form_items(_, _, _, error(Diagnostic), error(Diagnostic)).
-continue_form_items(Path, TopNodeId, FormNodeId,
-                    ok(Item, ItemRows, Codes, Position, Index, Variables0),
-                    Result) :-
-    read_form_items(Path, TopNodeId, FormNodeId, Codes, Position, Index,
-                    Variables0, RestResult),
-    (   RestResult = ok(RestItems, RestRows, RestCodes, End, RestIndex,
-                        Variables)
-    ->  append(ItemRows, RestRows, SourceRows),
-        Result = ok([Item | RestItems], SourceRows, RestCodes, End,
-                    RestIndex, Variables)
+continue_form_items_dl(_, _, _, error(Diagnostic), error(Diagnostic)).
+continue_form_items_dl(Path, TopNodeId, FormNodeId,
+                       ok(Item, ItemRows0, ItemRows,
+                          Codes, Position, Index, Variables0),
+                       Result) :-
+    read_form_items_dl(Path, TopNodeId, FormNodeId, Codes, Position, Index,
+                       Variables0, RestResult),
+    (   RestResult = ok(RestItems, RestRows0, RestRows,
+                        RestCodes, End, RestIndex, Variables)
+    ->  ItemRows = RestRows0,
+        Result = ok([Item | RestItems], ItemRows0, RestRows,
+                    RestCodes, End, RestIndex, Variables)
     ;   Result = RestResult
     ).
 
 finish_form(_, _, _, error(Diagnostic), error(Diagnostic)).
 finish_form(Path, NodeId, Start,
-            ok(Items, ItemRows, Codes, End, Index, Variables),
-            ok(node(NodeId, form(Items)), [Source | ItemRows], Codes, End,
-               Index, Variables)) :-
+            ok(Items, ItemRows0, ItemRows, Codes, End, Index, Variables),
+            ok(node(NodeId, form(Items)), [Source | ItemRows0], ItemRows,
+               Codes, End, Index, Variables)) :-
     source_row(NodeId, Path, Start, End, Source).
 
 read_query_codes([], Position, _, error(unterminated_query, Position)).
@@ -164,7 +176,7 @@ finish_query(Path, NodeId, _Start, _Index, _Variables,
 finish_query(Path, NodeId, Start, Index, Variables,
              ok(QueryCodes, Codes, End),
              ok(node(NodeId, literal(tree_sitter_query(Text))),
-                [Source], Codes, End, Index, Variables)) :-
+                [Source | Rows], Rows, Codes, End, Index, Variables)) :-
     string_codes(Text, QueryCodes),
     source_row(NodeId, Path, Start, End, Source).
 
@@ -206,8 +218,8 @@ finish_string(Path, NodeId, _Start, _Index, _Variables,
     reader_diagnostic(Path, NodeId, Code, Position, Diagnostic).
 finish_string(Path, NodeId, Start, Index, Variables,
               ok(StringCodes, Codes, End),
-              ok(node(NodeId, literal(String)), [Source], Codes, End,
-                 Index, Variables)) :-
+              ok(node(NodeId, literal(String)), [Source | Rows], Rows,
+                 Codes, End, Index, Variables)) :-
     string_codes(String, StringCodes),
     source_row(NodeId, Path, Start, End, Source).
 
@@ -222,8 +234,8 @@ finish_symbol(Path, NodeId, Start, _, _, NameCodes, _, _,
     ),
     reader_diagnostic(Path, NodeId, Code, Start, Diagnostic).
 finish_symbol(Path, NodeId, Start, End, Index, NameCodes, Codes, Variables,
-              ok(node(NodeId, literal(symbol(Name))), [Source], Codes, End,
-                 Index, Variables)) :-
+              ok(node(NodeId, literal(symbol(Name))), [Source | Rows], Rows,
+                 Codes, End, Index, Variables)) :-
     atom_codes(Name, NameCodes),
     source_row(NodeId, Path, Start, End, Source).
 
@@ -239,8 +251,8 @@ finish_variable(Path, _, NodeId, Start, _, _, NameCodes, _, _,
     reader_diagnostic(Path, NodeId, Code, Start, Diagnostic).
 finish_variable(Path, TopNodeId, NodeId, Start, End, Index, NameCodes, Codes,
                 Variables0,
-                ok(node(NodeId, variable(VariableId, Name)), [Source], Codes,
-                   End, Index, Variables)) :-
+                ok(node(NodeId, variable(VariableId, Name)),
+                   [Source | Rows], Rows, Codes, End, Index, Variables)) :-
     atom_codes(Name, NameCodes),
     variable_identity(Name, TopNodeId, NodeId, Variables0, Variables,
                       VariableId),
@@ -266,13 +278,13 @@ finish_token(Path, NodeId, Start, End, Index, TokenCodes, Codes, Variables,
     ->  number_codes(Integer, TokenCodes),
         Payload = literal(Integer),
         source_row(NodeId, Path, Start, End, Source),
-        Result = ok(node(NodeId, Payload), [Source], Codes, End,
-                    Index, Variables)
+        Result = ok(node(NodeId, Payload), [Source | Rows], Rows,
+                    Codes, End, Index, Variables)
     ;   valid_atom_codes(TokenCodes)
     ->  atom_codes(Name, TokenCodes),
         source_row(NodeId, Path, Start, End, Source),
-        Result = ok(node(NodeId, atom(Name)), [Source], Codes, End,
-                    Index, Variables)
+        Result = ok(node(NodeId, atom(Name)), [Source | Rows], Rows,
+                    Codes, End, Index, Variables)
     ;   atom_codes(Token, TokenCodes),
         reader_diagnostic(Path, NodeId, invalid_atom(Token), Start,
                           Diagnostic),

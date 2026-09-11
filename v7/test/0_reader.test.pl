@@ -160,6 +160,27 @@ test(reader_tree_reifies_to_indexed_syntax_graph) :-
               sources([0, 1, 2, 3, 4, 5, 6])
             ]).
 
+test(source_rows_preserve_enclosing_order_and_multiplicity) :-
+    Text = "(outer (inner x) (inner x))",
+    read_dl7(source_rows, Text, Forms, Rows, Diagnostics),
+    Forms = [node(reader_node(source_rows, 0), form(_))],
+    findall(NodeId,
+            member(source(NodeId, _, _, _, _, _, _, _), Rows),
+            NodeIds),
+    Observed = reader_rows(Diagnostics, NodeIds, Rows),
+    Observed = reader_rows(
+                    [],
+                    [ reader_node(source_rows, 0),
+                      reader_node(source_rows, 1),
+                      reader_node(source_rows, 2),
+                      reader_node(source_rows, 3),
+                      reader_node(source_rows, 4),
+                      reader_node(source_rows, 5),
+                      reader_node(source_rows, 6),
+                      reader_node(source_rows, 7)
+                    ],
+                    _).
+
 test(syntax_graph_reports_a_missing_source_without_partial_rows) :-
     Forms = [node(reader_node(missing, 0), atom(value))],
     reify_syntax(Forms, [], Rows, Diagnostics),
