@@ -789,7 +789,10 @@ worklist_loop([Relation | Queue0], DependencyIndex, LevelByRelation0,
     (   get_assoc(Relation, DependencyIndex, Readers)
     ->  reader_levels(Readers, BodyLevel, LevelByRelation0, LevelByRelation1,
                       Enqueued, Debug),
-        append(Queue0, Enqueued, Queue)
+        (   Enqueued == []
+        ->  Queue = Queue0
+        ;   append(Queue0, Enqueued, Queue)
+        )
     ;   LevelByRelation1 = LevelByRelation0,
         Queue = Queue0
     ),

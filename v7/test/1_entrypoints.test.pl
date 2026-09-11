@@ -2533,6 +2533,42 @@ test(stratification_worklist_matches_reference_on_invariant_programs) :-
     Observed = parity(Observations),
     Observed == parity([equal, equal, equal, equal, equal]).
 
+test(stratification_worklist_reuses_queue_on_empty_enqueue) :-
+    Dependencies = [dependency(child, parent, positive, 0, positive)],
+    Levels0 = [level(parent, 0), level(child, 0)],
+    dl7_evaluator:dependency_index(Dependencies, DependencyIndex),
+    dl7_evaluator:level_index(Levels0, LevelByRelation0),
+    dl7_evaluator:worklist_loop(
+        [parent], DependencyIndex, LevelByRelation0, LevelByRelation, false),
+    dl7_evaluator:levels_from_index(
+        Levels0, LevelByRelation, Levels),
+    Levels == Levels0.
+
+test(stratification_worklist_keeps_nonempty_enqueue_order) :-
+    Levels0 = [level(parent, 0), level(first, 0), level(second, 0)],
+    dl7_evaluator:level_index(Levels0, LevelByRelation0),
+    dl7_evaluator:reader_levels(
+        [first-1, second-1], 0, LevelByRelation0, LevelByRelation,
+        Enqueued, false),
+    Enqueued == [first, second],
+    dl7_evaluator:levels_from_index(
+        Levels0, LevelByRelation, Levels),
+    Levels == [level(parent, 0), level(first, 1), level(second, 1)].
+
+test(stratification_worklist_repeated_reader_keys_keep_fixpoint) :-
+    Dependencies =
+        [ dependency(child, parent, positive, 1, positive),
+          dependency(child, parent, positive, 1, positive)
+        ],
+    Levels0 = [level(parent, 0), level(child, 0)],
+    dl7_evaluator:dependency_index(Dependencies, DependencyIndex),
+    dl7_evaluator:level_index(Levels0, LevelByRelation0),
+    dl7_evaluator:worklist_loop(
+        [parent], DependencyIndex, LevelByRelation0, LevelByRelation, false),
+    dl7_evaluator:levels_from_index(
+        Levels0, LevelByRelation, Levels),
+    Levels == [level(parent, 0), level(child, 1)].
+
 test(stratification_worklist_matches_reference_on_nearest_shadow_rules) :-
     compile_dl7('v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7',
                 _, Runtime, []),
