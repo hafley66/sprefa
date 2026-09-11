@@ -15,6 +15,7 @@
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(gensym), [gensym/2]).
 :- use_module(library(lists), [max_list/2]).
+:- use_module(library(ordsets), [ord_union/3]).
 :- use_module(library(pairs), [group_pairs_by_key/2]).
 :- use_module(library(tableutil), [table_statistics/2]).
 :- use_module(library(ugraphs),
@@ -144,15 +145,16 @@ evaluate_strata(Level, MaxStratum, Strata, Dependencies, Rules, Seeds, LowerRows
     evaluate_stratum_after_aggregates(
         AggregateDiagnostics, AggregateSeeds,
         Level, MaxStratum, Strata, Dependencies, Rules, Seeds, LowerRows,
-        PlainRules, CurrentSeeds, Closure, Diagnostics).
+        PlainRules, CurrentRules, CurrentSeeds, Closure, Diagnostics).
 
 evaluate_stratum_after_aggregates(
     [], AggregateSeeds,
     Level, MaxStratum, Strata, Dependencies, Rules, Seeds, LowerRows,
-    PlainRules, CurrentSeeds, Closure, Diagnostics) :-
+    PlainRules, CurrentRules, CurrentSeeds, Closure, Diagnostics) :-
     !,
     append(CurrentSeeds, AggregateSeeds, Seeds0),
     sort(Seeds0, StratumSeeds),
+    current_result_relations(CurrentRules, StratumSeeds, ResultRelations),
     gensym(dl7_evaluation_, EvaluationId),
     setup_call_cleanup(
         run_compile_step(
@@ -163,7 +165,8 @@ evaluate_stratum_after_aggregates(
                 Level, PlainRules, StratumSeeds, LowerRows)),
         run_compile_step(
             evaluator, evaluate_collect(Level),
-            collect_closure(EvaluationId, CompletedRows),
+            collect_closure(EvaluationId, ResultRelations, LowerRows,
+                            CompletedRows),
             evaluate_collect_metrics(Level, CompletedRows)),
         run_compile_step(
             evaluator, evaluate_cleanup(Level),
@@ -173,7 +176,7 @@ evaluate_stratum_after_aggregates(
     evaluate_strata(NextLevel, MaxStratum, Strata, Dependencies, Rules, Seeds,
                     CompletedRows, Closure, Diagnostics).
 evaluate_stratum_after_aggregates(
-    Diagnostics, _, _, _, _, _, _, _, _, _, _, [], Diagnostics).
+    Diagnostics, _, _, _, _, _, _, _, _, _, _, _, [], Diagnostics).
 
 rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
     memberchk(stratum(Relation, Level), Strata).
@@ -225,6 +228,20 @@ relation_level(Strata, Relation, Level) :-
     ->  Level = DerivedLevel
     ;   Level = 0
     ).
+
+%% current_result_relations(+Rules, +Seeds, -Relations) is det.
+%%
+% A stratum can add rows only through its own rule heads or seeds. Lower-level
+% definitions remain available as body inputs through LowerRows and are unioned
+% into the completed snapshot after the current roots are evaluated. The nil
+% kernel relation is a permanent evaluator row, including empty strata.
+current_result_relations(Rules, Seeds, Relations) :-
+    findall(Relation,
+            ( member(rule(call(Relation, _), _), Rules)
+            ; member(call(Relation, _), Seeds)
+            ),
+            Relations0),
+    sort([ref(kernel(nil)) | Relations0], Relations).
 
 aggregate_rule(rule(call(_, Arguments), _)) :-
     memberchk(aggregate(count, _), Arguments).
@@ -928,16 +945,32 @@ index_argument_hash(Position, Arguments, Hash) :-
     ;   true
     ).
 
-collect_closure(EvaluationId, Closure) :-
-    findall(Call, proves(EvaluationId, Call), Calls),
+%% collect_closure(+EvaluationId, +ResultRelations, +LowerRows, -Closure)
+%% is det.
+%%
+% Bound relation roots enumerate only rows that can be produced in this
+% stratum. Completed lower rows are already immutable and are merged afterward,
+% avoiding a fresh unbound proves/2 traversal over every lower relation.
+collect_closure(EvaluationId, ResultRelations, LowerRows, Closure) :-
+    findall(Call,
+            ( member(Relation, ResultRelations),
+              Call = call(Relation, _),
+              proves(EvaluationId, Call)
+            ),
+            Calls),
+    sort(Calls, CurrentRows),
     findall(Request, evaluation_request(EvaluationId, Request), Requests),
-    append(Calls, Requests, Rows),
-    sort(Rows, Closure),
-    profile_closure_rows(Closure).
+    sort(Requests, RequestRows),
+    ord_union(CurrentRows, RequestRows, NewRows),
+    ord_union(LowerRows, NewRows, Closure),
+    profile_closure_rows(NewRows).
 
-profile_closure_rows(Closure) :-
+% The profile category records the rows collected for this stratum before the
+% completed lower snapshot is merged, so repeated lower-row enumeration is
+% visible as removed work rather than as repeated output accounting.
+profile_closure_rows(NewRows) :-
     (   profile_scope_on
-    ->  profile_closure_rows_(Closure)
+    ->  profile_closure_rows_(NewRows)
     ;   true
     ).
 

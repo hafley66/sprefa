@@ -1929,6 +1929,31 @@ test(demand_cone_does_not_follow_aggregate_edges_from_a_shared_head) :-
     sort([Plain, Needed], Expected),
     Selected == Expected.
 
+test(evaluator_collection_binds_result_relations_and_unions_lower_rows) :-
+    EvaluationId = evaluator_collection_bound_roots,
+    Current = rule(call(ref(current_result), [const(current)]), []),
+    Unrelated = rule(call(ref(unrelated_result), [const(unrelated)]), []),
+    Seeds = [call(ref(seed_result), [const(seed)])],
+    LowerRows = [call(ref(lower_result), [const(lower)])],
+    setup_call_cleanup(
+        true,
+        once((
+            dl7_evaluator:install_evaluation(
+                EvaluationId, [Current, Unrelated], Seeds, LowerRows,
+                ClauseReferences),
+            dl7_evaluator:current_result_relations(
+                [Current], Seeds, ResultRelations),
+            dl7_evaluator:collect_closure(
+                EvaluationId, ResultRelations, LowerRows, Closure)
+        )),
+        dl7_evaluator:clear_evaluation(EvaluationId, ClauseReferences)),
+    sort([call(ref(kernel(nil)), [const([])]),
+          call(ref(current_result), [const(current)]),
+          call(ref(lower_result), [const(lower)]),
+          call(ref(seed_result), [const(seed)])],
+         Expected),
+    Closure == Expected.
+
 test(evaluator_current_stratum_reads_completed_positive_dependency) :-
     Source = ref(source),
     Lower = ref(lower),
