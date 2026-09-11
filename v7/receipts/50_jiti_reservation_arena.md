@@ -29,9 +29,9 @@ lowering-boundary JITI arena instead of repeated list scans.
 The repeated work is the `memberchk/2` scan inside `scoped_reservation/5`.
 Every probe is one fresh SWI process under `timeout`, tracing off unless
 stated. The baseline and the changed source are measured with the same fixture
-(`v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7`) and the same process
-regime. Temporary probes live under `/private/tmp`. No install, build, or
-delegation was performed.
+(`v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7`) and the same
+measurement procedure. Temporary probes live under `/private/tmp`. No install,
+build, or delegation was performed.
 
 ## Pre-edit inventory
 
@@ -92,35 +92,43 @@ Phase split: promotion uses 108/9/9/508/508 calls by length, lowering uses
 
 ## Physical representation
 
-One flattened dynamic predicate and one thread-local scope stack:
+One flattened dynamic predicate with a view column, and one thread-local scope
+stack:
 
 ```prolog
-:- dynamic arena_reservation/5.          % Owner, Name, Target, Kind, StoreId
+:- dynamic arena_reservation/6.   % Owner, Name, Target, Kind, StoreId, View
 :- thread_local reservation_arena_scope/1.
 ```
 
 `open_reservation_arena/1` mints a `gensym/2` store id, pushes it, and asserts
-every reservation in list order as `arena_reservation(Owner, Name, Target,
-Kind, StoreId)`. `close_reservation_arena/0` pops the innermost id and
-`retractall/1`s exactly its clauses. `setup_call_cleanup/3` in
-`lower_after_declarations/8` pairs them around the promotion call and around
-the environment lowering tail.
+every `VisibleReservations` entry in list order under view `visible`.
+`install_promoted_reservation_view/1` then asserts this boundary's local
+`PromotedReservations` in list order under view `promoted`, inside the same
+scope. One store is built per `lower_datalog/5` boundary.
+`close_reservation_arena/0` pops the innermost id and `retractall/1`s exactly
+its clauses in both views.
 
 `scoped_reservation/5` dispatches on an active scope. With one active it reads
-the arena; otherwise it reads the list. The arena branch keeps the original
-product-first, then any-kind, then parent-walk order; a JITI collision cannot
-change the result because the stored full fields are unified after bucket
-selection. Non-ground keys still unify against the clauses in assert order,
-which reproduces `memberchk/2` first-match.
+the arena; otherwise it reads the list. The arena branch tries the promoted
+view before the visible view, so a promoted `(Owner, Name)` shadows its
+pre-promotion entry, and the two views together reproduce
+`PromotedReservations ++ ImportedReservations` while each list is stored once.
+The branch order stays product-first, then any-kind, then parent-walk. A JITI
+collision cannot change the result because the stored full fields are unified
+after bucket selection, and non-ground keys still unify against the clauses in
+assert order.
 
 ## Boundary, identity, and cleanup
 
-- One arena is installed per reservation list at the owning
-  `lower_datalog/5` boundary. Nearest-shadow opens 12 arenas (2 for each of 6
-  lowering calls) and asserts 2,088 clauses total.
+- One store is built per `lower_datalog/5` boundary. Nearest-shadow performs 6
+  builds and asserts 1,044 visible clauses plus 818 promoted-view clauses.
+- Promotion runs before the promoted view is installed, so its 206 lookups read
+  the visible view exactly as the pre-promotion `VisibleReservations` list. The
+  local promotion candidates (`Promotions`, `DerivedReservations`) stay lists
+  enumerated once.
 - The store id in every clause keeps nested lowerings and lowerings in other
   threads disjoint. The scope stack is thread-local and innermost-first.
-- `open_reservation_arena/1` closes its own arena when installation fails, and
+- `open_reservation_arena/1` closes its own store when installation fails, and
   rethrows after cleanup. `setup_call_cleanup/3` runs `close_reservation_arena`
   on success, failure, and exception.
 
@@ -142,18 +150,19 @@ which reproduces `memberchk/2` first-match.
 ## Realized JITI shape
 
 After a nearest-shadow compile, `library(prolog_jiti):jiti_list/1` on
-`dl7_lowerer:arena_reservation/5`:
+`dl7_lowerer:arena_reservation/6`:
 
 | Index | Buckets | Speedup | Collisions |
 | --- | ---: | ---: | ---: |
-| argument `2` (Name) | 128 | 99.1 | 26 |
+| argument `2` (Name) | 128 | 99.1 | 24 |
 | deep `3/1/2:2` | 128 | 114.0 | 27 |
-| deep `3:1` | 32 | 1.0 | 0 |
+| deep `3` | 4 | 1.4 | 0 |
+| deep `3:1` | 4 | 1.0 | 0 |
 | deep `3/1:2` | 2 | 1.0 | 0 |
 
 The realized key index narrows by `Name`; exact unification still filters
-`Owner`, `Target`, `Kind`, and `StoreId`. `jiti_suggest_modes` was not needed;
-all key arguments are called bound.
+`Owner`, `Target`, `Kind`, `StoreId`, and `View`. `jiti_suggest_modes` was not
+needed; all key arguments are called bound.
 
 ## Exact output parity
 
@@ -173,10 +182,10 @@ before the cold compile.
 | State | Cold wall (4 samples) | Cold inferences |
 | --- | --- | ---: |
 | before | 333, 329, 326, 330 ms | 1,909,640 |
-| after | 292, 288, 281, 288 ms | 1,915,232 |
+| after | 295, 294, 283, 293 ms | 1,927,130 |
 
-Median wall changed from 329.5 ms to 288 ms, a decrease of 41.5 ms or 12.6
-percent. Charged inferences changed by `+5,592`, or `+0.29` percent. Warm
+Median wall changed from 329.5 ms to 293.5 ms, a decrease of 36 ms or 10.9
+percent. Charged inferences changed by `+17,490`, or `+0.92` percent. Warm
 inferences are unchanged at 2,240.
 
 ## Work counters and cleanup
@@ -187,8 +196,9 @@ inferences are unchanged at 2,240.
 | lookups served by JITI | 0 | 2,070 | +2,070 |
 | lookups served by list scan | 2,070 | 0 | -2,070 |
 | reservation list cells | 692,571 | 0 | -692,571 |
-| arena builds (opens) | 0 | 12 | +12 |
-| clauses asserted | 0 | 2,088 | +2,088 |
+| store builds | 0 | 6 | +6 |
+| visible clauses asserted | 0 | 1,044 | +1,044 |
+| promoted-view clauses asserted | 0 | 818 | +818 |
 
 After a complete compile the residue was:
 
@@ -197,19 +207,20 @@ arena_reservation clauses = 0
 reservation_arena_scope rows = 0
 ```
 
-The source remains because the compiler-level wall decreased 12.6 percent
-while charged inferences changed by 0.29 percent. Output bytes, rows,
+The source remains because the compiler-level wall decreased 10.9 percent
+while charged inferences changed by 0.92 percent. Output bytes, rows,
 diagnostics, runtime counts, warm inferences, and residue are unchanged.
 
 ## Tests and CI coverage
 
-`v7/test/19_lexical_binding.test.pl` gains eight focused cases and now reports
-18 passing cases; the maximum case time was under 0.01 s:
+`v7/test/19_lexical_binding.test.pl` gains nine focused cases and now reports
+19 passing cases; the maximum case time was under 0.02 s:
 
 - list/arena equivalence for nearest shadowing, direct and chained parent
   aliases, unknown owners, and missing names;
 - list/arena equivalence with a partially bound key;
 - same-owner product precedence under the arena;
+- the promoted view shadowing its pre-promotion visible entry;
 - a two-owner parent cycle that terminates and fails;
 - unknown name fails;
 - nested store isolation;
@@ -218,7 +229,7 @@ diagnostics, runtime counts, warm inferences, and residue are unchanged.
 
 `v7/test/18_binding_symmetry.test.pl` (16 cases) and
 `v7/test/20_compiler_performance.test.pl` (17 cases) pass. The focused test
-file adds eight repository test cases; workflow files are unchanged, so CI
+file adds nine repository test cases; workflow files are unchanged, so CI
 workflow coverage adds, changes, and removes zero cases.
 
 `v7/test/1_entrypoints.test.pl` reports 23 failures both before and after the

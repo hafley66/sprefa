@@ -211,6 +211,36 @@ test(reservation_arena_same_owner_product_precedence_is_unchanged) :-
     Reservation == reservation(owner(scope), 'Name',
                                target(owner(product)), product).
 
+test(reservation_arena_promoted_view_shadows_visible_view) :-
+    Visible = [ reservation(owner(scope), name,
+                            target(owner(base)), reference),
+                reservation(owner(scope), other,
+                            target(owner(other_target)), product)
+              ],
+    Promoted = [ reservation(owner(scope), name,
+                             deferred_expression(
+                                 node(bind, atom(name)), bind, 3),
+                             expression),
+                 reservation(owner(scope), other,
+                             target(owner(other_target)), product)
+               ],
+    setup_call_cleanup(
+        dl7_lowerer:open_reservation_arena(Visible),
+        ( dl7_lowerer:install_promoted_reservation_view(Promoted),
+          dl7_lowerer:scoped_reservation(
+              owner(scope), name, Visible, [], NameResult),
+          NameResult == reservation(
+                            owner(scope), name,
+                            deferred_expression(
+                                node(bind, atom(name)), bind, 3),
+                            expression),
+          dl7_lowerer:scoped_reservation(
+              owner(scope), other, Visible, [], OtherResult),
+          OtherResult == reservation(
+                              owner(scope), other,
+                              target(owner(other_target)), product) ),
+        dl7_lowerer:close_reservation_arena).
+
 test(reservation_arena_parent_cycle_terminates_and_fails) :-
     Reservations = [ reservation(owner(cycle_a), other,
                                   target(owner(cycle_b)), product),
@@ -362,7 +392,7 @@ reservation_arena_thread(Reservations, Tag, Queue) :-
     thread_send_message(Queue, Tag-Result).
 
 reservation_arena_residue(Facts) :-
-    findall(_, dl7_lowerer:arena_reservation(_, _, _, _, _), FactList),
+    findall(_, dl7_lowerer:arena_reservation(_, _, _, _, _, _), FactList),
     length(FactList, Facts),
     findall(_, dl7_lowerer:reservation_arena_scope(_), ScopeList),
     length(ScopeList, 0).
