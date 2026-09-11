@@ -137,6 +137,42 @@ test(numbered_prelude_files_are_loaded_in_lexical_order) :-
     maplist(file_exists, Paths, Exists),
     Exists == [true, true, true, true, true, true].
 
+test(dense_index_diagnostics_preserves_owner_counts_order_and_multiplicity) :-
+    Edges =
+        [ pending_edge(owner, first, target(a), 0),
+          pending_edge(owner, second, target(b), 3),
+          pending_edge(owner, second, target(c), 3),
+          pending_edge(other, only, target(d), 0)
+        ],
+    Origins = [origin(edge(owner, second, 3), owner_second)],
+    dl7_checker:dense_index_diagnostics(
+        Edges, Edges, Origins, IndexedDiagnostics),
+    dl7_checker:dense_index_diagnostics_scanned(
+        Edges, Edges, Origins, ScannedDiagnostics),
+    dl7_checker:dense_index_diagnostics([], [], [], EmptyDiagnostics),
+    Observed = diagnostics(IndexedDiagnostics, ScannedDiagnostics,
+                           EmptyDiagnostics),
+    Observed == diagnostics(
+                    [ diagnostic(check, owner_second,
+                                 non_dense_index(owner, 3)),
+                      diagnostic(check, owner_second,
+                                 non_dense_index(owner, 3))
+                    ],
+                    [ diagnostic(check, owner_second,
+                                 non_dense_index(owner, 3)),
+                      diagnostic(check, owner_second,
+                                 non_dense_index(owner, 3))
+                    ],
+                    []).
+
+test(dense_index_diagnostics_preserves_nonground_scan_mode) :-
+    Edges =
+        [ pending_edge(Owner, first, target(a), 0),
+          pending_edge(Owner, second, target(b), 1)
+        ],
+    dl7_checker:dense_index_diagnostics(Edges, Edges, [], Diagnostics),
+    Diagnostics == [].
+
 test(split_prelude_loads_all_existing_type_algebra_declarations) :-
     compile_dl7('v7/test/fixtures/2_partial.dl7', Rows, _Runtime, Diagnostics),
     once(type_operator_snapshot(Rows, Snapshot)),

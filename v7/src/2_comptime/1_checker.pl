@@ -4,8 +4,10 @@
             check_resolved_rules/5
           ]).
 
+:- use_module(library(assoc), [get_assoc/3, list_to_assoc/2]).
 :- use_module(library(aggregate), [aggregate_all/3]).
 :- use_module(library(error), [must_be/2]).
+:- use_module(library(pairs), [group_pairs_by_key/2]).
 :- use_module('../1_libtime/0_evaluator',
               [integer_comparison/3, stratify_rules/3]).
 :- use_module('0_lowerer', [kernel_relation/2]).
@@ -334,9 +336,34 @@ duplicate_index_diagnostics([pending_edge(Owner, Name, _, Index) | Rest],
     duplicate_index_diagnostics(Rest, Origins,
                                 [seen(Owner, Index) | Seen], RestDiags).
 
-dense_index_diagnostics([], _, _, []).
-dense_index_diagnostics([pending_edge(Owner, Name, _, Index) | Rest], All,
-                        Origins, Diags) :-
+dense_index_diagnostics(Edges, All, Origins, Diags) :-
+    (   ground(Edges),
+        ground(All)
+    ->  owner_edge_count_index(All, CountIndex),
+        dense_index_diagnostics_indexed(Edges, CountIndex, Origins, Diags)
+    ;   dense_index_diagnostics_scanned(Edges, All, Origins, Diags)
+    ).
+
+dense_index_diagnostics_indexed([], _, _, []).
+dense_index_diagnostics_indexed(
+    [pending_edge(Owner, Name, _, Index) | Rest], CountIndex, Origins, Diags) :-
+    (   get_assoc(Owner, CountIndex, Count)
+    ->  true
+    ;   Count = 0
+    ),
+    edge_origin(Origins, Owner, Name, Index, NodeId),
+    (   (   Index < 0
+        ;   Index >= Count
+        )
+    ->  Diags = [diagnostic(check, NodeId, non_dense_index(Owner, Index))
+                 | RestDiags]
+    ;   Diags = RestDiags
+    ),
+    dense_index_diagnostics_indexed(Rest, CountIndex, Origins, RestDiags).
+
+dense_index_diagnostics_scanned([], _, _, []).
+dense_index_diagnostics_scanned(
+    [pending_edge(Owner, Name, _, Index) | Rest], All, Origins, Diags) :-
     count_owner_edges(All, Owner, Count),
     edge_origin(Origins, Owner, Name, Index, NodeId),
     (   (   Index < 0
@@ -346,7 +373,22 @@ dense_index_diagnostics([pending_edge(Owner, Name, _, Index) | Rest], All,
                  | RestDiags]
     ;   Diags = RestDiags
     ),
-    dense_index_diagnostics(Rest, All, Origins, RestDiags).
+    dense_index_diagnostics_scanned(Rest, All, Origins, RestDiags).
+
+owner_edge_count_index(Edges, CountIndex) :-
+    findall(Owner-1,
+            member(pending_edge(Owner, _, _, _), Edges),
+            Pairs0),
+    keysort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Groups),
+    owner_edge_count_groups(Groups, Counts),
+    list_to_assoc(Counts, CountIndex).
+
+owner_edge_count_groups([], []).
+owner_edge_count_groups([Owner-Occurrences | Groups],
+                        [Owner-Count | Counts]) :-
+    length(Occurrences, Count),
+    owner_edge_count_groups(Groups, Counts).
 
 count_owner_edges([], _, 0).
 count_owner_edges([pending_edge(Owner, _, _, _) | Rest], Owner, Count) :-
