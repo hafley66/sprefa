@@ -4,10 +4,16 @@ def mean($values):
 def phase_mean($runs; $phase; $field):
   mean([$runs[].phases[] | select(.phase == $phase) | .[$field]]);
 
+def step_mean($runs; $phase; $step; $field):
+  mean([$runs[].steps[]
+        | select(.phase == $phase and .step == $step)
+        | .[$field]]);
+
 def aggregate_runs:
   . as $runs
   | ($runs[0]) as $first
   | ([$runs[].phases[].phase] | unique) as $phase_names
+  | ([$runs[].steps[] | {phase: .phase, step: .step}] | unique) as $step_names
   | {
       files: $first.files,
       types_per_file: $first.types_per_file,
@@ -16,6 +22,7 @@ def aggregate_runs:
       total_fields: $first.total_fields,
       source_bytes: $first.source_bytes,
       repetitions: ($runs | length),
+      trace_mode: $first.trace_mode,
       wall_ms: mean([$runs[].wall_ms]),
       inferences: mean([$runs[].inferences]),
       compiler_rows: mean([$runs[].compiler_rows]),
@@ -26,11 +33,25 @@ def aggregate_runs:
             wall_ms: phase_mean($runs; $phase; "wall_ms"),
             inferences: phase_mean($runs; $phase; "inferences")
           }
+      ],
+      steps: [
+        $step_names[] as $key
+        | {
+            phase: $key.phase,
+            step: $key.step,
+            wall_ms: step_mean($runs; $key.phase; $key.step; "wall_ms"),
+            inferences: step_mean($runs; $key.phase; $key.step; "inferences")
+          }
       ]
     };
 
 def phase_value($measurement; $phase; $field):
   first($measurement.phases[] | select(.phase == $phase) | .[$field]) // 0;
+
+def step_value($measurement; $phase; $step; $field):
+  first($measurement.steps[]
+        | select(.phase == $phase and .step == $step)
+        | .[$field]) // 0;
 
 def ratio($after; $before):
   if $before == 0 then null else $after / $before end;
@@ -64,6 +85,23 @@ sort_by(.files)
   ]) as $phase_pressure
 | ($phase_pressure | map(.inference_delta) | add) as $attributed_inferences
 | ($phase_pressure | map(.wall_delta_ms) | add) as $attributed_wall
+| ([($before.steps[] | {phase: .phase, step: .step}),
+    ($after.steps[] | {phase: .phase, step: .step})] | unique) as $step_names
+| ([
+    $step_names[] as $key
+    | (step_value($after; $key.phase; $key.step; "inferences")
+       - step_value($before; $key.phase; $key.step; "inferences")) as $step_inference_delta
+    | (step_value($after; $key.phase; $key.step; "wall_ms")
+       - step_value($before; $key.phase; $key.step; "wall_ms")) as $step_wall_delta
+    | {
+        phase: $key.phase,
+        step: $key.step,
+        inference_delta: $step_inference_delta,
+        inference_share_pct: percent($step_inference_delta; $inference_delta),
+        wall_delta_ms: $step_wall_delta,
+        wall_share_pct: percent($step_wall_delta; $wall_delta)
+      }
+  ] | sort_by(-.inference_delta) | .[0:12]) as $step_pressure
 | ({
     phase: "outside_traced_phases",
     inference_delta: ($inference_delta - $attributed_inferences),
@@ -74,6 +112,7 @@ sort_by(.files)
   }) as $outside_pressure
 | {
     kind: "differential",
+    trace_mode: $after.trace_mode,
     from_files: $before.files,
     to_files: $after.files,
     workload_ratio: ratio($after.total_fields; $before.total_fields),
@@ -99,5 +138,6 @@ sort_by(.files)
     },
     pressure_by_phase:
       (($phase_pressure + [$outside_pressure])
-       | sort_by(-.inference_delta))
+       | sort_by(-.inference_delta)),
+    pressure_by_step: $step_pressure
   }

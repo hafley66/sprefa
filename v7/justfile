@@ -40,9 +40,10 @@ compiler-perf-test:
 # Generate deterministic multi-file DL7 projects and measure cold compilation
 # at powers-of-two file counts. Arguments: max files, types/file, fields/type,
 # repetitions. Every individual compiler process has a 3-second ceiling. The
-# final rows attribute each adjacent scale increase to compiler phases.
-compiler-scale max_files="8" types_per_file="16" fields_per_type="8" repetitions="1":
-    bash "{{ v7 }}/bench/3a_compiler_scale.sh" "{{ max_files }}" "{{ types_per_file }}" "{{ fields_per_type }}" "{{ repetitions }}"
+# final rows attribute each adjacent scale increase to compiler phases. Pass
+# trace_mode=collect to add the twelve largest traced step deltas.
+compiler-scale max_files="8" types_per_file="16" fields_per_type="8" repetitions="1" trace_mode="off":
+    bash "{{ v7 }}/bench/3a_compiler_scale.sh" "{{ max_files }}" "{{ types_per_file }}" "{{ fields_per_type }}" "{{ repetitions }}" "{{ trace_mode }}"
 
 # Compile one fixture through the deterministic profiler and write
 # 0_profile.json, 1_folded.txt, 2_duplicates.tsv, 3_flamechart.html, and

@@ -2,7 +2,7 @@
 %
 % Usage:
 %   swipl -q -s 3_compiler_scale.pl -g main -t halt -- \
-%       <files> <types-per-file> <fields-per-type> <repetitions>
+%       <files> <types-per-file> <fields-per-type> <repetitions> [off|collect]
 %
 % Source generation, garbage collection, and compiler-cache clearing happen
 % outside the measured interval. Each repetition measures one cold project
@@ -24,37 +24,68 @@
 :- use_module('../src/2_comptime/2_compiler',
               [compile_dl7_project/5]).
 
+:- meta_predicate with_trace_mode(+, 0).
+
 main :-
     current_prolog_flag(argv, Arguments),
     (   scale_arguments(Arguments, Config)
     ->  run_scale(Config)
     ;   format(user_error,
-               'usage: <files> <types-per-file> <fields-per-type> <repetitions>~n',
+               'usage: <files> <types-per-file> <fields-per-type> <repetitions> [off|collect]~n',
                []),
         halt(2)
     ).
 
-scale_arguments([FilesAtom, TypesAtom, FieldsAtom, RepetitionsAtom | _],
-                scale(Files, Types, Fields, Repetitions)) :-
+scale_arguments([FilesAtom, TypesAtom, FieldsAtom, RepetitionsAtom | Rest],
+                scale(Files, Types, Fields, Repetitions, TraceMode)) :-
     maplist(positive_integer,
             [FilesAtom, TypesAtom, FieldsAtom, RepetitionsAtom],
-            [Files, Types, Fields, Repetitions]).
+            [Files, Types, Fields, Repetitions]),
+    trace_argument(Rest, TraceMode).
+
+trace_argument([], off).
+trace_argument([TraceMode | _], TraceMode) :-
+    memberchk(TraceMode, [off, collect]).
 
 positive_integer(Atom, Integer) :-
     catch(atom_number(Atom, Integer), _, fail),
     integer(Integer),
     Integer > 0.
 
-run_scale(scale(Files, Types, Fields, Repetitions)) :-
+run_scale(scale(Files, Types, Fields, Repetitions, TraceMode)) :-
     v7_directory(V7Directory),
     scale_directory(V7Directory, ScaleDirectory),
     setup_call_cleanup(
         make_directory_path(ScaleDirectory),
         ( generate_project(ScaleDirectory, Files, Types, Fields,
                            Paths, SourceBytes),
-          run_repetitions(Repetitions, V7Directory, Paths,
-                          Files, Types, Fields, SourceBytes) ),
+          with_trace_mode(
+              TraceMode,
+              run_repetitions(Repetitions, V7Directory, Paths,
+                              Files, Types, Fields, SourceBytes, TraceMode)) ),
         delete_directory_and_contents(ScaleDirectory)).
+
+with_trace_mode(TraceMode, Goal) :-
+    prior_trace_mode(Prior),
+    setup_call_cleanup(
+        apply_trace_mode(TraceMode),
+        call(Goal),
+        restore_trace_mode(Prior)).
+
+prior_trace_mode(value(Value)) :-
+    getenv('DL7_TRACE', Value),
+    !.
+prior_trace_mode(unset).
+
+apply_trace_mode(off) :-
+    unsetenv('DL7_TRACE').
+apply_trace_mode(collect) :-
+    setenv('DL7_TRACE', collect).
+
+restore_trace_mode(unset) :-
+    unsetenv('DL7_TRACE').
+restore_trace_mode(value(Value)) :-
+    setenv('DL7_TRACE', Value).
 
 v7_directory(V7Directory) :-
     source_file(dl7_compiler_scale:main, SourcePath),
@@ -119,13 +150,14 @@ scale_field_target(FileIndex, TypeIndex, _, Target) :-
     format(atom(Target), 'ScaleF~dT~d', [FileIndex, PreviousTypeIndex]).
 
 run_repetitions(Repetitions, V7Directory, Paths,
-                Files, Types, Fields, SourceBytes) :-
+                Files, Types, Fields, SourceBytes, TraceMode) :-
     numlist(1, Repetitions, Runs),
     maplist(run_repetition(V7Directory, Paths,
-                          Files, Types, Fields, SourceBytes),
+                          Files, Types, Fields, SourceBytes, TraceMode),
             Runs).
 
-run_repetition(V7Directory, Paths, Files, Types, Fields, SourceBytes, Run) :-
+run_repetition(V7Directory, Paths, Files, Types, Fields, SourceBytes,
+               TraceMode, Run) :-
     garbage_collect,
     clear_compiler_caches,
     statistics(inferences, BeforeInferences),
@@ -133,16 +165,18 @@ run_repetition(V7Directory, Paths, Files, Types, Fields, SourceBytes, Run) :-
     compile_dl7_project(V7Directory, Paths, Rows, Runtime, Diagnostics),
     get_time(AfterWall),
     statistics(inferences, AfterInferences),
-    latest_compile_trace(_, Phases, _, _),
+    latest_compile_trace(_, Phases, Steps, _),
     WallMs is round((AfterWall - BeforeWall) * 1000),
     Inferences is AfterInferences - BeforeInferences,
     length(Rows, RowCount),
     length(Diagnostics, DiagnosticCount),
     runtime_counts(Runtime, RuntimeRelations, RuntimeSeeds, RuntimeRules),
     phase_totals(Phases, PhaseTotals),
+    step_totals(Steps, StepTotals),
     TotalTypes is Files * Types,
     TotalFields is TotalTypes * Fields,
     Report = _{run: Run,
+               trace_mode: TraceMode,
                files: Files,
                types_per_file: Types,
                fields_per_type: Fields,
@@ -156,7 +190,8 @@ run_repetition(V7Directory, Paths, Files, Types, Fields, SourceBytes, Run) :-
                runtime_relations: RuntimeRelations,
                runtime_seeds: RuntimeSeeds,
                runtime_rules: RuntimeRules,
-               phases: PhaseTotals},
+               phases: PhaseTotals,
+               steps: StepTotals},
     json_write_dict(current_output, Report, [width(0)]),
     nl,
     report_diagnostics(Diagnostics).
@@ -194,3 +229,29 @@ phase_total(Phases, Name,
 measurement_wall_inferences(
     measurement(WallMs, _, Inferences, _, _, _, _, _, _, _, _, _),
     WallMs, Inferences).
+
+step_totals(Steps, Totals) :-
+    findall(Phase-Name,
+            ( member(step(_, Phase, Step, _, _), Steps),
+              step_name(Step, Name) ),
+            Keys0),
+    sort(Keys0, Keys),
+    maplist(step_total(Steps), Keys, Totals).
+
+step_total(Steps, Phase-Name,
+           _{phase: Phase, step: Name,
+             wall_ms: WallMs, inferences: Inferences}) :-
+    findall(Wall-Inference,
+            ( member(step(_, Phase, Step, Measurement, _), Steps),
+              step_name(Step, Name),
+              measurement_wall_inferences(Measurement, Wall, Inference) ),
+            Measurements),
+    pairs_keys_values(Measurements, Walls, InferenceCounts),
+    sum_list(Walls, WallMs),
+    sum_list(InferenceCounts, Inferences).
+
+step_name(Name, Name) :-
+    atom(Name),
+    !.
+step_name(Term, Name) :-
+    format(atom(Name), '~w', [Term]).
