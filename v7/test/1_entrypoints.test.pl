@@ -1,6 +1,7 @@
 :- begin_tests(dl7_entrypoints).
 
 :- use_module(library(aggregate), [aggregate_all/3]).
+:- use_module(library(crypto), [crypto_data_hash/3]).
 :- use_module(library(lists), [max_list/2]).
 :- use_module(library(process), [process_create/3, process_wait/2]).
 :- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
@@ -1983,6 +1984,162 @@ assert_evaluation_closure(Rules, Seeds, ExpectedRows) :-
          ExpectedClosure),
     Closure == ExpectedClosure,
     Diagnostics == [].
+
+stratum_arena_clause_count(Count) :-
+    aggregate_all(count, dl7_evaluator:arena_stratum(_, _, _), Count).
+
+stratum_arena_scope_count(Count) :-
+    aggregate_all(count, dl7_evaluator:stratum_arena_scope(_), Count).
+
+test(stratum_arena_lifecycle_builds_once_and_clears_after_success) :-
+    Strata = [stratum(first, 2), stratum(second, 3)],
+    setup_call_cleanup(
+        dl7_evaluator:open_stratum_arena(Strata),
+        ( stratum_arena_clause_count(DuringClauses),
+          stratum_arena_scope_count(DuringScopes)
+        ),
+        dl7_evaluator:close_stratum_arena),
+    stratum_arena_clause_count(AfterClauses),
+    stratum_arena_scope_count(AfterScopes),
+    Observed = lifecycle(
+                   during(DuringClauses, DuringScopes),
+                   after(AfterClauses, AfterScopes)),
+    Observed == lifecycle(during(2, 1), after(0, 0)).
+
+test(stratum_arena_relation_level_defaults_to_zero) :-
+    Strata = [stratum(present, 4)],
+    setup_call_cleanup(
+        dl7_evaluator:open_stratum_arena(Strata),
+        dl7_evaluator:relation_level(Strata, missing, Level),
+        dl7_evaluator:close_stratum_arena),
+    Level == 0.
+
+test(stratum_arena_relation_level_preserves_first_list_match) :-
+    Strata = [stratum(duplicate, 7), stratum(duplicate, 3)],
+    setup_call_cleanup(
+        dl7_evaluator:open_stratum_arena(Strata),
+        dl7_evaluator:relation_level(Strata, duplicate, Level),
+        dl7_evaluator:close_stratum_arena),
+    Level == 7.
+
+test(stratum_arena_cleanup_runs_after_failure_and_exception) :-
+    (   setup_call_cleanup(
+            dl7_evaluator:open_stratum_arena([stratum(failed, 1)]),
+            fail,
+            dl7_evaluator:close_stratum_arena)
+    ->  FailureOutcome = unexpected_success
+    ;   FailureOutcome = failed
+    ),
+    stratum_arena_clause_count(AfterFailureClauses),
+    stratum_arena_scope_count(AfterFailureScopes),
+    catch(
+        setup_call_cleanup(
+            dl7_evaluator:open_stratum_arena([stratum(thrown, 2)]),
+            throw(stratum_arena_probe),
+            dl7_evaluator:close_stratum_arena),
+        stratum_arena_probe,
+        ExceptionOutcome = caught),
+    stratum_arena_clause_count(AfterExceptionClauses),
+    stratum_arena_scope_count(AfterExceptionScopes),
+    Observed = cleanup(
+                   FailureOutcome,
+                   after_failure(AfterFailureClauses, AfterFailureScopes),
+                   ExceptionOutcome,
+                   after_exception(
+                       AfterExceptionClauses, AfterExceptionScopes)),
+    Observed == cleanup(failed, after_failure(0, 0), caught,
+                        after_exception(0, 0)).
+
+test(stratum_arena_open_cleans_partially_installed_facts_on_failure) :-
+    (   dl7_evaluator:open_stratum_arena(
+            [stratum(installed, 1), malformed_stratum])
+    ->  Outcome = unexpected_success
+    ;   Outcome = failed
+    ),
+    stratum_arena_clause_count(Clauses),
+    stratum_arena_scope_count(Scopes),
+    Observed = partial_open(Outcome, Clauses, Scopes),
+    Observed == partial_open(failed, 0, 0).
+
+test(stratum_arena_nested_evaluations_are_isolated) :-
+    Outer = [stratum(shared, 1)],
+    Inner = [stratum(shared, 9)],
+    setup_call_cleanup(
+        dl7_evaluator:open_stratum_arena(Outer),
+        ( dl7_evaluator:relation_level(Outer, shared, OuterBefore),
+          setup_call_cleanup(
+              dl7_evaluator:open_stratum_arena(Inner),
+              dl7_evaluator:relation_level(Inner, shared, InnerLevel),
+              dl7_evaluator:close_stratum_arena),
+          dl7_evaluator:relation_level(Outer, shared, OuterAfter)
+        ),
+        dl7_evaluator:close_stratum_arena),
+    Observed = nested(OuterBefore, InnerLevel, OuterAfter),
+    Observed == nested(1, 9, 1).
+
+create_stratum_arena_queues(Ready, Release, Results) :-
+    message_queue_create(Ready),
+    message_queue_create(Release),
+    message_queue_create(Results).
+
+destroy_stratum_arena_queues(Ready, Release, Results) :-
+    message_queue_destroy(Ready),
+    message_queue_destroy(Release),
+    message_queue_destroy(Results).
+
+stratum_arena_thread(Name, Level, Ready, Release, Results) :-
+    Strata = [stratum(shared, Level)],
+    setup_call_cleanup(
+        dl7_evaluator:open_stratum_arena(Strata),
+        ( thread_send_message(Ready, ready(Name)),
+          thread_get_message(Release, continue, [timeout(2)]),
+          dl7_evaluator:relation_level(Strata, shared, ObservedLevel),
+          thread_send_message(Results, result(Name, ObservedLevel))
+        ),
+        dl7_evaluator:close_stratum_arena).
+
+test(stratum_arena_simultaneous_evaluations_are_isolated) :-
+    setup_call_cleanup(
+        create_stratum_arena_queues(Ready, Release, Results),
+        ( thread_create(
+              stratum_arena_thread(a, 2, Ready, Release, Results),
+              ThreadA, []),
+          thread_create(
+              stratum_arena_thread(b, 8, Ready, Release, Results),
+              ThreadB, []),
+          thread_get_message(Ready, ReadyA, [timeout(2)]),
+          thread_get_message(Ready, ReadyB, [timeout(2)]),
+          stratum_arena_clause_count(DuringClauses),
+          thread_send_message(Release, continue),
+          thread_send_message(Release, continue),
+          thread_get_message(Results, ResultA, [timeout(2)]),
+          thread_get_message(Results, ResultB, [timeout(2)]),
+          thread_join(ThreadA, StatusA),
+          thread_join(ThreadB, StatusB),
+          stratum_arena_clause_count(AfterClauses)
+        ),
+        destroy_stratum_arena_queues(Ready, Release, Results)),
+    sort([ReadyA, ReadyB], ReadyObserved),
+    sort([ResultA, ResultB], ResultObserved),
+    Observed = simultaneous(
+                   ReadyObserved, DuringClauses, ResultObserved,
+                   statuses(StatusA, StatusB), AfterClauses),
+    Observed == simultaneous(
+                    [ready(a), ready(b)], 2,
+                    [result(a, 2), result(b, 8)],
+                    statuses(true, true), 0).
+
+test(stratum_arena_preserves_nearest_shadow_canonical_compiler_rows) :-
+    compile_dl7('v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7',
+                CompilerRows, _RuntimeProgram, Diagnostics),
+    with_output_to(string(Canonical), write_canonical(CompilerRows)),
+    string_codes(Canonical, Codes),
+    crypto_data_hash(Codes, Hash, [algorithm(sha256)]),
+    length(CompilerRows, RowCount),
+    Observed = canonical(RowCount, Diagnostics, Hash),
+    Observed == canonical(
+                    810, [],
+                    fc7c8e3723c9017ec4c09efd21cdb62b579619c0efa57d0fcfad410c493dfbe4).
 
 test(demand_cone_selects_transitive_plain_definitions_as_exact_rules) :-
     LowerA = rule(call(lower, [const(a)]), []),

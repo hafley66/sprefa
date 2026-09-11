@@ -40,12 +40,14 @@
 :- dynamic evaluation_seed/3.
 :- dynamic evaluation_lower_index/7.
 :- dynamic evaluation_request/2.
+:- dynamic arena_stratum/3.
 
 :- thread_local debug_worklist_visits/1.
 :- thread_local debug_worklist_changes/1.
 
 :- thread_local lower_store_scope/1.
 :- thread_local lower_store_installed/2.
+:- thread_local stratum_arena_scope/1.
 
 :- table proves/2.
 
@@ -75,10 +77,47 @@ evaluate(Rules, Seeds, Closure, Diagnostics) :-
         Rules, Dependencies, Strata, StrataDiagnostics),
     setup_call_cleanup(
         open_lower_store,
-        evaluate_after_stratify(
-            StrataDiagnostics, Strata, Dependencies, Rules, Seeds,
-            Closure, Diagnostics),
+        setup_call_cleanup(
+            open_stratum_arena(Strata),
+            evaluate_after_stratify(
+                StrataDiagnostics, Strata, Dependencies, Rules, Seeds,
+                Closure, Diagnostics),
+            close_stratum_arena),
         close_lower_store).
+
+%% open_stratum_arena(+Strata) is det.
+%
+% Materialize one evaluation's relation levels in source-list order. The
+% explicit arena id keeps nested evaluations and evaluations in other threads
+% disjoint while arena_stratum/3 remains one JITI-indexed dynamic predicate.
+open_stratum_arena(Strata) :-
+    gensym(dl7_stratum_arena_, ArenaId),
+    asserta(stratum_arena_scope(ArenaId)),
+    catch(
+        (   install_stratum_facts(Strata, ArenaId)
+        ->  true
+        ;   close_stratum_arena,
+            fail
+        ),
+        Error,
+        ( close_stratum_arena,
+          throw(Error)
+        )).
+
+install_stratum_facts([], _).
+install_stratum_facts([stratum(Relation, Level) | Strata], ArenaId) :-
+    assertz(arena_stratum(Relation, ArenaId, Level)),
+    install_stratum_facts(Strata, ArenaId).
+
+%% close_stratum_arena is det.
+%
+% Remove the innermost evaluation's facts. setup_call_cleanup/3 in evaluate/4
+% runs this path after success, failure, or exception.
+close_stratum_arena :-
+    (   retract(stratum_arena_scope(ArenaId))
+    ->  retractall(arena_stratum(_, ArenaId, _))
+    ;   true
+    ).
 
 %% open_lower_store is det.
 %
@@ -347,8 +386,10 @@ demand_cone_rules_at_level(Level, Relation, RuleIndex, NewRules0, NewRules) :-
 seed_at_level(Strata, Level, call(Relation, _)) :-
     relation_level(Strata, Relation, Level).
 
-relation_level(Strata, Relation, Level) :-
-    (   memberchk(stratum(Relation, DerivedLevel), Strata)
+relation_level(_Strata, Relation, Level) :-
+    stratum_arena_scope(ArenaId),
+    !,
+    (   arena_stratum(Relation, ArenaId, DerivedLevel)
     ->  Level = DerivedLevel
     ;   Level = 0
     ).
