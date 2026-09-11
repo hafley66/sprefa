@@ -9,6 +9,7 @@
           ]).
 
 :- use_module(library(http/json), [json_read_dict/2]).
+:- use_module('../1_libtime/0_evaluator', [integer_comparison/3]).
 :- use_module('1_artifact_emitter',
               [compiler_view/2, emit_compiled/4]).
 
@@ -292,27 +293,39 @@ require_level_rule(LogicalRows, RuleId) :-
 
 validate_goal(RuleId, _, _,
               checked_goal(Polarity,
-                           call(ref(kernel(int_lt)), Arguments))) :-
+                           call(ref(kernel(Name)), Arguments))) :-
+    integer_comparison(Name, _, _),
     !,
-    require_int_lt_polarity(RuleId, Polarity),
-    maplist(validate_int_lt_argument(RuleId), Arguments).
+    require_integer_comparison_polarity(RuleId, Polarity),
+    maplist(validate_integer_comparison_argument(RuleId, Name), Arguments).
 validate_goal(RuleId, Sources, OutputIdentity,
               checked_goal(Polarity, call(ref(Relation), Arguments))) :-
     require_positive_goal(RuleId, Polarity),
     require_source_relation(RuleId, Sources, OutputIdentity, Relation),
     validate_arguments(RuleId, call(ref(Relation), Arguments)).
 
-require_int_lt_polarity(_, positive) :- !.
-require_int_lt_polarity(_, negative) :- !.
-require_int_lt_polarity(RuleId, Polarity) :-
+require_integer_comparison_polarity(_, positive) :- !.
+require_integer_comparison_polarity(_, negative) :- !.
+require_integer_comparison_polarity(RuleId, Polarity) :-
     throw(sqlite_query_error(
               unsupported_sqlite_goal_polarity(RuleId, Polarity))).
 
-validate_int_lt_argument(_, var(_)) :- !.
-validate_int_lt_argument(_, const(Value)) :- integer(Value), !.
-validate_int_lt_argument(RuleId, Argument) :-
-    throw(sqlite_query_error(
-              unsupported_sqlite_int_lt_argument(RuleId, Argument))).
+validate_integer_comparison_argument(_, _, var(_)) :- !.
+validate_integer_comparison_argument(_, _, const(Value)) :-
+    integer(Value),
+    !.
+validate_integer_comparison_argument(RuleId, Name, Argument) :-
+    integer_comparison_argument_error(Name, RuleId, Argument, Reason),
+    throw(sqlite_query_error(Reason)).
+
+integer_comparison_argument_error(
+    int_lt, RuleId, Argument,
+    unsupported_sqlite_int_lt_argument(RuleId, Argument)) :-
+    !.
+integer_comparison_argument_error(
+    Name, RuleId, Argument,
+    unsupported_sqlite_integer_comparison_argument(
+        RuleId, Name, Argument)).
 
 require_positive_goal(_, positive) :- !.
 require_positive_goal(RuleId, Polarity) :-
@@ -357,11 +370,11 @@ lower_rules([Rule | Rules], Sources, Output,
 
 lower_rule(rule(rule_id(Index), Head, Goals), Sources,
            bound_output(_, _, OutputColumns), Plan) :-
-    partition(int_lt_goal, Goals, ScalarGoals, RelationGoals),
+    partition(integer_comparison_goal, Goals, ScalarGoals, RelationGoals),
     lower_goal_sources(
         RelationGoals, Sources, rule_id(Index), 0,
         FromItems, [], Bindings),
-    lower_int_lt_goals(
+    lower_integer_comparison_goals(
         ScalarGoals, Bindings, rule_id(Index), ScalarPredicates),
     Head = call(_, HeadArguments),
     lower_projection(
@@ -370,32 +383,39 @@ lower_rule(rule(rule_id(Index), Head, Goals), Sources,
     render_rule_select(Projection, FromItems, ScalarPredicates, Sql),
     Plan = _{rule:Index, sql:Sql}.
 
-int_lt_goal(
-    checked_goal(_, call(ref(kernel(int_lt)), [_, _]))).
+integer_comparison_goal(
+    checked_goal(_, call(ref(kernel(Name)), [_, _]))) :-
+    integer_comparison(Name, _, _).
 
-lower_int_lt_goals([], _, _, []).
-lower_int_lt_goals(
+lower_integer_comparison_goals([], _, _, []).
+lower_integer_comparison_goals(
     [checked_goal(Polarity,
-                  call(ref(kernel(int_lt)), [Left, Right])) | Goals],
+                  call(ref(kernel(Name)), [Left, Right])) | Goals],
     Bindings, RuleId, [Predicate | Predicates]) :-
-    scalar_expression(Left, Bindings, RuleId, LeftExpression),
-    scalar_expression(Right, Bindings, RuleId, RightExpression),
-    int_lt_predicate(
-        Polarity, LeftExpression, RightExpression, Predicate),
-    lower_int_lt_goals(Goals, Bindings, RuleId, Predicates).
+    scalar_expression(Name, Left, Bindings, RuleId, LeftExpression),
+    scalar_expression(Name, Right, Bindings, RuleId, RightExpression),
+    integer_comparison_predicate(
+        Name, Polarity, LeftExpression, RightExpression, Predicate),
+    lower_integer_comparison_goals(
+        Goals, Bindings, RuleId, Predicates).
 
-scalar_expression(var(Variable), Bindings, RuleId, Expression) :-
+scalar_expression(Name, var(Variable), Bindings, RuleId, Expression) :-
     (   memberchk(Variable-Expression0, Bindings)
     ->  Expression = Expression0
     ;   throw(sqlite_query_error(
                   unsupported_sqlite_unbound_scalar(
-                      RuleId, int_lt, Variable)))
+                      RuleId, Name, Variable)))
     ).
-scalar_expression(const(Value), _, _, literal(Value)).
+scalar_expression(_, const(Value), _, _, literal(Value)).
 
-int_lt_predicate(positive, Left, Right, less_than(Left, Right)).
-int_lt_predicate(negative, Left, Right,
-                 greater_than_or_equal(Left, Right)).
+integer_comparison_predicate(Name, Polarity, Left, Right,
+                             integer_comparison(Operator, Left, Right)) :-
+    integer_comparison(Name, PositiveOperator, NegativeOperator),
+    comparison_operator(Polarity, PositiveOperator, NegativeOperator,
+                        Operator).
+
+comparison_operator(positive, PositiveOperator, _, PositiveOperator).
+comparison_operator(negative, _, NegativeOperator, NegativeOperator).
 
 lower_goal_sources([], _, _, _, [], Bindings, Bindings).
 lower_goal_sources(
@@ -548,17 +568,21 @@ render_predicate(equals(Left, Right), Sql) :-
     render_expression(Left, LeftSql),
     render_expression(Right, RightSql),
     format(string(Sql), "~s = ~s", [LeftSql, RightSql]).
-render_predicate(less_than(Left, Right), Sql) :-
+render_predicate(integer_comparison(Operator, Left, Right), Sql) :-
     render_expression(Left, LeftSql),
     render_expression(Right, RightSql),
-    format(string(Sql), "~s < ~s", [LeftSql, RightSql]).
-render_predicate(greater_than_or_equal(Left, Right), Sql) :-
-    render_expression(Left, LeftSql),
-    render_expression(Right, RightSql),
-    format(string(Sql), "~s >= ~s", [LeftSql, RightSql]).
+    sqlite_comparison_operator(Operator, OperatorSql),
+    format(string(Sql), "~s ~s ~s", [LeftSql, OperatorSql, RightSql]).
 render_predicate(not_null(Expression), Sql) :-
     render_expression(Expression, ExpressionSql),
     format(string(Sql), "~s IS NOT NULL", [ExpressionSql]).
+
+sqlite_comparison_operator('<', "<").
+sqlite_comparison_operator('=<', "<=").
+sqlite_comparison_operator('=:=', "=").
+sqlite_comparison_operator('=\\=', "!=").
+sqlite_comparison_operator('>=', ">=").
+sqlite_comparison_operator('>', ">").
 
 render_expression(column(Alias, Column), Sql) :-
     sqlite_identifier(Alias, AliasSql),

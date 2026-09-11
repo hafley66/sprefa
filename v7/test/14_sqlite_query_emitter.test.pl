@@ -132,58 +132,73 @@ test(connected_body_reordering_and_rule_union_are_explicit, [nondet]) :-
     get_dict(rules, Artifact,
              [_{rule:0, sql:_}, _{rule:1, sql:_}]).
 
-test(int_lt_lowers_to_native_positive_and_negative_sql, [nondet]) :-
-    boundary_runtime(
-        [rule(call(ref(output), [var(value)]),
-              [ checked_goal(positive,
-                             call(ref(input), [var(value)])),
-                checked_goal(positive,
-                             call(ref(kernel(int_lt)),
-                                  [var(value), const(5)]))
-              ])],
-        [], PositiveRuntime),
-    boundary_runtime(
-        [rule(call(ref(output), [var(value)]),
-              [ checked_goal(positive,
-                             call(ref(input), [var(value)])),
-                checked_goal(negative,
-                             call(ref(kernel(int_lt)),
-                                  [var(value), const(5)]))
-              ])],
-        [], NegativeRuntime),
+test(integer_comparisons_lower_to_positive_and_complement_sql, [nondet]) :-
+    findall(Name-Polarity-Sql,
+            ( member(Name,
+                     [int_lt, int_le, int_eq, int_ne, int_ge, int_gt]),
+              member(Polarity, [positive, negative]),
+              integer_comparison_sql(Name, Polarity, Sql)
+            ),
+            ComparisonSql),
     boundary_runtime(
         [rule(call(ref(output), [const(1)]),
               [checked_goal(positive,
                             call(ref(kernel(int_lt)),
                                  [const(2), const(5)]))])],
         [], ConstantRuntime),
+    boundary_runtime(
+        [rule(call(ref(output), [const(1)]),
+              [checked_goal(positive,
+                            call(ref(kernel(int_lt)),
+                                 [const("2"), const(5)]))])],
+        [], InvalidArgumentRuntime),
+    boundary_runtime(
+        [rule(call(ref(output), [const(1)]),
+              [checked_goal(positive,
+                            call(ref(kernel(int_lt)),
+                                 [var(missing), const(5)]))])],
+        [], UnboundScalarRuntime),
     basic_layout(Layout),
-    emit_sqlite_query(
-        compiled_unit([], PositiveRuntime, []), Layout,
-        PositiveArtifact, PositiveDiagnostics),
-    emit_sqlite_query(
-        compiled_unit([], NegativeRuntime, []), Layout,
-        NegativeArtifact, NegativeDiagnostics),
     emit_sqlite_query(
         compiled_unit([], ConstantRuntime, []), Layout,
         ConstantArtifact, ConstantDiagnostics),
-    Observed = sqlite_int_lt(
-                   positive(PositiveDiagnostics,
-                            PositiveArtifact.select_sql),
-                   negative(NegativeDiagnostics,
-                            NegativeArtifact.select_sql),
-                   constant(ConstantDiagnostics,
-                            ConstantArtifact.select_sql)),
-    Observed == sqlite_int_lt(
-                    positive(
-                        [],
-                        "SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" < 5"),
-                    negative(
-                        [],
-                        "SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" >= 5"),
-                    constant(
-                        [],
-                        "SELECT DISTINCT 1 AS \"value\" WHERE 2 < 5")).
+    emit_sqlite_query(
+        compiled_unit([], InvalidArgumentRuntime, []), Layout,
+        _, InvalidArgumentDiagnostics),
+    emit_sqlite_query(
+        compiled_unit([], UnboundScalarRuntime, []), Layout,
+        _, UnboundScalarDiagnostics),
+    Observed = sqlite_integer_comparisons(
+                   ComparisonSql,
+                   int_lt_constant(ConstantDiagnostics,
+                                   ConstantArtifact.select_sql),
+                   int_lt_errors(InvalidArgumentDiagnostics,
+                                 UnboundScalarDiagnostics)),
+    Observed == sqlite_integer_comparisons(
+                    [ int_lt-positive-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" < 5",
+                      int_lt-negative-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" >= 5",
+                      int_le-positive-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" <= 5",
+                      int_le-negative-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" > 5",
+                      int_eq-positive-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" = 5",
+                      int_eq-negative-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" != 5",
+                      int_ne-positive-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" != 5",
+                      int_ne-negative-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" = 5",
+                      int_ge-positive-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" >= 5",
+                      int_ge-negative-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" < 5",
+                      int_gt-positive-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" > 5",
+                      int_gt-negative-"SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" <= 5"
+                    ],
+                    int_lt_constant(
+                        [], "SELECT DISTINCT 1 AS \"value\" WHERE 2 < 5"),
+                    int_lt_errors(
+                        [diagnostic(
+                             emit, none,
+                             unsupported_sqlite_int_lt_argument(
+                                 rule_id(0), const("2")))],
+                        [diagnostic(
+                             emit, none,
+                             unsupported_sqlite_unbound_scalar(
+                                 rule_id(0), int_lt, missing))])).
 
 test(unsupported_program_and_layout_shapes_are_rejected) :-
     boundary_runtime(
@@ -361,6 +376,21 @@ basic_layout([
     sqlite_source("Input", "input", ["value"]),
     sqlite_output("Output", ["value"])
 ]).
+
+integer_comparison_sql(Name, Polarity, Sql) :-
+    boundary_runtime(
+        [rule(call(ref(output), [var(value)]),
+              [ checked_goal(positive,
+                             call(ref(input), [var(value)])),
+                checked_goal(Polarity,
+                             call(ref(kernel(Name)),
+                                  [var(value), const(5)]))
+              ])],
+        [], Runtime),
+    basic_layout(Layout),
+    emit_sqlite_query(
+        compiled_unit([], Runtime, []), Layout, Artifact, []),
+    Sql = Artifact.select_sql.
 
 connected_union_runtime(
     checked_datalog(
