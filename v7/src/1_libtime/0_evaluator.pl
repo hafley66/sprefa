@@ -22,7 +22,12 @@
                 transitive_closure/2,
                 vertices_edges_to_ugraph/3
               ]).
-:- use_module('../2_comptime/1b_compiler_tracer', [run_compile_step/4]).
+:- use_module('../2_comptime/1b_compiler_tracer',
+              [ compile_scope_memo_lookup/3,
+                compile_scope_memo_store/3,
+                in_compile_scope/0,
+                run_compile_step/4
+              ]).
 
 :- dynamic evaluation_rule/3.
 :- dynamic evaluation_seed/3.
@@ -378,6 +383,30 @@ stratify_rules(Rules, DerivedStrata, Diagnostics) :-
         Rules, Dependencies, DerivedStrata, Diagnostics).
 
 stratify_rules_with_dependencies(
+    Rules, Dependencies, DerivedStrata, Diagnostics) :-
+    (   in_compile_scope
+    ->  memoized_stratification(
+            Rules, Dependencies, DerivedStrata, Diagnostics)
+    ;   calc_stratification(
+            Rules, Dependencies, DerivedStrata, Diagnostics)
+    ).
+
+%% memoized_stratification(+Rules, +Dependencies, -Strata, -Diagnostics) is det.
+%
+% Memoize the pure stratification result on the exact checked Rules term within
+% the current compile scope. The term hash only selects a bucket; the stored
+% rules term is compared exactly before a hit, so a hash collision misses.
+memoized_stratification(Rules, Dependencies, DerivedStrata, Diagnostics) :-
+    Key = stratification(Rules),
+    term_hash(Key, Hash),
+    (   compile_scope_memo_lookup(Hash, Key, Value)
+    ->  Value = stratification_result(DerivedStrata, Diagnostics)
+    ;   calc_stratification(Rules, Dependencies, DerivedStrata, Diagnostics),
+        Value = stratification_result(DerivedStrata, Diagnostics),
+        compile_scope_memo_store(Hash, Key, Value)
+    ).
+
+calc_stratification(
     Rules, Dependencies, DerivedStrata, Diagnostics) :-
     rule_relations(Rules, Relations),
     strict_cycle_diagnostics(Relations, Dependencies, CycleDiagnostics),

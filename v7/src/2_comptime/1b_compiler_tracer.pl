@@ -7,7 +7,11 @@
             reset_compile_trace/0,
             collected_compile_phases/1,
             collected_compile_steps/1,
-            latest_compile_trace/4
+            latest_compile_trace/4,
+            in_compile_scope/0,
+            compile_scope_memo_lookup/3,
+            compile_scope_memo_store/3,
+            compile_scope_memo_stats/3
           ]).
 
 :- use_module(library(http/json), [json_write_dict/3]).
@@ -23,6 +27,10 @@
 :- thread_local compile_trace_sequence/1.
 :- thread_local compile_trace_mode_now/1.
 :- thread_local latest_compile_trace/4.
+:- thread_local compile_scope_frames/1.
+:- thread_local compile_scope_frame_counter/1.
+:- thread_local compile_scope_memo/4.
+:- thread_local compile_scope_memo_stat/3.
 
 :- prolog_load_context(directory, TraceDirectory),
    directory_file_path(TraceDirectory, '../../out/compile-trace.jsonl',
@@ -35,22 +43,30 @@
 %
 % Establish one trace ledger around the outermost compiler entry point.
 % Nested compiler helpers contribute phases and steps to the same ledger.
+% Every call also opens a fresh compile-scope memo frame, so a nested
+% compilation cannot read or erase another active compilation's entries.
 with_compile_trace(Program, Goal) :-
     (   active_compile_trace(_)
-    ->  call(Goal)
+    ->  with_compile_scope_frame(Goal)
     ;   setup_call_cleanup(
             begin_compile_trace(Program, Before),
             call(Goal),
             finish_compile_trace(Program, Before))
     ).
 
+with_compile_scope_frame(Goal) :-
+    open_compile_scope_frame,
+    setup_call_cleanup(true, call(Goal), close_compile_scope_frame).
+
 begin_compile_trace(Program, Before) :-
     reset_compile_trace,
     retractall(latest_compile_trace(_, _, _, _)),
     assertz(active_compile_trace(Program)),
+    open_compile_scope_frame,
     statistics_snapshot(Before).
 
 finish_compile_trace(Program, Before) :-
+    close_compile_scope_frame,
     capture_measurement(Before, TotalMeasurement),
     collected_compile_phases(Phases),
     collected_compile_steps(Steps),
@@ -59,6 +75,87 @@ finish_compile_trace(Program, Before) :-
     write_compile_summary(Program, Phases, TotalMeasurement),
     write_compile_steps(Program, Phases, Steps),
     reset_compile_trace.
+
+%% Compile-scope memo frames. A frame is the lifetime of one with_compile_trace
+%% call; its entries are thread local and visible only through the top frame, so
+%% nested scopes stay isolated and concurrent threads never share an entry.
+open_compile_scope_frame :-
+    (   retract(compile_scope_frame_counter(Previous))
+    ->  Frame is Previous + 1
+    ;   Frame = 1
+    ),
+    assertz(compile_scope_frame_counter(Frame)),
+    (   retract(compile_scope_frames(Frames0))
+    ->  Frames = [Frame | Frames0]
+    ;   Frames = [Frame]
+    ),
+    assertz(compile_scope_frames(Frames)),
+    assertz(compile_scope_memo_stat(Frame, 0, 0)).
+
+close_compile_scope_frame :-
+    (   retract(compile_scope_frames([Frame | Rest]))
+    ->  retractall(compile_scope_memo(Frame, _, _, _)),
+        retractall(compile_scope_memo_stat(Frame, _, _)),
+        assertz(compile_scope_frames(Rest))
+    ;   true
+    ).
+
+%% in_compile_scope is semidet.
+in_compile_scope :-
+    compile_scope_frames([_ | _]).
+
+%% compile_scope_memo_store(+Hash, +Key, +Value) is det.
+%
+% Store one memo entry in the current frame. Hash is a caller-chosen bucket
+% selector; the full Key is retained so lookup can verify it exactly.
+compile_scope_memo_store(Hash, Key, Value) :-
+    compile_scope_frames([Frame | _]),
+    assertz(compile_scope_memo(Frame, Hash, Key, Value)).
+
+%% compile_scope_memo_lookup(+Hash, +Key, -Value) is semidet.
+%
+% Select the Hash bucket, then unify only entries whose stored Key is the exact
+% same term. A hash collision therefore cannot produce a false hit.
+compile_scope_memo_lookup(Hash, Key, Value) :-
+    compile_scope_frames([Frame | _]),
+    (   compile_scope_memo(Frame, Hash, StoredKey, Value),
+        StoredKey == Key
+    ->  compile_scope_memo_hit(Frame)
+    ;   compile_scope_memo_miss(Frame),
+        fail
+    ).
+
+compile_scope_memo_hit(Frame) :-
+    (   retract(compile_scope_memo_stat(Frame, Hits0, Misses))
+    ->  Hits is Hits0 + 1,
+        assertz(compile_scope_memo_stat(Frame, Hits, Misses))
+    ;   true
+    ).
+
+compile_scope_memo_miss(Frame) :-
+    (   retract(compile_scope_memo_stat(Frame, Hits, Misses0))
+    ->  Misses is Misses0 + 1,
+        assertz(compile_scope_memo_stat(Frame, Hits, Misses))
+    ;   true
+    ).
+
+%% compile_scope_memo_stats(-Hits, -Misses, -Entries) is det.
+%
+% Current-frame memo counters, or all zero outside a compile scope.
+compile_scope_memo_stats(Hits, Misses, Entries) :-
+    (   compile_scope_frames([Frame | _])
+    ->  (   compile_scope_memo_stat(Frame, FrameHits, FrameMisses)
+        ->  Hits = FrameHits,
+            Misses = FrameMisses
+        ;   Hits = 0,
+            Misses = 0
+        ),
+        findall(Key, compile_scope_memo(Frame, _, Key, _), Keys),
+        length(Keys, Entries)
+    ;   Hits = 0,
+        Misses = 0,
+        Entries = 0
+    ).
 
 %% run_compile_phase(+Phase, :Goal, -Measurement) is semidet.
 %
@@ -139,7 +236,11 @@ reset_compile_trace :-
     retractall(compile_phase_row(_, _, _)),
     retractall(compile_step_row(_, _, _, _, _)),
     retractall(compile_trace_sequence(_)),
-    retractall(compile_trace_mode_now(_)).
+    retractall(compile_trace_mode_now(_)),
+    retractall(compile_scope_frames(_)),
+    retractall(compile_scope_frame_counter(_)),
+    retractall(compile_scope_memo(_, _, _, _)),
+    retractall(compile_scope_memo_stat(_, _, _)).
 
 collected_compile_phases(Phases) :-
     findall(Sequence-phase(Phase, Measurement),

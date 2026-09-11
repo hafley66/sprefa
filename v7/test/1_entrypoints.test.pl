@@ -29,7 +29,11 @@
 :- use_module('../src/2_comptime/1b_compiler_tracer',
               [ reset_compile_trace/0,
                 with_compile_trace/2,
-                collected_compile_steps/1
+                collected_compile_steps/1,
+                in_compile_scope/0,
+                compile_scope_memo_lookup/3,
+                compile_scope_memo_store/3,
+                compile_scope_memo_stats/3
               ]).
 :- use_module('../src/3_emit/0_logical_program_reifier',
               [logical_program_rows/2]).
@@ -2180,6 +2184,202 @@ test(stratification_index_is_scoped_to_each_rule_set) :-
                     [stratum(a, 1), stratum(b, 0)], [],
                     [stratum(c, 1), stratum(d, 0)], [],
                     [stratum(a, 1), stratum(b, 0)], []).
+
+% Compile-scope stratification memo. The memo caches the pure stratify result
+% on the exact checked Rules term for one with_compile_trace scope. These tests
+% pin miss/hit accounting, exact-key collision rejection, cleanup on every exit
+% path, nested/thread isolation, out-of-scope non-caching, and real-fixture
+% canonical parity.
+memo_probe_rules(
+    [ rule(call(a, [var(value)]),
+           [checked_goal(negative, call(b, [var(value)]))]),
+      rule(call(b, [var(value)]), [])
+    ]).
+
+memo_other_rules(
+    [ rule(call(x, [var(value)]),
+           [checked_goal(positive, call(y, [var(value)]))]),
+      rule(call(y, [var(value)]), [])
+    ]).
+
+test(stratification_memo_one_miss_then_hits_for_exact_rules) :-
+    memo_probe_rules(Rules),
+    with_compile_trace(memo_probe, (
+        stratify_rules(Rules, First, FirstDiagnostics),
+        stratify_rules(Rules, Second, SecondDiagnostics),
+        stratify_rules(Rules, Third, ThirdDiagnostics),
+        compile_scope_memo_stats(Hits, Misses, Entries))),
+    Observed = memo_hits(First, FirstDiagnostics,
+                         Second, SecondDiagnostics,
+                         Third, ThirdDiagnostics,
+                         stats(Hits, Misses, Entries)),
+    Observed == memo_hits([stratum(a, 1), stratum(b, 0)], [],
+                          [stratum(a, 1), stratum(b, 0)], [],
+                          [stratum(a, 1), stratum(b, 0)], [],
+                          stats(2, 1, 1)).
+
+test(stratification_memo_misses_for_different_rules) :-
+    memo_probe_rules(RulesA),
+    memo_other_rules(RulesB),
+    with_compile_trace(memo_probe, (
+        stratify_rules(RulesA, StrataA, DiagnosticsA),
+        stratify_rules(RulesB, StrataB, DiagnosticsB),
+        compile_scope_memo_stats(Hits, Misses, Entries))),
+    Observed = memo_distinct(StrataA, DiagnosticsA, StrataB, DiagnosticsB,
+                             stats(Hits, Misses, Entries)),
+    Observed == memo_distinct([stratum(a, 1), stratum(b, 0)], [],
+                              [stratum(x, 0), stratum(y, 0)], [],
+                              stats(0, 2, 2)).
+
+test(stratification_memo_rejects_forced_hash_collision) :-
+    KeyA = stratification([rule(call(a, [var(value)]), [])]),
+    KeyB = stratification([rule(call(b, [var(value)]), [])]),
+    with_compile_trace(memo_probe, (
+        compile_scope_memo_store(
+            0, KeyA, stratification_result([stratum(a, 0)], [])),
+        (   compile_scope_memo_lookup(0, KeyB, _)
+        ->  Collision = false_hit
+        ;   Collision = rejected
+        ),
+        compile_scope_memo_stats(Hits, Misses, Entries))),
+    Observed = collision(Collision, stats(Hits, Misses, Entries)),
+    Observed == collision(rejected, stats(0, 1, 1)).
+
+test(stratification_memo_erases_entries_after_success) :-
+    memo_probe_rules(Rules),
+    with_compile_trace(memo_probe, stratify_rules(Rules, _, _)),
+    compile_scope_memo_stats(Hits, Misses, Entries),
+    (   in_compile_scope
+    ->  Scope = active
+    ;   Scope = clear
+    ),
+    Observed = after_success(Scope, stats(Hits, Misses, Entries)),
+    Observed == after_success(clear, stats(0, 0, 0)).
+
+test(stratification_memo_erases_entries_after_failure) :-
+    memo_probe_rules(Rules),
+    (   with_compile_trace(memo_probe,
+                           ( stratify_rules(Rules, _, _), fail ))
+    ->  Outcome = unexpected
+    ;   Outcome = failed
+    ),
+    compile_scope_memo_stats(Hits, Misses, Entries),
+    Observed = after_failure(Outcome, stats(Hits, Misses, Entries)),
+    Observed == after_failure(failed, stats(0, 0, 0)).
+
+test(stratification_memo_erases_entries_after_exception) :-
+    memo_probe_rules(Rules),
+    catch(
+        with_compile_trace(memo_probe,
+                           ( stratify_rules(Rules, _, _),
+                             throw(memo_probe_exception) )),
+        memo_probe_exception,
+        true),
+    compile_scope_memo_stats(Hits, Misses, Entries),
+    Observed = after_exception(stats(Hits, Misses, Entries)),
+    Observed == after_exception(stats(0, 0, 0)).
+
+test(stratification_memo_nested_scopes_are_isolated) :-
+    memo_probe_rules(Rules),
+    with_compile_trace(memo_outer, (
+        stratify_rules(Rules, _, _),
+        compile_scope_memo_stats(OuterHits0, OuterMisses0, OuterEntries0),
+        with_compile_trace(memo_inner, (
+            stratify_rules(Rules, _, _),
+            compile_scope_memo_stats(InnerHits, InnerMisses, InnerEntries))),
+        (   in_compile_scope
+        ->  OuterScope = active
+        ;   OuterScope = clear
+        ),
+        stratify_rules(Rules, _, _),
+        compile_scope_memo_stats(OuterHits1, OuterMisses1, OuterEntries1))),
+    Observed = nested(outer_first(OuterHits0, OuterMisses0, OuterEntries0),
+                      inner(InnerHits, InnerMisses, InnerEntries),
+                      after_inner(OuterScope),
+                      outer_second(
+                          OuterHits1, OuterMisses1, OuterEntries1)),
+    Observed == nested(outer_first(0, 1, 1),
+                       inner(0, 1, 1),
+                       after_inner(active),
+                       outer_second(1, 1, 1)).
+
+test(stratification_memo_threads_are_isolated) :-
+    memo_probe_rules(Rules),
+    message_queue_create(Queue),
+    setup_call_cleanup(
+        true,
+        ( with_compile_trace(memo_outer, (
+              stratify_rules(Rules, _, _),
+              compile_scope_memo_stats(
+                  OuterHits, OuterMisses, OuterEntries))),
+          thread_create(memo_thread_probe(Rules, Queue), Thread, []),
+          thread_join(Thread, _),
+          thread_get_message(Queue, ChildStats)
+        ),
+        message_queue_destroy(Queue)),
+    Observed = threads(stats(OuterHits, OuterMisses, OuterEntries),
+                       ChildStats),
+    Observed == threads(stats(0, 1, 1), stats(0, 1, 1)).
+
+memo_thread_probe(Rules, Queue) :-
+    with_compile_trace(memo_thread, (
+        stratify_rules(Rules, _, _),
+        compile_scope_memo_stats(Hits, Misses, Entries))),
+    thread_send_message(Queue, stats(Hits, Misses, Entries)).
+
+test(stratification_memo_outside_scope_leaves_no_state) :-
+    memo_probe_rules(Rules),
+    stratify_rules(Rules, OutsideFirst, _),
+    stratify_rules(Rules, OutsideSecond, _),
+    with_compile_trace(memo_probe, (
+        stratify_rules(Rules, _, _),
+        compile_scope_memo_stats(Hits, Misses, Entries))),
+    (   OutsideFirst == OutsideSecond
+    ->  Repeated = stable
+    ;   Repeated = unstable
+    ),
+    Observed = outside_scope(Repeated, stats(Hits, Misses, Entries)),
+    Observed == outside_scope(stable, stats(0, 1, 1)).
+
+test(stratification_memo_matches_pure_output_on_nearest_shadow_rules) :-
+    compile_dl7('v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7',
+                _, Runtime, []),
+    Runtime = checked_datalog(_, datalog_program(_, _, Rules), _, _),
+    stratify_rules(Rules, PureStrata, PureDiagnostics),
+    with_compile_trace(memo_fixture, (
+        stratify_rules(Rules, FirstStrata, FirstDiagnostics),
+        stratify_rules(Rules, SecondStrata, SecondDiagnostics),
+        compile_scope_memo_stats(Hits, Misses, Entries))),
+    strata_parity(FirstStrata, FirstDiagnostics, PureStrata, PureDiagnostics,
+                  FirstParity),
+    strata_parity(SecondStrata, SecondDiagnostics, PureStrata, PureDiagnostics,
+                  SecondParity),
+    Observed = memo_fixture(FirstParity, SecondParity,
+                            stats(Hits, Misses, Entries)),
+    Observed == memo_fixture(equal, equal, stats(1, 1, 1)).
+
+test(stratification_memo_matches_pure_output_on_partial_rules) :-
+    compile_dl7('v7/test/fixtures/2_partial.dl7', _, Runtime, []),
+    Runtime = checked_datalog(_, datalog_program(_, _, Rules), _, _),
+    stratify_rules(Rules, PureStrata, PureDiagnostics),
+    with_compile_trace(memo_fixture, (
+        stratify_rules(Rules, FirstStrata, FirstDiagnostics),
+        stratify_rules(Rules, SecondStrata, SecondDiagnostics),
+        compile_scope_memo_stats(Hits, Misses, Entries))),
+    strata_parity(FirstStrata, FirstDiagnostics, PureStrata, PureDiagnostics,
+                  FirstParity),
+    strata_parity(SecondStrata, SecondDiagnostics, PureStrata, PureDiagnostics,
+                  SecondParity),
+    Observed = memo_fixture(FirstParity, SecondParity,
+                            stats(Hits, Misses, Entries)),
+    Observed == memo_fixture(equal, equal, stats(1, 1, 1)).
+
+strata_parity(Strata, Diagnostics, PureStrata, PureDiagnostics, Parity) :-
+    (   Strata == PureStrata,
+        Diagnostics == PureDiagnostics
+    ->  Parity = equal
+    ;   Parity = differ(Strata, Diagnostics, PureStrata, PureDiagnostics)
+    ).
 
 % Parity against a test-local copy of the full-list relaxation the worklist
 % replaced. The reference is the pre-change algorithm verbatim, so agreement
