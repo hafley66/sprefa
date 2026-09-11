@@ -1,0 +1,275 @@
+# DL7 shared architecture graph
+# Generated from 0_system.dl7 by 1_generate.pl. Do not edit by hand.
+
+title: "DL7 shared architecture graph"
+
+direction: right
+
+classes: {
+  rel_depends_on: { style: { stroke: "#868e96"; stroke-width: 1 } }
+  rel_emits: { style: { stroke: "#2f9e44"; stroke-width: 3 } }
+  rel_lowers_to: { style: { stroke: "#7048e8"; stroke-width: 3; stroke-dash: 4 } }
+  rel_hosts: { style: { stroke: "#e8590c"; stroke-width: 3 } }
+  rel_reads: { style: { stroke: "#1971c2"; stroke-width: 3 } }
+  rel_writes: { style: { stroke: "#0c8599"; stroke-width: 3 } }
+  rel_watches: { style: { stroke: "#f08c00"; stroke-width: 3; stroke-dash: 4 } }
+  rel_reloads: { style: { stroke: "#c2255c"; stroke-width: 3; stroke-dash: 4 } }
+  rel_effects: { style: { stroke: "#ae3ec9"; stroke-width: 4 } }
+  rel_later_target: { style: { stroke: "#495057"; stroke-width: 2; stroke-dash: 6 } }
+}
+
+overview: {
+  "compile": {
+    "dl7.bench": "compiler performance budget gate"
+    "dl7.checker": "checked Datalog resolution, safety, strata"
+    "dl7.compiler_cacher": "content-addressed compile/prelude cache"
+    "dl7.compiler_tracer": "phase/step compile trace ledger"
+    "dl7.evaluator": "shared stratified Datalog evaluator"
+    "dl7.extract_loader": "TSI stream loader and registry validation"
+    "dl7.host_planner": "hosted external operator shape validation"
+    "dl7.kernel": "DL7 compiler kernel, lowering, driver"
+    "dl7.macrotime": "macrotime library and syntax rewrite"
+    "dl7.module_graph": "multi-unit module graph and environments"
+    "dl7.prelude": "DL7 prelude declarations and type algebra"
+    "dl7.reader": "DL7 reader and CST"
+    "dl7.schema": "DL7 runtime/wire type schema"
+    "dl7.source_fact_loader": "source-fact envelope to span/occurrence graph"
+    "dl7.tool_cli": "CLI mainers over the compiler"
+  }
+  "algebra": {
+    "dl6.bind": "bind operator and interval/watch bind runners"
+    "dl6.clock": "clock dependency and tick-ring grading"
+    "dl6.conformance": "conformance corpus and battery of record"
+    "dl6.declarations": "declaration sugar and expansion phases"
+    "dl6.delta": "delta rows and boundary diffs"
+    "dl6.diag": "diagnostics to LSP records"
+    "dl6.effects": "effect port rows and executor modules"
+    "dl6.emit_dd": "isolated DD plan JSON emitter"
+    "dl6.emit_rust": "Rust target emitter"
+    "dl6.emit_ts": "TypeScript target emitter"
+    "dl6.frontier": "frontier and support-count write strategies"
+    "dl6.host": "host declaration expansion and external relations"
+    "dl6.interner": "program text intern plan and runtime intern planes"
+    "dl6.ivm": "incremental view maintenance lowering and runtime"
+    "dl6.keys": "declared relation keys and key checks"
+    "dl6.lower": "rule to target-neutral lowered plan"
+    "dl6.queries": "query cone subscription and pruning"
+    "dl6.reload_catalog": "program reload planner and runtime catalog"
+    "dl6.retention": "retention bounds and history pruning"
+    "dl6.rules": "analysis, body walk, stratification, program checks"
+    "dl6.storage": "storage projection and struct type plans"
+    "dl6.surface": "DL6 surface grammar, DCG parser, printer, registry"
+    "dl6.types": "type plane, semantic type ids, topological order"
+    "dl6.watches": "filesystem/revision watch sources"
+    "dl7.userland": "userland type algebra and DL6 catalog app"
+  }
+  "generated": {
+    "dl7.emit.dbsp": "DBSP JSON and Rust plan emitters"
+    "dl7.emit.rust": "Rust type and runtime region emitters"
+    "dl7.emit.sqlite": "SQLite query and IVM install emitter"
+    "dl7.emitter_protocol": "target-neutral reification and artifact emission"
+    "dl7.emitters": "userland policy emitter programs"
+  }
+  "runtime": {
+    "dd.backend": "differential-dataflow backend"
+    "ext.core": "sprefa-extract crate core and dispatch"
+    "ext.cpg": "Joern CPG decode"
+    "ext.langs": "per-language extraction front ends"
+    "ext.move_rename": "move and rename rewriters"
+    "ext.scip": "SCIP indexer produce/load"
+    "ext.sqlite_export": "extract SQLite snapshot exporter"
+    "ext.tsi": "typed symbol index protocol and registry"
+    "ext.watch": "named-ref watch protocol and generations"
+    "hmr": "program hot reload and generation-boundary swap"
+    "ivm.algebra": "shared generic IVM operator algebra"
+    "ivm.sqlite": "SQLite transactional IVM extension"
+    "rt.dd_ram": "dd-runner RAM kernel"
+    "rt.executor": "generic whole-language runtime executor"
+    "rt.rust": "sprefa-engine-rs generated-program runtime"
+    "rt.store": "sprefa-store cascade engine with dd/salsa oracles"
+    "rt.tsv2": "TypeScript tsv2 incremental runtime"
+    "rt.v7": "DL7 successor whole-language runtime"
+  }
+  "hosts": {
+    "host.clocks": "clock tick host"
+    "host.env": "environment variable host"
+    "host.filesystem": "filesystem host executor"
+    "host.git": "Git refs, history, repo-at hosts"
+    "host.http": "HTTP get/post hosts"
+    "host.shell": "shell/process host executor"
+    "host.soopy": "Soopy stage/commit/checkout hosts"
+  }
+  "effects": {
+    "lsp.diagnostics": "legacy v5 DL LSP diagnostics (donor; not V7)"
+    "lsp.edits": "legacy v5 LSP rename/codeAction/workspace edits (absent; not V7)"
+  }
+  "dd.backend" -> "ivm.algebra": "later_target" { class: rel_later_target }
+  "dl6.bind" -> "dl6.host": "depends_on" { class: rel_depends_on }
+  "dl6.clock" -> "dl6.rules": "depends_on" { class: rel_depends_on }
+  "dl6.conformance" -> "dl6.rules": "watches" { class: rel_watches }
+  "dl6.declarations" -> "dl6.surface": "depends_on" { class: rel_depends_on }
+  "dl6.delta" -> "dl6.ivm": "depends_on" { class: rel_depends_on }
+  "dl6.delta" -> "rt.tsv2": "emits" { class: rel_emits }
+  "dl6.effects" -> "dl6.host": "depends_on" { class: rel_depends_on }
+  "dl6.effects" -> "rt.rust": "hosts" { class: rel_hosts }
+  "dl6.emit_dd" -> "dl6.lower": "depends_on" { class: rel_depends_on }
+  "dl6.emit_rust" -> "dl6.lower": "depends_on" { class: rel_depends_on }
+  "dl6.emit_ts" -> "dl6.lower": "depends_on" { class: rel_depends_on }
+  "dl6.frontier" -> "dl6.delta": "depends_on" { class: rel_depends_on }
+  "dl6.host" -> "dl6.declarations": "depends_on" { class: rel_depends_on }
+  "dl6.host" -> "rt.rust": "hosts" { class: rel_hosts }
+  "dl6.interner" -> "dl6.storage": "depends_on" { class: rel_depends_on }
+  "dl6.ivm" -> "dl6.storage": "depends_on" { class: rel_depends_on }
+  "dl6.ivm" -> "ivm.sqlite": "emits" { class: rel_emits }
+  "dl6.ivm" -> "rt.tsv2": "emits" { class: rel_emits }
+  "dl6.keys" -> "dl6.types": "depends_on" { class: rel_depends_on }
+  "dl6.lower" -> "dl6.rules": "depends_on" { class: rel_depends_on }
+  "dl6.lower" -> "dl6.storage": "depends_on" { class: rel_depends_on }
+  "dl6.queries" -> "dl6.rules": "reads" { class: rel_reads }
+  "dl6.reload_catalog" -> "dl6.storage": "reloads" { class: rel_reloads }
+  "dl6.retention" -> "dl6.ivm": "depends_on" { class: rel_depends_on }
+  "dl6.rules" -> "dl6.declarations": "depends_on" { class: rel_depends_on }
+  "dl6.storage" -> "dl6.types": "depends_on" { class: rel_depends_on }
+  "dl6.types" -> "dl6.declarations": "depends_on" { class: rel_depends_on }
+  "dl6.watches" -> "dl6.host": "effects" { class: rel_effects }
+  "dl6.watches" -> "ext.watch": "watches" { class: rel_watches }
+  "dl7.bench" -> "dl7.compiler_cacher": "depends_on" { class: rel_depends_on }
+  "dl7.bench" -> "dl7.compiler_tracer": "depends_on" { class: rel_depends_on }
+  "dl7.checker" -> "dl7.kernel": "depends_on" { class: rel_depends_on }
+  "dl7.emit.dbsp" -> "dl7.emitter_protocol": "depends_on" { class: rel_depends_on }
+  "dl7.emit.dbsp" -> "rt.dd_ram": "lowers_to" { class: rel_lowers_to }
+  "dl7.emit.rust" -> "dl7.emitter_protocol": "depends_on" { class: rel_depends_on }
+  "dl7.emit.rust" -> "rt.rust": "emits" { class: rel_emits }
+  "dl7.emit.sqlite" -> "dl7.emitter_protocol": "depends_on" { class: rel_depends_on }
+  "dl7.emit.sqlite" -> "ivm.sqlite": "lowers_to" { class: rel_lowers_to }
+  "dl7.emitter_protocol" -> "dl7.checker": "depends_on" { class: rel_depends_on }
+  "dl7.evaluator" -> "dl7.kernel": "depends_on" { class: rel_depends_on }
+  "dl7.extract_loader" -> "ext.tsi": "reads" { class: rel_reads }
+  "dl7.host_planner" -> "host.soopy": "hosts" { class: rel_hosts }
+  "dl7.kernel" -> "dl7.macrotime": "depends_on" { class: rel_depends_on }
+  "dl7.kernel" -> "dl7.reader": "depends_on" { class: rel_depends_on }
+  "dl7.module_graph" -> "dl7.kernel": "depends_on" { class: rel_depends_on }
+  "dl7.module_graph" -> "dl7.reader": "depends_on" { class: rel_depends_on }
+  "dl7.source_fact_loader" -> "ext.core": "reads" { class: rel_reads }
+  "dl7.tool_cli" -> "ext.watch": "reads" { class: rel_reads }
+  "dl7.userland" -> "dl7.kernel": "depends_on" { class: rel_depends_on }
+  "dl7.userland" -> "dl7.prelude": "depends_on" { class: rel_depends_on }
+  "ext.core" -> "ext.tsi": "emits" { class: rel_emits }
+  "ext.core" -> "ext.langs": "hosts" { class: rel_hosts }
+  "ext.cpg" -> "ext.tsi": "emits" { class: rel_emits }
+  "ext.move_rename" -> "ext.core": "writes" { class: rel_writes }
+  "ext.scip" -> "ext.tsi": "emits" { class: rel_emits }
+  "ext.sqlite_export" -> "ivm.sqlite": "writes" { class: rel_writes }
+  "ext.watch" -> "ext.tsi": "emits" { class: rel_emits }
+  "hmr" -> "rt.tsv2": "reloads" { class: rel_reloads }
+  "host.clocks" -> "rt.rust": "depends_on" { class: rel_depends_on }
+  "host.env" -> "rt.rust": "depends_on" { class: rel_depends_on }
+  "host.filesystem" -> "host.soopy": "depends_on" { class: rel_depends_on }
+  "host.git" -> "rt.rust": "depends_on" { class: rel_depends_on }
+  "host.http" -> "rt.rust": "depends_on" { class: rel_depends_on }
+  "host.shell" -> "rt.tsv2": "depends_on" { class: rel_depends_on }
+  "host.soopy" -> "rt.rust": "depends_on" { class: rel_depends_on }
+  "ivm.algebra" -> "ivm.sqlite": "lowers_to" { class: rel_lowers_to }
+  "lsp.diagnostics" -> "dl6.diag": "reads" { class: rel_reads }
+  "rt.dd_ram" -> "dl7.emit.dbsp": "reads" { class: rel_reads }
+  "rt.executor" -> "dl7.emit.rust": "reads" { class: rel_reads }
+  "rt.rust" -> "dl6.emit_rust": "reads" { class: rel_reads }
+  "rt.tsv2" -> "dl6.ivm": "reads" { class: rel_reads }
+  "rt.v7" -> "rt.executor": "depends_on" { class: rel_depends_on }
+}
+
+layers: {
+  "compiler": {
+    "dl7.bench": "compiler performance budget gate"
+    "dl7.checker": "checked Datalog resolution, safety, strata"
+    "dl7.compiler_cacher": "content-addressed compile/prelude cache"
+    "dl7.compiler_tracer": "phase/step compile trace ledger"
+    "dl7.emit.dbsp": "DBSP JSON and Rust plan emitters"
+    "dl7.emit.rust": "Rust type and runtime region emitters"
+    "dl7.emit.sqlite": "SQLite query and IVM install emitter"
+    "dl7.emitter_protocol": "target-neutral reification and artifact emission"
+    "dl7.emitters": "userland policy emitter programs"
+    "dl7.evaluator": "shared stratified Datalog evaluator"
+    "dl7.extract_loader": "TSI stream loader and registry validation"
+    "dl7.host_planner": "hosted external operator shape validation"
+    "dl7.kernel": "DL7 compiler kernel, lowering, driver"
+    "dl7.macrotime": "macrotime library and syntax rewrite"
+    "dl7.module_graph": "multi-unit module graph and environments"
+    "dl7.prelude": "DL7 prelude declarations and type algebra"
+    "dl7.reader": "DL7 reader and CST"
+    "dl7.schema": "DL7 runtime/wire type schema"
+    "dl7.source_fact_loader": "source-fact envelope to span/occurrence graph"
+    "dl7.tool_cli": "CLI mainers over the compiler"
+    "dl7.userland": "userland type algebra and DL6 catalog app"
+    "dl7.bench" -> "dl7.compiler_cacher": "depends_on" { class: rel_depends_on }
+    "dl7.bench" -> "dl7.compiler_tracer": "depends_on" { class: rel_depends_on }
+    "dl7.checker" -> "dl7.kernel": "depends_on" { class: rel_depends_on }
+    "dl7.emit.dbsp" -> "dl7.emitter_protocol": "depends_on" { class: rel_depends_on }
+    "dl7.emit.rust" -> "dl7.emitter_protocol": "depends_on" { class: rel_depends_on }
+    "dl7.emit.sqlite" -> "dl7.emitter_protocol": "depends_on" { class: rel_depends_on }
+    "dl7.emitter_protocol" -> "dl7.checker": "depends_on" { class: rel_depends_on }
+    "dl7.evaluator" -> "dl7.kernel": "depends_on" { class: rel_depends_on }
+    "dl7.kernel" -> "dl7.macrotime": "depends_on" { class: rel_depends_on }
+    "dl7.kernel" -> "dl7.reader": "depends_on" { class: rel_depends_on }
+    "dl7.module_graph" -> "dl7.kernel": "depends_on" { class: rel_depends_on }
+    "dl7.module_graph" -> "dl7.reader": "depends_on" { class: rel_depends_on }
+    "dl7.userland" -> "dl7.kernel": "depends_on" { class: rel_depends_on }
+    "dl7.userland" -> "dl7.prelude": "depends_on" { class: rel_depends_on }
+  }
+  "runtime_tick": {
+    "dl7.tool_cli": "CLI mainers over the compiler"
+    "editor": "editor"
+    "ext.core": "sprefa-extract crate core and dispatch"
+    "ext.langs": "per-language extraction front ends"
+    "ext.tsi": "typed symbol index protocol and registry"
+    "ext.watch": "named-ref watch protocol and generations"
+    "host.filesystem": "filesystem host executor"
+    "host.git": "Git refs, history, repo-at hosts"
+    "host.http": "HTTP get/post hosts"
+    "host.shell": "shell/process host executor"
+    "ivm.sqlite": "SQLite transactional IVM extension"
+    "lsp.diagnostics": "legacy v5 DL LSP diagnostics (donor; not V7)"
+    "host.filesystem" -> "ext.watch": "watches" { class: rel_watches }
+    "host.git" -> "ext.watch": "watches" { class: rel_watches }
+    "editor" -> "ext.watch": "watches" { class: rel_watches }
+    "ext.watch" -> "ext.core": "emits" { class: rel_emits }
+    "ext.core" -> "ext.langs": "hosts" { class: rel_hosts }
+    "ext.langs" -> "ext.tsi": "emits" { class: rel_emits }
+    "ext.tsi" -> "ivm.sqlite": "writes" { class: rel_writes }
+    "ivm.sqlite" -> "dl7.tool_cli": "reads" { class: rel_reads }
+    "dl7.tool_cli" -> "lsp.diagnostics": "emits" { class: rel_emits }
+    "dl7.tool_cli" -> "host.shell": "effects" { class: rel_effects }
+    "dl7.tool_cli" -> "host.http": "effects" { class: rel_effects }
+  }
+  "reload": {
+    "dd.backend": "differential-dataflow backend"
+    "dl6.frontier": "frontier and support-count write strategies"
+    "dl6.reload_catalog": "program reload planner and runtime catalog"
+    "dl6.retention": "retention bounds and history pruning"
+    "dl6.storage": "storage projection and struct type plans"
+    "hmr": "program hot reload and generation-boundary swap"
+    "rt.dd_ram": "dd-runner RAM kernel"
+    "rt.tsv2": "TypeScript tsv2 incremental runtime"
+    "dl6.reload_catalog" -> "dl6.storage": "reloads" { class: rel_reloads }
+    "hmr" -> "rt.tsv2": "reloads" { class: rel_reloads }
+  }
+  "reference": {
+    "ProgramJson": "ProgramJson"
+    "dl6.lower": "rule to target-neutral lowered plan"
+    "dl6.rules": "analysis, body walk, stratification, program checks"
+    "dl7.emit.dbsp": "DBSP JSON and Rust plan emitters"
+    "dl7.emit.rust": "Rust type and runtime region emitters"
+    "ivm.sqlite": "SQLite transactional IVM extension"
+    "rt.executor": "generic whole-language runtime executor"
+    "rt.rust": "sprefa-engine-rs generated-program runtime"
+    "rt.v7": "DL7 successor whole-language runtime"
+    "dl6.rules" -> "dl6.lower": "emits" { class: rel_emits }
+    "dl6.lower" -> "ProgramJson": "emits" { class: rel_emits }
+    "ProgramJson" -> "rt.rust": "reads" { class: rel_reads }
+    "rt.rust" -> "ivm.sqlite": "writes" { class: rel_writes }
+    "dl7.emit.rust" -> "rt.executor": "emits" { class: rel_emits }
+    "dl7.emit.dbsp" -> "rt.executor": "lowers_to" { class: rel_lowers_to }
+    "rt.executor" -> "rt.v7": "lowers_to" { class: rel_lowers_to }
+    "rt.v7" -> "ivm.sqlite": "hosts" { class: rel_hosts }
+  }
+}

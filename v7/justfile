@@ -133,3 +133,22 @@ watch-e2e:
 sqlite-plan-e2e:
     cargo build --manifest-path "{{ v7 }}/../v6/dd-runner/Cargo.toml"
     cd "{{ v7 }}/.." && swipl -q -s "{{ v7 }}/test/13_sqlite_plan.e2e.pl" -g '(run_tests -> halt(0); halt(1))'
+
+# Compile the one authored architecture source and regenerate 2_system.d2 and
+# 2_progress.md.
+architecture-generate:
+    swipl -q -s "{{ v7 }}/applications/architecture/1_generate.pl" -g generate_main -t halt -- generate "{{ v7 }}"
+
+# Fail on generated drift without rewriting tracked output.
+architecture-check:
+    swipl -q -s "{{ v7 }}/applications/architecture/1_generate.pl" -g generate_main -t halt -- check "{{ v7 }}"
+
+# Render the generated system map to SVG in a temporary directory.
+architecture-render:
+    swipl -q -s "{{ v7 }}/applications/architecture/1_generate.pl" -g generate_main -t halt -- generate "{{ v7 }}"
+    d2 "{{ v7 }}/applications/architecture/2_system.d2" "$(mktemp -d)/system.svg"
+
+# Assert exact artifact rows, validation rejection, percentage arithmetic,
+# unknown denominators, determinism, and generated-file drift detection.
+architecture-test:
+    swipl -q -s "{{ v7 }}/test/21_architecture_generate.test.pl" -g run_tests -t halt
