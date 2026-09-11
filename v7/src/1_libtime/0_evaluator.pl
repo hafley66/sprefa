@@ -26,13 +26,19 @@
               [ compile_scope_memo_lookup/3,
                 compile_scope_memo_store/3,
                 in_compile_scope/0,
-                run_compile_step/4
+                run_compile_step/4,
+                debug_trace_on/0,
+                debug_event/2,
+                debug_histogram_fields/3
               ]).
 
 :- dynamic evaluation_rule/3.
 :- dynamic evaluation_seed/3.
 :- dynamic evaluation_lower_index/7.
 :- dynamic evaluation_request/2.
+
+:- thread_local debug_worklist_visits/1.
+:- thread_local debug_worklist_changes/1.
 
 :- table proves/2.
 
@@ -107,15 +113,16 @@ evaluate_stratum_after_aggregates(
             evaluator, evaluate_install(Level),
             install_evaluation(EvaluationId, PlainRules, StratumSeeds, LowerRows,
                                ClauseReferences),
-            evaluate_install_metrics(PlainRules, StratumSeeds, LowerRows)),
+            evaluate_install_metrics(
+                Level, PlainRules, StratumSeeds, LowerRows)),
         run_compile_step(
             evaluator, evaluate_collect(Level),
             collect_closure(EvaluationId, CompletedRows),
-            evaluate_collect_metrics(CompletedRows)),
+            evaluate_collect_metrics(Level, CompletedRows)),
         run_compile_step(
             evaluator, evaluate_cleanup(Level),
             clear_evaluation(EvaluationId, ClauseReferences),
-            evaluate_cleanup_metrics(EvaluationId, ClauseReferences))),
+            evaluate_cleanup_metrics(Level, EvaluationId, ClauseReferences))),
     NextLevel is Level + 1,
     evaluate_strata(NextLevel, MaxStratum, Strata, Dependencies, Rules, Seeds,
                     CompletedRows, Closure, Diagnostics).
@@ -406,7 +413,21 @@ memoized_stratification(Rules, Dependencies, DerivedStrata, Diagnostics) :-
         compile_scope_memo_store(Hash, Key, Value)
     ).
 
-calc_stratification(
+%% calc_stratification(+Rules, +Dependencies, -DerivedStrata, -Diagnostics)
+%% is det.
+%
+% Debug instrumentation wraps the pure derivation: stratification input and
+% result events are emitted only while debug tracing is active, and the
+% worklist counters are kept outside the derived result.
+calc_stratification(Rules, Dependencies, DerivedStrata, Diagnostics) :-
+    debug_stratification_input(Rules, Dependencies),
+    debug_reset_worklist_counters,
+    calc_stratification_body(Rules, Dependencies, DerivedStrata, Diagnostics),
+    debug_worklist_counters(Visits, Changes),
+    debug_stratification_result(
+        DerivedStrata, Diagnostics, Visits, Changes).
+
+calc_stratification_body(
     Rules, Dependencies, DerivedStrata, Diagnostics) :-
     rule_relations(Rules, Relations),
     strict_cycle_diagnostics(Relations, Dependencies, CycleDiagnostics),
@@ -419,6 +440,104 @@ calc_stratification(
     ;   DerivedStrata = [],
         Diagnostics = CycleDiagnostics
     ).
+
+debug_stratification_input(Rules, Dependencies) :-
+    (   debug_trace_on
+    ->  length(Rules, RuleCount),
+        length(Dependencies, DependencyCount),
+        rule_relations(Rules, Relations),
+        length(Relations, RelationCount),
+        dependency_polarity_counts(
+            Dependencies, Positive, Negative, GapZero, GapOne),
+        debug_event(stratification_input,
+                    [phase=stratify, rules=RuleCount,
+                     dependencies=DependencyCount, relations=RelationCount,
+                     positive=Positive, negative=Negative,
+                     gap_zero=GapZero, gap_one=GapOne])
+    ;   true
+    ).
+
+dependency_polarity_counts(Dependencies, Positive, Negative,
+                           GapZero, GapOne) :-
+    aggregate_all(count,
+                  member(dependency(_, _, positive, _, _), Dependencies),
+                  Positive),
+    aggregate_all(count,
+                  member(dependency(_, _, negative, _, _), Dependencies),
+                  Negative),
+    aggregate_all(count,
+                  member(dependency(_, _, _, 0, _), Dependencies),
+                  GapZero),
+    aggregate_all(count,
+                  member(dependency(_, _, _, 1, _), Dependencies),
+                  GapOne).
+
+debug_stratification_result(DerivedStrata, Diagnostics, Visits, Changes) :-
+    (   debug_trace_on
+    ->  length(DerivedStrata, StrataCount),
+        length(Diagnostics, DiagnosticCount),
+        strict_cycle_count(Diagnostics, StrictCycleCount),
+        strata_level_histogram(DerivedStrata, LevelHistogram),
+        debug_histogram_fields(strata_levels, LevelHistogram, HistFields),
+        append([phase=stratify, strata=StrataCount,
+                diagnostics=DiagnosticCount,
+                strict_cycles=StrictCycleCount,
+                worklist_visits=Visits,
+                level_changes=Changes], HistFields, Fields),
+        debug_event(stratification_result, Fields)
+    ;   true
+    ).
+
+strict_cycle_count(Diagnostics, Count) :-
+    aggregate_all(count,
+                  ( member(diagnostic(_, _, Reason), Diagnostics),
+                    strict_cycle_reason(Reason)
+                  ),
+                  Count).
+
+strict_cycle_reason(strict_dependency_cycle(_)).
+strict_cycle_reason(aggregate_dependency_cycle(_)).
+
+strata_level_histogram(Strata, Histogram) :-
+    findall(Level, member(stratum(_, Level), Strata), Levels0),
+    msort(Levels0, Levels),
+    sort(Levels, DistinctLevels),
+    level_counts(DistinctLevels, Levels, Histogram).
+
+level_counts([], _, []).
+level_counts([Level | Levels], All, [Level-Count | Rest]) :-
+    aggregate_all(count, member(Level, All), Count),
+    level_counts(Levels, All, Rest).
+
+debug_reset_worklist_counters :-
+    retractall(debug_worklist_visits(_)),
+    retractall(debug_worklist_changes(_)).
+
+debug_worklist_counters(Visits, Changes) :-
+    (   retract(debug_worklist_visits(Visits0))
+    ->  Visits = Visits0
+    ;   Visits = 0
+    ),
+    (   retract(debug_worklist_changes(Changes0))
+    ->  Changes = Changes0
+    ;   Changes = 0
+    ).
+
+debug_bump_visit(true) :-
+    (   retract(debug_worklist_visits(Count0))
+    ->  Count is Count0 + 1
+    ;   Count = 1
+    ),
+    assertz(debug_worklist_visits(Count)).
+debug_bump_visit(false).
+
+debug_bump_change(true) :-
+    (   retract(debug_worklist_changes(Count0))
+    ->  Count is Count0 + 1
+    ;   Count = 1
+    ),
+    assertz(debug_worklist_changes(Count)).
+debug_bump_change(false).
 
 rule_dependencies([], []).
 rule_dependencies([rule(call(HeadRelation, HeadArguments), Goals) | Rules],
@@ -566,7 +685,12 @@ dependency_bodies(Dependencies, Queue) :-
 % the assoc carries relation lookup while relaxing.
 relax_worklist(Queue, DependencyIndex, Levels0, Levels) :-
     level_index(Levels0, LevelByRelation0),
-    worklist_loop(Queue, DependencyIndex, LevelByRelation0, LevelByRelation),
+    (   debug_trace_on
+    ->  Debug = true
+    ;   Debug = false
+    ),
+    worklist_loop(Queue, DependencyIndex, LevelByRelation0, LevelByRelation,
+                  Debug),
     levels_from_index(Levels0, LevelByRelation, Levels).
 
 %% level_index(+Levels, -LevelByRelation) is det.
@@ -586,31 +710,34 @@ levels_from_index([level(Relation, _) | Levels0], LevelByRelation,
     get_assoc(Relation, LevelByRelation, Level),
     levels_from_index(Levels0, LevelByRelation, Levels).
 
-worklist_loop([], _, LevelByRelation, LevelByRelation).
+worklist_loop([], _, LevelByRelation, LevelByRelation, _).
 worklist_loop([Relation | Queue0], DependencyIndex, LevelByRelation0,
-              LevelByRelation) :-
+              LevelByRelation, Debug) :-
+    debug_bump_visit(Debug),
     get_assoc(Relation, LevelByRelation0, BodyLevel),
     (   get_assoc(Relation, DependencyIndex, Readers)
     ->  reader_levels(Readers, BodyLevel, LevelByRelation0, LevelByRelation1,
-                      Enqueued),
+                      Enqueued, Debug),
         append(Queue0, Enqueued, Queue)
     ;   LevelByRelation1 = LevelByRelation0,
         Queue = Queue0
     ),
-    worklist_loop(Queue, DependencyIndex, LevelByRelation1, LevelByRelation).
+    worklist_loop(Queue, DependencyIndex, LevelByRelation1, LevelByRelation,
+                  Debug).
 
-reader_levels([], _, LevelByRelation, LevelByRelation, []).
+reader_levels([], _, LevelByRelation, LevelByRelation, [], _).
 reader_levels([HeadRelation-Gap | Readers], BodyLevel, LevelByRelation0,
-              LevelByRelation, Enqueued) :-
+              LevelByRelation, Enqueued, Debug) :-
     get_assoc(HeadRelation, LevelByRelation0, Current),
     Required is BodyLevel + Gap,
     (   Required > Current
-    ->  put_assoc(HeadRelation, LevelByRelation0, Required, LevelByRelation1),
+    ->  debug_bump_change(Debug),
+        put_assoc(HeadRelation, LevelByRelation0, Required, LevelByRelation1),
         reader_levels(Readers, BodyLevel, LevelByRelation1, LevelByRelation,
-                      Rest),
+                      Rest, Debug),
         Enqueued = [HeadRelation | Rest]
     ;   reader_levels(Readers, BodyLevel, LevelByRelation0, LevelByRelation,
-                      Enqueued)
+                      Enqueued, Debug)
     ).
 
 strata_for_relations([], _, []).
@@ -698,16 +825,17 @@ clear_evaluation(EvaluationId, ClauseReferences) :-
 %%   space                summed answer-trie memory in bytes
 %% Cleanup reports the known clause-reference count and a per-EvaluationId leak
 %% check.
-evaluate_install_metrics(Rules, Seeds, LowerRows,
+evaluate_install_metrics(Level, Rules, Seeds, LowerRows,
                          [ metric(stratum_rules, RuleCount),
                            metric(stratum_seeds, SeedCount),
                            metric(stratum_lower_rows, LowerRowCount)
                          ]) :-
     length(Rules, RuleCount),
     length(Seeds, SeedCount),
-    length(LowerRows, LowerRowCount).
+    length(LowerRows, LowerRowCount),
+    debug_evaluator_install(Level, Rules, Seeds, LowerRows).
 
-evaluate_collect_metrics(CompletedRows,
+evaluate_collect_metrics(Level, CompletedRows,
                          [ metric(stratum_closure_rows, ClosureCount),
                            metric(global_table_answers, TableAnswers),
                            metric(global_complete_calls, TableCompleteCalls),
@@ -716,16 +844,98 @@ evaluate_collect_metrics(CompletedRows,
     length(CompletedRows, ClosureCount),
     table_statistics(answers, TableAnswers),
     table_statistics(complete_call, TableCompleteCalls),
-    table_statistics(space, TableSpaceBytes).
+    table_statistics(space, TableSpaceBytes),
+    debug_evaluator_collect(Level, CompletedRows).
 
-evaluate_cleanup_metrics(EvaluationId, ClauseReferences,
+evaluate_cleanup_metrics(Level, EvaluationId, ClauseReferences,
                          [ metric(erased_clauses, ErasedCount),
                            metric(leftover_lower_rows, LeftoverRowCount)
                          ]) :-
     length(ClauseReferences, ErasedCount),
     aggregate_all(count,
                   evaluation_lower_index(EvaluationId, _, _, _, _, _, _),
-                  LeftoverRowCount).
+                  LeftoverRowCount),
+    debug_evaluator_cleanup(Level, EvaluationId, ClauseReferences).
+
+%% Evaluator debug events. Per-relation cardinalities and global table
+%% statistics are gathered only while debug tracing is active, after the
+%% measured install/collect/cleanup interval.
+
+debug_evaluator_install(Level, Rules, Seeds, LowerRows) :-
+    (   debug_trace_on
+    ->  length(Rules, RuleCount),
+        length(Seeds, SeedCount),
+        length(LowerRows, LowerRowCount),
+        relation_rule_histogram(Rules, RuleHistogram),
+        relation_call_histogram(Seeds, SeedHistogram),
+        relation_call_histogram(LowerRows, LowerHistogram),
+        debug_histogram_fields(rule_relations, RuleHistogram, RuleFields),
+        debug_histogram_fields(seed_relations, SeedHistogram, SeedFields),
+        debug_histogram_fields(lower_relations, LowerHistogram, LowerFields),
+        append([phase=evaluator, stratum=Level, outcome=installed,
+                rules=RuleCount, seeds=SeedCount,
+                lower_rows=LowerRowCount | RuleFields],
+               SeedFields, Fields0),
+        append(Fields0, LowerFields, Fields),
+        debug_event(evaluator_install, Fields)
+    ;   true
+    ).
+
+debug_evaluator_collect(Level, CompletedRows) :-
+    (   debug_trace_on
+    ->  length(CompletedRows, ClosureCount),
+        relation_call_histogram(CompletedRows, ClosureHistogram),
+        debug_histogram_fields(
+            closure_relations, ClosureHistogram, ClosureFields),
+        table_statistics(answers, TableAnswers),
+        table_statistics(complete_call, TableCompleteCalls),
+        table_statistics(space, TableSpaceBytes),
+        append([phase=evaluator, stratum=Level, outcome=collected,
+                closure_rows=ClosureCount,
+                global_table_answers=TableAnswers,
+                global_complete_calls=TableCompleteCalls,
+                global_table_space_bytes=TableSpaceBytes | ClosureFields],
+               [], Fields),
+        debug_event(evaluator_collect, Fields)
+    ;   true
+    ).
+
+debug_evaluator_cleanup(Level, EvaluationId, ClauseReferences) :-
+    (   debug_trace_on
+    ->  length(ClauseReferences, ErasedCount),
+        aggregate_all(count,
+                      evaluation_lower_index(EvaluationId, _, _, _, _, _, _),
+                      LeftoverRowCount),
+        debug_event(evaluator_cleanup,
+                    [phase=evaluator, stratum=Level, outcome=cleared,
+                     erased_clauses=ErasedCount,
+                     leftover_lower_rows=LeftoverRowCount])
+    ;   true
+    ).
+
+relation_rule_histogram(Rules, Histogram) :-
+    findall(Relation,
+            ( member(rule(call(Relation, _), _), Rules) ),
+            Relations0),
+    sort(Relations0, Relations),
+    relation_rule_counts(Relations, Rules, Histogram).
+
+relation_rule_counts([], _, []).
+relation_rule_counts([Relation | Relations], Rules, [Relation-Count | Rest]) :-
+    aggregate_all(count,
+                  member(rule(call(Relation, _), _), Rules),
+                  Count),
+    relation_rule_counts(Relations, Rules, Rest).
+
+relation_call_histogram(Rows, Histogram) :-
+    findall(Relation, member(call(Relation, _), Rows), Relations0),
+    sort(Relations0, Relations),
+    relation_call_counts(Relations, Rows, Histogram).
+
+relation_call_counts([], _, []).
+relation_call_counts([Relation | Relations], Rows, [Relation-Count | Rest]) :-
+    aggregate_all(count, member(call(Relation, _), Rows), Count),
+    relation_call_counts(Relations, Rows, Rest).
 
 proves(_, Call) :-
     integer_comparison_arguments(Call, PositiveOperator, _, Left, Right),

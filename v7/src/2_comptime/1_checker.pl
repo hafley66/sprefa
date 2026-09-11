@@ -4,10 +4,16 @@
             check_resolved_rules/5
           ]).
 
+:- use_module(library(aggregate), [aggregate_all/3]).
 :- use_module(library(error), [must_be/2]).
 :- use_module('../1_libtime/0_evaluator',
               [integer_comparison/3, stratify_rules/3]).
 :- use_module('0_lowerer', [kernel_relation/2]).
+:- use_module('1b_compiler_tracer',
+              [debug_trace_on/0,
+                debug_event/2,
+                debug_histogram_fields/3
+              ]).
 
 %% check_datalog(+BasementProgram, +Origins, -Checked, -Diagnostics) is det.
 %
@@ -16,9 +22,14 @@
 % safety, then emit canonical colon edges, the positive dependency graph, and
 % SCC strata. Diagnostics are sorted by origin; no Checked value survives a
 % diagnostic.
-check_datalog(basement_program(root_graph(Nodes, PendingEdges),
-                               datalog_program(Relations0, Seeds0, Rules0)),
-              Origins, Checked, Diagnostics) :-
+check_datalog(Basement, Origins, Checked, Diagnostics) :-
+    debug_checker_input(Basement, Origins),
+    check_datalog_body(Basement, Origins, Checked, Diagnostics),
+    debug_checker_output(Checked, Diagnostics).
+
+check_datalog_body(basement_program(root_graph(Nodes, PendingEdges),
+                                    datalog_program(Relations0, Seeds0, Rules0)),
+                   Origins, Checked, Diagnostics) :-
     !,
     must_be(ground, Origins),
     relations_refs(Relations0, SourceRelations),
@@ -43,7 +54,7 @@ check_datalog(basement_program(root_graph(Nodes, PendingEdges),
     ;   Checked = [],
         sort(Diags, Diagnostics)
     ).
-check_datalog(Program, _, [], Diagnostics) :-
+check_datalog_body(Program, _, [], Diagnostics) :-
     must_be(ground, Program),
     Diagnostics = [diagnostic(check, none, invalid_basement_program)].
 
@@ -54,6 +65,12 @@ check_datalog(Program, _, [], Diagnostics) :-
 % are already canonical, so this entrypoint performs declaration, arity,
 % mode, safety, and stratification checks without source-name resolution.
 check_resolved_rules(Relations, Rules, Depends, Strata, Diagnostics) :-
+    debug_resolved_input(Relations, Rules),
+    check_resolved_rules_body(Relations, Rules, Depends, Strata,
+                              Diagnostics),
+    debug_resolved_output(Depends, Strata, Diagnostics).
+
+check_resolved_rules_body(Relations, Rules, Depends, Strata, Diagnostics) :-
     must_be(ground, Relations),
     must_be(ground, Rules),
     resolved_rule_diagnostics(Rules, Relations, RuleDiagnostics),
@@ -71,6 +88,94 @@ check_resolved_rules(Relations, Rules, Depends, Strata, Diagnostics) :-
     ;   Depends = [],
         Strata = [],
         sort(RuleDiagnostics, Diagnostics)
+    ).
+
+%% Checker debug events. Counts derive only while debug tracing is active.
+
+debug_checker_input(
+    basement_program(root_graph(Nodes, PendingEdges),
+                     datalog_program(Relations, Seeds, Rules)),
+    Origins) :-
+    (   debug_trace_on
+    ->  length(Nodes, NodeCount),
+        length(PendingEdges, EdgeCount),
+        length(Relations, RelationCount),
+        length(Seeds, SeedCount),
+        length(Rules, RuleCount),
+        length(Origins, OriginCount),
+        debug_event(checker_input,
+                    [phase=check, nodes=NodeCount, pending_edges=EdgeCount,
+                     relations=RelationCount, seeds=SeedCount,
+                     rules=RuleCount, origins=OriginCount])
+    ;   true
+    ).
+debug_checker_input(_, _).
+
+debug_checker_output(Checked, Diagnostics) :-
+    (   debug_trace_on
+    ->  checked_counts(Checked, Nodes, Edges, Relations, Seeds, Rules),
+        length(Diagnostics, DiagnosticCount),
+        checker_reason_histogram(Diagnostics, Histogram),
+        debug_histogram_fields(diagnostic_reasons, Histogram, HistFields),
+        append([phase=check, nodes=Nodes, edges=Edges,
+                relations=Relations, seeds=Seeds, rules=Rules,
+                diagnostics=DiagnosticCount], HistFields, Fields),
+        debug_event(checker_output, Fields)
+    ;   true
+    ).
+
+checked_counts(
+    checked_datalog(root_graph(Nodes0, Edges0),
+                    datalog_program(Relations0, Seeds0, Rules0), _, _),
+    Nodes, Edges, Relations, Seeds, Rules) :-
+    !,
+    length(Nodes0, Nodes),
+    length(Edges0, Edges),
+    length(Relations0, Relations),
+    length(Seeds0, Seeds),
+    length(Rules0, Rules).
+checked_counts(_, 0, 0, 0, 0, 0).
+
+checker_reason_histogram(Diagnostics, Histogram) :-
+    findall(Name,
+            ( member(diagnostic(_, _, Reason), Diagnostics),
+              checker_reason_name(Reason, Name)
+            ),
+            Names0),
+    msort(Names0, Names),
+    sort(Names, Distinct),
+    histogram_counts(Distinct, Names, Histogram).
+
+checker_reason_name(Reason, Name) :-
+    (   compound(Reason)
+    ->  functor(Reason, Name, _)
+    ;   Name = Reason
+    ).
+
+histogram_counts([], _, []).
+histogram_counts([Key | Keys], Rows, [Key-Count | Rest]) :-
+    aggregate_all(count, member(Key, Rows), Count),
+    histogram_counts(Keys, Rows, Rest).
+
+debug_resolved_input(Relations, Rules) :-
+    (   debug_trace_on
+    ->  length(Relations, RelationCount),
+        length(Rules, RuleCount),
+        debug_event(checker_input,
+                    [phase=check, resolved=true,
+                     relations=RelationCount, rules=RuleCount])
+    ;   true
+    ).
+
+debug_resolved_output(Depends, Strata, Diagnostics) :-
+    (   debug_trace_on
+    ->  length(Depends, DependCount),
+        length(Strata, StrataCount),
+        length(Diagnostics, DiagnosticCount),
+        debug_event(checker_output,
+                    [phase=check, resolved=true, depends=DependCount,
+                     strata=StrataCount, diagnostics=DiagnosticCount])
+    ;   true
     ).
 
 resolved_rule_diagnostics([], _, []).

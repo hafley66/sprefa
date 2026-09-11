@@ -10,6 +10,7 @@
             standard_macrotime_paths/1
           ]).
 
+:- use_module(library(aggregate), [aggregate_all/3]).
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module('../0_reader/2_embedder', [dl7_text_unit/5]).
@@ -48,7 +49,10 @@
 :- use_module('1b_compiler_tracer',
               [ with_compile_trace/2,
                 run_compile_phase/3,
-                run_compile_step/4
+                run_compile_step/4,
+                debug_trace_on/0,
+                debug_event/2,
+                debug_histogram_fields/3
               ]).
 :- use_module('1c_compiler_cacher',
               [ with_prelude_cache/5,
@@ -541,11 +545,13 @@ compile_units(Units, Compiled, Diagnostics) :-
         compile_units_traced(Units, Compiled, Diagnostics)).
 
 compile_units_traced(Units, Compiled, Diagnostics) :-
+    debug_lowerer_input(Units),
     run_compile_phase(
         lower,
         lower_compiler_units(Units, ModuleBasements, ModuleOrigins,
                              LowerDiagnostics),
         _),
+    debug_lowerer_output(ModuleBasements, LowerDiagnostics),
     Context = compile_context(Units, none),
     compile_after_unit_lower(LowerDiagnostics, Context,
                              ModuleBasements, ModuleOrigins,
@@ -555,12 +561,14 @@ compile_units_traced(Units, Compiled, Diagnostics) :-
 compile_project_units(Project, TsiRows, Units, Compiled, Diagnostics) :-
     source_unit_module_owners(Units, SourceOwners),
     tsi_expression_environment(TsiRows, SourceOwners, TsiEnvironment),
+    debug_lowerer_input(Units),
     run_compile_phase(
         lower,
         lower_compiler_units(Units, TsiEnvironment,
                              ModuleBasements0, ModuleOrigins0,
                              LowerDiagnostics),
         _),
+    debug_lowerer_output(ModuleBasements0, LowerDiagnostics),
     install_project_after_lower(
         LowerDiagnostics, Project, TsiRows, ModuleBasements0, ModuleOrigins0,
         ModuleBasements, ModuleOrigins, ProjectDiagnostics),
@@ -1165,6 +1173,9 @@ evaluate_compiler_rounds(AuthoredRules, BaseRelations, BaseSeeds, FrozenEdges,
             FrozenGeneratedRelations, FrozenGeneratedRules,
             RoundClosure0)),
     strip_snapshot_rows(RoundClosure0, RoundClosure),
+    debug_round_event(
+        Round, Rules, RoundSeeds, FrozenEdges, FrozenRequests,
+        FrozenGeneratedRelations, FrozenGeneratedRules, RoundClosure),
     continue_compiler_rounds(EvaluationDiagnostics,
                              AuthoredRules, BaseRelations, BaseSeeds,
                              FrozenEdges, FrozenRequests,
@@ -1223,6 +1234,115 @@ assembly_compile_metrics(
     length(GeneratedRelations, GeneratedRelationCount),
     length(GeneratedRules, GeneratedRuleCount).
 
+%% Debug instrumentation helpers. All derive counts only while debug tracing is
+%% active; off-trace compilation computes nothing here.
+
+debug_lowerer_input(Units) :-
+    (   debug_trace_on
+    ->  length(Units, UnitCount),
+        debug_event(lowerer_input, [phase=lower, units=UnitCount])
+    ;   true
+    ).
+
+debug_lowerer_output(ModuleBasements, Diagnostics) :-
+    (   debug_trace_on
+    ->  module_basement_totals(ModuleBasements, Nodes, Edges,
+                               Relations, Seeds, Rules),
+        length(Diagnostics, DiagnosticCount),
+        diagnostic_reason_histogram(Diagnostics, Histogram),
+        debug_histogram_fields(diagnostic_reasons, Histogram, HistFields),
+        append([phase=lower, nodes=Nodes, edges=Edges,
+                relations=Relations, seeds=Seeds, rules=Rules,
+                diagnostics=DiagnosticCount], HistFields, Fields),
+        debug_event(lowerer_output, Fields)
+    ;   true
+    ).
+
+module_basement_totals([], 0, 0, 0, 0, 0).
+module_basement_totals(
+    [module_basement(_, basement_program(
+         root_graph(Nodes0, Edges0),
+         datalog_program(Relations0, Seeds0, Rules0))) | Basements],
+    Nodes, Edges, Relations, Seeds, Rules) :-
+    module_basement_totals(Basements, Nodes1, Edges1, Relations1,
+                           Seeds1, Rules1),
+    length(Nodes0, NodeCount),
+    length(Edges0, EdgeCount),
+    length(Relations0, RelationCount),
+    length(Seeds0, SeedCount),
+    length(Rules0, RuleCount),
+    Nodes is Nodes1 + NodeCount,
+    Edges is Edges1 + EdgeCount,
+    Relations is Relations1 + RelationCount,
+    Seeds is Seeds1 + SeedCount,
+    Rules is Rules1 + RuleCount.
+
+diagnostic_reason_histogram(Diagnostics, Histogram) :-
+    findall(Name,
+            ( member(diagnostic(_, _, Reason), Diagnostics),
+              diagnostic_reason_name(Reason, Name)
+            ),
+            Names0),
+    msort(Names0, Names),
+    sort(Names, DistinctNames),
+    histogram_counts(DistinctNames, Names, Histogram).
+
+diagnostic_reason_name(Reason, Name) :-
+    (   compound(Reason)
+    ->  functor(Reason, Name, _)
+    ;   Name = Reason
+    ).
+
+relation_histogram(Rows, Histogram) :-
+    findall(Relation, member(call(Relation, _), Rows), Relations0),
+    sort(Relations0, Relations),
+    relation_counts(Relations, Rows, Histogram).
+
+relation_counts([], _, []).
+relation_counts([Relation | Relations], Rows, [Relation-Count | Rest]) :-
+    aggregate_all(count, member(call(Relation, _), Rows), Count),
+    relation_counts(Relations, Rows, Rest).
+
+histogram_counts([], _, []).
+histogram_counts([Key | Keys], Rows, [Key-Count | Rest]) :-
+    aggregate_all(count, member(Key, Rows), Count),
+    histogram_counts(Keys, Rows, Rest).
+
+debug_round_event(
+    Round, Rules, Seeds, FrozenEdges, FrozenRequests,
+    GeneratedRelations, GeneratedRules, Closure) :-
+    (   debug_trace_on
+    ->  length(Rules, RuleCount),
+        length(Seeds, SeedCount),
+        length(FrozenEdges, FrozenEdgeCount),
+        length(FrozenRequests, FrozenRequestCount),
+        length(GeneratedRelations, GeneratedRelationCount),
+        length(GeneratedRules, GeneratedRuleCount),
+        length(Closure, ClosureCount),
+        relation_histogram(Seeds, SeedHistogram),
+        relation_histogram(Closure, ClosureHistogram),
+        debug_histogram_fields(seed_relations, SeedHistogram, SeedFields),
+        debug_histogram_fields(
+            closure_relations, ClosureHistogram, ClosureFields),
+        append([phase=comptime, round=Round,
+                rules=RuleCount, seed_rows=SeedCount,
+                frozen_edges=FrozenEdgeCount,
+                frozen_interns=FrozenRequestCount,
+                generated_relations=GeneratedRelationCount,
+                generated_rules=GeneratedRuleCount,
+                closure_rows=ClosureCount | SeedFields],
+               ClosureFields, Fields),
+        debug_event(comptime_round, Fields)
+    ;   true
+    ).
+
+debug_round_decision(Round, Decision) :-
+    (   debug_trace_on
+    ->  debug_event(comptime_round_decision,
+                    [phase=comptime, round=Round, outcome=Decision])
+    ;   true
+    ).
+
 continue_compiler_rounds([], AuthoredRules, BaseRelations, BaseSeeds,
                          FrozenEdges, FrozenRequests,
                          FrozenGeneratedRelations, FrozenGeneratedRules,
@@ -1270,18 +1390,21 @@ continue_after_assembly(
         validate_functional_rows(Relations, RoundClosure, KeyDiagnostics),
         append(DerivedBindDiagnostics, KeyDiagnostics, StableDiagnostics0),
         sort(StableDiagnostics0, StableDiagnostics),
+        debug_round_decision(Round, stable),
         finish_stable_round(StableDiagnostics, RoundClosure,
                             NextGeneratedRelations, NextGeneratedRules,
                             Depends, Strata,
                             Closure, GeneratedProgram, Diagnostics)
     ;   compiler_round_limit(Limit),
         (   Round >= Limit
-        ->  Closure = [],
+        ->  debug_round_decision(Round, limit_exhausted),
+            Closure = [],
             GeneratedProgram = generated_program([], [], [], []),
             Diagnostics = [diagnostic(
                                compile, none,
                                compiler_round_limit_exhausted(Limit))]
         ;   NextRound is Round + 1,
+            debug_round_decision(Round, continue),
             evaluate_compiler_rounds(
                 AuthoredRules, BaseRelations, BaseSeeds,
                 NextEdges, NextRequests,
