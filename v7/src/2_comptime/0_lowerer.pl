@@ -6,7 +6,12 @@
           ]).
 
 :- use_module(library(error), [must_be/2]).
+:- use_module(library(gensym), [gensym/2]).
 :- use_module('../1_libtime/0_evaluator', [integer_comparison/3]).
+
+:- dynamic arena_reservation/5.
+
+:- thread_local reservation_arena_scope/1.
 
 %% lower_datalog(+Unit, -Program, -Origins, -Diagnostics) is det.
 %
@@ -72,39 +77,68 @@ lower_after_declarations(
     append(Reservations, ImportedReservations, VisibleReservations),
     append(Relations, ImportedRelations, VisibleRelations),
     append(Edges, ImportedEdges, VisibleEdges),
-    promote_deferred_aliases(
-        Reservations, VisibleReservations, Edges, VisibleEdges,
-        DeclarationOrigins,
-        DerivedReservations, PromotedReservations, PromotedEdges,
-        Promotions),
+    setup_call_cleanup(
+        open_reservation_arena(VisibleReservations),
+        promote_deferred_aliases(
+            Reservations, VisibleReservations, Edges, VisibleEdges,
+            DeclarationOrigins,
+            DerivedReservations, PromotedReservations, PromotedEdges,
+            Promotions),
+        close_reservation_arena),
     append(PromotedReservations, ImportedReservations,
            PromotedVisibleReservations),
     append(PromotedEdges, ImportedEdges, PromotedVisibleEdges),
     Environment = expression_environment(
                       PromotedVisibleReservations, VisibleRelations,
                       PromotedVisibleEdges),
+    setup_call_cleanup(
+        open_reservation_arena(PromotedVisibleReservations),
+        lower_reserved_environment(
+            CallPolicy, DerivedReservations, Environment, Forms, ModuleOwner,
+            Promotions, Nodes0, PromotedEdges, Relations, DeclarationOrigins,
+            Program, Origins, Diagnostics),
+        close_reservation_arena).
+
+%% lower_reserved_environment(+CallPolicy, +DerivedReservations, +Environment,
+%%                            +Forms, +ModuleOwner, +Promotions, +Nodes0,
+%%                            +PromotedEdges, +Relations, +DeclarationOrigins,
+%%                            -Program, -Origins, -Diagnostics) is det.
+%
+% The reservation-dependent tail of lowering runs inside the environment
+% reservation arena so every scoped_reservation lookup in derived bind rules
+% and executables reads the JITI facts.
+lower_reserved_environment(
+    CallPolicy, DerivedReservations, Environment, Forms, ModuleOwner,
+    Promotions, Nodes0, PromotedEdges, Relations, DeclarationOrigins,
+    Program, Origins, Diagnostics) :-
     lower_derived_bind_rules(CallPolicy, DerivedReservations, Environment,
                              0,
                              DerivedResult),
-    (   DerivedResult = ok(OtherDerivedRules, OtherDerivedOrigins)
-    ->  length(OtherDerivedRules, AliasRuleIndex),
-        promoted_alias_rules(
-            Promotions, AliasRuleIndex,
-            AliasRules, AliasOrigins, _),
-        append(OtherDerivedRules, AliasRules, DerivedRules),
-        append(OtherDerivedOrigins, AliasOrigins, DerivedOrigins),
-        length(DerivedRules, RuleIndex),
-        lower_executables(CallPolicy, Forms, ModuleOwner, Environment,
-                          RuleIndex, ExecutableResult),
-        finish_lowered_executables(
-            ExecutableResult, DerivedRules, DerivedOrigins,
-            Nodes0, PromotedEdges, Relations, DeclarationOrigins, ModuleOwner,
-            Program, Origins, Diagnostics)
-    ;   DerivedResult = error(Diagnostic),
-        Program = [],
-        Origins = [],
-        Diagnostics = [Diagnostic]
-    ).
+    finish_lowered_environment(
+        DerivedResult, CallPolicy, Promotions, Forms, ModuleOwner, Environment,
+        Nodes0, PromotedEdges, Relations, DeclarationOrigins,
+        Program, Origins, Diagnostics).
+
+finish_lowered_environment(
+    ok(OtherDerivedRules, OtherDerivedOrigins), CallPolicy, Promotions, Forms,
+    ModuleOwner,
+    Environment, Nodes0, PromotedEdges, Relations, DeclarationOrigins,
+    Program, Origins, Diagnostics) :-
+    length(OtherDerivedRules, AliasRuleIndex),
+    promoted_alias_rules(
+        Promotions, AliasRuleIndex,
+        AliasRules, AliasOrigins, _),
+    append(OtherDerivedRules, AliasRules, DerivedRules),
+    append(OtherDerivedOrigins, AliasOrigins, DerivedOrigins),
+    length(DerivedRules, RuleIndex),
+    lower_executables(CallPolicy, Forms, ModuleOwner, Environment,
+                      RuleIndex, ExecutableResult),
+    finish_lowered_executables(
+        ExecutableResult, DerivedRules, DerivedOrigins,
+        Nodes0, PromotedEdges, Relations, DeclarationOrigins, ModuleOwner,
+        Program, Origins, Diagnostics).
+finish_lowered_environment(
+    error(Diagnostic), _, _, _, _, _, _, _, _, _, [], [], [Diagnostic]).
 
 promote_deferred_aliases(
     Reservations, VisibleReservations, Edges, VisibleEdges,
@@ -1460,8 +1494,70 @@ expression_callable(Name, Owner,
 callable_reservation_kind(product).
 callable_reservation_kind(derived_callable).
 
+%% open_reservation_arena(+Reservations) is det.
+%
+% Materialize one lowering boundary's reservation table as flattened dynamic
+% facts in list order. The explicit store id keeps nested lowerings and
+% lowerings in other threads disjoint while arena_reservation/5 stays one
+% JITI-indexed dynamic predicate. The caller pairs this with
+% close_reservation_arena/0 under setup_call_cleanup/3.
+open_reservation_arena(Reservations) :-
+    gensym(dl7_reservation_arena_, StoreId),
+    asserta(reservation_arena_scope(StoreId)),
+    catch(
+        (   install_reservation_facts(Reservations, StoreId)
+        ->  true
+        ;   close_reservation_arena,
+            fail
+        ),
+        Error,
+        ( close_reservation_arena,
+          throw(Error)
+        )).
+
+install_reservation_facts([], _).
+install_reservation_facts(
+    [reservation(Owner, Name, Target, Kind) | Reservations], StoreId) :-
+    assertz(arena_reservation(Owner, Name, Target, Kind, StoreId)),
+    install_reservation_facts(Reservations, StoreId).
+
+%% close_reservation_arena is det.
+%
+% Pop the innermost boundary and retract exactly its clauses. Runs on success,
+% failure, and exception through setup_call_cleanup/3.
+close_reservation_arena :-
+    (   retract(reservation_arena_scope(StoreId))
+    ->  retractall(arena_reservation(_, _, _, _, StoreId))
+    ;   true
+    ).
+
 scoped_reservation(Owner, Name, Reservations, Visited, Reservation) :-
     \+ memberchk(Owner, Visited),
+    (   reservation_arena_scope(_)
+    ->  scoped_reservation_arena(Owner, Name, Reservations, Visited,
+                                 Reservation)
+    ;   scoped_reservation_list(Owner, Name, Reservations, Visited,
+                               Reservation)
+    ).
+
+% Index selection narrows the candidate clauses; the stored full fields are
+% still unified, so a hash collision cannot change the returned reservation.
+scoped_reservation_arena(Owner, Name, Reservations, Visited, Reservation) :-
+    reservation_arena_scope(StoreId),
+    (   arena_reservation(Owner, Name, target(Callable), product, StoreId)
+    ->  Reservation = reservation(
+                           Owner, Name, target(Callable), product)
+    ;   arena_reservation(Owner, Name, Target, Kind, StoreId)
+    ->  Reservation = reservation(Owner, Name, Target, Kind)
+    ;   reservation_parent_arena(StoreId, Owner, Parent),
+        scoped_reservation(Parent, Name, Reservations, [Owner | Visited],
+                           Reservation)
+    ).
+
+reservation_parent_arena(StoreId, Owner, Parent) :-
+    arena_reservation(Parent, _, target(Owner), product, StoreId).
+
+scoped_reservation_list(Owner, Name, Reservations, Visited, Reservation) :-
     (   memberchk(reservation(Owner, Name, target(Callable), product),
                   Reservations)
     ->  Reservation = reservation(
