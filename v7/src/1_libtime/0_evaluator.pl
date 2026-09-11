@@ -29,7 +29,9 @@
                 run_compile_step/4,
                 debug_trace_on/0,
                 debug_event/2,
-                debug_histogram_fields/3
+                debug_histogram_fields/3,
+                profile_scope_on/0,
+                profile_occurrence/2
               ]).
 
 :- dynamic evaluation_rule/3.
@@ -391,6 +393,7 @@ stratify_rules(Rules, DerivedStrata, Diagnostics) :-
 
 stratify_rules_with_dependencies(
     Rules, Dependencies, DerivedStrata, Diagnostics) :-
+    profile_occurrence(stratification_input, Rules),
     (   in_compile_scope
     ->  memoized_stratification(
             Rules, Dependencies, DerivedStrata, Diagnostics)
@@ -759,26 +762,74 @@ install_evaluation(EvaluationId, Rules, Seeds, LowerRows, ClauseReferences) :-
     install_lower_rows(LowerRows, EvaluationId, LowerReferences),
     append([RuleReferences, SeedReferences, LowerReferences], ClauseReferences).
 
-install_rules([], _, []).
-install_rules([Rule | Rules], EvaluationId, [Reference | References]) :-
+install_rules(Rules, EvaluationId, References) :-
+    (   profile_scope_on
+    ->  install_rules_profiled(Rules, EvaluationId, References)
+    ;   install_rules_plain(Rules, EvaluationId, References)
+    ).
+
+install_rules_plain([], _, []).
+install_rules_plain([Rule | Rules], EvaluationId, [Reference | References]) :-
     Rule = rule(call(Relation, _), _),
     assertz(evaluation_rule(EvaluationId, Relation, Rule), Reference),
-    install_rules(Rules, EvaluationId, References).
+    install_rules_plain(Rules, EvaluationId, References).
+
+install_rules_profiled([], _, []).
+install_rules_profiled([Rule | Rules], EvaluationId, [Reference | References]) :-
+    Rule = rule(call(Relation, _), _),
+    assertz(evaluation_rule(EvaluationId, Relation, Rule), Reference),
+    profile_occurrence(evaluator_installed_rules, Rule),
+    install_rules_profiled(Rules, EvaluationId, References).
 
 install_seeds([], _, []).
 install_seeds([Seed | Seeds], EvaluationId, [Reference | References]) :-
+    (   profile_scope_on
+    ->  install_seeds_profiled([Seed | Seeds], EvaluationId,
+                               [Reference | References])
+    ;   install_seeds_plain([Seed | Seeds], EvaluationId,
+                           [Reference | References])
+    ).
+
+install_seeds_plain([], _, []).
+install_seeds_plain([Seed | Seeds], EvaluationId, [Reference | References]) :-
     Seed = call(Relation, _),
     assertz(evaluation_seed(EvaluationId, Relation, Seed), Reference),
-    install_seeds(Seeds, EvaluationId, References).
+    install_seeds_plain(Seeds, EvaluationId, References).
+
+install_seeds_profiled([], _, []).
+install_seeds_profiled([Seed | Seeds], EvaluationId, [Reference | References]) :-
+    Seed = call(Relation, _),
+    assertz(evaluation_seed(EvaluationId, Relation, Seed), Reference),
+    profile_occurrence(evaluator_installed_seeds, Seed),
+    install_seeds_profiled(Seeds, EvaluationId, References).
 
 install_lower_rows([], _, []).
 install_lower_rows([Row | Rows], EvaluationId, [Reference | References]) :-
+    (   profile_scope_on
+    ->  install_lower_rows_profiled([Row | Rows], EvaluationId,
+                                    [Reference | References])
+    ;   install_lower_rows_plain([Row | Rows], EvaluationId,
+                                [Reference | References])
+    ).
+
+install_lower_rows_plain([], _, []).
+install_lower_rows_plain([Row | Rows], EvaluationId, [Reference | References]) :-
     Row = call(Relation, Arguments),
     index_argument_hashes(Arguments, Hash1, Hash2, Hash3, Hash4),
     assertz(evaluation_lower_index(
                 EvaluationId, Relation, Hash1, Hash2, Hash3, Hash4, Row),
             Reference),
-    install_lower_rows(Rows, EvaluationId, References).
+    install_lower_rows_plain(Rows, EvaluationId, References).
+
+install_lower_rows_profiled([], _, []).
+install_lower_rows_profiled([Row | Rows], EvaluationId, [Reference | References]) :-
+    Row = call(Relation, Arguments),
+    index_argument_hashes(Arguments, Hash1, Hash2, Hash3, Hash4),
+    assertz(evaluation_lower_index(
+                EvaluationId, Relation, Hash1, Hash2, Hash3, Hash4, Row),
+            Reference),
+    profile_occurrence(evaluator_installed_lower_rows, Row),
+    install_lower_rows_profiled(Rows, EvaluationId, References).
 
 %% evaluation_lower(+EvaluationId, +Relation, ?Row) is nondet.
 %
@@ -814,7 +865,19 @@ collect_closure(EvaluationId, Closure) :-
     findall(Call, proves(EvaluationId, Call), Calls),
     findall(Request, evaluation_request(EvaluationId, Request), Requests),
     append(Calls, Requests, Rows),
-    sort(Rows, Closure).
+    sort(Rows, Closure),
+    profile_closure_rows(Closure).
+
+profile_closure_rows(Closure) :-
+    (   profile_scope_on
+    ->  profile_closure_rows_(Closure)
+    ;   true
+    ).
+
+profile_closure_rows_([]).
+profile_closure_rows_([Row | Rows]) :-
+    profile_occurrence(evaluator_collected_closure_rows, Row),
+    profile_closure_rows_(Rows).
 
 clear_evaluation(EvaluationId, ClauseReferences) :-
     abolish_table_subgoals(dl7_evaluator:proves(EvaluationId, _)),

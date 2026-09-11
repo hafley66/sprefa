@@ -12,7 +12,8 @@
 :- use_module('1b_compiler_tracer',
               [debug_trace_on/0,
                 debug_event/2,
-                debug_histogram_fields/3
+                debug_histogram_fields/3,
+                profile_occurrence/2
               ]).
 
 %% check_datalog(+BasementProgram, +Origins, -Checked, -Diagnostics) is det.
@@ -23,6 +24,7 @@
 % SCC strata. Diagnostics are sorted by origin; no Checked value survives a
 % diagnostic.
 check_datalog(Basement, Origins, Checked, Diagnostics) :-
+    profile_occurrence(checker_input, check_datalog(Basement, Origins)),
     debug_checker_input(Basement, Origins),
     check_datalog_body(Basement, Origins, Checked, Diagnostics),
     debug_checker_output(Checked, Diagnostics).
@@ -65,6 +67,8 @@ check_datalog_body(Program, _, [], Diagnostics) :-
 % are already canonical, so this entrypoint performs declaration, arity,
 % mode, safety, and stratification checks without source-name resolution.
 check_resolved_rules(Relations, Rules, Depends, Strata, Diagnostics) :-
+    profile_occurrence(checker_input,
+                       check_resolved_rules(Relations, Rules)),
     debug_resolved_input(Relations, Rules),
     check_resolved_rules_body(Relations, Rules, Depends, Strata,
                               Diagnostics),
