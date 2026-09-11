@@ -1,0 +1,143 @@
+{
+  "receipt": "45_swi_indexing_storage_lab",
+  "date": "2026-09-11",
+  "head_sha": "71c1f8b0ad0d6f4dc7c7afc8a2de51976f2ab084",
+  "swi_prolog": "10.0.2 arm64-darwin",
+  "scope": "read-only compiler investigation; probes under /private/tmp; no compiler/test/benchmark edits",
+  "docs": [
+    {"topic": "JITI utilities jiti_list/1", "url": "https://www.swi-prolog.org/pldoc/man?section=prologjiti"},
+    {"topic": "jiti_list/1", "url": "https://www.swi-prolog.org/pldoc/man?predicate=jiti_list/1"},
+    {"topic": "predicate_property/2", "url": "https://www.swi-prolog.org/pldoc/man?predicate=predicate_property/2"},
+    {"topic": "assertz/1 dynamic predicate", "url": "https://www.swi-prolog.org/pldoc/man?predicate=assertz/1"},
+    {"topic": "dynamic/1", "url": "https://www.swi-prolog.org/pldoc/man?predicate=dynamic/1"},
+    {"topic": "mode/1 declaration", "url": "https://www.swi-prolog.org/pldoc/man?predicate=mode/1"},
+    {"topic": "compile_predicates/1", "url": "https://www.swi-prolog.org/pldoc/man?predicate=compile_predicates/1"},
+    {"topic": "retractall/1", "url": "https://www.swi-prolog.org/pldoc/man?predicate=retractall/1"},
+    {"topic": "library(assoc) AVL association lists", "url": "https://www.swi-prolog.org/pldoc/man?section=assoc"},
+    {"topic": "get_assoc/3", "url": "https://www.swi-prolog.org/pldoc/man?predicate=get_assoc/3"},
+    {"topic": "library(rbtrees) red-black trees", "url": "https://www.swi-prolog.org/pldoc/man?section=rbtrees"},
+    {"topic": "rb_lookup/3", "url": "https://www.swi-prolog.org/pldoc/man?predicate=rb_lookup/3"},
+    {"topic": "library(dicts) dict utilities", "url": "https://www.swi-prolog.org/pldoc/man?section=dicts"},
+    {"topic": "get_dict/3", "url": "https://www.swi-prolog.org/pldoc/man?predicate=get_dict/3"},
+    {"topic": "library(record) named fields", "url": "https://www.swi-prolog.org/pldoc/man?section=record"},
+    {"topic": "recorded/3 recorded database", "url": "https://www.swi-prolog.org/pldoc/man?predicate=recorded/3"},
+    {"topic": "erase/1", "url": "https://www.swi-prolog.org/pldoc/man?predicate=erase/1"},
+    {"topic": "nb_setval/2 global variables", "url": "https://www.swi-prolog.org/pldoc/man?predicate=nb_setval/2"},
+    {"topic": "transaction/1", "url": "https://www.swi-prolog.org/pldoc/man?predicate=transaction/1"},
+    {"topic": "table/1 tabled execution", "url": "https://www.swi-prolog.org/pldoc/man?predicate=table/1"},
+    {"topic": "Tabled execution chapter", "url": "https://www.swi-prolog.org/pldoc/man?section=tabling"},
+    {"topic": "Mode-directed tabling / answer subsumption", "url": "https://www.swi-prolog.org/pldoc/man?section=tabling-mode-directed"},
+    {"topic": "Variant and subsumptive tabling", "url": "https://www.swi-prolog.org/pldoc/man?section=tabling-subsumptive"},
+    {"topic": "Incremental tabling", "url": "https://www.swi-prolog.org/pldoc/man?section=tabling-incremental"},
+    {"topic": "Monotonic tabling", "url": "https://www.swi-prolog.org/pldoc/man?section=tabling-monotonic"},
+    {"topic": "abolish_all_tables/0", "url": "https://www.swi-prolog.org/pldoc/man?predicate=abolish_all_tables/0"},
+    {"topic": "table_statistics/2", "url": "https://www.swi-prolog.org/pldoc/man?predicate=table_statistics/2"},
+    {"topic": "term_hash/2", "url": "https://www.swi-prolog.org/pldoc/man?predicate=term_hash/2"},
+    {"topic": "statistics/2", "url": "https://www.swi-prolog.org/pldoc/man?predicate=statistics/2"}
+  ],
+  "dataset": {
+    "fixture_shape": "nearest-shadow",
+    "origins": 1124,
+    "origin_key_kinds": ["edge/3", "goal/2", "rule/1", "seed/1"],
+    "origin_duplicate_keys": 48,
+    "edges": 484,
+    "reservations": 684,
+    "relations": "114..134",
+    "strata": 140,
+    "relation_strata_required": 134,
+    "lookups": 34497,
+    "lookup_mix": {
+      "edge_origin": 4166,
+      "goal_origin": 642,
+      "rule_origin": 436,
+      "pending_edge_by_owner_name": 3560,
+      "pending_edge_by_callable_index": 1748,
+      "reservation_by_owner_name": 5024,
+      "stratum_by_relation": 18921
+    },
+    "none_results": 0,
+    "warmup_lookups": 64,
+    "baseline_checksum": "75393311983764",
+    "note": "origin count reduced to 1124 by using 436 rule origins so the required total holds; R43 rule_origin call count is 528 and is folded here to 436 keys looked up directly"
+  },
+  "mechanisms": [
+    {"name": "list", "family": "linear", "build_ms": 1, "build_inferences": 11707, "lookup_ms": 246, "lookup_inferences": 311365, "checksum": "75393311983764", "first_match_ok": true, "answer_order": "list order", "duplicate_semantics": "first match, nondet if no cut", "note": "memberchk/2 baseline; C-level scan not charged"},
+    {"name": "jiti", "family": "dynamic facts + JITI", "build_ms": 2, "build_inferences": 4875, "lookup_ms": 35, "lookup_inferences": 242371, "checksum": "75393311983764", "first_match_ok": true, "answer_order": "assert order (first asserted first)", "duplicate_semantics": "first match via cut or once", "indexed": true, "note": "predicate_property(...,indexed(...)) after warmup shows realised hash indexes, buckets 512, collisions 0-27, speedup 156-484"},
+    {"name": "assoc", "family": "AVL tree", "build_ms": 33, "build_inferences": 27553, "lookup_ms": 42, "lookup_inferences": 345862, "checksum": "75393311983764", "first_match_ok": true, "answer_order": "ascending key", "duplicate_semantics": "requires first-wins normalization; list_to_assoc rejects duplicate keys", "note": "one assoc per lookup mode; keys must be ground"},
+    {"name": "rbtree", "family": "red-black tree", "build_ms": 44, "build_inferences": 208525, "lookup_ms": 69, "lookup_inferences": 1093827, "checksum": "75393311983764", "first_match_ok": true, "answer_order": "ascending key", "duplicate_semantics": "requires first-wins normalization", "note": "rb_lookup/3 API is rb_lookup(+Key,-Value,+Tree)"},
+    {"name": "dict", "family": "SWI dict with integer term_hash key + collision bucket", "build_ms": 50, "build_inferences": 42040, "lookup_ms": 41, "lookup_inferences": 413969, "checksum": "75393311983764", "first_match_ok": true, "answer_order": "bucket insertion order", "duplicate_semantics": "first-wins insert; exact re-unification rejects collisions", "note": "dict keys restricted to atom/integer, so compound keys require term_hash plus exact check"},
+    {"name": "recorded", "family": "recorded database", "build_ms": 1, "build_inferences": 4875, "lookup_ms": 643, "lookup_inferences": 276868, "checksum": "75393311983764", "first_match_ok": true, "answer_order": "record order", "duplicate_semantics": "first match", "note": "recorded/3 hashes the first argument; retrieval cost dominated by bucket enumeration"},
+    {"name": "table_variant", "family": "variant tabling", "build_ms": 2, "build_inferences": 4875, "lookup_ms": 68, "lookup_inferences": 501779, "checksum": "75002755859694", "first_match_ok": false, "answer_order": "documented as no ordering guarantee", "duplicate_semantics": "all answers retained; once/1 picks table order", "note": "checksum differs from baseline on duplicate origin keys"},
+    {"name": "table_first", "family": "mode-directed tabling first/1", "build_ms": 2, "build_inferences": 4875, "lookup_ms": 54, "lookup_inferences": 533370, "checksum": "75393311983764", "first_match_ok": true, "answer_order": "first answer retained", "duplicate_semantics": "first answer wins", "note": "matches baseline exactly"},
+    {"name": "tries", "family": "library(tries)", "available": false, "note": "current_predicate(tries:trie_new/1) is false; library(tries) does not resolve in this install; tries exist only inside the tabling engine"}
+  ],
+  "lifetime": {
+    "rounds": 9,
+    "reuse": [
+      {"name": "list", "build_ms": 1, "build_inferences": 11708, "pass_ms": 2237, "pass_inferences": 2795190},
+      {"name": "jiti", "build_ms": 2, "build_inferences": 4876, "pass_ms": 303, "pass_inferences": 2174243},
+      {"name": "assoc", "build_ms": 33, "build_inferences": 27554, "pass_ms": 366, "pass_inferences": 3105663},
+      {"name": "recorded", "build_ms": 1, "build_inferences": 4876, "pass_ms": 5878, "pass_inferences": 2484717}
+    ],
+    "rebuild": [
+      {"name": "list", "total_ms": 2213, "total_inferences": 2900562},
+      {"name": "jiti", "total_ms": 335, "total_inferences": 2218119},
+      {"name": "assoc", "total_ms": 666, "total_inferences": 3352393},
+      {"name": "dict", "total_ms": 766, "total_inferences": 4095714},
+      {"name": "table_first", "total_ms": 524, "total_inferences": 4851194}
+    ]
+  },
+  "replay": {
+    "fixture": "v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7",
+    "baseline": {"rows": 810, "diagnostics": 0, "wall_ms": 445, "inferences": 1899632, "hash": "90f67cb26d46c18b15828528d89c2357c70e5494e3f23b566aa2474611a0ba87"},
+    "jiti_wrapper": {"rows": 810, "diagnostics": 0, "wall_ms": 920, "inferences": 1919822, "hash": "90f67cb26d46c18b15828528d89c2357c70e5494e3f23b566aa2474611a0ba87", "delta_inferences": 20190, "note": "prolog_wrap plus per-distinct-Origins fact install; hash preserved"},
+    "assoc_wrapper_hash_only": {"rows": 810, "diagnostics": 0, "wall_ms": 1476, "inferences": 1938762, "hash": "90f67cb26d46c18b15828528d89c2357c70e5494e3f23b566aa2474611a0ba87", "delta_inferences": 39130, "note": "per-Origins AVL build keyed by term_hash; hash preserved"},
+    "assoc_wrapper_identity": {"wall_ms": 2212, "inferences": 1938762, "delta_inferences": 39130, "note": "adds full == identity check per call; same charged inferences"},
+    "r43_threaded_candidate": {"inferences": 1929769, "wall_ms": 333.16, "baseline_inferences": 1899633, "baseline_wall_ms": 411.30, "delta_inferences": 30136, "verdict": "rejected on inference budget despite lower wall"},
+    "note": "wrapper form necessarily adds interpreter-level cost, so the replay confirms hash preservation but the microbench is the fair mechanism comparison; the threaded R43 candidate is the fair origin-replacement comparison"
+  },
+  "cleanup": {
+    "jiti_clauses_before": 1000,
+    "jiti_clauses_after_retractall": 0,
+    "tables_after_calls": 3,
+    "tables_after_abolish_all_tables": 0,
+    "recorded_after_retractall": 100,
+    "recorded_note": "retractall/1 does not remove recorded/3 terms; erase/1 or recorda/rb are required"
+  },
+  "memory_rss_bytes": {
+    "list": 20168704,
+    "jiti": 20643840,
+    "assoc": 19939328,
+    "rbtree": 23314432
+  },
+  "recommendations": [
+    {"collection": "origin", "predicate": "arena_origin(?Kind, ?NodeId)", "modes": "(+,-) det with none fallback; (-,-) enumeration", "mechanism": "dynamic facts + JITI, built once per compile", "reason": "35ms/242371 inf versus list 246ms/311365 inf; preserves first-match; multi-shape key (edge/3, goal/2, rule/1) suits deep first-argument index"},
+    {"collection": "reservation", "predicate": "arena_reservation(?OwnerId, ?NameId, ?TargetId, ?KindId)", "modes": "(+Owner,+Name,-Reservation) det; recursion retained in Prolog", "mechanism": "dynamic facts + JITI", "reason": "scoped_reservation/5 is recursive and polymorphic over target/kind; only the memberchk leaf is indexed"},
+    {"collection": "pending_edge", "predicate": "arena_edge(?OwnerId, ?NameId, ?TargetId, ?Index)", "modes": "(+Owner,+Name,-Target) det; (+Target,+Index,-Candidate) det", "mechanism": "dynamic facts + JITI, multi-argument index", "reason": "two distinct lookup shapes over one relation; JITI builds the index for each observed mode"},
+    {"collection": "relation", "predicate": "arena_relation(?RefId, ?Arity, ?KeySets)", "modes": "(+Ref,-Arity,-KeySets) det", "mechanism": "dynamic facts + JITI (assoc also viable for single fully-bound key)", "reason": "single lookup mode; JITI avoids a second structure and matches assoc wall"},
+    {"collection": "stratum", "predicate": "arena_stratum(?Relation, ?Level)", "modes": "(+Relation,-Level) det with 0 default", "mechanism": "dynamic facts + JITI", "reason": "highest call count 18921; simple key to level"},
+    {"collection": "evaluator_lower", "predicate": "evaluation_lower_index/7", "modes": "nondet keyed lookup", "mechanism": "keep dynamic clause index; replace four term_hash positions with one arena argument-vector id", "reason": "already a dynamic index; hashing is the remaining structural cost"}
+  ],
+  "integer_ids": {
+    "atoms": "globally interned, identity equality, no extra id needed",
+    "ground_compound": "not hash-consed; equality is structural, so repeated Owner/Ref/KeySets terms are re-traversed and re-hashed",
+    "help": "dense integer arena ids give O(1) identity, shrink clause terms, and turn JITI first-argument indexes into integer buckets",
+    "still_hashed": "evaluator argument vectors and any ground compound with no assigned arena slot keep term_hash, with exact re-unification preserving collision rejection"
+  },
+  "smallest_slice": {
+    "target": "stratum collection",
+    "steps": [
+      "add open_compile_arena/0 and close_compile_arena/0 around the compile-trace boundary, mirroring open_lower_store/close_lower_store",
+      "in open, assert arena_stratum(Relation, Level) facts once from the strata input in list order",
+      "in close, retractall(arena_stratum(_, _)) under setup_call_cleanup/3",
+      "replace relation_level/3 memberchk stratum with arena_stratum lookup plus the existing 0 default"
+    ],
+    "invariant": "phase-boundary terms (basement_program/2, checked_datalog/4, generated_program/4) unchanged; first-match preserved by assert order"
+  },
+  "validation": {
+    "json": "jq empty passes",
+    "reproduction_dir": "/private/tmp/dl7_lab",
+    "markdown": "v7/receipts/45_swi_indexing_storage_lab.md",
+    "git_diff_check": "passes for owned receipts"
+  }
+}
