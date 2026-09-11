@@ -18,7 +18,12 @@
             debug_histogram_fields/3,
             debug_row_sample_fields/3,
             debug_sample_limit/1,
-            debug_rows_all/0
+            debug_rows_all/0,
+            with_profile_scope/1,
+            profile_scope_on/0,
+            profile_occurrence/2,
+            collected_profile_occurrences/1,
+            collected_profile_debug_events/1
           ]).
 
 :- use_module(library(http/json), [json_write_dict/3]).
@@ -27,6 +32,7 @@
 :- meta_predicate with_compile_trace(+, 0).
 :- meta_predicate run_compile_phase(+, 0, -).
 :- meta_predicate run_compile_step(+, +, 0, 1).
+:- meta_predicate with_profile_scope(0).
 
 :- thread_local active_compile_trace/1.
 :- thread_local compile_phase_row/3.
@@ -39,6 +45,10 @@
 :- thread_local compile_scope_memo/4.
 :- thread_local compile_scope_memo_stat/3.
 :- thread_local compile_debug_row/2.
+:- thread_local profile_scope_depth/1.
+:- thread_local profile_occurrence_row/3.
+:- thread_local profile_occurrence_seq/1.
+:- thread_local profile_debug_row/2.
 
 :- prolog_load_context(directory, TraceDirectory),
    directory_file_path(TraceDirectory, '../../out/compile-trace.jsonl',
@@ -80,6 +90,7 @@ finish_compile_trace(Program, Before) :-
     collected_compile_steps(Steps),
     assertz(latest_compile_trace(
                 Program, Phases, Steps, TotalMeasurement)),
+    capture_profile_debug,
     write_compile_debug,
     write_compile_summary(Program, Phases, TotalMeasurement),
     write_compile_steps(Program, Phases, Steps),
@@ -248,6 +259,93 @@ record_debug_event(Event, Fields) :-
 
 collected_debug_events(Events) :-
     findall(Sequence-Fields, compile_debug_row(Sequence, Fields), Keyed),
+    keysort(Keyed, Sorted),
+    findall(Fields, member(_-Fields, Sorted), Events).
+
+%% with_profile_scope(:Goal) is semidet.
+%
+% Establish one profiler capture scope around a compiled program. Inside the
+% scope the compiler records exact work occurrences and the outer compile
+% trace copies its structured debug rows into a persistent store. Nested
+% scopes increment a depth counter, so only the outermost open resets state.
+% Everything here is inert outside an active scope.
+with_profile_scope(Goal) :-
+    setup_call_cleanup(
+        open_profile_scope,
+        call(Goal),
+        close_profile_scope).
+
+open_profile_scope :-
+    (   retract(profile_scope_depth(Previous))
+    ->  Depth is Previous + 1
+    ;   Depth = 1,
+        retractall(profile_occurrence_row(_, _, _)),
+        retractall(profile_occurrence_seq(_)),
+        retractall(profile_debug_row(_, _))
+    ),
+    assertz(profile_scope_depth(Depth)).
+
+close_profile_scope :-
+    (   retract(profile_scope_depth(Depth))
+    ->  (   Depth =:= 1
+        ->  true
+        ;   Next is Depth - 1,
+            assertz(profile_scope_depth(Next))
+        )
+    ;   true
+    ).
+
+%% profile_scope_on is semidet.
+profile_scope_on :-
+    profile_scope_depth(_).
+
+%% profile_occurrence(+Category, +Identity) is det.
+%
+% Record one occurrence of a repeated compiler-work category. The category
+% names the semantic role; the identity is the exact canonical term whose
+% equality the duplicate report tests. Off scope this is one guard check and
+% nothing is stored. Recording is best effort: a throw is swallowed so the
+% enclosing compiler step keeps its result.
+profile_occurrence(Category, Identity) :-
+    (   profile_scope_on
+    ->  catch(record_profile_occurrence(Category, Identity), _, true)
+    ;   true
+    ).
+
+record_profile_occurrence(Category, Identity) :-
+    next_profile_occurrence_sequence(Sequence),
+    assertz(profile_occurrence_row(Sequence, Category, Identity)).
+
+next_profile_occurrence_sequence(Sequence) :-
+    (   retract(profile_occurrence_seq(Previous))
+    ->  Sequence is Previous + 1
+    ;   Sequence = 0
+    ),
+    assertz(profile_occurrence_seq(Sequence)).
+
+collected_profile_occurrences(Occurrences) :-
+    findall(Sequence-Category-Identity,
+            profile_occurrence_row(Sequence, Category, Identity),
+            Keyed),
+    keysort(Keyed, Sorted),
+    findall(Category-Identity,
+            member(_-Category-Identity, Sorted),
+            Occurrences).
+
+%% capture_profile_debug is det.
+%
+% At compile finish, copy the structured debug rows into the profiler store so
+% they survive reset_compile_trace/0. Off scope (or outside debug mode) this is
+% a single guard check that copies nothing.
+capture_profile_debug :-
+    (   profile_scope_on
+    ->  forall(compile_debug_row(Sequence, Fields),
+               assertz(profile_debug_row(Sequence, Fields)))
+    ;   true
+    ).
+
+collected_profile_debug_events(Events) :-
+    findall(Sequence-Fields, profile_debug_row(Sequence, Fields), Keyed),
     keysort(Keyed, Sorted),
     findall(Fields, member(_-Fields, Sorted), Events).
 
@@ -535,9 +633,13 @@ write_compile_steps(Program, Phases, Steps) :-
 %% write_compile_debug is det.
 %
 % Emit collected debug events in sequence order. Only debug mode writes; other
-% modes keep their existing writers untouched.
+% modes keep their existing writers untouched. Inside a profiler capture scope
+% the rows are already copied into the profile store, so the human-formatted
+% writer stays silent and the command output remains readable.
 write_compile_debug :-
-    (   compile_trace_mode(debug)
+    (   profile_scope_on
+    ->  true
+    ;   compile_trace_mode(debug)
     ->  collected_debug_events(Events),
         maplist(write_debug_line, Events)
     ;   true
