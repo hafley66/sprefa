@@ -661,14 +661,17 @@ check_goal_transition(Goal, Available, Produced,
     check_goal(Goal, Produced, _, Reason).
 check_goal_transition(Goal, Available0, Produced0,
                       Available, Produced, Reason) :-
-    check_goal(Goal, Available0, Available, Reason),
+    goal_call(Goal, positive, _),
+    !,
+    goal_variables(Goal, Variables),
+    check_goal_with_variables(Goal, Available0, Available, Reason,
+                              Variables),
     (   Reason == none
-    ->  goal_variables(Goal, Variables),
-        add_variables(Variables, Produced0, Produced)
+    ->  add_variables(Variables, Produced0, Produced)
     ;   Produced = Produced0
     ).
 
-check_goal(Goal, Bound0, Bound, Reason) :-
+check_goal_with_variables(Goal, Bound0, Bound, Reason, _Variables) :-
     goal_call(Goal, positive,
               call(ref(kernel(Name)), Arguments)),
     integer_comparison(Name, _, _),
@@ -679,7 +682,7 @@ check_goal(Goal, Bound0, Bound, Reason) :-
     ;   Bound = Bound0,
         Reason = underconstrained_kernel_goal(Name, [[0, 1]])
     ).
-check_goal(Goal, Bound0, Bound, Reason) :-
+check_goal_with_variables(Goal, Bound0, Bound, Reason, Variables) :-
     goal_call(Goal, positive,
               call(ref(kernel(cons)), [Head, Tail, List])),
     !,
@@ -687,37 +690,44 @@ check_goal(Goal, Bound0, Bound, Reason) :-
         ;   argument_is_bound(Head, Bound0),
             argument_is_bound(Tail, Bound0)
         )
-    ->  goal_variables(Goal, Variables),
-        add_variables(Variables, Bound0, Bound),
+    ->  add_variables(Variables, Bound0, Bound),
         Reason = none
     ;   Bound = Bound0,
         Reason = underconstrained_kernel_goal(cons, [[2], [0, 1]])
     ).
-check_goal(Goal, Bound0, Bound, Reason) :-
+check_goal_with_variables(Goal, Bound0, Bound, Reason, Variables) :-
     goal_call(Goal, positive,
               call(ref(kernel(edge_ref)), [Owner, Label, _])),
     !,
     (   argument_is_bound(Owner, Bound0),
         argument_is_bound(Label, Bound0)
-    ->  goal_variables(Goal, Variables),
-        add_variables(Variables, Bound0, Bound),
+    ->  add_variables(Variables, Bound0, Bound),
         Reason = none
     ;   Bound = Bound0,
         Reason = underconstrained_kernel_goal(
                      edge_ref, [[0, 1]])
     ).
-check_goal(Goal, Bound0, Bound, Reason) :-
+check_goal_with_variables(Goal, Bound0, Bound, Reason, Variables) :-
     goal_call(Goal, positive,
               call(ref(kernel(intern)), [Constructor, Arguments, _])),
     !,
     (   argument_is_bound(Constructor, Bound0),
         argument_is_bound(Arguments, Bound0)
-    ->  goal_variables(Goal, Variables),
-        add_variables(Variables, Bound0, Bound),
+    ->  add_variables(Variables, Bound0, Bound),
         Reason = none
     ;   Bound = Bound0,
         Reason = underconstrained_kernel_goal(intern, [[0, 1]])
     ).
+check_goal_with_variables(Goal, Bound0, Bound, none, Variables) :-
+    goal_call(Goal, positive, _),
+    add_variables(Variables, Bound0, Bound).
+
+check_goal(Goal, Bound0, Bound, Reason) :-
+    goal_call(Goal, positive, _),
+    !,
+    goal_variables(Goal, Variables),
+    check_goal_with_variables(Goal, Bound0, Bound, Reason, Variables).
+
 check_goal(Goal, Bound, Bound, negative_constructive_kernel_goal(Name)) :-
     goal_call(Goal, negative, call(ref(kernel(Name)), _)),
     memberchk(Name, [cons, edge_ref, intern, nil]),
@@ -742,11 +752,6 @@ check_goal(Goal, Bound, Bound, Reason) :-
     ->  Reason = none
     ;   Reason = unbound_negative_goal(Unbound)
     ).
-check_goal(Goal, Bound0, Bound, none) :-
-    goal_call(Goal, positive, _),
-    goal_variables(Goal, Variables),
-    add_variables(Variables, Bound0, Bound).
-
 argument_is_bound_in(Bound, Argument) :-
     argument_is_bound(Argument, Bound).
 

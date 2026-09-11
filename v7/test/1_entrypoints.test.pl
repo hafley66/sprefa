@@ -188,6 +188,20 @@ test(head_safety_precomputed_variables_matches_wrapper) :-
                     [diagnostic(check, head_origin, unsafe_head_var(b))],
                     [diagnostic(check, head_origin, unsafe_head_var(b))]).
 
+test(check_goal_precomputed_variables_matches_wrapper) :-
+    Goal = checked_goal(
+               positive,
+               call(ref(kernel(cons)), [var(head), var(tail), var(list)])),
+    Bound0 = [list],
+    dl7_checker:goal_variables(Goal, Variables),
+    dl7_checker:check_goal(Goal, Bound0, WrapperBound, WrapperReason),
+    dl7_checker:check_goal_with_variables(
+        Goal, Bound0, WorkerBound, WorkerReason, Variables),
+    Observed = goal_check(Variables, WrapperBound, WrapperReason,
+                          WorkerBound, WorkerReason),
+    Observed == goal_check([head, tail, list], [tail, head, list], none,
+                           [tail, head, list], none).
+
 test(split_prelude_loads_all_existing_type_algebra_declarations) :-
     compile_dl7('v7/test/fixtures/2_partial.dl7', Rows, _Runtime, Diagnostics),
     once(type_operator_snapshot(Rows, Snapshot)),
