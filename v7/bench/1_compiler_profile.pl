@@ -21,10 +21,14 @@
 :- module(dl7_compiler_profile,
           [ profile_main/0,
             require_fixture/2,
+            repository_root/1,
+            render_identity_text/3,
+            render_fixture_text/3,
             build_spans/4,
             duplicate_groups/2,
             duplicate_groups_from_hashes/2,
             duplicate_occurrence_summary/2,
+            duplicate_occurrence_summary/3,
             deterministic_profile_text/2
           ]).
 
@@ -53,12 +57,15 @@ profile_categories(
 %% profile_main/0 is det.
 %
 % Command entrypoint. With `--` the argv terms are the fixture path and the
-% output directory; the output directory defaults under v7/out.
+% output directory; the output directory defaults under v7/out, anchored at the
+% repository root rather than the current directory. The fixture is resolved
+% against the filesystem before compilation so every displayed path can be
+% rendered relative to the repository root.
 profile_main :-
     current_prolog_flag(argv, Arguments),
     parse_arguments(Arguments, Fixture, OutputDirectory),
-    (   require_fixture(Fixture, _)
-    ->  run_stages(Fixture, OutputDirectory, ExitCode)
+    (   require_fixture(Fixture, AbsoluteFixture)
+    ->  run_stages(AbsoluteFixture, OutputDirectory, ExitCode)
     ;   profile_error(source, Fixture),
         ExitCode = 2
     ),
@@ -66,11 +73,28 @@ profile_main :-
 
 parse_arguments([Fixture, OutputDirectory | _], Fixture, OutputDirectory) :-
     !.
-parse_arguments([Fixture], Fixture, 'v7/out/compiler-profile') :-
-    !.
+parse_arguments([Fixture], Fixture, OutputDirectory) :-
+    !,
+    default_output_directory(OutputDirectory).
 parse_arguments(_, _, _) :-
     profile_error(usage, 'expected <fixture> [output-directory]'),
     halt(2).
+
+default_output_directory(Directory) :-
+    repository_root(Root),
+    directory_file_path(Root, 'v7/out/compiler-profile', Directory).
+
+%% repository_root(-Root) is det.
+%
+% The checkout or worktree root, derived from this module's own location
+% (`<root>/v7/bench/1_compiler_profile.pl`). Used only to render displayed
+% paths stably; occurrence equality never consults it.
+repository_root(Root) :-
+    source_file(dl7_compiler_profile:profile_main, Source),
+    absolute_file_name(Source, AbsoluteSource),
+    file_directory_name(AbsoluteSource, BenchDirectory),
+    file_directory_name(BenchDirectory, V7Directory),
+    file_directory_name(V7Directory, Root).
 
 %% require_fixture(+Path, -Absolute) is semidet.
 require_fixture(Path, Absolute) :-
@@ -88,14 +112,25 @@ run_stages(Fixture, OutputDirectory, ExitCode) :-
 
 run_stages_(Fixture, OutputDirectory, ExitCode) :-
     (   compile_stage(Fixture, Rows, Diagnostics)
-    ->  (   report_stage(Fixture, OutputDirectory, Rows, Diagnostics)
-        ->  ExitCode = 0
-        ;   profile_error(report, report_failed),
-            ExitCode = 4
-        )
+    ->  run_report_stage(Fixture, OutputDirectory, Rows, Diagnostics, ExitCode)
     ;   profile_error(compile, compiler_returned_failure),
         ExitCode = 3
     ).
+
+%% run_report_stage(+Fixture, +OutputDirectory, +Rows, +Diagnostics, -Exit) is det.
+%
+% A throw or failure inside report staging is labeled `report`, not `compile`,
+% so the shell can preserve the precise stage without inventing one.
+run_report_stage(Fixture, OutputDirectory, Rows, Diagnostics, ExitCode) :-
+    catch(
+        (   report_stage(Fixture, OutputDirectory, Rows, Diagnostics)
+        ->  ExitCode = 0
+        ;   profile_error(report, report_failed),
+            ExitCode = 4
+        ),
+        ReportError,
+        ( profile_error(report, ReportError),
+          ExitCode = 4 )).
 
 %% compile_stage(+Fixture, -Rows, -Diagnostics) is semidet.
 compile_stage(Fixture, Rows, Diagnostics) :-
@@ -104,18 +139,25 @@ compile_stage(Fixture, Rows, Diagnostics) :-
     with_profile_scope(
         compile_dl7(Fixture, Rows, _Runtime, Diagnostics)).
 
+%% report_stage(+Fixture, +OutputDirectory, +Rows, +Diagnostics) is semidet.
+%
+% All five artifacts are deterministic: wall is reported only to stderr, and
+% every displayed path is rendered against the repository root so a different
+% checkout prefix yields identical bytes.
 report_stage(Fixture, OutputDirectory, Rows, Diagnostics) :-
     latest_compile_trace(Program, _Phases, _Steps, TotalMeasurement),
     TotalMeasurement = measurement(TotalWall, _, TotalInferences, _, _, _, _,
                                    _, _, _, _, _),
+    repository_root(RepoRoot),
+    render_fixture_text(RepoRoot, Fixture, DisplayFixture),
     collected_profile_debug_events(Events),
     collected_profile_occurrences(Occurrences),
     build_spans(Events, TotalInferences, TotalWall, Spans),
     length(Rows, CompilerRows),
     length(Diagnostics, DiagnosticCount),
-    duplicate_occurrence_summary(Occurrences, DuplicateReport),
+    duplicate_occurrence_summary(RepoRoot, Occurrences, DuplicateReport),
     make_directory_path(OutputDirectory),
-    profile_dict(Fixture, Program, TotalInferences, TotalWall,
+    profile_dict(DisplayFixture, Program, TotalInferences,
                  CompilerRows, DiagnosticCount, Spans, DuplicateReport,
                  ProfileDict),
     profile_json_text(ProfileDict, JsonText),
@@ -124,11 +166,12 @@ report_stage(Fixture, OutputDirectory, Rows, Diagnostics) :-
     write_text_file(OutputDirectory, '1_folded.txt', FoldedText),
     duplicate_tsv_text(DuplicateReport, TsvText),
     write_text_file(OutputDirectory, '2_duplicates.tsv', TsvText),
-    summary_text(Fixture, TotalInferences, CompilerRows, DuplicateReport,
+    summary_text(DisplayFixture, TotalInferences, CompilerRows, DuplicateReport,
                  SummaryText),
     write_text_file(OutputDirectory, '4_summary.txt', SummaryText),
-    html_text(Fixture, JsonText, Spans, HtmlText),
-    write_text_file(OutputDirectory, '3_flamechart.html', HtmlText).
+    html_text(DisplayFixture, JsonText, Spans, HtmlText),
+    write_text_file(OutputDirectory, '3_flamechart.html', HtmlText),
+    format(user_error, 'DL7-PROFILE-WALL total_wall_ms=~w~n', [TotalWall]).
 
 profile_error(Stage, Message) :-
     format(user_error, 'DL7-PROFILE-ERROR stage=~w ~q~n', [Stage, Message]).
@@ -354,9 +397,16 @@ aggregate_folded(Pairs, Aggregated) :-
             Aggregated0),
     sort(Aggregated0, Aggregated).
 
+%% emit_folded(+Pairs) is det.
+%
+% Standard folded-stack output carries only positive self-weight; a span whose
+% width is fully attributed to children contributes no standalone line.
 emit_folded([]).
 emit_folded([Path-Weight | Rest]) :-
-    format(current_output, '~w ~w~n', [Path, Weight]),
+    (   Weight =:= 0
+    ->  true
+    ;   format(current_output, '~w ~w~n', [Path, Weight])
+    ),
     emit_folded(Rest).
 
 %% ------------------------------------------------------------------
@@ -365,15 +415,24 @@ emit_folded([Path-Weight | Rest]) :-
 
 %% duplicate_occurrence_summary(+Occurrences, -Report) is det.
 %
+% Convenience form with no path normalization; used by tests that pin duplicate
+% arithmetic and category separation on synthetic occurrences.
+duplicate_occurrence_summary(Occurrences, Report) :-
+    duplicate_occurrence_summary('', Occurrences, Report).
+
+%% duplicate_occurrence_summary(+RepoRoot, +Occurrences, -Report) is det.
+%
 % Occurrences is the recorded Category-Identity list. The report keeps each
 % category separate so the same term under a different semantic role is never
 % merged, and equality inside a category is verified with == after hash
-% bucketing.
-duplicate_occurrence_summary(Occurrences, Report) :-
+% bucketing. RepoRoot normalizes only the rendered identity text; the terms
+% themselves stay exact for ==.
+duplicate_occurrence_summary(RepoRoot, Occurrences, Report) :-
     group_occurrence_categories(Occurrences, Grouped),
     profile_categories(Categories),
-    findall(Entry, ( member(Category, Categories),
-                     category_duplicate_entry(Grouped, Category, Entry) ),
+    findall(Entry,
+            ( member(Category, Categories),
+              category_duplicate_entry(RepoRoot, Grouped, Category, Entry) ),
             Entries),
     overall_duplicate_entry(Entries, Overall),
     Report = _{ denominator:
@@ -391,7 +450,7 @@ group_occurrence_categories(Occurrences, Grouped) :-
     keysort(Pairs, Sorted),
     group_pairs_by_key(Sorted, Grouped).
 
-category_duplicate_entry(Grouped, Category, Entry) :-
+category_duplicate_entry(RepoRoot, Grouped, Category, Entry) :-
     (   memberchk(Category-Identities, Grouped)
     ->  true
     ;   Identities = []
@@ -405,7 +464,7 @@ category_duplicate_entry(Grouped, Category, Entry) :-
     sum_counts(Counts, Total),
     Duplicate is Total - Unique,
     duplicate_percent(Duplicate, Total, Percent),
-    top_repeated(Counts, 5, Top),
+    top_repeated(RepoRoot, Counts, 5, Top),
     Entry = _{ category: Category,
                total: Total,
                unique: Unique,
@@ -489,28 +548,67 @@ duplicate_percent(Duplicate, Total, Percent) :-
     Raw is Duplicate * 100.0 / Total,
     Percent is round(Raw * 100) / 100.0.
 
-top_repeated(Counts, Limit, Top) :-
+top_repeated(RepoRoot, Counts, Limit, Top) :-
     include(count_above_one, Counts, Repeated),
     take_first(Repeated, Limit, Taken),
-    maplist(repeated_entry, Taken, Top).
+    maplist(repeated_entry(RepoRoot), Taken, Top).
 
 count_above_one(Count-_) :-
     Count > 1.
 
-repeated_entry(Count-Identity, _{count: Count, identity: Text}) :-
-    bounded_identity_text(Identity, Text).
+repeated_entry(RepoRoot, Count-Identity,
+               _{count: Count, identity: Text}) :-
+    render_identity_text(RepoRoot, Identity, Text).
 
-%% bounded_identity_text(+Identity, -Text) is det.
+%% render_identity_text(+RepoRoot, +Identity, -Text) is det.
 %
 % Structural rendering capped so a large checker input cannot flood the TSV or
-% the JSON. Equality was already decided on the full term with ==.
-bounded_identity_text(Identity, Text) :-
+% the JSON. Equality was already decided on the full term with ==; RepoRoot only
+% rewrites checkout-absolute prefixes in the rendered text to `$REPO/...`, so
+% two worktrees of the same source render identically.
+render_identity_text(RepoRoot, Identity, Text) :-
     with_output_to(string(Raw), write_canonical(Identity)),
-    string_length(Raw, Length),
+    normalize_rendered_paths(RepoRoot, Raw, Normalized),
+    string_length(Normalized, Length),
     (   Length =< 160
-    ->  Text = Raw
-    ;   sub_string(Raw, 0, 157, _, Prefix),
+    ->  Text = Normalized
+    ;   sub_string(Normalized, 0, 157, _, Prefix),
         string_concat(Prefix, "...", Text)
+    ).
+
+%% render_fixture_text(+RepoRoot, +Fixture, -Text) is det.
+render_fixture_text(RepoRoot, Fixture, Text) :-
+    atom_string(Fixture, FixtureText),
+    normalize_rendered_paths(RepoRoot, FixtureText, Text).
+
+%% normalize_rendered_paths(+RepoRoot, +Text, -Normalized) is det.
+%
+% Replaces every occurrence of the absolute repository root (with its trailing
+% separator) with the stable token `$REPO/`. An empty root is the identity.
+normalize_rendered_paths('', Text, Text) :-
+    !.
+normalize_rendered_paths(RepoRoot, Text, Normalized) :-
+    atom_string(RepoRoot, RootText0),
+    strip_trailing_slash(RootText0, RootText),
+    string_concat(RootText, "/", Prefix),
+    replace_all(Text, Prefix, "$REPO/", Normalized).
+
+strip_trailing_slash(Text, Stripped) :-
+    (   sub_string(Text, _, 1, 0, "/")
+    ->  sub_string(Text, 0, _, 1, Stripped)
+    ;   Stripped = Text
+    ).
+
+replace_all(Text, Needle, Replacement, Result) :-
+    string_length(Needle, NeedleLength),
+    (   sub_string(Text, Before, NeedleLength, _, Needle)
+    ->  sub_string(Text, 0, Before, _, Prefix),
+        Start is Before + NeedleLength,
+        sub_string(Text, Start, _, 0, Suffix),
+        replace_all(Suffix, Needle, Replacement, SuffixOut),
+        string_concat(Prefix, Replacement, Step),
+        string_concat(Step, SuffixOut, Result)
+    ;   Result = Text
     ).
 
 take_first(_, 0, []) :-
@@ -524,27 +622,21 @@ take_first([Head | Tail], Limit, [Head | First]) :-
 %% JSON, TSV, summary, HTML
 %% ------------------------------------------------------------------
 
-profile_dict(Fixture, Program, TotalInferences, TotalWall,
+profile_dict(Fixture, Program, TotalInferences,
              CompilerRows, DiagnosticCount, Spans, DuplicateReport, Dict) :-
     findall(SpanDict,
             ( member(Span, Spans), span_dict(Span, SpanDict) ),
             SpanDicts),
     length(SpanDicts, SpanCount),
-    findall(Id-Wall,
-            ( member(Span, Spans), span_id(Span, Id), span_wall(Span, Wall) ),
-            WallPairs),
-    dict_pairs(WallDict, wall, WallPairs),
     Dict = _{ fixture: Fixture,
               program: Program,
               width_metric: inferences,
               deterministic: true,
               total_inferences: TotalInferences,
-              total_wall_ms: TotalWall,
               compiler_rows: CompilerRows,
               diagnostics: DiagnosticCount,
               span_count: SpanCount,
               spans: SpanDicts,
-              wall_observations: WallDict,
               duplicate_work: DuplicateReport }.
 
 span_dict(Span, Dict) :-
@@ -574,9 +666,9 @@ profile_json_text(Dict, Text) :-
 
 %% deterministic_profile_text(+Dict, -Text) is det.
 %
-% Canonical projection with the wall-only fields (total_wall_ms and the
-% per-span wall_observations map) removed. Two fresh runs must produce
-% byte-identical Text.
+% Canonical JSON projection. The profile dict no longer carries wall fields;
+% the defensive exclusion keeps this predicate usable if a legacy dict with
+% `total_wall_ms` or `wall_observations` is passed.
 deterministic_profile_text(Dict, Text) :-
     dict_pairs(Dict, Tag, Pairs0),
     exclude(wall_pair, Pairs0, Pairs),

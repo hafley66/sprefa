@@ -7,6 +7,9 @@
 :- use_module('../bench/1_compiler_profile',
               [ profile_main/0,
                 require_fixture/2,
+                repository_root/1,
+                render_identity_text/3,
+                render_fixture_text/3,
                 duplicate_groups/2,
                 duplicate_groups_from_hashes/2,
                 duplicate_occurrence_summary/2,
@@ -163,7 +166,18 @@ test(json_structure_has_stable_ids_and_existing_parents) :-
              ;   memberchk(Parent, Ids)
              ) )),
     get_dict(width_metric, Dict, inferences),
-    get_dict(deterministic, Dict, true).
+    get_dict(deterministic, Dict, true),
+    get_dict(fixture, Dict, Fixture),
+    sub_string(Fixture, 0, 6, _, "$REPO/"),
+    repository_root(Root),
+    atom_string(Root, RootText),
+    get_dict(duplicate_work, Dict, DuplicateWork),
+    get_dict(categories, DuplicateWork, Categories),
+    forall(member(Category, Categories),
+           ( get_dict(top_repeated, Category, Tops),
+             forall(member(Top, Tops),
+                    ( get_dict(identity, Top, Identity),
+                      \+ sub_string(Identity, _, _, _, RootText) )) )).
 
 test(json_has_expected_hierarchy) :-
     profile_runs(run(First, _)),
@@ -192,18 +206,28 @@ test(json_has_expected_hierarchy) :-
              get_dict(parent, Child, StratumId),
              get_dict(category, Child, ChildCategory) )).
 
-test(folded_tsv_summary_and_json_are_deterministic) :-
+test(all_five_artifacts_are_deterministic) :-
     profile_runs(run(First, Second)),
-    forall(member(Name, ['1_folded.txt', '2_duplicates.tsv',
+    forall(member(Name, ['0_profile.json', '1_folded.txt',
+                         '2_duplicates.tsv', '3_flamechart.html',
                          '4_summary.txt']),
            ( read_artifact(First, Name, Text1),
              read_artifact(Second, Name, Text2),
-             Text1 == Text2 )),
-    read_profile_dict(First, Dict1),
-    read_profile_dict(Second, Dict2),
-    deterministic_profile_text(Dict1, Projected1),
-    deterministic_profile_text(Dict2, Projected2),
-    Projected1 == Projected2.
+             Text1 == Text2 )).
+
+test(rendered_paths_are_checkout_root_stable) :-
+    render_identity_text('/checkout/one',
+                         file('/checkout/one/v7/test/fixtures/a.dl7'), Text1),
+    render_identity_text('/checkout/two',
+                         file('/checkout/two/v7/test/fixtures/a.dl7'), Text2),
+    Text1 == Text2,
+    sub_string(Text1, _, _, _, "$REPO/v7/test/fixtures/a.dl7"),
+    render_fixture_text('/checkout/one',
+                        '/checkout/one/v7/test/fixtures/a.dl7', Fixture1),
+    render_fixture_text('/checkout/two',
+                        '/checkout/two/v7/test/fixtures/a.dl7', Fixture2),
+    Fixture1 == Fixture2,
+    Fixture1 == "$REPO/v7/test/fixtures/a.dl7".
 
 test(duplicate_tsv_names_columns_and_percent) :-
     profile_runs(run(First, _)),
@@ -250,16 +274,63 @@ shell_script_path(Path) :-
     file_directory_name(BenchPath, BenchDirectory),
     directory_file_path(BenchDirectory, '2_compiler_flamechart.sh', Path).
 
+run_shell(Arguments, ExitCode, Stderr) :-
+    shell_script_path(Script),
+    process_create(path(bash), [Script | Arguments],
+                   [stdout(null), stderr(pipe(ErrorStream)),
+                    process(Process)]),
+    read_string(ErrorStream, _, Stderr),
+    close(ErrorStream),
+    process_wait(Process, exit(ExitCode)).
+
 test(shell_writes_five_artifacts) :-
     fixture_path(Fixture),
     fresh_directory(Directory),
-    shell_script_path(Script),
-    process_create(path(bash), [Script, Fixture, Directory],
-                   [stdout(null), stderr(null), process(Process)]),
-    process_wait(Process, exit(0)),
+    run_shell([Fixture, Directory], 0, _),
     forall(member(Name, ['0_profile.json', '1_folded.txt',
                          '2_duplicates.tsv', '3_flamechart.html',
                          '4_summary.txt']),
            ( artifact(Directory, Name, Artifact), exists_file(Artifact) )).
+
+% The shell forwards the Prolog stage unchanged: a missing fixture is
+% `stage=source`, and the shell never overwrites it with `stage=report`.
+test(shell_unknown_source_preserves_stage) :-
+    fresh_directory(Directory),
+    run_shell(['v7/test/fixtures/not_a_real_fixture.dl7', Directory],
+              ExitCode, Stderr),
+    ExitCode == 2,
+    sub_string(Stderr, _, _, _, "stage=source"),
+    \+ sub_string(Stderr, _, _, _, "stage=report").
+
+% An output directory whose parent is a regular file makes report staging fail;
+% the shell must preserve the Prolog `stage=report` and exit 4.
+test(shell_report_failure_preserves_stage) :-
+    fixture_path(Fixture),
+    fresh_directory(Directory),
+    directory_file_path(Directory, blocker, Blocker),
+    setup_call_cleanup(
+        open(Blocker, write, Stream, [encoding(utf8)]),
+        format(Stream, 'block~n', []),
+        close(Stream)),
+    directory_file_path(Blocker, child, BadOutput),
+    run_shell([Fixture, BadOutput], ExitCode, Stderr),
+    ExitCode == 4,
+    sub_string(Stderr, _, _, _, "stage=report").
+
+test(shell_pins_default_output_directory) :-
+    shell_script_path(Script),
+    read_file_to_string(Script, Text, []),
+    sub_string(Text, _, _, _,
+               'output_directory="${repo_root}/v7/out/compiler-profile"').
+
+test(folded_omits_zero_weight_entries) :-
+    profile_runs(run(First, _)),
+    read_artifact(First, '1_folded.txt', Folded),
+    Folded \== "",
+    split_string(Folded, "\n", "", Lines),
+    delete(Lines, "", Content),
+    Content \== [],
+    forall(member(Line, Content),
+           \+ sub_string(Line, _, _, 0, " 0")).
 
 :- end_tests(dl7_compiler_profile).

@@ -7,9 +7,10 @@
 # Small non-interactive wrapper: resolve the fixture and output directory, then
 # run exactly one bounded swipl process that compiles the fixture and writes the
 # five profile artifacts. No analysis, network, package install, or browser
-# launch happens here. A nonzero exit identifies the failed stage: the Prolog
-# process prints `DL7-PROFILE-ERROR stage=<source|usage|compile|report>` and this
-# script adds `stage=timeout` when the 20-second cap fires.
+# launch happens here. The Prolog process owns directory creation and prints the
+# precise `DL7-PROFILE-ERROR stage=<source|usage|compile|report>`; this script
+# only adds `stage=timeout` when the 20-second cap fires and otherwise forwards
+# the original exit status unchanged.
 
 set -euo pipefail
 
@@ -35,10 +36,8 @@ esac
 if [ "$#" -eq 2 ]; then
     output_directory="$2"
 else
-    output_directory="${repo_root}/out/compiler-profile"
+    output_directory="${repo_root}/v7/out/compiler-profile"
 fi
-
-mkdir -p "$output_directory"
 
 set +e
 timeout 20 swipl -q -s "$profile_module" -g profile_main -t halt -- \
@@ -52,7 +51,6 @@ if [ "$status" -eq 124 ]; then
 fi
 
 if [ "$status" -ne 0 ]; then
-    printf 'DL7-PROFILE-ERROR stage=report exit=%s\n' "$status" >&2
     exit "$status"
 fi
 
