@@ -1,6 +1,7 @@
 :- begin_tests(dl7_entrypoints).
 
 :- use_module(library(aggregate), [aggregate_all/3]).
+:- use_module(library(lists), [max_list/2]).
 :- use_module(library(process), [process_create/3, process_wait/2]).
 :- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
@@ -2087,6 +2088,202 @@ test(stratification_is_pure_deterministic_and_strict_cycle_checked) :-
                             evaluator(temporary_rules(0), temporary_seeds(0),
                                       temporary_lower_rows(0),
                                       temporary_requests(0))))).
+
+% Indexed stratification invariants. Each pins the exact strata/diagnostic
+% term so the worklist relaxation cannot drift from the reference semantics.
+test(stratification_positive_chain_keeps_one_level) :-
+    Rules =
+        [ rule(call(a, [var(value)]),
+               [checked_goal(positive, call(b, [var(value)]))]),
+          rule(call(b, [var(value)]),
+               [checked_goal(positive, call(c, [var(value)]))]),
+          rule(call(c, [var(value)]), [])
+        ],
+    stratify_rules(Rules, Strata, Diagnostics),
+    Observed = stratification_invariant(Strata, Diagnostics),
+    Observed == stratification_invariant(
+                    [stratum(a, 0), stratum(b, 0), stratum(c, 0)], []).
+
+test(stratification_negative_edge_places_head_one_above_body) :-
+    Rules =
+        [ rule(call(d, [var(value)]),
+               [checked_goal(negative, call(e, [var(value)]))]),
+          rule(call(e, [var(value)]), [])
+        ],
+    stratify_rules(Rules, Strata, Diagnostics),
+    Observed = stratification_invariant(Strata, Diagnostics),
+    Observed == stratification_invariant(
+                    [stratum(d, 1), stratum(e, 0)], []).
+
+test(stratification_positive_recursive_scc_terminates_at_one_level) :-
+    Rules =
+        [ rule(call(s, []), []),
+          rule(call(p, [var(value)]),
+               [ checked_goal(positive, call(q, [var(value)])),
+                 checked_goal(negative, call(s, []))
+               ]),
+          rule(call(q, [var(value)]),
+               [checked_goal(positive, call(p, [var(value)]))])
+        ],
+    stratify_rules(Rules, Strata, Diagnostics),
+    Observed = stratification_invariant(Strata, Diagnostics),
+    Observed == stratification_invariant(
+                    [stratum(p, 1), stratum(q, 1), stratum(s, 0)], []).
+
+test(stratification_mixed_cycle_keeps_strict_cycle_diagnostic) :-
+    Rules =
+        [ rule(call(left, [var(value)]),
+               [checked_goal(negative, call(right, [var(value)]))]),
+          rule(call(right, [var(value)]),
+               [checked_goal(positive, call(left, [var(value)]))])
+        ],
+    stratify_rules(Rules, Strata, Diagnostics),
+    Observed = stratification_invariant(Strata, Diagnostics),
+    Observed == stratification_invariant(
+                    [],
+                    [diagnostic(stratify, none,
+                                strict_dependency_cycle([left, right]))]).
+
+test(stratification_aggregate_edge_uses_gap_one) :-
+    Rules =
+        [ rule(call(region_count,
+                    [var(region), aggregate(count, var(region))]),
+               [checked_goal(
+                    positive,
+                    call(sale, [var(region), var(item)]))]),
+          rule(call(sale, [var(region), var(item)]), [])
+        ],
+    stratify_rules(Rules, Strata, Diagnostics),
+    Observed = stratification_invariant(Strata, Diagnostics),
+    Observed == stratification_invariant(
+                    [stratum(region_count, 1), stratum(sale, 0)], []).
+
+% A second rule set with disjoint relations must not see a stratum or index
+% built for the first, and re-running the first must reproduce it exactly.
+test(stratification_index_is_scoped_to_each_rule_set) :-
+    RulesA =
+        [ rule(call(a, [var(value)]),
+               [checked_goal(negative, call(b, [var(value)]))]),
+          rule(call(b, [var(value)]), [])
+        ],
+    RulesB =
+        [ rule(call(c, [var(value)]),
+               [checked_goal(negative, call(d, [var(value)]))]),
+          rule(call(d, [var(value)]), [])
+        ],
+    stratify_rules(RulesA, StrataA0, DiagA0),
+    stratify_rules(RulesB, StrataB, DiagB),
+    stratify_rules(RulesA, StrataA1, DiagA1),
+    Observed = index_scope(StrataA0, DiagA0, StrataB, DiagB,
+                           StrataA1, DiagA1),
+    Observed == index_scope(
+                    [stratum(a, 1), stratum(b, 0)], [],
+                    [stratum(c, 1), stratum(d, 0)], [],
+                    [stratum(a, 1), stratum(b, 0)], []).
+
+% Parity against a test-local copy of the full-list relaxation the worklist
+% replaced. The reference is the pre-change algorithm verbatim, so agreement
+% pins the new traversal to the old fixpoint on each rule set.
+test(stratification_worklist_matches_reference_on_invariant_programs) :-
+    invariant_rule_sets(RuleSets),
+    maplist(rule_set_strata_parity, RuleSets, Observations),
+    Observed = parity(Observations),
+    Observed == parity([equal, equal, equal, equal, equal]).
+
+test(stratification_worklist_matches_reference_on_nearest_shadow_rules) :-
+    compile_dl7('v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7',
+                _, Runtime, []),
+    Runtime = checked_datalog(_, datalog_program(_, _, Rules), _, _),
+    rule_set_strata_parity(Rules, Observed),
+    Observed == equal.
+
+test(stratification_worklist_matches_reference_on_partial_rules) :-
+    compile_dl7('v7/test/fixtures/2_partial.dl7', _, Runtime, []),
+    Runtime = checked_datalog(_, datalog_program(_, _, Rules), _, _),
+    rule_set_strata_parity(Rules, Observed),
+    Observed == equal.
+
+invariant_rule_sets(
+    [ [ rule(call(a, [var(value)]),
+             [checked_goal(positive, call(b, [var(value)]))]),
+        rule(call(b, [var(value)]),
+             [checked_goal(positive, call(c, [var(value)]))]),
+        rule(call(c, [var(value)]), [])
+      ],
+      [ rule(call(d, [var(value)]),
+             [checked_goal(negative, call(e, [var(value)]))]),
+        rule(call(e, [var(value)]), [])
+      ],
+      [ rule(call(s, []), []),
+        rule(call(p, [var(value)]),
+             [ checked_goal(positive, call(q, [var(value)])),
+               checked_goal(negative, call(s, []))
+             ]),
+        rule(call(q, [var(value)]),
+             [checked_goal(positive, call(p, [var(value)]))])
+      ],
+      [ rule(call(region_count,
+                  [var(region), aggregate(count, var(region))]),
+             [checked_goal(
+                  positive,
+                  call(sale, [var(region), var(item)]))]),
+        rule(call(sale, [var(region), var(item)]), [])
+      ],
+      [ rule(call(u, [var(value)]),
+             [checked_goal(negative, call(v, [var(value)]))]),
+        rule(call(v, [var(value)]), []),
+        rule(call(w, [var(value)]),
+             [checked_goal(positive, call(u, [var(value)]))])
+      ]
+    ]).
+
+rule_set_strata_parity(Rules, Equal) :-
+    reference_strata(Rules, ReferenceStrata),
+    stratify_rules(Rules, WorklistStrata, []),
+    (   WorklistStrata == ReferenceStrata
+    ->  Equal = equal
+    ;   Equal = differ(WorklistStrata, ReferenceStrata)
+    ).
+
+%% reference_strata(+Rules, -Strata) is det.
+%
+% Test-local reference for the pre-change full-list relaxation: each pass
+% recomputes every relation's requirement from the previous pass's levels.
+reference_strata(Rules, Strata) :-
+    dl7_evaluator:rule_dependencies(Rules, Dependencies),
+    dl7_evaluator:rule_relations(Rules, Relations),
+    findall(level(Relation, 0), member(Relation, Relations), Levels0),
+    reference_relax(Dependencies, Levels0, Levels),
+    dl7_evaluator:derived_relations(Rules, DerivedRelations),
+    findall(stratum(Relation, Level),
+            ( member(Relation, DerivedRelations),
+              memberchk(level(Relation, Level), Levels)
+            ),
+            Strata).
+
+reference_relax(Dependencies, Levels0, Levels) :-
+    reference_relax_levels(Levels0, Dependencies, Levels1),
+    (   Levels1 == Levels0
+    ->  Levels = Levels1
+    ;   reference_relax(Dependencies, Levels1, Levels)
+    ).
+
+reference_relax_levels(Levels0, Dependencies, Levels) :-
+    reference_relax_levels(Levels0, Levels0, Dependencies, Levels).
+
+reference_relax_levels([], _, _, []).
+reference_relax_levels([level(Relation, Current) | Levels0], AllLevels,
+                       Dependencies, [level(Relation, Next) | Levels]) :-
+    findall(Required,
+            ( member(dependency(Relation, BodyRelation, _, Gap, _),
+                     Dependencies),
+              memberchk(level(BodyRelation, BodyLevel), AllLevels),
+              Required is BodyLevel + Gap
+            ),
+            Requirements0),
+    Requirements = [Current | Requirements0],
+    max_list(Requirements, Next),
+    reference_relax_levels(Levels0, AllLevels, Dependencies, Levels).
 
 test(cons_constructs_deconstructs_and_stops_at_the_empty_tail) :-
     Rules =
