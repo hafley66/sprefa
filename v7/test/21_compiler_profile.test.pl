@@ -254,6 +254,8 @@ test(html_embeds_profile_json_and_labels) :-
     string_concat(Trimmed, "\n", FileText),
     once(sub_string(Html, _, _, _, Trimmed)),
     once(sub_string(Html, _, _, _, "profile-data")),
+    once(sub_string(Html, _, _, _, "host.appendChild(bar)")),
+    \+ sub_string(Html, _, _, _, "\nhtml_script\n"),
     forall(member(Label, ["compile", "install", "collect", "cleanup",
                           "round_1"]),
            sub_string(Html, _, _, _, Label)).

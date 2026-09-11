@@ -802,7 +802,8 @@ html_text(Fixture, JsonText, Spans, Text) :-
           forall(member(Span, Spans), html_span(Span)),
           format('</ul>~n', []),
           format('<script id="profile-data" type="application/json">~s</script>~n', [JsonText]),
-          format('~s~n', [html_script]),
+          html_script(Script),
+          format('~s~n', [Script]),
           format('</body>~n</html>~n', []) )).
 
 html_span(Span) :-

@@ -293,6 +293,13 @@ Correction verification (one `swipl` process at a time, each command under 20 s)
 | nearest-shadow perf gate | cold 3,136,311 / budget 16,000,000; warm 2,240 / budget 5,000; exit 0 |
 | artifact absolute-path scan | zero `/Users/...` occurrences in all five |
 
+Rendering correction: `html_text/4` previously formatted the predicate name
+`html_script` as text instead of calling `html_script/1`. The generated page
+therefore contained an empty chart host and no renderer. The generator now
+embeds the returned script. A headless Chromium render produced all 72 span
+bars, and `html_embeds_profile_json_and_labels` pins the executable renderer
+body so this failure cannot pass as embedded-data-only HTML again.
+
 No budget moved. No compiler or evaluator semantics changed.
 
 ## 11. Boundaries and open items
