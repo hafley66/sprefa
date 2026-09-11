@@ -42,6 +42,9 @@
 :- thread_local debug_worklist_visits/1.
 :- thread_local debug_worklist_changes/1.
 
+:- thread_local lower_store_scope/1.
+:- thread_local lower_store_installed/2.
+
 :- table proves/2.
 
 %% integer_comparison(?Name, ?PositiveOperator, ?NegativeOperator) is nondet.
@@ -68,9 +71,50 @@ evaluate(Rules, Seeds, Closure, Diagnostics) :-
     rule_dependencies(Rules, Dependencies),
     stratify_rules_with_dependencies(
         Rules, Dependencies, Strata, StrataDiagnostics),
-    evaluate_after_stratify(
-        StrataDiagnostics, Strata, Dependencies, Rules, Seeds,
-        Closure, Diagnostics).
+    setup_call_cleanup(
+        open_lower_store,
+        evaluate_after_stratify(
+            StrataDiagnostics, Strata, Dependencies, Rules, Seeds,
+            Closure, Diagnostics),
+        close_lower_store).
+
+%% open_lower_store is det.
+%
+% Open one evaluate-scope lower-row store for the strata of a single evaluate/4
+% call. The immutable completed lower rows are identical terms across strata
+% and nested snapshot to snapshot, so the store keeps exactly one clause per
+% distinct row for the whole call. Each stratum still installs its own rules,
+% seeds, SLG table, and proof identity under its own EvaluationId; only the
+% lower-row clauses are shared.
+open_lower_store :-
+    gensym(dl7_lower_store_, StoreId),
+    asserta(lower_store_scope(StoreId)),
+    assertz(lower_store_installed(StoreId, [])).
+
+%% close_lower_store is det.
+%
+% Erase every shared lower-row clause and the scope state. Runs on success,
+% failure, and exception through setup_call_cleanup/3 in evaluate/4, so no
+% shared row outlives the evaluate call. The most recently opened scope is
+% removed first, so a nested evaluate call unwinds its own store.
+close_lower_store :-
+    (   retract(lower_store_scope(StoreId))
+    ->  retractall(evaluation_lower_index(StoreId, _, _, _, _, _, _)),
+        retractall(lower_store_installed(StoreId, _))
+    ;   true
+    ).
+
+%% lower_store_id(+EvaluationId, -StoreId) is det.
+%
+% Resolve the store that holds this evaluation's lower rows. Inside an
+% evaluate/4 scope every stratum reads the one shared store; outside a scope
+% the EvaluationId is its own store, preserving the direct install/lookup
+% behavior used by callers that manage their own references.
+lower_store_id(EvaluationId, StoreId) :-
+    (   lower_store_scope(ActiveStore)
+    ->  StoreId = ActiveStore
+    ;   StoreId = EvaluationId
+    ).
 
 evaluate_after_stratify(
     [], Strata, Dependencies, Rules, Seeds, Closure, Diagnostics) :-
@@ -803,13 +847,35 @@ install_seeds_profiled([Seed | Seeds], EvaluationId, [Reference | References]) :
     profile_occurrence(evaluator_installed_seeds, Seed),
     install_seeds_profiled(Seeds, EvaluationId, References).
 
-install_lower_rows([], _, []).
-install_lower_rows([Row | Rows], EvaluationId, [Reference | References]) :-
+install_lower_rows(Rows, EvaluationId, References) :-
+    (   lower_store_scope(StoreId)
+    ->  install_shared_lower_rows(Rows, StoreId, References)
+    ;   install_private_lower_rows(Rows, EvaluationId, References)
+    ).
+
+install_private_lower_rows(Rows, EvaluationId, References) :-
     (   profile_scope_on
-    ->  install_lower_rows_profiled([Row | Rows], EvaluationId,
-                                    [Reference | References])
-    ;   install_lower_rows_plain([Row | Rows], EvaluationId,
-                                [Reference | References])
+    ->  install_lower_rows_profiled(Rows, EvaluationId, References)
+    ;   install_lower_rows_plain(Rows, EvaluationId, References)
+    ).
+
+%% install_shared_lower_rows(+Rows, +StoreId, -[]) is det.
+%
+% A stratum's completed lower snapshot is the union of every earlier snapshot.
+% ord_subtract/3 keeps only the rows not yet stored for this evaluate call, so
+% each distinct row is asserted once. The returned reference list is empty by
+% design: the shared store is owned by the evaluate/4 scope, not by the
+% stratum, so clear_evaluation/2 must not erase it.
+install_shared_lower_rows(Rows, StoreId, []) :-
+    (   retract(lower_store_installed(StoreId, Installed))
+    ->  true
+    ;   Installed = []
+    ),
+    ord_subtract(Rows, Installed, NewRows),
+    assertz(lower_store_installed(StoreId, Rows)),
+    (   profile_scope_on
+    ->  install_lower_rows_profiled(NewRows, StoreId, _)
+    ;   install_lower_rows_plain(NewRows, StoreId, _)
     ).
 
 install_lower_rows_plain([], _, []).
@@ -842,8 +908,9 @@ install_lower_rows_profiled([Row | Rows], EvaluationId, [Reference | References]
 % nondeterministic in the modes existing callers use.
 evaluation_lower(EvaluationId, Relation, Row) :-
     Row = call(_, Arguments),
+    lower_store_id(EvaluationId, StoreId),
     index_argument_hashes(Arguments, Hash1, Hash2, Hash3, Hash4),
-    evaluation_lower_index(EvaluationId, Relation,
+    evaluation_lower_index(StoreId, Relation,
                            Hash1, Hash2, Hash3, Hash4, Stored),
     Stored = Row.
 
