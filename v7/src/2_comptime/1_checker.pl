@@ -143,11 +143,9 @@ finish_checked([], DerivedStrata, Nodes, ColonEdges, Relations, Seeds, Rules,
     append(Nodes, KernelNodes, CheckedNodes),
     append(ColonEdges, KernelEdges, AllEdges),
     msort(AllEdges, SortedEdges),
-    predecessor_seeds(SortedEdges, PredecessorSeeds),
-    append(Seeds, PredecessorSeeds, CheckedSeeds),
     msort(Relations, SortedRelations),
     Checked = checked_datalog(root_graph(CheckedNodes, SortedEdges),
-                              datalog_program(SortedRelations, CheckedSeeds,
+                              datalog_program(SortedRelations, Seeds,
                                               Rules),
                               Depends, Strata).
 finish_checked(Diagnostics, _, _, _, _, _, _, [], Diagnostics).
@@ -315,7 +313,7 @@ kernel_relation_keys(cons, [[0, 1], [2]]).
 kernel_relation_keys(edge_ref, [[0, 1]]).
 kernel_relation_keys(intern, [[0, 1]]).
 kernel_relation_keys(intern_snapshot, [[0, 1]]).
-kernel_relation_keys(predecessor, [[0, 1], [0, 2]]).
+kernel_relation_keys(int_lt, [[0, 1]]).
 kernel_relation_keys(def, [[0]]).
 kernel_relation_keys(head, [[0]]).
 kernel_relation_keys(body, [[0, 1]]).
@@ -323,17 +321,6 @@ kernel_relation_keys(node, []).
 kernel_relation_keys(module, []).
 kernel_relation_keys(product, []).
 kernel_relation_keys(sum, []).
-
-%% Every checked dense owner-index sequence contributes its adjacent pairs.
-predecessor_seeds(Edges, Seeds) :-
-    findall(call(ref(kernel(predecessor)),
-                 [ref(Owner), const(EarlierIndex), const(LaterIndex)]),
-            ( member(':'(Owner, _, _, LaterIndex), Edges),
-              LaterIndex > 0,
-              EarlierIndex is LaterIndex - 1
-            ),
-            Seeds0),
-    sort(Seeds0, Seeds).
 
 kernel_graph(
     [ node(primitive(int)),
@@ -351,7 +338,7 @@ kernel_graph(
       node(kernel(edge_ref)), product(kernel(edge_ref)),
       node(kernel(intern)), product(kernel(intern)),
       node(kernel(intern_snapshot)), product(kernel(intern_snapshot)),
-      node(kernel(predecessor)), product(kernel(predecessor)),
+      node(kernel(int_lt)), product(kernel(int_lt)),
       node(kernel(def)), product(kernel(def)),
       node(kernel(head)), product(kernel(head)),
       node(kernel(body)), product(kernel(body))
@@ -381,9 +368,8 @@ kernel_graph(
       ':'(kernel(intern_snapshot), constructor, ref(primitive(type)), 0),
       ':'(kernel(intern_snapshot), arguments, ref(primitive(any)), 1),
       ':'(kernel(intern_snapshot), return, ref(primitive(type)), 2),
-      ':'(kernel(predecessor), owner, ref(primitive(type)), 0),
-      ':'(kernel(predecessor), earlier, ref(primitive(int)), 1),
-      ':'(kernel(predecessor), later, ref(primitive(int)), 2),
+      ':'(kernel(int_lt), left, ref(primitive(int)), 0),
+      ':'(kernel(int_lt), right, ref(primitive(int)), 1),
       ':'(kernel(def), relation, ref(primitive(type)), 0),
       ':'(kernel(def), arity, ref(primitive(int)), 1),
       ':'(kernel(head), rule, ref(primitive(type)), 0),
@@ -506,6 +492,16 @@ check_goal_transition(Goal, Available0, Produced0,
 
 check_goal(Goal, Bound0, Bound, Reason) :-
     goal_call(Goal, positive,
+              call(ref(kernel(int_lt)), Arguments)),
+    !,
+    (   maplist(argument_is_bound_in(Bound0), Arguments)
+    ->  Bound = Bound0,
+        int_lt_argument_types(Arguments, Reason)
+    ;   Bound = Bound0,
+        Reason = underconstrained_kernel_goal(int_lt, [[0, 1]])
+    ).
+check_goal(Goal, Bound0, Bound, Reason) :-
+    goal_call(Goal, positive,
               call(ref(kernel(cons)), [Head, Tail, List])),
     !,
     (   (   argument_is_bound(List, Bound0)
@@ -548,6 +544,16 @@ check_goal(Goal, Bound, Bound, negative_constructive_kernel_goal(Name)) :-
     memberchk(Name, [cons, edge_ref, intern, nil]),
     !.
 check_goal(Goal, Bound, Bound, Reason) :-
+    goal_call(Goal, negative,
+              call(ref(kernel(int_lt)), Arguments)),
+    !,
+    goal_variables(Goal, Variables),
+    unbound_variables(Variables, Bound, Unbound),
+    (   Unbound == []
+    ->  int_lt_argument_types(Arguments, Reason)
+    ;   Reason = unbound_negative_goal(Unbound)
+    ).
+check_goal(Goal, Bound, Bound, Reason) :-
     goal_call(Goal, negative, _),
     !,
     goal_variables(Goal, Variables),
@@ -560,6 +566,20 @@ check_goal(Goal, Bound0, Bound, none) :-
     goal_call(Goal, positive, _),
     goal_variables(Goal, Variables),
     add_variables(Variables, Bound0, Bound).
+
+argument_is_bound_in(Bound, Argument) :-
+    argument_is_bound(Argument, Bound).
+
+int_lt_argument_types(Arguments, Reason) :-
+    (   nth0(Position, Arguments, Argument),
+        \+ int_argument(Argument)
+    ->  Reason = kernel_argument_type_mismatch(
+                     int_lt, Position, int, Argument)
+    ;   Reason = none
+    ).
+
+int_argument(var(_)).
+int_argument(const(Value)) :- integer(Value).
 
 argument_is_bound(Argument, Bound) :-
     argument_variables(Argument, Variables),

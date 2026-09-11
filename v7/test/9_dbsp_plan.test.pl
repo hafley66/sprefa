@@ -100,6 +100,39 @@ test(reified_program_graph_reconstructs_the_checked_executable_exactly) :-
     executable(Seeds, Rules) ==
         executable(ExpectedSeeds, ExpectedRules).
 
+test(int_lt_reifies_exactly_and_names_the_dbsp_predicate_gap) :-
+    fixture(checked_datalog(
+                Graph,
+                datalog_program(Relations, Seeds,
+                                [rule(Head, Body)]),
+                Dependencies, Strata)),
+    IntLtGoal = checked_goal(
+                    positive,
+                    call(ref(kernel(int_lt)),
+                         [const(2), const(5)])),
+    append(Body, [IntLtGoal], IntLtBody),
+    ExpectedRules = [rule(Head, IntLtBody)],
+    Runtime = checked_datalog(
+                  Graph,
+                  datalog_program(Relations, Seeds, ExpectedRules),
+                  Dependencies, Strata),
+    logical_program_rows(Runtime, LogicalRows),
+    dl7_dbsp_plan_emitter:logical_executable(
+        LogicalRows, ReifiedSeeds, ReifiedRules),
+    emit_dbsp_plan(Runtime, Plan, Diagnostics),
+    Observed = int_lt_backend_boundary(
+                   reified(ReifiedSeeds, ReifiedRules),
+                   emitted(Plan.operators, Plan.rules, Diagnostics)),
+    Observed == int_lt_backend_boundary(
+                    reified([], ExpectedRules),
+                    emitted(
+                        [], [],
+                        [ diagnostic(
+                              emit, none,
+                              hidden_runtime_relation(
+                                  rule_id(0), kernel(int_lt)))
+                        ])).
+
 test(checked_rules_have_normalized_occurrence_nodes_and_edges) :-
     fixture(Runtime),
     logical_program_graph_rows(Runtime, Rows),

@@ -290,11 +290,29 @@ require_level_rule(LogicalRows, RuleId) :-
                   unsupported_sqlite_rule_kind(RuleId)))
     ).
 
+validate_goal(RuleId, _, _,
+              checked_goal(Polarity,
+                           call(ref(kernel(int_lt)), Arguments))) :-
+    !,
+    require_int_lt_polarity(RuleId, Polarity),
+    maplist(validate_int_lt_argument(RuleId), Arguments).
 validate_goal(RuleId, Sources, OutputIdentity,
               checked_goal(Polarity, call(ref(Relation), Arguments))) :-
     require_positive_goal(RuleId, Polarity),
     require_source_relation(RuleId, Sources, OutputIdentity, Relation),
     validate_arguments(RuleId, call(ref(Relation), Arguments)).
+
+require_int_lt_polarity(_, positive) :- !.
+require_int_lt_polarity(_, negative) :- !.
+require_int_lt_polarity(RuleId, Polarity) :-
+    throw(sqlite_query_error(
+              unsupported_sqlite_goal_polarity(RuleId, Polarity))).
+
+validate_int_lt_argument(_, var(_)) :- !.
+validate_int_lt_argument(_, const(Value)) :- integer(Value), !.
+validate_int_lt_argument(RuleId, Argument) :-
+    throw(sqlite_query_error(
+              unsupported_sqlite_int_lt_argument(RuleId, Argument))).
 
 require_positive_goal(_, positive) :- !.
 require_positive_goal(RuleId, Polarity) :-
@@ -339,15 +357,45 @@ lower_rules([Rule | Rules], Sources, Output,
 
 lower_rule(rule(rule_id(Index), Head, Goals), Sources,
            bound_output(_, _, OutputColumns), Plan) :-
+    partition(int_lt_goal, Goals, ScalarGoals, RelationGoals),
     lower_goal_sources(
-        Goals, Sources, rule_id(Index), 0,
+        RelationGoals, Sources, rule_id(Index), 0,
         FromItems, [], Bindings),
+    lower_int_lt_goals(
+        ScalarGoals, Bindings, rule_id(Index), ScalarPredicates),
     Head = call(_, HeadArguments),
     lower_projection(
         HeadArguments, OutputColumns, Bindings, rule_id(Index),
         Projection),
-    render_rule_select(Projection, FromItems, Sql),
+    render_rule_select(Projection, FromItems, ScalarPredicates, Sql),
     Plan = _{rule:Index, sql:Sql}.
+
+int_lt_goal(
+    checked_goal(_, call(ref(kernel(int_lt)), [_, _]))).
+
+lower_int_lt_goals([], _, _, []).
+lower_int_lt_goals(
+    [checked_goal(Polarity,
+                  call(ref(kernel(int_lt)), [Left, Right])) | Goals],
+    Bindings, RuleId, [Predicate | Predicates]) :-
+    scalar_expression(Left, Bindings, RuleId, LeftExpression),
+    scalar_expression(Right, Bindings, RuleId, RightExpression),
+    int_lt_predicate(
+        Polarity, LeftExpression, RightExpression, Predicate),
+    lower_int_lt_goals(Goals, Bindings, RuleId, Predicates).
+
+scalar_expression(var(Variable), Bindings, RuleId, Expression) :-
+    (   memberchk(Variable-Expression0, Bindings)
+    ->  Expression = Expression0
+    ;   throw(sqlite_query_error(
+                  unsupported_sqlite_unbound_scalar(
+                      RuleId, int_lt, Variable)))
+    ).
+scalar_expression(const(Value), _, _, literal(Value)).
+
+int_lt_predicate(positive, Left, Right, less_than(Left, Right)).
+int_lt_predicate(negative, Left, Right,
+                 greater_than_or_equal(Left, Right)).
 
 lower_goal_sources([], _, _, _, [], Bindings, Bindings).
 lower_goal_sources(
@@ -440,15 +488,24 @@ projection_expression(const(Value), _, _, literal(Value)).
 
 column_expression(Alias, Column, column(Alias, Column)).
 
-render_rule_select(Projection, [Base], Sql) :-
+render_rule_select(Projection, [], Predicates, Sql) :-
+    !,
+    maplist(render_projection, Projection, ProjectionSql),
+    atomics_to_string(ProjectionSql, ", ", SelectList),
+    render_predicate_suffix(Predicates, PredicateSuffix),
+    format(string(Sql), "SELECT DISTINCT ~s~s",
+           [SelectList, PredicateSuffix]).
+render_rule_select(Projection, [Base], ScalarPredicates, Sql) :-
     !,
     maplist(render_projection, Projection, ProjectionSql),
     atomics_to_string(ProjectionSql, ", ", SelectList),
     render_base_item(Base, BaseSql, BasePredicates),
-    render_predicate_suffix(BasePredicates, PredicateSuffix),
+    append(BasePredicates, ScalarPredicates, Predicates),
+    render_predicate_suffix(Predicates, PredicateSuffix),
     format(string(Sql), "SELECT DISTINCT ~s FROM ~s~s",
            [SelectList, BaseSql, PredicateSuffix]).
-render_rule_select(Projection, [Base, FirstJoin | Joins], Sql) :-
+render_rule_select(Projection, [Base, FirstJoin | Joins],
+                   ScalarPredicates, Sql) :-
     maplist(render_projection, Projection, ProjectionSql),
     atomics_to_string(ProjectionSql, ", ", SelectList),
     render_base_item(Base, BaseSql, BasePredicates),
@@ -458,8 +515,9 @@ render_rule_select(Projection, [Base, FirstJoin | Joins], Sql) :-
         from_join(Table, Alias, FirstPredicates), FirstJoinSql),
     maplist(render_join_item, Joins, JoinSqls),
     atomics_to_string(JoinSqls, "", JoinSql),
-    format(string(Sql), "SELECT DISTINCT ~s FROM ~s~s~s",
-           [SelectList, BaseSql, FirstJoinSql, JoinSql]).
+    render_predicate_suffix(ScalarPredicates, PredicateSuffix),
+    format(string(Sql), "SELECT DISTINCT ~s FROM ~s~s~s~s",
+           [SelectList, BaseSql, FirstJoinSql, JoinSql, PredicateSuffix]).
 
 render_projection(projection(Expression, Column), Sql) :-
     render_expression(Expression, ExpressionSql),
@@ -490,6 +548,14 @@ render_predicate(equals(Left, Right), Sql) :-
     render_expression(Left, LeftSql),
     render_expression(Right, RightSql),
     format(string(Sql), "~s = ~s", [LeftSql, RightSql]).
+render_predicate(less_than(Left, Right), Sql) :-
+    render_expression(Left, LeftSql),
+    render_expression(Right, RightSql),
+    format(string(Sql), "~s < ~s", [LeftSql, RightSql]).
+render_predicate(greater_than_or_equal(Left, Right), Sql) :-
+    render_expression(Left, LeftSql),
+    render_expression(Right, RightSql),
+    format(string(Sql), "~s >= ~s", [LeftSql, RightSql]).
 render_predicate(not_null(Expression), Sql) :-
     render_expression(Expression, ExpressionSql),
     format(string(Sql), "~s IS NOT NULL", [ExpressionSql]).

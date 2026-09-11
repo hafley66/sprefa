@@ -11,11 +11,6 @@
 (: closed_names
    (* (: list any)))
 
-(: before
-   (* (: owner type)
-      (: earlier int)
-      (: later int)))
-
 (: Pick
    (* (: source type)
       (: names any)

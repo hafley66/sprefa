@@ -55,7 +55,7 @@ slice_after_protocol(
     include(declaration_one_of(ProtocolIds), Relations, ProtocolRelations),
     macro_rule_relations(MacroRules, MacroRelationIds),
     include(seed_relation_one_of(MacroRelationIds), Seeds, CandidateSeeds),
-    exclude(compiler_predecessor_seed, CandidateSeeds, MacroSeeds).
+    MacroSeeds = CandidateSeeds.
 slice_after_protocol(
     Diagnostics, _, _, [], Diagnostics).
 
@@ -162,14 +162,10 @@ evaluate_macro_program(
     checked_datalog(_, datalog_program(_, ProgramSeeds, AllRules), _, _),
     Rows, Closure, Diagnostics) :-
     macro_rules(Protocol, AllRules, Rules),
-    exclude(compiler_predecessor_seed, ProgramSeeds, MacroProgramSeeds),
     syntax_seed_calls(Rows, Protocol, SyntaxSeeds),
-    append(MacroProgramSeeds, SyntaxSeeds, Seeds0),
+    append(ProgramSeeds, SyntaxSeeds, Seeds0),
     sort(Seeds0, Seeds),
     evaluate(Rules, Seeds, Closure, Diagnostics).
-
-compiler_predecessor_seed(
-    call(ref(kernel(predecessor)), _)).
 
 macro_rules(Protocol, Rules, MacroRules) :-
     include(macro_root_rule(Protocol), Rules, Roots),
@@ -213,25 +209,12 @@ rule_heads_one_of(Relations, rule(call(ref(Relation), _), _)) :-
 
 syntax_seed_calls([], _, []).
 syntax_seed_calls(Rows, Protocol, Calls) :-
-    syntax_row_calls(Rows, Protocol, RowCalls),
-    syntax_predecessor_calls(Rows, PredecessorCalls),
-    append(RowCalls, PredecessorCalls, Calls).
+    syntax_row_calls(Rows, Protocol, Calls).
 
 syntax_row_calls([], _, []).
 syntax_row_calls([Row | Rows], Protocol, [Call | Calls]) :-
     syntax_row_call(Row, Protocol, Call),
     syntax_row_calls(Rows, Protocol, Calls).
-
-syntax_predecessor_calls(Rows, Calls) :-
-    findall(
-        call(ref(kernel(predecessor)),
-             [ref(Owner), const(Earlier), const(Later)]),
-        ( member(':'(Owner, item, _, Later), Rows),
-          Later > 0,
-          Earlier is Later - 1
-        ),
-        Calls0),
-    sort(Calls0, Calls).
 
 syntax_row_call(node(Id), _, call(ref(kernel(node)), [ref(Id)])).
 syntax_row_call(':'(Owner, Label, Target, Index), _,

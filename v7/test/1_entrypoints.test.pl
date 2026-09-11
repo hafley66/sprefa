@@ -681,14 +681,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 15542,
+                    [], [], 890,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(282, 538, 135, 432, 129, 224, 135),
+                    runtime(counts(280, 532, 134, 1, 127, 222, 134),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -697,7 +697,7 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                         edge_ref([[0, 1]]),
                         intern([[0, 1]]),
                          intern_snapshot([[0, 1]]),
-                         predecessor([[0, 1], [0, 2]]),
+                         int_lt([[0, 1]]),
                          def([[0]]), head([[0]]), body([[0, 1]])),
                     compound_key(
                         edges([key("account", int, 0),
@@ -720,6 +720,86 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               temporary_lower_rows(0), temporary_requests(0)),
                     true, true),
     !.
+
+test(migrated_int_lt_ordering_products_have_exact_ranks) :-
+    compile_dl7('v7/test/fixtures/2_partial.dl7',
+                Rows, Runtime, Diagnostics),
+    rank_pairs(Rows, key_rank, 1, 2, KeyRanks),
+    rank_pairs(Rows, pick_rank, 2, 3, PickRanks),
+    rank_pairs(Rows, exclude_rank, 2, 3, ExcludeRanks),
+    Runtime = checked_datalog(
+                  _, datalog_program(_, _, RuntimeRules), _, _),
+    named_owner(Rows, curry_unbound, CurryUnbound),
+    named_owner(Rows, curry_predecessor, CurryPredecessor),
+    named_owner(Rows, curry_has_predecessor, CurryHasPredecessor),
+    named_owner(Rows, curry_rank, CurryRank),
+    named_owner(Rows, intersection_edge_candidate, IntersectionEdge),
+    named_owner(Rows, intersection_predecessor, IntersectionPredecessor),
+    named_owner(Rows, intersection_has_predecessor,
+                IntersectionHasPredecessor),
+    named_owner(Rows, intersection_rank, IntersectionRank),
+    include(rule_head_is_one_of(
+                [ CurryPredecessor, CurryHasPredecessor, CurryRank,
+                  IntersectionPredecessor, IntersectionHasPredecessor,
+                  IntersectionRank
+                ]),
+            RuntimeRules, OrderingRules),
+    OrderingSeeds =
+        [ call(ref(CurryUnbound),
+               [ref(source), ref(curry_result), const(a), ref(type),
+                const(0)]),
+          call(ref(CurryUnbound),
+               [ref(source), ref(curry_result), const(c), ref(type),
+                const(2)]),
+          call(ref(IntersectionEdge),
+               [ ref(left), ref(right), const("left"), const(a), ref(type),
+                 const(0)
+               ]),
+          call(ref(IntersectionEdge),
+               [ ref(left), ref(right), const("left"), const(c), ref(type),
+                 const(2)
+               ]),
+          call(ref(IntersectionEdge),
+               [ ref(left), ref(right), const("right"), const(b), ref(type),
+                 const(1)
+               ]),
+          call(ref(IntersectionEdge),
+               [ ref(left), ref(right), const("right"), const(d), ref(type),
+                 const(3)
+               ])
+        ],
+    evaluate(OrderingRules, OrderingSeeds,
+             OrderingClosure, OrderingDiagnostics),
+    findall(SourceIndex-ResultIndex,
+            member(call(ref(CurryRank),
+                        [ ref(curry_result), const(SourceIndex),
+                          const(ResultIndex)
+                        ]),
+                   OrderingClosure),
+            CurryRanks),
+    findall(Side-SourceIndex-ResultIndex,
+            member(call(ref(IntersectionRank),
+                        [ ref(left), ref(right), const(Side),
+                          const(SourceIndex), const(ResultIndex)
+                        ]),
+                   OrderingClosure),
+            IntersectionRanks),
+    Observed = ordering_ranks(
+                   diagnostics(Diagnostics, OrderingDiagnostics),
+                   key(KeyRanks), pick(PickRanks), exclude(ExcludeRanks),
+                   curry(CurryRanks), intersection(IntersectionRanks)),
+    Observed == ordering_ranks(
+                    diagnostics([], []),
+                    key([0-0, 2-1]),
+                    pick([0-0, 1-1]),
+                    exclude([1-0]),
+                    curry([0-0, 2-1]),
+                    intersection(
+                        [ "left"-0-0,
+                          "left"-2-1,
+                          "right"-1-2,
+                          "right"-3-3
+                        ])).
 
 test(host_declaration_closes_to_graph_rows_and_runtime_boundary) :-
     hosted_relation_receipt(Observed),
@@ -2104,42 +2184,135 @@ test(cons_constructs_deconstructs_and_stops_at_the_empty_tail) :-
                                  cons, [[2], [0, 1]]))])),
     !.
 
-test(checked_edge_indices_expose_adjacent_and_strict_order) :-
-    Text = "(: Empty (*))\n(: Singleton (* (: only int)))\n(: Triple (* (: first int) (: second int) (: third int)))\n(: before (* (: owner type) (: earlier int) (: later int)))\n(<- (before ?Owner ?Earlier ?Later)\n    (predecessor ?Owner ?Earlier ?Later))\n(<- (before ?Owner ?Earlier ?Later)\n    (predecessor ?Owner ?Earlier ?Middle)\n    (before ?Owner ?Middle ?Later))\n",
-    dl7_text_unit(ordered_index, ordered_index_source, Text, Unit,
-                  ReaderDiagnostics),
-    compile_unit(Unit,
-                 compiled_unit(_, RuntimeProgram, CompilerRows),
-                 CompilerDiagnostics),
-    named_owner(CompilerRows, 'Empty', Empty),
-    named_owner(CompilerRows, 'Singleton', Singleton),
-    named_owner(CompilerRows, 'Triple', Triple),
-    named_owner(CompilerRows, before, Before),
-    relation_pairs(CompilerRows, ref(kernel(predecessor)), Empty,
-                   EmptyPairs),
-    relation_pairs(CompilerRows, ref(kernel(predecessor)), Singleton,
-                   SingletonPairs),
-    relation_pairs(CompilerRows, ref(kernel(predecessor)), Triple,
-                   AdjacentPairs),
-    relation_pairs(CompilerRows, ref(Before), Triple, StrictPairs),
-    runtime_predecessor_snapshot(RuntimeProgram, Triple, RuntimeSnapshot),
-    Observed = ordered_index_result(
-                   diagnostics(ReaderDiagnostics, CompilerDiagnostics),
-                   empty(EmptyPairs),
-                   singleton(SingletonPairs),
-                   triple(adjacent(AdjacentPairs), strict(StrictPairs)),
-                   RuntimeSnapshot),
-    Observed == ordered_index_result(
-                    diagnostics([], []),
-                    empty([]),
-                    singleton([]),
-                    triple(
-                        adjacent([0-1, 1-2]),
-                        strict([0-1, 0-2, 1-2])),
-                    runtime(
-                        keys([[0, 1], [0, 2]]),
-                        ordered_seeds([0-1, 1-2]))),
-    !.
+test(int_lt_positive_and_grounded_negative_are_exact) :-
+    Rules =
+        [ rule(call(ref(positive_true), [const(ok)]),
+               [checked_goal(
+                    positive,
+                    call(ref(kernel(int_lt)), [const(2), const(5)]))]),
+          rule(call(ref(positive_false), [const(no)]),
+               [checked_goal(
+                    positive,
+                    call(ref(kernel(int_lt)), [const(5), const(2)]))]),
+          rule(call(ref(negative_true), [const(ok)]),
+               [checked_goal(
+                    negative,
+                    call(ref(kernel(int_lt)), [const(5), const(2)]))]),
+          rule(call(ref(negative_false), [const(no)]),
+               [checked_goal(
+                    negative,
+                    call(ref(kernel(int_lt)), [const(2), const(5)]))])
+        ],
+    evaluate(Rules, [], Closure, Diagnostics),
+    findall(success,
+            dl7_evaluator:kernel_int_lt_call(
+                call(ref(kernel(int_lt)), [const(2), const(5)])),
+            Successes),
+    findall(success,
+            dl7_evaluator:kernel_int_lt_call(
+                call(ref(kernel(int_lt)), [const(5), const(2)])),
+            Failures),
+    Observed = int_lt_result(Diagnostics, Closure,
+                             positive_solutions(Successes, Failures)),
+    Observed == int_lt_result(
+                    [],
+                    [ call(ref(negative_true), [const(ok)]),
+                      call(ref(positive_true), [const(ok)]),
+                      call(ref(kernel(nil)), [const([])])
+                    ],
+                    positive_solutions([success], [])).
+
+test(int_lt_modes_and_integer_arguments_are_checked_exactly) :-
+    Underbound = checked_goal(
+                     positive,
+                     call(ref(kernel(int_lt)), [var(left), const(5)])),
+    NonInteger = checked_goal(
+                     positive,
+                     call(ref(kernel(int_lt)), [const("2"), const(5)])),
+    GroundNegative = checked_goal(
+                         negative,
+                         call(ref(kernel(int_lt)),
+                              [const(5), const(2)])),
+    check_goal_sequence([Underbound], [], UnderboundBound,
+                        UnderboundDiagnostics),
+    check_goal_sequence([NonInteger], [], NonIntegerBound,
+                        NonIntegerDiagnostics),
+    check_goal_sequence([GroundNegative], [], NegativeBound,
+                        NegativeDiagnostics),
+    Observed = int_lt_checks(
+                   underbound(UnderboundBound, UnderboundDiagnostics),
+                   non_integer(NonIntegerBound, NonIntegerDiagnostics),
+                   grounded_negative(NegativeBound, NegativeDiagnostics)),
+    Observed == int_lt_checks(
+                    underbound(
+                        [],
+                        [diagnostic(
+                             check, none,
+                             underconstrained_kernel_goal(
+                                 int_lt, [[0, 1]]))]),
+                    non_integer(
+                        [],
+                        [diagnostic(
+                             check, none,
+                             kernel_argument_type_mismatch(
+                                 int_lt, 0, int, const("2")))]),
+                    grounded_negative([], [])).
+
+test(kernel_inventory_replaces_predecessor_with_int_lt) :-
+    findall(Name-Arity, dl7_lowerer:kernel_relation(Name, Arity),
+            Inventory),
+    dl7_checker:kernel_relation_rows(Relations),
+    dl7_checker:kernel_graph(Nodes, Edges),
+    include(int_lt_kernel_node, Nodes, IntLtNodes),
+    include(int_lt_kernel_edge, Edges, IntLtEdges),
+    Observed = kernel_inventory(
+                   Inventory,
+                   relation_rows(Relations),
+                   graph(IntLtNodes, IntLtEdges)),
+    Observed == kernel_inventory(
+                    [ node-1,
+                      module-1,
+                      product-1,
+                      sum-1,
+                      ':'-4,
+                      edge_snapshot-4,
+                      nil-1,
+                      cons-3,
+                      edge_ref-3,
+                      intern-3,
+                      intern_snapshot-3,
+                      int_lt-2,
+                      def-2,
+                      head-2,
+                      body-4
+                    ],
+                    relation_rows(
+                        [ relation(ref(kernel(node)), 1, []),
+                          relation(ref(kernel(module)), 1, []),
+                          relation(ref(kernel(product)), 1, []),
+                          relation(ref(kernel(sum)), 1, []),
+                          relation(ref(kernel(':')), 4,
+                                   [[0, 1], [0, 3]]),
+                          relation(ref(kernel(edge_snapshot)), 4,
+                                   [[0, 1], [0, 3]]),
+                          relation(ref(kernel(nil)), 1, [[0]]),
+                          relation(ref(kernel(cons)), 3, [[0, 1], [2]]),
+                          relation(ref(kernel(edge_ref)), 3, [[0, 1]]),
+                          relation(ref(kernel(intern)), 3, [[0, 1]]),
+                          relation(ref(kernel(intern_snapshot)), 3,
+                                   [[0, 1]]),
+                          relation(ref(kernel(int_lt)), 2, [[0, 1]]),
+                          relation(ref(kernel(def)), 2, [[0]]),
+                          relation(ref(kernel(head)), 2, [[0]]),
+                          relation(ref(kernel(body)), 4, [[0, 1]])
+                        ]),
+                    graph(
+                        [node(kernel(int_lt)), product(kernel(int_lt))],
+                        [ ':'(kernel(int_lt), left,
+                              ref(primitive(int)), 0),
+                          ':'(kernel(int_lt), right,
+                              ref(primitive(int)), 1)
+                        ])).
 
 test(prefix_negation_is_safe_stratified_and_cleanup_scoped) :-
     anti_join_receipt(AntiJoin),
@@ -2494,7 +2667,7 @@ runtime_key_snapshot(
          nil(NilKeys), cons(ConsKeys), edge_ref(EdgeRefKeys),
          intern(InternKeys),
          intern_snapshot(InternSnapshotKeys),
-         predecessor(PredecessorKeys), def(DefKeys), head(HeadKeys),
+         int_lt(IntLtKeys), def(DefKeys), head(HeadKeys),
          body(BodyKeys))) :-
     memberchk(relation(ref(kernel(':')), 4, ColonKeys), Relations),
     memberchk(relation(ref(kernel(edge_snapshot)), 4, SnapshotKeys),
@@ -2505,8 +2678,7 @@ runtime_key_snapshot(
     memberchk(relation(ref(kernel(intern)), 3, InternKeys), Relations),
     memberchk(relation(ref(kernel(intern_snapshot)), 3,
                        InternSnapshotKeys), Relations),
-    memberchk(relation(ref(kernel(predecessor)), 3, PredecessorKeys),
-              Relations),
+    memberchk(relation(ref(kernel(int_lt)), 2, IntLtKeys), Relations),
     memberchk(relation(ref(kernel(def)), 2, DefKeys), Relations),
     memberchk(relation(ref(kernel(head)), 2, HeadKeys), Relations),
     memberchk(relation(ref(kernel(body)), 4, BodyKeys), Relations).
@@ -2765,19 +2937,22 @@ is_program_stratum(program_stratum(_, _)).
 length_is(Expected, List) :-
     length(List, Expected).
 
-relation_pairs(Rows, Relation, Owner, Pairs) :-
-    findall(Earlier-Later,
-            member(call(Relation,
-                        [ref(Owner), const(Earlier), const(Later)]),
-                   Rows),
+rank_pairs(Rows, Name, SourcePosition, ResultPosition, Pairs) :-
+    named_owner(Rows, Name, Relation),
+    findall(SourceIndex-ResultIndex,
+            ( member(call(ref(Relation), Arguments), Rows),
+              nth0(SourcePosition, Arguments, const(SourceIndex)),
+              nth0(ResultPosition, Arguments, const(ResultIndex))
+            ),
             Pairs).
 
-runtime_predecessor_snapshot(
-    checked_datalog(_, datalog_program(Relations, Seeds, _), _, _),
-    Owner,
-    runtime(keys(Keys), ordered_seeds(Pairs))) :-
-    memberchk(relation(ref(kernel(predecessor)), 3, Keys), Relations),
-    relation_pairs(Seeds, ref(kernel(predecessor)), Owner, Pairs).
+rule_head_is_one_of(Identities, rule(call(ref(Identity), _), _)) :-
+    memberchk(Identity, Identities).
+
+int_lt_kernel_node(node(kernel(int_lt))).
+int_lt_kernel_node(product(kernel(int_lt))).
+
+int_lt_kernel_edge(':'(kernel(int_lt), _, _, _)).
 
 normalized_program(Relations, Seeds, Rules, Depends, Strata) :-
     maplist(normalized_relation, Relations),

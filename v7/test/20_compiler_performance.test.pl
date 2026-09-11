@@ -20,11 +20,11 @@ partial_profile(Profile) :-
 % inclusive: the value equal to the budget passes and budget+1 fails.
 test(nearest_shadow_cold_boundaries) :-
     nearest_shadow_profile(Profile),
-    ColdAt = measurement(3000, 16000000, 14586, 0, 0, 0, []),
-    Warm = measurement(1, 2148, 14586, 0, 0, 0, []),
+    ColdAt = measurement(3000, 16000000, 790, 0, 0, 0, []),
+    Warm = measurement(1, 2148, 790, 0, 0, 0, []),
     profile_failures(Profile, ColdAt, Warm, 0, out, out, AtFailures),
     AtFailures == [],
-    ColdOver = measurement(3001, 16000001, 14586, 0, 0, 0, []),
+    ColdOver = measurement(3001, 16000001, 790, 0, 0, 0, []),
     profile_failures(Profile, ColdOver, Warm, 0, out, out, OverFailures),
     OverFailures == [ cold_wall_budget(3001, 3000),
                       cold_inference_budget(16000001, 16000000)
@@ -32,26 +32,26 @@ test(nearest_shadow_cold_boundaries) :-
 
 test(nearest_shadow_row_and_diagnostic_boundaries) :-
     nearest_shadow_profile(Profile),
-    Cold = measurement(1, 1, 14586, 0, 0, 0, []),
-    Warm = measurement(1, 1, 14586, 0, 0, 0, []),
+    Cold = measurement(1, 1, 790, 0, 0, 0, []),
+    Warm = measurement(1, 1, 790, 0, 0, 0, []),
     profile_failures(Profile, Cold, Warm, 0, out, out, []),
-    WrongRows = measurement(1, 1, 14587, 0, 0, 0, []),
+    WrongRows = measurement(1, 1, 791, 0, 0, 0, []),
     profile_failures(Profile, WrongRows, Warm, 0, out, out,
-                     [compiler_row_checkpoint(14587, 14586)]),
+                     [compiler_row_checkpoint(791, 790)]),
     Diagnostic = diagnostic(evaluate, none, probe),
-    BadCold = measurement(1, 1, 14586, 0, 0, 0, [Diagnostic]),
+    BadCold = measurement(1, 1, 790, 0, 0, 0, [Diagnostic]),
     profile_failures(Profile, BadCold, Warm, 0, out, out,
                      [cold_diagnostics([Diagnostic])]),
-    BadWarm = measurement(1, 1, 14586, 0, 0, 0, [Diagnostic]),
+    BadWarm = measurement(1, 1, 790, 0, 0, 0, [Diagnostic]),
     profile_failures(Profile, Cold, BadWarm, 0, out, out,
                      [warm_diagnostics([Diagnostic])]).
 
 test(nearest_shadow_warm_boundaries_and_output_parity) :-
     nearest_shadow_profile(Profile),
-    Cold = measurement(1, 1, 14586, 0, 0, 0, []),
-    WarmAt = measurement(1, 5000, 14586, 0, 0, 0, []),
+    Cold = measurement(1, 1, 790, 0, 0, 0, []),
+    WarmAt = measurement(1, 5000, 790, 0, 0, 0, []),
     profile_failures(Profile, Cold, WarmAt, 0, out, out, []),
-    WarmOver = measurement(1, 5001, 14586, 0, 0, 0, []),
+    WarmOver = measurement(1, 5001, 790, 0, 0, 0, []),
     profile_failures(Profile, Cold, WarmOver, 0, out, out,
                      [warm_inference_budget(5001, 5000)]),
     profile_failures(Profile, Cold, WarmAt, 0, out(cold), out(warm),
@@ -74,8 +74,8 @@ test(partial_boundaries) :-
 % within-budget case to zero. No compile, no sleep.
 test(over_budget_measurements_exit_nonzero) :-
     nearest_shadow_profile(Profile),
-    Cold = measurement(9999, 99999999, 14586, 0, 0, 0, []),
-    Warm = measurement(1, 2148, 14586, 0, 0, 0, []),
+    Cold = measurement(9999, 99999999, 790, 0, 0, 0, []),
+    Warm = measurement(1, 2148, 790, 0, 0, 0, []),
     profile_failures(Profile, Cold, Warm, 0, out, out, Failures),
     Failures \== [],
     performance_exit_code(Failures, Code),
@@ -83,8 +83,8 @@ test(over_budget_measurements_exit_nonzero) :-
 
 test(within_budget_measurements_exit_zero) :-
     nearest_shadow_profile(Profile),
-    Cold = measurement(1, 1, 14586, 0, 0, 0, []),
-    Warm = measurement(1, 1, 14586, 0, 0, 0, []),
+    Cold = measurement(1, 1, 790, 0, 0, 0, []),
+    Warm = measurement(1, 1, 790, 0, 0, 0, []),
     profile_failures(Profile, Cold, Warm, 0, out, out, []),
     performance_exit_code([], 0).
 
@@ -97,8 +97,8 @@ test(over_budget_subprocess_exits_nonzero) :-
     format(string(Goal),
            "use_module(~q),\c
             fixture_profile('v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7', P),\c
-            profile_failures(P, measurement(9999,99999999,14586,0,0,0,[]),\c
-                             measurement(1,2148,14586,0,0,0,[]), 0, out, out, F),\c
+            profile_failures(P, measurement(9999,99999999,790,0,0,0,[]),\c
+                             measurement(1,2148,790,0,0,0,[]), 0, out, out, F),\c
             performance_exit_code(F, C), halt(C)", [BenchPath]),
     process_create(
         path(swipl),

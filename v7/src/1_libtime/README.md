@@ -15,9 +15,7 @@ already-checked DL7 program, converts syntax graph rows to evaluator calls, and
 reads macro claims and `expansion` edges from the closure. It slices that
 program to claim writers, syntax constructors, `item` and `expansion` edge
 writers, and their non-input helper dependency cone before evaluation.
-Predecessor rows are derived from the active syntax `item` edges for that
-round. Retained compiler predecessor seeds from the macro program are excluded
-from macrotime.
+Ordinal comparisons in macro rules use the kernel `int_lt/2` predicate.
 `0b_syntax_rewriter.pl` applies those claims to the active top-level and nested
 item sequences. `1_syntax_expander.pl` owns repeated rounds and termination.
 
@@ -58,10 +56,10 @@ path for a macro library. Project-authored macro imports remain to be derived
 from module graph edges.
 
 The standard-library cache retains the sliced checked program rather than its
-complete compiler prelude and compiler rows. Its source defines its ordinal
-closure over the kernel `predecessor` relation, so bootstrap compilation needs
-only the kernel relation set. Claim rules with the exact shape “form item zero
-has literal atom Name” form a dispatch index. When every claim writer has that
-shape and the active graph contains none of those names, expansion returns the
-input graph exactly without evaluator closure. A general claim rule makes the
-dispatch result unknown and retains the full evaluation path.
+complete compiler prelude and compiler rows. Its source compares ordinals with
+the kernel `int_lt/2` predicate, so bootstrap compilation needs only the kernel
+relation set. Claim rules with the exact shape “form item zero has literal atom
+Name” form a dispatch index. When every claim writer has that shape and the
+active graph contains none of those names, expansion returns the input graph
+exactly without evaluator closure. A general claim rule makes the dispatch
+result unknown and retains the full evaluation path.

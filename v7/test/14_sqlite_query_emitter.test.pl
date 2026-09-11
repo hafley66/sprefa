@@ -132,6 +132,59 @@ test(connected_body_reordering_and_rule_union_are_explicit, [nondet]) :-
     get_dict(rules, Artifact,
              [_{rule:0, sql:_}, _{rule:1, sql:_}]).
 
+test(int_lt_lowers_to_native_positive_and_negative_sql, [nondet]) :-
+    boundary_runtime(
+        [rule(call(ref(output), [var(value)]),
+              [ checked_goal(positive,
+                             call(ref(input), [var(value)])),
+                checked_goal(positive,
+                             call(ref(kernel(int_lt)),
+                                  [var(value), const(5)]))
+              ])],
+        [], PositiveRuntime),
+    boundary_runtime(
+        [rule(call(ref(output), [var(value)]),
+              [ checked_goal(positive,
+                             call(ref(input), [var(value)])),
+                checked_goal(negative,
+                             call(ref(kernel(int_lt)),
+                                  [var(value), const(5)]))
+              ])],
+        [], NegativeRuntime),
+    boundary_runtime(
+        [rule(call(ref(output), [const(1)]),
+              [checked_goal(positive,
+                            call(ref(kernel(int_lt)),
+                                 [const(2), const(5)]))])],
+        [], ConstantRuntime),
+    basic_layout(Layout),
+    emit_sqlite_query(
+        compiled_unit([], PositiveRuntime, []), Layout,
+        PositiveArtifact, PositiveDiagnostics),
+    emit_sqlite_query(
+        compiled_unit([], NegativeRuntime, []), Layout,
+        NegativeArtifact, NegativeDiagnostics),
+    emit_sqlite_query(
+        compiled_unit([], ConstantRuntime, []), Layout,
+        ConstantArtifact, ConstantDiagnostics),
+    Observed = sqlite_int_lt(
+                   positive(PositiveDiagnostics,
+                            PositiveArtifact.select_sql),
+                   negative(NegativeDiagnostics,
+                            NegativeArtifact.select_sql),
+                   constant(ConstantDiagnostics,
+                            ConstantArtifact.select_sql)),
+    Observed == sqlite_int_lt(
+                    positive(
+                        [],
+                        "SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" < 5"),
+                    negative(
+                        [],
+                        "SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" >= 5"),
+                    constant(
+                        [],
+                        "SELECT DISTINCT 1 AS \"value\" WHERE 2 < 5")).
+
 test(unsupported_program_and_layout_shapes_are_rejected) :-
     boundary_runtime(
         [rule(call(ref(output), [aggregate(count, var(value))]),
