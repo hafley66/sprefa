@@ -17,6 +17,7 @@ the existing inference budgets.
 8. [Tests and CI coverage](#8-tests-and-ci-coverage)
 9. [Changed files](#9-changed-files)
 10. [Method and scope](#10-method-and-scope)
+11. [Correction: instrumentation gated by compile scope](#11-correction-instrumentation-gated-by-compile-scope)
 
 ## 1. Change
 
@@ -169,7 +170,7 @@ worklist and memo helpers; no budget moved.
 
 ## 8. Tests and CI coverage
 
-`v7/test/3_compiler_trace.test.pl` gained eleven deterministic cases and the
+`v7/test/3_compiler_trace.test.pl` gained twelve deterministic cases and the
 tracer subprocess helper `debug_compile_probe/1`; three pre-existing cases are
 unchanged.
 
@@ -177,6 +178,7 @@ unchanged.
 | --- | --- |
 | `debug_mode_emits_structured_events_in_order` | exact event-name order `scope_enter, phase_begin, step_begin, step_end, phase_end, custom`; `step_end` `outcome=success`, `rows=3` |
 | `debug_events_require_an_active_compile_trace` | env alone, no `with_compile_trace`, zero debug rows |
+| `debug_step_outside_trace_runs_goal_but_skips_metrics_and_events` | `DL7_TRACE=debug`, no `with_compile_trace`: goal runs, counter-backed MetricsGoal called 0 times, 0 debug rows |
 | `off_mode_records_no_debug_events` | off trace, collected events `[]` |
 | `debug_row_samples_are_bounded_and_opt_in` | limit 2: `total=5 shown=2 omitted=3`, `rows=none`; `DL7_TRACE_ROWS=all`: `total=5 shown=5 omitted=0`, `rows=[a,b,c,d,e]` |
 | `debug_histograms_are_bounded_and_opt_in` | limit 3: `total=5 shown=3 omitted=2`, 3 pairs; `all`: `total=5 shown=5 omitted=0`, 5 pairs |
@@ -192,14 +194,14 @@ under 0.5 s):
 
 | suite | result |
 | --- | --- |
-| `v7/test/3_compiler_trace.test.pl` | 14 pass (max 0.22 s) |
+| `v7/test/3_compiler_trace.test.pl` | 15 pass (max 0.22 s) |
 | `v7/test/18_binding_symmetry.test.pl` | 16 pass |
 | `v7/test/19_lexical_binding.test.pl` | 10 pass |
 | `v7/test/20_compiler_performance.test.pl` | 17 pass |
 | `1_entrypoints` memo + evaluator trace subset | 12 pass |
 | nearest-shadow perf gate (bench CLI) | exit 0, within budgets |
 
-Coverage change: adds 11 tracer test cases and one subprocess compile-probe
+Coverage change: adds 12 tracer test cases and one subprocess compile-probe
 helper. No test removed or changed. No performance budget moved or weakened. No
 workflow file changed.
 
@@ -225,3 +227,45 @@ files that count relations/diagnostics.
   the embedded `file(...)` term cannot differ.
 - Bench: `swipl -q -s v7/bench/0_compiler_performance.pl -g main -t halt -- <fixture>`.
 - Every command ran under `timeout 60` or less; one `swipl` process at a time.
+
+## 11. Correction: instrumentation gated by compile scope
+
+Two gates were too weak and did work outside an active compile trace. Both are
+corrected in place; the schema, event set, and inside-scope behavior are
+unchanged.
+
+1. `run_compile_step/4` selected its debug wrapper with `compile_trace_mode(debug)`
+   (`v7/src/2_comptime/1b_compiler_tracer.pl`). That only reads the mode, so
+   `DL7_TRACE=debug` outside `with_compile_trace/2` still entered
+   `run_debug_step/4`, called `MetricsGoal`, and emitted no rows but ran the
+   metrics callback. The branch is now gated on `debug_trace_on/0`, which
+   requires both an active compile trace and debug mode: outside a trace the
+   Goal is called directly, `MetricsGoal` is never called, and no event is
+   recorded. Inside a trace the two predicates agree, so traced behavior is
+   identical.
+
+2. `debug_reset_worklist_counters/0` and `debug_worklist_counters/2`
+   (`v7/src/1_libtime/0_evaluator.pl`) unconditionally retracted and read the
+   thread-local visit/change counters, so trace-off stratification still did
+   counter retract/read work. Both now gate their state operations on
+   `debug_trace_on/0`; trace off performs no counter retract, assert, or read.
+   Debug-mode visit/change values are preserved: the counters are still reset
+   before `calc_stratification_body/4` and read after it whenever the trace is
+   active.
+
+Fresh results, one `swipl` process at a time, each command capped at 20 s:
+
+| check | result |
+| --- | --- |
+| `v7/test/3_compiler_trace.test.pl` | 15 pass (max 0.22 s) |
+| nearest-shadow trace off, `0_compiler_performance.pl` | `rows=810`, diagnostics cold `[]` warm `[]` |
+| nearest-shadow trace-off inferences | cold 3,136,024 / budget 16,000,000; warm 2,233 / budget 5,000 |
+| nearest-shadow `DL7_TRACE=debug` | `event=stratification_result ... worklist_visits=11 level_changes=0` |
+| `git diff --check` | clean (exit 0) |
+
+No budget moved. Cold inferences are 3,136,024 against the base 3,135,832
+(`+192`); the delta is the two added off-path `debug_trace_on/0` guard calls in
+`calc_stratification/4`, the same category of check section 7 already records,
+and no counter state is touched trace off. The new deterministic case
+`debug_step_outside_trace_runs_goal_but_skips_metrics_and_events` uses a
+`flag/3`-backed MetricsGoal and asserts `Calls == 0` and `DebugRows == 0`.

@@ -179,6 +179,22 @@ test(debug_events_require_an_active_compile_trace) :-
                       DebugRows))),
     DebugRows == 0.
 
+debug_counting_metrics(Metrics) :-
+    flag(debug_metric_calls, Calls, Calls + 1),
+    Metrics = [].
+
+test(debug_step_outside_trace_runs_goal_but_skips_metrics_and_events) :-
+    with_dl7_trace('debug', (
+        reset_compile_trace,
+        flag(debug_metric_calls, _, 0),
+        run_compile_step(comptime, outside_trace, true, debug_counting_metrics),
+        flag(debug_metric_calls, Calls, Calls),
+        aggregate_all(count,
+                      dl7_compiler_tracer:compile_debug_row(_, _),
+                      DebugRows))),
+    Calls == 0,
+    DebugRows == 0.
+
 test(off_mode_records_no_debug_events) :-
     with_dl7_trace('off', (
         with_compile_trace(debug_off_probe, (
