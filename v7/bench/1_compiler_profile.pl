@@ -1,18 +1,22 @@
-% DL7 deterministic compiler flamechart and duplicate-work report.
+% DL7 deterministic compiler flamechart, timing, and duplicate-work report.
 %
 % One bounded process compiles one fixture inside a profile scope, then writes
-% five artifacts in reading order:
+% six artifacts in reading order:
 %
 %   0_profile.json    structured span tree plus the duplicate-work report
 %   1_folded.txt      folded stacks, deterministic inference self-weights
 %   2_duplicates.tsv  per-category occurrence duplication
-%   3_flamechart.html self-contained viewer, embeds 0_profile.json verbatim
+%   3_flamechart.html self-contained viewer, embeds 0_profile.json plus
+%                     the run-specific 5_timing.json, shows wall and inference
 %   4_summary.txt     human-readable denominator and formula
+%   5_timing.json     run-specific: total and per-span wall_ms + wall_percent
 %
 % Deterministic width is the inference count the compiler tracer already
 % measures per phase and step; a fresh-process comparison showed inference
-% counts byte-stable while wall milliseconds are not. Wall time is written to
-% stderr only, so every generated artifact remains byte-stable.
+% counts byte-stable while wall milliseconds are not. Structural and inference
+% artifacts (0/1/2/4) carry no wall and stay byte-stable across processes; the
+% run-specific wall measurements live only in 5_timing.json and the HTML that
+% embeds it.
 %
 % Diagnostic instrumentation only: no compiler, graph, evaluator, or IR
 % semantics change.
@@ -140,9 +144,10 @@ compile_stage(Fixture, Rows, Diagnostics) :-
 
 %% report_stage(+Fixture, +OutputDirectory, +Rows, +Diagnostics) is semidet.
 %
-% All five artifacts are deterministic: wall is reported only to stderr, and
-% every displayed path is rendered against the repository root so a different
-% checkout prefix yields identical bytes.
+% Structural and inference artifacts (0/1/2/4) are deterministic: no wall is
+% written to them, and every displayed path is rendered against the repository
+% root so a different checkout prefix yields identical bytes. Wall measurements
+% are isolated in the run-specific 5_timing.json and the HTML that embeds it.
 report_stage(Fixture, OutputDirectory, Rows, Diagnostics) :-
     latest_compile_trace(Program, _Phases, _Steps, TotalMeasurement),
     TotalMeasurement = measurement(TotalWall, _, TotalInferences, _, _, _, _,
@@ -168,7 +173,10 @@ report_stage(Fixture, OutputDirectory, Rows, Diagnostics) :-
     summary_text(DisplayFixture, TotalInferences, CompilerRows, DuplicateReport,
                  SummaryText),
     write_text_file(OutputDirectory, '4_summary.txt', SummaryText),
-    html_text(DisplayFixture, JsonText, Spans, HtmlText),
+    timing_dict(DisplayFixture, TotalWall, Spans, TimingDict),
+    timing_json_text(TimingDict, TimingJsonText),
+    write_text_file(OutputDirectory, '5_timing.json', TimingJsonText),
+    html_text(DisplayFixture, JsonText, TimingJsonText, Spans, HtmlText),
     write_text_file(OutputDirectory, '3_flamechart.html', HtmlText),
     format(user_error, 'DL7-PROFILE-WALL total_wall_ms=~w~n', [TotalWall]).
 
@@ -678,6 +686,91 @@ deterministic_profile_text(Dict, Text) :-
 wall_pair(Key-_) :-
     memberchk(Key, [wall_observations, total_wall_ms]).
 
+%% ------------------------------------------------------------------
+%% Run-specific timing artifact
+%% ------------------------------------------------------------------
+%
+% Wall milliseconds are measured by the tracer but are not byte-stable across
+% processes, so they never enter the deterministic JSON. This section isolates
+% them in 5_timing.json: total wall plus one entry per span with wall_ms and
+% wall_percent (wall_ms / total_wall_ms * 100). The HTML embeds the same text
+% so the default view shows the cost center and numeric milliseconds.
+
+%% timing_dict(+Fixture, +TotalWallMs, +Spans, -Dict) is det.
+timing_dict(Fixture, TotalWall, Spans, Dict) :-
+    findall(SpanTiming,
+            ( member(Span, Spans), timing_span(TotalWall, Span, SpanTiming) ),
+            SpanTimings),
+    cost_center_entry(TotalWall, Spans, CostCenter),
+    Dict = _{ run_specific: true,
+              wall_metric: milliseconds,
+              fixture: Fixture,
+              total_wall_ms: TotalWall,
+              cost_center: CostCenter,
+              spans: SpanTimings }.
+
+timing_span(TotalWall, Span, Dict) :-
+    span_id(Span, Id),
+    span_label(Span, Label),
+    span_width(Span, Width),
+    span_wall(Span, Wall),
+    Span = span(_, _, _, _, Category, Depth, _, _, _),
+    wall_percent(TotalWall, Wall, WallPercent),
+    Dict = _{ id: Id,
+              label: Label,
+              category: Category,
+              depth: Depth,
+              wall_ms: Wall,
+              wall_percent: WallPercent,
+              inferences: Width }.
+
+%% wall_percent(+TotalWallMs, +WallMs, -Percent) is det.
+%
+% Percent is rounded to two decimals; a zero total yields 0.0 rather than a
+% division by zero.
+wall_percent(TotalWall, _, 0.0) :-
+    TotalWall =:= 0,
+    !.
+wall_percent(TotalWall, Wall, Percent) :-
+    Raw is Wall * 100.0 / TotalWall,
+    Percent is round(Raw * 100) / 100.0.
+
+%% cost_center_entry(+TotalWallMs, +Spans, -Entry) is det.
+%
+% The cost center is the non-root span with the largest wall. Spans arrive in
+% pre-order by opening sequence, so the first maximum wins ties deterministically.
+cost_center_entry(TotalWall, Spans, Entry) :-
+    exclude(root_span, Spans, Children),
+    (   Children = [First | Rest]
+    ->  max_wall_span(Rest, First, Best),
+        span_id(Best, Id),
+        span_label(Best, Label),
+        span_width(Best, Width),
+        span_wall(Best, Wall),
+        wall_percent(TotalWall, Wall, WallPercent),
+        Entry = _{ id: Id, label: Label, wall_ms: Wall,
+                   wall_percent: WallPercent, inferences: Width }
+    ;   Entry = null
+    ).
+
+root_span(Span) :-
+    span_parent(Span, none).
+
+max_wall_span([], Best, Best).
+max_wall_span([Span | Rest], Best0, Best) :-
+    span_wall(Span, Wall),
+    span_wall(Best0, BestWall),
+    (   Wall > BestWall
+    ->  max_wall_span(Rest, Span, Best)
+    ;   max_wall_span(Rest, Best0, Best)
+    ).
+
+%% timing_json_text(+Dict, -Text) is det.
+timing_json_text(Dict, Text) :-
+    with_output_to(string(Body),
+                   json_write_dict(current_output, Dict, [width(0)])),
+    string_concat(Body, "\n", Text).
+
 duplicate_tsv_text(Report, Text) :-
     get_dict(categories, Report, Entries),
     get_dict(overall, Report, Overall),
@@ -751,12 +844,13 @@ summary_text(Fixture, TotalInferences, CompilerRows, Report, Text) :-
           format('deterministic width metric: inferences~n', []),
           format('compiler rows: ~w~n', [CompilerRows]),
           format('total inferences: ~w~n', [TotalInferences]),
+          format('wall metric: milliseconds (run-specific; see 5_timing.json)~n', []),
           nl,
-          format('duplicate-work denominator: sum of occurrence counts across categories~n', []),
-          format('duplicate-work formula: duplicate_percent = duplicate_occurrences / total_occurrences * 100~n', []),
-          format('overall: total=~w unique=~w duplicate=~w percent=~2f~n',
+          format('duplicate occurrences denominator: sum of occurrence counts across categories~n', []),
+          format('duplicate occurrences formula: duplicate_percent = duplicate_occurrences / total_occurrences * 100~n', []),
+          format('overall duplicate occurrences: total=~w unique=~w duplicate=~w percent=~2f~n',
                  [Total, Unique, Duplicate, Percent]),
-          format('duplicate_inference_percent: unavailable~n', []),
+          format('duplicate CPU/inference percent: unavailable~n', []),
           nl,
           format('per category:~n', []),
           forall(member(Entry, Entries), summary_entry(Entry)) )).
@@ -777,11 +871,20 @@ summary_top(Entry) :-
     get_dict(identity, Entry, Identity),
     format('    ~wx ~s~n', [Count, Identity]).
 
-html_text(Fixture, JsonText, Spans, Text) :-
+%% html_text(+Fixture, +JsonText, +TimingJsonText, +Spans, -Text) is det.
+%
+% The page carries both the deterministic profile JSON and the run-specific
+% timing JSON. The default view shows the cost center and a metrics table with
+% numeric wall_ms and wall_percent without requiring hover; the flamechart bars
+% repeat the values inline and put the full detail in the tooltip.
+html_text(Fixture, JsonText, TimingJsonText, Spans, Text) :-
     findall(Depth, ( member(S, Spans),
                      S = span(_, _, _, _, _, Depth, _, _, _) ), Depths),
     max_list(Depths, MaxDepth),
     Height is (MaxDepth + 1) * 22,
+    Spans = [RootSpan | _],
+    span_wall(RootSpan, TotalWall),
+    cost_center_text(TotalWall, Spans, CostCenterText),
     with_output_to(
         string(Text),
         ( format('<!DOCTYPE html>~n', []),
@@ -793,27 +896,57 @@ html_text(Fixture, JsonText, Spans, Text) :-
           format('#flamechart{position:relative;height:~wpx;border:1px solid #ccc;background:#fafafa;overflow:auto}~n', [Height]),
           format('.span{position:absolute;height:20px;box-sizing:border-box;border:1px solid #4a6fa5;background:#c9dcf5;font-size:11px;line-height:18px;padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}~n', []),
           format('.span:hover{background:#9fc2ec}~n', []),
-          format('ul#span-list{font-family:ui-monospace,monospace;font-size:12px}~n', []),
+          format('.span.cost-center{border-color:#b5560a;background:#f5d9a5}~n', []),
+          format('#cost-center{font-weight:600}~n', []),
+          format('table#span-table{border-collapse:collapse;font-family:ui-monospace,monospace;font-size:12px}~n', []),
+          format('table#span-table th,table#span-table td{border:1px solid #ccc;padding:2px 6px;text-align:right}~n', []),
+          format('table#span-table td.label,table#span-table th.label{text-align:left}~n', []),
           format('</style>~n</head>~n<body>~n', []),
           format('<h1>DL7 compiler profile: ~w</h1>~n', [Fixture]),
-          format('<p>Deterministic width metric: inferences. Wall time is metadata only and does not affect ordering.</p>~n', []),
+          format('<p>Width metric: inferences (deterministic). Wall metric: milliseconds (run-specific, this run).</p>~n', []),
+          format('<p id="cost-center">Cost center: ~s</p>~n', [CostCenterText]),
+          format('<p id="duplicate-note">duplicate occurrences: repeated occurrences across recorded collections; duplicate CPU/inference percent: unavailable.</p>~n', []),
           format('<div id="flamechart" role="img" aria-label="DL7 compiler flamechart for ~w"></div>~n', [Fixture]),
-          format('<h2>Spans</h2>~n<ul id="span-list">~n', []),
-          forall(member(Span, Spans), html_span(Span)),
-          format('</ul>~n', []),
+          format('<h2>Span metrics</h2>~n', []),
+          format('<table id="span-table">~n', []),
+          format('<thead><tr><th>id</th><th class="label">label</th><th>category</th><th>depth</th><th>inferences</th><th>wall_ms</th><th>wall_percent</th></tr></thead>~n', []),
+          format('<tbody>~n', []),
+          forall(member(Span, Spans), html_span_row(TotalWall, Span)),
+          format('</tbody>~n', []),
+          format('</table>~n', []),
           format('<script id="profile-data" type="application/json">~s</script>~n', [JsonText]),
+          format('<script id="timing-data" type="application/json">~s</script>~n', [TimingJsonText]),
           html_script(Script),
           format('~s~n', [Script]),
           format('</body>~n</html>~n', []) )).
 
-html_span(Span) :-
+%% cost_center_text(+TotalWallMs, +Spans, -Text) is det.
+cost_center_text(TotalWall, Spans, Text) :-
+    exclude(root_span, Spans, Children),
+    (   Children = [First | Rest]
+    ->  max_wall_span(Rest, First, Best),
+        span_id(Best, Id),
+        span_label(Best, Label),
+        span_width(Best, Width),
+        span_wall(Best, Wall),
+        wall_percent(TotalWall, Wall, WallPercent),
+        format(string(Text),
+               '~w (~w) wall ~w ms (~2f%) over ~w inferences',
+               [Label, Id, Wall, WallPercent, Width])
+    ;   format(string(Text), 'none', [])
+    ).
+
+html_span_row(TotalWall, Span) :-
     span_id(Span, Id),
     span_parent(Span, Parent),
     span_label(Span, Label),
     span_width(Span, Width),
+    span_wall(Span, Wall),
+    wall_percent(TotalWall, Wall, WallPercent),
     Span = span(_, _, _, _, Category, Depth, Start, _, _),
-    format('<li><span class="label" data-id="~w" data-parent="~w" data-category="~w" data-depth="~w" data-start="~w" data-width="~w">~w</span></li>~n',
-           [Id, Parent, Category, Depth, Start, Width, Label]).
+    format('<tr class="label-row" data-id="~w" data-parent="~w" data-category="~w" data-depth="~w" data-start="~w" data-width="~w" data-wall-ms="~w" data-wall-percent="~2f"><td>~w</td><td class="label">~w</td><td>~w</td><td>~w</td><td>~w</td><td>~w</td><td>~2f</td></tr>~n',
+           [Id, Parent, Category, Depth, Start, Width, Wall, WallPercent,
+            Id, Label, Category, Depth, Width, Wall, WallPercent]).
 
 html_script(
-    "<script>\n(function(){\n  var node = document.getElementById('profile-data');\n  var data = JSON.parse(node.textContent);\n  var spans = data.spans || [];\n  var root = spans[0];\n  var scale = root && root.width ? 100 / root.width : 1;\n  var host = document.getElementById('flamechart');\n  spans.forEach(function(s){\n    var bar = document.createElement('div');\n    bar.className = 'span';\n    bar.style.left = (s.start * scale) + '%';\n    bar.style.width = Math.max(0.15, s.width * scale) + '%';\n    bar.style.top = (s.depth * 22) + 'px';\n    bar.title = s.id + ' ' + s.label + ': ' + s.width + ' inferences (' + s.category + ')';\n    bar.textContent = s.label;\n    host.appendChild(bar);\n  });\n})();\n</script>").
+    "<script>\n(function(){\n  var profile = JSON.parse(document.getElementById('profile-data').textContent);\n  var timing = JSON.parse(document.getElementById('timing-data').textContent);\n  var spans = profile.spans || [];\n  var timingById = {};\n  (timing.spans || []).forEach(function(t){ timingById[t.id] = t; });\n  var root = spans[0];\n  var scale = root && root.width ? 100 / root.width : 1;\n  var costId = timing.cost_center ? timing.cost_center.id : null;\n  var host = document.getElementById('flamechart');\n  spans.forEach(function(s){\n    var t = timingById[s.id] || {};\n    var wallMs = (t.wall_ms || 0);\n    var wallPct = (t.wall_percent || 0);\n    var bar = document.createElement('div');\n    bar.className = 'span' + (s.id === costId ? ' cost-center' : '');\n    bar.style.left = (s.start * scale) + '%';\n    bar.style.width = Math.max(0.15, s.width * scale) + '%';\n    bar.style.top = (s.depth * 22) + 'px';\n    bar.title = s.id + ' ' + s.label + ': ' + s.width + ' inferences, ' + wallMs + ' ms (' + wallPct + '%) [' + s.category + ']';\n    bar.textContent = s.label + ' ' + wallMs + 'ms ' + wallPct + '%';\n    host.appendChild(bar);\n  });\n})();\n</script>").
