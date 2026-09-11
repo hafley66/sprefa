@@ -6,6 +6,8 @@
           ]).
 
 :- use_module(library(error), [must_be/2]).
+:- use_module('../1_libtime/00_integer_comparison',
+              [integer_comparison/1]).
 
 %% lower_datalog(+Unit, -Program, -Origins, -Diagnostics) is det.
 %
@@ -1256,8 +1258,8 @@ kernel_slot_label(intern, 2, return).
 kernel_slot_label(intern_snapshot, 0, constructor).
 kernel_slot_label(intern_snapshot, 1, arguments).
 kernel_slot_label(intern_snapshot, 2, return).
-kernel_slot_label(int_lt, 0, left).
-kernel_slot_label(int_lt, 1, right).
+kernel_slot_label(Name, 0, left) :- integer_comparison(Name).
+kernel_slot_label(Name, 1, right) :- integer_comparison(Name).
 
 positions(Arity, Positions) :-
     positions(0, Arity, Positions).
@@ -1490,7 +1492,9 @@ kernel_relation_keys_for_expression(cons, [[0, 1], [2]]).
 kernel_relation_keys_for_expression(edge_ref, [[0, 1]]).
 kernel_relation_keys_for_expression(intern, [[0, 1]]).
 kernel_relation_keys_for_expression(intern_snapshot, [[0, 1]]).
-kernel_relation_keys_for_expression(int_lt, [[0, 1]]).
+kernel_relation_keys_for_expression(Name, [[0, 1]]) :-
+    integer_comparison(Name),
+    !.
 kernel_relation_keys_for_expression(_, []).
 
 lower_expression_call(error(Reason), _, NodeId, _, _, _,
@@ -1833,7 +1837,7 @@ kernel_relation(cons, 3).
 kernel_relation(edge_ref, 3).
 kernel_relation(intern, 3).
 kernel_relation(intern_snapshot, 3).
-kernel_relation(int_lt, 2).
+kernel_relation(Name, 2) :- integer_comparison(Name).
 kernel_relation(def, 2).
 kernel_relation(head, 2).
 kernel_relation(body, 4).

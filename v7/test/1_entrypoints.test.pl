@@ -39,6 +39,8 @@
                 stratify_rules/3,
                 validate_functional_rows/3
               ]).
+:- use_module('../src/1_libtime/00_integer_comparison',
+              [integer_comparison/1]).
 :- use_module('fixtures/1_embedded', []).
 
 test(module_loader_preserves_separate_file_units) :-
@@ -681,14 +683,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 890,
+                    [], [], 910,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(280, 532, 134, 1, 127, 222, 134),
+                    runtime(counts(290, 542, 139, 1, 127, 222, 139),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -2222,6 +2224,22 @@ test(int_lt_positive_and_grounded_negative_are_exact) :-
                     ],
                     positive_solutions([success], [])).
 
+test(integer_comparison_family_positive_and_grounded_negative_are_exact) :-
+    findall(Result,
+            ( integer_comparison_case(Name, TrueLeft, TrueRight,
+                                      FalseLeft, FalseRight),
+              integer_comparison_evaluation(
+                  Name, TrueLeft, TrueRight, FalseLeft, FalseRight,
+                  Result)
+            ),
+            Observed),
+    findall(Expected,
+            ( integer_comparison_case(Name, _, _, _, _),
+              integer_comparison_expected(Name, Expected)
+            ),
+            ExpectedResults),
+    Observed == ExpectedResults.
+
 test(int_lt_modes_and_integer_arguments_are_checked_exactly) :-
     Underbound = checked_goal(
                      positive,
@@ -2258,17 +2276,52 @@ test(int_lt_modes_and_integer_arguments_are_checked_exactly) :-
                                  int_lt, 0, int, const("2")))]),
                     grounded_negative([], [])).
 
-test(kernel_inventory_replaces_predecessor_with_int_lt) :-
+test(integer_comparison_family_modes_and_integer_arguments_are_exact) :-
+    findall(
+        comparison_check(Name, UnderboundDiagnostics,
+                         NonIntegerDiagnostics, NegativeDiagnostics),
+        ( integer_comparison(Name),
+          Underbound = checked_goal(
+                           positive,
+                           call(ref(kernel(Name)),
+                                [var(left), const(5)])),
+          NonInteger = checked_goal(
+                           positive,
+                           call(ref(kernel(Name)),
+                                [const("2"), const(5)])),
+          GroundNegative = checked_goal(
+                               negative,
+                               call(ref(kernel(Name)),
+                                    [const(5), const(2)])),
+          check_goal_sequence([Underbound], [], [], UnderboundDiagnostics),
+          check_goal_sequence([NonInteger], [], [], NonIntegerDiagnostics),
+          check_goal_sequence([GroundNegative], [], [], NegativeDiagnostics)
+        ),
+        Observed),
+    findall(
+        comparison_check(
+            Name,
+            [diagnostic(check, none,
+                        underconstrained_kernel_goal(Name, [[0, 1]]))],
+            [diagnostic(check, none,
+                        kernel_argument_type_mismatch(
+                            Name, 0, int, const("2")))],
+            []),
+        integer_comparison(Name),
+        Expected),
+    Observed == Expected.
+
+test(kernel_inventory_contains_exact_integer_comparison_family) :-
     findall(Name-Arity, dl7_lowerer:kernel_relation(Name, Arity),
             Inventory),
     dl7_checker:kernel_relation_rows(Relations),
     dl7_checker:kernel_graph(Nodes, Edges),
-    include(int_lt_kernel_node, Nodes, IntLtNodes),
-    include(int_lt_kernel_edge, Edges, IntLtEdges),
+    include(integer_comparison_kernel_node, Nodes, ComparisonNodes),
+    include(integer_comparison_kernel_edge, Edges, ComparisonEdges),
     Observed = kernel_inventory(
                    Inventory,
                    relation_rows(Relations),
-                   graph(IntLtNodes, IntLtEdges)),
+                   graph(ComparisonNodes, ComparisonEdges)),
     Observed == kernel_inventory(
                     [ node-1,
                       module-1,
@@ -2282,6 +2335,11 @@ test(kernel_inventory_replaces_predecessor_with_int_lt) :-
                       intern-3,
                       intern_snapshot-3,
                       int_lt-2,
+                      int_le-2,
+                      int_eq-2,
+                      int_ne-2,
+                      int_ge-2,
+                      int_gt-2,
                       def-2,
                       head-2,
                       body-4
@@ -2302,15 +2360,46 @@ test(kernel_inventory_replaces_predecessor_with_int_lt) :-
                           relation(ref(kernel(intern_snapshot)), 3,
                                    [[0, 1]]),
                           relation(ref(kernel(int_lt)), 2, [[0, 1]]),
+                          relation(ref(kernel(int_le)), 2, [[0, 1]]),
+                          relation(ref(kernel(int_eq)), 2, [[0, 1]]),
+                          relation(ref(kernel(int_ne)), 2, [[0, 1]]),
+                          relation(ref(kernel(int_ge)), 2, [[0, 1]]),
+                          relation(ref(kernel(int_gt)), 2, [[0, 1]]),
                           relation(ref(kernel(def)), 2, [[0]]),
                           relation(ref(kernel(head)), 2, [[0]]),
                           relation(ref(kernel(body)), 4, [[0, 1]])
                         ]),
                     graph(
-                        [node(kernel(int_lt)), product(kernel(int_lt))],
+                        [ node(kernel(int_lt)), product(kernel(int_lt)),
+                          node(kernel(int_le)), product(kernel(int_le)),
+                          node(kernel(int_eq)), product(kernel(int_eq)),
+                          node(kernel(int_ne)), product(kernel(int_ne)),
+                          node(kernel(int_ge)), product(kernel(int_ge)),
+                          node(kernel(int_gt)), product(kernel(int_gt))
+                        ],
                         [ ':'(kernel(int_lt), left,
                               ref(primitive(int)), 0),
                           ':'(kernel(int_lt), right,
+                              ref(primitive(int)), 1),
+                          ':'(kernel(int_le), left,
+                              ref(primitive(int)), 0),
+                          ':'(kernel(int_le), right,
+                              ref(primitive(int)), 1),
+                          ':'(kernel(int_eq), left,
+                              ref(primitive(int)), 0),
+                          ':'(kernel(int_eq), right,
+                              ref(primitive(int)), 1),
+                          ':'(kernel(int_ne), left,
+                              ref(primitive(int)), 0),
+                          ':'(kernel(int_ne), right,
+                              ref(primitive(int)), 1),
+                          ':'(kernel(int_ge), left,
+                              ref(primitive(int)), 0),
+                          ':'(kernel(int_ge), right,
+                              ref(primitive(int)), 1),
+                          ':'(kernel(int_gt), left,
+                              ref(primitive(int)), 0),
+                          ':'(kernel(int_gt), right,
                               ref(primitive(int)), 1)
                         ])).
 
@@ -2949,10 +3038,56 @@ rank_pairs(Rows, Name, SourcePosition, ResultPosition, Pairs) :-
 rule_head_is_one_of(Identities, rule(call(ref(Identity), _), _)) :-
     memberchk(Identity, Identities).
 
-int_lt_kernel_node(node(kernel(int_lt))).
-int_lt_kernel_node(product(kernel(int_lt))).
+integer_comparison_kernel_node(node(kernel(Name))) :-
+    integer_comparison(Name).
+integer_comparison_kernel_node(product(kernel(Name))) :-
+    integer_comparison(Name).
 
-int_lt_kernel_edge(':'(kernel(int_lt), _, _, _)).
+integer_comparison_kernel_edge(':'(kernel(Name), _, _, _)) :-
+    integer_comparison(Name).
+
+integer_comparison_case(int_lt, 2, 5, 5, 2).
+integer_comparison_case(int_le, 2, 2, 5, 2).
+integer_comparison_case(int_eq, 2, 2, 2, 5).
+integer_comparison_case(int_ne, 2, 5, 2, 2).
+integer_comparison_case(int_ge, 5, 2, 2, 5).
+integer_comparison_case(int_gt, 5, 2, 2, 5).
+
+integer_comparison_evaluation(
+    Name, TrueLeft, TrueRight, FalseLeft, FalseRight,
+    comparison_result(Name, Diagnostics, Closure)) :-
+    Rules =
+        [ rule(call(ref(positive_true(Name)), [const(ok)]),
+               [checked_goal(
+                    positive,
+                    call(ref(kernel(Name)),
+                         [const(TrueLeft), const(TrueRight)]))]),
+          rule(call(ref(positive_false(Name)), [const(no)]),
+               [checked_goal(
+                    positive,
+                    call(ref(kernel(Name)),
+                         [const(FalseLeft), const(FalseRight)]))]),
+          rule(call(ref(negative_true(Name)), [const(ok)]),
+               [checked_goal(
+                    negative,
+                    call(ref(kernel(Name)),
+                         [const(FalseLeft), const(FalseRight)]))]),
+          rule(call(ref(negative_false(Name)), [const(no)]),
+               [checked_goal(
+                    negative,
+                    call(ref(kernel(Name)),
+                         [const(TrueLeft), const(TrueRight)]))])
+        ],
+    evaluate(Rules, [], Closure, Diagnostics).
+
+integer_comparison_expected(
+    Name,
+    comparison_result(
+        Name, [],
+        [ call(ref(kernel(nil)), [const([])]),
+          call(ref(negative_true(Name)), [const(ok)]),
+          call(ref(positive_true(Name)), [const(ok)])
+        ])).
 
 normalized_program(Relations, Seeds, Rules, Depends, Strata) :-
     maplist(normalized_relation, Relations),

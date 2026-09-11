@@ -132,58 +132,55 @@ test(connected_body_reordering_and_rule_union_are_explicit, [nondet]) :-
     get_dict(rules, Artifact,
              [_{rule:0, sql:_}, _{rule:1, sql:_}]).
 
-test(int_lt_lowers_to_native_positive_and_negative_sql, [nondet]) :-
-    boundary_runtime(
-        [rule(call(ref(output), [var(value)]),
-              [ checked_goal(positive,
-                             call(ref(input), [var(value)])),
-                checked_goal(positive,
-                             call(ref(kernel(int_lt)),
-                                  [var(value), const(5)]))
-              ])],
-        [], PositiveRuntime),
-    boundary_runtime(
-        [rule(call(ref(output), [var(value)]),
-              [ checked_goal(positive,
-                             call(ref(input), [var(value)])),
-                checked_goal(negative,
-                             call(ref(kernel(int_lt)),
-                                  [var(value), const(5)]))
-              ])],
-        [], NegativeRuntime),
+test(integer_comparisons_lower_to_native_positive_and_negative_sql,
+     [nondet]) :-
+    basic_layout(Layout),
+    findall(
+        comparison_sql(Name,
+                       positive(PositiveDiagnostics,
+                                PositiveSql),
+                       negative(NegativeDiagnostics,
+                                NegativeSql)),
+        ( sqlite_comparison_case(Name, _, _),
+          comparison_runtime(Name, positive, PositiveRuntime),
+          comparison_runtime(Name, negative, NegativeRuntime),
+          emit_sqlite_query(
+              compiled_unit([], PositiveRuntime, []), Layout,
+              PositiveArtifact, PositiveDiagnostics),
+          emit_sqlite_query(
+              compiled_unit([], NegativeRuntime, []), Layout,
+              NegativeArtifact, NegativeDiagnostics),
+          get_dict(select_sql, PositiveArtifact, PositiveSql),
+          get_dict(select_sql, NegativeArtifact, NegativeSql)
+        ),
+        Observed),
+    findall(
+        comparison_sql(
+            Name,
+            positive([], PositiveSql),
+            negative([], NegativeSql)),
+        ( sqlite_comparison_case(Name, PositiveOperator, NegativeOperator),
+          format(string(PositiveSql),
+                 "SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" ~s 5",
+                 [PositiveOperator]),
+          format(string(NegativeSql),
+                 "SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" ~s 5",
+                 [NegativeOperator])
+        ),
+        Expected),
+    Observed == Expected,
     boundary_runtime(
         [rule(call(ref(output), [const(1)]),
               [checked_goal(positive,
                             call(ref(kernel(int_lt)),
                                  [const(2), const(5)]))])],
         [], ConstantRuntime),
-    basic_layout(Layout),
-    emit_sqlite_query(
-        compiled_unit([], PositiveRuntime, []), Layout,
-        PositiveArtifact, PositiveDiagnostics),
-    emit_sqlite_query(
-        compiled_unit([], NegativeRuntime, []), Layout,
-        NegativeArtifact, NegativeDiagnostics),
     emit_sqlite_query(
         compiled_unit([], ConstantRuntime, []), Layout,
         ConstantArtifact, ConstantDiagnostics),
-    Observed = sqlite_int_lt(
-                   positive(PositiveDiagnostics,
-                            PositiveArtifact.select_sql),
-                   negative(NegativeDiagnostics,
-                            NegativeArtifact.select_sql),
-                   constant(ConstantDiagnostics,
-                            ConstantArtifact.select_sql)),
-    Observed == sqlite_int_lt(
-                    positive(
-                        [],
-                        "SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" < 5"),
-                    negative(
-                        [],
-                        "SELECT DISTINCT \"g0\".\"value\" AS \"value\" FROM \"input\" AS \"g0\" WHERE \"g0\".\"value\" IS NOT NULL AND \"g0\".\"value\" >= 5"),
-                    constant(
-                        [],
-                        "SELECT DISTINCT 1 AS \"value\" WHERE 2 < 5")).
+    ConstantDiagnostics == [],
+    ConstantArtifact.select_sql ==
+        "SELECT DISTINCT 1 AS \"value\" WHERE 2 < 5".
 
 test(unsupported_program_and_layout_shapes_are_rejected) :-
     boundary_runtime(
@@ -361,6 +358,24 @@ basic_layout([
     sqlite_source("Input", "input", ["value"]),
     sqlite_output("Output", ["value"])
 ]).
+
+sqlite_comparison_case(int_lt, "<", ">=").
+sqlite_comparison_case(int_le, "<=", ">").
+sqlite_comparison_case(int_eq, "=", "!=").
+sqlite_comparison_case(int_ne, "!=", "=").
+sqlite_comparison_case(int_ge, ">=", "<").
+sqlite_comparison_case(int_gt, ">", "<=").
+
+comparison_runtime(Name, Polarity, Runtime) :-
+    boundary_runtime(
+        [rule(call(ref(output), [var(value)]),
+              [ checked_goal(positive,
+                             call(ref(input), [var(value)])),
+                checked_goal(Polarity,
+                             call(ref(kernel(Name)),
+                                  [var(value), const(5)]))
+              ])],
+        [], Runtime).
 
 connected_union_runtime(
     checked_datalog(

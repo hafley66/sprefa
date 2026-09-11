@@ -3,10 +3,10 @@
 % Two fixture profiles share one measured cold/warm loop:
 %
 %   2_partial      traced (DL7_TRACE=collect) structural profile, unchanged:
-%                  cold inference budget 88,000,000, warm 50,000, rows 15,542,
+%                  cold inference budget 88,000,000, warm 50,000, rows 15,562,
 %                  eight closure rounds, empty diagnostics, warm output parity.
 %   nearest-shadow timed TRACE OFF: cold wall <= 3000 ms, cold inference budget
-%                  16,000,000, compiler rows 790, empty diagnostics, warm
+%                  16,000,000, compiler rows 810, empty diagnostics, warm
 %                  inference budget 5,000 (measured warm baseline 2,148), warm
 %                  exact-output parity.
 %
@@ -91,7 +91,8 @@ run_self_check(Mode) :-
                     Profile),
     self_check_measurements(Mode, Cold, Warm),
     report_begin('7_nearest_shadow.dl7(self-check)',
-                 'v7-compiler-perf/nearest-shadow-int-lt@2026-09-10', off),
+                 'v7-compiler-perf/nearest-shadow-int-comparisons@2026-09-10',
+                 off),
     profile_report(Profile, Cold, Warm, null, Report),
     json_write_dict(current_output, Report, [width(0)]),
     nl,
@@ -104,14 +105,14 @@ run_self_check(Mode) :-
     halt(ExitCode).
 
 self_check_measurements(pass,
-                        measurement(1, 1, 790, 0, 0, 0, []),
-                        measurement(1, 1, 790, 0, 0, 0, [])).
+                        measurement(1, 1, 810, 0, 0, 0, []),
+                        measurement(1, 1, 810, 0, 0, 0, [])).
 self_check_measurements(wall,
-                        measurement(9999, 1, 790, 0, 0, 0, []),
-                        measurement(1, 1, 790, 0, 0, 0, [])).
+                        measurement(9999, 1, 810, 0, 0, 0, []),
+                        measurement(1, 1, 810, 0, 0, 0, [])).
 self_check_measurements(inference,
-                        measurement(1, 99999999, 790, 0, 0, 0, []),
-                        measurement(1, 1, 790, 0, 0, 0, [])).
+                        measurement(1, 99999999, 810, 0, 0, 0, []),
+                        measurement(1, 1, 810, 0, 0, 0, [])).
 
 report_unknown_fixture([Fixture | _]) :-
     !,
@@ -140,7 +141,8 @@ fixture_profile(Path,
                 profile('7_nearest_shadow.dl7', Path, Baseline, off, Checks)) :-
     file_base_name(Path, '7_nearest_shadow.dl7'),
     !,
-    Baseline = 'v7-compiler-perf/nearest-shadow-int-lt@2026-09-10',
+    Baseline =
+        'v7-compiler-perf/nearest-shadow-int-comparisons@2026-09-10',
     nearest_shadow_checks(Checks).
 fixture_profile(Path,
                 profile('2_partial.dl7', Path, Baseline, collect, Checks)) :-
@@ -157,7 +159,7 @@ timed_trace(collect) :-
 nearest_shadow_checks([
     cold_wall_limit(3000),
     cold_inference_budget(16000000),
-    compiler_rows(790),
+    compiler_rows(810),
     cold_diagnostics_empty,
     warm_diagnostics_empty,
     warm_inference_budget(5000),
@@ -167,7 +169,7 @@ nearest_shadow_checks([
 partial_checks([
     cold_inference_budget(88000000),
     warm_inference_budget(50000),
-    compiler_rows(15542),
+    compiler_rows(15562),
     closure_rounds(8),
     cold_diagnostics_empty,
     warm_diagnostics_empty,

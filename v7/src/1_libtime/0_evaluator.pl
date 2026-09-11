@@ -17,6 +17,10 @@
                 transitive_closure/2,
                 vertices_edges_to_ugraph/3
               ]).
+:- use_module('00_integer_comparison',
+              [ integer_comparison/1,
+                integer_comparison_holds/3
+              ]).
 :- use_module('../2_comptime/1b_compiler_tracer', [run_compile_step/4]).
 
 :- dynamic evaluation_rule/3.
@@ -205,9 +209,9 @@ aggregate_rule_proof(CompletedRows, Rule, Head) :-
 completed_body_holds([], _).
 completed_body_holds(
     [checked_goal(positive, Call) | Goals], Rows) :-
-    int_lt_arguments(Call, Left, Right),
+    integer_comparison_arguments(Call, Name, Left, Right),
     !,
-    Left < Right,
+    integer_comparison_holds(Name, Left, Right),
     completed_body_holds(Goals, Rows).
 completed_body_holds([checked_goal(positive, Call) | Goals], Rows) :-
     member(Call, Rows),
@@ -215,9 +219,9 @@ completed_body_holds([checked_goal(positive, Call) | Goals], Rows) :-
 completed_body_holds(
     [checked_goal(negative, Call) | Goals], Rows) :-
     ground(Call),
-    int_lt_arguments(Call, Left, Right),
+    integer_comparison_arguments(Call, Name, Left, Right),
     !,
-    \+ Left < Right,
+    \+ integer_comparison_holds(Name, Left, Right),
     completed_body_holds(Goals, Rows).
 completed_body_holds([checked_goal(negative, Call) | Goals], Rows) :-
     ground(Call),
@@ -616,9 +620,9 @@ evaluate_cleanup_metrics(EvaluationId, ClauseReferences,
                   LeftoverRowCount).
 
 proves(_, Call) :-
-    int_lt_arguments(Call, Left, Right),
+    integer_comparison_arguments(Call, Name, Left, Right),
     !,
-    Left < Right.
+    integer_comparison_holds(Name, Left, Right).
 proves(EvaluationId, Call) :-
     Call = call(Relation, _),
     evaluation_seed(EvaluationId, Relation, Call).
@@ -668,9 +672,9 @@ satisfy_goal(EvaluationId, Goal) :-
 satisfy_goal(_, Goal) :-
     goal_call(Goal, negative, Call),
     ground(Call),
-    int_lt_arguments(Call, Left, Right),
+    integer_comparison_arguments(Call, Name, Left, Right),
     !,
-    \+ Left < Right.
+    \+ integer_comparison_holds(Name, Left, Right).
 satisfy_goal(EvaluationId, Goal) :-
     goal_call(Goal, negative, Call),
     ground(Call),
@@ -684,6 +688,13 @@ kernel_int_lt_call(Call) :-
 
 int_lt_arguments(
     call(ref(kernel(int_lt)), [const(Left), const(Right)]), Left, Right) :-
+    integer(Left),
+    integer(Right).
+
+integer_comparison_arguments(
+    call(ref(kernel(Name)), [const(Left), const(Right)]),
+    Name, Left, Right) :-
+    integer_comparison(Name),
     integer(Left),
     integer(Right).
 
