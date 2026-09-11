@@ -3,6 +3,7 @@
 :- use_module(library(http/json), [atom_json_dict/3]).
 :- use_module(library(process), [process_create/3, process_wait/2]).
 :- use_module('../src/1_libtime/0_evaluator', [stratify_rules/3]).
+:- use_module('../src/2_comptime/1_checker', [check_datalog/4]).
 :- use_module('../src/2_comptime/1b_compiler_tracer').
 :- use_module('../src/2_comptime/1c_compiler_cacher', [clear_compiler_caches/0]).
 :- use_module('../src/2_comptime/2_compiler', [compile_dl7/4]).
@@ -328,6 +329,22 @@ test(debug_trace_preserves_compile_output) :-
     RowsOff == RowsDebug,
     RuntimeOff == RuntimeDebug,
     DiagnosticsOff == DiagnosticsDebug.
+
+test(check_phase_finalizes_immediately_without_once) :-
+    Basement = basement_program(
+                    root_graph([], []),
+                    datalog_program([], [], [])),
+    with_dl7_trace('collect',
+        with_compile_trace(check_phase_probe,
+            ( run_compile_phase(
+                  check,
+                  check_datalog(Basement, [], Checked, Diagnostics),
+                  Measurement),
+              collected_compile_phases(Phases),
+              Phases == [phase(check, Measurement)],
+              ground(Measurement),
+              Diagnostics == [],
+              nonvar(Checked) ))).
 
 debug_compile_probe(Stderr) :-
     source_file(dl7_compiler:compile_dl7(_, _, _, _), CompilerPath),

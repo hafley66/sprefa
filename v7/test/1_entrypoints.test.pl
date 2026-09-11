@@ -1855,6 +1855,39 @@ restore_dl7_trace(none) :-
 restore_dl7_trace(Prior) :-
     setenv('DL7_TRACE', Prior).
 
+trace_setting(Prior) :-
+    (   getenv('DL7_TRACE', Value)
+    ->  Prior = Value
+    ;   Prior = none
+    ).
+
+trace_setting_restored(Prior) :-
+    (   Prior == none
+    ->  \+ getenv('DL7_TRACE', _)
+    ;   getenv('DL7_TRACE', Prior)
+    ).
+
+test(check_datalog_structured_input_has_one_solution_in_trace_modes) :-
+    Basement = basement_program(
+                    root_graph([], []),
+                    datalog_program([], [], [])),
+    trace_setting(Prior),
+    with_dl7_trace(
+        'off',
+        findall(Checked-Diagnostics,
+                check_datalog(Basement, [], Checked, Diagnostics),
+                OffPairs)),
+    trace_setting_restored(Prior),
+    with_dl7_trace(
+        'debug',
+        findall(Checked-Diagnostics,
+                check_datalog(Basement, [], Checked, Diagnostics),
+                DebugPairs)),
+    trace_setting_restored(Prior),
+    OffPairs = [OffChecked-[]],
+    DebugPairs = [DebugChecked-[]],
+    OffChecked == DebugChecked.
+
 trace_phase_steps(Steps, PhaseSteps) :-
     findall(Phase-Step,
             member(step(_, Phase, Step, _, _), Steps),

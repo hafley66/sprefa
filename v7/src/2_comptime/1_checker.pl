@@ -102,6 +102,7 @@ debug_checker_input(
     basement_program(root_graph(Nodes, PendingEdges),
                      datalog_program(Relations, Seeds, Rules)),
     Origins) :-
+    !,
     (   debug_trace_on
     ->  length(Nodes, NodeCount),
         length(PendingEdges, EdgeCount),
