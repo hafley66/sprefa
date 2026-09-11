@@ -7,7 +7,11 @@
           ]).
 
 :- use_module(library(aggregate), [aggregate_all/3]).
-:- use_module(library(assoc), [get_assoc/3, list_to_assoc/2]).
+:- use_module(library(assoc),
+              [ get_assoc/3,
+                list_to_assoc/2,
+                put_assoc/4
+              ]).
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(gensym), [gensym/2]).
 :- use_module(library(lists), [max_list/2]).
@@ -486,33 +490,99 @@ initial_levels([Relation | Relations],
                [level(Relation, 0) | Levels]) :-
     initial_levels(Relations, Levels).
 
+%% relax_to_fixpoint(+Dependencies, +Levels0, -Levels) is det.
+%
+% Solve level(Head) >= level(Body) + Gap for every dependency with the least
+% fixpoint above the all-zero assignment. The dependency list is indexed by
+% body relation once, and only readers of a relation whose level increased are
+% relaxed, so each constraint is enforced on change instead of on every pass.
 relax_to_fixpoint(Dependencies, Levels0, Levels) :-
-    relax_levels(Levels0, Dependencies, Levels1),
-    (   Levels1 == Levels0
-    ->  Levels = Levels1
-    ;   relax_to_fixpoint(Dependencies, Levels1, Levels)
+    dependency_index(Dependencies, ByBody),
+    dependency_bodies(Dependencies, Queue),
+    relax_worklist(Queue, ByBody, Levels0, Levels).
+
+%% dependency_index(+Dependencies, -ByBody) is det.
+%
+% ByBody groups (Head, Gap) under each BodyRelation that Head reads. A level
+% increase of one body relation can only change the requirement of a relation
+% that reads it, so the index bounds each relaxation step to those readers
+% instead of rescanning all dependencies. Keys and values keep dependency
+% order, so the fixpoint does not depend on traversal order.
+dependency_index(Dependencies, ByBody) :-
+    findall(BodyRelation-(HeadRelation-Gap),
+            member(dependency(HeadRelation, BodyRelation, _, Gap, _),
+                   Dependencies),
+            Pairs0),
+    keysort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Groups),
+    list_to_assoc(Groups, ByBody).
+
+%% dependency_bodies(+Dependencies, -Queue) is det.
+%
+% Seed the worklist with every body relation. Processing a body once enforces
+% the initial gap on its readers even when its level never increases; later
+% dequeues are driven only by level growth.
+dependency_bodies(Dependencies, Queue) :-
+    findall(BodyRelation,
+            member(dependency(_, BodyRelation, _, _, _), Dependencies),
+            Bodies0),
+    sort(Bodies0, Queue).
+
+%% relax_worklist(+Queue, +DependencyIndex, +Levels0, -Levels) is det.
+%
+% Changed-relation worklist. Queue holds relations whose level recently
+% increased. Dequeuing a core relation relaxes only that relation's readers,
+% and a reader is enqueued exactly when its level grows, so the queue drains
+% once no requirement can change. Levels0 fixes the deterministic output order;
+% the assoc carries relation lookup while relaxing.
+relax_worklist(Queue, DependencyIndex, Levels0, Levels) :-
+    level_index(Levels0, LevelByRelation0),
+    worklist_loop(Queue, DependencyIndex, LevelByRelation0, LevelByRelation),
+    levels_from_index(Levels0, LevelByRelation, Levels).
+
+%% level_index(+Levels, -LevelByRelation) is det.
+level_index(Levels, LevelByRelation) :-
+    findall(Relation-Level,
+            member(level(Relation, Level), Levels),
+            Pairs),
+    list_to_assoc(Pairs, LevelByRelation).
+
+%% levels_from_index(+Levels0, +LevelByRelation, -Levels) is det.
+%
+% Rebuild the level list in the input relation order so the public strata
+% output stays deterministic and independent of worklist scheduling.
+levels_from_index([], _, []).
+levels_from_index([level(Relation, _) | Levels0], LevelByRelation,
+                  [level(Relation, Level) | Levels]) :-
+    get_assoc(Relation, LevelByRelation, Level),
+    levels_from_index(Levels0, LevelByRelation, Levels).
+
+worklist_loop([], _, LevelByRelation, LevelByRelation).
+worklist_loop([Relation | Queue0], DependencyIndex, LevelByRelation0,
+              LevelByRelation) :-
+    get_assoc(Relation, LevelByRelation0, BodyLevel),
+    (   get_assoc(Relation, DependencyIndex, Readers)
+    ->  reader_levels(Readers, BodyLevel, LevelByRelation0, LevelByRelation1,
+                      Enqueued),
+        append(Queue0, Enqueued, Queue)
+    ;   LevelByRelation1 = LevelByRelation0,
+        Queue = Queue0
+    ),
+    worklist_loop(Queue, DependencyIndex, LevelByRelation1, LevelByRelation).
+
+reader_levels([], _, LevelByRelation, LevelByRelation, []).
+reader_levels([HeadRelation-Gap | Readers], BodyLevel, LevelByRelation0,
+              LevelByRelation, Enqueued) :-
+    get_assoc(HeadRelation, LevelByRelation0, Current),
+    Required is BodyLevel + Gap,
+    (   Required > Current
+    ->  put_assoc(HeadRelation, LevelByRelation0, Required, LevelByRelation1),
+        reader_levels(Readers, BodyLevel, LevelByRelation1, LevelByRelation,
+                      Rest),
+        Enqueued = [HeadRelation | Rest]
+    ;   reader_levels(Readers, BodyLevel, LevelByRelation0, LevelByRelation,
+                      Enqueued)
     ).
-
-relax_levels(Levels0, Dependencies, Levels) :-
-    relax_levels(Levels0, Levels0, Dependencies, Levels).
-
-relax_levels([], _, _, []).
-relax_levels([level(Relation, Current) | Levels0], AllLevels, Dependencies,
-             [level(Relation, Next) | Levels]) :-
-    dependency_requirements(Relation, Dependencies,
-                            AllLevels, Requirements0),
-    Requirements = [Current | Requirements0],
-    max_list(Requirements, Next),
-    relax_levels(Levels0, AllLevels, Dependencies, Levels).
-
-dependency_requirements(Relation, Dependencies, Levels, Requirements) :-
-    findall(Required,
-            ( member(dependency(Relation, BodyRelation, _, Gap, _),
-                     Dependencies),
-              memberchk(level(BodyRelation, BodyLevel), Levels),
-              Required is BodyLevel + Gap
-            ),
-            Requirements).
 
 strata_for_relations([], _, []).
 strata_for_relations([Relation | Relations], Levels,
