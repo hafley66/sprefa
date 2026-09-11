@@ -1965,6 +1965,119 @@ test(demand_cone_does_not_follow_aggregate_edges_from_a_shared_head) :-
     sort([Plain, Needed], Expected),
     Selected == Expected.
 
+test(demand_cone_index_matches_reference_on_relation_graphs) :-
+    demand_cone_reference_cases(Cases),
+    maplist(demand_cone_case_parity, Cases, Parities),
+    Parities == [equal, equal, equal].
+
+demand_cone_case_parity(
+    case(Strata, Level, Rules, Dependencies, Current), Parity) :-
+    reference_demand_cone(
+        Strata, Level, Rules, Dependencies, Current, Expected),
+    dl7_evaluator:demand_cone_rules(
+        Strata, Level, Rules, Dependencies, Current, Observed),
+    (   Observed == Expected
+    ->  Parity = equal
+    ;   Parity = differ(Expected, Observed)
+    ).
+
+demand_cone_reference_cases(
+    [ case(
+          [ stratum(leaf, 0), stratum(left, 1), stratum(right, 1),
+            stratum(root, 2), stratum(future, 3) ],
+          2,
+          [ RootA, RootB, RootA, Left, Right, Leaf, Future1 ],
+          [ dependency(root, left, positive, 0, positive),
+            dependency(root, right, positive, 0, positive),
+            dependency(left, leaf, positive, 0, positive),
+            dependency(right, leaf, positive, 0, positive),
+            dependency(future, root, positive, 0, positive) ],
+          [ RootA, RootB, RootA ] ),
+      case(
+          [ stratum(leaf, 0), stratum(cycle_a, 1), stratum(cycle_b, 1),
+            stratum(keep, 1), stratum(root, 2), stratum(future, 3),
+            stratum(drop, 0), stratum(aggregate_only, 0),
+            stratum(strict_only, 0) ],
+          2,
+          [ Root, CycleA, CycleB, Keep, Leaf, Drop, AggregateOnly,
+            StrictOnly, Future2 ],
+          [ dependency(root, keep, positive, 0, positive),
+            dependency(root, drop, negative, 1, negative),
+            dependency(root, aggregate_only, positive, 1, aggregate),
+            dependency(root, strict_only, positive, 0, strict),
+            dependency(cycle_a, cycle_b, positive, 0, positive),
+            dependency(cycle_b, cycle_a, positive, 0, positive),
+            dependency(keep, leaf, positive, 0, positive),
+            dependency(future, root, positive, 0, positive) ],
+          [ Root, CycleA ] ),
+      case(
+          [ stratum(isolated, 2), stratum(lower, 0), stratum(future, 3) ],
+          2,
+          [ Isolated, Lower, Future3 ],
+          [],
+          [ Isolated ] )
+    ]) :-
+    RootA = rule(call(root, [const(left)]),
+                 [checked_goal(positive, call(left, [const(left)]))]),
+    RootB = rule(call(root, [const(right)]),
+                 [checked_goal(positive, call(right, [const(right)]))]),
+    Left = rule(call(left, [const(left)]),
+                [checked_goal(positive, call(leaf, [const(value)]))]),
+    Right = rule(call(right, [const(right)]),
+                 [checked_goal(positive, call(leaf, [const(value)]))]),
+    Leaf = rule(call(leaf, [const(value)]), []),
+    Future1 = rule(call(future, [const(value)]),
+                   [checked_goal(positive, call(root, [const(value)]))]),
+    Root = rule(call(root, [var(value)]),
+                [checked_goal(positive, call(keep, [var(value)]))]),
+    CycleA = rule(call(cycle_a, [var(value)]),
+                  [checked_goal(positive, call(cycle_b, [var(value)]))]),
+    CycleB = rule(call(cycle_b, [var(value)]),
+                  [checked_goal(positive, call(cycle_a, [var(value)]))]),
+    Keep = rule(call(keep, [var(value)]),
+                [checked_goal(positive, call(leaf, [var(value)]))]),
+    Drop = rule(call(drop, [const(drop)]), []),
+    AggregateOnly = rule(call(aggregate_only, [const(aggregate)]), []),
+    StrictOnly = rule(call(strict_only, [const(strict)]), []),
+    Isolated = rule(call(isolated, [const(isolated)]), []),
+    Lower = rule(call(lower, [const(lower)]), []),
+    Future3 = rule(call(future, [const(value)]), []),
+    Future2 = rule(call(future, [const(value)]),
+                   [checked_goal(positive, call(root, [const(value)]))]).
+
+reference_demand_cone(
+    Strata, Level, Rules, Dependencies, CurrentRules, PlainRules) :-
+    exclude(dl7_evaluator:aggregate_rule, CurrentRules, CurrentPlainRules),
+    sort(CurrentPlainRules, Roots),
+    reference_demand_cone_fixpoint(
+        Strata, Level, Rules, Dependencies, Roots, PlainRules).
+
+reference_demand_cone_fixpoint(
+    Strata, Level, Rules, Dependencies, Selected, PlainRules) :-
+    findall(BodyRelation,
+            ( member(rule(call(HeadRelation, _), _), Selected),
+              member(dependency(HeadRelation, BodyRelation,
+                                positive, 0, positive), Dependencies)
+            ),
+            BodyRelations0),
+    sort(BodyRelations0, BodyRelations),
+    include(reference_plain_definition_for(Strata, Level, BodyRelations),
+            Rules, DependencyRules),
+    append(Selected, DependencyRules, Next0),
+    sort(Next0, Next),
+    (   Next == Selected
+    ->  PlainRules = Next
+    ;   reference_demand_cone_fixpoint(
+            Strata, Level, Rules, Dependencies, Next, PlainRules)
+    ).
+
+reference_plain_definition_for(Strata, Level, Relations, Rule) :-
+    Rule = rule(call(Relation, _), _),
+    memberchk(Relation, Relations),
+    memberchk(stratum(Relation, RuleLevel), Strata),
+    RuleLevel =< Level,
+    \+ dl7_evaluator:aggregate_rule(Rule).
+
 test(evaluator_collection_binds_result_relations_and_unions_lower_rows) :-
     EvaluationId = evaluator_collection_bound_roots,
     Current = rule(call(ref(current_result), [const(current)]), []),

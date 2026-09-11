@@ -191,34 +191,115 @@ demand_cone_rules(
     Strata, Level, Rules, Dependencies, CurrentRules, PlainRules) :-
     exclude(aggregate_rule, CurrentRules, CurrentPlainRules),
     sort(CurrentPlainRules, Roots),
-    demand_cone_fixpoint(
-        Strata, Level, Rules, Dependencies, Roots, PlainRules).
+    demand_cone_dependency_index(Dependencies, DependencyIndex),
+    demand_cone_rule_index(Strata, Level, Rules, RuleIndex),
+    demand_cone_root_relations(Roots, RootRelations),
+    demand_cone_relation_set(RootRelations, SeenRelations),
+    list_to_assoc([], IncludedRelations),
+    demand_cone_worklist(
+        RootRelations, DependencyIndex, RuleIndex, SeenRelations,
+        IncludedRelations, Roots, Selected),
+    sort(Selected, PlainRules).
 
-demand_cone_fixpoint(
-    Strata, Level, Rules, Dependencies, Selected, PlainRules) :-
-    findall(BodyRelation,
-            ( member(rule(call(HeadRelation, _), _), Selected),
-              member(dependency(HeadRelation, BodyRelation,
-                                positive, 0, positive), Dependencies)
+%% demand_cone_dependency_index(+Dependencies, -DependencyIndex) is det.
+%
+% The old fixpoint repeatedly rediscovered the same positive zero-gap body
+% relations from every selected rule. Store that relation union once, keyed by
+% its exact head relation. The final sort keeps the previous relation ordering.
+demand_cone_dependency_index(Dependencies, DependencyIndex) :-
+    findall(HeadRelation-BodyRelation,
+            member(dependency(HeadRelation, BodyRelation,
+                              positive, 0, positive), Dependencies),
+            Pairs0),
+    keysort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Groups),
+    maplist(sort_relation_group, Groups, SortedGroups),
+    list_to_assoc(SortedGroups, DependencyIndex).
+
+sort_relation_group(Relation-Bodies0, Relation-Bodies) :-
+    sort(Bodies0, Bodies).
+
+%% demand_cone_rule_index(+Strata, +Level, +Rules, -RuleIndex) is det.
+%
+% Index every nonaggregate definition that the old include/3 scan could select
+% for a newly discovered body relation. Rule list order is immaterial before
+% the existing final sort/2, while retaining all same-head definitions keeps
+% their dependency edges available to the worklist.
+demand_cone_rule_index(Strata, Level, Rules, RuleIndex) :-
+    findall(Relation-Rule,
+            ( member(Rule, Rules),
+              demand_cone_eligible_rule(Strata, Level, Rule, Relation)
             ),
-            BodyRelations0),
-    sort(BodyRelations0, BodyRelations),
-    include(plain_definition_for(Strata, Level, BodyRelations),
-            Rules, DependencyRules),
-    append(Selected, DependencyRules, Next0),
-    sort(Next0, Next),
-    (   Next == Selected
-    ->  PlainRules = Next
-    ;   demand_cone_fixpoint(
-            Strata, Level, Rules, Dependencies, Next, PlainRules)
-    ).
+            Pairs0),
+    keysort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, RuleGroups),
+    list_to_assoc(RuleGroups, RuleIndex).
 
-plain_definition_for(Strata, Level, Relations, Rule) :-
+demand_cone_eligible_rule(Strata, Level, Rule, Relation) :-
     Rule = rule(call(Relation, _), _),
-    memberchk(Relation, Relations),
     memberchk(stratum(Relation, RuleLevel), Strata),
     RuleLevel =< Level,
     \+ aggregate_rule(Rule).
+
+demand_cone_root_relations(Roots, RootRelations) :-
+    findall(Relation,
+            member(rule(call(Relation, _), _), Roots),
+            RootRelations0),
+    sort(RootRelations0, RootRelations).
+
+demand_cone_relation_set(Relations, RelationSet) :-
+    findall(Relation-true,
+            member(Relation, Relations),
+            Pairs),
+    list_to_assoc(Pairs, RelationSet).
+
+%% demand_cone_worklist(+Queue, +DependencyIndex, +RuleIndex,
+%%                      +SeenRelations, +IncludedRelations, +Selected0,
+%%                      -Selected) is det.
+%
+% Each relation head enters the queue once. A relation can be a current root
+% before it later appears as a body relation, so SeenRelations and
+% IncludedRelations are separate: the latter records when its eligible rule
+% definitions have been added to Selected.
+demand_cone_worklist([], _, _, _, _, Selected, Selected).
+demand_cone_worklist(
+    [Relation | Queue0], DependencyIndex, RuleIndex, Seen0, Included0,
+    Selected0, Selected) :-
+    (   get_assoc(Relation, DependencyIndex, BodyRelations)
+    ->  true
+    ;   BodyRelations = []
+    ),
+    demand_cone_discover(
+        BodyRelations, RuleIndex, Seen0, Seen1, Included0, Included1,
+        NewRelations, NewRules),
+    append(Queue0, NewRelations, Queue),
+    append(NewRules, Selected0, Selected1),
+    demand_cone_worklist(
+        Queue, DependencyIndex, RuleIndex, Seen1, Included1,
+        Selected1, Selected).
+
+demand_cone_discover([], _, Seen, Seen, Included, Included, [], []).
+demand_cone_discover(
+    [Relation | Relations], RuleIndex, Seen0, Seen, Included0, Included,
+    NewRelations, NewRules) :-
+    (   get_assoc(Relation, Seen0, _)
+    ->  Seen1 = Seen0,
+        NewRelations = NewRelations0
+    ;   put_assoc(Relation, Seen0, true, Seen1),
+        NewRelations = [Relation | NewRelations0]
+    ),
+    (   get_assoc(Relation, Included0, _)
+    ->  Included1 = Included0,
+        NewRules = NewRules0
+    ;   put_assoc(Relation, Included0, true, Included1),
+        (   get_assoc(Relation, RuleIndex, RelationRules)
+        ->  append(RelationRules, NewRules0, NewRules)
+        ;   NewRules = NewRules0
+        )
+    ),
+    demand_cone_discover(
+        Relations, RuleIndex, Seen1, Seen, Included1, Included,
+        NewRelations0, NewRules0).
 
 seed_at_level(Strata, Level, call(Relation, _)) :-
     relation_level(Strata, Relation, Level).
