@@ -49,7 +49,10 @@
 :- use_module('1a_generated_program_assembler',
               [assemble_generated_program/5]).
 :- use_module('1b_compiler_tracer',
-              [ with_compile_trace/2,
+              [ compile_scope_memo_lookup/3,
+                compile_scope_memo_store/3,
+                in_compile_scope/0,
+                with_compile_trace/2,
                 run_compile_phase/3,
                 run_compile_step/4,
                 debug_trace_on/0,
@@ -1175,8 +1178,8 @@ evaluate_compiler_rounds(AuthoredRules, BaseRelations, BaseSeeds, FrozenEdges,
     sort(Relations0, Relations),
     append(AuthoredRules, FrozenGeneratedRules, Rules0),
     sort(Rules0, Rules),
-    check_resolved_rules(Relations, Rules, Depends, Strata,
-                         ProgramDiagnostics),
+    checked_round_program(Relations, Rules, Depends, Strata,
+                          ProgramDiagnostics),
     compiler_round_seeds(BaseSeeds, FrozenEdges, FrozenRequests, RoundSeeds),
     run_compile_step(
         comptime, evaluate_round(Round),
@@ -1201,6 +1204,27 @@ evaluate_compiler_program([], Rules, Seeds, Closure, Diagnostics) :-
     !,
     evaluate(Rules, Seeds, Closure, Diagnostics).
 evaluate_compiler_program(Diagnostics, _, _, [], Diagnostics).
+
+%% checked_round_program(+Relations, +Rules, -Depends, -Strata, -Diagnostics)
+%% is det.
+%
+% Frozen edges and intern requests can require another compiler round while
+% leaving the relation and rule program byte-identical. Cache the pure resolved
+% rule check under that exact program for the active compilation scope. Hashes
+% select buckets; compile_scope_memo_lookup/3 compares the complete key.
+checked_round_program(Relations, Rules, Depends, Strata, Diagnostics) :-
+    (   in_compile_scope
+    ->  Key = resolved_rules(Relations, Rules),
+        term_hash(Key, Hash),
+        (   compile_scope_memo_lookup(Hash, Key, Value)
+        ->  Value = resolved_program(Depends, Strata, Diagnostics)
+        ;   check_resolved_rules(Relations, Rules, Depends, Strata,
+                                 Diagnostics),
+            compile_scope_memo_store(
+                Hash, Key, resolved_program(Depends, Strata, Diagnostics))
+        )
+    ;   check_resolved_rules(Relations, Rules, Depends, Strata, Diagnostics)
+    ).
 
 basement_compile_metrics(
     basement_program(root_graph(Nodes, Edges),

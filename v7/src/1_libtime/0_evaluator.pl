@@ -16,12 +16,13 @@
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(gensym), [gensym/2]).
 :- use_module(library(lists), [max_list/2]).
-:- use_module(library(ordsets), [ord_union/3]).
+:- use_module(library(ordsets), [ord_intersection/3, ord_union/3]).
 :- use_module(library(pairs), [group_pairs_by_key/2]).
 :- use_module(library(tableutil), [table_statistics/2]).
 :- use_module(library(ugraphs),
               [ neighbors/3,
-                transitive_closure/2,
+                reachable/3,
+                transpose_ugraph/2,
                 vertices_edges_to_ugraph/3
               ]).
 :- use_module('../2_comptime/1b_compiler_tracer',
@@ -162,8 +163,9 @@ evaluate_after_stratify(
     !,
     max_stratum(Strata, MaxStratum),
     demand_cone_static_indexes(Strata, Rules, Dependencies, StaticIndexes),
+    evaluation_level_indexes(Strata, Rules, Seeds, LevelIndexes),
     evaluate_strata(0, MaxStratum, Strata, Dependencies, StaticIndexes,
-                    Rules, Seeds, [], Closure, Diagnostics).
+                    LevelIndexes, Rules, Seeds, [], Closure, Diagnostics).
 evaluate_after_stratify(Diagnostics, _, _, _, _, [], Diagnostics).
 
 max_stratum([], 0).
@@ -172,13 +174,14 @@ max_stratum(Strata, MaxStratum) :-
     max_list(Levels, MaxStratum).
 
 evaluate_strata(Level, MaxStratum, _Strata, _Dependencies, _StaticIndexes,
-                _Rules, _Seeds, Closure, Closure, []) :-
+                _LevelIndexes, _Rules, _Seeds, Closure, Closure, []) :-
     Level > MaxStratum,
     !.
 evaluate_strata(Level, MaxStratum, Strata, Dependencies, StaticIndexes,
-                Rules, Seeds, LowerRows, Closure, Diagnostics) :-
-    include(rule_at_level(Strata, Level), Rules, CurrentRules),
-    include(seed_at_level(Strata, Level), Seeds, CurrentSeeds),
+                LevelIndexes, Rules, Seeds,
+                LowerRows, Closure, Diagnostics) :-
+    level_index_rows(LevelIndexes, rules, Level, CurrentRules),
+    level_index_rows(LevelIndexes, seeds, Level, CurrentSeeds),
     include(aggregate_rule, CurrentRules, AggregateRules),
     demand_cone_rules_indexed(
         Level, StaticIndexes, CurrentRules, PlainRules),
@@ -186,13 +189,13 @@ evaluate_strata(Level, MaxStratum, Strata, Dependencies, StaticIndexes,
                                AggregateSeeds, AggregateDiagnostics),
     evaluate_stratum_after_aggregates(
         AggregateDiagnostics, AggregateSeeds,
-        Level, MaxStratum, Strata, Dependencies, StaticIndexes,
+        Level, MaxStratum, Strata, Dependencies, StaticIndexes, LevelIndexes,
         Rules, Seeds, LowerRows,
         PlainRules, CurrentRules, CurrentSeeds, Closure, Diagnostics).
 
 evaluate_stratum_after_aggregates(
     [], AggregateSeeds,
-    Level, MaxStratum, Strata, Dependencies, StaticIndexes,
+    Level, MaxStratum, Strata, Dependencies, StaticIndexes, LevelIndexes,
     Rules, Seeds, LowerRows,
     PlainRules, CurrentRules, CurrentSeeds, Closure, Diagnostics) :-
     !,
@@ -218,9 +221,46 @@ evaluate_stratum_after_aggregates(
             evaluate_cleanup_metrics(Level, EvaluationId, ClauseReferences))),
     NextLevel is Level + 1,
     evaluate_strata(NextLevel, MaxStratum, Strata, Dependencies, StaticIndexes,
-                    Rules, Seeds, CompletedRows, Closure, Diagnostics).
+                    LevelIndexes, Rules, Seeds,
+                    CompletedRows, Closure, Diagnostics).
 evaluate_stratum_after_aggregates(
-    Diagnostics, _, _, _, _, _, _, _, _, _, _, _, _, [], Diagnostics).
+    Diagnostics, _, _, _, _, _, _, _, _, _, _, _, _, _, [], Diagnostics).
+
+%% evaluation_level_indexes(+Strata, +Rules, +Seeds, -Indexes) is det.
+%
+% Rules and seeds are immutable for one evaluate/4 call. Bucket them once by
+% stratum level instead of filtering both complete lists at every level.
+% keysort/2 is stable, preserving the order produced by include/3.
+evaluation_level_indexes(
+    Strata, Rules, Seeds, level_indexes(RulesByLevel, SeedsByLevel)) :-
+    findall(Level-Rule,
+            ( member(Rule, Rules),
+              Rule = rule(call(Relation, _), _),
+              relation_level(Strata, Relation, Level) ),
+            RulePairs0),
+    level_pairs_assoc(RulePairs0, RulesByLevel),
+    findall(Level-Seed,
+            ( member(Seed, Seeds),
+              Seed = call(Relation, _),
+              relation_level(Strata, Relation, Level) ),
+            SeedPairs0),
+    level_pairs_assoc(SeedPairs0, SeedsByLevel).
+
+level_pairs_assoc(Pairs0, Index) :-
+    keysort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Groups),
+    list_to_assoc(Groups, Index).
+
+level_index_rows(level_indexes(RulesByLevel, _), rules, Level, Rows) :-
+    (   get_assoc(Level, RulesByLevel, LevelRows)
+    ->  Rows = LevelRows
+    ;   Rows = []
+    ).
+level_index_rows(level_indexes(_, SeedsByLevel), seeds, Level, Rows) :-
+    (   get_assoc(Level, SeedsByLevel, LevelRows)
+    ->  Rows = LevelRows
+    ;   Rows = []
+    ).
 
 rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
     memberchk(stratum(Relation, Level), Strata).
@@ -825,26 +865,40 @@ derived_relations(Rules, Relations) :-
 
 strict_cycle_diagnostics([], _, []) :- !.
 strict_cycle_diagnostics(Relations, Dependencies, Diagnostics) :-
+    strict_dependencies(Dependencies, StrictDependencies),
+    strict_cycle_diagnostics_for_edges(
+        StrictDependencies, Relations, Dependencies, Diagnostics).
+
+strict_dependencies(Dependencies, StrictDependencies) :-
+    include(strict_dependency, Dependencies, StrictDependencies).
+
+strict_dependency(dependency(_, _, _, 1, _)).
+
+strict_cycle_diagnostics_for_edges([], _, _, []) :-
+    !.
+strict_cycle_diagnostics_for_edges(
+    StrictDependencies, Relations, Dependencies, Diagnostics) :-
     dependency_edges(Dependencies, Edges),
     vertices_edges_to_ugraph(Relations, Edges, Graph),
-    transitive_closure(Graph, Closure),
     findall(strict_edge(Cause, HeadRelation, BodyRelation),
             ( member(dependency(HeadRelation, BodyRelation, _, 1, Cause),
-                     Dependencies),
-              neighbors(BodyRelation, Closure, Reachable),
+                     StrictDependencies),
+              reachable(BodyRelation, Graph, Reachable),
               memberchk(HeadRelation, Reachable)
             ),
             StrictEdges0),
     sort(StrictEdges0, StrictEdges),
-    strict_edges_diagnostics(StrictEdges, Relations, Closure, Diagnostics).
+    strict_edges_diagnostics(StrictEdges, Graph, Diagnostics).
 
-strict_edges_diagnostics([], _, _, []) :- !.
-strict_edges_diagnostics(StrictEdges, Relations, Closure,
+strict_edges_diagnostics([], _, []) :- !.
+strict_edges_diagnostics(StrictEdges, Graph,
                          [diagnostic(stratify, none, CycleDiagnostic)]) :-
+    transpose_ugraph(Graph, TransposedGraph),
     findall(Relation,
             ( member(strict_edge(_, Head, _), StrictEdges),
-              member(Relation, Relations),
-              mutually_reachable(Head, Relation, Closure)
+              strongly_connected_relations(
+                  Head, Graph, TransposedGraph, Component),
+              member(Relation, Component)
             ),
             CycleRelations0),
     sort(CycleRelations0, CycleRelations),
@@ -856,12 +910,10 @@ cycle_diagnostic(StrictEdges, Relations,
     !.
 cycle_diagnostic(_, Relations, strict_dependency_cycle(Relations)).
 
-mutually_reachable(Relation, Relation, _) :- !.
-mutually_reachable(Left, Right, Closure) :-
-    neighbors(Left, Closure, LeftReachable),
-    memberchk(Right, LeftReachable),
-    neighbors(Right, Closure, RightReachable),
-    memberchk(Left, RightReachable).
+strongly_connected_relations(Relation, Graph, TransposedGraph, Component) :-
+    reachable(Relation, Graph, Forward),
+    reachable(Relation, TransposedGraph, Reverse),
+    ord_intersection(Forward, Reverse, Component).
 
 dependency_edges([], []).
 dependency_edges([dependency(HeadRelation, BodyRelation, _, _, _)
