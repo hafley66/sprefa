@@ -39,7 +39,8 @@ compiler-perf-test:
 
 # Generate deterministic multi-file DL7 projects and measure cold compilation
 # at powers-of-two file counts. Arguments: max files, types/file, fields/type,
-# repetitions. Every individual compiler process has a 3-second ceiling.
+# repetitions. Every individual compiler process has a 3-second ceiling. The
+# final rows attribute each adjacent scale increase to compiler phases.
 compiler-scale max_files="8" types_per_file="16" fields_per_type="8" repetitions="1":
     bash "{{ v7 }}/bench/3a_compiler_scale.sh" "{{ max_files }}" "{{ types_per_file }}" "{{ fields_per_type }}" "{{ repetitions }}"
 

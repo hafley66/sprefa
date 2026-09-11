@@ -16,8 +16,11 @@
                 make_directory_path/1
               ]).
 :- use_module(library(http/json), [json_write_dict/3]).
+:- use_module(library(pairs), [pairs_keys_values/3]).
 :- use_module('../src/2_comptime/1c_compiler_cacher',
               [clear_compiler_caches/0]).
+:- use_module('../src/2_comptime/1b_compiler_tracer',
+              [latest_compile_trace/4]).
 :- use_module('../src/2_comptime/2_compiler',
               [compile_dl7_project/5]).
 
@@ -130,11 +133,13 @@ run_repetition(V7Directory, Paths, Files, Types, Fields, SourceBytes, Run) :-
     compile_dl7_project(V7Directory, Paths, Rows, Runtime, Diagnostics),
     get_time(AfterWall),
     statistics(inferences, AfterInferences),
+    latest_compile_trace(_, Phases, _, _),
     WallMs is round((AfterWall - BeforeWall) * 1000),
     Inferences is AfterInferences - BeforeInferences,
     length(Rows, RowCount),
     length(Diagnostics, DiagnosticCount),
     runtime_counts(Runtime, RuntimeRelations, RuntimeSeeds, RuntimeRules),
+    phase_totals(Phases, PhaseTotals),
     TotalTypes is Files * Types,
     TotalFields is TotalTypes * Fields,
     Report = _{run: Run,
@@ -150,7 +155,8 @@ run_repetition(V7Directory, Paths, Files, Types, Fields, SourceBytes, Run) :-
                diagnostics: DiagnosticCount,
                runtime_relations: RuntimeRelations,
                runtime_seeds: RuntimeSeeds,
-               runtime_rules: RuntimeRules},
+               runtime_rules: RuntimeRules,
+               phases: PhaseTotals},
     json_write_dict(current_output, Report, [width(0)]),
     nl,
     report_diagnostics(Diagnostics).
@@ -169,3 +175,22 @@ runtime_counts(
     length(Seeds, SeedCount),
     length(Rules, RuleCount).
 runtime_counts(_, 0, 0, 0).
+
+phase_totals(Phases, Totals) :-
+    findall(Name, member(phase(Name, _), Phases), Names0),
+    sort(Names0, Names),
+    maplist(phase_total(Phases), Names, Totals).
+
+phase_total(Phases, Name,
+            _{phase: Name, wall_ms: WallMs, inferences: Inferences}) :-
+    findall(Wall-Inference,
+            ( member(phase(Name, Measurement), Phases),
+              measurement_wall_inferences(Measurement, Wall, Inference) ),
+            Measurements),
+    pairs_keys_values(Measurements, Walls, InferenceCounts),
+    sum_list(Walls, WallMs),
+    sum_list(InferenceCounts, Inferences).
+
+measurement_wall_inferences(
+    measurement(WallMs, _, Inferences, _, _, _, _, _, _, _, _, _),
+    WallMs, Inferences).
