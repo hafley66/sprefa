@@ -510,17 +510,24 @@ level_counts([Level | Levels], All, [Level-Count | Rest]) :-
     level_counts(Levels, All, Rest).
 
 debug_reset_worklist_counters :-
-    retractall(debug_worklist_visits(_)),
-    retractall(debug_worklist_changes(_)).
+    (   debug_trace_on
+    ->  retractall(debug_worklist_visits(_)),
+        retractall(debug_worklist_changes(_))
+    ;   true
+    ).
 
 debug_worklist_counters(Visits, Changes) :-
-    (   retract(debug_worklist_visits(Visits0))
-    ->  Visits = Visits0
-    ;   Visits = 0
-    ),
-    (   retract(debug_worklist_changes(Changes0))
-    ->  Changes = Changes0
-    ;   Changes = 0
+    (   debug_trace_on
+    ->  (   retract(debug_worklist_visits(Visits0))
+        ->  Visits = Visits0
+        ;   Visits = 0
+        ),
+        (   retract(debug_worklist_changes(Changes0))
+        ->  Changes = Changes0
+        ;   Changes = 0
+        )
+    ;   Visits = 0,
+        Changes = 0
     ).
 
 debug_bump_visit(true) :-

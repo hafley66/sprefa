@@ -398,7 +398,7 @@ run_compile_step(Phase, Step, Goal, MetricsGoal) :-
             call(Goal),
             finish_compile_step(
                 Phase, Step, Before, MetricsGoal))
-    ;   compile_trace_mode(debug)
+    ;   debug_trace_on
     ->  run_debug_step(Phase, Step, Goal, MetricsGoal)
     ;   call(Goal)
     ).
