@@ -189,6 +189,184 @@ test(promoted_alias_uses_nearest_owner_index_and_alias_origins) :-
                    ],
     Next == 1.
 
+test(reservation_arena_matches_list_for_shadowing_and_aliases) :-
+    reservation_arena_fixture(Reservations),
+    arena_equivalence(Reservations, ['Name', field, missing, parent_name, other]).
+
+test(reservation_arena_matches_list_for_partial_keys) :-
+    reservation_arena_fixture(Reservations),
+    arena_equivalence(Reservations, [_, 'Name', field, missing]).
+
+test(reservation_arena_same_owner_product_precedence_is_unchanged) :-
+    Reservations = [ reservation(owner(scope), 'Name',
+                                  target(owner(reference)), reference),
+                     reservation(owner(scope), 'Name',
+                                  target(owner(product)), product)
+                   ],
+    setup_call_cleanup(
+        dl7_lowerer:open_reservation_arena(Reservations),
+        dl7_lowerer:scoped_reservation(
+            owner(scope), 'Name', Reservations, [], Reservation),
+        dl7_lowerer:close_reservation_arena),
+    Reservation == reservation(owner(scope), 'Name',
+                               target(owner(product)), product).
+
+test(reservation_arena_parent_cycle_terminates_and_fails) :-
+    Reservations = [ reservation(owner(cycle_a), other,
+                                  target(owner(cycle_b)), product),
+                     reservation(owner(cycle_b), other,
+                                  target(owner(cycle_a)), product)
+                   ],
+    setup_call_cleanup(
+        dl7_lowerer:open_reservation_arena(Reservations),
+        ( dl7_lowerer:scoped_reservation(
+              owner(cycle_a), 'Missing', Reservations, [], _) ->
+            Cycle = unexpected
+        ;   Cycle = terminated
+        ),
+        dl7_lowerer:close_reservation_arena),
+    Cycle == terminated.
+
+test(reservation_arena_unknown_name_fails) :-
+    Reservation = reservation(owner(scope), name, target(owner(x)), product),
+    setup_call_cleanup(
+        dl7_lowerer:open_reservation_arena([Reservation]),
+        ( dl7_lowerer:scoped_reservation(
+              owner(scope), unknown, [Reservation], [], _) ->
+            Outcome = unexpected
+        ;   Outcome = absent
+        ),
+        dl7_lowerer:close_reservation_arena),
+    Outcome == absent.
+
+test(reservation_arena_nested_store_isolation) :-
+    Inner = [reservation(owner(scope), name, target(owner(inner)), product)],
+    Outer = [reservation(owner(scope), name, target(owner(outer)), product)],
+    once(
+        setup_call_cleanup(
+            dl7_lowerer:open_reservation_arena(Outer),
+            ( dl7_lowerer:scoped_reservation(
+                  owner(scope), name, Outer, [], OuterResult),
+              OuterResult == reservation(
+                                  owner(scope), name,
+                                  target(owner(outer)), product),
+              setup_call_cleanup(
+                  dl7_lowerer:open_reservation_arena(Inner),
+                  ( dl7_lowerer:scoped_reservation(
+                        owner(scope), name, Inner, [], InnerResult),
+                    InnerResult == reservation(
+                                        owner(scope), name,
+                                        target(owner(inner)), product) ),
+                  dl7_lowerer:close_reservation_arena),
+              dl7_lowerer:scoped_reservation(
+                  owner(scope), name, Outer, [], Restored),
+              Restored == reservation(
+                              owner(scope), name,
+                              target(owner(outer)), product) ),
+            dl7_lowerer:close_reservation_arena)).
+
+test(reservation_arena_simultaneous_thread_isolation) :-
+    First = [reservation(owner(scope), name, target(owner(first)), product)],
+    Second = [reservation(owner(scope), name, target(owner(second)), product)],
+    message_queue_create(Queue),
+    thread_create(
+        reservation_arena_thread(First, first, Queue),
+        FirstThread, []),
+    thread_create(
+        reservation_arena_thread(Second, second, Queue),
+        SecondThread, []),
+    thread_join(FirstThread, _),
+    thread_join(SecondThread, _),
+    thread_get_message(Queue, first-FirstResult),
+    thread_get_message(Queue, second-SecondResult),
+    message_queue_destroy(Queue),
+    FirstResult == reservation(owner(scope), name, target(owner(first)), product),
+    SecondResult == reservation(owner(scope), name,
+                                target(owner(second)), product).
+
+test(reservation_arena_cleanup_after_success_failure_exception) :-
+    Reservations = [reservation(owner(scope), name, target(owner(x)), product)],
+    setup_call_cleanup(
+        dl7_lowerer:open_reservation_arena(Reservations),
+        true,
+        dl7_lowerer:close_reservation_arena),
+    reservation_arena_residue(0),
+    (   setup_call_cleanup(
+            dl7_lowerer:open_reservation_arena(Reservations),
+            fail,
+            dl7_lowerer:close_reservation_arena)
+    ->  Failed = unexpected
+    ;   Failed = failed
+    ),
+    Failed == failed,
+    reservation_arena_residue(0),
+    catch(
+        setup_call_cleanup(
+            dl7_lowerer:open_reservation_arena(Reservations),
+            throw(arena_test_exception),
+            dl7_lowerer:close_reservation_arena),
+        arena_test_exception,
+        true),
+    reservation_arena_residue(0).
+
+%% reservation_arena_fixture(-Reservations) is det.
+%
+% A reservation table exercising direct shadowing, a chained parent alias,
+% product-over-reference precedence, and a two-owner parent cycle.
+reservation_arena_fixture(Reservations) :-
+    Reservations = [
+        reservation(owner(root), 'Name', target(owner(base)), product),
+        reservation(owner(root), 'Name', target(owner(shadow)), reference),
+        reservation(owner(inner), 'Name', target(owner(inner_name)), reference),
+        reservation(owner(inner), field, target(owner(field_target)), product),
+        reservation(owner(parent), parent_name, target(owner(inner)), product),
+        reservation(owner(cycle_a), other, target(owner(cycle_b)), product),
+        reservation(owner(cycle_b), other, target(owner(cycle_a)), product)
+    ].
+
+%% arena_equivalence(+Reservations, +Names) is det.
+%
+% Every (Owner, Name) query with each owner in the table and each name in
+% Names must return the identical reservation from the list accessor and the
+% JITI arena. Names may hold a variable to exercise partial keys.
+arena_equivalence(Reservations, Names) :-
+    list_owners(Reservations, Owners),
+    findall(Result,
+            arena_query(Owners, Names, Reservations, Result),
+            ListResults),
+    setup_call_cleanup(
+        dl7_lowerer:open_reservation_arena(Reservations),
+        findall(Result,
+                arena_query(Owners, Names, Reservations, Result),
+                ArenaResults),
+        dl7_lowerer:close_reservation_arena),
+    ListResults == ArenaResults.
+
+arena_query(Owners, Names, Reservations, Result) :-
+    member(Owner, Owners),
+    member(Name, Names),
+    dl7_lowerer:scoped_reservation(Owner, Name, Reservations, [], Result).
+
+list_owners(Reservations, Owners) :-
+    findall(Owner,
+            member(reservation(Owner, _, _, _), Reservations),
+            OwnerList0),
+    sort(OwnerList0, Owners).
+
+reservation_arena_thread(Reservations, Tag, Queue) :-
+    setup_call_cleanup(
+        dl7_lowerer:open_reservation_arena(Reservations),
+        dl7_lowerer:scoped_reservation(
+            owner(scope), name, Reservations, [], Result),
+        dl7_lowerer:close_reservation_arena),
+    thread_send_message(Queue, Tag-Result).
+
+reservation_arena_residue(Facts) :-
+    findall(_, dl7_lowerer:arena_reservation(_, _, _, _, _), FactList),
+    length(FactList, Facts),
+    findall(_, dl7_lowerer:reservation_arena_scope(_), ScopeList),
+    length(ScopeList, 0).
+
 fixture_path(Name, Path) :-
     test_directory(TestDirectory),
     atomic_list_concat(
