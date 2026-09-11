@@ -14,6 +14,13 @@
 :- use_module('../1_libtime/0_evaluator',
               [integer_comparison/3, stratify_rules/3]).
 :- use_module('0_lowerer', [kernel_relation/2]).
+:- use_module('0_graph_lookup',
+              [ open_checker_graph_store/2,
+                close_graph_store/0,
+                graph_forward/4,
+                graph_parent/3,
+                graph_module_member/2
+              ]).
 :- use_module('1b_compiler_tracer',
               [debug_trace_on/0,
                 debug_event/2,
@@ -185,6 +192,19 @@ check_datalog_body(basement_program(root_graph(Nodes, PendingEdges),
                    Origins, Checked, Diagnostics) :-
     !,
     must_be(ground, Origins),
+    setup_call_cleanup(
+        open_checker_graph_store(PendingEdges, Nodes),
+        check_datalog_graph_body(
+            Nodes, PendingEdges, Relations0, Seeds0, Rules0, Origins,
+            Checked, Diagnostics),
+        close_graph_store).
+check_datalog_body(Program, _, [], Diagnostics) :-
+    must_be(ground, Program),
+    Diagnostics = [diagnostic(check, none, invalid_basement_program)].
+
+check_datalog_graph_body(
+        Nodes, PendingEdges, Relations0, Seeds0, Rules0, Origins,
+        Checked, Diagnostics) :-
     relations_refs(Relations0, SourceRelations),
     kernel_relation_rows(KernelRelations),
     append(SourceRelations, KernelRelations, AllRelations),
@@ -207,9 +227,6 @@ check_datalog_body(basement_program(root_graph(Nodes, PendingEdges),
     ;   Checked = [],
         sort(Diags, Diagnostics)
     ).
-check_datalog_body(Program, _, [], Diagnostics) :-
-    must_be(ground, Program),
-    Diagnostics = [diagnostic(check, none, invalid_basement_program)].
 
 %% check_resolved_rules(+Relations, +Rules, -Depends, -Strata,
 %%                      -Diagnostics) is det.
@@ -581,21 +598,21 @@ resolve_target(name(Owner, Name), Edges, Nodes, Visited, Resolved) :-
 % owner; a module owner resolves the four pinned primitive names.
 resolve_name(Owner, Name, Edges, Nodes, Visited, Resolved) :-
     \+ memberchk(Owner-Name, Visited),
-    (   memberchk(pending_edge(Owner, Name, Target, _), Edges)
+    (   graph_forward(Edges, Owner, Name, Target)
     ->  resolve_target(Target, Edges, Nodes, [Owner-Name | Visited], Resolved)
-    ;   parent_owner(Owner, Edges, Parent),
+    ;   graph_parent(Edges, Owner, Parent),
         resolve_name(Parent, Name, Edges, Nodes, [Owner-Name | Visited],
                      Resolved)
-    ;   memberchk(module(Owner), Nodes),
+    ;   graph_module_member(Nodes, Owner),
         kernel_relation(Name, _),
         Resolved = ref(kernel(Name))
-    ;   memberchk(module(Owner), Nodes),
+    ;   graph_module_member(Nodes, Owner),
         primitive_name(Name),
         Resolved = ref(primitive(Name))
     ).
 
 parent_owner(Owner, Edges, Parent) :-
-    memberchk(pending_edge(Parent, _, target(Owner), _), Edges).
+    graph_parent(Edges, Owner, Parent).
 
 primitive_name(int).
 primitive_name(text).

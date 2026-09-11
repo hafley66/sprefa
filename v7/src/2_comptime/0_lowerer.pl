@@ -8,6 +8,11 @@
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(gensym), [gensym/2]).
 :- use_module('../1_libtime/0_evaluator', [integer_comparison/3]).
+:- use_module('0_graph_lookup',
+              [ open_lowerer_graph_store/1,
+                close_graph_store/0,
+                graph_callable_slot/4
+              ]).
 
 :- dynamic arena_reservation/6.
 
@@ -91,10 +96,13 @@ lower_after_declarations(
             Environment = expression_environment(
                               PromotedVisibleReservations, VisibleRelations,
                               PromotedVisibleEdges),
-            lower_reserved_environment(
-                CallPolicy, DerivedReservations, Environment, Forms,
-                ModuleOwner, Promotions, Nodes0, PromotedEdges, Relations,
-                DeclarationOrigins, Program, Origins, Diagnostics)
+            setup_call_cleanup(
+                open_lowerer_graph_store(PromotedVisibleEdges),
+                lower_reserved_environment(
+                    CallPolicy, DerivedReservations, Environment, Forms,
+                    ModuleOwner, Promotions, Nodes0, PromotedEdges, Relations,
+                    DeclarationOrigins, Program, Origins, Diagnostics),
+                close_graph_store)
         ),
         close_reservation_arena).
 
@@ -1260,10 +1268,8 @@ callable_slots(Callable, Arity, Environment, Slots) :-
 
 callable_slot(target(Callable), expression_environment(_, _, Edges), Index,
               slot(Index, Label)) :-
-    memberchk(pending_edge(Callable, Candidate, _, Index), Edges),
-    atom(Candidate),
-    !,
-    Label = Candidate.
+    graph_callable_slot(Edges, Callable, Index, Label),
+    !.
 callable_slot(kernel(Name), _, Index, slot(Index, Label)) :-
     kernel_slot_label(Name, Index, Label),
     !.
