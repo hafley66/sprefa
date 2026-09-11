@@ -205,7 +205,7 @@ edge|dl7.bench|depends_on|dl7.compiler_tracer
 edge|dl7.extract_loader|reads|ext.tsi
 edge|dl7.source_fact_loader|reads|ext.core
 edge|dl7.host_planner|hosts|host.soopy
-edge|dl7.tool_cli|depends_on|ext.watch
+edge|dl7.tool_cli|reads|ext.watch
 edge|dl6.surface|depends_on|none
 edge|dl6.declarations|depends_on|dl6.surface
 edge|dl6.rules|depends_on|dl6.declarations
