@@ -9,7 +9,7 @@
 :- use_module(library(gensym), [gensym/2]).
 :- use_module('../1_libtime/0_evaluator', [integer_comparison/3]).
 
-:- dynamic arena_reservation/5.
+:- dynamic arena_reservation/6.
 
 :- thread_local reservation_arena_scope/1.
 
@@ -79,24 +79,23 @@ lower_after_declarations(
     append(Edges, ImportedEdges, VisibleEdges),
     setup_call_cleanup(
         open_reservation_arena(VisibleReservations),
-        promote_deferred_aliases(
-            Reservations, VisibleReservations, Edges, VisibleEdges,
-            DeclarationOrigins,
-            DerivedReservations, PromotedReservations, PromotedEdges,
-            Promotions),
-        close_reservation_arena),
-    append(PromotedReservations, ImportedReservations,
-           PromotedVisibleReservations),
-    append(PromotedEdges, ImportedEdges, PromotedVisibleEdges),
-    Environment = expression_environment(
-                      PromotedVisibleReservations, VisibleRelations,
-                      PromotedVisibleEdges),
-    setup_call_cleanup(
-        open_reservation_arena(PromotedVisibleReservations),
-        lower_reserved_environment(
-            CallPolicy, DerivedReservations, Environment, Forms, ModuleOwner,
-            Promotions, Nodes0, PromotedEdges, Relations, DeclarationOrigins,
-            Program, Origins, Diagnostics),
+        (   promote_deferred_aliases(
+                Reservations, VisibleReservations, Edges, VisibleEdges,
+                DeclarationOrigins,
+                DerivedReservations, PromotedReservations, PromotedEdges,
+                Promotions),
+            install_promoted_reservation_view(PromotedReservations),
+            append(PromotedReservations, ImportedReservations,
+                   PromotedVisibleReservations),
+            append(PromotedEdges, ImportedEdges, PromotedVisibleEdges),
+            Environment = expression_environment(
+                              PromotedVisibleReservations, VisibleRelations,
+                              PromotedVisibleEdges),
+            lower_reserved_environment(
+                CallPolicy, DerivedReservations, Environment, Forms,
+                ModuleOwner, Promotions, Nodes0, PromotedEdges, Relations,
+                DeclarationOrigins, Program, Origins, Diagnostics)
+        ),
         close_reservation_arena).
 
 %% lower_reserved_environment(+CallPolicy, +DerivedReservations, +Environment,
@@ -1496,16 +1495,17 @@ callable_reservation_kind(derived_callable).
 
 %% open_reservation_arena(+Reservations) is det.
 %
-% Materialize one lowering boundary's reservation table as flattened dynamic
-% facts in list order. The explicit store id keeps nested lowerings and
-% lowerings in other threads disjoint while arena_reservation/5 stays one
+% Materialize one lowering boundary's visible reservation table as flattened
+% dynamic facts in list order, under the view `visible`. One store is built per
+% lower_datalog/5 boundary. The explicit store id keeps nested lowerings and
+% lowerings in other threads disjoint while arena_reservation/6 stays one
 % JITI-indexed dynamic predicate. The caller pairs this with
 % close_reservation_arena/0 under setup_call_cleanup/3.
 open_reservation_arena(Reservations) :-
     gensym(dl7_reservation_arena_, StoreId),
     asserta(reservation_arena_scope(StoreId)),
     catch(
-        (   install_reservation_facts(Reservations, StoreId)
+        (   install_reservation_view(Reservations, StoreId, visible)
         ->  true
         ;   close_reservation_arena,
             fail
@@ -1515,11 +1515,21 @@ open_reservation_arena(Reservations) :-
           throw(Error)
         )).
 
-install_reservation_facts([], _).
-install_reservation_facts(
-    [reservation(Owner, Name, Target, Kind) | Reservations], StoreId) :-
-    assertz(arena_reservation(Owner, Name, Target, Kind, StoreId)),
-    install_reservation_facts(Reservations, StoreId).
+%% install_promoted_reservation_view(+Reservations) is det.
+%
+% Add this boundary's post-promotion local reservations as the `promoted` view
+% of the innermost store. A promoted (Owner, Name) then shadows its
+% pre-promotion entry in the visible view, so the two views together reproduce
+% PromotedReservations ++ ImportedReservations while each list is stored once.
+install_promoted_reservation_view(Reservations) :-
+    reservation_arena_scope(StoreId),
+    install_reservation_view(Reservations, StoreId, promoted).
+
+install_reservation_view([], _, _).
+install_reservation_view(
+    [reservation(Owner, Name, Target, Kind) | Reservations], StoreId, View) :-
+    assertz(arena_reservation(Owner, Name, Target, Kind, StoreId, View)),
+    install_reservation_view(Reservations, StoreId, View).
 
 %% close_reservation_arena is det.
 %
@@ -1527,7 +1537,7 @@ install_reservation_facts(
 % failure, and exception through setup_call_cleanup/3.
 close_reservation_arena :-
     (   retract(reservation_arena_scope(StoreId))
-    ->  retractall(arena_reservation(_, _, _, _, StoreId))
+    ->  retractall(arena_reservation(_, _, _, _, StoreId, _))
     ;   true
     ).
 
@@ -1542,20 +1552,36 @@ scoped_reservation(Owner, Name, Reservations, Visited, Reservation) :-
 
 % Index selection narrows the candidate clauses; the stored full fields are
 % still unified, so a hash collision cannot change the returned reservation.
+% The promoted view is consulted before the visible view, so a promoted
+% (Owner, Name) shadows its pre-promotion entry while list sequence is kept.
 scoped_reservation_arena(Owner, Name, Reservations, Visited, Reservation) :-
     reservation_arena_scope(StoreId),
-    (   arena_reservation(Owner, Name, target(Callable), product, StoreId)
+    (   reservation_arena_product(StoreId, Owner, Name, Callable)
     ->  Reservation = reservation(
                            Owner, Name, target(Callable), product)
-    ;   arena_reservation(Owner, Name, Target, Kind, StoreId)
+    ;   reservation_arena_any(StoreId, Owner, Name, Target, Kind)
     ->  Reservation = reservation(Owner, Name, Target, Kind)
     ;   reservation_parent_arena(StoreId, Owner, Parent),
         scoped_reservation(Parent, Name, Reservations, [Owner | Visited],
                            Reservation)
     ).
 
+reservation_arena_product(StoreId, Owner, Name, Callable) :-
+    (   arena_reservation(Owner, Name, target(Callable), product, StoreId,
+                          promoted)
+    ;   arena_reservation(Owner, Name, target(Callable), product, StoreId,
+                          visible)
+    ).
+
+reservation_arena_any(StoreId, Owner, Name, Target, Kind) :-
+    (   arena_reservation(Owner, Name, Target, Kind, StoreId, promoted)
+    ;   arena_reservation(Owner, Name, Target, Kind, StoreId, visible)
+    ).
+
 reservation_parent_arena(StoreId, Owner, Parent) :-
-    arena_reservation(Parent, _, target(Owner), product, StoreId).
+    (   arena_reservation(Parent, _, target(Owner), product, StoreId, promoted)
+    ;   arena_reservation(Parent, _, target(Owner), product, StoreId, visible)
+    ).
 
 scoped_reservation_list(Owner, Name, Reservations, Visited, Reservation) :-
     (   memberchk(reservation(Owner, Name, target(Callable), product),
