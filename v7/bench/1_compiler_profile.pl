@@ -11,9 +11,8 @@
 %
 % Deterministic width is the inference count the compiler tracer already
 % measures per phase and step; a fresh-process comparison showed inference
-% counts byte-stable while wall milliseconds are not. Wall values live only in
-% the top-level wall_observations map, which is excluded from any byte
-% comparison of deterministic fields.
+% counts byte-stable while wall milliseconds are not. Wall time is written to
+% stderr only, so every generated artifact remains byte-stable.
 %
 % Diagnostic instrumentation only: no compiler, graph, evaluator, or IR
 % semantics change.

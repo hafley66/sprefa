@@ -67,8 +67,8 @@ test(duplicate_summary_exact_percentages) :-
                     evaluator_installed_seeds-call(s, [x]) ],
     duplicate_occurrence_summary(Occurrences, Report),
     get_dict(categories, Report, Entries),
-    member(Stratification, Entries),
-    get_dict(category, Stratification, stratification_input),
+    once(( member(Stratification, Entries),
+           get_dict(category, Stratification, stratification_input) )),
     get_dict(total, Stratification, 3),
     get_dict(unique, Stratification, 2),
     get_dict(duplicate, Stratification, 1),
@@ -120,16 +120,17 @@ fresh_directory(Directory) :-
     Directory = Created.
 
 profile_runs(run(First, Second)) :-
-    (   nb_current(dl7_profile_run_pair, Pair)
-    ->  Pair = run(First, Second)
+    (   nb_current(dl7_profile_run_pair, RunPair)
+    ->  true
     ;   fixture_path(Fixture),
         fresh_directory(First),
         run_profile(Fixture, First, 0, _),
         fresh_directory(Second),
         run_profile(Fixture, Second, 0, _),
-        nb_setval(dl7_profile_run_pair, run(First, Second)),
-        Pair = run(First, Second)
-    ).
+        RunPair = run(First, Second),
+        nb_setval(dl7_profile_run_pair, RunPair)
+    ),
+    RunPair = run(First, Second).
 
 artifact(Directory, Name, Path) :-
     directory_file_path(Directory, Name, Path).
@@ -221,7 +222,7 @@ test(rendered_paths_are_checkout_root_stable) :-
     render_identity_text('/checkout/two',
                          file('/checkout/two/v7/test/fixtures/a.dl7'), Text2),
     Text1 == Text2,
-    sub_string(Text1, _, _, _, "$REPO/v7/test/fixtures/a.dl7"),
+    once(sub_string(Text1, _, _, _, "$REPO/v7/test/fixtures/a.dl7")),
     render_fixture_text('/checkout/one',
                         '/checkout/one/v7/test/fixtures/a.dl7', Fixture1),
     render_fixture_text('/checkout/two',
@@ -236,23 +237,23 @@ test(duplicate_tsv_names_columns_and_percent) :-
     forall(member(Column, ["category", "total", "unique", "duplicate",
                            "percent", "top_repeated"]),
            sub_string(Header, _, _, _, Column)),
-    sub_string(Tsv, _, _, _, "overall").
+    once(sub_string(Tsv, _, _, _, "overall")).
 
 test(summary_names_denominator_and_formula) :-
     profile_runs(run(First, _)),
     read_artifact(First, '4_summary.txt', Summary),
-    sub_string(Summary, _, _, _, "duplicate-work denominator"),
-    sub_string(Summary, _, _, _, "duplicate-work formula"),
-    sub_string(Summary, _, _, _, "duplicate_inference_percent: unavailable"),
-    sub_string(Summary, _, _, _, "inferences").
+    once(sub_string(Summary, _, _, _, "duplicate-work denominator")),
+    once(sub_string(Summary, _, _, _, "duplicate-work formula")),
+    once(sub_string(Summary, _, _, _, "duplicate_inference_percent: unavailable")),
+    once(sub_string(Summary, _, _, _, "inferences")).
 
 test(html_embeds_profile_json_and_labels) :-
     profile_runs(run(First, _)),
     read_artifact(First, '3_flamechart.html', Html),
     read_artifact(First, '0_profile.json', FileText),
     string_concat(Trimmed, "\n", FileText),
-    sub_string(Html, _, _, _, Trimmed),
-    sub_string(Html, _, _, _, "profile-data"),
+    once(sub_string(Html, _, _, _, Trimmed)),
+    once(sub_string(Html, _, _, _, "profile-data")),
     forall(member(Label, ["compile", "install", "collect", "cleanup",
                           "round_1"]),
            sub_string(Html, _, _, _, Label)).
@@ -262,7 +263,7 @@ test(unknown_source_exits_nonzero_with_stage) :-
     run_profile('v7/test/fixtures/not_a_real_fixture.dl7',
                 Directory, ExitCode, Stderr),
     ExitCode == 2,
-    sub_string(Stderr, _, _, _, "stage=source").
+    once(sub_string(Stderr, _, _, _, "stage=source")).
 
 test(require_fixture_rejects_unknown) :-
     fixture_path(Fixture),
@@ -299,7 +300,7 @@ test(shell_unknown_source_preserves_stage) :-
     run_shell(['v7/test/fixtures/not_a_real_fixture.dl7', Directory],
               ExitCode, Stderr),
     ExitCode == 2,
-    sub_string(Stderr, _, _, _, "stage=source"),
+    once(sub_string(Stderr, _, _, _, "stage=source")),
     \+ sub_string(Stderr, _, _, _, "stage=report").
 
 % An output directory whose parent is a regular file makes report staging fail;
@@ -315,13 +316,13 @@ test(shell_report_failure_preserves_stage) :-
     directory_file_path(Blocker, child, BadOutput),
     run_shell([Fixture, BadOutput], ExitCode, Stderr),
     ExitCode == 4,
-    sub_string(Stderr, _, _, _, "stage=report").
+    once(sub_string(Stderr, _, _, _, "stage=report")).
 
 test(shell_pins_default_output_directory) :-
     shell_script_path(Script),
     read_file_to_string(Script, Text, []),
-    sub_string(Text, _, _, _,
-               'output_directory="${repo_root}/v7/out/compiler-profile"').
+    once(sub_string(Text, _, _, _,
+                    'output_directory="${repo_root}/v7/out/compiler-profile"')).
 
 test(folded_omits_zero_weight_entries) :-
     profile_runs(run(First, _)),

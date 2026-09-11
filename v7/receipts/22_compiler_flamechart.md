@@ -287,7 +287,7 @@ Correction verification (one `swipl` process at a time, each command under 20 s)
 
 | check | result |
 | --- | --- |
-| `v7/test/21_compiler_profile.test.pl` | 22 pass (max 1.93 s) |
+| `v7/test/21_compiler_profile.test.pl` | 22 pass (max 2.49 s) |
 | `v7/test/3_compiler_trace.test.pl` | 15 pass (max 0.25 s) |
 | `2_compiler_flamechart.sh <fixture>` default + explicit dir | exit 0; all five files byte-identical across fresh runs |
 | nearest-shadow perf gate | cold 3,136,311 / budget 16,000,000; warm 2,240 / budget 5,000; exit 0 |
