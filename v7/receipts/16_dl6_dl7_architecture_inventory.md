@@ -59,21 +59,34 @@ axis|dl7.kernel|binds_at|comptime_fixpoint
 axis|dl7.kernel|binds_at|runtime_fixpoint
 ```
 
+Central axis: one DL7 relational mechanism, realized by the single `evaluate/4`
+fixpoint, is applied three times. `macrotime_fixpoint` consumes the syntax graph
+and produces expanded syntax. `comptime_fixpoint` consumes the TSI/type/module
+graph and produces a checked runtime Datalog/IVM program. `runtime_fixpoint`
+over whole-language fact deltas produces maintained query/effect relations, and
+is planned in `v7/rust` (`rt.v7`) with the generic executor `rt.executor`; it is
+not present in-tree at this base. The three are the same mechanism, not three
+engines: `dl7.evaluator` is `binding=shared` and runs at all three.
+
 `dl7.macrotime` is the macrotime application (`binding=macrotime`).
 `dl7.kernel`, `dl7.checker`, `dl7.emitter_protocol`, and the emit nodes are the
 comptime application. `dl7.evaluator`, `dl7.prelude`, and `dl7.schema` are
-`binding=shared`. `ext.*`, `host.*`, `lsp.*`, `ivm.*`, `rt.*`, `rt.v7`, `hmr`,
-and `dd.backend` are the runtime application.
+`binding=shared`. `ext.*`, `host.*`, `lsp.*`, `ivm.*`, `rt.*`, `rt.v7`,
+`rt.executor`, `hmr`, and `dd.backend` are the runtime application.
+
+`rt.v7` (successor whole-language runtime) and `rt.executor` (generic runtime
+executor) are distinct planned components. They are not `rt.rust`
+(`v6/sprefa-engine-rs`), which is the current in-tree generated-program runtime.
 
 ### DL6 as DL7 userland application
 
-`DL6` is not a second compiler core in this model. It is a userland `.dl7`
-application composed of macros, declarations, rules, checks, and emitter
-relations, currently still written in SWI-Prolog under `v6/prolog/`. Every
-`dl6.*` component carries `plane=userland`; its `binding` says which fixpoint
-step it corresponds to. The authored counterpart already exists as the DL7
-userland catalog `v7/applications/dl6/0_catalog.dl7` with the storage emitter
-`v7/emitters/2_interned_storage.dl7`.
+`DL6` is not a second kernel and not a peer compiler core. It is a userland
+`.dl7` application and macro/emitter donor composed of macros, declarations,
+rules, checks, and emitter relations, currently still written in SWI-Prolog
+under `v6/prolog/`. Every `dl6.*` component carries `plane=userland`; its
+`binding` says which fixpoint step it corresponds to. The authored counterpart
+already exists as the DL7 userland catalog `v7/applications/dl6/0_catalog.dl7`
+with the storage emitter `v7/emitters/2_interned_storage.dl7`.
 
 | DL6 userland layer | Binding time | DL7 userland node |
 |---|---|---|
@@ -86,6 +99,7 @@ hosts extract, filesystem, git, LSP, shell, HTTP, and SQLite IVM. No `v7/rust`
 tree exists at this base; it is recorded as `planned` (`rt.v7`), sourced from
 `v7/labs/19_rust_dynamic_loading/0_RESEARCH.md:450`. `v6/sprefa-engine-rs`
 (`rt.rust`) is the in-tree runtime today.
+
 
 ## Machine-readable inventory
 
@@ -159,8 +173,8 @@ component|host.http|HTTP get/post hosts|implemented|unknown/unknown|unknown|none
 component|host.clocks|clock tick host|implemented|unknown/unknown|unknown|none|rt.rust|/clock/tick rows|dl6.clock|v6/sprefa-engine-rs/src/executors/clock.rs:30;v6/sprefa-engine-rs/src/source_bind/_1_runtime.rs|v6/sprefa-engine-rs/tests|binding=runtime|plane=host-runtime
 component|host.env|environment variable host|implemented|unknown/unknown|unknown|none|rt.rust|/env/var rows|dl6.host|v6/sprefa-engine-rs/src/executors/env.rs:14|v6/sprefa-engine-rs/tests|binding=runtime|plane=host-runtime
 component|host.soopy|Soopy stage/commit/checkout hosts|implemented|unknown/unknown|unknown|none|rt.rust|stage/commit/checkout rows|dl6.effects;dl7.tool_cli|v6/sprefa-engine-rs/src/hosts.rs:470;v6/sprefa-engine-rs/src/executors/checkout.rs:21;v6/sprefa-engine-rs/src/executors/watch.rs:49|v7/test/7_rust_type_region.e2e.pl|binding=runtime|plane=host-runtime
-component|lsp.diagnostics|DL LSP diagnostic publishing|implemented|unknown/unknown|unknown|dl6.diag:partial|dl6.diag|textDocument/publishDiagnostics|editor|src/lsp.rs:44,102,537,747;v6/dl/fixtures/diag-rail.dl6:1|v6/tsv2/scripts/lsp-diags.sh|binding=runtime|plane=host-runtime
-component|lsp.edits|LSP rename/codeAction/workspace edits|absent|unknown/unknown|unknown|none|none|none|none|src/lsp.rs (no WorkspaceEdit handler)|none|binding=runtime|plane=host-runtime
+component|lsp.diagnostics|legacy v5 DL LSP diagnostics (donor; not V7)|implemented|unknown/unknown|unknown|dl6.diag:partial|dl6.diag|textDocument/publishDiagnostics|editor|src/lsp.rs:44,102,537,747;v6/dl/fixtures/diag-rail.dl6:1|v6/tsv2/scripts/lsp-diags.sh|binding=runtime|plane=host-runtime
+component|lsp.edits|legacy v5 LSP rename/codeAction/workspace edits (absent; not V7)|absent|unknown/unknown|unknown|none|none|none|none|src/lsp.rs (no WorkspaceEdit handler)|none|binding=runtime|plane=host-runtime
 component|ivm.algebra|shared generic IVM operator algebra|absent|unknown/unknown|unknown|none|none|none|none|sqlite_ivm/src/0b_relational.rs:27;v6/dd-runner/src/kernel.rs:53;v6/sprefa-store/src/engine.rs:1|none|binding=runtime|plane=host-runtime
 component|ivm.sqlite|SQLite transactional IVM extension|implemented|64/64|sqlite_ivm/README.md:54-58|dl6.ivm:full;dl7.emit.sqlite:full|none|maintained result tables;__ivm_* catalogs|dl7.emit.sqlite;dl6.storage|sqlite_ivm/src/0b_relational.rs:27;sqlite_ivm/src/1a_relational.rs:624;sqlite_ivm/README.md:38-53|sqlite_ivm/scripts/9_verify.sh;sqlite_ivm/bench/46_feature_acceptance.md|binding=runtime|plane=host-runtime
 component|rt.tsv2|TypeScript tsv2 incremental runtime|implemented|unknown/unknown|unknown|dl6.ivm:full;dl6.reload_catalog:full|dl6.emit_ts|tick deltas;IReloadPlan|dl6.reload_catalog|v6/tsv2/runtime/1_incremental.ts:990;v6/tsv2/runtime/3_subscribe.ts:46;v6/tsv2/runtime/2_boot.ts:28|v6/tsv2/tests|binding=runtime|plane=host-runtime
@@ -168,6 +182,7 @@ component|rt.rust|sprefa-engine-rs generated-program runtime|implemented|unknown
 component|rt.dd_ram|dd-runner RAM kernel|partial|unknown/unknown|unknown|dl7.emit.dbsp:partial|dl7.emit.dbsp|closure rows;tick deltas|dl7.emit.dbsp;dl6.reload_catalog|v6/dd-runner/src/kernel.rs:53,352,424;v6/dd-runner/src/main.rs:66,197,454|v6/dd-runner/grade.sh;v7/test/13_sqlite_plan.e2e.pl|binding=runtime|plane=host-runtime
 component|rt.store|sprefa-store cascade engine with dd/salsa oracles|implemented|unknown/unknown|unknown|none|none|cascade deltas;reconcile;reach|bench;oracle|v6/sprefa-store/src/engine.rs:1;v6/sprefa-store/src/oracle.rs:1;v6/sprefa-store/js/src/engine/engine.ts:1|v6/sprefa-store/tests|binding=runtime|plane=host-runtime
 component|rt.v7|DL7 successor whole-language runtime|planned|unknown/unknown|architecture directive (boop codex-2344 2026-09-10)|self|ext.core;ext.langs;ext.watch;ivm.sqlite;host.filesystem;host.git;host.shell;host.http;host.clocks;lsp.diagnostics|maintained query/effect relations|dl7.tool_cli|v7/labs/19_rust_dynamic_loading/0_RESEARCH.md:450|v7/labs/19_rust_dynamic_loading/0_RESEARCH.md:1|binding=runtime|plane=host-runtime
+component|rt.executor|generic whole-language runtime executor|planned|unknown/unknown|architecture directive (boop codex-2344 2026-09-10)|none|dl7.emit.rust;dl7.schema|maintained whole-language relation rows;effect dispatch|rt.v7;host.filesystem;host.git;lsp.diagnostics|v7/labs/19_rust_dynamic_loading/0_RESEARCH.md:450;v7/design/1_MINIMAL_VERTICAL_SLICE.PLAN.md:24-25|none|binding=runtime|plane=host-runtime
 component|hmr|program hot reload and generation-boundary swap|partial|unknown/unknown|unknown|dl6.reload_catalog:full|rt.tsv2;dl6.reload_catalog|reload plan;drop/refill/keep|rt.tsv2|v6/tsv2/serve/reloadPlan.ts:39;v6/tsv2/serve/3_engine.ts:245;v6/tsv2/serve/4_http.ts:180;v7/labs/19_rust_dynamic_loading/0_RESEARCH.md:450|v6/tsv2/tests/serveReload.test.ts|binding=runtime|plane=host-runtime
 component|dd.backend|differential-dataflow backend|planned|unknown/unknown|unknown|none|none|none|none|sqlite_ivm/bench/shared/34_circuit_dd.rs;sqlite_ivm/bench/shared/22_crossover_dd.rs|sqlite_ivm/scripts/16_shootout.sh|binding=runtime|plane=host-runtime
 edge|dl7.kernel|depends_on|dl7.reader
@@ -190,7 +205,7 @@ edge|dl7.bench|depends_on|dl7.compiler_tracer
 edge|dl7.extract_loader|reads|ext.tsi
 edge|dl7.source_fact_loader|reads|ext.core
 edge|dl7.host_planner|hosts|host.soopy
-edge|dl7.tool_cli|emits|ext.watch
+edge|dl7.tool_cli|depends_on|ext.watch
 edge|dl6.surface|depends_on|none
 edge|dl6.declarations|depends_on|dl6.surface
 edge|dl6.rules|depends_on|dl6.declarations
@@ -235,11 +250,13 @@ edge|host.clocks|depends_on|rt.rust
 edge|host.env|depends_on|rt.rust
 edge|host.soopy|depends_on|rt.rust
 edge|lsp.diagnostics|reads|dl6.diag
-edge|ivm.sqlite|lowers_to|ivm.algebra
+edge|ivm.algebra|lowers_to|ivm.sqlite
 edge|rt.tsv2|reads|dl6.ivm
 edge|rt.rust|reads|dl6.emit_rust
 edge|rt.dd_ram|reads|dl7.emit.dbsp
 edge|rt.store|depends_on|none
+edge|rt.v7|depends_on|rt.executor
+edge|rt.executor|reads|dl7.emit.rust
 edge|hmr|reloads|rt.tsv2
 edge|dd.backend|later_target|ivm.algebra
 edge|dl6.conformance|watches|dl6.rules
@@ -304,24 +321,24 @@ Absolute paths are relative to the base worktree. Primary sources:
 | components (DL7) | 21 |
 | components (DL6 userland) | 24 |
 | components (extraction/hosts/LSP) | 17 |
-| components (backends/runtime) | 9 |
-| components total | 71 |
-| typed edges | 74 |
+| components (backends/runtime) | 10 |
+| components total | 72 |
+| typed edges | 75 |
 | axis records | 9 |
-| evidence path references | 177 |
+| evidence path references | 179 |
 | milestone with sourced denominator | 7 |
-| milestone unknown denominator | 64 |
+| milestone unknown denominator | 65 |
 | binding macrotime | 4 |
 | binding comptime | 37 |
-| binding runtime | 27 |
+| binding runtime | 28 |
 | binding shared | 3 |
 | plane core | 19 |
 | plane userland | 26 |
-| plane host-runtime | 26 |
+| plane host-runtime | 27 |
 | state implemented | 59 |
 | state partial | 7 |
 | state absent | 2 |
-| state planned | 2 (dd.backend, rt.v7) |
+| state planned | 3 (dd.backend, rt.v7, rt.executor) |
 | state reference | 1 |
 | DL6 facilities with full DL7 equivalent | 2 (rules/strata/checks, IVM runtime userland) |
 | DL6 facilities with partial DL7 equivalent | 7 |
