@@ -1970,6 +1970,34 @@ test(demand_cone_index_matches_reference_on_relation_graphs) :-
     maplist(demand_cone_case_parity, Cases, Parities),
     Parities == [equal, equal, equal].
 
+test(demand_cone_static_indexes_match_wrapper_at_every_fixture_level) :-
+    maplist(demand_cone_fixture_levels_parity,
+            [ 'v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7',
+              'v7/test/fixtures/2_partial.dl7' ]).
+
+demand_cone_fixture_levels_parity(Path) :-
+    compile_dl7(Path, _, Runtime, []),
+    Runtime = checked_datalog(_, datalog_program(_, _, Rules), _, _),
+    dl7_evaluator:rule_dependencies(Rules, Dependencies),
+    stratify_rules(Rules, Strata, []),
+    dl7_evaluator:demand_cone_static_indexes(
+        Strata, Rules, Dependencies, StaticIndexes),
+    findall(Level, member(stratum(_, Level), Strata), Levels0),
+    sort(Levels0, Levels),
+    maplist(
+        demand_cone_fixture_level_parity(
+            Strata, Rules, Dependencies, StaticIndexes),
+        Levels).
+
+demand_cone_fixture_level_parity(
+    Strata, Rules, Dependencies, StaticIndexes, Level) :-
+    include(dl7_evaluator:rule_at_level(Strata, Level), Rules, CurrentRules),
+    dl7_evaluator:demand_cone_rules(
+        Strata, Level, Rules, Dependencies, CurrentRules, WrapperRules),
+    dl7_evaluator:demand_cone_rules_indexed(
+        Level, StaticIndexes, CurrentRules, IndexedRules),
+    IndexedRules == WrapperRules.
+
 demand_cone_case_parity(
     case(Strata, Level, Rules, Dependencies, Current), Parity) :-
     reference_demand_cone(

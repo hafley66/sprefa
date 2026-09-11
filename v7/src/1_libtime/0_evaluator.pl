@@ -8,7 +8,8 @@
 
 :- use_module(library(aggregate), [aggregate_all/3]).
 :- use_module(library(assoc),
-              [ get_assoc/3,
+              [ assoc_to_list/2,
+                get_assoc/3,
                 list_to_assoc/2,
                 put_assoc/4
               ]).
@@ -121,8 +122,9 @@ evaluate_after_stratify(
     [], Strata, Dependencies, Rules, Seeds, Closure, Diagnostics) :-
     !,
     max_stratum(Strata, MaxStratum),
-    evaluate_strata(0, MaxStratum, Strata, Dependencies, Rules, Seeds, [],
-                    Closure, Diagnostics).
+    demand_cone_static_indexes(Strata, Rules, Dependencies, StaticIndexes),
+    evaluate_strata(0, MaxStratum, Strata, Dependencies, StaticIndexes,
+                    Rules, Seeds, [], Closure, Diagnostics).
 evaluate_after_stratify(Diagnostics, _, _, _, _, [], Diagnostics).
 
 max_stratum([], 0).
@@ -130,26 +132,29 @@ max_stratum(Strata, MaxStratum) :-
     findall(Level, member(stratum(_, Level), Strata), Levels),
     max_list(Levels, MaxStratum).
 
-evaluate_strata(Level, MaxStratum, _, _, _, _, Closure, Closure, []) :-
+evaluate_strata(Level, MaxStratum, _Strata, _Dependencies, _StaticIndexes,
+                _Rules, _Seeds, Closure, Closure, []) :-
     Level > MaxStratum,
     !.
-evaluate_strata(Level, MaxStratum, Strata, Dependencies, Rules, Seeds, LowerRows,
-                Closure, Diagnostics) :-
+evaluate_strata(Level, MaxStratum, Strata, Dependencies, StaticIndexes,
+                Rules, Seeds, LowerRows, Closure, Diagnostics) :-
     include(rule_at_level(Strata, Level), Rules, CurrentRules),
     include(seed_at_level(Strata, Level), Seeds, CurrentSeeds),
     include(aggregate_rule, CurrentRules, AggregateRules),
-    demand_cone_rules(
-        Strata, Level, Rules, Dependencies, CurrentRules, PlainRules),
+    demand_cone_rules_indexed(
+        Level, StaticIndexes, CurrentRules, PlainRules),
     derive_aggregate_rule_rows(LowerRows, AggregateRules,
                                AggregateSeeds, AggregateDiagnostics),
     evaluate_stratum_after_aggregates(
         AggregateDiagnostics, AggregateSeeds,
-        Level, MaxStratum, Strata, Dependencies, Rules, Seeds, LowerRows,
+        Level, MaxStratum, Strata, Dependencies, StaticIndexes,
+        Rules, Seeds, LowerRows,
         PlainRules, CurrentRules, CurrentSeeds, Closure, Diagnostics).
 
 evaluate_stratum_after_aggregates(
     [], AggregateSeeds,
-    Level, MaxStratum, Strata, Dependencies, Rules, Seeds, LowerRows,
+    Level, MaxStratum, Strata, Dependencies, StaticIndexes,
+    Rules, Seeds, LowerRows,
     PlainRules, CurrentRules, CurrentSeeds, Closure, Diagnostics) :-
     !,
     append(CurrentSeeds, AggregateSeeds, Seeds0),
@@ -173,10 +178,10 @@ evaluate_stratum_after_aggregates(
             clear_evaluation(EvaluationId, ClauseReferences),
             evaluate_cleanup_metrics(Level, EvaluationId, ClauseReferences))),
     NextLevel is Level + 1,
-    evaluate_strata(NextLevel, MaxStratum, Strata, Dependencies, Rules, Seeds,
-                    CompletedRows, Closure, Diagnostics).
+    evaluate_strata(NextLevel, MaxStratum, Strata, Dependencies, StaticIndexes,
+                    Rules, Seeds, CompletedRows, Closure, Diagnostics).
 evaluate_stratum_after_aggregates(
-    Diagnostics, _, _, _, _, _, _, _, _, _, _, _, [], Diagnostics).
+    Diagnostics, _, _, _, _, _, _, _, _, _, _, _, _, [], Diagnostics).
 
 rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
     memberchk(stratum(Relation, Level), Strata).
@@ -189,15 +194,31 @@ rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
 % lower-row snapshot, so their definitions do not enter this demand cone.
 demand_cone_rules(
     Strata, Level, Rules, Dependencies, CurrentRules, PlainRules) :-
+    demand_cone_static_indexes(Strata, Rules, Dependencies, StaticIndexes),
+    demand_cone_rules_indexed(
+        Level, StaticIndexes, CurrentRules, PlainRules).
+
+%% demand_cone_static_indexes(+Strata, +Rules, +Dependencies,
+%%                            -StaticIndexes) is det.
+%
+% These indexes depend only on one evaluate/4 input program. The evaluator
+% builds them once per evaluation and threads them through every stratum;
+% demand_cone_rules/6 remains the direct-call compatibility wrapper.
+demand_cone_static_indexes(Strata, Rules, Dependencies,
+                           static_indexes(DependencyIndex, RuleIndex)) :-
+    demand_cone_dependency_index(Dependencies, DependencyIndex),
+    demand_cone_static_rule_index(Strata, Rules, RuleIndex).
+
+demand_cone_rules_indexed(
+    Level, static_indexes(DependencyIndex, RuleIndex), CurrentRules,
+    PlainRules) :-
     exclude(aggregate_rule, CurrentRules, CurrentPlainRules),
     sort(CurrentPlainRules, Roots),
-    demand_cone_dependency_index(Dependencies, DependencyIndex),
-    demand_cone_rule_index(Strata, Level, Rules, RuleIndex),
     demand_cone_root_relations(Roots, RootRelations),
     demand_cone_relation_set(RootRelations, SeenRelations),
     list_to_assoc([], IncludedRelations),
     demand_cone_worklist(
-        RootRelations, DependencyIndex, RuleIndex, SeenRelations,
+        Level, RootRelations, DependencyIndex, RuleIndex, SeenRelations,
         IncludedRelations, Roots, Selected),
     sort(Selected, PlainRules).
 
@@ -219,26 +240,41 @@ demand_cone_dependency_index(Dependencies, DependencyIndex) :-
 sort_relation_group(Relation-Bodies0, Relation-Bodies) :-
     sort(Bodies0, Bodies).
 
-%% demand_cone_rule_index(+Strata, +Level, +Rules, -RuleIndex) is det.
+%% demand_cone_static_rule_index(+Strata, +Rules, -RuleIndex) is det.
 %
-% Index every nonaggregate definition that the old include/3 scan could select
-% for a newly discovered body relation. Rule list order is immaterial before
-% the existing final sort/2, while retaining all same-head definitions keeps
-% their dependency edges available to the worklist.
-demand_cone_rule_index(Strata, Level, Rules, RuleIndex) :-
-    findall(Relation-Rule,
+% Index every nonaggregate definition and retain its stratum level. The level
+% filter moves to discovery, so this index can be reused by every stratum.
+demand_cone_static_rule_index(Strata, Rules, RuleIndex) :-
+    findall(Relation-rule_definition(RuleLevel, Rule),
             ( member(Rule, Rules),
-              demand_cone_eligible_rule(Strata, Level, Rule, Relation)
+              demand_cone_eligible_rule(Strata, Rule, Relation, RuleLevel)
             ),
             Pairs0),
     keysort(Pairs0, Pairs),
     group_pairs_by_key(Pairs, RuleGroups),
     list_to_assoc(RuleGroups, RuleIndex).
 
-demand_cone_eligible_rule(Strata, Level, Rule, Relation) :-
+demand_cone_rule_index(Strata, Level, Rules, RuleIndex) :-
+    demand_cone_static_rule_index(Strata, Rules, StaticRuleIndex),
+    demand_cone_filter_rule_index(Level, StaticRuleIndex, RuleIndex).
+
+demand_cone_filter_rule_index(Level, StaticRuleIndex, RuleIndex) :-
+    assoc_to_list(StaticRuleIndex, Groups),
+    maplist(filter_rule_group(Level), Groups, FilteredGroups),
+    list_to_assoc(FilteredGroups, RuleIndex).
+
+filter_rule_group(Level, Relation-Definitions0, Relation-Rules) :-
+    include(rule_definition_at_level(Level), Definitions0, Definitions),
+    maplist(rule_definition_rule, Definitions, Rules).
+
+rule_definition_at_level(Level, rule_definition(RuleLevel, _)) :-
+    RuleLevel =< Level.
+
+rule_definition_rule(rule_definition(_, Rule), Rule).
+
+demand_cone_eligible_rule(Strata, Rule, Relation, RuleLevel) :-
     Rule = rule(call(Relation, _), _),
     memberchk(stratum(Relation, RuleLevel), Strata),
-    RuleLevel =< Level,
     \+ aggregate_rule(Rule).
 
 demand_cone_root_relations(Roots, RootRelations) :-
@@ -253,7 +289,7 @@ demand_cone_relation_set(Relations, RelationSet) :-
             Pairs),
     list_to_assoc(Pairs, RelationSet).
 
-%% demand_cone_worklist(+Queue, +DependencyIndex, +RuleIndex,
+%% demand_cone_worklist(+Level, +Queue, +DependencyIndex, +RuleIndex,
 %%                      +SeenRelations, +IncludedRelations, +Selected0,
 %%                      -Selected) is det.
 %
@@ -261,27 +297,27 @@ demand_cone_relation_set(Relations, RelationSet) :-
 % before it later appears as a body relation, so SeenRelations and
 % IncludedRelations are separate: the latter records when its eligible rule
 % definitions have been added to Selected.
-demand_cone_worklist([], _, _, _, _, Selected, Selected).
+demand_cone_worklist(_, [], _, _, _, _, Selected, Selected).
 demand_cone_worklist(
-    [Relation | Queue0], DependencyIndex, RuleIndex, Seen0, Included0,
-    Selected0, Selected) :-
+    Level, [Relation | Queue0], DependencyIndex, RuleIndex, Seen0,
+    Included0, Selected0, Selected) :-
     (   get_assoc(Relation, DependencyIndex, BodyRelations)
     ->  true
     ;   BodyRelations = []
     ),
     demand_cone_discover(
-        BodyRelations, RuleIndex, Seen0, Seen1, Included0, Included1,
+        Level, BodyRelations, RuleIndex, Seen0, Seen1, Included0, Included1,
         NewRelations, NewRules),
     append(Queue0, NewRelations, Queue),
     append(NewRules, Selected0, Selected1),
     demand_cone_worklist(
-        Queue, DependencyIndex, RuleIndex, Seen1, Included1,
+        Level, Queue, DependencyIndex, RuleIndex, Seen1, Included1,
         Selected1, Selected).
 
-demand_cone_discover([], _, Seen, Seen, Included, Included, [], []).
+demand_cone_discover(_, [], _, Seen, Seen, Included, Included, [], []).
 demand_cone_discover(
-    [Relation | Relations], RuleIndex, Seen0, Seen, Included0, Included,
-    NewRelations, NewRules) :-
+    Level, [Relation | Relations], RuleIndex, Seen0, Seen, Included0,
+    Included, NewRelations, NewRules) :-
     (   get_assoc(Relation, Seen0, _)
     ->  Seen1 = Seen0,
         NewRelations = NewRelations0
@@ -292,14 +328,21 @@ demand_cone_discover(
     ->  Included1 = Included0,
         NewRules = NewRules0
     ;   put_assoc(Relation, Included0, true, Included1),
-        (   get_assoc(Relation, RuleIndex, RelationRules)
-        ->  append(RelationRules, NewRules0, NewRules)
-        ;   NewRules = NewRules0
-        )
+        demand_cone_rules_at_level(
+            Level, Relation, RuleIndex, NewRules0, NewRules)
     ),
     demand_cone_discover(
-        Relations, RuleIndex, Seen1, Seen, Included1, Included,
+        Level, Relations, RuleIndex, Seen1, Seen, Included1, Included,
         NewRelations0, NewRules0).
+
+demand_cone_rules_at_level(Level, Relation, RuleIndex, NewRules0, NewRules) :-
+    (   get_assoc(Relation, RuleIndex, RelationDefinitions)
+    ->  include(rule_definition_at_level(Level),
+                RelationDefinitions, EligibleDefinitions),
+        maplist(rule_definition_rule, EligibleDefinitions, RelationRules),
+        append(RelationRules, NewRules0, NewRules)
+    ;   NewRules = NewRules0
+    ).
 
 seed_at_level(Strata, Level, call(Relation, _)) :-
     relation_level(Strata, Relation, Level).
