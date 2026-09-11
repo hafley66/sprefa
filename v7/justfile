@@ -37,6 +37,12 @@ compiler-perf-gate:
 compiler-perf-test:
     timeout 20 swipl -q -s "{{ v7 }}/test/20_compiler_performance.test.pl" -g run_tests -t halt
 
+# Generate deterministic multi-file DL7 projects and measure cold compilation
+# at powers-of-two file counts. Arguments: max files, types/file, fields/type,
+# repetitions. Every individual compiler process has a 3-second ceiling.
+compiler-scale max_files="8" types_per_file="16" fields_per_type="8" repetitions="1":
+    bash "{{ v7 }}/bench/3a_compiler_scale.sh" "{{ max_files }}" "{{ types_per_file }}" "{{ fields_per_type }}" "{{ repetitions }}"
+
 # Compile one fixture through the deterministic profiler and write
 # 0_profile.json, 1_folded.txt, 2_duplicates.tsv, 3_flamechart.html, and
 # 4_summary.txt under v7/out/compiler-profile (or the given directory).
