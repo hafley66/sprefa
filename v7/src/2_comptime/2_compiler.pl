@@ -42,7 +42,9 @@
               ]).
 :- use_module('1_checker',
               [ check_datalog/4,
-                check_resolved_rules/5
+                check_resolved_rules/5,
+                open_checker_origin_arena/1,
+                close_checker_origin_arena/0
               ]).
 :- use_module('1a_generated_program_assembler',
               [assemble_generated_program/5]).
@@ -553,9 +555,9 @@ compile_units_traced(Units, Compiled, Diagnostics) :-
         _),
     debug_lowerer_output(ModuleBasements, LowerDiagnostics),
     Context = compile_context(Units, none),
-    compile_after_unit_lower(LowerDiagnostics, Context,
-                             ModuleBasements, ModuleOrigins,
-                             Compiled, Diagnostics),
+    compile_after_unit_lower_with_origin_arena(
+        LowerDiagnostics, Context, ModuleBasements, ModuleOrigins,
+        Compiled, Diagnostics),
     !.
 
 compile_project_units(Project, TsiRows, Units, Compiled, Diagnostics) :-
@@ -573,10 +575,22 @@ compile_project_units(Project, TsiRows, Units, Compiled, Diagnostics) :-
         LowerDiagnostics, Project, TsiRows, ModuleBasements0, ModuleOrigins0,
         ModuleBasements, ModuleOrigins, ProjectDiagnostics),
     Context = compile_context(Units, project(Project, TsiRows)),
-    compile_after_unit_lower(ProjectDiagnostics, Context,
-                             ModuleBasements, ModuleOrigins,
-                             Compiled, Diagnostics),
+    compile_after_unit_lower_with_origin_arena(
+        ProjectDiagnostics, Context, ModuleBasements, ModuleOrigins,
+        Compiled, Diagnostics),
     !.
+
+compile_after_unit_lower_with_origin_arena(
+    [], Context, ModuleBasements, ModuleOrigins, Compiled, Diagnostics) :-
+    !,
+    setup_call_cleanup(
+        open_checker_origin_arena(ModuleOrigins),
+        compile_after_unit_lower(
+            [], Context, ModuleBasements, ModuleOrigins,
+            Compiled, Diagnostics),
+        close_checker_origin_arena).
+compile_after_unit_lower_with_origin_arena(
+    Diagnostics, _, _, _, [], Diagnostics).
 
 install_project_after_lower(
     [], Project, TsiRows, Basements0, Origins0,
