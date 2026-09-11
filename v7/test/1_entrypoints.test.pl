@@ -1715,6 +1715,88 @@ test(evaluation_index_isolates_simultaneous_evaluation_ids) :-
     AfterA == [],
     AfterB == [RowB].
 
+test(evaluation_shared_lower_store_deduplicates_growing_snapshots) :-
+    Relation = ref(kernel(shared_lower)),
+    First = call(Relation, [const(a)]),
+    Second = call(Relation, [const(b)]),
+    Third = call(Relation, [const(c)]),
+    SnapshotOne = [First, Second],
+    SnapshotTwo = [First, Second, Third],
+    setup_call_cleanup(
+        dl7_evaluator:open_lower_store,
+        once((
+            dl7_evaluator:install_lower_rows(
+                SnapshotOne, shared_first, RefsOne),
+            dl7_evaluator:lower_store_scope(StoreId),
+            aggregate_all(count,
+                          dl7_evaluator:evaluation_lower_index(
+                              StoreId, _, _, _, _, _, _),
+                          StoredOne),
+            dl7_evaluator:install_lower_rows(
+                SnapshotTwo, shared_second, RefsTwo),
+            aggregate_all(count,
+                          dl7_evaluator:evaluation_lower_index(
+                              StoreId, _, _, _, _, _, _),
+                          StoredTwo),
+            findall(Row,
+                    dl7_evaluator:evaluation_lower(
+                        shared_second, Relation, Row),
+                    All)
+        )),
+        dl7_evaluator:close_lower_store),
+    RefsOne == [],
+    RefsTwo == [],
+    StoredOne == 2,
+    StoredTwo == 3,
+    sort(SnapshotTwo, Expected),
+    sort(All, SortedAll),
+    SortedAll == Expected.
+
+test(evaluation_shared_lower_store_clears_on_scope_exit) :-
+    setup_call_cleanup(
+        dl7_evaluator:open_lower_store,
+        once((
+            dl7_evaluator:install_lower_rows(
+                [call(ref(kernel(clear_probe)), [const(row)])],
+                clear_probe_id, _),
+            dl7_evaluator:lower_store_scope(_)
+        )),
+        dl7_evaluator:close_lower_store),
+    aggregate_all(count,
+                  dl7_evaluator:evaluation_lower_index(_, _, _, _, _, _, _),
+                  LeftoverRows),
+    aggregate_all(count, dl7_evaluator:lower_store_scope(_), LeftoverScopes),
+    LeftoverRows == 0,
+    LeftoverScopes == 0.
+
+test(evaluation_shared_lower_store_rejects_forced_collision) :-
+    Relation = ref(kernel(shared_collide)),
+    RealRow = call(Relation, [const(payload)]),
+    FakeRow = call(Relation, [const(other)]),
+    term_hash(const(payload), ForcedHash),
+    setup_call_cleanup(
+        dl7_evaluator:open_lower_store,
+        once((
+            dl7_evaluator:install_lower_rows([RealRow], shared_collide_id, _),
+            dl7_evaluator:lower_store_scope(StoreId),
+            assertz(dl7_evaluator:evaluation_lower_index(
+                        StoreId, Relation, ForcedHash, _, _, _, FakeRow)),
+            findall(Found,
+                    ( Found = call(Relation, [const(payload)]),
+                      dl7_evaluator:evaluation_lower(
+                          shared_collide_id, Relation, Found) ),
+                    PayloadRows),
+            findall(Found,
+                    dl7_evaluator:evaluation_lower(
+                        shared_collide_id, Relation, Found),
+                    AllRows)
+        )),
+        dl7_evaluator:close_lower_store),
+    PayloadRows == [RealRow],
+    sort(AllRows, SortedAll),
+    sort([RealRow, FakeRow], SortedExpected),
+    SortedAll == SortedExpected.
+
 evaluator_trace_probe(Rules, Seeds) :-
     Rules = [ rule(call(ref(derived), [var(x)]),
                    [ checked_goal(positive, call(ref(seed), [var(x)])) ]) ],
