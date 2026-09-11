@@ -2,6 +2,7 @@
 
 :- use_module(library(http/json), [json_read_dict/3]).
 :- use_module(library(process), [process_create/3, process_wait/2]).
+:- use_module(library(lists), [max_list/2]).
 :- use_module(library(filesex), [make_directory_path/1,
                                  directory_file_path/3]).
 :- use_module('../bench/1_compiler_profile',
@@ -17,8 +18,6 @@
               ]).
 
 fixture_path('v7/test/fixtures/lexical_binding/7_nearest_shadow.dl7').
-
-setup(profile_runs(_)).
 
 %% ------------------------------------------------------------------
 %% Synthetic duplicate semantics
@@ -119,18 +118,24 @@ fresh_directory(Directory) :-
     make_directory_path(Created),
     Directory = Created.
 
+% Compile runs are produced lazily and memoized in thread-local non-backtrackable
+% storage: the first request compiles run one, and only the determinism test asks
+% for run two. This keeps every case's own compile cost to at most one fresh
+% process instead of paying two up front.
 profile_runs(run(First, Second)) :-
-    (   nb_current(dl7_profile_run_pair, RunPair)
-    ->  true
+    profile_run(first, First),
+    profile_run(second, Second).
+
+profile_run(Slot, Directory) :-
+    atomic_list_concat([dl7_profile_run, Slot], '_', Key),
+    (   nb_current(Key, Cached)
+    ->  Directory = Cached
     ;   fixture_path(Fixture),
-        fresh_directory(First),
-        run_profile(Fixture, First, 0, _),
-        fresh_directory(Second),
-        run_profile(Fixture, Second, 0, _),
-        RunPair = run(First, Second),
-        nb_setval(dl7_profile_run_pair, RunPair)
-    ),
-    RunPair = run(First, Second).
+        fresh_directory(Created),
+        run_profile(Fixture, Created, 0, _),
+        nb_setval(Key, Created),
+        Directory = Created
+    ).
 
 artifact(Directory, Name, Path) :-
     directory_file_path(Directory, Name, Path).
@@ -146,11 +151,18 @@ read_profile_dict(Directory, Dict) :-
         json_read_dict(Stream, Dict, [value_string_as(atom)]),
         close(Stream)).
 
-test(all_five_artifacts_written) :-
+deterministic_artifact_names(
+    ['0_profile.json', '1_folded.txt', '2_duplicates.tsv', '4_summary.txt']).
+
+all_artifact_names(
+    ['0_profile.json', '1_folded.txt', '2_duplicates.tsv',
+     '3_flamechart.html', '4_summary.txt', '5_timing.json']).
+
+test(all_six_artifacts_written) :-
     profile_runs(run(First, _)),
     forall(member(Name, ['0_profile.json', '1_folded.txt',
                          '2_duplicates.tsv', '3_flamechart.html',
-                         '4_summary.txt']),
+                         '4_summary.txt', '5_timing.json']),
            ( artifact(First, Name, Path), exists_file(Path) )).
 
 test(json_structure_has_stable_ids_and_existing_parents) :-
@@ -207,11 +219,10 @@ test(json_has_expected_hierarchy) :-
              get_dict(parent, Child, StratumId),
              get_dict(category, Child, ChildCategory) )).
 
-test(all_five_artifacts_are_deterministic) :-
+test(deterministic_artifacts_are_byte_stable) :-
     profile_runs(run(First, Second)),
-    forall(member(Name, ['0_profile.json', '1_folded.txt',
-                         '2_duplicates.tsv', '3_flamechart.html',
-                         '4_summary.txt']),
+    deterministic_artifact_names(Names),
+    forall(member(Name, Names),
            ( read_artifact(First, Name, Text1),
              read_artifact(Second, Name, Text2),
              Text1 == Text2 )).
@@ -242,10 +253,85 @@ test(duplicate_tsv_names_columns_and_percent) :-
 test(summary_names_denominator_and_formula) :-
     profile_runs(run(First, _)),
     read_artifact(First, '4_summary.txt', Summary),
-    once(sub_string(Summary, _, _, _, "duplicate-work denominator")),
-    once(sub_string(Summary, _, _, _, "duplicate-work formula")),
-    once(sub_string(Summary, _, _, _, "duplicate_inference_percent: unavailable")),
+    once(sub_string(Summary, _, _, _, "duplicate occurrences denominator")),
+    once(sub_string(Summary, _, _, _, "duplicate occurrences formula")),
+    once(sub_string(Summary, _, _, _, "duplicate CPU/inference percent: unavailable")),
+    once(sub_string(Summary, _, _, _, "wall metric: milliseconds")),
     once(sub_string(Summary, _, _, _, "inferences")).
+
+%% ------------------------------------------------------------------
+%% Run-specific timing contract
+%% ------------------------------------------------------------------
+
+read_timing_dict(Directory, Dict) :-
+    artifact(Directory, '5_timing.json', Path),
+    setup_call_cleanup(
+        open(Path, read, Stream, [encoding(utf8)]),
+        json_read_dict(Stream, Dict, [value_string_as(atom)]),
+        close(Stream)).
+
+% The timing artifact is run-specific and carries total plus per-span wall_ms
+% and wall_percent. The root span carries the whole total at 100%; the cost
+% center is one of its non-root children and matches the largest child wall.
+test(timing_artifact_pins_total_and_per_span_wall) :-
+    profile_runs(run(First, _)),
+    read_timing_dict(First, Timing),
+    get_dict(run_specific, Timing, true),
+    get_dict(wall_metric, Timing, milliseconds),
+    get_dict(total_wall_ms, Timing, TotalWall),
+    number(TotalWall),
+    read_profile_dict(First, Profile),
+    get_dict(span_count, Profile, SpanCount),
+    get_dict(spans, Timing, TimingSpans),
+    length(TimingSpans, SpanCount),
+    forall(member(TimingSpan, TimingSpans),
+           ( get_dict(wall_ms, TimingSpan, WallMs),
+             get_dict(wall_percent, TimingSpan, WallPercent),
+             number(WallMs),
+             number(WallPercent),
+             WallPercent >= 0.0,
+             WallPercent =< 100.0 )),
+    TimingSpans = [RootTiming | _],
+    get_dict(wall_ms, RootTiming, RootWall),
+    RootWall =:= TotalWall,
+    get_dict(wall_percent, RootTiming, RootPercent),
+    RootPercent =:= 100.0,
+    get_dict(cost_center, Timing, CostCenter),
+    CostCenter \== null,
+    get_dict(wall_ms, CostCenter, CenterWall),
+    findall(Wall,
+            ( member(Child, TimingSpans),
+              get_dict(category, Child, ChildCategory),
+              ChildCategory \== compile,
+              get_dict(wall_ms, Child, Wall) ),
+            ChildWalls),
+    max_list(ChildWalls, MaxChildWall),
+    CenterWall =:= MaxChildWall.
+
+test(deterministic_artifacts_exclude_wall) :-
+    profile_runs(run(First, _)),
+    deterministic_artifact_names(Names),
+    forall(member(Name, Names),
+           ( read_artifact(First, Name, Text),
+             \+ sub_string(Text, _, _, _, "wall_ms"),
+             \+ sub_string(Text, _, _, _, "total_wall_ms") )),
+    read_artifact(First, '5_timing.json', TimingText),
+    once(sub_string(TimingText, _, _, _, "total_wall_ms")).
+
+test(html_shows_wall_and_inference_metrics_without_hover) :-
+    profile_runs(run(First, _)),
+    read_artifact(First, '3_flamechart.html', Html),
+    read_artifact(First, '5_timing.json', TimingText),
+    string_concat(TimingTrimmed, "\n", TimingText),
+    once(sub_string(Html, _, _, _, TimingTrimmed)),
+    once(sub_string(Html, _, _, _, "timing-data")),
+    once(sub_string(Html, _, _, _, "getElementById('timing-data')")),
+    once(sub_string(Html, _, _, _, "#cost-center")),
+    once(sub_string(Html, _, _, _, "Cost center:")),
+    once(sub_string(Html, _, _, _, "wall_percent")),
+    once(sub_string(Html, _, _, _, "data-wall-ms")),
+    once(sub_string(Html, _, _, _, "duplicate CPU/inference percent: unavailable")),
+    once(sub_string(Html, _, _, _, "duplicate occurrences")).
 
 test(html_embeds_profile_json_and_labels) :-
     profile_runs(run(First, _)),
@@ -286,13 +372,12 @@ run_shell(Arguments, ExitCode, Stderr) :-
     close(ErrorStream),
     process_wait(Process, exit(ExitCode)).
 
-test(shell_writes_five_artifacts) :-
+test(shell_writes_six_artifacts) :-
     fixture_path(Fixture),
     fresh_directory(Directory),
     run_shell([Fixture, Directory], 0, _),
-    forall(member(Name, ['0_profile.json', '1_folded.txt',
-                         '2_duplicates.tsv', '3_flamechart.html',
-                         '4_summary.txt']),
+    all_artifact_names(Names),
+    forall(member(Name, Names),
            ( artifact(Directory, Name, Artifact), exists_file(Artifact) )).
 
 % The shell forwards the Prolog stage unchanged: a missing fixture is

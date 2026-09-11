@@ -6,9 +6,11 @@
 #
 # Small non-interactive wrapper: resolve the fixture and output directory, then
 # run exactly one bounded swipl process that compiles the fixture and writes the
-# five profile artifacts. No analysis, network, package install, or browser
-# launch happens here. The Prolog process owns directory creation and prints the
-# precise `DL7-PROFILE-ERROR stage=<source|usage|compile|report>`; this script
+# six profile artifacts (0_profile.json, 1_folded.txt, 2_duplicates.tsv,
+# 3_flamechart.html, 4_summary.txt, 5_timing.json). No analysis, network, package
+# install, or browser launch happens here. The Prolog process owns directory
+# creation and prints the precise
+# `DL7-PROFILE-ERROR stage=<source|usage|compile|report>`; this script
 # only adds `stage=timeout` when the 20-second cap fires and otherwise forwards
 # the original exit status unchanged.
 
