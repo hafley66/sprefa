@@ -201,6 +201,79 @@ fn renamed_fixture_crate_passes_cargo_check() {
     );
 }
 
+/// A module path inside an ordinary macro (`check!(ground::decide())`, the
+/// boop 2026-09-11 report-8 shape) is a bound reference and renames; the
+/// same-spelled field, local, loop binding and string in the same macro stay.
+/// FAIL-FIRST, against the report-8 binary:
+///     macro_body_paths_rename_and_locals_stay ... exited 6:
+///         src/lib.rs byte 214: macro body reaches the symbol at runtime
+/// @comment-ok: fail-first receipt, repo law keeps these in TEST headers
+#[test]
+fn macro_body_paths_rename_and_locals_stay() {
+    let fixture = fixture("macro", "commit");
+    rename_verb(&fixture, "src/lib.rs#ground", "_1b_ground", &["--commit"]);
+    let entries = diff_rq(&fixture.root, &tree("macro", "after"));
+    assert!(
+        entries.is_empty(),
+        "committed tree differs from after/:\n{}",
+        entries.join("\n")
+    );
+}
+
+/// rustc judges the macro fixture crate: the module declared through
+/// `#[path = "_1b_ground.rs"]` still compiles once the ident moves.
+#[test]
+fn renamed_macro_fixture_crate_passes_cargo_check() {
+    let fixture = fixture("macro", "check");
+    rename_verb(&fixture, "src/lib.rs#ground", "_1b_ground", &["--commit"]);
+    let check = Command::new("cargo")
+        .args(["check", "--offline"])
+        .env("CARGO_TARGET_DIR", fixture.root.join("target"))
+        .current_dir(&fixture.root)
+        .output()
+        .expect("cargo runs");
+    assert!(
+        check.status.success(),
+        "cargo check on the renamed macro fixture: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+}
+
+/// `--list --commit` is all-or-zero: the valid `ground` row applies nothing
+/// when the later `Wyll` row stops at the twin declarations (exit 3).
+#[test]
+fn list_commit_is_atomic_across_rows() {
+    let fixture = fixture("macro", "list");
+    let list = fixture.state.join("renames.tsv");
+    std::fs::write(
+        &list,
+        "src/lib.rs\tground\t_1b_ground\nsrc/twins.rs\tWyll\tVyle\n",
+    )
+    .expect("write rename list");
+    let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .args(["rename", "--list"])
+        .arg(&list)
+        .arg("--root")
+        .arg(&fixture.root)
+        .arg("--state")
+        .arg(&fixture.state)
+        .arg("--commit")
+        .output()
+        .expect("extract binary runs");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("src/twins.rs declares Wyll more than once"),
+        "the stop names the twin row:\n{stderr}"
+    );
+    assert_eq!(output.status.code(), Some(3), "Ambiguous exits 3:\n{stderr}");
+    let entries = diff_rq(&fixture.root, &tree("macro", "before"));
+    assert!(
+        entries.is_empty(),
+        "a stopped row applied earlier rows:\n{}",
+        entries.join("\n")
+    );
+}
+
 /// The verb run against this crate's own tree, judged by rustc, not by an
 /// assertion. MEASURED 2026-08-27: 25.2 s, over the 10-second cap, so it runs by
 /// hand: `cargo test --features cli --test 5_rename_rust -- --ignored`.

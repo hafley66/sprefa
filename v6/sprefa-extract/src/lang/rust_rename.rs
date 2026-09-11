@@ -9,17 +9,17 @@
 //! sits in `rust_rehome.rs:685-1300` behind a `MoveCx`, and a rename carries a
 //! `RenameCx`.
 //!
-//! Three seats are reported and never rewritten, because rewriting one guesses:
-//! a glob `use m::*` that puts the symbol in a scope which then writes the bare
-//! name, an identifier token inside a macro or attribute body, and any span whose
-//! bytes do not read back as the old name (`syn_span` bridges a proc_macro2 CHAR
-//! column, so a non-ASCII byte earlier on the line shifts it).
+//! Seats a run reports and never rewrites: a glob `use m::*` whose scope then
+//! writes the bare name, and a `.old` member token when the anchor is a method.
+//! A macro body's idents are classified by token context instead: a `::`
+//! segment resolves on the scope plane, a `$old`/`'old` token never reaches the
+//! symbol, a bare ident follows the bare-name law (shadowed, block-local, else
+//! the scope binding).
+//! @comment-ok: module header, the arm's seat and shadow laws
 //!
-//! Two limits this arm states rather than hides. A `use` written inside a block
-//! counts against the enclosing MODULE scope, which can only drop a seat, never
-//! invent one. A method seat is matched by name: the receiver's type is not
-//! inferred, so `x.old()` on an unrelated type is respelled too, and only a
-//! request whose anchor declaration IS a method reaches that code at all.
+//! Stated limits: a block-written `use` counts against the enclosing MODULE
+//! scope; a `let`/`for` binding shadows the bare name at BLOCK granularity only.
+//! @comment-ok: module header, same waiver
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -70,6 +70,8 @@ impl Rename for RustSource {
         };
         let home = corpus.home(&request.anchor);
         let nameable = corpus.nameable(module_of(home, &declaration.chain));
+        let reexports =
+            corpus.reexports(&nameable, (request.anchor.clone(), declaration.chain.clone()));
 
         let mut refs = vec![SymbolRef {
             file: request.anchor.clone(),
@@ -81,7 +83,7 @@ impl Rename for RustSource {
         for (rel, scan) in &corpus.scans {
             let anchored = (rel == &request.anchor).then_some(declaration);
             corpus.harvest(
-                rel, scan, &nameable, anchored, request, &mut refs, &mut seats,
+                rel, scan, &nameable, &reexports, anchored, request, &mut refs, &mut seats,
             );
         }
         if let Some(stop) = corpus.inexact(&refs) {
@@ -221,8 +223,7 @@ impl Corpus {
 
     /// The module a file is. A file under no crate root answers to itself, so its
     /// own paths still resolve against each other.
-    fn home(&self, rel: &str) -> &ModuleId {
-        static ORPHAN: ModuleId = (String::new(), Vec::new());
+    fn home(&self, rel: &str) -> &ModuleId {        static ORPHAN: ModuleId = (String::new(), Vec::new());
         self.homes.get(rel).unwrap_or(&ORPHAN)
     }
 
@@ -267,7 +268,9 @@ impl Corpus {
             for (rel, scan) in &self.scans {
                 let home = self.home(rel);
                 for leaf in &scan.uses {
-                    if !leaf.exported || !matches!(leaf.kind, LeafKind::Name) {
+                    if !leaf.exported
+                        || !matches!(leaf.kind, LeafKind::Name | LeafKind::SelfName)
+                    {
                         continue;
                     }
                     let Some(from) = self.resolve(home, &leaf.chain, &leaf.prefix) else {
@@ -284,6 +287,56 @@ impl Corpus {
         }
     }
 
+    /// The file scope a module id names: the file whose home is its deepest
+    /// module prefix, with the inline-mod chain left over.
+    fn scope_of(&self, module: &ModuleId) -> Option<(String, Vec<String>)> {
+        let (rel, home) = self
+            .homes
+            .iter()
+            .filter(|(_, home)| home.0 == module.0 && module.1.starts_with(&home.1))
+            .max_by_key(|(_, home)| home.1.len())?;
+        Some((rel.clone(), module.1[home.1.len()..].to_vec()))
+    }
+
+    /// Scopes that bind the name, to a fixpoint: a named import binds directly,
+    /// `use m::*` binds when m's scope binds. Seeded with the anchor's own scope.
+    fn reexports(
+        &self,
+        nameable: &BTreeSet<ModuleId>,
+        seed: (String, Vec<String>),
+    ) -> BTreeMap<String, BTreeSet<Vec<String>>> {
+        let mut binds: BTreeSet<(String, Vec<String>)> = BTreeSet::from([seed]);
+        loop {
+            let mut grew = false;
+            for (rel, scan) in &self.scans {
+                let home = self.home(rel);
+                for leaf in &scan.uses {
+                    let Some(target) = self.resolve(home, &leaf.chain, &leaf.prefix) else {
+                        continue;
+                    };
+                    let binding = match leaf.kind {
+                        LeafKind::Name | LeafKind::SelfName => nameable.contains(&target),
+                        LeafKind::Glob if !nameable.contains(&target) => self
+                            .scope_of(&target)
+                            .is_some_and(|scope| binds.contains(&scope)),
+                        _ => false,
+                    };
+                    if binding {
+                        grew |= binds.insert((rel.clone(), leaf.chain.clone()));
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        let mut out: BTreeMap<String, BTreeSet<Vec<String>>> = BTreeMap::new();
+        for (rel, chain) in binds {
+            out.entry(rel).or_default().insert(chain);
+        }
+        out
+    }
+
     /// One file's seats. `anchored` carries the declaration when this file is the
     /// anchor, so its own scope binds the name and its own ident is not a shadow.
     #[allow(clippy::too_many_arguments)]
@@ -292,6 +345,7 @@ impl Corpus {
         rel: &str,
         scan: &FileScan,
         nameable: &BTreeSet<ModuleId>,
+        reexports: &BTreeMap<String, BTreeSet<Vec<String>>>,
         anchored: Option<&Decl>,
         request: &RenameRequest,
         refs: &mut Vec<SymbolRef>,
@@ -319,6 +373,11 @@ impl Corpus {
                 .iter()
                 .any(|block| block.start <= span.start && span.end() <= block.end())
         };
+        let inside_local_block = |span: Span| {
+            scan.locals
+                .iter()
+                .any(|block| block.start <= span.start && span.end() <= block.end())
+        };
         for leaf in &scan.uses {
             let reaches = self
                 .resolve(home, &leaf.chain, &leaf.prefix)
@@ -331,6 +390,12 @@ impl Corpus {
                 LeafKind::Name => {
                     shadowed.insert(&leaf.chain);
                 }
+                LeafKind::SelfName if reaches => {
+                    ours.insert(&leaf.chain);
+                }
+                LeafKind::SelfName => {
+                    shadowed.insert(&leaf.chain);
+                }
                 LeafKind::Alias if reaches => {
                     refs.push(seat(rel, leaf.span, RefRole::Import, &request.old))
                 }
@@ -338,6 +403,15 @@ impl Corpus {
                     shadowed.insert(&leaf.chain);
                 }
                 LeafKind::Glob if reaches => globs.entry(&leaf.chain).or_default().push(leaf.item),
+                // A glob of a scope that binds the name re-exposes it here; the
+                // glob itself has no token to rewrite.
+                LeafKind::Glob
+                    if reexports
+                        .get(rel)
+                        .is_some_and(|chains| chains.contains(&leaf.chain)) =>
+                {
+                    ours.insert(&leaf.chain);
+                }
                 _ => {}
             }
         }
@@ -352,7 +426,10 @@ impl Corpus {
                 }
                 continue;
             }
-            if shadowed.contains(path.chain.as_slice()) || inside_shadow_block(path.span) {
+            if shadowed.contains(path.chain.as_slice())
+                || inside_shadow_block(path.span)
+                || (path.bare && inside_local_block(path.span))
+            {
                 continue;
             }
             if ours.contains(path.chain.as_slice()) {
@@ -370,15 +447,70 @@ impl Corpus {
             }
         }
 
+        // A `::` token in a macro body is a path segment like any other; a local
+        // binding cannot shadow it, only a same-named item can.
+        for token in &scan.opaque {
+            let Some(prefix) = token.prefix.as_deref() else {
+                continue;
+            };
+            if !prefix.is_empty() {
+                if self
+                    .resolve(home, &token.chain, prefix)
+                    .is_some_and(|module| nameable.contains(&module))
+                {
+                    refs.push(seat(rel, token.span, RefRole::Read, &request.old));
+                }
+                continue;
+            }
+            if shadowed.contains(token.chain.as_slice()) {
+                continue;
+            }
+            if ours.contains(token.chain.as_slice()) {
+                refs.push(seat(rel, token.span, RefRole::Read, &request.old));
+                continue;
+            }
+            for span in globs.get(token.chain.as_slice()).into_iter().flatten() {
+                seats.push(SymbolSeat {
+                    file: rel.to_string(),
+                    span: *span,
+                    form: "glob import",
+                });
+            }
+        }
+
         if ours.is_empty() {
             return;
         }
-        for span in &scan.opaque {
-            seats.push(SymbolSeat {
-                file: rel.to_string(),
-                span: *span,
-                form: "macro body",
-            });
+        for token in &scan.opaque {
+            if token.prefix.is_some() {
+                continue;
+            }
+            // `.old` inside a macro cannot be resolved to the anchor unless the
+            // anchor IS a method.
+            if token.member {
+                if anchored.is_some_and(|decl| decl.method) {
+                    seats.push(SymbolSeat {
+                        file: rel.to_string(),
+                        span: token.span,
+                        form: "macro body",
+                    });
+                }
+                continue;
+            }
+            if shadowed.contains(token.chain.as_slice()) || inside_local_block(token.span) {
+                continue;
+            }
+            if ours.contains(token.chain.as_slice()) {
+                refs.push(seat(rel, token.span, RefRole::Read, &request.old));
+                continue;
+            }
+            for span in globs.get(token.chain.as_slice()).into_iter().flatten() {
+                seats.push(SymbolSeat {
+                    file: rel.to_string(),
+                    span: *span,
+                    form: "glob import",
+                });
+            }
         }
         if anchored.is_some_and(|decl| decl.method) {
             for span in &scan.methods {
@@ -425,8 +557,22 @@ struct FileScan {
     /// `x.old()` receivers, kept for a request whose anchor IS a method.
     methods: Vec<Span>,
     /// The name written as an identifier token inside a macro or attribute body.
-    opaque: Vec<Span>,
+    opaque: Vec<OpaqueToken>,
+    /// Blocks that bind the name as a local (`let`, `for`).
+    locals: Vec<Span>,
     inexact: Vec<Span>,
+}
+
+/// One `old` ident inside a token stream, with the context the scope plane
+/// classifies on.
+struct OpaqueToken {
+    span: Span,
+    chain: Vec<String>,
+    /// The `::`-segments before it when the NEXT token is `::` (empty = first
+    /// segment); None = no `::` follows.
+    prefix: Option<Vec<String>>,
+    /// A `.old` member mention.
+    member: bool,
 }
 
 /// One declaration of the name: the item ident's own span, and the inline
@@ -459,6 +605,9 @@ enum LeafKind {
     Name,
     /// `use P::OLD as local;` names the symbol and binds `local`.
     Alias,
+    /// `use P::OLD::{self}` binds the module's own name; the `self` token never
+    /// respells.
+    SelfName,
     /// `use P::other as OLD;` binds the name to something else.
     Shadow,
     /// `use P::*;`
@@ -471,6 +620,8 @@ struct PathSeat {
     prefix: Vec<String>,
     span: Span,
     role: RefRole,
+    /// The whole path is this one segment, so a block-local binding shadows it.
+    bare: bool,
 }
 
 struct Scan<'a> {
@@ -512,19 +663,90 @@ impl Scan<'_> {
         });
     }
 
-    /// Identifier tokens in a stream no rewrite may enter. The span is reported,
-    /// never replaced, so it is not held to the `exact` check.
+    /// Identifier tokens in a stream the walk cannot parse, classified by their
+    /// token context. A rewrite can now enter, so every span is `exact`-checked.
     fn tokens(&mut self, stream: proc_macro2::TokenStream) {
-        for tree in stream {
+        let trees: Vec<proc_macro2::TokenTree> = stream.into_iter().collect();
+        let is_colon = |tree: Option<&proc_macro2::TokenTree>| {
+            matches!(tree, Some(proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == ':')
+        };
+        let is_dot = |tree: Option<&proc_macro2::TokenTree>| {
+            matches!(tree, Some(proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == '.')
+        };
+        for (index, tree) in trees.iter().enumerate() {
             match tree {
                 proc_macro2::TokenTree::Ident(ident) if ident == self.old => {
-                    let span = syn_span(self.line_starts, ident.span());
-                    self.out.opaque.push(span);
+                    // `$old` names a metavariable, `'old` a label or lifetime.
+                    if matches!(trees.get(index.wrapping_sub(1)), Some(token)
+                        if matches!(token, proc_macro2::TokenTree::Punct(punct)
+                            if punct.as_char() == '$' || punct.as_char() == '\''))
+                    {
+                        continue;
+                    }
+                    let Some(span) = self.exact(ident.span()) else {
+                        continue;
+                    };
+                    let (prefix, member) = match is_colon(trees.get(index + 1)) {
+                        true => (Some(path_prefix(&trees, index)), false),
+                        false => (None, is_dot(trees.get(index.wrapping_sub(1)))),
+                    };
+                    self.out.opaque.push(OpaqueToken {
+                        span,
+                        chain: self.chain.clone(),
+                        prefix,
+                        member,
+                    });
                 }
                 proc_macro2::TokenTree::Group(group) => self.tokens(group.stream()),
                 _ => {}
             }
         }
+    }
+
+    /// A `let`/`for` binding of the name shadows the bare name inside its block.
+    fn local(&mut self, pat: &syn::Pat, block: Option<Span>) {
+        if binds_name(pat, self.old) {
+            if let Some(block) = block {
+                self.out.locals.push(block);
+            }
+        }
+    }
+}
+
+/// The `::`-joined segments before `trees[index]`, walking back while
+/// `ident : :` precedes the cursor: `crate::air::` yields `[crate, air]`.
+fn path_prefix(trees: &[proc_macro2::TokenTree], index: usize) -> Vec<String> {
+    let colon = |trees: &[proc_macro2::TokenTree], at: usize| {
+        matches!(trees.get(at), Some(proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == ':')
+    };
+    let mut prefix = Vec::new();
+    let mut cursor = index;
+    while cursor >= 3 {
+        let Some(proc_macro2::TokenTree::Ident(ident)) = trees.get(cursor - 3) else {
+            break;
+        };
+        if !(colon(trees, cursor - 1) && colon(trees, cursor - 2)) {
+            break;
+        }
+        prefix.push(ident.to_string());
+        cursor -= 3;
+    }
+    prefix.reverse();
+    prefix
+}
+
+/// Whether a pattern binds the name, through the wrapper shapes a `let` or
+/// `for` carries. Match-arm and nested-struct patterns are not walked.
+fn binds_name(pat: &syn::Pat, old: &str) -> bool {
+    match pat {
+        syn::Pat::Ident(pat) => pat.ident == old,
+        syn::Pat::Paren(pat) => binds_name(&pat.pat, old),
+        syn::Pat::Reference(pat) => binds_name(&pat.pat, old),
+        syn::Pat::Type(pat) => binds_name(&pat.pat, old),
+        syn::Pat::Tuple(pat) => pat.elems.iter().any(|elem| binds_name(elem, old)),
+        syn::Pat::Slice(pat) => pat.elems.iter().any(|elem| binds_name(elem, old)),
+        syn::Pat::Or(pat) => pat.cases.iter().any(|case| binds_name(case, old)),
+        _ => false,
     }
 }
 
@@ -602,9 +824,30 @@ impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
                     prefix: branch.idents[..index].to_vec(),
                     span,
                     role: RefRole::Import,
+                    bare: false,
                 });
             }
             let names_it = branch.idents.get(named).map(String::as_str) == Some(self.old);
+            // `use P::OLD::{self}`: the leaf is the `self` token, the binding is
+            // the segment before it.
+            if branch.idents.get(named).map(String::as_str) == Some("self")
+                && matches!(branch.kind, LeafKind::Name)
+                && named > 0
+                && branch.idents[named - 1] == self.old
+            {
+                let Some(span) = self.exact(branch.spans[named - 1]) else {
+                    continue;
+                };
+                self.out.uses.push(UseLeaf {
+                    chain: self.chain.clone(),
+                    prefix: branch.idents[..named - 1].to_vec(),
+                    span,
+                    kind: LeafKind::SelfName,
+                    item,
+                    exported,
+                });
+                continue;
+            }
             if names_it {
                 let Some(span) = self.exact(branch.spans[named]) else {
                     continue;
@@ -656,6 +899,7 @@ impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
                     prefix: idents[..index].to_vec(),
                     span,
                     role: self.role,
+                    bare: idents.len() == 1,
                 });
             }
         }
@@ -674,6 +918,17 @@ impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
         self.role = held;
     }
 
+    fn visit_local(&mut self, node: &'ast syn::Local) {
+        self.local(&node.pat, self.blocks.last().copied());
+        syn::visit::visit_local(self, node);
+    }
+
+    fn visit_expr_for_loop(&mut self, node: &'ast syn::ExprForLoop) {
+        let body = syn_span(self.line_starts, node.body.brace_token.span.join());
+        self.local(&node.pat, Some(body));
+        syn::visit::visit_expr_for_loop(self, node);
+    }
+
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         if node.method == self.old {
             if let Some(span) = self.exact(node.method.span()) {
@@ -683,8 +938,8 @@ impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
         syn::visit::visit_expr_method_call(self, node);
     }
 
-    /// A macro body is tokens, not a scope the plane binds; the walk stops at the
-    /// invocation and reports what it spells.
+    /// A macro body is tokens, not a scope the plane binds: the walk classifies
+    /// what it spells instead of parsing it.
     fn visit_macro(&mut self, node: &'ast syn::Macro) {
         self.tokens(node.tokens.clone());
     }
