@@ -1,6 +1,7 @@
 :- module(dl7_evaluator,
           [ derive_aggregate_rows/4,
             evaluate/4,
+            integer_comparison/3,
             stratify_rules/3,
             validate_functional_rows/3
           ]).
@@ -25,6 +26,18 @@
 :- dynamic evaluation_request/2.
 
 :- table proves/2.
+
+%% integer_comparison(?Name, ?PositiveOperator, ?NegativeOperator) is nondet.
+%
+% The kernel comparison family shares one grounded integer contract. The two
+% operators are logical complements, so positive and negative evaluation use
+% the same registry without materializing relation rows.
+integer_comparison(int_lt, '<', '>=').
+integer_comparison(int_le, '=<', '>').
+integer_comparison(int_eq, '=:=', '=\\=').
+integer_comparison(int_ne, '=\\=', '=:=').
+integer_comparison(int_ge, '>=', '<').
+integer_comparison(int_gt, '>', '=<').
 
 %% evaluate(+Rules, +Seeds, -Closure, -Diagnostics) is det.
 %
@@ -205,9 +218,9 @@ aggregate_rule_proof(CompletedRows, Rule, Head) :-
 completed_body_holds([], _).
 completed_body_holds(
     [checked_goal(positive, Call) | Goals], Rows) :-
-    int_lt_arguments(Call, Left, Right),
+    integer_comparison_arguments(Call, PositiveOperator, _, Left, Right),
     !,
-    Left < Right,
+    call(PositiveOperator, Left, Right),
     completed_body_holds(Goals, Rows).
 completed_body_holds([checked_goal(positive, Call) | Goals], Rows) :-
     member(Call, Rows),
@@ -215,9 +228,9 @@ completed_body_holds([checked_goal(positive, Call) | Goals], Rows) :-
 completed_body_holds(
     [checked_goal(negative, Call) | Goals], Rows) :-
     ground(Call),
-    int_lt_arguments(Call, Left, Right),
+    integer_comparison_arguments(Call, _, NegativeOperator, Left, Right),
     !,
-    \+ Left < Right,
+    call(NegativeOperator, Left, Right),
     completed_body_holds(Goals, Rows).
 completed_body_holds([checked_goal(negative, Call) | Goals], Rows) :-
     ground(Call),
@@ -616,9 +629,9 @@ evaluate_cleanup_metrics(EvaluationId, ClauseReferences,
                   LeftoverRowCount).
 
 proves(_, Call) :-
-    int_lt_arguments(Call, Left, Right),
+    integer_comparison_arguments(Call, PositiveOperator, _, Left, Right),
     !,
-    Left < Right.
+    call(PositiveOperator, Left, Right).
 proves(EvaluationId, Call) :-
     Call = call(Relation, _),
     evaluation_seed(EvaluationId, Relation, Call).
@@ -668,9 +681,9 @@ satisfy_goal(EvaluationId, Goal) :-
 satisfy_goal(_, Goal) :-
     goal_call(Goal, negative, Call),
     ground(Call),
-    int_lt_arguments(Call, Left, Right),
+    integer_comparison_arguments(Call, _, NegativeOperator, Left, Right),
     !,
-    \+ Left < Right.
+    call(NegativeOperator, Left, Right).
 satisfy_goal(EvaluationId, Goal) :-
     goal_call(Goal, negative, Call),
     ground(Call),
@@ -679,11 +692,18 @@ satisfy_goal(EvaluationId, Goal) :-
 
 %% kernel_int_lt_call(+Call) is semidet.
 kernel_int_lt_call(Call) :-
-    int_lt_arguments(Call, Left, Right),
-    Left < Right.
+    Call = call(ref(kernel(int_lt)), _),
+    integer_comparison_call(Call).
 
-int_lt_arguments(
-    call(ref(kernel(int_lt)), [const(Left), const(Right)]), Left, Right) :-
+%% integer_comparison_call(+Call) is semidet.
+integer_comparison_call(Call) :-
+    integer_comparison_arguments(Call, PositiveOperator, _, Left, Right),
+    call(PositiveOperator, Left, Right).
+
+integer_comparison_arguments(
+    call(ref(kernel(Name)), [const(Left), const(Right)]),
+    PositiveOperator, NegativeOperator, Left, Right) :-
+    integer_comparison(Name, PositiveOperator, NegativeOperator),
     integer(Left),
     integer(Right).
 

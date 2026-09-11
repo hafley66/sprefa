@@ -27,7 +27,7 @@ compiler-perf:
     swipl -q -s "{{ v7 }}/bench/0_compiler_performance.pl" -g main -t halt -- "{{ v7 }}/test/fixtures/2_partial.dl7"
 
 # One-command local regression gate: nearest-shadow cold TRACE OFF must stay
-# under 3000 ms wall and 16,000,000 inferences with rows 790, empty
+# under 3000 ms wall and 16,000,000 inferences with rows 810, empty
 # diagnostics, and warm exact-output parity. Bounded by timeout 20.
 compiler-perf-gate:
     timeout 20 swipl -q -s "{{ v7 }}/bench/0_compiler_performance.pl" -g main -t halt -- "{{ v7 }}/test/fixtures/lexical_binding/7_nearest_shadow.dl7"

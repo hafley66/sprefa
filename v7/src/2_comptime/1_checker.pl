@@ -5,7 +5,8 @@
           ]).
 
 :- use_module(library(error), [must_be/2]).
-:- use_module('../1_libtime/0_evaluator', [stratify_rules/3]).
+:- use_module('../1_libtime/0_evaluator',
+              [integer_comparison/3, stratify_rules/3]).
 :- use_module('0_lowerer', [kernel_relation/2]).
 
 %% check_datalog(+BasementProgram, +Origins, -Checked, -Diagnostics) is det.
@@ -313,7 +314,9 @@ kernel_relation_keys(cons, [[0, 1], [2]]).
 kernel_relation_keys(edge_ref, [[0, 1]]).
 kernel_relation_keys(intern, [[0, 1]]).
 kernel_relation_keys(intern_snapshot, [[0, 1]]).
-kernel_relation_keys(int_lt, [[0, 1]]).
+kernel_relation_keys(Name, [[0, 1]]) :-
+    integer_comparison(Name, _, _),
+    !.
 kernel_relation_keys(def, [[0]]).
 kernel_relation_keys(head, [[0]]).
 kernel_relation_keys(body, [[0, 1]]).
@@ -322,7 +325,9 @@ kernel_relation_keys(module, []).
 kernel_relation_keys(product, []).
 kernel_relation_keys(sum, []).
 
-kernel_graph(
+kernel_graph(Nodes, Edges) :-
+    integer_comparison_graph(ComparisonNodes, ComparisonEdges),
+    append(
     [ node(primitive(int)),
       node(primitive(text)),
       node(primitive(any)),
@@ -337,12 +342,15 @@ kernel_graph(
       node(kernel(cons)), product(kernel(cons)),
       node(kernel(edge_ref)), product(kernel(edge_ref)),
       node(kernel(intern)), product(kernel(intern)),
-      node(kernel(intern_snapshot)), product(kernel(intern_snapshot)),
-      node(kernel(int_lt)), product(kernel(int_lt)),
+      node(kernel(intern_snapshot)), product(kernel(intern_snapshot))
+    ], ComparisonNodes, Nodes0),
+    append(Nodes0,
+    [
       node(kernel(def)), product(kernel(def)),
       node(kernel(head)), product(kernel(head)),
       node(kernel(body)), product(kernel(body))
-    ],
+    ], Nodes),
+    append(
     [ ':'(kernel(node), id, ref(primitive(type)), 0),
       ':'(kernel(module), id, ref(primitive(type)), 0),
       ':'(kernel(product), id, ref(primitive(type)), 0),
@@ -367,9 +375,10 @@ kernel_graph(
       ':'(kernel(intern), return, ref(primitive(type)), 2),
       ':'(kernel(intern_snapshot), constructor, ref(primitive(type)), 0),
       ':'(kernel(intern_snapshot), arguments, ref(primitive(any)), 1),
-      ':'(kernel(intern_snapshot), return, ref(primitive(type)), 2),
-      ':'(kernel(int_lt), left, ref(primitive(int)), 0),
-      ':'(kernel(int_lt), right, ref(primitive(int)), 1),
+      ':'(kernel(intern_snapshot), return, ref(primitive(type)), 2)
+    ], ComparisonEdges, Edges0),
+    append(Edges0,
+    [
       ':'(kernel(def), relation, ref(primitive(type)), 0),
       ':'(kernel(def), arity, ref(primitive(int)), 1),
       ':'(kernel(head), rule, ref(primitive(type)), 0),
@@ -378,7 +387,22 @@ kernel_graph(
       ':'(kernel(body), goal, ref(primitive(int)), 1),
       ':'(kernel(body), polarity, ref(primitive(text)), 2),
       ':'(kernel(body), application, ref(primitive(type)), 3)
-    ]).
+    ], Edges).
+
+integer_comparison_graph(Nodes, Edges) :-
+    findall(Node,
+            ( integer_comparison(Name, _, _),
+              member(Node, [node(kernel(Name)), product(kernel(Name))])
+            ),
+            Nodes),
+    findall(Edge,
+            ( integer_comparison(Name, _, _),
+              member(Edge,
+                     [ ':'(kernel(Name), left, ref(primitive(int)), 0),
+                       ':'(kernel(Name), right, ref(primitive(int)), 1)
+                     ])
+            ),
+            Edges).
 
 %% Seeds resolve to ground calls over declared product relations.
 resolve_seeds([], _, _, _, _, _, [], []).
@@ -492,13 +516,14 @@ check_goal_transition(Goal, Available0, Produced0,
 
 check_goal(Goal, Bound0, Bound, Reason) :-
     goal_call(Goal, positive,
-              call(ref(kernel(int_lt)), Arguments)),
+              call(ref(kernel(Name)), Arguments)),
+    integer_comparison(Name, _, _),
     !,
     (   maplist(argument_is_bound_in(Bound0), Arguments)
     ->  Bound = Bound0,
-        int_lt_argument_types(Arguments, Reason)
+        integer_comparison_argument_types(Name, Arguments, Reason)
     ;   Bound = Bound0,
-        Reason = underconstrained_kernel_goal(int_lt, [[0, 1]])
+        Reason = underconstrained_kernel_goal(Name, [[0, 1]])
     ).
 check_goal(Goal, Bound0, Bound, Reason) :-
     goal_call(Goal, positive,
@@ -545,12 +570,13 @@ check_goal(Goal, Bound, Bound, negative_constructive_kernel_goal(Name)) :-
     !.
 check_goal(Goal, Bound, Bound, Reason) :-
     goal_call(Goal, negative,
-              call(ref(kernel(int_lt)), Arguments)),
+              call(ref(kernel(Name)), Arguments)),
+    integer_comparison(Name, _, _),
     !,
     goal_variables(Goal, Variables),
     unbound_variables(Variables, Bound, Unbound),
     (   Unbound == []
-    ->  int_lt_argument_types(Arguments, Reason)
+    ->  integer_comparison_argument_types(Name, Arguments, Reason)
     ;   Reason = unbound_negative_goal(Unbound)
     ).
 check_goal(Goal, Bound, Bound, Reason) :-
@@ -570,11 +596,11 @@ check_goal(Goal, Bound0, Bound, none) :-
 argument_is_bound_in(Bound, Argument) :-
     argument_is_bound(Argument, Bound).
 
-int_lt_argument_types(Arguments, Reason) :-
+integer_comparison_argument_types(Name, Arguments, Reason) :-
     (   nth0(Position, Arguments, Argument),
         \+ int_argument(Argument)
     ->  Reason = kernel_argument_type_mismatch(
-                     int_lt, Position, int, Argument)
+                     Name, Position, int, Argument)
     ;   Reason = none
     ).
 
