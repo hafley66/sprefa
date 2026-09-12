@@ -266,8 +266,32 @@ wave three 2026-09-12: {
   }
 }
 
+reify lane lands 2026-09-12: {
+  lanes -> gh: PR #731 151d50659, 131 calls, 91 distinct, 88 portable pass, 57 committed (3.7 MB), 8 of 10 reasons
+  fable -> lanes: graded. cargo test green (8 suites), clippy 0, tree clean, 1586 LOC in 8 files. merged, c9b05ed05
+  lanes.zero: |`sh
+    # compile_dl7/4 over all 42 .dl7 under v7/test/fixtures and v7/applications reaches 3_emit ZERO times
+    # the five plunit suites are the only driver of the reifier. freeze.sh keeps compile mode as the receipt
+  `|
+  lanes.red: |`prolog
+    % v7 is RED at f5018ad23 before any wrapper: v7/test/fixtures/5_curry.dl7
+    % compile_dl7/4 -> source_refreeze_limit_exhausted(16), thrown at 2_compiler.pl:833
+    % three tests in v7/test/1_entrypoints.test.pl fail from it (:1314 :1111 :2383). local main only, unpushed codex perf commits
+  `|
+  lanes.merge: |`rust
+    // _5_reify/_0_api.rs CompiledUnit { type_graph_facts, runtime_program, compiler_facts }
+    // delete after comptime lands, repoint compiler_view and emit_compiled at _4_comptime::Compiled
+    // validate_functional_rows/3 (0_evaluator.pl:557-646) lives in _5_validate.rs until an eval lane owns it
+  `|
+  lanes.forks: |`md
+    reference target wrapped ref(logical_program(R)) on calls path :113, bare on graph path 0a:115
+    polarity const("positive") on calls :162 vs const(positive) on graph 0a:63. program_rule_kind always level :228
+    prolog(Callable) emitter arm: host-Prolog callable, no Rust equivalent, exit 3, 3 cases in status.json skip
+  `|
+}
+
 pending: {
-  lanes -> fable: comptime and reify hails (none yet)
+  lanes -> fable: comptime hail (none yet)
   fable -> lanes: driver lane last: 2_compiler.pl:75-700 + 0a_module_lowerer.pl into lib.rs compile() and dl8 compile f.dl7
   fable -> lanes: grade: git log, cargo test, cargo clippy
   fable -> chris: plans/v8/2026-09-13-v8-tour.md
