@@ -372,7 +372,18 @@ morning 2026-09-12: {
       --brief plans/v8/2026-09-12-v8-tracing.brief.md
     # first spawn killed: just boop-start cold-builds sprefa-extract, 120 s deadline. warmed the cache, respawned, spawn 1032
   `|
-  lanes -> gh: tracing PR (pending)
+  lanes -> gh: PR #734 ae895037e, first spawn died on a 30 s ACP ack timeout, second spawn fine
+  fable -> lanes: graded. 10 suites green, eprintln 0, clippy 0. no slowdown: 5_curry 481 ms with tracing, 497 before. merged
+  lanes.phases: |`sh
+    RUST_LOG=dl8=info HAFLEY_LOG_FORMAT=json dl8 compile 2_partial.dl7
+    {"level":"INFO","fields":{"name":"read","ms":12,"rows":2,"diagnostics":0},"target":"dl8::phase"}
+    #            0_minimal  2_partial  5_curry
+    # read          11         12        12      6 prelude files every process
+    # macrotime      3          3         5
+    # lower          2          2         4
+    # check          -          2         1
+    # comptime       -         38       413
+  `|
 }
 
 night ends 2026-09-12: {
