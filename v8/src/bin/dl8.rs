@@ -15,6 +15,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Read one .dl7 file and print its forms, source rows and diagnostics as JSON.
+    Read { file: PathBuf },
+    /// Expand macrotime over a case (JSON: syntax graph rows + macro program).
+    Expand { case: PathBuf },
+    /// Lower a case (JSON) to the checked-goal program.
+    Lower { case: PathBuf },
     /// Evaluate a checked-goal program (JSON) and print its closure as JSON.
     Eval {
         program: PathBuf,
@@ -27,6 +33,9 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::Read { file } => dl8::_0_read::cli(&file),
+        Command::Expand { case } => dl8::_1_macrotime::cli(&case),
+        Command::Lower { case } => dl8::_2_lower::cli(&case),
         Command::Eval { program, trace } => {
             let text = match std::fs::read_to_string(&program) {
                 Ok(t) => t,

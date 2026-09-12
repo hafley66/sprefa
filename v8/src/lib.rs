@@ -4,4 +4,7 @@
 //! operator; `_6_eval` is the fixpoint kernel that both `_1_macrotime` and
 //! `_4_comptime` call.
 
+pub mod _0_read;
+pub mod _1_macrotime;
+pub mod _2_lower;
 pub mod _6_eval;
