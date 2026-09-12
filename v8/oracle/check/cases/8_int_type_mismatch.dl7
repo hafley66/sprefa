@@ -1,0 +1,9 @@
+(: point
+   (* (: x int)))
+
+(: reader
+   (* (: seen int)))
+
+(<- (reader ?Value)
+    (point ?Value)
+    (int_lt ?Value "three"))
