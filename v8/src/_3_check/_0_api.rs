@@ -132,6 +132,7 @@ fn invalid(u: &mut Universe) -> Vec<TermId> {
 }
 
 /// `:182`. `None` is v7's `Checked = []`.
+#[tracing::instrument(skip_all)]
 pub fn check_datalog(
     u: &mut Universe,
     lowered: &Lowered,

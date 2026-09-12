@@ -78,6 +78,7 @@ pub const COMPILER_ROUND_LIMIT: i64 = 16;
 
 /// `:1173`. `outer` is the source-refreeze pass, carried for the trace only.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all)]
 pub fn rounds(
     u: &mut Universe,
     authored_rules: &[TermId],
@@ -147,6 +148,7 @@ pub fn rounds(
                 round: st.round,
                 outcome: Outcome::Stable,
             });
+            tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::Stable);
             let mut all = base_relations.to_vec();
             all.extend_from_slice(&assembled.relations);
             let all = prolog_sort(u, all);
@@ -173,6 +175,7 @@ pub fn rounds(
                 round: st.round,
                 outcome: Outcome::LimitExhausted,
             });
+            tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::LimitExhausted);
             let limit = u.int(COMPILER_ROUND_LIMIT);
             let reason = u.compound("compiler_round_limit_exhausted", vec![limit]);
             let d = diagnostic(u, "compile", reason);
@@ -183,6 +186,7 @@ pub fn rounds(
             round: st.round,
             outcome: Outcome::Continue,
         });
+        tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::Continue);
         st.frozen_edges = next_edges;
         st.frozen_requests = next_requests;
         st.frozen_generated_relations = assembled.relations;

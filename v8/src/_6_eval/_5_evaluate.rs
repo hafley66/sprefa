@@ -383,6 +383,7 @@ fn aggregate_rows(
     Ok(rows)
 }
 
+#[tracing::instrument(skip_all, fields(rules = program.rules.len(), seeds = program.seeds.len()))]
 pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
     let (strata, diagnostics) = stratify(u, program);
     if !diagnostics.is_empty() {
@@ -526,6 +527,7 @@ pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) 
                 }
             }
             fx(Trace::Round { level, round, new });
+            tracing::trace!(target: "dl8::eval", level, round, new);
             round += 1;
             if new == 0 {
                 break;

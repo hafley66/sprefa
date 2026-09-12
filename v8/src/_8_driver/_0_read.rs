@@ -34,6 +34,7 @@ pub fn macrotime_text() -> String {
 pub fn program_text(path: &Path) -> io::Result<(String, String)> {
     let canonical = std::fs::canonicalize(path)?;
     let text = std::fs::read_to_string(&canonical)?;
+    tracing::debug!(target: "dl8::io", path = %canonical.display(), bytes = text.len());
     Ok((canonical.display().to_string(), text))
 }
 

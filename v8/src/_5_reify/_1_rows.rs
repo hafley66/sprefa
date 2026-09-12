@@ -11,6 +11,7 @@ use crate::_3_check::Checked;
 use crate::_6_eval::term::{TermId, Universe};
 
 /// `:15`. The `Checked` fields are the `checked_datalog/4` arguments.
+#[tracing::instrument(skip_all)]
 pub fn logical_program_rows(u: &mut Universe, checked: &Checked) -> Result<Vec<TermId>, Stop> {
     rows(
         u,

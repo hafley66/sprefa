@@ -43,5 +43,19 @@ bash v8/oracle/compile/freeze.sh          # pins REV=f5018ad23, all 46 cases
 bash v8/oracle/compile/verify.sh          # dl8 over every case, committed or not
 ```
 
+## Logs
+
+Every phase emits one `dl8::phase` event with its name, measured milliseconds,
+row count and diagnostic count. Tracing goes to stderr; stdout stays the oracle.
+
+```bash
+RUST_LOG=dl8=debug dl8 compile f.dl7      # phase events, wave/round trace, io reads
+HAFLEY_LOG_FORMAT=json dl8 compile f.dl7  # one JSON object per event
+dl8 compile f.dl7 --trace                 # wave and round lines, RUST_LOG unset
+```
+
+`RUST_LOG` picks the filter when set; `--trace` raises the default to
+`dl8=debug` when it is not. `HAFLEY_LOG_FORMAT=human|json` picks the encoding.
+
 Design: `plans/v8/2026-09-12-v8-eval-api.md`. Buy-vs-build:
 `plans/v8/2026-09-12-v8-buy-vs-build.md`.

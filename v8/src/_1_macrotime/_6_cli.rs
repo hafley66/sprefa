@@ -124,21 +124,21 @@ pub fn cli(input: &Path, trace: bool) -> ExitCode {
     let text = match std::fs::read_to_string(input) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("dl8: cannot read {}: {e}", input.display()); // @eprintln-ok
+            tracing::error!(phase = "macrotime", error = %e, path = %input.display());
             return ExitCode::from(2);
         }
     };
     let value: Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("dl8: {}: {e}", input.display()); // @eprintln-ok
+            tracing::error!(phase = "macrotime", error = %e, path = %input.display());
             return ExitCode::from(2);
         }
     };
     let case = match value.get("input").unwrap_or(&value).as_object() {
         Some(m) => m.clone(),
         None => {
-            eprintln!("dl8: {}: no input object", input.display()); // @eprintln-ok
+            tracing::error!(phase = "macrotime", error = "no input object", path = %input.display());
             return ExitCode::from(2);
         }
     };
@@ -146,14 +146,14 @@ pub fn cli(input: &Path, trace: bool) -> ExitCode {
     let forms = match terms_from_json(&mut u, case.get("forms")) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("dl8: forms: {e}"); // @eprintln-ok
+            tracing::error!(phase = "macrotime", error = %e, field = "forms");
             return ExitCode::from(2);
         }
     };
     let source_rows = match terms_from_json(&mut u, case.get("source_rows")) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("dl8: source_rows: {e}"); // @eprintln-ok
+            tracing::error!(phase = "macrotime", error = %e, field = "source_rows");
             return ExitCode::from(2);
         }
     };
@@ -162,13 +162,13 @@ pub fn cli(input: &Path, trace: bool) -> ExitCode {
         match macro_program_from_json(&mut u, case.get("macro_program").unwrap_or(&empty)) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("dl8: macro_program: {e}"); // @eprintln-ok
+                tracing::error!(phase = "macrotime", error = %e, field = "macro_program");
                 return ExitCode::from(2);
             }
         };
     let mut sink = |w: Wave| {
         if trace {
-            eprintln!("{w:?}"); // @eprintln-ok
+            tracing::debug!(target: "dl8::trace", wave = ?w);
         }
     };
     let expansion = run(&mut u, &forms, &source_rows, &macro_program, &mut sink);

@@ -34,6 +34,7 @@ pub enum Wave {
     },
 }
 
+#[tracing::instrument(skip_all, fields(rows = rows.len()))]
 pub fn expand(
     u: &mut Universe,
     rows: &[Row],

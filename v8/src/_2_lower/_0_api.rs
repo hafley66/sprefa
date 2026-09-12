@@ -74,6 +74,7 @@ fn relation_dictionary(u: &Universe, rows: &[TermId]) -> HashMap<TermId, (i64, T
 }
 
 /// `:52`.
+#[tracing::instrument(skip_all)]
 pub fn lower_datalog(
     u: &mut Universe,
     policy: CallPolicy,

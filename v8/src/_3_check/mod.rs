@@ -32,14 +32,14 @@ pub fn cli(input: &Path) -> ExitCode {
     let text = match std::fs::read_to_string(input) {
         Ok(text) => text,
         Err(e) => {
-            eprintln!("dl8: cannot read {}: {e}", input.display()); // @eprintln-ok
+            tracing::error!(phase = "check", error = %e, path = %input.display());
             return ExitCode::from(2);
         }
     };
     let case: serde_json::Value = match serde_json::from_str(&text) {
         Ok(value) => value,
         Err(e) => {
-            eprintln!("dl8: {}: {e}", input.display()); // @eprintln-ok
+            tracing::error!(phase = "check", error = %e, path = %input.display());
             return ExitCode::from(2);
         }
     };
@@ -49,7 +49,7 @@ pub fn cli(input: &Path) -> ExitCode {
             ExitCode::from(code as u8)
         }
         Err(e) => {
-            eprintln!("dl8 check: {e}"); // @eprintln-ok
+            tracing::error!(phase = "check", error = %e);
             ExitCode::from(3)
         }
     }

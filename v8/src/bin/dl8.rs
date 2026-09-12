@@ -5,6 +5,8 @@ use dl8::_6_eval::json::term_to_json;
 use dl8::_6_eval::json::{closure_to_json, program_from_json};
 use dl8::_6_eval::{evaluate, Trace, Universe};
 use dl8::_8_driver::{Event, Stop};
+use hafley_observe::{Config, OutputFormat};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -61,8 +63,32 @@ enum Command {
     },
 }
 
+fn trace_requested(command: &Command) -> bool {
+    match command {
+        Command::Expand { trace, .. }
+        | Command::Compile { trace, .. }
+        | Command::Eval { trace, .. } => *trace,
+        _ => false,
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let ansi = std::io::stderr().is_terminal();
+    let default_filter = if trace_requested(&cli.command) {
+        "dl8=debug"
+    } else {
+        "warn"
+    };
+    let config = Config::from_env("dl8", env!("CARGO_PKG_VERSION"), default_filter, ansi)
+        .unwrap_or(Config {
+            service_name: "dl8",
+            service_version: env!("CARGO_PKG_VERSION"),
+            default_filter: "warn",
+            format: OutputFormat::Human,
+            ansi,
+        });
+    let _ = hafley_observe::init(config);
     match cli.command {
         Command::Read { file } => dl8::_0_read::cli(&file),
         Command::Expand { case, trace } => dl8::_1_macrotime::cli(&case, trace),
@@ -81,14 +107,14 @@ fn main() -> ExitCode {
             let text = match std::fs::read_to_string(&program) {
                 Ok(t) => t,
                 Err(e) => {
-                    eprintln!("dl8: cannot read {}: {e}", program.display()); // @eprintln-ok
+                    tracing::error!(phase = "eval", error = %e, path = %program.display());
                     return ExitCode::from(2);
                 }
             };
             let value: serde_json::Value = match serde_json::from_str(&text) {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("dl8: {}: {e}", program.display()); // @eprintln-ok
+                    tracing::error!(phase = "eval", error = %e, path = %program.display());
                     return ExitCode::from(2);
                 }
             };
@@ -96,13 +122,13 @@ fn main() -> ExitCode {
             let program = match program_from_json(&mut u, value.get("program").unwrap_or(&value)) {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("dl8: {e}"); // @eprintln-ok
+                    tracing::error!(phase = "eval", error = %e);
                     return ExitCode::from(2);
                 }
             };
             let mut fx = |t: Trace| {
                 if trace {
-                    eprintln!("{t:?}"); // @eprintln-ok
+                    tracing::debug!(target: "dl8::trace", event = ?t);
                 }
             };
             let closure = evaluate(&mut u, &program, &mut fx);
@@ -126,7 +152,7 @@ fn compile_cli(
     let mut u = Universe::new();
     let mut fx = |e: Event| {
         if trace {
-            eprintln!("{e:?}"); // @eprintln-ok
+            tracing::debug!(target: "dl8::trace", event = ?e);
         }
     };
     let paths: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
@@ -146,11 +172,11 @@ fn compile_cli(
     let compiled = match compiled {
         Ok(compiled) => compiled,
         Err(Stop::Io(message)) => {
-            eprintln!("dl8 compile: {message}"); // @eprintln-ok
+            tracing::error!(phase = "compile", error = %message);
             return ExitCode::from(2);
         }
         Err(other) => {
-            eprintln!("dl8 compile: {other:?}"); // @eprintln-ok
+            tracing::error!(phase = "compile", error = ?other);
             return ExitCode::from(3);
         }
     };
