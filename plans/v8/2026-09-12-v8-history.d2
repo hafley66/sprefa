@@ -224,9 +224,51 @@ load lane lands 2026-09-12: {
   `|
 }
 
+check lane lands 2026-09-12: {
+  lanes -> gh: PR #730 d6c53364e, 172 calls, 75 distinct pass, 19 committed (5 MB), 25 diagnostic functors classified
+  fable -> lanes: graded. cargo test 6/6, clippy 0, tree clean, 1848 LOC in 9 files. merged, 46caef462
+  lanes.stale: |`sh
+    # the branch's own v7/ is stale (cut from origin/main e46d120e1, checker differs by 521 lines)
+    # freeze.sh pins REV=f5018ad23 and extracts git archive into scratch. control vs dirty tree: 56/56 identical
+  `|
+  lanes.api: |`rust
+    // src/_3_check/_0_api.rs
+    pub struct Checked { .. }   // checked_datalog(Graph, datalog_program(Rels, Seeds, Rules), Deps, Strata)
+    pub enum Stop { Fail, .. }  // v7 check_datalog/4 FAILS on a malformed call (D1, :990 :779 :751), cli exit 3
+    pub fn check_datalog(u: &mut Universe, ..) -> Result<(Checked, Vec<Diagnostic>), Stop>
+  `|
+  lanes.forks: |`md
+    F1 :978 vs :1048 head vars sub_term, body vars top-level only. F2 :585 unresolved_name names the label
+    F3 :823 negatives read Produced, positives read Available. D2 :383 :391 :413 unreachable
+    D5 checker kernel_relation_keys/2 disagrees with lowerer kernel_keys/1 on nil and seven names
+  `|
+  fable -> kernel: P1 applied, pub fields on EdgeIndex and ReservationIndex. ca50870b7
+}
+
+wave three 2026-09-12: {
+  fable -> lanes: worktrees v8-comptime and v8-reify from ca50870b7
+  par: {
+    comptime lane: {
+      lanes -> v7: wrap evaluate_checked/4 and compile_dl7/4 at f5018ad23
+      lanes.rounds: |`rust
+        // src/_4_comptime, second call of _6_eval::evaluate. one state struct, Round through fx
+        pub struct Compiled { .. }  // compiled_unit(TypeGraphFacts, RuntimeProgram, CompilerFacts)
+        pub fn evaluate_checked(u: &mut Universe, cx: &CompileContext, checked: &Checked, fx: &mut dyn FnMut(Round)) -> (Compiled, Vec<Diagnostic>)
+      `|
+    }
+    reify lane: {
+      lanes -> v7: wrap logical_program_rows/2, _calls, graph_calls/3, compiler_view/2, emit_compiled/4
+      lanes.reify: |`rust
+        // src/_5_reify. CompiledUnit defined locally, merged with comptime's Compiled after both land
+        pub fn logical_program_rows(u: &mut Universe, checked: &Checked) -> Vec<TermId>
+      `|
+    }
+  }
+}
+
 pending: {
-  lanes -> fable: check hail (none yet)
-  fable -> lanes: wave three after check lands: _4_comptime rounds (2_compiler.pl, 1a, 1c, 1d, 0a), _5_reify (3_emit/0, 0a, 1)
+  lanes -> fable: comptime and reify hails (none yet)
+  fable -> lanes: driver lane last: 2_compiler.pl:75-700 + 0a_module_lowerer.pl into lib.rs compile() and dl8 compile f.dl7
   fable -> lanes: grade: git log, cargo test, cargo clippy
   fable -> chris: plans/v8/2026-09-13-v8-tour.md
 }
