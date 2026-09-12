@@ -346,6 +346,35 @@ driver lane lands 2026-09-12: {
   lanes -> fable: "not done: compile_dl7_macro_program/3 verb, project_stream_paths/3, prolog(Callable) arm, 1b tracer histograms, codegen emitters, 4_tool"
 }
 
+morning 2026-09-12: {
+  chris -> fable: stats on why 42 files take 3.5 s. tracing like hafley-rs. a local verdaccio for crates. flash41 lane for tracing
+  fable -> chris: "no tracing yet: 30 eprintln sites, all @eprintln-ok. hafley-observe is boop's subscriber, path dep only"
+  fable.stats: |`sh
+    # release binary, one process per file
+    0_minimal.dl7   48 ms   1 evaluate      # the floor: 6 prelude files lowered + macro library evaluated per process
+    median file     85 ms   2 evaluates
+    2_partial.dl7  113 ms   8 evaluates
+    5_curry.dl7    452 ms  33 evaluates over 32 refreezes
+    # sample(1) on 5_curry, 331 samples: Eval::solve 272, cmp+prolog_sort 85, SipHash on TermId 44 (61 HashMap sites), lower_one 40
+  `|
+  fable -> chris: "kellnr is the verdaccio of crates. margo static, git deps zero infra, crates.io needs a name"
+  chris -> fable: do them all, topological order
+  fable.registry: |`sh
+    cargo install kellnr --locked                                   # 810 crates, ~6 min
+    kellnr start --registry-data-dir ~/.agent/kellnr/data --local-ip 127.0.0.1 --setup-admin-token $T
+    # ~/.cargo/config.toml  [registries] hafley = { index = "sparse+http://localhost:8000/api/v1/crates/" }
+    cargo login --registry hafley $T
+    cd ~/projects/hafley-rs && cargo publish -p hafley-observe --registry hafley
+    # v8/Cargo.toml  hafley-observe = { version = "0.1", registry = "hafley" }  tracing = "0.1"    668f29b4d
+  `|
+  fable.lane: |`sh
+    boop beep lane create --branch feature/v8-tracing-20260912 --preset f41 --base-sha 668f29b4d \
+      --brief plans/v8/2026-09-12-v8-tracing.brief.md
+    # first spawn killed: just boop-start cold-builds sprefa-extract, 120 s deadline. warmed the cache, respawned, spawn 1032
+  `|
+  lanes -> gh: tracing PR (pending)
+}
+
 night ends 2026-09-12: {
   fable -> chris: "PR #725 carries everything: 8 lane PRs merged into it, 17715 Rust lines, 9 suites, 17 tests, clippy 0"
   fable -> chris: "read tomorrow: this file, plans/v8/2026-09-13-v8-tour.md, the port board. every lane wrote a .PLAN.visual.human.unga.md"
