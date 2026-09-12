@@ -1,0 +1,1 @@
+{"expected": {"basements": [],"diagnostics": [ {"args": [ {"a":"extract"},  {"a":"none"},  {"a":"tsi_stream_without_run"} ],"f":"diagnostic"} ],"origins": []},"input": {"basements": [],"call":"install_tsi_graph","origins": [],"rows": [ {"args": [1,  {"a":"tsi.type"},  [ {"args": [1 ],"f":"id"} ] ],"f":"extract_fact"} ]}}

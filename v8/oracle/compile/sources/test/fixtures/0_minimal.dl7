@@ -1,0 +1,15 @@
+
+; shared frontend fixture
+(: User
+   (* (: id int)
+      (: name text)
+      (: note "hello\nworld")))
+(<- (copy ?Value ?Value ?_ ?_)
+    (source ?Value))
+()
+; empty form, nested forms, bare atoms, symbol data
+(: Wrapper
+   (* (: inner
+         (* (: tag 'kind)))
+      (: bare atom)))
+'spot

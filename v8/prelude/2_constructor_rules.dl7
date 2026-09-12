@@ -1,0 +1,77 @@
+; Canonical application identities use the shared cons and intern relations.
+(<- (Partial ?Source ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments)
+    (intern Partial ?Arguments ?Result))
+
+(<- (Partial ?Source ?Result)
+    (intern_snapshot Partial ?Arguments ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments))
+
+(<- (Option ?Source ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments)
+    (intern Option ?Arguments ?Result))
+
+(<- (Option ?Source ?Result)
+    (intern_snapshot Option ?Arguments ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments))
+
+(<- (Key ?Name ?Options ?Result)
+    (nil ?Empty)
+    (cons ?Options ?Empty ?TailArguments)
+    (cons ?Name ?TailArguments ?Arguments)
+    (intern Key ?Arguments ?Result))
+
+(<- (Key ?Name ?Options ?Result)
+    (intern_snapshot Key ?Arguments ?Result)
+    (cons ?Name ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Options ?Empty ?TailArguments))
+
+(<- (Pick ?Source ?Names ?Result)
+    (nil ?Empty)
+    (cons ?Names ?Empty ?TailArguments)
+    (cons ?Source ?TailArguments ?Arguments)
+    (intern Pick ?Arguments ?Result))
+
+(<- (Pick ?Source ?Names ?Result)
+    (intern_snapshot Pick ?Arguments ?Result)
+    (cons ?Source ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Names ?Empty ?TailArguments))
+
+(<- (Exclude ?Source ?Names ?Result)
+    (nil ?Empty)
+    (cons ?Names ?Empty ?TailArguments)
+    (cons ?Source ?TailArguments ?Arguments)
+    (intern Exclude ?Arguments ?Result))
+
+(<- (Exclude ?Source ?Names ?Result)
+    (intern_snapshot Exclude ?Arguments ?Result)
+    (cons ?Source ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Names ?Empty ?TailArguments))
+
+; HistoryV1 options are ordinary typed data. The first version accepts copy
+; mode plus a source contract and interns source plus options as the
+; specialization identity.
+(<- (HistoryV1 ?Source ?Options ?Result)
+    (edge_snapshot ?Options ?Mode "copy" 0)
+    (edge_snapshot ?Options ?ContractName ?Contract 1)
+    (Conforms ?Source ?Contract ?Proof)
+    (nil ?Empty)
+    (cons ?Options ?Empty ?TailArguments)
+    (cons ?Source ?TailArguments ?Arguments)
+    (intern HistoryV1 ?Arguments ?Result))
+
+(<- (HistoryV1 ?Source ?Options ?Result)
+    (intern_snapshot HistoryV1 ?Arguments ?Result)
+    (cons ?Source ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Options ?Empty ?TailArguments)
+    (edge_snapshot ?Options ?Mode "copy" 0)
+    (edge_snapshot ?Options ?ContractName ?Contract 1)
+    (Conforms ?Source ?Contract ?Proof))

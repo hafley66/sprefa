@@ -1,0 +1,1 @@
+{"expected": {"diagnostics": [ {"args": [ {"a":"reader"},  {"a":"cases/32_query_backslash_at_eof.dl7"},  {"args": [ {"a":"cases/32_query_backslash_at_eof.dl7"}, 2 ],"f":"reader_node"},  {"a":"unterminated_query"},  {"args": [9, 1, 10 ],"f":"position"} ],"f":"diagnostic"} ],"forms": [],"source_rows": []},"input":"(x {q\"ab\\","path":"cases/32_query_backslash_at_eof.dl7"}

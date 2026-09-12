@@ -1,0 +1,21 @@
+; UserHistory is minted by the compiler fixpoint, not authored as a product.
+; Naming it inside a target application must read the same under both labels.
+(: KeyOptions (*))
+
+(: User
+   (* (: id int)
+      (: name text)))
+
+(: UserContract
+   (* (: id int)
+      (: name text)))
+
+(: HistoryOptions
+   (* (: mode "copy")
+      (: contract UserContract)))
+
+(: UserHistory (HistoryV1 User HistoryOptions))
+
+(: Both
+   (* (: atom_label (Option UserHistory))
+      (: (Key "compound_label" KeyOptions) (Option UserHistory))))

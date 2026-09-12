@@ -1,0 +1,11 @@
+(: alpha
+   (* (: value int)))
+
+(: beta
+   (* (: value int)))
+
+(<- (alpha (count ?Value))
+    (beta ?Value))
+
+(<- (beta ?Value)
+    (alpha ?Value))

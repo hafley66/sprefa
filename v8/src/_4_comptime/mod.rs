@@ -1,0 +1,54 @@
+//! The compiler fixpoint. Port of `v7/src/2_comptime/2_compiler.pl:700-1591`,
+//! `1a_generated_program_assembler.pl` and `1d_host_planner.pl`.
+
+#[path = "_1_api.rs"]
+pub mod api;
+#[path = "_3_assemble.rs"]
+pub mod assemble;
+#[path = "_5_finish.rs"]
+pub mod finish;
+#[path = "_4_host.rs"]
+pub mod host;
+#[path = "_6_json.rs"]
+pub mod json;
+#[path = "_0_load/mod.rs"]
+pub mod load;
+#[path = "_2_rounds.rs"]
+pub mod rounds;
+#[path = "_7_sources.rs"]
+pub mod sources;
+
+pub use api::{evaluate_checked, Compiled, Generated, Refreeze, Sources};
+pub use assemble::assemble_generated_program;
+pub use rounds::{Outcome, Round, RoundState};
+pub use sources::Live;
+
+use std::path::Path;
+use std::process::ExitCode;
+
+pub fn cli(input: &Path) -> ExitCode {
+    let text = match std::fs::read_to_string(input) {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::error!(phase = "comptime", error = %e, path = %input.display());
+            return ExitCode::from(2);
+        }
+    };
+    let case: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!(phase = "comptime", error = %e, path = %input.display());
+            return ExitCode::from(2);
+        }
+    };
+    match json::run(&case) {
+        Ok((out, code)) => {
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            ExitCode::from(code)
+        }
+        Err(e) => {
+            tracing::error!(phase = "comptime", error = %e);
+            ExitCode::from(3)
+        }
+    }
+}

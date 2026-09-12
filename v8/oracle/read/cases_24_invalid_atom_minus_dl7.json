@@ -1,0 +1,1 @@
+{"expected": {"diagnostics": [ {"args": [ {"a":"reader"},  {"a":"cases/24_invalid_atom_minus.dl7"},  {"args": [ {"a":"cases/24_invalid_atom_minus.dl7"}, 2 ],"f":"reader_node"},  {"args": [ {"a":"-"} ],"f":"invalid_atom"},  {"args": [3, 1, 4 ],"f":"position"} ],"f":"diagnostic"} ],"forms": [],"source_rows": []},"input":"(x -)\n","path":"cases/24_invalid_atom_minus.dl7"}

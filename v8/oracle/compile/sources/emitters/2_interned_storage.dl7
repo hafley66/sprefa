@@ -1,0 +1,217 @@
+; Selectable, target-neutral storage layout derived from the ordinary type
+; graph. Applications author capability-tagged policy and selection products.
+; No unselected product or sum enters the layout.
+(: InternedStorageEmitter (*))
+
+(: storage_policy
+   (* (: policy type)))
+
+(: storage_policy_member
+   (* (: policy type)
+      (: member type)))
+
+(: storage_policy_root
+   (* (: policy type)
+      (: root type)))
+
+(: storage_policy_dictionary
+   (* (: policy type)
+      (: scalar type)
+      (: dictionary type)))
+
+(: storage_plain_field
+   (* (: policy type)
+      (: owner type)
+      (: label any)))
+
+(: storage_dictionary_target
+   (* (: policy type)
+      (: scalar type)))
+
+(: storage_reachable
+   (* (: policy type)
+      (: node type)
+      (: kind text)))
+
+(: storage_type_layout
+   (* (: policy type)
+      (: constructor type)
+      (: kind text)))
+
+(: storage_field_layout
+   (* (: policy type)
+      (: owner type)
+      (: label any)
+      (: position int)
+      (: logical_target type)
+      (: representation text)
+      (: storage_domain type)))
+
+; Parent-to-child direction lets a boundary planner process the child before
+; replacing the parent's logical value with a catalog-local child ID.
+(: storage_dependency
+   (* (: policy type)
+      (: parent type)
+      (: required_domain type)
+      (: label any)
+      (: position int)
+      (: role text)))
+
+; Reverse boundary metadata retains the logical field label, position, and
+; target beside the stored domain used to reconstruct or selectively join it.
+(: storage_projection
+   (* (: policy type)
+      (: owner type)
+      (: position int)
+      (: label any)
+      (: storage_domain type)
+      (: logical_target type)
+      (: representation text)))
+
+(: storage_dictionary_layout
+   (* (: policy type)
+      (: scalar type)
+      (: dictionary type)))
+
+; Local identity describes one storage catalog. Semantic identity describes
+; equality of logical values and does not claim that local IDs are stable.
+(: storage_identity_domain
+   (* (: policy type)
+      (: domain type)
+      (: role text)
+      (: local_identity text)
+      (: semantic_identity text)))
+
+(emits InternedStorageEmitter "types" storage_type_layout)
+(emits InternedStorageEmitter "fields" storage_field_layout)
+(emits InternedStorageEmitter "dependencies" storage_dependency)
+(emits InternedStorageEmitter "projections" storage_projection)
+(emits InternedStorageEmitter "dictionaries" storage_dictionary_layout)
+(emits InternedStorageEmitter "identities" storage_identity_domain)
+
+(<- (storage_policy ?Policy)
+    (edge_snapshot
+      ?Policy ?CapabilityLabel "interned-storage-policy-v1" 0))
+
+(<- (storage_policy_member ?Policy ?Member)
+    (storage_policy ?Policy)
+    (edge_snapshot ?Policy ?Label ?Member ?Index)
+    (product ?Member))
+
+(<- (storage_policy_root ?Policy ?Root)
+    (storage_policy_member ?Policy ?Selection)
+    (edge_snapshot ?Selection ?CapabilityLabel "storage-root-v1" 0)
+    (edge_snapshot ?Selection ?RootLabel ?Root 1))
+
+(<- (storage_policy_dictionary ?Policy ?Scalar ?Dictionary)
+    (storage_policy_member ?Policy ?Selection)
+    (edge_snapshot
+      ?Selection ?CapabilityLabel "scalar-dictionary-v1" 0)
+    (edge_snapshot ?Selection ?ScalarLabel ?Scalar 1)
+    (edge_snapshot ?Selection ?DictionaryLabel ?Dictionary 2))
+
+(<- (storage_plain_field ?Policy ?Owner ?Label)
+    (storage_policy_member ?Policy ?Selection)
+    (edge_snapshot ?Selection ?CapabilityLabel "plain-field-v1" 0)
+    (edge_snapshot ?Selection ?OwnerLabel ?Owner 1)
+    (edge_snapshot ?Selection ?PositionLabel ?Position 2)
+    (edge_snapshot ?Owner ?Label ?Target ?Position))
+
+(<- (storage_dictionary_target ?Policy ?Scalar)
+    (storage_policy_dictionary ?Policy ?Scalar ?Dictionary))
+
+(<- (storage_reachable ?Policy ?Root "product")
+    (storage_policy_root ?Policy ?Root)
+    (product ?Root))
+
+(<- (storage_reachable ?Policy ?Root "sum")
+    (storage_policy_root ?Policy ?Root)
+    (sum ?Root))
+
+(<- (storage_reachable ?Policy ?Child "product")
+    (storage_reachable ?Policy ?Parent ?ParentKind)
+    (edge_snapshot ?Parent ?Label ?Child ?Position)
+    (product ?Child)
+    (not (storage_plain_field ?Policy ?Parent ?Label)))
+
+(<- (storage_reachable ?Policy ?Child "sum")
+    (storage_reachable ?Policy ?Parent ?ParentKind)
+    (edge_snapshot ?Parent ?Label ?Child ?Position)
+    (sum ?Child)
+    (not (storage_plain_field ?Policy ?Parent ?Label)))
+
+(<- (storage_type_layout ?Policy ?Type ?Kind)
+    (storage_reachable ?Policy ?Type ?Kind))
+
+(<- (storage_field_layout
+       ?Policy ?Owner ?Label ?Position ?Target
+       "reference-local-id" ?Target)
+    (storage_reachable ?Policy ?Owner ?OwnerKind)
+    (edge_snapshot ?Owner ?Label ?Target ?Position)
+    (product ?Target)
+    (not (storage_plain_field ?Policy ?Owner ?Label)))
+
+(<- (storage_field_layout
+       ?Policy ?Owner ?Label ?Position ?Target
+       "reference-local-id" ?Target)
+    (storage_reachable ?Policy ?Owner ?OwnerKind)
+    (edge_snapshot ?Owner ?Label ?Target ?Position)
+    (sum ?Target)
+    (not (storage_plain_field ?Policy ?Owner ?Label)))
+
+(<- (storage_field_layout
+       ?Policy ?Owner ?Label ?Position ?Scalar
+       "dictionary-local-id" ?Dictionary)
+    (storage_reachable ?Policy ?Owner ?OwnerKind)
+    (edge_snapshot ?Owner ?Label ?Scalar ?Position)
+    (storage_policy_dictionary ?Policy ?Scalar ?Dictionary)
+    (not (storage_plain_field ?Policy ?Owner ?Label)))
+
+; A plain-selected field claims its own row. Without this guard the fallback
+; also fires whenever no dictionary maps the target, giving two rows.
+(<- (storage_field_layout
+       ?Policy ?Owner ?Label ?Position ?Target "scalar" ?Target)
+    (storage_reachable ?Policy ?Owner ?OwnerKind)
+    (edge_snapshot ?Owner ?Label ?Target ?Position)
+    (not (product ?Target))
+    (not (sum ?Target))
+    (not (storage_dictionary_target ?Policy ?Target))
+    (not (storage_plain_field ?Policy ?Owner ?Label)))
+
+(<- (storage_field_layout
+       ?Policy ?Owner ?Label ?Position ?Target "inline" ?Target)
+    (storage_reachable ?Policy ?Owner ?OwnerKind)
+    (edge_snapshot ?Owner ?Label ?Target ?Position)
+    (storage_plain_field ?Policy ?Owner ?Label))
+
+(<- (storage_dependency
+       ?Policy ?Parent ?Child ?Label ?Position "reference")
+    (storage_field_layout
+      ?Policy ?Parent ?Label ?Position ?Child
+      "reference-local-id" ?Child))
+
+(<- (storage_dependency
+       ?Policy ?Parent ?Dictionary ?Label ?Position "dictionary")
+    (storage_field_layout
+      ?Policy ?Parent ?Label ?Position ?Scalar
+      "dictionary-local-id" ?Dictionary))
+
+(<- (storage_projection
+       ?Policy ?Owner ?Position ?Label ?StorageDomain ?LogicalTarget
+       ?Representation)
+    (storage_field_layout
+      ?Policy ?Owner ?Label ?Position ?LogicalTarget
+      ?Representation ?StorageDomain))
+
+(<- (storage_dictionary_layout ?Policy ?Scalar ?Dictionary)
+    (storage_policy_dictionary ?Policy ?Scalar ?Dictionary))
+
+(<- (storage_identity_domain
+       ?Policy ?Type "structural" "catalog-local-intern-id"
+       "constructor-and-ordered-fields")
+    (storage_reachable ?Policy ?Type ?Kind))
+
+(<- (storage_identity_domain
+       ?Policy ?Dictionary "dictionary" "catalog-local-dictionary-id"
+       "scalar-content")
+    (storage_policy_dictionary ?Policy ?Scalar ?Dictionary))

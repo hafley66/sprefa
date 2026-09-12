@@ -1,0 +1,39 @@
+(: User
+   (* (: id int)
+      (: name text)))
+
+(User 7 "Ada")
+
+(: UserContract
+   (* (: id int)
+      (: name text)))
+
+(: HistoryOptions
+   (* (: mode "copy")
+      (: contract UserContract)))
+
+(: UserHistory (HistoryV1 User HistoryOptions))
+
+(UserHistory (name: "Ada") (id: 7))
+
+(: copied
+   (* (: id int)
+      (: name text)))
+
+(<- (copied ?id ?name)
+    (UserHistory ?id ?name))
+
+(: SourceCopy
+   (* (: id int)
+      (: name text)))
+
+(SourceCopy 8 "Grace")
+
+(<- (UserHistory ?id ?name)
+    (SourceCopy ?id ?name))
+
+(: names
+   (* (: name text)))
+
+(<- (names ?name)
+    (UserHistory ?name))

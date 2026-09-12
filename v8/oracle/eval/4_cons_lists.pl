@@ -1,0 +1,23 @@
+program(
+    [ rule(call(ref(item), [var(head)]),
+           [ checked_goal(positive, call(ref(suffix), [var(list)])),
+             checked_goal(positive, call(ref(kernel(cons)), [var(head), var(tail), var(list)])) ]),
+      rule(call(ref(suffix), [var(list)]),
+           [checked_goal(positive, call(ref(source), [var(list)]))]),
+      rule(call(ref(suffix), [var(tail)]),
+           [ checked_goal(positive, call(ref(suffix), [var(list)])),
+             checked_goal(positive, call(ref(kernel(cons)), [var(head), var(tail), var(list)])) ]),
+      rule(call(ref(singleton), [var(list)]),
+           [ checked_goal(positive, call(ref(item), [var(head)])),
+             checked_goal(positive, call(ref(kernel(nil)), [var(empty)])),
+             checked_goal(positive, call(ref(kernel(cons)), [var(head), var(empty), var(list)])) ]),
+      rule(call(ref(pair), [var(list)]),
+           [ checked_goal(positive, call(ref(item), [var(first)])),
+             checked_goal(positive, call(ref(singleton), [var(rest)])),
+             checked_goal(positive, call(ref(kernel(cons)), [var(first), var(rest), var(list)])) ]),
+      rule(call(ref(empty_witness), []),
+           [checked_goal(positive, call(ref(kernel(cons)), [var(head), var(tail), const([])]))]),
+      rule(call(ref(improper_witness), []),
+           [checked_goal(positive, call(ref(kernel(cons)), [var(head), var(tail), const([one | improper])]))])
+    ],
+    [ call(ref(source), [const([const(one), const(two), const(three)])]) ]).

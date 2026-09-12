@@ -1,0 +1,8 @@
+(: Action
+   (* (: value int)))
+
+(: Event
+   (* (: value int)))
+
+(<+ (Action ?Value)
+    (Event ?Value))

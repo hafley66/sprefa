@@ -1,0 +1,14 @@
+(: Base (*))
+
+(: Outer
+   (* (: Name (Option text))
+      (: OuterAlias Base)
+      (: Inner
+         (* (: Name Base)
+            (: direct Name)
+            (: argument (Option Name))
+            (: One Base)
+            (: Two One)
+            (: Three Two)
+            (: same_scope Three)
+            (: across_scope OuterAlias)))))

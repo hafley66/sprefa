@@ -1,0 +1,5 @@
+(: reader
+   (* (: seen int)))
+
+(<- (reader 1)
+    (not (cons 1 2 ?List)))

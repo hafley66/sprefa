@@ -1,0 +1,5 @@
+(: reader
+   (* (: seen type)))
+
+(<- (reader ?Target)
+    (edge_ref ?Owner ?Label ?Target))
