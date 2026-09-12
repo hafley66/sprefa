@@ -4,6 +4,10 @@
 // `DL8_READ_PATH` overrides the path written into `reader_node(Path, Index)`.
 // Integers wider than i64 raise `integer_out_of_range`; v7 has bignums.
 
+#[path = "_5_digest.rs"]
+pub mod digest;
+#[path = "_4_expand.rs"]
+pub mod expand;
 #[path = "_0_grammar.rs"]
 pub mod grammar;
 #[path = "_3_cli.rs"]
@@ -13,5 +17,7 @@ pub mod reader;
 #[path = "_1_tokens.rs"]
 pub mod tokens;
 
+pub use digest::sha256_hex;
+pub use expand::expand_dl7;
 pub use read_cli::cli;
 pub use reader::{read, Pos, Read, Reader};

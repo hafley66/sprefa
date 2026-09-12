@@ -1,0 +1,16 @@
+(: Input
+   (* (: value int)))
+
+(: Output
+   (* (: value int)))
+
+(Input 7)
+
+(<- (Output ?Value)
+    (Input ?Value))
+
+(: Counted
+   (* (: count int)))
+
+(<- (Counted (count ?Value))
+    (Input ?Value))

@@ -22,7 +22,7 @@ pub mod rows;
 #[path = "_5_validate.rs"]
 pub mod validate;
 
-pub use api::{Calls, CompiledUnit, CompilerView, Emitted, Stop};
+pub use api::{Calls, CompilerView, Emitted, Stop};
 pub use calls::{logical_program_calls, logical_program_rows_calls};
 pub use emit::{compiler_view, emit_compiled, Emitter};
 pub use graph::{logical_program_graph_calls, logical_program_graph_rows};

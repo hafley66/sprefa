@@ -1,0 +1,26 @@
+; The first external operator keeps one ordinary relation shape. Host adds
+; compiler-known implementation and port-direction edges around that shape.
+(: Source
+   (* (: path text)))
+
+(: ExtractMode (*))
+
+(: TsiRecord
+   (* (: relation text)
+      (: arguments any)))
+
+(: SprefaExtract
+   (* (: abi text)
+      (: symbol text)))
+
+(: ExtractTsi
+   (Host SprefaExtract
+      (* (: source Source)
+         (: mode ExtractMode))
+      (* (: record TsiRecord))))
+
+; Edge identities are constructed where a rule needs them. Direction is an
+; ordinary edge on each reified host port.
+(<- (: ?Edge direction ?Direction 0)
+    (HostPort ?Relation ?Label ?Direction)
+    (edge_ref ?Relation ?Label ?Edge))

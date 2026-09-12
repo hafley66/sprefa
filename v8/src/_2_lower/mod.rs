@@ -30,10 +30,13 @@ pub mod partial;
 pub mod promote;
 #[path = "_1_slots.rs"]
 pub mod slots;
+#[path = "_12_units.rs"]
+pub mod units;
 
 pub use api::{lower_datalog, Lowered};
 pub use cx::{CallPolicy, Cx};
 pub use derived::Stop;
+pub use units::{install_module_aliases, lower_compiler_units, merge_module_basements, Units};
 
 use std::path::Path;
 use std::process::ExitCode;

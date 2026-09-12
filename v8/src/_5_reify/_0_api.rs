@@ -1,6 +1,8 @@
 //! The shapes three v7 modules pass between each other, plus the one stop the
 //! port needs where v7 simply fails.
 
+// `compiled_unit/3` at `1_artifact_emitter.pl:23` is `2_compiler.pl:910`'s
+// term; `crate::_4_comptime::Compiled` is the one struct for it.
 use crate::_6_eval::term::TermId;
 
 /// Where v7 fails instead of returning a diagnostic, and where an arm is not
@@ -9,18 +11,6 @@ use crate::_6_eval::term::TermId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stop {
     Fail(&'static str),
-}
-
-/// `compiled_unit(TypeGraphFacts, RuntimeProgram, CompilerFacts)`
-/// at `1_artifact_emitter.pl:23`, one field per functor argument.
-///
-/// `_4_comptime` is porting the same term as `Compiled` on a parallel branch.
-/// The coordinator merges the two after both land; nothing outside
-/// `_5_reify::emit` reads this struct.
-pub struct CompiledUnit {
-    pub type_graph_facts: Vec<TermId>,
-    pub runtime_program: TermId,
-    pub compiler_facts: Vec<TermId>,
 }
 
 /// `compiler_view(TypeGraphFacts, CompilerFacts, LogicalProgramRows,

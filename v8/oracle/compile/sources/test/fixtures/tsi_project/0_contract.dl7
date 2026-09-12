@@ -1,0 +1,12 @@
+; A loaded type carries no source name, so the probe reaches it structurally.
+
+(: Mapper
+   (* (: id string)))
+
+(: tsi_conforms_probe
+   (* (: source type)
+      (: proof type)))
+
+(<- (tsi_conforms_probe ?Source ?Proof)
+    (product ?Source)
+    (Conforms ?Source Mapper ?Proof))

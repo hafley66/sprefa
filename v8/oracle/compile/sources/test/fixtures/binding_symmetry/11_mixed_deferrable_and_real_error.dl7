@@ -1,0 +1,9 @@
+; A deferrable label diagnostic beside a real target error. Deferral reads the
+; whole list, so the target's arity error must still surface.
+(: KeyOptions (*))
+
+(: Base
+   (* (: id int)))
+
+(: Ledger
+   (* (: (NotDeclaredAnywhere "n" KeyOptions) (Option Base Base Base))))

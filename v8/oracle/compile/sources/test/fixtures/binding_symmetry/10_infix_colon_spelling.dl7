@@ -1,0 +1,10 @@
+; The one infix colon form, both spellings dl7_syntax_rewrite/3 accepts: a
+; separate ':' item after any label, and an atom whose own name ends in ':'.
+(: KeyOptions (*))
+
+(: Separate
+   (* (atom_label : (Option text))
+      ((Key "compound_label" KeyOptions) : (Option text))))
+
+(: Trailing
+   (* (atom_label: (Option text))))

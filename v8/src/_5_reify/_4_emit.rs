@@ -5,25 +5,27 @@
 //! emitter is a type identity connected to one or more output relations by
 //! `emits(Emitter, ArtifactName, OutputRelation)` rows (`:30-33`).
 
-use super::api::{CompiledUnit, CompilerView, Emitted, Stop};
+use super::api::{CompilerView, Emitted, Stop};
 use super::calls::{colon_arguments, emit_diagnostic, logical_program_rows_calls};
 use super::graph::logical_program_graph_calls;
 use super::rows::{checked_parts, logical_program_rows_term};
 use super::validate::validate_functional_rows;
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::strata::eval_program;
+use crate::_4_comptime::Compiled;
 use crate::_6_eval::program::{Program, Row};
 use crate::_6_eval::term::{Term, TermId, Universe};
 use crate::_6_eval::{evaluate, Trace};
 
 /// `:22-26`.
-pub fn compiler_view(u: &mut Universe, unit: &CompiledUnit) -> Result<CompilerView, Stop> {
-    let logical_program_rows = logical_program_rows_term(u, unit.runtime_program)?;
+pub fn compiler_view(u: &mut Universe, unit: &Compiled) -> Result<CompilerView, Stop> {
+    let runtime_program = unit.runtime.to_term(u);
+    let logical_program_rows = logical_program_rows_term(u, runtime_program)?;
     Ok(CompilerView {
         type_graph_facts: unit.type_graph_facts.clone(),
         compiler_facts: unit.compiler_facts.clone(),
         logical_program_rows,
-        runtime_program: unit.runtime_program,
+        runtime_program,
     })
 }
 
@@ -60,13 +62,14 @@ impl Emitter {
 pub fn emit_compiled(
     u: &mut Universe,
     emitter: &Emitter,
-    unit: &CompiledUnit,
+    unit: &Compiled,
 ) -> Result<Emitted, Stop> {
     match emitter {
         Emitter::MonomorphicDatalog => {
             let name = u.atom("monomorphic_datalog");
+            let runtime_program = unit.runtime.to_term(u);
             Ok(Emitted {
-                artifact: u.compound("artifact", vec![name, unit.runtime_program]),
+                artifact: u.compound("artifact", vec![name, runtime_program]),
                 diagnostics: vec![],
             })
         }

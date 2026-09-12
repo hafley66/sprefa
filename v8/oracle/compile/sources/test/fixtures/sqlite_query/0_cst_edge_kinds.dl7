@@ -1,0 +1,42 @@
+(: Node
+   (* (: input_path text)
+      (: content_id text)
+      (: family text)
+      (: span_start int)
+      (: span_end int)
+      (: kind text)))
+
+(: Edge
+   (* (: input_path text)
+      (: content_id text)
+      (: family text)
+      (: kind text)
+      (: from_start int)
+      (: from_end int)
+      (: to_start int)
+      (: to_end int)))
+
+(: CstEdgeKinds
+   (* (: input_path text)
+      (: content_id text)
+      (: edge_kind text)
+      (: from_start int)
+      (: from_end int)
+      (: source_kind text)
+      (: to_start int)
+      (: to_end int)
+      (: target_kind text)))
+
+(<- (CstEdgeKinds
+       ?InputPath ?ContentId ?EdgeKind
+       ?FromStart ?FromEnd ?SourceKind
+       ?ToStart ?ToEnd ?TargetKind)
+    (Edge
+      ?InputPath ?ContentId "cst" ?EdgeKind
+      ?FromStart ?FromEnd ?ToStart ?ToEnd)
+    (Node
+      ?InputPath ?ContentId "cst"
+      ?FromStart ?FromEnd ?SourceKind)
+    (Node
+      ?InputPath ?ContentId "cst"
+      ?ToStart ?ToEnd ?TargetKind))
