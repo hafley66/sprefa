@@ -1,0 +1,214 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 200
+    pad: 20
+  }
+}
+shape: sequence_diagram
+
+chris
+fable: fable (coordinator)
+v7: v7 swipl (oracle)
+kernel: v8/src/_6_eval
+lanes: opus lanes
+gh: github
+
+decision 2026-09-11: {
+  chris -> fable: over/under on prolog tuning vs rust port
+  fable -> chris: port. keep DL7 syntax, <+ macrotime, comptime, both fixpoints
+  chris -> fable: pr per work, d2 chess board of rounds
+  fable -> chris: plans/v8/2026-09-11-v8-port-board.d2
+  chris -> fable: fs is the rxjs pipe, draw structure
+  fable -> chris: plans/v8/2026-09-11-v8-structure.d2
+  fable.pipe: |`rust
+    // v8/src/lib.rs = the .pipe() call, one folder per arg
+    pub mod _0_read; pub mod _1_macrotime; pub mod _2_lower;
+    pub mod _6_eval;   // kernel, called by macrotime and comptime
+  `|
+  chris -> fable: _<n>_name.rs, dark theme, no png, pub only, no close() envelope
+  chris -> fable: model _6_eval in rust, then ts/rxjs, then Growing.fixpoint() / evaluate()
+  fable -> chris: plans/v8/2026-09-12-v8-eval-api.md
+  fable.slice: |`rust
+    // redux crate shape, trace is the effect sink
+    pub trait Slice {
+      type State; type Event; type Output; type Effect;
+      fn reduce(st: &mut State, ev: Event, fx: &mut dyn FnMut(Effect)) -> Output;
+    }
+  `|
+}
+
+kernel build 2026-09-12: {
+  chris -> fable: build core eval, then lisp parser (buy vs build), then macrotime. opus for all lanes
+  fable -> chris: plans/v8/2026-09-12-v8-buy-vs-build.md
+  fable -> v7: wrap_predicate(dl7_evaluator:evaluate/4) inside compile_dl7
+  v7 -> fable: v8/oracle/eval/*.json, 17 hand + 15 compile fixtures
+  fable.json: |`json
+    {"f":"rule","args":[{"f":"call","args":[{"a":"edge"},[{"v":"x"},{"v":"y"}]]},
+      [{"f":"checked_goal","args":[{"a":"positive"}, "..."]}]]}
+  `|
+  fable -> kernel: term arena
+  kernel.term: |`rust
+    pub enum Term { Int(i64), Atom(Sym), Str(Sym), Compound(Sym, Vec<TermId>) }
+    pub struct Universe { syms: IndexSet<String>, terms: IndexSet<Term>, nil: Sym, cons: Sym }
+  `|
+  fable -> kernel: program shape, same as v7 rule/2 terms
+  kernel.program: |`rust
+    pub enum Arg { Var(VarId), Ground(TermId), Count(Box<Arg>) }
+    pub struct Goal { polarity: Polarity, rel: TermId, args: Vec<Arg> }
+    pub struct Rule { rel: TermId, head: Vec<Arg>, body: Vec<Goal>, vars: Vec<TermId> }
+    pub enum Kernel { Nil, Cons, EdgeRef, Intern, Int(IntCmp) }
+  `|
+  fable -> kernel: evaluate = stratify, then per level semi-naive rounds
+  kernel.sig: |`rust
+    pub fn evaluate(u: &mut Universe, program: &Program,
+                    fx: &mut dyn FnMut(Trace)) -> Closure
+  `|
+  for each stratum level: {
+    loop until new == 0: {
+      if round == 0: {
+        kernel -> kernel: fire(rule, plan = All for every goal)
+      }
+      else: {
+        kernel -> kernel: "one plan per current-level goal j: Old before j, Delta at j, All after"
+      }
+      kernel.round: |`rust
+        store.mark_all();                       // frontier -> old
+        for (rel, row) in sink { if store.insert(rel, row) { new += 1 } }
+        fx(Trace::Round { level, round, new });
+        if new == 0 { break }
+      `|
+    }
+  }
+  loop parity: {
+    kernel -> v7: diff closure json
+    v7 -> kernel: "diffs: term order (Str before Atom, nil before Atom), missing demanded rows, aggregate on kernel goals, null atoms"
+    kernel.fix: |`rust
+      // demand(): top-down memoized rows when any head arg is bound
+      // tables_only: aggregates count stored rows, never kernel solutions
+      // cmp(): Number < String < [] < Atom < Compound
+    `|
+  }
+  kernel -> fable: 32/32 fixtures, clippy 0, 5..53 ms per call
+  fable -> gh: PR #725 feature/v8-eval-kernel-20260912
+}
+
+lanes 2026-09-12: {
+  fable -> lanes: three worktrees from 02f7b38a2, disjoint files, PR against the kernel branch
+  par: {
+    read lane: {
+      lanes -> v7: dump read_dl7 terms per .dl7
+      lanes.read: |`rust
+        // src/_0_read, tree-sitter 0.27 binding of v7/tree-sitter-dl7
+        pub fn read(src: &str) -> SyntaxGraph
+      `|
+    }
+    macrotime lane: {
+      lanes -> v7: dump syntax graph + expansion waves
+      lanes.mt: |`rust
+        // src/_1_macrotime, <+ rewrites via _6_eval::evaluate
+        pub fn expand(graph: SyntaxGraph) -> ExpandedGraph
+      `|
+    }
+    lower lane: {
+      lanes -> v7: dump lower_datalog_deferred/5
+      lanes.lower: |`lisp
+        ; :/2 and :/4, v7/src/2_comptime/0_lowerer.pl:1124..1280
+        (: owner name)
+        (: owner name target index)
+      `|
+    }
+  }
+  chris -> fable: keep going, stop short. tour tomorrow
+  chris -> fable: tour covers type theory, TSI, sprefa-extract split
+  chris -> fable: history as d2 sequence, code blocks, groups
+}
+
+read lane lands 2026-09-12 01:13: {
+  lanes -> gh: PR #726 a75cb32a0, 89 oracle fixtures (54 tree .dl7 + 35 authored), 9529 source rows, 16 diagnostics
+  fable -> lanes: graded. cargo test 2/2, clippy 0 in lane files, tree clean, 594 LOC
+  lanes.finding: |`prolog
+    % v7 positions count characters, string_codes/2 is the door
+    % cases/19_unicode_offsets.dl7: invalid_atom(café) at position(15,1,16), byte offset 18
+  `|
+  lanes.reader: |`rust
+    // src/_0_read/_2_reader.rs runs v7's character state machine over Vec<char>
+    // build.rs links v7/tree-sitter-dl7/src/parser.c, _0_grammar.rs exposes
+    // tree_sitter_dl7() as *const TSLanguage, and nothing reads the CST yet
+  `|
+  fable -> chris: "fork for you: reader is a hand port, tree-sitter linked but unused. keep for LSP later, or drop build.rs"
+  fable -> kernel: clippy map_or leftovers fixed, 68113739b pushed
+}
+
+lower lane lands 2026-09-12: {
+  lanes -> gh: PR #727, 509089ea4 (PLAN + unga plan), 15f86054c (port)
+  fable -> lanes: graded. cargo test 2/2, clippy 0 in lane files, tree clean, 3582 LOC in 14 files
+  lanes.oracle: |`sh
+    # wraps lower_datalog/5 (macrotime unit) AND lower_datalog_deferred/5 (prelude + every source unit)
+    # 62 lowerings = 52 MB, 19 committed = 5 MB, all 62 checked byte-identical, skip list empty
+    cd ~/projects/sprefa && V7_DIR=v7 bash <worktree>/v8/oracle/lower/freeze.sh
+  `|
+  lanes.defect: |`prolog
+    % v7 defect, 0_lowerer.pl:292. finish_lowered_executables/11 error clause leaves
+    % argument 9 (Program) unbound. siblings at :71 :147 :65 bind []. port reproduces it.
+    "program": null, "program_bound": false
+  `|
+  lanes.forks: |`md
+    six forks, none decided, all cited into 0_lowerer.pl:
+    Host reserved in bind target :713, var bind target rejected :778,
+    def/2 head/2 body/4 no slot labels :1971, one count per head :1152,
+    compound edge target shadow order :581, Curry/Literal by name :414
+  `|
+  fable -> chris: "naming: _0_api.rs and _0_cx.rs share a prefix, so do _1_forms.rs and _1_slots.rs"
+}
+
+macrotime lane lands 2026-09-12: {
+  lanes -> gh: PR #728 559e1d895, 29 cases (21 fixture units + expansion_cases.dl7 + 7 diagnostics)
+  fable -> lanes: graded. cargo test 2/2, clippy 0, tree clean, 1711 LOC in 8 files
+  lanes.wave: |`rust
+    // src/_1_macrotime/_4_expand.rs, one <+ wave. no second evaluator exists
+    let closure = _6_eval::evaluate(u, &macro_program, fx);   // rules = macrotime/0_standard.dl7
+    let rewrite = rewrite_active_graph(u, &graph, &closure);
+    fx(Wave::Rewritten { .. });     // <- pause point: rows, origin, seen, wave counter
+    graph = Graph::build(u, rewrite.rows);
+  `|
+  lanes -> fable: "control dump against git archive HEAD v7: byte-identical, the dirty checker edits do not move macrotime"
+}
+
+integrate 2026-09-12: {
+  chris -> fable: get us to dl7 faster, keep it simple, redux utils split pure from impure
+  fable -> kernel: merge #726 #727 #728 into feature/v8-eval-kernel-20260912, 4 suites green, clippy 0
+  fable.redux: |`rust
+    // ~/projects/hafley-games/crates/redux, 9 commits unpushed so no git dep tonight
+    // lanes mirror the shape inline. Effect = Never proves a slice pure
+    pub trait Slice { type Context<'a>: Copy; type State; type Event; type Output; type Effect;
+      fn reduce(st: &mut State, ev: Event, cx: Context<'_>, fx: &mut impl FnMut(Effect)) -> Output }
+    pub fn reduce_then_apply<R: Slice, A>(state, event, cx, effects: &mut Vec<R::Effect>, apply: A)
+  `|
+  fable -> kernel: stubs _3_check, _4_comptime (+ _0_load), _5_reify, dl8 check|load|comptime|reify. 26fcb5f94
+  fable -> lanes: wave two, worktrees v8-check and v8-load from 26fcb5f94
+  par: {
+    check lane: {
+      lanes -> v7: wrap check_datalog/4 + check_resolved_rules/5 from a git archive HEAD copy (checker is dirty in main)
+      lanes.check: |`rust
+        // src/_3_check, pure. Checked mirrors checked_datalog(Env, datalog_program(Rels, Seeds, Rules), Deps, Strata)
+        pub fn check_datalog(u: &mut Universe, lowered: &Lowered, ..) -> (Checked, Vec<Diagnostic>)
+      `|
+    }
+    load lane: {
+      lanes -> v7: wrap 0b filesystem grapher, 0c extract loader (23 tsi.* rels), 0d source facts
+      lanes.load: |`rust
+        // src/_4_comptime/_0_load. impure edge reads bytes, everything after is pure over slices
+        pub fn read_tsi_stream(path: &Path) -> Vec<String>;
+        pub fn install_tsi_graph(u: &mut Universe, lines: &[String], ..) -> (Rows, Vec<Diagnostic>)
+      `|
+    }
+  }
+}
+
+pending: {
+  lanes -> fable: check and load hails (none yet)
+  fable -> lanes: wave three after check lands: _4_comptime rounds (2_compiler.pl, 1a, 1c, 1d, 0a), _5_reify (3_emit/0, 0a, 1)
+  fable -> lanes: grade: git log, cargo test, cargo clippy
+  fable -> chris: plans/v8/2026-09-13-v8-tour.md
+}
