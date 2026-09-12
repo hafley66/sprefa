@@ -1,0 +1,1 @@
+{"expected": {"diagnostics": [ {"args": [ {"a":"reader"},  {"a":"cases/02_stray_close_brace.dl7"},  {"args": [ {"a":"cases/02_stray_close_brace.dl7"}, 2 ],"f":"reader_node"},  {"a":"unexpected_closing_query_brace"},  {"args": [5, 2, 1 ],"f":"position"} ],"f":"diagnostic"} ],"forms": [],"source_rows": []},"input":"(ok)\n}\n","path":"cases/02_stray_close_brace.dl7"}
