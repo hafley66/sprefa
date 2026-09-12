@@ -158,10 +158,7 @@ impl<'a> Eval<'a> {
                     Some(k) => kernel::negative_holds(self.u, k, &args),
                     None => {
                         let row: Vec<TermId> = args.iter().map(|a| a.unwrap()).collect();
-                        !self
-                            .store
-                            .table(goal.rel)
-                            .map_or(false, |t| t.contains(&row))
+                        !self.store.table(goal.rel).is_some_and(|t| t.contains(&row))
                     }
                 };
                 if holds {

@@ -69,10 +69,7 @@ fn every_oracle_fixture_matches_v7() {
                 got["diagnostics"]
             ));
         }
-        let want_code = if want["diagnostics"]
-            .as_array()
-            .map_or(true, |d| d.is_empty())
-        {
+        let want_code = if want["diagnostics"].as_array().is_none_or(|d| d.is_empty()) {
             0
         } else {
             1
