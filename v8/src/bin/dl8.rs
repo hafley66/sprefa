@@ -1,8 +1,10 @@
 //! The one subscribe: reads a program, runs the pipe, prints the result.
 
 use clap::{Parser, Subcommand};
+use dl8::_6_eval::json::term_to_json;
 use dl8::_6_eval::json::{closure_to_json, program_from_json};
 use dl8::_6_eval::{evaluate, Trace, Universe};
+use dl8::_8_driver::{Event, Stop};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -34,6 +36,22 @@ enum Command {
     Comptime { case: PathBuf },
     /// Reify a checked program (JSON) to logical program rows.
     Reify { case: PathBuf },
+    /// Compile one `.dl7` file (or a project) and print compiler rows, the
+    /// runtime program and diagnostics as JSON.
+    Compile {
+        /// Source files; more than one, or `--project`, selects the project door.
+        #[arg(required = true)]
+        file: Vec<PathBuf>,
+        /// Project root; `compile_dl7_project/5` instead of `compile_dl7/4`.
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// A TSI JSONL stream to load before lowering.
+        #[arg(long)]
+        tsi: Vec<PathBuf>,
+        /// Print every wave and round to stderr.
+        #[arg(long)]
+        trace: bool,
+    },
     /// Evaluate a checked-goal program (JSON) and print its closure as JSON.
     Eval {
         program: PathBuf,
@@ -53,6 +71,12 @@ fn main() -> ExitCode {
         Command::Load { case } => dl8::_4_comptime::load::cli(&case),
         Command::Comptime { case } => dl8::_4_comptime::cli(&case),
         Command::Reify { case } => dl8::_5_reify::cli(&case),
+        Command::Compile {
+            file,
+            project,
+            tsi,
+            trace,
+        } => compile_cli(&file, project.as_deref(), &tsi, trace),
         Command::Eval { program, trace } => {
             let text = match std::fs::read_to_string(&program) {
                 Ok(t) => t,
@@ -90,5 +114,63 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         }
+    }
+}
+
+fn compile_cli(
+    files: &[PathBuf],
+    project: Option<&std::path::Path>,
+    streams: &[PathBuf],
+    trace: bool,
+) -> ExitCode {
+    let mut u = Universe::new();
+    let mut fx = |e: Event| {
+        if trace {
+            eprintln!("{e:?}"); // @eprintln-ok
+        }
+    };
+    let paths: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
+    let streams: Vec<&std::path::Path> = streams.iter().map(|p| p.as_path()).collect();
+    let compiled = match (project, paths.as_slice()) {
+        (None, [one]) if streams.is_empty() => dl8::compile(&mut u, one, &mut fx),
+        (root, _) => {
+            let root = root.map(|r| r.to_path_buf()).unwrap_or_else(|| {
+                paths[0]
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("."))
+            });
+            dl8::compile_project(&mut u, &root, &paths, &streams, &mut fx)
+        }
+    };
+    let compiled = match compiled {
+        Ok(compiled) => compiled,
+        Err(Stop::Io(message)) => {
+            eprintln!("dl8 compile: {message}"); // @eprintln-ok
+            return ExitCode::from(2);
+        }
+        Err(other) => {
+            eprintln!("dl8 compile: {other:?}"); // @eprintln-ok
+            return ExitCode::from(3);
+        }
+    };
+    let encode = |ids: &[dl8::_6_eval::TermId]| {
+        serde_json::Value::Array(ids.iter().map(|t| term_to_json(&u, *t)).collect())
+    };
+    let mut out = serde_json::Map::new();
+    out.insert("compiler_rows".into(), encode(&compiled.compiler_rows));
+    out.insert(
+        "runtime_program".into(),
+        term_to_json(&u, compiled.runtime_program),
+    );
+    out.insert("diagnostics".into(), encode(&compiled.diagnostics));
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::Value::Object(out)).unwrap()
+    );
+    if compiled.diagnostics.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
     }
 }

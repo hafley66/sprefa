@@ -10,12 +10,21 @@ fixtures in `oracle/`.
 | `_1_macrotime` | reify, `<+` expansion waves over `_6_eval`, materialize, 29 oracle cases |
 | `_2_lower` | `0_lowerer.pl` and both graph stores, 19 committed of 62 checked lowerings |
 | `_3_check` | `1_checker.pl` port, 19 committed of 75 checked calls, 25 diagnostic functors classified |
-| `_4_comptime` | rounds not built yet; `_0_load` ports the filesystem, TSI and source-fact loaders, 51 committed of 57 cases |
-| `_5_reify` | not built yet |
+| `_4_comptime` | the two nested compiler fixpoints, `2_compiler.pl:700-1591`; `_7_sources.rs` is the live refreeze, `Replay` the oracle one; `_0_load` ports the filesystem, TSI and source-fact loaders, 51 committed of 57 cases |
+| `_5_reify` | `0_logical_program_reifier.pl`, `0a_logical_program_grapher.pl`, `1_artifact_emitter.pl`; 57 committed of 88 checked calls |
 | `_6_eval` | stratified semi-naive evaluator, parity with v7 `evaluate/4` |
+| `_8_driver` | the call in order, `2_compiler.pl:75-700`; `lib.rs::compile` is the chain, 16 committed of 46 whole-pipeline cases |
+
+`prelude/` and `macrotime/` are byte-identical copies of `v7/prelude` and
+`v7/macrotime` at `f5018ad23`, compiled into the binary with `include_str!`, so
+nothing under `v7/` is read at runtime.
 
 ```bash
 cargo test                      # oracle parity through the real binary
+cargo run -- compile ../v7/test/fixtures/2_partial.dl7
+cargo run -- compile oracle/compile/sources/test/fixtures/modules/0_accounts.dl7 \
+  oracle/compile/sources/test/fixtures/modules/1_consumer.dl7 \
+  --project oracle/compile/sources/test/fixtures/modules
 cargo run -- eval oracle/eval/0_transitive.json --trace
 ```
 
@@ -29,6 +38,9 @@ V7_DIR=$PWD/v7 bash v8/oracle/macrotime/refreeze.sh
 V7_DIR=v7 bash v8/oracle/lower/freeze.sh
 bash v8/oracle/check/freeze.sh            # pins REV=f5018ad23
 V7_DIR=v7 bash v8/oracle/load/freeze.sh
+bash v8/oracle/reify/freeze.sh
+bash v8/oracle/compile/freeze.sh          # pins REV=f5018ad23, all 46 cases
+bash v8/oracle/compile/verify.sh          # dl8 over every case, committed or not
 ```
 
 Design: `plans/v8/2026-09-12-v8-eval-api.md`. Buy-vs-build:

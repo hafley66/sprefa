@@ -1,0 +1,19 @@
+; The saturated late-generated application stands as the target itself, with no
+; wrapping constructor, under both label forms and the same CallPolicy.
+(: KeyOptions (*))
+
+(: User
+   (* (: id int)
+      (: name text)))
+
+(: UserContract
+   (* (: id int)
+      (: name text)))
+
+(: HistoryOptions
+   (* (: mode "copy")
+      (: contract UserContract)))
+
+(: Both
+   (* (: atom_label (HistoryV1 User HistoryOptions))
+      (: (Key "compound_label" KeyOptions) (HistoryV1 User HistoryOptions))))

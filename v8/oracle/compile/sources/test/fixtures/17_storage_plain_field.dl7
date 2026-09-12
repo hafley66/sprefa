@@ -1,0 +1,47 @@
+; Plain-field selection over targets a dictionary does not map. PlainIntPolicy
+; selects an int column; NoDictionaryPolicy declares no dictionary at all.
+(: Repository
+   (* (: url text)))
+
+(: Blob
+   (* (: repository Repository)
+      (: ordinary text)
+      (: size int)))
+
+(: SharedTextDictionary (*))
+
+(: BlobRoot
+   (* (: capability "storage-root-v1")
+      (: target Blob)))
+
+(: TextDictionarySelection
+   (* (: capability "scalar-dictionary-v1")
+      (: scalar text)
+      (: dictionary SharedTextDictionary)))
+
+(: PlainSize
+   (* (: capability "plain-field-v1")
+      (: owner Blob)
+      (: position 2)))
+
+(: PlainText
+   (* (: capability "plain-field-v1")
+      (: owner Blob)
+      (: position 1)))
+
+(: PlainIntPolicy
+   (* (: capability "interned-storage-policy-v1")
+      (: root BlobRoot)
+      (: dictionary TextDictionarySelection)
+      (: storage_plain PlainSize)))
+
+(: PlainTextPolicy
+   (* (: capability "interned-storage-policy-v1")
+      (: root BlobRoot)
+      (: dictionary TextDictionarySelection)
+      (: storage_plain PlainText)))
+
+(: NoDictionaryPolicy
+   (* (: capability "interned-storage-policy-v1")
+      (: root BlobRoot)
+      (: storage_plain PlainSize)))

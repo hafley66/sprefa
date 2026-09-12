@@ -15,10 +15,13 @@ pub mod json;
 pub mod load;
 #[path = "_2_rounds.rs"]
 pub mod rounds;
+#[path = "_7_sources.rs"]
+pub mod sources;
 
 pub use api::{evaluate_checked, Compiled, Generated, Refreeze, Sources};
 pub use assemble::assemble_generated_program;
 pub use rounds::{Outcome, Round, RoundState};
+pub use sources::Live;
 
 use std::path::Path;
 use std::process::ExitCode;

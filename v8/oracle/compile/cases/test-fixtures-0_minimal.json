@@ -1,0 +1,1 @@
+{"expected":{"compiler_rows":[],"diagnostics":[{"args":[{"a":"lower"},{"args":[{"a":"<root>/test/fixtures/0_minimal.dl7"},28],"f":"reader_node"},{"a":"expected_call"}],"f":"diagnostic"}],"runtime_program":[]},"input":{"arguments":["<root>/test/fixtures/0_minimal.dl7"]}}

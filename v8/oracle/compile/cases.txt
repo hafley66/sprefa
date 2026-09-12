@@ -1,0 +1,4 @@
+project-modules-consumer	--project	test/fixtures/modules	test/fixtures/modules/0_accounts.dl7	test/fixtures/modules/1_consumer.dl7
+project-modules-plus	--project	test/fixtures/modules	test/fixtures/modules/0_accounts.dl7	test/fixtures/modules/2_plus_consumer.dl7
+project-tsi-contract	--project	test/fixtures/tsi_project	test/fixtures/tsi_project/0_contract.dl7	--tsi	test/fixtures/tsi/1_semantic_user.jsonl
+project-dl6-catalog	--project	.	emitters/2_interned_storage.dl7	applications/dl6/0_catalog.dl7

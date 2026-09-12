@@ -3,11 +3,13 @@
 //!
 //! Seven case shapes, tagged by `entry`, one per wrapped v7 predicate.
 
-use super::api::{CompiledUnit, Stop};
+use super::api::Stop;
 use super::calls::{logical_program_calls, logical_program_rows_calls};
 use super::emit::{compiler_view, emit_compiled, Emitter};
 use super::graph::logical_program_graph_calls;
 use super::rows::logical_program_rows_term;
+use crate::_3_check::Checked;
+use crate::_4_comptime::Compiled;
 use crate::_6_eval::json::{term_from_json, term_to_json};
 use crate::_6_eval::term::{Term, TermId, Universe};
 use serde_json::{json, Value};
@@ -40,11 +42,40 @@ fn relations(u: &mut Universe, input: &Value) -> Result<Option<Vec<TermId>>, Str
         .map(Some)
 }
 
-fn unit(u: &mut Universe, input: &Value) -> Result<CompiledUnit, String> {
-    Ok(CompiledUnit {
+fn unit(u: &mut Universe, input: &Value) -> Result<Compiled, String> {
+    let runtime = term(u, input, "runtime_program")?;
+    Ok(Compiled {
         type_graph_facts: list(u, input, "type_graph_facts")?,
-        runtime_program: term(u, input, "runtime_program")?,
+        runtime: checked_from_term(u, runtime)?,
         compiler_facts: list(u, input, "compiler_facts")?,
+    })
+}
+
+/// The inverse of `Checked::to_term` (`_3_check/_0_api.rs:36`), so the oracle
+/// reader builds the struct v7's `compiled_unit/3` second slot holds.
+fn checked_from_term(u: &Universe, checked: TermId) -> Result<Checked, String> {
+    let Some(("checked_datalog", args)) = u.functor(checked) else {
+        return Err("runtime_program is not checked_datalog/4".into());
+    };
+    let Some(("root_graph", graph)) = u.functor(args[0]) else {
+        return Err("root_graph/2 expected".into());
+    };
+    let Some(("datalog_program", program)) = u.functor(args[1]) else {
+        return Err("datalog_program/3 expected".into());
+    };
+    let lists = [
+        graph[0], graph[1], program[0], program[1], program[2], args[2], args[3],
+    ]
+    .map(|slot| u.as_list(slot));
+    let [nodes, edges, relations, seeds, rules, depends, strata] = lists;
+    Ok(Checked {
+        nodes: nodes.ok_or("nodes")?,
+        edges: edges.ok_or("edges")?,
+        relations: relations.ok_or("relations")?,
+        seeds: seeds.ok_or("seeds")?,
+        rules: rules.ok_or("rules")?,
+        depends: depends.ok_or("depends")?,
+        strata: strata.ok_or("strata")?,
     })
 }
 

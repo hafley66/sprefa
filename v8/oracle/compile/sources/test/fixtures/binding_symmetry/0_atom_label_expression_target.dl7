@@ -1,0 +1,6 @@
+; The atom-label spelling of an expression target. Its resolved target is the
+; oracle every compound-label fixture in this directory is compared against.
+(: KeyOptions (*))
+
+(: Holder
+   (* (: direct (Option text))))
