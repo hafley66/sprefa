@@ -1,0 +1,23 @@
+program(
+    [ rule(call(ref(open), [var(node)]),
+           [ checked_goal(positive, call(ref(base), [var(node)])),
+             checked_goal(negative, call(ref(blocked), [var(node)])) ]),
+      rule(call(ref(reach), [var(node)]),
+           [checked_goal(positive, call(ref(open), [var(node)]))]),
+      rule(call(ref(reach), [var(to)]),
+           [ checked_goal(positive, call(ref(reach), [var(from)])),
+             checked_goal(positive, call(ref(link), [var(from), var(to)])),
+             checked_goal(negative, call(ref(blocked), [var(to)])) ]),
+      rule(call(ref(unreached), [var(node)]),
+           [ checked_goal(positive, call(ref(base), [var(node)])),
+             checked_goal(negative, call(ref(reach), [var(node)])) ])
+    ],
+    [ call(ref(base), [const(a)]),
+      call(ref(base), [const(b)]),
+      call(ref(base), [const(c)]),
+      call(ref(base), [const(d)]),
+      call(ref(blocked), [const(b)]),
+      call(ref(link), [const(a), const(b)]),
+      call(ref(link), [const(a), const(c)]),
+      call(ref(link), [const(c), const(d)]),
+      call(ref(link), [const(d), const(c)]) ]).

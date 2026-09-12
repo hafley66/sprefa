@@ -1,0 +1,94 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 200
+    pad: 20
+  }
+}
+direction: down
+
+classes: {
+  light: {style.fill: "#2e2e2e"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+  dark: {style.fill: "#4a4640"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+  wip: {style.fill: "#6b4f12"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+  done: {style.fill: "#1f4d2a"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+  blocked: {style.fill: "#6e2a25"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+  note: {style.fill: "#1a1a1a"; style.stroke: "#555555"; style.font-color: "#e8e8e8"}
+}
+
+loop: 1. one round of the port fixpoint, one PR per square {
+  oracle: "v7 prolog, frozen\n54 fixtures = the oracle" {class: light}
+  port: "v8 rust phase\nbranch v8/<phase>-<round>" {class: wip}
+  canon: "canonicalize ids,\npaths, row order" {class: light}
+  diff: "diff rows, diagnostics,\nrule order, IR" {shape: diamond; class: light}
+  land: "PR merged\nsquare turns green" {class: done}
+  fix: "PR stays open\nsquare turns red" {class: blocked}
+  retire: "v7 phase leaves\nthe run path" {class: light}
+
+  oracle -> canon: v7 output
+  port -> canon: v8 output
+  canon -> diff
+  diff -> land: empty
+  diff -> fix: non-empty
+  fix -> port: next commit
+  land -> retire: after r3
+}
+
+legend: 2. legend {
+  grid-columns: 2
+  grid-gap: 6
+  l1: "square = one PR" {class: light}
+  l2: "dark square = one PR" {class: dark}
+  l3: "wip = branch open" {class: wip}
+  l4: "done = merged, diff empty" {class: done}
+  l5: "blocked = diff non-empty" {class: blocked}
+  l6: |md
+    - row = v8 folder, eval first because both fixpoints call it
+    - column = round: r1 port, r2 parity (oracle diff empty), r3 land (scale receipt + v7 phase retired)
+    - fixpoint reached = every square green, no v7 in run path
+  | {class: note}
+}
+
+loop -> legend: read the board layer
+
+layers: {
+  board: {
+    vars: {
+      d2-config: {layout-engine: dagre; theme-id: 200; pad: 20}
+    }
+    classes: {
+      light: {style.fill: "#2e2e2e"; style.stroke: "#777777"; style.font-color: "#e8e8e8"; width: 230; height: 80}
+      dark: {style.fill: "#4a4640"; style.stroke: "#777777"; style.font-color: "#e8e8e8"; width: 230; height: 80}
+      wip: {style.fill: "#6b4f12"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+      done: {style.fill: "#1f4d2a"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+      blocked: {style.fill: "#6e2a25"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+    }
+    chess: "v8 port board: 7 folders x 3 rounds, 21 PRs" {
+      grid-rows: 7
+      grid-columns: 3
+      grid-gap: 0
+
+      eval_r1: "eval\nr1 port" {class: light}
+      eval_r2: "eval\nr2 parity" {class: dark}
+      eval_r3: "eval\nr3 land" {class: light}
+      read_r1: "read\nr1 port" {class: dark}
+      read_r2: "read\nr2 parity" {class: light}
+      read_r3: "read\nr3 land" {class: dark}
+      macrotime_r1: "macrotime\nr1 port" {class: light}
+      macrotime_r2: "macrotime\nr2 parity" {class: dark}
+      macrotime_r3: "macrotime\nr3 land" {class: light}
+      lower_r1: "lower\nr1 port" {class: dark}
+      lower_r2: "lower\nr2 parity" {class: light}
+      lower_r3: "lower\nr3 land" {class: dark}
+      check_r1: "check\nr1 port" {class: light}
+      check_r2: "check\nr2 parity" {class: dark}
+      check_r3: "check\nr3 land" {class: light}
+      comptime_r1: "comptime\nr1 port" {class: dark}
+      comptime_r2: "comptime\nr2 parity" {class: light}
+      comptime_r3: "comptime\nr3 land" {class: dark}
+      reify_r1: "reify\nr1 port" {class: light}
+      reify_r2: "reify\nr2 parity" {class: dark}
+      reify_r3: "reify\nr3 land" {class: light}
+    }
+  }
+}

@@ -1,0 +1,232 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 200
+    pad: 20
+  }
+}
+direction: down
+
+classes: {
+  phase: {style.fill: "#2e2e2e"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+  tap: {style.fill: "#1f2a38"; style.stroke: "#68a0d0"; style.font-color: "#e8e8e8"; style.stroke-dash: 4}
+  entry: {style.fill: "#6b4f12"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+  oracle: {style.fill: "#1f4d2a"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+  code: {style.fill: "#1a1a1a"; style.stroke: "#555555"; style.font-color: "#e8e8e8"}
+  note: {style.fill: "#2a2a1f"; style.stroke: "#555555"; style.font-color: "#e8e8e8"}
+}
+
+fs: v8/ as a tree, read column by column {
+  grid-columns: 3
+  grid-gap: 24
+  title: |||md
+    # v8: the filesystem IS the pipe
+    | fs thing | rxjs thing | v8 spelling |
+    | --- | --- | --- |
+    | `_<n>_name/` folder under src/ | one arg of `.pipe(...)` | `_0_read/` .. `_5_reify/` |
+    | folder nested inside a phase | inner pipe of a higher-order map | `_6_eval/_0_stratify/` |
+    | folder called from two phases | a shared operator factory | `_6_eval/`, both fixpoints |
+    | sibling folder, not on the pipe | `tap` side effect | `_8_trace/`, `_9_oracle/` |
+    | `mod.rs` | the operator: `fn run(In) -> Out` | one per folder |
+    | `types.rs` | the Out type, interface first | one per folder, header of the folder |
+    | `bin/` | the one `.subscribe()` | `dl8` cli |
+  ||| {class: note}
+
+  lib: |`rust
+        // v8/src/lib.rs  = the .pipe() call, folders in order
+      pub mod _0_read;      // _0_read/mod.rs
+      pub mod _1_macrotime;
+      pub mod _2_lower;
+      pub mod _3_check;
+      pub mod _4_comptime;
+      pub mod _5_reify;
+      pub mod _6_eval;      // kernel, called twice
+    pub mod _8_trace;     // tap
+
+      pub fn compile(src: Source) -> Result<RuntimeIr, Diags> {
+          _0_read::run(src)
+              .and_then(_1_macrotime::run)
+              .and_then(_2_lower::run)
+              .and_then(_3_check::run)
+              .and_then(_4_comptime::run)
+              .map(_5_reify::run)
+      }
+  `| {class: code}
+
+  pipe: src/  one folder per operator {
+    read: |md
+      **_0_read/**  DL7 syntax unchanged
+      - in: `Source` (path + bytes)
+      - out: `SyntaxGraph`
+      - port of `v7/src/0_reader/0_parser.pl`
+      - fork: hand port, or bind `v7/tree-sitter-dl7`
+    | {class: phase}
+    expand: |md
+      **_1_macrotime/**  fixpoint 1
+      - in: `SyntaxGraph` as facts + `macrotime/0_standard.dl7`
+      - out: `ExpandedGraph` (rewrites applied)
+      - calls `_6_eval::run`, port of `1_libtime/1_syntax_expander.pl`
+    | {class: phase}
+    lower: |md
+      **_2_lower/**
+      - in: `ExpandedGraph`
+      - out: `LoweredProgram`
+      - `v7/src/2_comptime/0_lowerer.pl`
+    | {class: phase}
+    check: |md
+      **_3_check/**
+      - in: `LoweredProgram`
+      - out: `CheckedProgram` + `Diags`
+      - lexical, type, mode, key, strata
+    | {class: phase}
+    comptime: |md
+      **_4_comptime/**  fixpoint 2
+      - in: `CheckedProgram` as facts + `prelude/*.dl7`
+      - out: `CompilerFacts`
+      - calls `_6_eval::run`, port of `2_comptime/2_compiler.pl`
+    | {class: phase; link: layers.eval}
+    reify: |md
+      **_5_reify/**
+      - in: `CompilerFacts`
+      - out: `RuntimeIr`
+      - feeds sqlite_ivm and rust emitters
+    | {class: phase}
+
+    read -> expand -> lower -> check -> comptime -> reify
+  }
+
+  trace: |md
+    **_8_trace/**  tap, not on the pipe
+    - `tracing` spans per phase and step
+    - counts: rows, lookups, allocs
+    - replaces `1b_compiler_tracer.pl`
+  | {class: tap}
+
+  oracle: |md
+    **_9_oracle/**  tap, not on the pipe
+    - frozen v7 output per fixture, committed once
+    - `<fixture>.<phase>.rows` canonical text
+    - v8 never calls swipl at test time
+  | {class: oracle}
+
+  bin: |md
+    **bin/dl8.rs**  the one subscribe
+    - `dl8 compile f.dl7` -> canonical rows
+    - `dl8 phase <n> f.dl7` -> one phase's Out
+    - `dl8 scale --files N --fields M`
+  | {class: entry; link: layers.entry}
+
+  tests: |md
+    **tests/**  real binary only (zoom: layer tests)
+    - `_0_oracle.rs`: every fixture, every phase, diff = empty
+    - `_1_scale.rs`: counts, 10 s cap per case
+    - unit tests only for pure fns (interner, canon)
+  | {class: oracle; link: layers.tests}
+}
+
+layers: {
+  entry: {
+    vars: {d2-config: {layout-engine: dagre; theme-id: 200; pad: 20}}
+    shape: sequence_diagram
+    shell
+    dl8: bin/dl8.rs
+    lib: lib::compile
+    phase: src/_<n>_*/mod.rs
+    trace: _8_trace
+    shell -> dl8: dl8 compile f.dl7
+    dl8 -> lib: compile(Source)
+    lib -> phase: run(In) -> Out   x6, in folder order
+    phase -> trace: span + counts
+    phase -> lib: Out or Diags
+    lib -> dl8: RuntimeIr
+    dl8 -> shell: canonical rows on stdout
+    dl8 -> shell: exit 1 + diags on stderr
+  }
+
+  tests: {
+    vars: {d2-config: {layout-engine: elk; theme-id: 200; pad: 20}}
+    direction: down
+    classes: {
+      oracle: {style.fill: "#1f4d2a"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+      code: {style.fill: "#1a1a1a"; style.stroke: "#555555"; style.font-color: "#e8e8e8"}
+      phase: {style.fill: "#2e2e2e"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+    }
+    g: tests/ {
+      grid-columns: 2
+      grid-gap: 24
+      flow: fixture -> frozen rows {
+        freeze: |md
+          **once, by hand, per fixture**
+          - `swipl v7 ... f.dl7` per phase
+          - canonicalize ids, paths, order
+          - commit to `_9_oracle/f.<phase>.rows`
+        | {class: phase}
+        fixtures: "v7/test/fixtures + v7/examples\n54 .dl7 files" {class: phase}
+        rows: "_9_oracle/*.rows\nfrozen v7 truth" {class: oracle}
+        fixtures -> freeze -> rows
+      }
+      harness: |`rust
+        // tests/_0_oracle.rs, one case per fixture x phase
+        #[test] fn oracle_parity() {
+            for f in fixtures() { for p in PHASES {
+                let want = read(oracle_path(f, p));
+                let got  = dl8(["phase", p, f]);   // real binary
+                assert_eq!(canon(got), want, "{f} {p}");
+            }}
+        }
+      `| {class: code}
+      scale: |`rust
+        // tests/_1_scale.rs, counts not wall time
+        #[test] fn scale_16_files() {
+            let r = dl8(["scale","--files","16","--fields","2048"]);
+            assert!(r.lookups_indexed > 0.99 * r.lookups_total);
+            assert!(r.elapsed < Duration::from_secs(10));
+        }
+      `| {class: code}
+    }
+  }
+
+  eval: {
+    vars: {d2-config: {layout-engine: elk; theme-id: 200; pad: 20}}
+    direction: down
+    classes: {
+      phase: {style.fill: "#2e2e2e"; style.stroke: "#777777"; style.font-color: "#e8e8e8"}
+      code: {style.fill: "#1a1a1a"; style.stroke: "#555555"; style.font-color: "#e8e8e8"}
+    }
+    g: _6_eval/ {
+      grid-columns: 2
+      grid-gap: 24
+      outer: |`rust
+        // _6_eval/mod.rs  = the fixpoint, used by both phases
+        pub fn run(rules: &Rules, facts: Facts) -> Rows {
+            let strata = _0_stratify::run(rules);       // _0_stratify/
+            let mut store = _2_index::Store::new(facts); // _2_index/
+            for s in strata {
+                _1_seminaive::run(&mut store, &s);      // _1_seminaive/
+            }
+            store.into_rows()
+        }
+        // _1_macrotime: rules = macrotime/0_standard.dl7, facts = syntax graph
+        // _4_comptime:  rules = prelude/*.dl7 + user rules, facts = lowered program
+      `| {class: code}
+      inner: _6_eval/  inner pipe {
+        stratify: |md
+          **_0_stratify/**
+          - rules -> ordered strata
+          - port of `0_evaluator.pl` strata_for_relations
+        | {class: phase}
+        seminaive: |md
+          **_1_seminaive/**
+          - delta rows only per round
+          - stops when delta is empty
+        | {class: phase}
+        index: |md
+          **_2_index/**
+          - `HashMap<(owner,label),EdgeId>`
+          - replaces assertz/JITI arenas
+        | {class: phase}
+        stratify -> seminaive -> index
+      }
+    }
+  }
+}

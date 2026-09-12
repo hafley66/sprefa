@@ -1,0 +1,68 @@
+//! The one subscribe: reads a program, runs the pipe, prints the result.
+
+use clap::{Parser, Subcommand};
+use dl8::_6_eval::json::{closure_to_json, program_from_json};
+use dl8::_6_eval::{evaluate, Trace, Universe};
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+#[derive(Parser)]
+#[command(name = "dl8", about = "DL7, compiled in Rust")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Evaluate a checked-goal program (JSON) and print its closure as JSON.
+    Eval {
+        program: PathBuf,
+        /// Print one line per stratum and round to stderr.
+        #[arg(long)]
+        trace: bool,
+    },
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Eval { program, trace } => {
+            let text = match std::fs::read_to_string(&program) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("dl8: cannot read {}: {e}", program.display()); // @eprintln-ok
+                    return ExitCode::from(2);
+                }
+            };
+            let value: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("dl8: {}: {e}", program.display()); // @eprintln-ok
+                    return ExitCode::from(2);
+                }
+            };
+            let mut u = Universe::new();
+            let program = match program_from_json(&mut u, &value) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("dl8: {e}"); // @eprintln-ok
+                    return ExitCode::from(2);
+                }
+            };
+            let mut fx = |t: Trace| {
+                if trace {
+                    eprintln!("{t:?}"); // @eprintln-ok
+                }
+            };
+            let closure = evaluate(&mut u, &program, &mut fx);
+            let out = closure_to_json(&u, &closure.rows, &closure.diagnostics);
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            if closure.diagnostics.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
+        }
+    }
+}
