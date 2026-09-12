@@ -1,0 +1,21 @@
+; Extra macrotime oracle input. The v7 fixtures reach the standard `<+`
+; rewrite once at most, so this file drives several claims in one wave and a
+; claim nested under a form so the rewriter emits child overrides.
+
+(: Action
+   (* (: value int)))
+
+(: Event
+   (* (: value int)))
+
+(: Other
+   (* (: value int)))
+
+(<+ (Action ?Value)
+    (Event ?Value))
+
+(<+ (Other ?Value)
+    (Action ?Value))
+
+(<- (Event ?Value)
+    (<+ (Other ?Value)))
