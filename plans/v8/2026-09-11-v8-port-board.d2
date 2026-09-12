@@ -70,7 +70,7 @@ layers: {
 
       eval_r1: "eval\nr1 port\nPR #725" {class: done}
       eval_r2: "eval\nr2 parity\n32 fixtures" {class: done}
-      eval_r3: "eval\nr3 land" {class: light}
+      eval_r3: "eval\nr3 land\ndriver opus lane" {class: wip}
       read_r1: "read\nr1 port\nPR #726" {class: done}
       read_r2: "read\nr2 parity\n89 fixtures" {class: done}
       read_r3: "read\nr3 land" {class: dark}
@@ -83,8 +83,8 @@ layers: {
       check_r1: "check\nr1 port\nPR #730" {class: done}
       check_r2: "check\nr2 parity\n75 calls" {class: done}
       check_r3: "check\nr3 land" {class: light}
-      comptime_r1: "comptime\nr1 port\n_0_load PR #729, rounds opus lane" {class: wip}
-      comptime_r2: "comptime\nr2 parity" {class: light}
+      comptime_r1: "comptime\nr1 port\nPR #729 + #732" {class: done}
+      comptime_r2: "comptime\nr2 parity\n331 calls, rounds equal" {class: done}
       comptime_r3: "comptime\nr3 land" {class: dark}
       reify_r1: "reify\nr1 port\nPR #731" {class: done}
       reify_r2: "reify\nr2 parity\n88 cases" {class: done}

@@ -290,9 +290,40 @@ reify lane lands 2026-09-12: {
   `|
 }
 
+comptime lane lands 2026-09-12: {
+  lanes -> gh: PR #732 f356582a7, 331 calls, 128 distinct, 331 of 331 match, 8 committed (3.9 MB), 24 of 24 reasons classified
+  fable -> lanes: graded. cargo test green (8 suites, 11 tests), clippy 0, tree clean, 2275 LOC in 7 files. merged, 7bd004b53
+  lanes.rounds: |`md
+    round counts v7 = dl8, asserted: 2_partial 7, 3_type_algebra 3, 4_generated_call 3, 8_hosted 2, 0_catalog 2, twelve fixtures 1
+    5_curry: 32 rounds over 32 refreezes, source_refreeze_limit_exhausted(16) byte for byte
+  `|
+  lanes.seam: |`rust
+    // _4_comptime/_1_api.rs. final_checked_program (2_compiler.pl:929) calls lower_final_units (:970) into 0a_module_lowerer.pl
+    pub trait Sources { fn refreeze(&mut self, u, mode: Refreeze, compiler_facts, generated_relations, ..) -> .. }
+    pub struct Replay { .. }   // v7's recorded answers, checks ordinal + mode + input lengths. the driver lane writes the live impl
+    pub struct Compiled { type_graph_facts: Vec<TermId>, runtime: Checked, compiler_facts: Vec<TermId> }
+  `|
+  lanes.forks: |`md
+    F2 deferrable diagnostic matches only not_relation(_) :807. F4 one constant 16 for both loops, worst case 256 evaluations :829 :1436
+    F5 one assembler diagnostic drops every generated rule of the round 1a:28. F6 compiler_round_seeds sort unobservable :1505
+    23 of 24 diagnostic reasons have no .dl7 that reaches them, each named with its throw site in status.json
+  `|
+}
+
+driver lane 2026-09-12: {
+  fable -> lanes: worktree v8-driver from 7bd004b53, runs alone
+  lanes.compile: |`rust
+    // v8/src/lib.rs, the .pipe() in folder order, the one place that reads files
+    pub fn compile(src: Source, fx: &mut dyn FnMut(Effect)) -> Result<Compiled, Vec<Diagnostic>>
+    // owns: _2_lower/_12_units.rs (0a_module_lowerer.pl), _4_comptime/_7_sources.rs (live Sources),
+    // deletes _5_reify CompiledUnit for _4_comptime::Compiled, copies prelude + macrotime .dl7 under v8/
+  `|
+  lanes -> v7: compile_dl7/4 over 42 .dl7 + compile_dl7_project_rows/6 for the dl6 app
+}
+
 pending: {
-  lanes -> fable: comptime hail (none yet)
-  fable -> lanes: driver lane last: 2_compiler.pl:75-700 + 0a_module_lowerer.pl into lib.rs compile() and dl8 compile f.dl7
+  lanes -> fable: driver hail (none yet)
+  fable -> chris: merge order for tomorrow: #725 carries everything, lane PRs are the per-phase diffs
   fable -> lanes: grade: git log, cargo test, cargo clippy
   fable -> chris: plans/v8/2026-09-13-v8-tour.md
 }
