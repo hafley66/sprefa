@@ -206,8 +206,26 @@ integrate 2026-09-12: {
   }
 }
 
+load lane lands 2026-09-12: {
+  lanes -> gh: PR #729 a8ec89acd, 57 distinct calls pass, 51 committed (3 MB), 18 of 19 diagnostic codes
+  fable -> lanes: graded. cargo test 5/5, clippy 0, tree clean, 2612 LOC in 10 files. merged, 17e8f7643
+  lanes.buy: |`md
+    build vs buy, measured: path-dep on sprefa-extract = 253 crates, 58.9 s clean, 2.84 s incremental, 2.1 GB
+    redeclare the 36 TSI row shapes in _0_load = 35 crates, 9.4 s clean, 0.41 s incremental. picked redeclare
+  `|
+  lanes.edge: |`rust
+    // _7_read.rs is the only file with std::fs, 48 lines. every install takes slices, returns owned values
+    // no Slice trait declared: three pure halves with Effect = Never is the same statement as returning a value
+  `|
+  lanes.forks: |`md
+    0b:72 relative_file_name/3 on a directory accepts units outside the root
+    0c:490 16-pass application cap, silent
+    0d has no caller in v7/src, 0d:51 stores the raw swipl exception, 0d:263 makes floats, Term has no float
+  `|
+}
+
 pending: {
-  lanes -> fable: check and load hails (none yet)
+  lanes -> fable: check hail (none yet)
   fable -> lanes: wave three after check lands: _4_comptime rounds (2_compiler.pl, 1a, 1c, 1d, 0a), _5_reify (3_emit/0, 0a, 1)
   fable -> lanes: grade: git log, cargo test, cargo clippy
   fable -> chris: plans/v8/2026-09-13-v8-tour.md

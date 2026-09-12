@@ -9,8 +9,8 @@ fixtures in `oracle/`.
 | `_0_read` | `read_dl7/5` port over a character stream, 89 oracle fixtures |
 | `_1_macrotime` | reify, `<+` expansion waves over `_6_eval`, materialize, 29 oracle cases |
 | `_2_lower` | `0_lowerer.pl` and both graph stores, 19 committed of 62 checked lowerings |
-| `_3_check` | not built yet |
-| `_4_comptime` | not built yet, `_0_load` holds the filesystem, TSI and source-fact loaders |
+| `_3_check` | `1_checker.pl` port, 19 committed of 75 checked calls, 25 diagnostic functors classified |
+| `_4_comptime` | rounds not built yet; `_0_load` ports the filesystem, TSI and source-fact loaders, 51 committed of 57 cases |
 | `_5_reify` | not built yet |
 | `_6_eval` | stratified semi-naive evaluator, parity with v7 `evaluate/4` |
 
@@ -27,6 +27,8 @@ cd ../../.. && swipl v8/oracle/eval/dump_compile.pl -- v7/test/fixtures/2_partia
 cd v8/oracle/read && V7_DIR=/Users/chrishafley/projects/sprefa/v7 swipl dump_read.pl --
 V7_DIR=$PWD/v7 bash v8/oracle/macrotime/refreeze.sh
 V7_DIR=v7 bash v8/oracle/lower/freeze.sh
+bash v8/oracle/check/freeze.sh            # pins REV=f5018ad23
+V7_DIR=v7 bash v8/oracle/load/freeze.sh
 ```
 
 Design: `plans/v8/2026-09-12-v8-eval-api.md`. Buy-vs-build:

@@ -88,9 +88,9 @@ pub struct ReservationIndex {
     pub owners: Dictionary,
     pub names: Dictionary,
     pub rows: Vec<Reservation>,
-    by_owner_name: HashMap<(u32, u32, u8), Vec<usize>>,
-    product_by_owner_name: HashMap<(u32, u32, u8), usize>,
-    parent_by_target: HashMap<(u32, u8), u32>,
+    pub by_owner_name: HashMap<(u32, u32, u8), Vec<usize>>,
+    pub product_by_owner_name: HashMap<(u32, u32, u8), usize>,
+    pub parent_by_target: HashMap<(u32, u8), u32>,
 }
 
 fn view_key(view: View) -> u8 {
@@ -198,9 +198,9 @@ pub struct EdgeIndex {
     pub owners: Dictionary,
     pub names: Dictionary,
     pub rows: Vec<Edge>,
-    by_owner_name: HashMap<(u32, u32), Vec<usize>>,
-    by_owner_index: HashMap<(u32, i64), Vec<usize>>,
-    by_target_owner: HashMap<u32, Vec<usize>>,
+    pub by_owner_name: HashMap<(u32, u32), Vec<usize>>,
+    pub by_owner_index: HashMap<(u32, i64), Vec<usize>>,
+    pub by_target_owner: HashMap<u32, Vec<usize>>,
 }
 
 impl EdgeIndex {
