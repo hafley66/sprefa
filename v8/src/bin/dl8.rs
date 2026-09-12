@@ -21,6 +21,14 @@ enum Command {
     Expand { case: PathBuf },
     /// Lower a case (JSON) to the checked-goal program.
     Lower { case: PathBuf },
+    /// Check a lowered case (JSON).
+    Check { case: PathBuf },
+    /// Load project facts: filesystem graph, TSI stream, source facts (JSON case).
+    Load { case: PathBuf },
+    /// Run comptime rounds over a checked case (JSON).
+    Comptime { case: PathBuf },
+    /// Reify a checked program (JSON) to logical program rows.
+    Reify { case: PathBuf },
     /// Evaluate a checked-goal program (JSON) and print its closure as JSON.
     Eval {
         program: PathBuf,
@@ -36,6 +44,10 @@ fn main() -> ExitCode {
         Command::Read { file } => dl8::_0_read::cli(&file),
         Command::Expand { case } => dl8::_1_macrotime::cli(&case),
         Command::Lower { case } => dl8::_2_lower::cli(&case),
+        Command::Check { case } => dl8::_3_check::cli(&case),
+        Command::Load { case } => dl8::_4_comptime::load::cli(&case),
+        Command::Comptime { case } => dl8::_4_comptime::cli(&case),
+        Command::Reify { case } => dl8::_5_reify::cli(&case),
         Command::Eval { program, trace } => {
             let text = match std::fs::read_to_string(&program) {
                 Ok(t) => t,

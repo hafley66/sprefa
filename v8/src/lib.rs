@@ -7,4 +7,7 @@
 pub mod _0_read;
 pub mod _1_macrotime;
 pub mod _2_lower;
+pub mod _3_check;
+pub mod _4_comptime;
+pub mod _5_reify;
 pub mod _6_eval;
