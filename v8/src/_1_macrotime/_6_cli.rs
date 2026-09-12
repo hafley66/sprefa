@@ -120,7 +120,7 @@ pub fn expansion_json(u: &mut Universe, e: &Expansion) -> Value {
     Value::Object(m)
 }
 
-pub fn cli(input: &Path) -> ExitCode {
+pub fn cli(input: &Path, trace: bool) -> ExitCode {
     let text = match std::fs::read_to_string(input) {
         Ok(t) => t,
         Err(e) => {
@@ -166,7 +166,12 @@ pub fn cli(input: &Path) -> ExitCode {
                 return ExitCode::from(2);
             }
         };
-    let expansion = run(&mut u, &forms, &source_rows, &macro_program, &mut |_| {});
+    let mut sink = |w: Wave| {
+        if trace {
+            eprintln!("{w:?}"); // @eprintln-ok
+        }
+    };
+    let expansion = run(&mut u, &forms, &source_rows, &macro_program, &mut sink);
     let out = expansion_json(&mut u, &expansion);
     println!("{}", serde_json::to_string(&out).unwrap());
     if expansion.diagnostics.is_empty() && expansion.materialize_diagnostics.is_empty() {

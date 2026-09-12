@@ -18,7 +18,12 @@ enum Command {
     /// Read one .dl7 file and print its forms, source rows and diagnostics as JSON.
     Read { file: PathBuf },
     /// Expand macrotime over a case (JSON: syntax graph rows + macro program).
-    Expand { case: PathBuf },
+    Expand {
+        case: PathBuf,
+        /// Print one line per wave to stderr.
+        #[arg(long)]
+        trace: bool,
+    },
     /// Lower a case (JSON) to the checked-goal program.
     Lower { case: PathBuf },
     /// Check a lowered case (JSON).
@@ -42,7 +47,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Read { file } => dl8::_0_read::cli(&file),
-        Command::Expand { case } => dl8::_1_macrotime::cli(&case),
+        Command::Expand { case, trace } => dl8::_1_macrotime::cli(&case, trace),
         Command::Lower { case } => dl8::_2_lower::cli(&case),
         Command::Check { case } => dl8::_3_check::cli(&case),
         Command::Load { case } => dl8::_4_comptime::load::cli(&case),
