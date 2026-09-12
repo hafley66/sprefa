@@ -321,9 +321,36 @@ driver lane 2026-09-12: {
   lanes -> v7: compile_dl7/4 over 42 .dl7 + compile_dl7_project_rows/6 for the dl6 app
 }
 
-pending: {
-  lanes -> fable: driver hail (none yet)
-  fable -> chris: merge order for tomorrow: #725 carries everything, lane PRs are the per-phase diffs
+driver lane lands 2026-09-12: {
+  lanes -> gh: PR #733 590872737, 46 cases (42 files + 4 project calls), 46 of 46 byte for byte, 16 committed (6.3 MB)
+  fable -> lanes: graded. cargo test green (9 suites, 17 tests), clippy 0, tree clean, 2116 LOC added. merged, 8906f6f2f
+  lanes.speed: |`sh
+    # release binary, whole corpus: dl8 3.5 s vs v7 23.2 s, median 6.3x (1.9x .. 9.5x)
+    dl8 compile v7/test/fixtures/2_partial.dl7   # rc=0, 110 ms, v7 2.4 s
+    dl8 compile v7/test/fixtures/5_curry.dl7     # rc=1, 444 ms, source_refreeze_limit_exhausted(16) same as v7
+  `|
+  lanes.trace: |`sh
+    $ dl8 compile 2_partial.dl7 --trace     # every sink on stderr: Trace, Wave, Round
+    Round(Evaluate { outer: 1, round: 1, rules: 12, seeds: 231, closure: 150 })   # macro library bootstrap
+    Round(Decision { outer: 1, round: 1, outcome: Stable })
+    Wave(Settled { wave: 0, rows: 768 })                                           # <+ waves over the unit
+    Round(Evaluate { outer: 1, round: 1, rules: 126, seeds: 1375, closure: 844 })  # comptime round 1
+    Round(Assemble { outer: 1, round: 2, relations: 1, rules: 1 })                 # a generated rule appears
+    Round(Decision { outer: 1, round: 2, outcome: Continue })
+  `|
+  lanes.prelude: |`rust
+    // v8/prelude/ (6 files) and v8/macrotime/ (1) copied byte-identical from f5018ad23, include_str!
+    // sound: read under the atoms prelude and macrotime (2_compiler.pl:181, :427), never a filename
+    // _5_reify CompiledUnit deleted. compiler_view and emit_compiled take &_4_comptime::Compiled, Checked::to_term at the term boundary
+  `|
+  lanes -> fable: "not done: compile_dl7_macro_program/3 verb, project_stream_paths/3, prolog(Callable) arm, 1b tracer histograms, codegen emitters, 4_tool"
+}
+
+night ends 2026-09-12: {
+  fable -> chris: "PR #725 carries everything: 8 lane PRs merged into it, 17715 Rust lines, 9 suites, 17 tests, clippy 0"
+  fable -> chris: "read tomorrow: this file, plans/v8/2026-09-13-v8-tour.md, the port board. every lane wrote a .PLAN.visual.human.unga.md"
+  fable -> chris: "your calls: merge #725, the forks table in tour section 9, sprefa-extract split, push hafley-games so redux becomes a git dep, fix v7 5_curry on local main"
+}
   fable -> lanes: grade: git log, cargo test, cargo clippy
   fable -> chris: plans/v8/2026-09-13-v8-tour.md
 }
