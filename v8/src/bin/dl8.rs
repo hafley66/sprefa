@@ -69,7 +69,7 @@ fn main() -> ExitCode {
                 }
             };
             let mut u = Universe::new();
-            let program = match program_from_json(&mut u, &value) {
+            let program = match program_from_json(&mut u, value.get("program").unwrap_or(&value)) {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("dl8: {e}"); // @eprintln-ok
