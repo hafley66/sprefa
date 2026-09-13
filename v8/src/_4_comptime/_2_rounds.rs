@@ -5,9 +5,10 @@ use super::api::{
     colon_rows, diagnostic, intern_rows, is_kernel_ref, strip_intern_rows, strip_snapshot_rows,
     Generated,
 };
-use super::assemble::assemble_generated_program;
+use super::assemble::{assemble_generated_program, Assembled};
 use super::finish::{derived_bind_diagnostics, validate_functional_rows};
 use crate::_3_check::api::prolog_sort;
+use crate::_3_check::resolved::Resolved;
 use crate::_3_check::{check_resolved_rules, Stop};
 use crate::_6_eval::program::{Arg, Goal, Polarity, Program, Row, Rule, VarId};
 use crate::_6_eval::term::{TermId, Universe};
@@ -106,6 +107,58 @@ impl RoundState {
     }
 }
 
+/// One base list and the frozen generated tail, sorted as one set.
+pub fn merged_sorted(u: &mut Universe, base: &[TermId], generated: &[TermId]) -> Vec<TermId> {
+    let mut all = base.to_vec();
+    all.extend_from_slice(generated);
+    prolog_sort(u, all)
+}
+
+/// `:1376`. The decision reaches the sink and the log together.
+pub fn decide(fx: &mut dyn FnMut(Round), outer: i64, round: i64, outcome: Outcome) {
+    fx(Round::Decision {
+        outer,
+        round,
+        outcome,
+    });
+    tracing::debug!(target: "dl8::comptime", outer, round, outcome = ?outcome);
+}
+
+pub fn round_limit_diagnostic(u: &mut Universe) -> TermId {
+    let limit = u.int(COMPILER_ROUND_LIMIT);
+    let reason = u.compound("compiler_round_limit_exhausted", vec![limit]);
+    diagnostic(u, "compile", reason)
+}
+
+/// `:1384`. The frozen lists stopped moving, so this closure is the answer
+/// unless the derived-bind or functional-key check rejects it.
+pub fn stable_outcome(
+    u: &mut Universe,
+    authored_rules: &[TermId],
+    base_relations: &[TermId],
+    closure: &[TermId],
+    assembled: Assembled,
+    resolved: Resolved,
+) -> RoundOutcome {
+    let all = merged_sorted(u, base_relations, &assembled.relations);
+    let mut stable = derived_bind_diagnostics(u, authored_rules, closure);
+    stable.extend(validate_functional_rows(u, &all, closure));
+    let stable = prolog_sort(u, stable);
+    if !stable.is_empty() {
+        return RoundOutcome::failed(stable);
+    }
+    RoundOutcome {
+        closure: strip_intern_rows(u, closure),
+        generated: Generated {
+            relations: assembled.relations,
+            rules: assembled.rules,
+            depends: resolved.depends,
+            strata: resolved.strata,
+        },
+        diagnostics: vec![],
+    }
+}
+
 /// `:1173`. The inner compiler fixpoint as a reducer over its frozen lists.
 pub struct Rounds<'a>(PhantomData<&'a ()>);
 
@@ -129,13 +182,8 @@ impl<'a> Slice for Rounds<'a> {
             outer,
         } = ev;
         loop {
-            let mut relations = base_relations.to_vec();
-            relations.extend_from_slice(&st.frozen_generated_relations);
-            let relations = prolog_sort(u, relations);
-            let mut rules = authored_rules.to_vec();
-            rules.extend_from_slice(&st.frozen_generated_rules);
-            let rules = prolog_sort(u, rules);
-
+            let relations = merged_sorted(u, base_relations, &st.frozen_generated_relations);
+            let rules = merged_sorted(u, authored_rules, &st.frozen_generated_rules);
             let resolved = check_resolved_rules(u, &relations, &rules)?;
             let seeds = compiler_round_seeds(u, base_seeds, &st.frozen_edges, &st.frozen_requests);
             if !resolved.diagnostics.is_empty() {
@@ -173,50 +221,23 @@ impl<'a> Slice for Rounds<'a> {
                 && assembled.relations == st.frozen_generated_relations
                 && assembled.rules == st.frozen_generated_rules
             {
-                fx(Round::Decision {
-                    outer,
-                    round: st.round,
-                    outcome: Outcome::Stable,
-                });
-                tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::Stable);
-                let mut all = base_relations.to_vec();
-                all.extend_from_slice(&assembled.relations);
-                let all = prolog_sort(u, all);
-                let mut stable = derived_bind_diagnostics(u, authored_rules, &closure);
-                stable.extend(validate_functional_rows(u, &all, &closure));
-                let stable = prolog_sort(u, stable);
-                if !stable.is_empty() {
-                    return Ok(RoundOutcome::failed(stable));
-                }
-                return Ok(RoundOutcome {
-                    closure: strip_intern_rows(u, &closure),
-                    generated: Generated {
-                        relations: assembled.relations,
-                        rules: assembled.rules,
-                        depends: resolved.depends,
-                        strata: resolved.strata,
-                    },
-                    diagnostics: vec![],
-                });
+                decide(fx, outer, st.round, Outcome::Stable);
+                let stable = stable_outcome(
+                    u,
+                    authored_rules,
+                    base_relations,
+                    &closure,
+                    assembled,
+                    resolved,
+                );
+                return Ok(stable);
             }
             if st.round >= COMPILER_ROUND_LIMIT {
-                fx(Round::Decision {
-                    outer,
-                    round: st.round,
-                    outcome: Outcome::LimitExhausted,
-                });
-                tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::LimitExhausted);
-                let limit = u.int(COMPILER_ROUND_LIMIT);
-                let reason = u.compound("compiler_round_limit_exhausted", vec![limit]);
-                let d = diagnostic(u, "compile", reason);
+                decide(fx, outer, st.round, Outcome::LimitExhausted);
+                let d = round_limit_diagnostic(u);
                 return Ok(RoundOutcome::failed(vec![d]));
             }
-            fx(Round::Decision {
-                outer,
-                round: st.round,
-                outcome: Outcome::Continue,
-            });
-            tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::Continue);
+            decide(fx, outer, st.round, Outcome::Continue);
             st.frozen_edges = next_edges;
             st.frozen_requests = next_requests;
             st.frozen_generated_relations = assembled.relations;

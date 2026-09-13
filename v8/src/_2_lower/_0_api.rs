@@ -6,7 +6,7 @@ use super::declare::{lower_declarations, Declared};
 use super::derived::{lower_derived_bind_rules, Stop};
 use super::execute::lower_executables;
 use super::index::{EdgeIndex, ReservationIndex};
-use super::promote::{promote_deferred_aliases, promoted_alias_rules};
+use super::promote::{promote_deferred_aliases, promoted_alias_rules, Promoted};
 use crate::_6_eval::term::{TermId, Universe};
 use std::collections::HashMap;
 
@@ -73,6 +73,58 @@ fn relation_dictionary(u: &Universe, rows: &[TermId]) -> HashMap<TermId, (i64, T
     out
 }
 
+/// The visible rows of one unit and the indexes over them.
+pub struct Scope {
+    pub promoted: Promoted,
+    pub reservations: ReservationIndex,
+    pub edges: EdgeIndex,
+    pub relations: HashMap<TermId, (i64, TermId)>,
+}
+
+/// `:78`. Local rows come first in every visible list, and the deferred aliases
+/// are promoted before the two indexes close over them.
+pub fn build_scope(u: &mut Universe, declared: &Declared, imported: &Environment) -> Scope {
+    let visible_reservations = concat(&declared.reservations, &imported.reservations);
+    let visible_relations = concat(&declared.relations, &imported.relations);
+    let visible_edges = concat(&declared.edges, &imported.edges);
+    let mut reservations = ReservationIndex::build(u, &visible_reservations);
+    let promoted = promote_deferred_aliases(
+        u,
+        &declared.reservations,
+        &reservations,
+        &declared.edges,
+        &visible_edges,
+        &declared.origins,
+    );
+    reservations.install_promoted(u, &promoted.reservations);
+    let promoted_edges = concat(&promoted.edges, &imported.edges);
+    let edges = EdgeIndex::build(u, &promoted_edges);
+    let relations = relation_dictionary(u, &visible_relations);
+    Scope {
+        promoted,
+        reservations,
+        edges,
+        relations,
+    }
+}
+
+fn invalid_unit(u: &mut Universe, unit_term: TermId) -> Lowered {
+    let reason = u.compound("invalid_dl7_unit", vec![unit_term]);
+    let lower = u.atom("lower");
+    let unit_atom = u.atom("unit");
+    let diagnostic = u.compound("diagnostic", vec![lower, unit_atom, reason]);
+    stopped(u, diagnostic)
+}
+
+/// `:292`. v7 leaves Program unbound here; every sibling binds `[]`.
+fn unbound_program(diagnostic: TermId) -> Lowered {
+    Lowered {
+        program: None,
+        origins: vec![],
+        diagnostics: vec![diagnostic],
+    }
+}
+
 /// `:52`.
 #[tracing::instrument(skip_all)]
 pub fn lower_datalog(
@@ -82,15 +134,7 @@ pub fn lower_datalog(
     environment_term: TermId,
 ) -> Result<Lowered, Stop> {
     let Some(unit) = unit_parts(u, unit_term) else {
-        let reason = u.compound("invalid_dl7_unit", vec![unit_term]);
-        let lower = u.atom("lower");
-        let unit_atom = u.atom("unit");
-        let diagnostic = u.compound("diagnostic", vec![lower, unit_atom, reason]);
-        return Ok(Lowered {
-            program: Some(empty_program(u)),
-            origins: vec![],
-            diagnostics: vec![diagnostic],
-        });
+        return Ok(invalid_unit(u, unit_term));
     };
     let imported = environment_parts(u, environment_term).unwrap_or_default();
     let module_identity = unit.origin;
@@ -100,31 +144,13 @@ pub fn lower_datalog(
         Ok(declared) => declared,
         Err(diagnostic) => return Ok(stopped(u, diagnostic)),
     };
-
-    // :78. Local rows come first in every visible list.
-    let visible_reservations = concat(&declared.reservations, &imported.reservations);
-    let visible_relations = concat(&declared.relations, &imported.relations);
-    let visible_edges = concat(&declared.edges, &imported.edges);
-
-    let mut reservation_index = ReservationIndex::build(u, &visible_reservations);
-    let promoted = promote_deferred_aliases(
-        u,
-        &declared.reservations,
-        &reservation_index,
-        &declared.edges,
-        &visible_edges,
-        &declared.origins,
-    );
-    reservation_index.install_promoted(u, &promoted.reservations);
-    let promoted_edges = concat(&promoted.edges, &imported.edges);
-    let edge_index = EdgeIndex::build(u, &promoted_edges);
-    let relations = relation_dictionary(u, &visible_relations);
-
+    let scope = build_scope(u, &declared, &imported);
+    let promoted = scope.promoted;
     let mut cx = Cx {
         u,
-        reservations: &reservation_index,
-        edges: &edge_index,
-        relations: &relations,
+        reservations: &scope.reservations,
+        edges: &scope.edges,
+        relations: &scope.relations,
         policy,
     };
 
@@ -134,14 +160,7 @@ pub fn lower_datalog(
     let rule_index = (derived.rules.len() + alias_rules.len()) as i64;
     let executables = match lower_executables(&mut cx, &unit.forms, module_owner, rule_index) {
         Ok(executables) => executables,
-        Err(diagnostic) => {
-            // :292. v7 leaves Program unbound here; every sibling binds [].
-            return Ok(Lowered {
-                program: None,
-                origins: vec![],
-                diagnostics: vec![diagnostic],
-            });
-        }
+        Err(diagnostic) => return Ok(unbound_program(diagnostic)),
     };
 
     let mut rules = derived.rules;
