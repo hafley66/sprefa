@@ -1,0 +1,8 @@
+(: point
+   (* (: x int)))
+
+(: reader
+   (* (: seen int)))
+
+(<- (reader ?Seen)
+    (point ?Other))

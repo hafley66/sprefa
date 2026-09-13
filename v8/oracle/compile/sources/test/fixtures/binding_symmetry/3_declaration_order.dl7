@@ -1,0 +1,8 @@
+; A compound-labelled expression target between two ordinary fields. The edge
+; indices must stay 0, 1, 2 in authored order.
+(: KeyOptions (*))
+
+(: Ordered
+   (* (: first text)
+      (: (Key "second" KeyOptions) (Option text))
+      (: third int)))

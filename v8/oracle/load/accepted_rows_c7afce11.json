@@ -1,0 +1,1 @@
+{"expected": {"accepted": []},"input": {"call":"accepted_rows","rows": [ {"args": [1,  {"a":"tsi.type"},  [ {"args": [1 ],"f":"id"} ] ],"f":"extract_fact"} ]}}

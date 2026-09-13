@@ -1,0 +1,10 @@
+; Structural targets under a compound label keep the pre-existing lower_target
+; path: a primitive, a reference and a literal, none of them expressions.
+(: KeyOptions (*))
+
+(: Base (*))
+
+(: Structural
+   (* (: (Key "primitive" KeyOptions) text)
+      (: (Key "reference" KeyOptions) Base)
+      (: (Key "literal" KeyOptions) "pinned")))

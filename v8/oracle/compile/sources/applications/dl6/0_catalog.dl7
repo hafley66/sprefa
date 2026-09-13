@@ -1,0 +1,73 @@
+; DL6 source catalog as a DL7 userland application, kept self-contained so the
+; example reads start to finish in one file.
+
+; Interned(+LogicalType, -SpecializedType) follows the prelude Option shape.
+; The replay rule runs while the snapshot exists and materializes ordinary
+; rows, which are what remain once the snapshot rows are dropped.
+(: Interned
+   (* (: source type)
+      (: return type)))
+
+(<- (Interned ?Source ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments)
+    (intern Interned ?Arguments ?Result))
+
+(<- (Interned ?Source ?Result)
+    (intern_snapshot Interned ?Arguments ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments))
+
+(: Repository
+   (* (: url text)))
+
+; path and name select the same specialization from two different owners.
+; language is the plain-text neighbour that must stay scalar under a policy
+; that maps only the wrapper.
+(: SourceFile
+   (* (: repository Repository)
+      (: path (Interned text))
+      (: language text)
+      (: size int)))
+
+(: Symbol
+   (* (: file SourceFile)
+      (: name (Interned text))
+      (: line int)))
+
+(: SharedTextDictionary (*))
+
+(: CatalogRoot
+   (* (: capability "storage-root-v1")
+      (: target Symbol)))
+
+; The selection names the WRAPPER as its scalar, so the existing dictionary
+; arm claims the field and the existing scalar arm is already excluded.
+(: WrappedTextSelection
+   (* (: capability "scalar-dictionary-v1")
+      (: scalar (Interned text))
+      (: dictionary SharedTextDictionary)))
+
+(: PrimitiveTextSelection
+   (* (: capability "scalar-dictionary-v1")
+      (: scalar text)
+      (: dictionary SharedTextDictionary)))
+
+(: SelectivePolicy
+   (* (: capability "interned-storage-policy-v1")
+      (: root CatalogRoot)
+      (: dictionary WrappedTextSelection)))
+
+; Both selections name one authored dictionary, so the dictionary identity row
+; is derived twice and must appear once.
+(: SharedDictionaryPolicy
+   (* (: capability "interned-storage-policy-v1")
+      (: root CatalogRoot)
+      (: dictionary WrappedTextSelection)
+      (: primitive_dictionary PrimitiveTextSelection)))
+
+; Companion artifact: the wrapper-to-underlying-type join, over the existing
+; relation. A consumer reads the storage domain and recovers the logical type.
+(: Dl6CatalogEmitter (*))
+
+(emits Dl6CatalogEmitter "interned" Interned)

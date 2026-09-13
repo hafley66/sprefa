@@ -1,0 +1,193 @@
+{
+  "checked_not_committed": [
+    {
+      "bytes": 1230302,
+      "call": "install_project_graph",
+      "case": "install_project_graph_275a9c4b.json"
+    },
+    {
+      "bytes": 1239115,
+      "call": "install_project_graph",
+      "case": "install_project_graph_4a795245.json"
+    },
+    {
+      "bytes": 1361791,
+      "call": "install_project_graph",
+      "case": "install_project_graph_ba883e49.json"
+    },
+    {
+      "bytes": 1270369,
+      "call": "install_tsi_graph",
+      "case": "install_tsi_graph_5a6b8795.json"
+    },
+    {
+      "bytes": 1230102,
+      "call": "install_tsi_graph",
+      "case": "install_tsi_graph_733d03aa.json"
+    },
+    {
+      "bytes": 1313366,
+      "call": "install_tsi_graph",
+      "case": "install_tsi_graph_c63f5994.json"
+    }
+  ],
+  "committed": [
+    "accepted_rows_03353063.json",
+    "accepted_rows_153eccff.json",
+    "accepted_rows_3e03539e.json",
+    "accepted_rows_497d95c1.json",
+    "accepted_rows_4ac31dd9.json",
+    "accepted_rows_5662ef57.json",
+    "accepted_rows_a0038e45.json",
+    "accepted_rows_a5880934.json",
+    "accepted_rows_c5de86c5.json",
+    "accepted_rows_c7afce11.json",
+    "accepted_rows_e66ed330.json",
+    "accepted_rows_f6756757.json",
+    "install_project_graph_0e2a10cf.json",
+    "install_project_graph_1d681036.json",
+    "install_project_graph_3da2cb9d.json",
+    "install_project_graph_6417cf00.json",
+    "install_project_graph_abe18cec.json",
+    "install_project_graph_b3cb1655.json",
+    "install_source_fact_graph_983f2487.json",
+    "install_tsi_graph_1b61415a.json",
+    "install_tsi_graph_4c65ea8d.json",
+    "install_tsi_graph_95a7ef22.json",
+    "install_tsi_graph_9ab0ed41.json",
+    "install_tsi_graph_b07ac536.json",
+    "install_tsi_graph_c62953a5.json",
+    "install_tsi_graph_daae9186.json",
+    "install_tsi_graph_e3b03aab.json",
+    "install_tsi_graph_e3c378c4.json",
+    "load_source_fact_texts_2351946d.json",
+    "load_source_fact_texts_37d05bee.json",
+    "load_source_fact_texts_7d9dac82.json",
+    "load_source_fact_texts_a2466eb2.json",
+    "load_tsi_lines_1c00caf0.json",
+    "load_tsi_lines_2598c814.json",
+    "load_tsi_lines_2c193817.json",
+    "load_tsi_lines_3415f2e5.json",
+    "load_tsi_lines_50b71ddb.json",
+    "load_tsi_lines_6826f7c2.json",
+    "load_tsi_lines_8c93595a.json",
+    "load_tsi_lines_a7791980.json",
+    "load_tsi_lines_ae6b4970.json",
+    "load_tsi_lines_b72eaa4b.json",
+    "load_tsi_lines_bbd4e8fc.json",
+    "load_tsi_lines_d1a50088.json",
+    "load_tsi_lines_eb134c48.json",
+    "tsi_expression_environment_6b2ca27c.json",
+    "tsi_expression_environment_a92aba56.json",
+    "tsi_expression_environment_b4092a68.json",
+    "tsi_expression_environment_cd9af0a8.json",
+    "tsi_expression_environment_f64d4a3e.json",
+    "tsi_expression_environment_fa5bdd69.json"
+  ],
+  "diagnostics": [
+    {
+      "code": "outside_project_root/2",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0b_filesystem_grapher.pl:74"
+    },
+    {
+      "code": "invalid_dl7_module_path/1",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0b_filesystem_grapher.pl:85"
+    },
+    {
+      "code": "project_unit_without_file_origin",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0b_filesystem_grapher.pl:89"
+    },
+    {
+      "code": "invalid_project_unit/1",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0b_filesystem_grapher.pl:93"
+    },
+    {
+      "code": "tsi_protocol/1",
+      "covered": "corpus",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:95"
+    },
+    {
+      "code": "tsi_line/3 not_json",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:124"
+    },
+    {
+      "code": "tsi_line/3 no_record_key",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:138"
+    },
+    {
+      "code": "tsi_line/3 malformed_record",
+      "covered": "corpus",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:209"
+    },
+    {
+      "code": "tsi_stream_without_run",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:373"
+    },
+    {
+      "code": "tsi_primitive_class_absent/1",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:446"
+    },
+    {
+      "code": "tsi_id_unresolved/2",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:550"
+    },
+    {
+      "code": "tsi_called_unresolved/1",
+      "covered": "corpus",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:562"
+    },
+    {
+      "code": "tsi_value_lacks_literal/1",
+      "covered": "corpus",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:573"
+    },
+    {
+      "code": "tsi_duplicate_edge_label/2",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:633"
+    },
+    {
+      "code": "tsi_edge_unplaced/1",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:658"
+    },
+    {
+      "code": "tsi_unknown_relation/1",
+      "covered": "corpus",
+      "site": "v7/src/2_comptime/0c_extract_loader.pl:699"
+    },
+    {
+      "code": "source_fact_read_error/1",
+      "covered": "none",
+      "reason": "the diagnostic carries the raw SWI exception term: an unbound variable for a missing file, a stream handle address for a JSON syntax error. Neither value is reproducible outside swipl. PLAN fork 4.",
+      "site": "v7/src/2_comptime/0d_source_fact_loader.pl:51"
+    },
+    {
+      "code": "source_fact_root_not_array",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0d_source_fact_loader.pl:61"
+    },
+    {
+      "code": "malformed_source_envelope/1",
+      "covered": "probe",
+      "site": "v7/src/2_comptime/0d_source_fact_loader.pl:77"
+    }
+  ],
+  "notes": [
+    "install_source_fact_graph/6 raises no diagnostic: its list is the literal [] at v7/src/2_comptime/0d_source_fact_loader.pl:287.",
+    "A duplicate JSON object key raises duplicate_key/1 in swipl and is last-wins in serde_json. Caught at v7/src/2_comptime/0c_extract_loader.pl:122 and :57 of 0d. No corpus file has one. PLAN fork 5.",
+    "checked_not_committed holds cases the freeze verified locally and kept out of git for size. The largest case of each call is committed regardless, so every install has one real-project shape inside the gate.",
+    "json_term/2 at v7/src/2_comptime/0d_source_fact_loader.pl:263 maps a JSON float to number/1. The v8 arena (v8/src/_6_eval/_0_term.rs:18) has no float term, so the port fails the envelope instead. No number in the frozen corpus is a float or outside i64. PLAN fork 6.",
+    "57 distinct cases were dumped and all 57 pass dl8 load, including the 6 held out of git for size."
+  ],
+  "skip": []
+}

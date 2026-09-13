@@ -1,0 +1,9 @@
+; Two owners select the same specialization, one through each label form. The
+; application identity is shared, so the label form cannot mint a second one.
+(: KeyOptions (*))
+
+(: Left
+   (* (: field (Option text))))
+
+(: Right
+   (* (: (Key "field" KeyOptions) (Option text))))

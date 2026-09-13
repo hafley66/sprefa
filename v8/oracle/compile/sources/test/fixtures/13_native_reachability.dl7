@@ -1,0 +1,14 @@
+(: edge
+   (* (: from int)
+      (: to int)))
+
+(: path
+   (* (: from int)
+      (: to int)))
+
+(<- (path ?From ?To)
+    (edge ?From ?To))
+
+(<- (path ?From ?To)
+    (path ?From ?Middle)
+    (edge ?Middle ?To))

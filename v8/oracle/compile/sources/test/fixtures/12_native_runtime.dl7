@@ -1,0 +1,12 @@
+(: Input
+   (* (: value int)
+      (: same int)
+      (: tag int)))
+
+(: Output
+   (* (: value int)))
+
+(Input 7 7 7)
+
+(<- (Output ?Value)
+    (Input ?Value ?Value 7))

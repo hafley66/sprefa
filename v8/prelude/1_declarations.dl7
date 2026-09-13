@@ -1,0 +1,305 @@
+; Shared relational helpers for closed name collections and edge order.
+(: contains
+   (* (: list any)
+      (: value any)))
+
+; Structured representation is a capability relation over an ordinary type
+; node. Storage targets decide how a capable node is represented.
+(: json
+   (* (: node type)))
+
+(: closed_names
+   (* (: list any)))
+
+(: Pick
+   (* (: source type)
+      (: names any)
+      (: return type)))
+
+(: pick_edge
+   (* (: source type)
+      (: names any)
+      (: name any)
+      (: target type)
+      (: source_index int)))
+
+(: pick_predecessor
+   (* (: source type)
+      (: names any)
+      (: source_index int)
+      (: prior_index int)))
+
+(: pick_has_predecessor
+   (* (: source type)
+      (: names any)
+      (: source_index int)))
+
+(: pick_rank
+   (* (: source type)
+      (: names any)
+      (: source_index int)
+      (: result_index int)))
+
+(: Exclude
+   (* (: source type)
+      (: names any)
+      (: return type)))
+
+(: HistoryV1
+   (* (: source type)
+      (: options type)
+      (: return type)))
+
+(: Key
+   (* (: name text)
+      (: options type)
+      (: return type)))
+
+(: keyed_edge
+   (* (: source type)
+      (: name text)
+      (: options type)
+      (: target any)
+      (: source_index int)))
+
+(: key_predecessor
+   (* (: source type)
+      (: source_index int)
+      (: prior_index int)))
+
+(: key_has_predecessor
+   (* (: source type)
+      (: source_index int)))
+
+(: key_rank
+   (* (: source type)
+      (: source_index int)
+      (: result_index int)))
+
+(: composite_key
+   (* (: source type)
+      (: position int)
+      (: name text)
+      (: options type)))
+
+(: history_v1_edge
+   (* (: source type)
+      (: options type)
+      (: result type)
+      (: name text)
+      (: target any)
+      (: source_index int)))
+
+(: history_v1_arity
+   (* (: result type)
+      (: arity int)))
+
+(: excluded_name
+   (* (: source type)
+      (: names any)
+      (: name any)))
+
+(: exclude_edge
+   (* (: source type)
+      (: names any)
+      (: name any)
+      (: target type)
+      (: source_index int)))
+
+(: exclude_predecessor
+   (* (: source type)
+      (: names any)
+      (: source_index int)
+      (: prior_index int)))
+
+(: exclude_has_predecessor
+   (* (: source type)
+      (: names any)
+      (: source_index int)))
+
+(: exclude_rank
+   (* (: source type)
+      (: names any)
+      (: source_index int)
+      (: result_index int)))
+
+; A call occurrence points at its callable. Supplied arguments and the result
+; use ordinary :/4 edges owned by the call node.
+(: Apply
+   (* (: call type)
+      (: callable type)))
+
+; Source partial-expression lowering marks the application occurrences that
+; Curry may specialize. Generated rule applications remain ordinary Apply
+; nodes without this tag.
+(: PartialCall
+   (* (: call type)))
+
+; Primitive values and generated variables participate in the same node and
+; edge graph as relation references. Literal identity is content-based.
+; Variable identity includes its generated callable scope.
+(: Literal
+   (* (: node type)
+      (: primitive type)
+      (: raw any)))
+
+(: Variable
+   (* (: node type)
+      (: scope type)
+      (: name text)))
+
+; Generated rule heads and body goals use distinct application identities.
+(: HeadCall
+   (* (: rule type)
+      (: return type)))
+
+(: BodyCall
+   (* (: rule type)
+      (: goal int)
+      (: return type)))
+
+; Curry identities are canonical callable specializations. The source lowerer
+; supplies Apply and call-edge facts. These Curry views, the remaining shape,
+; and the forwarding program are derived in userland.
+(: Curry
+   (* (: source type)
+      (: bindings any)
+      (: return type)))
+
+(: curry_specialization
+   (* (: source type)
+      (: result type)))
+
+(: curry_call
+   (* (: call type)
+      (: source type)
+      (: result type)
+      (: return_index int)))
+
+(: curry_result_slot
+   (* (: call type)
+      (: source_index int)))
+
+(: curry_supplied
+   (* (: result type)
+      (: source_index int)
+      (: value type)))
+
+(: curry_is_bound
+   (* (: result type)
+      (: source_index int)))
+
+(: curry_unbound
+   (* (: source type)
+      (: result type)
+      (: name any)
+      (: target any)
+      (: source_index int)))
+
+(: curry_predecessor
+   (* (: result type)
+      (: source_index int)
+      (: prior_index int)))
+
+(: curry_has_predecessor
+   (* (: result type)
+      (: source_index int)))
+
+(: curry_rank
+   (* (: result type)
+      (: source_index int)
+      (: result_index int)))
+
+(: curry_edge
+   (* (: source type)
+      (: result type)
+      (: name any)
+      (: target any)
+      (: source_index int)
+      (: result_index int)))
+
+(: curry_arity
+   (* (: result type)
+      (: arity int)))
+
+; An emitter node names each artifact and the relation whose closed rows form
+; that artifact. Host-Prolog and DL7 emitters consume the same compiler view.
+(: emits
+   (* (: emitter type)
+      (: name text)
+      (: output type)))
+
+; The checked runtime program re-enters comptime as ordinary rows for emitter
+; programs. Structural rule, call, and argument identities remain opaque.
+(: program_relation
+   (* (: relation type)
+      (: arity int)))
+
+(: program_key
+   (* (: relation type)
+      (: ordinal int)))
+
+(: program_key_position
+   (* (: relation type)
+      (: key_ordinal int)
+      (: position int)))
+
+(: program_seed
+   (* (: seed any)
+      (: call any)))
+
+(: program_rule
+   (* (: rule any)
+      (: head_call any)))
+
+(: program_rule_kind
+   (* (: rule any)
+      (: kind text)))
+
+(: program_goal
+   (* (: rule any)
+      (: position int)
+      (: polarity text)
+      (: call any)))
+
+(: program_apply
+   (* (: call any)
+      (: relation type)))
+
+(: program_argument
+   (* (: call any)
+      (: position int)
+      (: argument any)))
+
+; One edge relation classifies any reified program node. Labels remain data;
+; variable, reference, literal, aggregate, and later annotations do not gain
+; separate protocol relations.
+(: program_edge
+   (* (: owner any)
+      (: label any)
+      (: target any)
+      (: index int)))
+
+(: program_dependency
+   (* (: head type)
+      (: body type)
+      (: polarity text)))
+
+(: program_stratum
+   (* (: relation type)
+      (: level int)))
+
+; Hosted relations retain an ordinary callable product. Hosted identifies the
+; implementation node, while HostPort classifies each existing relation edge
+; by the direction used at the external operator boundary.
+(: Input (*))
+(: Output (*))
+
+(: Hosted
+   (* (: relation type)
+      (: implementation type)))
+
+(: HostPort
+   (* (: relation type)
+      (: label any)
+      (: direction type)))

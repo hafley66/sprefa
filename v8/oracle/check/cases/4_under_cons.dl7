@@ -1,0 +1,5 @@
+(: reader
+   (* (: seen int)))
+
+(<- (reader 1)
+    (cons ?Head ?Tail ?List))

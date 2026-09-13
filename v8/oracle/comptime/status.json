@@ -1,0 +1,247 @@
+{
+  "covered_by_committed_case": {
+    "source_refreeze_limit_exhausted/1": "no committed case; 5_curry reaches it and is 8.2 MB, verify.sh checks it"
+  },
+  "covered_by_verify_only": {
+    "not_relation/1 deferral path": "5_curry, 2_compiler.pl:807, 16 deferred refreezes",
+    "source_refreeze_limit_exhausted/1": "5_curry-evaluate_checked-120, 2_compiler.pl:833"
+  },
+  "diagnostic_reasons": {
+    "no_case_reaches_it": {
+      "compiler_round_limit_exhausted/1": "2_compiler.pl:1443",
+      "conflicting_generated_body_goal/3": "1a_generated_program_assembler.pl:221",
+      "conflicting_generated_definitions/2": "1a_generated_program_assembler.pl:70",
+      "conflicting_generated_heads/2": "1a_generated_program_assembler.pl:129",
+      "functional_key_conflict/5": "1_libtime/0_evaluator.pl:620",
+      "generated_application_callable/5": "1a_generated_program_assembler.pl:247",
+      "generated_argument_positions/5": "1a_generated_program_assembler.pl:276",
+      "generated_body_undeclared_relation/3": "1a_generated_program_assembler.pl:258",
+      "generated_head_undeclared_relation/2": "1a_generated_program_assembler.pl:254",
+      "generated_relation_already_declared/1": "1a_generated_program_assembler.pl:82",
+      "hosted_implementation_count/2": "1d_host_planner.pl:107",
+      "hosted_port_direction_count/4": "1d_host_planner.pl:134",
+      "hosted_port_invalid_direction/3": "1d_host_planner.pl:150",
+      "hosted_port_unknown_edge/2": "1d_host_planner.pl:139",
+      "hosted_relation_not_declared/1": "1d_host_planner.pl:115",
+      "invalid_generated_argument/3": "1a_generated_program_assembler.pl:312",
+      "invalid_generated_arity/2": "1a_generated_program_assembler.pl:66",
+      "invalid_generated_polarity/3": "1a_generated_program_assembler.pl:216",
+      "invalid_generated_value_node/5": "1a_generated_program_assembler.pl:335",
+      "missing_derived_bind/3": "2_compiler.pl:1472",
+      "missing_derived_edge_label/2": "2_compiler.pl:1488",
+      "non_dense_generated_goals/2": "1a_generated_program_assembler.pl:178",
+      "orphan_generated_rule_fragment/1": "1a_generated_program_assembler.pl:140"
+    },
+    "reached_by_a_dumped_case": {
+      "source_refreeze_limit_exhausted/1": "2_compiler.pl:833, 5_curry"
+    }
+  },
+  "downstream_checker_reasons": {
+    "generated_arity_mismatch": "1_checker.pl:405, no corpus program reaches it",
+    "generated_undeclared_relation": "1_checker.pl:410, no corpus program reaches it",
+    "invalid_generated_rule": "1_checker.pl:374, no corpus program reaches it",
+    "note": "the check lane's three generated-IR reasons are fed by this lane's assembled program"
+  },
+  "numbers": {
+    "byte_distinct": 128,
+    "calls_dumped": 331,
+    "checked_but_not_committed": 203,
+    "committed": 8,
+    "committed_bytes": 3915168,
+    "fixtures": 18
+  },
+  "oracle": "v7 at f5018ad23, staged by freeze.sh into /tmp/dl8-comptime-oracle",
+  "round_counts": {
+    "2_partial_evaluate_checked_21.json": {
+      "v7_assemble": 7,
+      "v7_refreeze": 1
+    },
+    "8_hosted_evaluate_checked_16.json": {
+      "v7_assemble": 2,
+      "v7_refreeze": 1
+    },
+    "prelude_evaluate_checked.json": {
+      "v7_assemble": 1,
+      "v7_refreeze": 1
+    }
+  },
+  "skip": [],
+  "v7_rounds_by_fixture": {
+    "0_catalog": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 2,
+        "v7_refreeze": 1
+      }
+    ],
+    "0_minimal": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "10_dbsp_source": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "11_host_source_sink": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "12_native_runtime": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "13_native_reachability": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "14_syntax_macros": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "15_standard_plus": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "16_interned_storage": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "17_storage_plain_field": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "2_partial": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 7,
+        "v7_refreeze": 1
+      }
+    ],
+    "3_type_algebra": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 3,
+        "v7_refreeze": 1
+      }
+    ],
+    "4_generated_call": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 3,
+        "v7_refreeze": 1
+      }
+    ],
+    "5_curry": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 32,
+        "v7_refreeze": 32
+      }
+    ],
+    "6_rust_types.expected": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "7_rust_types_region": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ],
+    "8_hosted": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 2,
+        "v7_refreeze": 1
+      }
+    ],
+    "9_program_emitter": [
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      },
+      {
+        "v7_assemble": 1,
+        "v7_refreeze": 1
+      }
+    ]
+  }
+}

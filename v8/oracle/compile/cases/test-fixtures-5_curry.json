@@ -1,0 +1,1 @@
+{"expected":{"compiler_rows":[],"diagnostics":[{"args":[{"a":"compile"},{"a":"none"},{"args":[16],"f":"source_refreeze_limit_exhausted"}],"f":"diagnostic"}],"runtime_program":[]},"input":{"arguments":["<root>/test/fixtures/5_curry.dl7"]}}

@@ -1,0 +1,17 @@
+(: gamma
+   (* (: value int)))
+
+(: alpha
+   (* (: value int)))
+
+(: beta
+   (* (: value int)))
+
+(gamma 1)
+
+(<- (alpha ?Value)
+    (beta ?Value))
+
+(<- (beta ?Value)
+    (gamma ?Value)
+    (not (alpha ?Value)))

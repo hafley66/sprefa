@@ -1,0 +1,527 @@
+{
+ "budget_bytes": 6291456,
+ "cases": [
+  {
+   "arguments": [
+    "<root>/applications/dl6/0_catalog.dl7"
+   ],
+   "bytes": 685951,
+   "committed": true,
+   "compiler_rows": 859,
+   "diagnostics": 0,
+   "stem": "applications-dl6-0_catalog",
+   "v7_ms": 457
+  },
+  {
+   "arguments": [
+    "--project",
+    "<root>/.",
+    "<root>/emitters/2_interned_storage.dl7",
+    "<root>/applications/dl6/0_catalog.dl7"
+   ],
+   "bytes": 961214,
+   "committed": true,
+   "compiler_rows": 1166,
+   "diagnostics": 0,
+   "stem": "project-dl6-catalog",
+   "v7_ms": 552
+  },
+  {
+   "arguments": [
+    "--project",
+    "<root>/test/fixtures/modules",
+    "<root>/test/fixtures/modules/0_accounts.dl7",
+    "<root>/test/fixtures/modules/1_consumer.dl7"
+   ],
+   "bytes": 716637,
+   "committed": true,
+   "compiler_rows": 929,
+   "diagnostics": 0,
+   "stem": "project-modules-consumer",
+   "v7_ms": 416
+  },
+  {
+   "arguments": [
+    "--project",
+    "<root>/test/fixtures/modules",
+    "<root>/test/fixtures/modules/0_accounts.dl7",
+    "<root>/test/fixtures/modules/2_plus_consumer.dl7"
+   ],
+   "bytes": 717957,
+   "committed": true,
+   "compiler_rows": 929,
+   "diagnostics": 0,
+   "stem": "project-modules-plus",
+   "v7_ms": 427
+  },
+  {
+   "arguments": [
+    "--project",
+    "<root>/test/fixtures/tsi_project",
+    "<root>/test/fixtures/tsi_project/0_contract.dl7",
+    "--tsi",
+    "<root>/test/fixtures/tsi/1_semantic_user.jsonl"
+   ],
+   "bytes": 921113,
+   "committed": true,
+   "compiler_rows": 1242,
+   "diagnostics": 0,
+   "stem": "project-tsi-contract",
+   "v7_ms": 996
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/0_minimal.dl7"
+   ],
+   "bytes": 196,
+   "committed": true,
+   "compiler_rows": 0,
+   "diagnostics": 1,
+   "stem": "test-fixtures-0_minimal",
+   "v7_ms": 181
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/10_dbsp_source.dl7"
+   ],
+   "bytes": 644712,
+   "committed": false,
+   "compiler_rows": 812,
+   "diagnostics": 0,
+   "stem": "test-fixtures-10_dbsp_source",
+   "v7_ms": 386
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/11_host_source_sink.dl7"
+   ],
+   "bytes": 654636,
+   "committed": false,
+   "compiler_rows": 826,
+   "diagnostics": 0,
+   "stem": "test-fixtures-11_host_source_sink",
+   "v7_ms": 400
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/12_native_runtime.dl7"
+   ],
+   "bytes": 642840,
+   "committed": false,
+   "compiler_rows": 809,
+   "diagnostics": 0,
+   "stem": "test-fixtures-12_native_runtime",
+   "v7_ms": 402
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/13_native_reachability.dl7"
+   ],
+   "bytes": 646960,
+   "committed": false,
+   "compiler_rows": 809,
+   "diagnostics": 0,
+   "stem": "test-fixtures-13_native_reachability",
+   "v7_ms": 383
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/14_syntax_macros.dl7"
+   ],
+   "bytes": 730423,
+   "committed": true,
+   "compiler_rows": 861,
+   "diagnostics": 0,
+   "stem": "test-fixtures-14_syntax_macros",
+   "v7_ms": 432
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/15_standard_plus.dl7"
+   ],
+   "bytes": 641431,
+   "committed": false,
+   "compiler_rows": 807,
+   "diagnostics": 0,
+   "stem": "test-fixtures-15_standard_plus",
+   "v7_ms": 397
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/16_interned_storage.dl7"
+   ],
+   "bytes": 720029,
+   "committed": false,
+   "compiler_rows": 906,
+   "diagnostics": 0,
+   "stem": "test-fixtures-16_interned_storage",
+   "v7_ms": 419
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/17_storage_plain_field.dl7"
+   ],
+   "bytes": 681048,
+   "committed": false,
+   "compiler_rows": 855,
+   "diagnostics": 0,
+   "stem": "test-fixtures-17_storage_plain_field",
+   "v7_ms": 394
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/2_partial.dl7"
+   ],
+   "bytes": 732688,
+   "committed": true,
+   "compiler_rows": 910,
+   "diagnostics": 0,
+   "stem": "test-fixtures-2_partial",
+   "v7_ms": 663
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/3_type_algebra.dl7"
+   ],
+   "bytes": 806014,
+   "committed": true,
+   "compiler_rows": 987,
+   "diagnostics": 0,
+   "stem": "test-fixtures-3_type_algebra",
+   "v7_ms": 531
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/4_generated_call.dl7"
+   ],
+   "bytes": 698272,
+   "committed": false,
+   "compiler_rows": 861,
+   "diagnostics": 0,
+   "stem": "test-fixtures-4_generated_call",
+   "v7_ms": 535
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/5_curry.dl7"
+   ],
+   "bytes": 166,
+   "committed": true,
+   "compiler_rows": 0,
+   "diagnostics": 1,
+   "stem": "test-fixtures-5_curry",
+   "v7_ms": 3943
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/6_rust_types.expected.dl7"
+   ],
+   "bytes": 724096,
+   "committed": false,
+   "compiler_rows": 906,
+   "diagnostics": 0,
+   "stem": "test-fixtures-6_rust_types.expected",
+   "v7_ms": 438
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/7_rust_types_region.dl7"
+   ],
+   "bytes": 643531,
+   "committed": false,
+   "compiler_rows": 810,
+   "diagnostics": 0,
+   "stem": "test-fixtures-7_rust_types_region",
+   "v7_ms": 392
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/8_hosted.dl7"
+   ],
+   "bytes": 652119,
+   "committed": false,
+   "compiler_rows": 829,
+   "diagnostics": 0,
+   "stem": "test-fixtures-8_hosted",
+   "v7_ms": 428
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/9_program_emitter.dl7"
+   ],
+   "bytes": 655964,
+   "committed": false,
+   "compiler_rows": 823,
+   "diagnostics": 0,
+   "stem": "test-fixtures-9_program_emitter",
+   "v7_ms": 396
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/0_atom_label_expression_target.dl7"
+   ],
+   "bytes": 649047,
+   "committed": false,
+   "compiler_rows": 807,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-0_atom_label_expression_target",
+   "v7_ms": 424
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/10_infix_colon_spelling.dl7"
+   ],
+   "bytes": 657913,
+   "committed": false,
+   "compiler_rows": 817,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-10_infix_colon_spelling",
+   "v7_ms": 428
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/11_mixed_deferrable_and_real_error.dl7"
+   ],
+   "bytes": 278,
+   "committed": true,
+   "compiler_rows": 0,
+   "diagnostics": 1,
+   "stem": "test-fixtures-binding_symmetry-11_mixed_deferrable_and_real_error",
+   "v7_ms": 180
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/1_compound_label_expression_target.dl7"
+   ],
+   "bytes": 654914,
+   "committed": false,
+   "compiler_rows": 812,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-1_compound_label_expression_target",
+   "v7_ms": 424
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/2_nested_application_targets.dl7"
+   ],
+   "bytes": 663954,
+   "committed": false,
+   "compiler_rows": 822,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-2_nested_application_targets",
+   "v7_ms": 459
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/3_declaration_order.dl7"
+   ],
+   "bytes": 652006,
+   "committed": false,
+   "compiler_rows": 814,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-3_declaration_order",
+   "v7_ms": 418
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/4_structural_targets.dl7"
+   ],
+   "bytes": 664956,
+   "committed": false,
+   "compiler_rows": 831,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-4_structural_targets",
+   "v7_ms": 423
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/5_shared_specialization.dl7"
+   ],
+   "bytes": 655842,
+   "committed": false,
+   "compiler_rows": 816,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-5_shared_specialization",
+   "v7_ms": 423
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/6_partial_atom_label_target.dl7"
+   ],
+   "bytes": 711459,
+   "committed": false,
+   "compiler_rows": 856,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-6_partial_atom_label_target",
+   "v7_ms": 447
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/7_partial_compound_label_target.dl7"
+   ],
+   "bytes": 725303,
+   "committed": false,
+   "compiler_rows": 867,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-7_partial_compound_label_target",
+   "v7_ms": 451
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/8_generated_callable_targets.dl7"
+   ],
+   "bytes": 712964,
+   "committed": false,
+   "compiler_rows": 858,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-8_generated_callable_targets",
+   "v7_ms": 520
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/binding_symmetry/9_saturated_generated_targets.dl7"
+   ],
+   "bytes": 709437,
+   "committed": false,
+   "compiler_rows": 856,
+   "diagnostics": 0,
+   "stem": "test-fixtures-binding_symmetry-9_saturated_generated_targets",
+   "v7_ms": 469
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/lexical_binding/0_nearest_and_chains.dl7"
+   ],
+   "bytes": 660253,
+   "committed": false,
+   "compiler_rows": 820,
+   "diagnostics": 0,
+   "stem": "test-fixtures-lexical_binding-0_nearest_and_chains",
+   "v7_ms": 438
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/lexical_binding/2_missing_name.dl7"
+   ],
+   "bytes": 241,
+   "committed": true,
+   "compiler_rows": 0,
+   "diagnostics": 1,
+   "stem": "test-fixtures-lexical_binding-2_missing_name",
+   "v7_ms": 193
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/lexical_binding/3_self_cycle.dl7"
+   ],
+   "bytes": 417,
+   "committed": true,
+   "compiler_rows": 0,
+   "diagnostics": 2,
+   "stem": "test-fixtures-lexical_binding-3_self_cycle",
+   "v7_ms": 193
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/lexical_binding/4_two_cycle.dl7"
+   ],
+   "bytes": 593,
+   "committed": true,
+   "compiler_rows": 0,
+   "diagnostics": 3,
+   "stem": "test-fixtures-lexical_binding-4_two_cycle",
+   "v7_ms": 196
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/lexical_binding/5_generated_callable.dl7"
+   ],
+   "bytes": 697103,
+   "committed": false,
+   "compiler_rows": 849,
+   "diagnostics": 0,
+   "stem": "test-fixtures-lexical_binding-5_generated_callable",
+   "v7_ms": 514
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/lexical_binding/6_deferred_alias_measure.dl7"
+   ],
+   "bytes": 660078,
+   "committed": false,
+   "compiler_rows": 817,
+   "diagnostics": 0,
+   "stem": "test-fixtures-lexical_binding-6_deferred_alias_measure",
+   "v7_ms": 431
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/lexical_binding/7_nearest_shadow.dl7"
+   ],
+   "bytes": 647990,
+   "committed": false,
+   "compiler_rows": 810,
+   "diagnostics": 0,
+   "stem": "test-fixtures-lexical_binding-7_nearest_shadow",
+   "v7_ms": 416
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/modules/0_accounts.dl7"
+   ],
+   "bytes": 638487,
+   "committed": false,
+   "compiler_rows": 804,
+   "diagnostics": 0,
+   "stem": "test-fixtures-modules-0_accounts",
+   "v7_ms": 383
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/modules/1_consumer.dl7"
+   ],
+   "bytes": 162,
+   "committed": true,
+   "compiler_rows": 0,
+   "diagnostics": 1,
+   "stem": "test-fixtures-modules-1_consumer",
+   "v7_ms": 193
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/modules/2_plus_consumer.dl7"
+   ],
+   "bytes": 162,
+   "committed": true,
+   "compiler_rows": 0,
+   "diagnostics": 1,
+   "stem": "test-fixtures-modules-2_plus_consumer",
+   "v7_ms": 204
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/sqlite_query/0_cst_edge_kinds.dl7"
+   ],
+   "bytes": 667963,
+   "committed": false,
+   "compiler_rows": 831,
+   "diagnostics": 0,
+   "stem": "test-fixtures-sqlite_query-0_cst_edge_kinds",
+   "v7_ms": 398
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/tsi_project/0_contract.dl7"
+   ],
+   "bytes": 908514,
+   "committed": false,
+   "compiler_rows": 1219,
+   "diagnostics": 0,
+   "stem": "test-fixtures-tsi_project-0_contract",
+   "v7_ms": 977
+  }
+ ],
+ "committed_bytes": 6275917,
+ "rev": "f5018ad23",
+ "root_token": "<root>"
+}

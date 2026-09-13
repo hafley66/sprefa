@@ -1,0 +1,14 @@
+; A partial application as an ordinary atom-label target. This compiles and
+; publishes the Curry rows; fixture 7 is the same partial under a compound label.
+(: User (*))
+(: Order (*))
+(: PairResult (*))
+
+(: Pair
+   (* (left: type)
+      (right: type)
+      (return: type)))
+
+(Pair User Order PairResult)
+
+(: PairUser (Pair User))
