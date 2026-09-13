@@ -1,0 +1,236 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 0
+    pad: 24
+  }
+}
+
+title: |||md
+  # dl8 kernel relations
+  Every kernel relation is a **function over bound arguments**,  
+  never a stored  
+  table, except the two snapshots. The checker refuses a call  
+  whose bound  
+  positions match no keyset (`_3_check/_4_mode.rs`). Source:  
+  `v8/src/_6_eval/_4_kernel.rs`, tables  
+  `v8/src/_2_lower/_9_kernel.rs`.  
+
+  | color | meaning |
+  |---|---|
+  | green | builds a value |
+  | amber | reads a stored table |
+  | blue | tests, no value made |
+  | magenta | the pull, demand() |
+
+  flow: nil → cons → intern → snapshots next round; demand pulls  
+  cons and intern per level; count switches demand off.  
+|||
+title.class: txt
+
+direction: down
+
+classes: {
+  txt:   { style.font-color: "#1b1b1b"; style.fill: "#ffffff"; style.stroke: "#cccccc" }
+  build: { style.fill: "#e6f4ea"; style.stroke: "#2e7d32"; style.font-color: "#1b3d1f" }
+  table: { style.fill: "#fff3e0"; style.stroke: "#ef6c00"; style.font-color: "#3e2723" }
+  test:  { style.fill: "#e3f2fd"; style.stroke: "#1565c0"; style.font-color: "#0d2a4a" }
+  pull:  { style.fill: "#f3e5f5"; style.stroke: "#7b1fa2"; style.font-color: "#3a1046" }
+}
+
+kernels: {
+  grid-columns: 3
+  grid-gap: 40
+  style.stroke: transparent
+  style.fill: transparent
+nil: "nil / 1" {
+  class: build
+  why: |||md
+  **why** the empty list, the seed of every argument list.  
+
+  **when** keyset `[]`: nothing needs binding, always runnable.  
+
+  **dl7** `(nil ?Empty)`  
+  **prolog** `proves(_, call(ref(kernel(nil)), [const([])])).`  
+  **rust** `vec![vec![u.compound("const",  
+  vec![u.empty_list()])]]`  
+  |||
+  why.class: txt
+}
+
+cons: "cons / 3   head tail list" {
+  class: build
+  why: |||md
+  **why** one list cell at a time. The only structural  
+  constructor, so nesting is lists of lists and every  
+  walk is one `cons` per level.  
+
+  **dl7** `(cons ?Source ?Empty ?Arguments)`  
+
+  **when** two modes, checker picks by what is bound:  
+
+  | keyset | bound | returns |
+  |---|---|---|
+  | `[0,1]` | head, tail | list |
+  | `[2]` | list | head, tail |
+
+  |||
+  why.class: txt
+  code: |`rust
+  Kernel::Cons => {
+    if let Some(list) = args[2] {
+      // list bound: split const([H|T])
+      let items = u.as_list(u.unary(list,"const")?)?;
+      let head = items[0];
+      let tail = u.compound("const",
+                   vec![u.list(&items[1..])]);
+      return vec![vec![head, tail, list]];
+    }
+    if let (Some(head), Some(tail)) = (args[0], args[1]) {
+      // head+tail bound: build const([H|T])
+      let mut items = u.as_list(u.unary(tail,"const")?)?;
+      items.insert(0, head);
+      let list = u.compound("const", vec![u.list(&items)]);
+      return vec![vec![head, tail, list]];
+    }
+    vec![]
+  }
+  `|
+}
+
+intern: "intern / 3   ctor args return" {
+  class: build
+  why: |||md
+  **why** canonical identity for an application. Two calls  
+  with equal ctor and args give one `TermId`, so a type like  
+  `(Partial User)` is one value everywhere. Every request is  
+  also recorded as an output row for the next round.  
+
+  **when** keyset `[0,1]`: ctor and args bound, return free.  
+
+  **dl7** `(intern Partial ?Arguments ?Result)`  
+  **prolog** `intern_value(ref(C), const(Tagged),  
+  ref(application(C, Args)))`  
+  |||
+  why.class: txt
+  code: |`rust
+  Kernel::Intern => {
+    let ctor = u.unary(ctor_tagged, "ref")?;
+    let tagged = u.as_list(u.unary(arguments, "const")?)?;
+    let plain: Vec<_> = tagged.iter()
+      .map(|t| semantic(u, *t))       // strip ref/const
+      .collect::<Option<_>>()?;
+    let app = u.compound("application",
+                vec![ctor, u.list(&plain)]);
+    let result = u.compound("ref", vec![app]);
+    vec![vec![ctor_tagged, arguments, result]]
+  }
+  `|
+}
+
+edge_ref: "edge_ref / 3   owner label return" {
+  class: build
+  why: |||md
+  **why** name an edge as a value: `ref(edge(Owner, Label))`.  
+  Lets a rule talk about a field itself, the way `(: Owner  
+  label target)` declares it.  
+
+  **when** keyset `[0,1]`: owner and label bound.  
+
+  **surface** none. The lowerer emits it for a declaration  
+  whose label is an expression, e.g. `(: (Key "account" O)  
+  int)`.  
+  |||
+  why.class: txt
+  code: |`rust
+  Kernel::EdgeRef => {
+    let owner = u.unary(owner_tagged, "ref")?;
+    let sem = semantic(u, label)?;
+    let edge = u.compound("edge", vec![owner, sem]);
+    let result = u.compound("ref", vec![edge]);
+    vec![vec![owner_tagged, label, result]]
+  }
+  `|
+}
+
+snapshots: "intern_snapshot / 3  and  edge_snapshot / 4" {
+  class: table
+  why: |||md
+  **why** the backward doors. `intern` and the graph only  
+  build forward. A rule that starts from a `Result` and wants  
+  its arguments, or from a type and wants its fields, reads  
+  a stored copy of the previous round instead.  
+
+  **when** scanned like any table, any binding works.  
+  Edge keys: `[0,1]` by name, `[0,3]` by position.  
+
+  **dl7**  
+  `(intern_snapshot Partial ?Arguments ?Result)`  
+  `(edge_snapshot ?Owner ?Name ?Target ?Index)`  
+
+  **filled by** comptime rounds, `_4_comptime/_2_rounds.rs`,  
+  from every `intern` output row and every `:` edge.  
+  |||
+  why.class: txt
+}
+
+int: "int_lt int_le int_eq int_ne int_ge int_gt / 2" {
+  class: test
+  why: |||md
+  **why** integer comparison. A test, no value produced.  
+
+  **when** keyset `[0,1]`: both sides bound and integer.  
+  Under `not`, the complement holds (`negative_holds`).  
+
+  **dl7** `(int_lt ?Prior ?Index)`  
+  |||
+  why.class: txt
+  code: |`rust
+  Kernel::Int(cmp) => match int_pair(u, args) {
+    Some((l, r)) if cmp.holds(l, r) =>
+      vec![vec![args[0].unwrap(), args[1].unwrap()]],
+    _ => vec![],
+  }
+  `|
+}
+
+count: "count in a head" {
+  class: test
+  why: |||md
+  **why** an aggregate over a closed stratum. Runs after  
+  every lower rule has stopped, so it sees the full table.  
+
+  **when** the body is evaluated with `tables_only = true`,  
+  which switches `demand()` off inside it.  
+  |||
+  why.class: txt
+  code: |`lisp
+  (<- (key_rank ?Source ?SourceIndex (count ?PriorIndex))
+      (keyed_edge ?Source ?Name ?Opts ?Target ?SourceIndex)
+      (key_predecessor ?Source ?SourceIndex ?PriorIndex))
+  `|
+}
+
+demand: "demand()   the one pull in a push engine" {
+  class: pull
+  why: |||md
+  **why** bottom-up rounds fill tables from facts. A body goal  
+  like `(Partial ?User ?R)` with `?User` already bound has no  
+  table row yet in round 0. `demand` runs the rules for that  
+  head with the bound pattern, top-down, memoized per  
+  `(rel, pattern)`, and hands the rows back unstored.  
+
+  **when** all four clauses hold.  
+  |||
+  why.class: txt
+  code: |`rust
+  let demand = !self.tables_only        // outside aggregates
+    && kernel.is_none()                 // a derived rel
+    && pattern.iter().any(|t| t.is_some()) // one arg bound
+    && self.rules_by_rel.contains_key(&goal.rel);
+  if demand {
+    solutions.extend(self.demand(goal.rel, &pattern));
+  }
+  `|
+}
+}
