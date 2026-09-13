@@ -6,10 +6,11 @@ use super::api::{
     kernel_call_args, source_application_edges, Compiled, Generated, Refreeze, Sources,
 };
 use super::host::{erase_host_planning_rows, validate_hosted_relations};
-use super::rounds::{rounds, Round, RoundOutcome, COMPILER_ROUND_LIMIT};
+use super::rounds::{Round, RoundInput, RoundOutcome, RoundState, Rounds, COMPILER_ROUND_LIMIT};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::{check_resolved_rules, Checked, Stop};
 use crate::_6_eval::term::{Term, TermId, Universe};
+use crate::_7_effect::Slice;
 use std::collections::HashMap;
 
 type Outcome = Result<(Option<Compiled>, Vec<TermId>), Stop>;
@@ -126,18 +127,20 @@ pub fn expand_source_compiler(
     let frozen_edges = prolog_sort(u, frozen);
     let frozen_requests = intern_rows(u, &facts);
 
-    let next = rounds(
-        u,
-        &checked.rules,
-        &base_relations,
-        &base_seeds,
+    let mut st = RoundState::seeded(
         frozen_edges,
         frozen_requests,
         generated.relations.clone(),
         generated.rules.clone(),
+    );
+    let input = RoundInput {
+        u: &mut *u,
+        authored_rules: &checked.rules,
+        base_relations: &base_relations,
+        base_seeds: &base_seeds,
         outer,
-        fx,
-    )?;
+    };
+    let next = Rounds::reduce(&mut st, input, fx)?;
     if !next.diagnostics.is_empty() {
         return Ok((None, next.diagnostics));
     }

@@ -8,7 +8,9 @@ use super::program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId}
 use super::stratify::{stratify, Strata};
 use super::table::{Range, Table};
 use super::term::{TermId, Universe};
+use crate::_7_effect::Slice;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Trace {
@@ -383,8 +385,31 @@ fn aggregate_rows(
     Ok(rows)
 }
 
+/// The semi-naive fixpoint as a reducer over its own row store.
+pub struct Evaluate<'a>(PhantomData<&'a ()>);
+
+impl<'a> Slice for Evaluate<'a> {
+    type State = Store;
+    type Event = (&'a mut Universe, &'a Program);
+    type Output = Closure;
+    type Effect = Trace;
+
+    fn reduce(store: &mut Store, (u, program): Self::Event, fx: &mut dyn FnMut(Trace)) -> Closure {
+        evaluate_into(store, u, program, fx)
+    }
+}
+
 #[tracing::instrument(skip_all, fields(rules = program.rules.len(), seeds = program.seeds.len()))]
 pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
+    Evaluate::reduce(&mut Store::default(), (u, program), fx)
+}
+
+fn evaluate_into(
+    store: &mut Store,
+    u: &mut Universe,
+    program: &Program,
+    fx: &mut dyn FnMut(Trace),
+) -> Closure {
     let (strata, diagnostics) = stratify(u, program);
     if !diagnostics.is_empty() {
         return Closure {
@@ -392,7 +417,6 @@ pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) 
             diagnostics,
         };
     }
-    let mut store = Store::default();
     let mut requests: Vec<Box<[TermId]>> = Vec::new();
 
     let nil_rel = {
@@ -442,7 +466,7 @@ pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) 
         let mut aggregate_diags = Vec::new();
         let mut aggregate_seeds = Vec::new();
         for rule in &aggregate {
-            match aggregate_rows(u, &store, &rules_by_rel, rule) {
+            match aggregate_rows(u, store, &rules_by_rel, rule) {
                 Ok(rows) => aggregate_seeds.extend(rows),
                 Err(d) => aggregate_diags.push(d),
             }
@@ -476,7 +500,7 @@ pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) 
                     let plan: Plan = rule.body.iter().map(|_| Range::All).collect();
                     fire(
                         u,
-                        &store,
+                        store,
                         &rules_by_rel,
                         rule,
                         &plan,
@@ -504,7 +528,7 @@ pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) 
                             .collect();
                         fire(
                             u,
-                            &store,
+                            store,
                             &rules_by_rel,
                             rule,
                             &plan,

@@ -8,6 +8,7 @@ pub mod _3_check;
 pub mod _4_comptime;
 pub mod _5_reify;
 pub mod _6_eval;
+pub mod _7_effect;
 pub mod _8_driver;
 
 use _2_lower::api::Lowered;
@@ -20,11 +21,13 @@ use _4_comptime::load::tsi_expression_environment;
 use _4_comptime::sources::{source_unit_module_owners, Live};
 use _4_comptime::Compiled;
 use _6_eval::term::{TermId, Universe};
+use _7_effect::Slice;
 use _8_driver::_0_read::{prelude_text, program_text};
 use _8_driver::_1_unit::{file_unit, prelude_unit};
 use _8_driver::_2_macro::{expand_units_with_macros, standard_macro_program};
 use _8_driver::_4_project::{install_graphs, load_dl7_project, load_tsi_streams, Project};
 use _8_driver::{Event, Stop};
+use std::marker::PhantomData;
 use std::path::Path;
 use std::time::Instant;
 
@@ -66,6 +69,24 @@ fn phase_event(name: &'static str, start: Instant, rows: usize, diagnostics: usi
         rows,
         diagnostics,
     );
+}
+
+/// `:112`. The whole pipe as a reducer over the term universe.
+pub struct Drive<'a>(PhantomData<&'a ()>);
+
+impl<'a> Slice for Drive<'a> {
+    type State = Universe;
+    type Event = &'a Path;
+    type Output = Result<Compile, Stop>;
+    type Effect = Event;
+
+    fn reduce(
+        u: &mut Universe,
+        path: &'a Path,
+        fx: &mut dyn FnMut(Event),
+    ) -> Result<Compile, Stop> {
+        compile(u, path, fx)
+    }
 }
 
 /// `:112`. Prelude, macro library, program, then the units chain.

@@ -12,6 +12,8 @@ use crate::_3_check::{check_resolved_rules, Stop};
 use crate::_6_eval::program::{Arg, Goal, Polarity, Program, Row, Rule, VarId};
 use crate::_6_eval::term::{TermId, Universe};
 use crate::_6_eval::{evaluate, Trace};
+use crate::_7_effect::Slice;
+use std::marker::PhantomData;
 
 /// `debug_round_decision/2` at `:1376` prints exactly these three.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -76,122 +78,151 @@ impl RoundOutcome {
 /// `:1467`. One constant serves both the inner and the outer loop; fork F4.
 pub const COMPILER_ROUND_LIMIT: i64 = 16;
 
-/// `:1173`. `outer` is the source-refreeze pass, carried for the trace only.
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all)]
-pub fn rounds(
-    u: &mut Universe,
-    authored_rules: &[TermId],
-    base_relations: &[TermId],
-    base_seeds: &[TermId],
-    frozen_edges: Vec<TermId>,
-    frozen_requests: Vec<TermId>,
-    frozen_generated_relations: Vec<TermId>,
-    frozen_generated_rules: Vec<TermId>,
-    outer: i64,
-    fx: &mut dyn FnMut(Round),
-) -> Result<RoundOutcome, Stop> {
-    let mut st = RoundState {
-        frozen_edges,
-        frozen_requests,
-        frozen_generated_relations,
-        frozen_generated_rules,
-        round: 1,
-    };
-    loop {
-        let mut relations = base_relations.to_vec();
-        relations.extend_from_slice(&st.frozen_generated_relations);
-        let relations = prolog_sort(u, relations);
-        let mut rules = authored_rules.to_vec();
-        rules.extend_from_slice(&st.frozen_generated_rules);
-        let rules = prolog_sort(u, rules);
+/// The read-only side of one inner fixpoint; `outer` is the source-refreeze
+/// pass, carried for the trace only.
+pub struct RoundInput<'a> {
+    pub u: &'a mut Universe,
+    pub authored_rules: &'a [TermId],
+    pub base_relations: &'a [TermId],
+    pub base_seeds: &'a [TermId],
+    pub outer: i64,
+}
 
-        let resolved = check_resolved_rules(u, &relations, &rules)?;
-        let seeds = compiler_round_seeds(u, base_seeds, &st.frozen_edges, &st.frozen_requests);
-        if !resolved.diagnostics.is_empty() {
-            return Ok(RoundOutcome::failed(resolved.diagnostics));
+impl RoundState {
+    /// `:1173`. The first round of a fixpoint, seeded from frozen rows.
+    pub fn seeded(
+        frozen_edges: Vec<TermId>,
+        frozen_requests: Vec<TermId>,
+        frozen_generated_relations: Vec<TermId>,
+        frozen_generated_rules: Vec<TermId>,
+    ) -> Self {
+        RoundState {
+            frozen_edges,
+            frozen_requests,
+            frozen_generated_relations,
+            frozen_generated_rules,
+            round: 1,
         }
+    }
+}
 
-        let (closure, evaluation_diagnostics) = evaluate_round(u, &rules, &seeds)?;
-        if !evaluation_diagnostics.is_empty() {
-            return Ok(RoundOutcome::failed(evaluation_diagnostics));
-        }
-        let closure = strip_snapshot_rows(u, &closure);
-        fx(Round::Evaluate {
+/// `:1173`. The inner compiler fixpoint as a reducer over its frozen lists.
+pub struct Rounds<'a>(PhantomData<&'a ()>);
+
+impl<'a> Slice for Rounds<'a> {
+    type State = RoundState;
+    type Event = RoundInput<'a>;
+    type Output = Result<RoundOutcome, Stop>;
+    type Effect = Round;
+
+    #[tracing::instrument(skip_all)]
+    fn reduce(
+        st: &mut RoundState,
+        ev: RoundInput<'a>,
+        fx: &mut dyn FnMut(Round),
+    ) -> Result<RoundOutcome, Stop> {
+        let RoundInput {
+            u,
+            authored_rules,
+            base_relations,
+            base_seeds,
             outer,
-            round: st.round,
-            rules: rules.len(),
-            seeds: seeds.len(),
-            closure: closure.len(),
-        });
+        } = ev;
+        loop {
+            let mut relations = base_relations.to_vec();
+            relations.extend_from_slice(&st.frozen_generated_relations);
+            let relations = prolog_sort(u, relations);
+            let mut rules = authored_rules.to_vec();
+            rules.extend_from_slice(&st.frozen_generated_rules);
+            let rules = prolog_sort(u, rules);
 
-        let next_edges = colon_rows(u, &closure);
-        let next_requests = intern_rows(u, &closure);
-        let assembled = assemble_generated_program(u, &closure, base_relations);
-        fx(Round::Assemble {
-            outer,
-            round: st.round,
-            relations: assembled.relations.len(),
-            rules: assembled.rules.len(),
-        });
-        if !assembled.diagnostics.is_empty() {
-            return Ok(RoundOutcome::failed(assembled.diagnostics));
-        }
-
-        if next_edges == st.frozen_edges
-            && next_requests == st.frozen_requests
-            && assembled.relations == st.frozen_generated_relations
-            && assembled.rules == st.frozen_generated_rules
-        {
-            fx(Round::Decision {
-                outer,
-                round: st.round,
-                outcome: Outcome::Stable,
-            });
-            tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::Stable);
-            let mut all = base_relations.to_vec();
-            all.extend_from_slice(&assembled.relations);
-            let all = prolog_sort(u, all);
-            let mut stable = derived_bind_diagnostics(u, authored_rules, &closure);
-            stable.extend(validate_functional_rows(u, &all, &closure));
-            let stable = prolog_sort(u, stable);
-            if !stable.is_empty() {
-                return Ok(RoundOutcome::failed(stable));
+            let resolved = check_resolved_rules(u, &relations, &rules)?;
+            let seeds = compiler_round_seeds(u, base_seeds, &st.frozen_edges, &st.frozen_requests);
+            if !resolved.diagnostics.is_empty() {
+                return Ok(RoundOutcome::failed(resolved.diagnostics));
             }
-            return Ok(RoundOutcome {
-                closure: strip_intern_rows(u, &closure),
-                generated: Generated {
-                    relations: assembled.relations,
-                    rules: assembled.rules,
-                    depends: resolved.depends,
-                    strata: resolved.strata,
-                },
-                diagnostics: vec![],
+
+            let (closure, evaluation_diagnostics) = evaluate_round(u, &rules, &seeds)?;
+            if !evaluation_diagnostics.is_empty() {
+                return Ok(RoundOutcome::failed(evaluation_diagnostics));
+            }
+            let closure = strip_snapshot_rows(u, &closure);
+            fx(Round::Evaluate {
+                outer,
+                round: st.round,
+                rules: rules.len(),
+                seeds: seeds.len(),
+                closure: closure.len(),
             });
-        }
-        if st.round >= COMPILER_ROUND_LIMIT {
+
+            let next_edges = colon_rows(u, &closure);
+            let next_requests = intern_rows(u, &closure);
+            let assembled = assemble_generated_program(u, &closure, base_relations);
+            fx(Round::Assemble {
+                outer,
+                round: st.round,
+                relations: assembled.relations.len(),
+                rules: assembled.rules.len(),
+            });
+            if !assembled.diagnostics.is_empty() {
+                return Ok(RoundOutcome::failed(assembled.diagnostics));
+            }
+
+            if next_edges == st.frozen_edges
+                && next_requests == st.frozen_requests
+                && assembled.relations == st.frozen_generated_relations
+                && assembled.rules == st.frozen_generated_rules
+            {
+                fx(Round::Decision {
+                    outer,
+                    round: st.round,
+                    outcome: Outcome::Stable,
+                });
+                tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::Stable);
+                let mut all = base_relations.to_vec();
+                all.extend_from_slice(&assembled.relations);
+                let all = prolog_sort(u, all);
+                let mut stable = derived_bind_diagnostics(u, authored_rules, &closure);
+                stable.extend(validate_functional_rows(u, &all, &closure));
+                let stable = prolog_sort(u, stable);
+                if !stable.is_empty() {
+                    return Ok(RoundOutcome::failed(stable));
+                }
+                return Ok(RoundOutcome {
+                    closure: strip_intern_rows(u, &closure),
+                    generated: Generated {
+                        relations: assembled.relations,
+                        rules: assembled.rules,
+                        depends: resolved.depends,
+                        strata: resolved.strata,
+                    },
+                    diagnostics: vec![],
+                });
+            }
+            if st.round >= COMPILER_ROUND_LIMIT {
+                fx(Round::Decision {
+                    outer,
+                    round: st.round,
+                    outcome: Outcome::LimitExhausted,
+                });
+                tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::LimitExhausted);
+                let limit = u.int(COMPILER_ROUND_LIMIT);
+                let reason = u.compound("compiler_round_limit_exhausted", vec![limit]);
+                let d = diagnostic(u, "compile", reason);
+                return Ok(RoundOutcome::failed(vec![d]));
+            }
             fx(Round::Decision {
                 outer,
                 round: st.round,
-                outcome: Outcome::LimitExhausted,
+                outcome: Outcome::Continue,
             });
-            tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::LimitExhausted);
-            let limit = u.int(COMPILER_ROUND_LIMIT);
-            let reason = u.compound("compiler_round_limit_exhausted", vec![limit]);
-            let d = diagnostic(u, "compile", reason);
-            return Ok(RoundOutcome::failed(vec![d]));
+            tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::Continue);
+            st.frozen_edges = next_edges;
+            st.frozen_requests = next_requests;
+            st.frozen_generated_relations = assembled.relations;
+            st.frozen_generated_rules = assembled.rules;
+            st.round += 1;
         }
-        fx(Round::Decision {
-            outer,
-            round: st.round,
-            outcome: Outcome::Continue,
-        });
-        tracing::debug!(target: "dl8::comptime", outer, round = st.round, outcome = ?Outcome::Continue);
-        st.frozen_edges = next_edges;
-        st.frozen_requests = next_requests;
-        st.frozen_generated_relations = assembled.relations;
-        st.frozen_generated_rules = assembled.rules;
-        st.round += 1;
     }
 }
 
