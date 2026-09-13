@@ -313,87 +313,58 @@ pub fn macro_dispatch(u: &mut Universe, p: &Protocol, rules: &[Rule], g: &Graph)
     Dispatch::Absent
 }
 
+/// The relation and the per-argument tag list of one graph row shape.
+pub fn seed_shape(
+    p: &Protocol,
+    name: &str,
+    arity: usize,
+) -> Option<(TermId, &'static [&'static str])> {
+    const SOURCE: &[&str] = &[
+        "ref", "const", "const", "const", "const", "const", "const", "const",
+    ];
+    Some(match (name, arity) {
+        ("node", 1) => (p.node, &["ref"]),
+        (":", 4) => (p.colon, &["ref", "const", "raw", "const"]),
+        ("syntax_frontier", 2) => (p.frontier, &["const", "ref"]),
+        ("syntax_form", 1) => (p.form, &["ref"]),
+        ("syntax_atom", 2) => (p.atom, &["ref", "text"]),
+        ("syntax_literal", 2) => (p.literal, &["ref", "const"]),
+        ("syntax_variable", 3) => (p.variable, &["ref", "ref", "text"]),
+        ("source", 8) => (p.source, SOURCE),
+        _ => return None,
+    })
+}
+
+/// `raw` passes an already-tagged argument through; `text` interns the atom's
+/// text before tagging it.
+pub fn seed_cell(u: &mut Universe, tag: &str, arg: TermId) -> TermId {
+    match tag {
+        "ref" => wrap_ref(u, arg),
+        "raw" => arg,
+        "text" => {
+            let text = text_of_atom(u, arg);
+            tagged(u, "const", text)
+        }
+        _ => tagged(u, "const", arg),
+    }
+}
+
 /// `syntax_seed_calls/3`: one seed row per graph row, tagged for the
 /// evaluator.
 pub fn syntax_seeds(u: &mut Universe, p: &Protocol, rows: &[TermId]) -> Vec<Row> {
     let mut out = Vec::with_capacity(rows.len());
     for &row in rows {
-        let (name, args) = match u.functor(row) {
-            Some((n, a)) => (n.to_string(), a.to_vec()),
-            None => continue,
+        let Some((name, args)) = u.functor(row).map(|(n, a)| (n.to_string(), a.to_vec())) else {
+            continue;
         };
-        let seed = match (name.as_str(), args.len()) {
-            ("node", 1) => {
-                let node = wrap_ref(u, args[0]);
-                Row {
-                    rel: p.node,
-                    args: vec![node],
-                }
-            }
-            (":", 4) => {
-                let owner = wrap_ref(u, args[0]);
-                let label = tagged(u, "const", args[1]);
-                let ordinal = tagged(u, "const", args[3]);
-                Row {
-                    rel: p.colon,
-                    args: vec![owner, label, args[2], ordinal],
-                }
-            }
-            ("syntax_frontier", 2) => {
-                let ordinal = tagged(u, "const", args[0]);
-                let node = wrap_ref(u, args[1]);
-                Row {
-                    rel: p.frontier,
-                    args: vec![ordinal, node],
-                }
-            }
-            ("syntax_form", 1) => {
-                let node = wrap_ref(u, args[0]);
-                Row {
-                    rel: p.form,
-                    args: vec![node],
-                }
-            }
-            ("syntax_atom", 2) => {
-                let node = wrap_ref(u, args[0]);
-                let text = text_of_atom(u, args[1]);
-                let text = tagged(u, "const", text);
-                Row {
-                    rel: p.atom,
-                    args: vec![node, text],
-                }
-            }
-            ("syntax_literal", 2) => {
-                let node = wrap_ref(u, args[0]);
-                let value = tagged(u, "const", args[1]);
-                Row {
-                    rel: p.literal,
-                    args: vec![node, value],
-                }
-            }
-            ("syntax_variable", 3) => {
-                let node = wrap_ref(u, args[0]);
-                let variable = wrap_ref(u, args[1]);
-                let text = text_of_atom(u, args[2]);
-                let text = tagged(u, "const", text);
-                Row {
-                    rel: p.variable,
-                    args: vec![node, variable, text],
-                }
-            }
-            ("source", 8) => {
-                let mut cells = vec![wrap_ref(u, args[0])];
-                for &cell in &args[1..] {
-                    cells.push(tagged(u, "const", cell));
-                }
-                Row {
-                    rel: p.source,
-                    args: cells,
-                }
-            }
-            _ => continue,
+        let Some((rel, tags)) = seed_shape(p, &name, args.len()) else {
+            continue;
         };
-        out.push(seed);
+        let mut cells = Vec::with_capacity(args.len());
+        for (arg, tag) in args.iter().zip(tags) {
+            cells.push(seed_cell(u, tag, *arg));
+        }
+        out.push(Row { rel, args: cells });
     }
     out
 }
@@ -409,6 +380,28 @@ pub struct Output {
     pub ordinal: TermId,
 }
 
+/// The closure grouped by relation; `Rows` is what every reader below reads.
+type Rows<'a> = HashMap<TermId, Vec<&'a Row>>;
+
+fn rows_of<'a, 'r>(by_rel: &'a Rows<'r>, rel: TermId) -> &'a [&'r Row] {
+    by_rel.get(&rel).map_or(&[], |v| v.as_slice())
+}
+
+/// Each argument of an arity-checked row unwrapped from its tag; a row whose
+/// argument carries a different tag is dropped.
+pub fn untagged_rows(u: &Universe, rows: &[&Row], tags: &[&str]) -> Vec<Vec<TermId>> {
+    rows.iter()
+        .filter(|row| row.args.len() == tags.len())
+        .filter_map(|row| {
+            row.args
+                .iter()
+                .zip(tags)
+                .map(|(a, tag)| u.unary(*a, tag))
+                .collect()
+        })
+        .collect()
+}
+
 /// `macro_results/6`: the syntax rows the closure derived, the claims on nodes
 /// that are still active, and the ordered expansion edges of those claims.
 pub fn macro_results(
@@ -417,94 +410,69 @@ pub fn macro_results(
     closure: &[Row],
     active: &HashSet<TermId>,
 ) -> (Vec<TermId>, Vec<Claim>, Vec<Output>) {
-    let mut by_rel: HashMap<TermId, Vec<&Row>> = HashMap::new();
+    let mut by_rel: Rows = HashMap::new();
     for row in closure {
         by_rel.entry(row.rel).or_default().push(row);
     }
-    let empty: Vec<&Row> = Vec::new();
-    let at = |rel: TermId| -> &[&Row] { by_rel.get(&rel).map_or(&empty, |v| v.as_slice()) };
+    let available = available_rows(u, p, &by_rel);
+    let (claims, invocations) = active_claims(u, p, &by_rel, active);
+    let outputs = expansion_outputs(u, p, &by_rel, &invocations);
+    (available, claims, outputs)
+}
 
-    let mut identities: HashSet<TermId> = HashSet::new();
+/// The nodes any syntax relation gives a shape to; a `node` or `item` row about
+/// anything else is not part of the rewritten graph.
+pub fn syntax_identities(u: &Universe, p: &Protocol, by_rel: &Rows) -> HashSet<TermId> {
+    let mut out = HashSet::new();
     for (rel, arity) in [(p.form, 1), (p.atom, 2), (p.literal, 2), (p.variable, 3)] {
-        for row in at(rel) {
+        for row in rows_of(by_rel, rel) {
             if row.args.len() == arity {
                 if let Some(node) = u.unary(row.args[0], "ref") {
-                    identities.insert(node);
+                    out.insert(node);
                 }
             }
         }
     }
+    out
+}
 
-    let mut available: Vec<TermId> = Vec::new();
-    for row in at(p.form) {
-        if let (1, Some(node)) = (row.args.len(), u.unary(row.args[0], "ref")) {
-            available.push(u.compound("syntax_form", vec![node]));
-        }
-    }
-    for row in at(p.atom) {
-        if row.args.len() != 2 {
-            continue;
-        }
-        if let (Some(node), Some(text)) =
-            (u.unary(row.args[0], "ref"), u.unary(row.args[1], "const"))
-        {
-            let name = atom_of_text(u, text);
-            available.push(u.compound("syntax_atom", vec![node, name]));
-        }
-    }
-    for row in at(p.literal) {
-        if row.args.len() != 2 {
-            continue;
-        }
-        if let (Some(node), Some(value)) =
-            (u.unary(row.args[0], "ref"), u.unary(row.args[1], "const"))
-        {
-            available.push(u.compound("syntax_literal", vec![node, value]));
-        }
-    }
-    for row in at(p.variable) {
-        if row.args.len() != 3 {
-            continue;
-        }
-        let node = u.unary(row.args[0], "ref");
-        let variable = u.unary(row.args[1], "ref");
-        let text = u.unary(row.args[2], "const");
-        if let (Some(node), Some(variable), Some(text)) = (node, variable, text) {
-            let name = atom_of_text(u, text);
-            available.push(u.compound("syntax_variable", vec![node, variable, name]));
-        }
-    }
-    for row in at(p.source) {
-        if row.args.len() != 8 {
-            continue;
-        }
-        let node = match u.unary(row.args[0], "ref") {
-            Some(n) => n,
-            None => continue,
-        };
-        let mut cells = vec![node];
-        let mut ok = true;
-        for &cell in &row.args[1..] {
-            match u.unary(cell, "const") {
-                Some(value) => cells.push(value),
-                None => ok = false,
+/// `:` at `macro_results/6`: the derived syntax graph, untagged and sorted.
+pub fn available_rows(u: &mut Universe, p: &Protocol, by_rel: &Rows) -> Vec<TermId> {
+    let identities = syntax_identities(u, p, by_rel);
+    let mut out: Vec<TermId> = Vec::new();
+    for (rel, name, tags, text_tail) in [
+        (p.form, "syntax_form", &["ref"][..], false),
+        (p.atom, "syntax_atom", &["ref", "const"][..], true),
+        (p.literal, "syntax_literal", &["ref", "const"][..], false),
+        (
+            p.variable,
+            "syntax_variable",
+            &["ref", "ref", "const"][..],
+            true,
+        ),
+        (
+            p.source,
+            "source",
+            &[
+                "ref", "const", "const", "const", "const", "const", "const", "const",
+            ][..],
+            false,
+        ),
+    ] {
+        for mut cells in untagged_rows(u, rows_of(by_rel, rel), tags) {
+            if text_tail {
+                let text = cells.pop().unwrap();
+                cells.push(atom_of_text(u, text));
             }
-        }
-        if ok {
-            available.push(u.compound("source", cells));
+            out.push(u.compound(name, cells));
         }
     }
-    for row in at(p.node) {
-        if row.args.len() != 1 {
-            continue;
-        }
-        if let Some(node) = u.unary(row.args[0], "ref") {
-            if identities.contains(&node) {
-                available.push(u.compound("node", vec![node]));
-            }
+    for cells in untagged_rows(u, rows_of(by_rel, p.node), &["ref"]) {
+        if identities.contains(&cells[0]) {
+            out.push(u.compound("node", cells));
         }
     }
-    for row in at(p.colon) {
+    for row in rows_of(by_rel, p.colon) {
         if row.args.len() != 4 || !is_const_atom(u, row.args[1], "item") {
             continue;
         }
@@ -515,14 +483,24 @@ pub fn macro_results(
             if identities.contains(&owner) && identities.contains(&target) {
                 let item = p.item;
                 let reference = wrap_ref(u, target);
-                available.push(u.compound(":", vec![owner, item, reference, ordinal]));
+                out.push(u.compound(":", vec![owner, item, reference, ordinal]));
             }
         }
     }
-    sort_terms(u, &mut available);
+    sort_terms(u, &mut out);
+    out
+}
 
+/// The claims landing on nodes the rewriter has not already consumed, with the
+/// invocation set the expansion edges are filtered against.
+pub fn active_claims(
+    u: &mut Universe,
+    p: &Protocol,
+    by_rel: &Rows,
+    active: &HashSet<TermId>,
+) -> (Vec<Claim>, HashSet<TermId>) {
     let mut claim_terms: Vec<TermId> = Vec::new();
-    for row in at(p.claim) {
+    for row in rows_of(by_rel, p.claim) {
         if row.args.len() != 2 {
             continue;
         }
@@ -544,7 +522,7 @@ pub fn macro_results(
         .filter_map(|c| u.functor(*c).map(|(_, args)| args[0]))
         .collect();
     sort_terms(u, &mut claim_terms);
-    let claims: Vec<Claim> = claim_terms
+    let claims = claim_terms
         .iter()
         .map(|c| {
             let args = u.functor(*c).unwrap().1;
@@ -554,9 +532,18 @@ pub fn macro_results(
             }
         })
         .collect();
+    (claims, invocations)
+}
 
+/// The ordered `expansion` edges of the claimed invocations.
+pub fn expansion_outputs(
+    u: &mut Universe,
+    p: &Protocol,
+    by_rel: &Rows,
+    invocations: &HashSet<TermId>,
+) -> Vec<Output> {
     let mut output_terms: Vec<TermId> = Vec::new();
-    for row in at(p.colon) {
+    for row in rows_of(by_rel, p.colon) {
         if row.args.len() != 4 || !is_const_atom(u, row.args[1], "expansion") {
             continue;
         }
@@ -570,7 +557,7 @@ pub fn macro_results(
         }
     }
     sort_terms(u, &mut output_terms);
-    let outputs: Vec<Output> = output_terms
+    output_terms
         .iter()
         .map(|o| {
             let args = u.functor(*o).unwrap().1;
@@ -580,8 +567,7 @@ pub fn macro_results(
                 ordinal: args[2],
             }
         })
-        .collect();
-    (available, claims, outputs)
+        .collect()
 }
 
 fn is_const_atom(u: &Universe, tagged: TermId, name: &str) -> bool {

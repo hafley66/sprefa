@@ -35,50 +35,27 @@ pub fn install_project_graph(
         .to_string();
     let units = u.as_list(project_parts[1]).ok_or("project units")?;
 
-    let mut claims: Vec<Claim> = Vec::new();
-    let mut directory_owners: Vec<TermId> = Vec::new();
-    let mut file_owners: Vec<TermId> = Vec::new();
-    let mut diagnostics: Vec<TermId> = Vec::new();
+    let mut collected = Collected::default();
     for unit in &units {
-        unit_path_claim(
-            u,
-            cwd,
-            *unit,
-            root,
-            &root_text,
-            &mut claims,
-            &mut directory_owners,
-            &mut file_owners,
-            &mut diagnostics,
-        );
+        unit_path_claim(u, cwd, *unit, root, &root_text, &mut collected);
     }
-
-    if !diagnostics.is_empty() {
+    if !collected.diagnostics.is_empty() {
         return Ok(Installed {
             basements: basements.to_vec(),
             origins: origins.to_vec(),
-            diagnostics,
+            diagnostics: collected.diagnostics,
         });
     }
 
-    let claims = unique_claims(u, claims);
+    let claims = unique_claims(u, collected.claims);
     let (edges, edge_origins) = indexed_claims(u, &claims);
     let root_owner = directory_owner(u, root);
-    directory_owners.push(root_owner);
-    let directory_owners = sorted(u, directory_owners);
-    let file_owners = sorted(u, file_owners);
+    collected.directory_owners.push(root_owner);
+    let directory_owners = sorted(u, collected.directory_owners);
+    let file_owners = sorted(u, collected.file_owners);
     let nodes = filesystem_nodes(u, &directory_owners, &file_owners);
-
-    // :35. The project root owns the whole filesystem graph.
-    let node_list = u.list(&nodes);
-    let edge_list = u.list(&edges);
-    let graph = u.compound("root_graph", vec![node_list, edge_list]);
-    let empty = u.empty_list();
-    let datalog = u.compound("datalog_program", vec![empty, empty, empty]);
-    let program = u.compound("basement_program", vec![graph, datalog]);
-    let basement = u.compound("module_basement", vec![root_owner, program]);
-    let origin_list = u.list(&edge_origins);
-    let module_origins = u.compound("module_origins", vec![root_owner, origin_list]);
+    let (basement, module_origins) =
+        filesystem_basement(u, root_owner, &nodes, &edges, &edge_origins);
 
     let mut out_basements = vec![basement];
     out_basements.extend_from_slice(basements);
@@ -91,24 +68,49 @@ pub fn install_project_graph(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// What one pass over the project units collects.
+#[derive(Default)]
+pub struct Collected {
+    pub claims: Vec<Claim>,
+    pub directory_owners: Vec<TermId>,
+    pub file_owners: Vec<TermId>,
+    pub diagnostics: Vec<TermId>,
+}
+
+/// `:35`. The project root owns the whole filesystem graph.
+fn filesystem_basement(
+    u: &mut Universe,
+    root_owner: TermId,
+    nodes: &[TermId],
+    edges: &[TermId],
+    edge_origins: &[TermId],
+) -> (TermId, TermId) {
+    let node_list = u.list(nodes);
+    let edge_list = u.list(edges);
+    let graph = u.compound("root_graph", vec![node_list, edge_list]);
+    let empty = u.empty_list();
+    let datalog = u.compound("datalog_program", vec![empty, empty, empty]);
+    let program = u.compound("basement_program", vec![graph, datalog]);
+    let basement = u.compound("module_basement", vec![root_owner, program]);
+    let origin_list = u.list(edge_origins);
+    let module_origins = u.compound("module_origins", vec![root_owner, origin_list]);
+    (basement, module_origins)
+}
+
 fn unit_path_claim(
     u: &mut Universe,
     cwd: &str,
     unit: TermId,
     root: TermId,
     root_text: &str,
-    claims: &mut Vec<Claim>,
-    directory_owners: &mut Vec<TermId>,
-    file_owners: &mut Vec<TermId>,
-    diagnostics: &mut Vec<TermId>,
+    out: &mut Collected,
 ) {
     let Some(unit_parts) = parts(u, unit, "dl7_unit", 5) else {
         // :93. No origin to name, so the subject is the atom none.
         let payload = u.compound("invalid_project_unit", vec![unit]);
         let none = u.atom("none");
         let row = diagnostic(u, "module", none, payload);
-        diagnostics.push(row);
+        out.diagnostics.push(row);
         return;
     };
     let origin = unit_parts[0];
@@ -116,7 +118,7 @@ fn unit_path_claim(
         // :89.
         let payload = u.atom("project_unit_without_file_origin");
         let row = diagnostic(u, "module", origin, payload);
-        diagnostics.push(row);
+        out.diagnostics.push(row);
         return;
     };
     // v7 hands whatever sits inside file/1 straight to relative_file_name/3,
@@ -128,7 +130,7 @@ fn unit_path_claim(
         let payload = u.compound("outside_project_root", vec![root, path]);
         let subject = u.compound("filesystem", vec![path]);
         let row = diagnostic(u, "module", subject, payload);
-        diagnostics.push(row);
+        out.diagnostics.push(row);
         return;
     }
     let Some(segments) = module_path_segments(&relative) else {
@@ -137,7 +139,7 @@ fn unit_path_claim(
         let payload = u.compound("invalid_dl7_module_path", vec![relative_atom]);
         let subject = u.compound("filesystem", vec![path]);
         let row = diagnostic(u, "module", subject, payload);
-        diagnostics.push(row);
+        out.diagnostics.push(row);
         return;
     };
     let root_owner = directory_owner(u, root);
@@ -151,10 +153,10 @@ fn unit_path_claim(
         file_owner,
         path,
         &path_text,
-        claims,
-        directory_owners,
+        &mut out.claims,
+        &mut out.directory_owners,
     );
-    file_owners.push(file_owner);
+    out.file_owners.push(file_owner);
 }
 
 /// `:114-120`. The last part must carry the `dl7` extension and a non-empty

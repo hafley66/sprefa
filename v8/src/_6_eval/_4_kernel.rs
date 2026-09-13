@@ -77,106 +77,79 @@ pub fn int_pair(u: &Universe, args: &[Option<TermId>]) -> Option<(i64, i64)> {
     Some((l, r))
 }
 
-/// A kernel call with some arguments bound. Returns every solution as the
-/// full argument vector; the caller unifies the unbound positions.
+/// Every kernel is a partial function: at most one solution, as the full
+/// argument vector, with the caller unifying the unbound positions.
 pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<TermId>> {
-    match k {
-        Kernel::Nil => {
-            if args.len() != 1 {
-                return vec![];
-            }
-            let empty = u.empty_list();
-            let row = u.compound("const", vec![empty]);
-            vec![vec![row]]
-        }
-        Kernel::Cons => {
-            if args.len() != 3 {
-                return vec![];
-            }
-            if let Some(list) = args[2] {
-                // cons_deconstruct: const([H|T]) with T a proper list
-                let inner = match u.unary(list, "const") {
-                    Some(i) => i,
-                    None => return vec![],
-                };
-                let items = match u.as_list(inner) {
-                    Some(items) if !items.is_empty() => items,
-                    _ => return vec![],
-                };
-                let head = items[0];
-                let rest = u.list(&items[1..]);
-                let tail = u.compound("const", vec![rest]);
-                return vec![vec![head, tail, list]];
-            }
-            if let (Some(head), Some(tail)) = (args[0], args[1]) {
-                let inner = match u.unary(tail, "const") {
-                    Some(i) => i,
-                    None => return vec![],
-                };
-                let mut items = match u.as_list(inner) {
-                    Some(items) => items,
-                    None => return vec![],
-                };
-                items.insert(0, head);
-                let full = u.list(&items);
-                let list = u.compound("const", vec![full]);
-                return vec![vec![head, tail, list]];
-            }
-            vec![]
-        }
-        Kernel::EdgeRef => {
-            if args.len() != 3 {
-                return vec![];
-            }
-            let (owner_tagged, label) = match (args[0], args[1]) {
-                (Some(o), Some(l)) => (o, l),
-                _ => return vec![],
-            };
-            let owner = match u.unary(owner_tagged, "ref") {
-                Some(o) => o,
-                None => return vec![],
-            };
-            let sem = match semantic(u, label) {
-                Some(s) => s,
-                None => return vec![],
-            };
-            let edge = u.compound("edge", vec![owner, sem]);
-            let result = u.compound("ref", vec![edge]);
-            vec![vec![owner_tagged, label, result]]
-        }
-        Kernel::Intern => {
-            if args.len() != 3 {
-                return vec![];
-            }
-            let (ctor_tagged, arguments) = match (args[0], args[1]) {
-                (Some(c), Some(a)) => (c, a),
-                _ => return vec![],
-            };
-            let ctor = match u.unary(ctor_tagged, "ref") {
-                Some(c) => c,
-                None => return vec![],
-            };
-            let tagged_list = match u.unary(arguments, "const").and_then(|l| u.as_list(l)) {
-                Some(l) => l,
-                None => return vec![],
-            };
-            let mut plain = Vec::with_capacity(tagged_list.len());
-            for t in tagged_list {
-                match semantic(u, t) {
-                    Some(s) => plain.push(s),
-                    None => return vec![],
-                }
-            }
-            let plain_list = u.list(&plain);
-            let app = u.compound("application", vec![ctor, plain_list]);
-            let result = u.compound("ref", vec![app]);
-            vec![vec![ctor_tagged, arguments, result]]
-        }
-        Kernel::Int(cmp) => match int_pair(u, args) {
-            Some((l, r)) if cmp.holds(l, r) => vec![vec![args[0].unwrap(), args[1].unwrap()]],
-            _ => vec![],
-        },
+    let solution = match k {
+        Kernel::Nil => nil_row(u, args),
+        Kernel::Cons => cons_row(u, args),
+        Kernel::EdgeRef => edge_ref_row(u, args),
+        Kernel::Intern => intern_row(u, args),
+        Kernel::Int(cmp) => int_row(u, cmp, args),
+    };
+    solution.map(|row| vec![row]).unwrap_or_default()
+}
+
+pub fn nil_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    (args.len() == 1).then(|| {
+        let empty = u.empty_list();
+        vec![u.compound("const", vec![empty])]
+    })
+}
+
+/// Deconstruct when the list is bound, otherwise construct from head and tail.
+pub fn cons_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    if args.len() != 3 {
+        return None;
     }
+    if let Some(list) = args[2] {
+        let items = u.as_list(u.unary(list, "const")?)?;
+        let head = *items.first()?;
+        let rest = u.list(&items[1..]);
+        let tail = u.compound("const", vec![rest]);
+        return Some(vec![head, tail, list]);
+    }
+    let (head, tail) = (args[0]?, args[1]?);
+    let mut items = u.as_list(u.unary(tail, "const")?)?;
+    items.insert(0, head);
+    let full = u.list(&items);
+    let list = u.compound("const", vec![full]);
+    Some(vec![head, tail, list])
+}
+
+pub fn edge_ref_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    if args.len() != 3 {
+        return None;
+    }
+    let (owner_tagged, label) = (args[0]?, args[1]?);
+    let owner = u.unary(owner_tagged, "ref")?;
+    let sem = semantic(u, label)?;
+    let edge = u.compound("edge", vec![owner, sem]);
+    let result = u.compound("ref", vec![edge]);
+    Some(vec![owner_tagged, label, result])
+}
+
+pub fn intern_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    if args.len() != 3 {
+        return None;
+    }
+    let (ctor_tagged, arguments) = (args[0]?, args[1]?);
+    let ctor = u.unary(ctor_tagged, "ref")?;
+    let tagged_list = u.as_list(u.unary(arguments, "const")?)?;
+    let plain: Vec<TermId> = tagged_list
+        .iter()
+        .map(|t| semantic(u, *t))
+        .collect::<Option<_>>()?;
+    let plain_list = u.list(&plain);
+    let app = u.compound("application", vec![ctor, plain_list]);
+    let result = u.compound("ref", vec![app]);
+    Some(vec![ctor_tagged, arguments, result])
+}
+
+pub fn int_row(u: &Universe, cmp: IntCmp, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    let (l, r) = int_pair(u, args)?;
+    cmp.holds(l, r)
+        .then(|| vec![args[0].unwrap(), args[1].unwrap()])
 }
 
 /// Negative kernel goal, only integer comparisons: the complement. Any other

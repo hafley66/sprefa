@@ -8,7 +8,9 @@ use super::program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId}
 use super::stratify::{stratify, Strata};
 use super::table::{Range, Table};
 use super::term::{TermId, Universe};
+use crate::_7_effect::Slice;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Trace {
@@ -148,64 +150,80 @@ impl<'a> Eval<'a> {
         }
         let goal = &rule.body[i];
         let kernel = Kernel::of(self.u, goal.rel);
-        match goal.polarity {
-            Polarity::Negative => {
-                let args: Vec<Option<TermId>> = goal.args.iter().map(|a| env.value(a)).collect();
-                if args.iter().any(|a| a.is_none()) {
-                    return;
-                }
-                let holds = match kernel {
-                    Some(k) => kernel::negative_holds(self.u, k, &args),
-                    None => {
-                        let row: Vec<TermId> = args.iter().map(|a| a.unwrap()).collect();
-                        !self.store.table(goal.rel).is_some_and(|t| t.contains(&row))
-                    }
-                };
-                if holds {
-                    self.solve(rule, i + 1, plan, env, out);
-                }
+        if goal.polarity == Polarity::Negative {
+            if self.negative_goal_holds(goal, kernel, env) {
+                self.solve(rule, i + 1, plan, env, out);
             }
-            Polarity::Positive => {
-                let pattern: Pattern = goal.args.iter().map(|a| env.value(a)).collect();
-                let mut solutions: Vec<Vec<TermId>> = Vec::new();
-                if let (Some(k), false) = (kernel, self.tables_only) {
-                    solutions = kernel::solve(self.u, k, &pattern);
-                    if k == Kernel::Intern {
-                        for row in &solutions {
-                            self.intern_requests.push(row.clone().into_boxed_slice());
-                        }
-                    }
-                }
-                if let Some(table) = self.store.table(goal.rel) {
-                    let bound: Vec<(usize, TermId)> = pattern
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(c, t)| t.map(|t| (c, t)))
-                        .collect();
-                    for id in table.candidates(&bound, plan[i]) {
-                        let row = table.row(id);
-                        if row.len() == goal.args.len() {
-                            solutions.push(row.to_vec());
-                        }
-                    }
-                }
-                let demand = !self.tables_only
-                    && kernel.is_none()
-                    && pattern.iter().any(|t| t.is_some())
-                    && self.rules_by_rel.contains_key(&goal.rel);
-                if demand {
-                    let extra = self.demand(goal.rel, &pattern);
-                    solutions.extend(extra);
-                }
-                for solution in solutions {
-                    let cp = env.checkpoint();
-                    if self.unify_row(goal, &solution, env) {
-                        self.solve(rule, i + 1, plan, env, out);
-                    }
-                    env.undo(cp);
+            return;
+        }
+        for solution in self.positive_solutions(goal, kernel, plan[i], env) {
+            let cp = env.checkpoint();
+            if self.unify_row(goal, &solution, env) {
+                self.solve(rule, i + 1, plan, env, out);
+            }
+            env.undo(cp);
+        }
+    }
+
+    /// A negative goal with an unbound argument never holds; v7's `\+` is
+    /// checked against ground rows only.
+    #[inline]
+    fn negative_goal_holds(&self, goal: &Goal, kernel: Option<Kernel>, env: &Env) -> bool {
+        let args: Vec<Option<TermId>> = goal.args.iter().map(|a| env.value(a)).collect();
+        if args.iter().any(|a| a.is_none()) {
+            return false;
+        }
+        match kernel {
+            Some(k) => kernel::negative_holds(self.u, k, &args),
+            None => {
+                let row: Vec<TermId> = args.iter().map(|a| a.unwrap()).collect();
+                !self.store.table(goal.rel).is_some_and(|t| t.contains(&row))
+            }
+        }
+    }
+
+    /// Kernel rows, then stored rows in the goal's plan range, then the
+    /// top-down rows a bound pattern demands.
+    #[inline]
+    fn positive_solutions(
+        &mut self,
+        goal: &Goal,
+        kernel: Option<Kernel>,
+        range: Range,
+        env: &Env,
+    ) -> Vec<Vec<TermId>> {
+        let pattern: Pattern = goal.args.iter().map(|a| env.value(a)).collect();
+        let mut solutions: Vec<Vec<TermId>> = Vec::new();
+        if let (Some(k), false) = (kernel, self.tables_only) {
+            solutions = kernel::solve(self.u, k, &pattern);
+            if k == Kernel::Intern {
+                for row in &solutions {
+                    self.intern_requests.push(row.clone().into_boxed_slice());
                 }
             }
         }
+        if let Some(table) = self.store.table(goal.rel) {
+            let bound: Vec<(usize, TermId)> = pattern
+                .iter()
+                .enumerate()
+                .filter_map(|(c, t)| t.map(|t| (c, t)))
+                .collect();
+            for id in table.candidates(&bound, range) {
+                let row = table.row(id);
+                if row.len() == goal.args.len() {
+                    solutions.push(row.to_vec());
+                }
+            }
+        }
+        let demand = !self.tables_only
+            && kernel.is_none()
+            && pattern.iter().any(|t| t.is_some())
+            && self.rules_by_rel.contains_key(&goal.rel);
+        if demand {
+            let extra = self.demand(goal.rel, &pattern);
+            solutions.extend(extra);
+        }
+        solutions
     }
 
     /// Top-down proof of a derived relation under bindings, the part of v7's
@@ -312,23 +330,14 @@ fn fire(
     requests.append(&mut eval.intern_requests);
 }
 
-/// Port of `derive_aggregate_rows/4`: every body proof over the completed
-/// lower rows is one bag entry; plain head positions form the group key.
-fn aggregate_rows(
+/// `completed_body_holds/2`: one bag entry per body proof over the stored
+/// rows, with a non-ground head rejecting the whole rule.
+fn aggregate_proofs(
     u: &mut Universe,
     store: &Store,
     rules_by_rel: &HashMap<TermId, Vec<&Rule>>,
     rule: &Rule,
-) -> Result<Sink, Diagnostic> {
-    let count_args = rule.count_args();
-    if count_args != 1 {
-        let n = u.int(count_args as i64);
-        let payload = u.compound("malformed_aggregate_head", vec![n]);
-        return Err(Diagnostic {
-            phase: "evaluate",
-            payload,
-        });
-    }
+) -> Result<Vec<Vec<TermId>>, Diagnostic> {
     let plan: Plan = rule.body.iter().map(|_| Range::All).collect();
     let mut proofs: Vec<Vec<TermId>> = Vec::new();
     let mut non_ground = false;
@@ -355,6 +364,27 @@ fn aggregate_rows(
             payload,
         });
     }
+    Ok(proofs)
+}
+
+/// Port of `derive_aggregate_rows/4`: every body proof over the completed
+/// lower rows is one bag entry; plain head positions form the group key.
+fn aggregate_rows(
+    u: &mut Universe,
+    store: &Store,
+    rules_by_rel: &HashMap<TermId, Vec<&Rule>>,
+    rule: &Rule,
+) -> Result<Sink, Diagnostic> {
+    let count_args = rule.count_args();
+    if count_args != 1 {
+        let n = u.int(count_args as i64);
+        let payload = u.compound("malformed_aggregate_head", vec![n]);
+        return Err(Diagnostic {
+            phase: "evaluate",
+            payload,
+        });
+    }
+    let proofs = aggregate_proofs(u, store, rules_by_rel, rule)?;
     let count_pos = rule
         .head
         .iter()
@@ -363,7 +393,7 @@ fn aggregate_rows(
     let mut groups: HashMap<Vec<TermId>, i64> = HashMap::new();
     let mut order: Vec<Vec<TermId>> = Vec::new();
     for proof in proofs {
-        let mut key = proof.clone();
+        let mut key = proof;
         key.remove(count_pos);
         let e = groups.entry(key.clone()).or_insert_with(|| {
             order.push(key);
@@ -383,8 +413,31 @@ fn aggregate_rows(
     Ok(rows)
 }
 
+/// The semi-naive fixpoint as a reducer over its own row store.
+pub struct Evaluate<'a>(PhantomData<&'a ()>);
+
+impl<'a> Slice for Evaluate<'a> {
+    type State = Store;
+    type Event = (&'a mut Universe, &'a Program);
+    type Output = Closure;
+    type Effect = Trace;
+
+    fn reduce(store: &mut Store, (u, program): Self::Event, fx: &mut dyn FnMut(Trace)) -> Closure {
+        evaluate_into(store, u, program, fx)
+    }
+}
+
 #[tracing::instrument(skip_all, fields(rules = program.rules.len(), seeds = program.seeds.len()))]
 pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
+    Evaluate::reduce(&mut Store::default(), (u, program), fx)
+}
+
+fn evaluate_into(
+    store: &mut Store,
+    u: &mut Universe,
+    program: &Program,
+    fx: &mut dyn FnMut(Trace),
+) -> Closure {
     let (strata, diagnostics) = stratify(u, program);
     if !diagnostics.is_empty() {
         return Closure {
@@ -392,7 +445,6 @@ pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) 
             diagnostics,
         };
     }
-    let mut store = Store::default();
     let mut requests: Vec<Box<[TermId]>> = Vec::new();
 
     let nil_rel = {
@@ -442,7 +494,7 @@ pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) 
         let mut aggregate_diags = Vec::new();
         let mut aggregate_seeds = Vec::new();
         for rule in &aggregate {
-            match aggregate_rows(u, &store, &rules_by_rel, rule) {
+            match aggregate_rows(u, store, &rules_by_rel, rule) {
                 Ok(rows) => aggregate_seeds.extend(rows),
                 Err(d) => aggregate_diags.push(d),
             }
@@ -476,7 +528,7 @@ pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) 
                     let plan: Plan = rule.body.iter().map(|_| Range::All).collect();
                     fire(
                         u,
-                        &store,
+                        store,
                         &rules_by_rel,
                         rule,
                         &plan,
@@ -504,7 +556,7 @@ pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) 
                             .collect();
                         fire(
                             u,
-                            &store,
+                            store,
                             &rules_by_rel,
                             rule,
                             &plan,

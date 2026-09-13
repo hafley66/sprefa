@@ -60,7 +60,7 @@ pub fn expand_unit_with_macros(
     macro_program: &MacroProgram,
     fx: &mut dyn FnMut(Wave),
 ) -> (Option<TermId>, Vec<TermId>) {
-    let Some(("dl7_unit", args)) = u.functor(unit).map(|(n, a)| (n, a.to_vec())) else {
+    let Some(args) = u.args::<5>(unit, "dl7_unit") else {
         let macrotime = u.atom("macrotime");
         let none = u.atom("none");
         let reason = u.compound("invalid_dl7_unit", vec![unit]);

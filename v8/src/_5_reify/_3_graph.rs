@@ -42,35 +42,44 @@ fn row_parts(u: &Universe, row: TermId) -> Option<(String, Vec<TermId>)> {
 pub fn logical_program_graph_rows(u: &mut Universe, checked: TermId) -> Result<Vec<TermId>, Stop> {
     let rows = logical_program_rows_term(u, checked)?;
     let mut out = Vec::new();
+    for id in occurrence_ids(u, &rows) {
+        out.push(u.compound("node", vec![id]));
+        out.push(u.compound("product", vec![id]));
+    }
+    out.extend(graph_edges(u, &rows)?);
+    Ok(prolog_sort(u, out))
+}
 
-    // :90-108, then :51-52. Nodes and products carry the same occurrence set.
-    let mut occurrences = Vec::new();
-    for row in &rows {
+/// `:90-108`, then `:51-52`. Nodes and products carry the same occurrence set.
+pub fn occurrence_ids(u: &mut Universe, rows: &[TermId]) -> Vec<TermId> {
+    let mut out = Vec::new();
+    for row in rows {
         let Some((name, args)) = row_parts(u, *row) else {
             continue;
         };
         match (name.as_str(), args.len()) {
-            ("program_seed", 2) | ("program_rule", 2) => occurrences.push(logical_id(u, args[0])),
-            ("program_goal", 4) => occurrences.push(goal_id(u, args[0], args[1])),
-            ("program_apply", 2) => occurrences.push(logical_id(u, args[0])),
-            ("program_argument", 3) => occurrences.push(logical_id(u, args[2])),
+            ("program_seed", 2) | ("program_rule", 2) => out.push(logical_id(u, args[0])),
+            ("program_goal", 4) => out.push(goal_id(u, args[0], args[1])),
+            ("program_apply", 2) => out.push(logical_id(u, args[0])),
+            ("program_argument", 3) => out.push(logical_id(u, args[2])),
             ("program_edge", 4) => {
                 let input = u.atom("input");
                 if args[1] == input {
                     if let Some(id) = u.unary(args[2], "ref") {
-                        occurrences.push(logical_id(u, id));
+                        out.push(logical_id(u, id));
                     }
                 }
             }
             _ => {}
         }
     }
-    for id in &occurrences {
-        out.push(u.compound("node", vec![*id]));
-        out.push(u.compound("product", vec![*id]));
-    }
+    out
+}
 
-    for row in &rows {
+/// `:54-88`. One reified row to its head, body, call, apply and argument edges.
+pub fn graph_edges(u: &mut Universe, rows: &[TermId]) -> Result<Vec<TermId>, Stop> {
+    let mut out = Vec::new();
+    for row in rows {
         let Some((name, args)) = row_parts(u, *row) else {
             continue;
         };
@@ -131,7 +140,7 @@ pub fn logical_program_graph_rows(u: &mut Universe, checked: TermId) -> Result<V
             _ => {}
         }
     }
-    Ok(prolog_sort(u, out))
+    Ok(out)
 }
 
 /// `:115-120`.

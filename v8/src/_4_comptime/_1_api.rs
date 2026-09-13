@@ -2,10 +2,11 @@
 //! v7's `:- dynamic` round caches are not ported; fork F1 in the PLAN.
 
 use super::finish::finish_evaluation;
-use super::rounds::{rounds, Round};
+use super::rounds::{Round, RoundInput, RoundState, Rounds};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::{Checked, Stop};
 use crate::_6_eval::term::{TermId, Universe};
+use crate::_7_effect::Slice;
 
 /// `compiled_unit(TypeGraphFacts, RuntimeProgram, CompilerFacts)` at `:910`.
 pub struct Compiled {
@@ -59,18 +60,15 @@ pub fn evaluate_checked(
     let initial_edges = prolog_sort(u, initial);
     let initial_requests = intern_rows(u, &base_seeds);
 
-    let outcome = rounds(
-        u,
-        &checked.rules,
-        &checked.relations,
-        &base_seeds,
-        initial_edges,
-        initial_requests,
-        Vec::new(),
-        Vec::new(),
-        1,
-        fx,
-    )?;
+    let mut st = RoundState::seeded(initial_edges, initial_requests, Vec::new(), Vec::new());
+    let input = RoundInput {
+        u: &mut *u,
+        authored_rules: &checked.rules,
+        base_relations: &checked.relations,
+        base_seeds: &base_seeds,
+        outer: 1,
+    };
+    let outcome = Rounds::reduce(&mut st, input, fx)?;
     finish_evaluation(u, outcome, sources, fx)
 }
 

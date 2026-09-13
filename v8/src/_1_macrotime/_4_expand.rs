@@ -10,6 +10,8 @@ use super::_2_protocol::{
 };
 use super::_3_rewrite::rewrite_active_graph;
 use crate::_6_eval::{evaluate, Program, Row, TermId, Trace, Universe};
+use crate::_7_effect::{reduce_then_apply, Slice};
+use std::marker::PhantomData;
 
 pub const WAVE_LIMIT: i64 = 64;
 
@@ -50,7 +52,38 @@ pub fn expand(
     )
 }
 
+/// The wave fixpoint as a reducer; the state is the row set being rewritten.
+pub struct Expand<'a>(PhantomData<&'a ()>);
+
+impl<'a> Slice for Expand<'a> {
+    type State = Vec<TermId>;
+    type Event = (&'a mut Universe, &'a MacroProgram);
+    type Output = (Vec<TermId>, Vec<TermId>, Vec<TermId>);
+    type Effect = Wave;
+
+    fn reduce(
+        st: &mut Vec<TermId>,
+        (u, macro_program): Self::Event,
+        fx: &mut dyn FnMut(Wave),
+    ) -> Self::Output {
+        expand_rows(u, std::mem::take(st), macro_program, fx)
+    }
+}
+
 pub fn expand_terms(
+    u: &mut Universe,
+    rows: Vec<TermId>,
+    macro_program: &MacroProgram,
+    fx: &mut dyn FnMut(Wave),
+) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
+    let mut state = rows;
+    let mut waves = Vec::new();
+    reduce_then_apply::<Expand>(&mut state, (u, macro_program), &mut waves, |_, wave| {
+        fx(wave)
+    })
+}
+
+fn expand_rows(
     u: &mut Universe,
     rows: Vec<TermId>,
     macro_program: &MacroProgram,
@@ -73,21 +106,23 @@ pub fn expand_terms(
     }
 
     let selected = macro_rules(u, &protocol, &macro_program.program.rules);
-    let rules: Vec<_> = selected
-        .iter()
-        .map(|i| macro_program.program.rules[*i].clone())
-        .collect();
+    // The rule cone is fixed for the whole expansion; only the seeds move.
+    let mut program = Program {
+        rules: selected
+            .iter()
+            .map(|i| macro_program.program.rules[*i].clone())
+            .collect(),
+        seeds: Vec::new(),
+    };
     let none = u.atom("none");
     let mut seen: Vec<Vec<TermId>> = vec![graph.rows.clone()];
     let mut origin: Vec<TermId> = Vec::new();
 
     for wave in 0..WAVE_LIMIT {
-        let mut seeds = macro_program.program.seeds.clone();
-        seeds.extend(syntax_seeds(u, &protocol, &graph.rows));
-        let program = Program {
-            rules: rules.clone(),
-            seeds,
-        };
+        program.seeds = macro_program.program.seeds.clone();
+        program
+            .seeds
+            .extend(syntax_seeds(u, &protocol, &graph.rows));
         let closure = evaluate(u, &program, &mut |_: Trace| {});
         if !closure.diagnostics.is_empty() {
             let terms = closure

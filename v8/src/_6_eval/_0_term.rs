@@ -148,6 +148,16 @@ impl Universe {
         }
     }
 
+    /// The arguments of `name/N` copied into a fixed array, so the caller can
+    /// go on mutating the universe without a heap row per read.
+    pub fn args<const N: usize>(&self, id: TermId, name: &str) -> Option<[TermId; N]> {
+        let (functor, args) = self.functor(id)?;
+        if functor != name || args.len() != N {
+            return None;
+        }
+        Some(std::array::from_fn(|i| args[i]))
+    }
+
     /// SWI-Prolog standard order as measured on 9.x:
     /// Number < String < `[]` < Atom < Compound. Compounds compare by arity,
     /// then name, then arguments left to right.

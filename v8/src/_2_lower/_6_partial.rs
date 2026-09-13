@@ -65,17 +65,7 @@ fn build(
     partial: TermId,
     rule_index: i64,
 ) -> Option<PartialRules> {
-    let (descriptor, bound_list) = {
-        let (name, args) = cx.u.functor(partial)?;
-        if name != "partial_application" || args.len() != 2 {
-            return None;
-        }
-        (args[0], args[1])
-    };
-    let (callable_term, arity, return_index) = {
-        let (_, args) = cx.u.functor(descriptor)?;
-        (args[2], cx.u.as_int(args[3])?, cx.u.as_int(args[5])?)
-    };
+    let (callable_term, arity, return_index, bound_list) = partial_parts(cx, partial)?;
     // :483. target(Id) identifies as Id; kernel(N) identifies as itself.
     let callable = cx.u.unary(callable_term, "target").unwrap_or(callable_term);
     let curry = product_target(cx, owner, "Curry")?;
@@ -98,23 +88,7 @@ fn build(
     let partial_call_rule = empty_rule(cx, owner, "PartialCall", |cx| {
         vec![cx.compound("ref", vec![call_owner])]
     });
-    let return_edge_rule = {
-        let call_ref = cx.compound("ref", vec![call_owner]);
-        let return_atom = cx.atom("return");
-        let label_const = cx.compound("const", vec![return_atom]);
-        let partial_ref = cx.compound("ref", vec![partial_node]);
-        let ordinal = cx.int(return_index);
-        let index_const = cx.compound("const", vec![ordinal]);
-        colon_rule(
-            cx,
-            owner,
-            call_ref,
-            label_const,
-            partial_ref,
-            index_const,
-            &[],
-        )
-    };
+    let return_edge_rule = partial_return_rule(cx, owner, call_owner, partial_node, return_index);
     let (edge_rule, edge_goal_nodes) = partial_edge_rule(cx, label, owner, partial_node, index);
 
     let mut rules = vec![apply_rule, partial_call_rule];
@@ -130,6 +104,46 @@ fn build(
         edge_rule_index,
     ));
     Some(PartialRules { rules, origins })
+}
+
+/// `:470`. `partial_application(Descriptor, Bound)` split into the callable
+/// term, its arity, its return position and the bound-argument list.
+fn partial_parts(cx: &Cx, partial: TermId) -> Option<(TermId, i64, i64, TermId)> {
+    let (name, args) = cx.u.functor(partial)?;
+    if name != "partial_application" || args.len() != 2 {
+        return None;
+    }
+    let (descriptor, bound_list) = (args[0], args[1]);
+    let (_, descriptor_args) = cx.u.functor(descriptor)?;
+    let callable_term = descriptor_args[2];
+    let arity = cx.u.as_int(descriptor_args[3])?;
+    let return_index = cx.u.as_int(descriptor_args[5])?;
+    Some((callable_term, arity, return_index, bound_list))
+}
+
+/// `:497`. The Curry node arrives on the call's `return` edge.
+fn partial_return_rule(
+    cx: &mut Cx,
+    owner: TermId,
+    call_owner: TermId,
+    partial_node: TermId,
+    return_index: i64,
+) -> TermId {
+    let call_ref = cx.compound("ref", vec![call_owner]);
+    let return_atom = cx.atom("return");
+    let label_const = cx.compound("const", vec![return_atom]);
+    let partial_ref = cx.compound("ref", vec![partial_node]);
+    let ordinal = cx.int(return_index);
+    let index_const = cx.compound("const", vec![ordinal]);
+    colon_rule(
+        cx,
+        owner,
+        call_ref,
+        label_const,
+        partial_ref,
+        index_const,
+        &[],
+    )
 }
 
 /// `:415`. `Curry` and `Literal` must resolve to products in this scope.

@@ -236,77 +236,81 @@ fn text<'a>(object: &'a Object, key: &str) -> Option<&'a str> {
     }
 }
 
-/// `:214-250`.
+fn int_field(u: &mut Universe, object: &Object, key: &str) -> Option<TermId> {
+    Some(u.int(integer(object, key)?))
+}
+
+/// The scope is a list of digest atoms; a non-string entry voids the record.
+fn decode_run(u: &mut Universe, object: &Object) -> Option<TermId> {
+    let mode = text(object, "mode")?;
+    if mode != "syntax" && mode != "semantic" {
+        return None;
+    }
+    let tool = text(object, "tool")?;
+    let version = text(object, "version")?;
+    let run = integer(object, "run")?;
+    let scope_values = object.get("scope")?.as_array()?;
+    let mut scope = Vec::with_capacity(scope_values.len());
+    for value in scope_values {
+        let Value::String(digest) = value else {
+            return None;
+        };
+        scope.push(u.atom(digest));
+    }
+    let run = u.int(run);
+    let mode = u.atom(mode);
+    let tool = u.atom(tool);
+    let version = u.atom(version);
+    let scope = u.list(&scope);
+    Some(u.compound("extract_run", vec![run, mode, tool, version, scope]))
+}
+
+/// `:214-250`. Every field is read before anything is interned, so a record
+/// that turns out malformed leaves no term behind.
 fn decode_record(u: &mut Universe, record: &str, object: &Object) -> Option<TermId> {
     match record {
         "protocol" => {
-            let version = u.int(integer(object, "version")?);
+            let version = int_field(u, object, "version")?;
             Some(u.compound("extract_protocol", vec![version]))
         }
-        "run" => {
-            let run = integer(object, "run")?;
-            let mode = text(object, "mode")?;
-            if mode != "syntax" && mode != "semantic" {
-                return None;
-            }
-            let tool = text(object, "tool")?.to_string();
-            let version = text(object, "version")?.to_string();
-            let scope_values = object.get("scope")?.as_array()?;
-            let mut scope = Vec::with_capacity(scope_values.len());
-            for value in scope_values {
-                let Value::String(digest) = value else {
-                    return None;
-                };
-                scope.push(u.atom(digest));
-            }
-            let run = u.int(run);
-            let mode = u.atom(mode);
-            let tool = u.atom(&tool);
-            let version = u.atom(&version);
-            let scope = u.list(&scope);
-            Some(u.compound("extract_run", vec![run, mode, tool, version, scope]))
-        }
+        "run" => decode_run(u, object),
         "fact" => {
+            let relation = text(object, "relation")?;
             let fact = integer(object, "fact")?;
-            let relation = text(object, "relation")?.to_string();
             let argument_values = object.get("args")?.as_array()?;
             let mut arguments = Vec::with_capacity(argument_values.len());
             for value in argument_values {
                 arguments.push(decode_argument(u, value)?);
             }
             let fact = u.int(fact);
-            let relation = u.atom(&relation);
+            let relation = u.atom(relation);
             let arguments = u.list(&arguments);
             Some(u.compound("extract_fact", vec![fact, relation, arguments]))
         }
         "witness" => {
-            let fact = integer(object, "fact")?;
-            let run = integer(object, "run")?;
-            let method = text(object, "method")?.to_string();
-            let fact = u.int(fact);
-            let run = u.int(run);
-            let method = u.atom(&method);
+            let method = text(object, "method")?;
+            let fact = int_field(u, object, "fact")?;
+            let run = int_field(u, object, "run")?;
+            let method = u.atom(method);
             Some(u.compound("extract_witness", vec![fact, run, method]))
         }
         "coverage" => {
-            let run = integer(object, "run")?;
-            let relation = text(object, "relation")?.to_string();
+            let relation = text(object, "relation")?;
             let coverage = text(object, "coverage")?;
             if coverage != "partial" && coverage != "complete" {
                 return None;
             }
-            let run = u.int(run);
-            let relation = u.atom(&relation);
+            let run = int_field(u, object, "run")?;
+            let relation = u.atom(relation);
             let coverage = u.atom(coverage);
             Some(u.compound("extract_coverage", vec![run, relation, coverage]))
         }
         "diagnostic" => {
-            let run = integer(object, "run")?;
-            let relation = text(object, "relation")?.to_string();
-            let detail = text(object, "detail")?.to_string();
-            let run = u.int(run);
-            let relation = u.atom(&relation);
-            let detail = u.atom(&detail);
+            let relation = text(object, "relation")?;
+            let detail = text(object, "detail")?;
+            let run = int_field(u, object, "run")?;
+            let relation = u.atom(relation);
+            let detail = u.atom(detail);
             Some(u.compound("extract_diagnostic", vec![run, relation, detail]))
         }
         _ => None,

@@ -108,76 +108,25 @@ fn relation_arities(u: &Universe, relations: &[TermId]) -> HashMap<TermId, TermI
     out
 }
 
+/// The buckets `index` fills row by row, before the named families are read
+/// back out of them.
+#[derive(Default)]
+pub struct Scratch {
+    pub named: HashMap<String, Vec<TermId>>,
+    pub by_rel: HashMap<TermId, Vec<Vec<TermId>>>,
+    pub def_ids: Vec<TermId>,
+    pub head_ids: Vec<TermId>,
+    pub fragment_ids: Vec<TermId>,
+}
+
 pub fn index(u: &mut Universe, rows: &[TermId]) -> Cx {
     let mut cx = Cx::default();
-    let mut named: HashMap<String, Vec<TermId>> = HashMap::new();
-    let mut by_rel: HashMap<TermId, Vec<Vec<TermId>>> = HashMap::new();
-    let mut def_ids = Vec::new();
-    let mut head_ids = Vec::new();
-    let mut fragment_ids = Vec::new();
-
+    let mut scratch = Scratch::default();
     for row in rows {
-        let Some((rel, args)) = call_parts(u, *row) else {
-            continue;
-        };
-        if is_kernel_ref(u, rel, ":") && args.len() == 4 {
-            if let Some(owner) = ref_of(u, args[0]) {
-                cx.colon_by_owner
-                    .entry(owner)
-                    .or_default()
-                    .push([args[1], args[2], args[3]]);
-            }
-            if let (Some(name), Some(target), Some(_)) = (
-                const_of(u, args[1]).and_then(|n| atom_text(u, n)),
-                ref_of(u, args[2]),
-                const_of(u, args[3]),
-            ) {
-                if ref_of(u, args[0]).is_some() {
-                    named.entry(name).or_default().push(target);
-                }
-            }
-            continue;
-        }
-        if is_kernel_ref(u, rel, "def") && args.len() == 2 {
-            if let Some(id) = ref_of(u, args[0]) {
-                def_ids.push(id);
-                if let Some(arity) = const_of(u, args[1]) {
-                    cx.def_arities.entry(id).or_default().push(arity);
-                }
-            }
-            continue;
-        }
-        if is_kernel_ref(u, rel, "head") && args.len() == 2 {
-            if let Some(id) = ref_of(u, args[0]) {
-                head_ids.push(id);
-                if let Some(application) = ref_of(u, args[1]) {
-                    cx.head_apps.entry(id).or_default().push(application);
-                }
-            }
-            continue;
-        }
-        if is_kernel_ref(u, rel, "body") {
-            if let Some(id) = args.first().and_then(|a| ref_of(u, *a)) {
-                fragment_ids.push(id);
-                if args.len() == 4 {
-                    if let Some(goal) = const_of(u, args[1]) {
-                        let header = match (const_of(u, args[2]), ref_of(u, args[3])) {
-                            (Some(polarity), Some(application)) => Some((polarity, application)),
-                            _ => None,
-                        };
-                        cx.body_by_rule.entry(id).or_default().push((goal, header));
-                    }
-                }
-            }
-            continue;
-        }
-        if let Some(id) = ref_of(u, rel) {
-            by_rel.entry(id).or_default().push(args);
-        }
+        index_row(u, &mut cx, &mut scratch, *row);
     }
-
-    for apply in named.get("Apply").into_iter().flatten() {
-        for args in by_rel.get(apply).into_iter().flatten() {
+    for apply in scratch.named.get("Apply").into_iter().flatten() {
+        for args in scratch.by_rel.get(apply).into_iter().flatten() {
             if args.len() != 2 {
                 continue;
             }
@@ -186,12 +135,73 @@ pub fn index(u: &mut Universe, rows: &[TermId]) -> Cx {
             }
         }
     }
-    cx.variables = node_family(u, &named, "Variable", &by_rel, true);
-    cx.literals = node_family(u, &named, "Literal", &by_rel, false);
-    cx.def_ids = sorted_unique(u, def_ids);
-    cx.head_ids = sorted_unique(u, head_ids);
-    cx.fragment_ids = sorted_unique(u, fragment_ids);
+    cx.variables = node_family(u, &scratch.named, "Variable", &scratch.by_rel, true);
+    cx.literals = node_family(u, &scratch.named, "Literal", &scratch.by_rel, false);
+    cx.def_ids = sorted_unique(u, scratch.def_ids);
+    cx.head_ids = sorted_unique(u, scratch.head_ids);
+    cx.fragment_ids = sorted_unique(u, scratch.fragment_ids);
     cx
+}
+
+/// `:352`. One compiler row into whichever bucket its kernel relation names.
+pub fn index_row(u: &mut Universe, cx: &mut Cx, scratch: &mut Scratch, row: TermId) {
+    let Some((rel, args)) = call_parts(u, row) else {
+        return;
+    };
+    if is_kernel_ref(u, rel, ":") && args.len() == 4 {
+        if let Some(owner) = ref_of(u, args[0]) {
+            cx.colon_by_owner
+                .entry(owner)
+                .or_default()
+                .push([args[1], args[2], args[3]]);
+        }
+        if let (Some(name), Some(target), Some(_)) = (
+            const_of(u, args[1]).and_then(|n| atom_text(u, n)),
+            ref_of(u, args[2]),
+            const_of(u, args[3]),
+        ) {
+            if ref_of(u, args[0]).is_some() {
+                scratch.named.entry(name).or_default().push(target);
+            }
+        }
+        return;
+    }
+    if is_kernel_ref(u, rel, "def") && args.len() == 2 {
+        if let Some(id) = ref_of(u, args[0]) {
+            scratch.def_ids.push(id);
+            if let Some(arity) = const_of(u, args[1]) {
+                cx.def_arities.entry(id).or_default().push(arity);
+            }
+        }
+        return;
+    }
+    if is_kernel_ref(u, rel, "head") && args.len() == 2 {
+        if let Some(id) = ref_of(u, args[0]) {
+            scratch.head_ids.push(id);
+            if let Some(application) = ref_of(u, args[1]) {
+                cx.head_apps.entry(id).or_default().push(application);
+            }
+        }
+        return;
+    }
+    if is_kernel_ref(u, rel, "body") {
+        if let Some(id) = args.first().and_then(|a| ref_of(u, *a)) {
+            scratch.fragment_ids.push(id);
+            if args.len() == 4 {
+                if let Some(goal) = const_of(u, args[1]) {
+                    let header = match (const_of(u, args[2]), ref_of(u, args[3])) {
+                        (Some(polarity), Some(application)) => Some((polarity, application)),
+                        _ => None,
+                    };
+                    cx.body_by_rule.entry(id).or_default().push((goal, header));
+                }
+            }
+        }
+        return;
+    }
+    if let Some(id) = ref_of(u, rel) {
+        scratch.by_rel.entry(id).or_default().push(args);
+    }
 }
 
 /// `variable_node_rows/3` at `:379` and `literal_node_rows/3` at `:388`. The
@@ -204,11 +214,9 @@ fn node_family(
     variable: bool,
 ) -> HashMap<TermId, Vec<TermId>> {
     let mut out: HashMap<TermId, Vec<TermId>> = HashMap::new();
-    let empty = Vec::new();
-    let relations = named.get(family).unwrap_or(&empty).clone();
+    let relations = named.get(family).map_or(&[][..], |v| v.as_slice());
     for rel in relations {
-        let rows = by_rel.get(&rel).cloned().unwrap_or_default();
-        for args in rows {
+        for args in by_rel.get(rel).into_iter().flatten() {
             if args.len() != 3 {
                 continue;
             }
@@ -386,7 +394,7 @@ fn assemble_body(
             diagnostics.push(diagnostic(u, "assemble", reason));
             continue;
         };
-        let Some(("goal", parts)) = u.functor(*only).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(parts) = u.args::<2>(*only, "goal") else {
             continue;
         };
         let (polarity_term, application) = (parts[0], parts[1]);
@@ -550,7 +558,7 @@ fn node_result(
     let literals = sorted_unique(u, cx.literals.get(&node).cloned().unwrap_or_default());
     if literals.is_empty() {
         if let [only] = variables.as_slice() {
-            if let Some(("variable", parts)) = u.functor(*only).map(|(n, a)| (n, a.to_vec())) {
+            if let Some(parts) = u.args::<2>(*only, "variable") {
                 let named = matches!(u.get(parts[1]), Term::Atom(_) | Term::Str(_));
                 if parts[0] == rule_id && named {
                     let generated = u.compound("generated", vec![rule_id, parts[1]]);
@@ -561,7 +569,7 @@ fn node_result(
     }
     if variables.is_empty() {
         if let [only] = literals.as_slice() {
-            if let Some(("literal", parts)) = u.functor(*only).map(|(n, a)| (n, a.to_vec())) {
+            if let Some(parts) = u.args::<2>(*only, "literal") {
                 if u.unary(parts[1], "const").is_some() {
                     return Ok(parts[1]);
                 }

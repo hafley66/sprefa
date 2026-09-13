@@ -6,10 +6,11 @@ use super::api::{
     kernel_call_args, source_application_edges, Compiled, Generated, Refreeze, Sources,
 };
 use super::host::{erase_host_planning_rows, validate_hosted_relations};
-use super::rounds::{rounds, Round, RoundOutcome, COMPILER_ROUND_LIMIT};
+use super::rounds::{Round, RoundInput, RoundOutcome, RoundState, Rounds, COMPILER_ROUND_LIMIT};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::{check_resolved_rules, Checked, Stop};
 use crate::_6_eval::term::{Term, TermId, Universe};
+use crate::_7_effect::Slice;
 use std::collections::HashMap;
 
 type Outcome = Result<(Option<Compiled>, Vec<TermId>), Stop>;
@@ -126,18 +127,20 @@ pub fn expand_source_compiler(
     let frozen_edges = prolog_sort(u, frozen);
     let frozen_requests = intern_rows(u, &facts);
 
-    let next = rounds(
-        u,
-        &checked.rules,
-        &base_relations,
-        &base_seeds,
+    let mut st = RoundState::seeded(
         frozen_edges,
         frozen_requests,
         generated.relations.clone(),
         generated.rules.clone(),
+    );
+    let input = RoundInput {
+        u: &mut *u,
+        authored_rules: &checked.rules,
+        base_relations: &base_relations,
+        base_seeds: &base_seeds,
         outer,
-        fx,
-    )?;
+    };
+    let next = Rounds::reduce(&mut st, input, fx)?;
     if !next.diagnostics.is_empty() {
         return Ok((None, next.diagnostics));
     }
@@ -240,7 +243,7 @@ pub fn derived_bind_diagnostics(
     let mut bind = Vec::new();
     let mut label = Vec::new();
     for rule in rules {
-        let Some(("rule", args)) = u.functor(*rule).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(args) = u.args::<2>(*rule, "rule") else {
             continue;
         };
         let Some([owner, name, value, index]) = colon_call_parts(u, args[0]) else {
@@ -278,14 +281,12 @@ fn located(u: &mut Universe, phase: &str, node: TermId, reason: TermId) -> TermI
     u.compound("diagnostic", vec![phase, node, reason])
 }
 
-/// `0_evaluator.pl:557`. Declared zero-based functional keys over a closure.
-pub fn validate_functional_rows(
-    u: &mut Universe,
-    relations: &[TermId],
-    rows: &[TermId],
-) -> Vec<TermId> {
+/// One row and its argument list, grouped by the relation it calls.
+type RelationRows = HashMap<TermId, Vec<(TermId, Vec<TermId>)>>;
+
+fn rows_by_relation(u: &mut Universe, rows: &[TermId]) -> RelationRows {
     let sorted = prolog_sort(u, rows.to_vec());
-    let mut by_relation: HashMap<TermId, Vec<(TermId, Vec<TermId>)>> = HashMap::new();
+    let mut out: RelationRows = HashMap::new();
     for row in &sorted {
         let Some(("call", args)) = u.functor(*row) else {
             continue;
@@ -293,11 +294,21 @@ pub fn validate_functional_rows(
         let Some(items) = u.as_list(args[1]) else {
             continue;
         };
-        by_relation.entry(args[0]).or_default().push((*row, items));
+        out.entry(args[0]).or_default().push((*row, items));
     }
+    out
+}
+
+/// `0_evaluator.pl:557`. Declared zero-based functional keys over a closure.
+pub fn validate_functional_rows(
+    u: &mut Universe,
+    relations: &[TermId],
+    rows: &[TermId],
+) -> Vec<TermId> {
+    let by_relation = rows_by_relation(u, rows);
     let mut out = Vec::new();
     for declaration in relations {
-        let Some(("relation", args)) = u.functor(*declaration).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(args) = u.args::<3>(*declaration, "relation") else {
             continue;
         };
         let (relation, key_sets) = (args[0], args[2]);
@@ -308,51 +319,64 @@ pub fn validate_functional_rows(
             continue;
         };
         for positions_term in key_sets {
-            let Some(positions) = u.as_list(positions_term) else {
-                continue;
-            };
-            let mut keyed: Vec<(Vec<TermId>, TermId)> = Vec::new();
-            for (row, items) in &relation_rows {
-                let mut key = Vec::with_capacity(positions.len());
-                for position in &positions {
-                    let Some(at) = u.as_int(*position).and_then(|n| items.get(n as usize)) else {
-                        key.clear();
-                        break;
-                    };
-                    key.push(*at);
-                }
-                if key.len() == positions.len() {
-                    keyed.push((key, *row));
-                }
-            }
-            keyed.sort_by(|a, b| u.cmp_rows(&a.0, &b.0));
-            let mut start = 0;
-            while start < keyed.len() {
-                let mut end = start + 1;
-                while end < keyed.len() && keyed[end].0 == keyed[start].0 {
-                    end += 1;
-                }
-                for left in start..end {
-                    for right in (left + 1)..end {
-                        let values = u.list(&keyed[start].0);
-                        let reason = u.compound(
-                            "functional_key_conflict",
-                            vec![
-                                relation,
-                                positions_term,
-                                values,
-                                keyed[left].1,
-                                keyed[right].1,
-                            ],
-                        );
-                        out.push(diagnostic(u, "evaluate", reason));
-                    }
-                }
-                start = end;
-            }
+            out.extend(key_conflicts(u, relation, positions_term, &relation_rows));
         }
     }
     prolog_sort(u, out)
+}
+
+/// One declared key set: every pair of rows sharing a key is a conflict. A row
+/// missing any keyed position takes no part.
+pub fn key_conflicts(
+    u: &mut Universe,
+    relation: TermId,
+    positions_term: TermId,
+    relation_rows: &[(TermId, Vec<TermId>)],
+) -> Vec<TermId> {
+    let Some(positions) = u.as_list(positions_term) else {
+        return Vec::new();
+    };
+    let mut keyed: Vec<(Vec<TermId>, TermId)> = Vec::new();
+    for (row, items) in relation_rows {
+        let mut key = Vec::with_capacity(positions.len());
+        for position in &positions {
+            let Some(at) = u.as_int(*position).and_then(|n| items.get(n as usize)) else {
+                key.clear();
+                break;
+            };
+            key.push(*at);
+        }
+        if key.len() == positions.len() {
+            keyed.push((key, *row));
+        }
+    }
+    keyed.sort_by(|a, b| u.cmp_rows(&a.0, &b.0));
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < keyed.len() {
+        let mut end = start + 1;
+        while end < keyed.len() && keyed[end].0 == keyed[start].0 {
+            end += 1;
+        }
+        for left in start..end {
+            for right in (left + 1)..end {
+                let values = u.list(&keyed[start].0);
+                let reason = u.compound(
+                    "functional_key_conflict",
+                    vec![
+                        relation,
+                        positions_term,
+                        values,
+                        keyed[left].1,
+                        keyed[right].1,
+                    ],
+                );
+                out.push(diagnostic(u, "evaluate", reason));
+            }
+        }
+        start = end;
+    }
+    out
 }
 
 /// `:1572`. The graph subset of the closure, relabelled by `semantic_label/2`.
@@ -397,7 +421,7 @@ pub fn generated_expression_environment(
 ) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
     let mut relations = Vec::with_capacity(generated_relations.len());
     for row in generated_relations {
-        let Some(("relation", args)) = u.functor(*row).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(args) = u.args::<3>(*row, "relation") else {
             continue;
         };
         let Some(id) = u.unary(args[0], "ref") else {
@@ -421,42 +445,67 @@ pub fn generated_expression_environment(
     let mut reservations = Vec::new();
     let mut edges = Vec::new();
     for row in facts {
-        let Some([owner, name, value, index]) = colon_call_parts(u, *row) else {
-            continue;
+        let kinds = Kinds {
+            product,
+            derived_callable,
+            generated_ids: &generated_ids,
+            derived_bind_slots,
         };
-        let (Some(owner), Some(index)) = (u.unary(owner, "ref"), u.unary(index, "const")) else {
-            continue;
-        };
-        if let Some(name) = u.unary(name, "const") {
-            if let Some(relation) = u.unary(value, "ref") {
-                let kind = if generated_ids.contains(&relation) {
-                    Some(product)
-                } else {
-                    let slot = u.compound("derived_bind_slot", vec![owner, name, index]);
-                    derived_bind_slots
-                        .contains(&slot)
-                        .then_some(derived_callable)
-                };
-                if let Some(kind) = kind {
-                    if matches!(u.get(name), Term::Atom(_)) {
-                        let target = u.compound("target", vec![relation]);
-                        reservations
-                            .push(u.compound("reservation", vec![owner, name, target, kind]));
-                    }
-                }
-            }
-        }
-        if let (Some(name), Some(target)) =
-            (u.unary(name, "const"), compiler_value_target(u, value))
-        {
-            edges.push(u.compound("pending_edge", vec![owner, name, target, index]));
-        }
+        environment_row(u, *row, &kinds, &mut reservations, &mut edges);
     }
     (
         prolog_sort(u, reservations),
         relations,
         prolog_sort(u, edges),
     )
+}
+
+/// What decides whether a compiler row reserves a product, a derived callable,
+/// or nothing at all.
+pub struct Kinds<'a> {
+    pub product: TermId,
+    pub derived_callable: TermId,
+    pub generated_ids: &'a [TermId],
+    pub derived_bind_slots: &'a [TermId],
+}
+
+/// `:1085`. One `:/4` compiler row as at most one reservation and at most one
+/// pending edge.
+pub fn environment_row(
+    u: &mut Universe,
+    row: TermId,
+    kinds: &Kinds,
+    reservations: &mut Vec<TermId>,
+    edges: &mut Vec<TermId>,
+) {
+    let Some([owner, name, value, index]) = colon_call_parts(u, row) else {
+        return;
+    };
+    let (Some(owner), Some(index)) = (u.unary(owner, "ref"), u.unary(index, "const")) else {
+        return;
+    };
+    if let Some(name) = u.unary(name, "const") {
+        if let Some(relation) = u.unary(value, "ref") {
+            let kind = if kinds.generated_ids.contains(&relation) {
+                Some(kinds.product)
+            } else {
+                let slot = u.compound("derived_bind_slot", vec![owner, name, index]);
+                kinds
+                    .derived_bind_slots
+                    .contains(&slot)
+                    .then_some(kinds.derived_callable)
+            };
+            if let Some(kind) = kind {
+                if matches!(u.get(name), Term::Atom(_)) {
+                    let target = u.compound("target", vec![relation]);
+                    reservations.push(u.compound("reservation", vec![owner, name, target, kind]));
+                }
+            }
+        }
+    }
+    if let (Some(name), Some(target)) = (u.unary(name, "const"), compiler_value_target(u, value)) {
+        edges.push(u.compound("pending_edge", vec![owner, name, target, index]));
+    }
 }
 
 /// `:1132`. A declared key set wins; otherwise one `return` edge names the

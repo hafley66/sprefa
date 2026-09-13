@@ -132,60 +132,81 @@ pub fn validate_hosted_relations(
 
     let mut out = Vec::new();
     for relation in &ids {
-        let implementations = rows.hosted.iter().filter(|r| r.0 == *relation).count();
-        if implementations != 1 {
-            let count = u.int(implementations as i64);
-            let reason = u.compound("hosted_implementation_count", vec![*relation, count]);
-            out.push(diagnostic(u, "host", reason));
-        }
-        if !declared.contains(relation) {
-            let reason = u.compound("hosted_relation_not_declared", vec![*relation]);
-            out.push(diagnostic(u, "host", reason));
-        }
-        let mut relation_edges: Vec<(TermId, TermId)> = edges
-            .iter()
-            .filter_map(|e| match u.functor(*e) {
-                Some((":", args)) if args.len() == 4 && args[0] == *relation => {
-                    Some((args[1], args[3]))
-                }
-                _ => None,
-            })
-            .collect();
-        relation_edges.sort_by(|a, b| u.cmp(a.0, b.0).then_with(|| u.cmp(a.1, b.1)));
-        relation_edges.dedup();
-
-        for (label, index) in &relation_edges {
-            let count = rows
-                .ports
-                .iter()
-                .filter(|p| p.0 == *relation && p.1 == *label)
-                .count();
-            if count != 1 {
-                let count = u.int(count as i64);
-                let reason = u.compound(
-                    "hosted_port_direction_count",
-                    vec![*relation, *label, *index, count],
-                );
-                out.push(diagnostic(u, "host", reason));
-            }
-        }
-        for port in rows.ports.iter().filter(|p| p.0 == *relation) {
-            if !relation_edges.iter().any(|(label, _)| *label == port.1) {
-                let reason = u.compound("hosted_port_unknown_edge", vec![*relation, port.1]);
-                out.push(diagnostic(u, "host", reason));
-            }
-        }
-        for port in rows.ports.iter().filter(|p| p.0 == *relation) {
-            if !directions.contains(&port.2) {
-                let reason = u.compound(
-                    "hosted_port_invalid_direction",
-                    vec![*relation, port.1, port.2],
-                );
-                out.push(diagnostic(u, "host", reason));
-            }
-        }
+        let one = hosted_relation_diagnostics(u, edges, &rows, &declared, &directions, *relation);
+        out.extend(one);
     }
     prolog_sort(u, out)
+}
+
+/// `:145`. The label and index of every `:/4` edge this relation owns.
+pub fn relation_edge_labels(
+    u: &Universe,
+    edges: &[TermId],
+    relation: TermId,
+) -> Vec<(TermId, TermId)> {
+    let mut out: Vec<(TermId, TermId)> = edges
+        .iter()
+        .filter_map(|e| match u.functor(*e) {
+            Some((":", args)) if args.len() == 4 && args[0] == relation => Some((args[1], args[3])),
+            _ => None,
+        })
+        .collect();
+    out.sort_by(|a, b| u.cmp(a.0, b.0).then_with(|| u.cmp(a.1, b.1)));
+    out.dedup();
+    out
+}
+
+/// `:11` for one relation: exactly one implementation, a declaration, one port
+/// per edge label, no port without an edge, a known direction on every port.
+pub fn hosted_relation_diagnostics(
+    u: &mut Universe,
+    edges: &[TermId],
+    rows: &HostRows,
+    declared: &HashSet<TermId>,
+    directions: &HashSet<TermId>,
+    relation: TermId,
+) -> Vec<TermId> {
+    let mut out = Vec::new();
+    let implementations = rows.hosted.iter().filter(|r| r.0 == relation).count();
+    if implementations != 1 {
+        let count = u.int(implementations as i64);
+        let reason = u.compound("hosted_implementation_count", vec![relation, count]);
+        out.push(diagnostic(u, "host", reason));
+    }
+    if !declared.contains(&relation) {
+        let reason = u.compound("hosted_relation_not_declared", vec![relation]);
+        out.push(diagnostic(u, "host", reason));
+    }
+    let relation_edges = relation_edge_labels(u, edges, relation);
+    for (label, index) in &relation_edges {
+        let count = rows
+            .ports
+            .iter()
+            .filter(|p| p.0 == relation && p.1 == *label)
+            .count();
+        if count != 1 {
+            let count = u.int(count as i64);
+            let reason = u.compound(
+                "hosted_port_direction_count",
+                vec![relation, *label, *index, count],
+            );
+            out.push(diagnostic(u, "host", reason));
+        }
+    }
+    for port in rows.ports.iter().filter(|p| p.0 == relation) {
+        if !relation_edges.iter().any(|(label, _)| *label == port.1) {
+            let reason = u.compound("hosted_port_unknown_edge", vec![relation, port.1]);
+            out.push(diagnostic(u, "host", reason));
+        }
+        if !directions.contains(&port.2) {
+            let reason = u.compound(
+                "hosted_port_invalid_direction",
+                vec![relation, port.1, port.2],
+            );
+            out.push(diagnostic(u, "host", reason));
+        }
+    }
+    out
 }
 
 pub struct Erased {

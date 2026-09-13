@@ -53,8 +53,8 @@ fn collect_variables(u: &Universe, id: TermId, out: &mut Vec<TermId>) {
         out.push(identity);
     }
     if let Term::Compound(_, args) = u.get(id) {
-        for arg in args.clone() {
-            collect_variables(u, arg, out);
+        for arg in args {
+            collect_variables(u, *arg, out);
         }
     }
 }
