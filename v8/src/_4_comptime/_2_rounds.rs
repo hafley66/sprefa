@@ -159,6 +159,42 @@ pub fn stable_outcome(
     }
 }
 
+/// One round's merged program, resolved and evaluated.
+pub struct Pass {
+    pub resolved: Resolved,
+    pub closure: Vec<TermId>,
+    pub rules: usize,
+    pub seeds: usize,
+}
+
+/// `:1203`. `Err` carries the outcome that ends the fixpoint before anything
+/// is assembled.
+pub fn round_closure(
+    u: &mut Universe,
+    st: &RoundState,
+    authored_rules: &[TermId],
+    base_relations: &[TermId],
+    base_seeds: &[TermId],
+) -> Result<Result<Pass, RoundOutcome>, Stop> {
+    let relations = merged_sorted(u, base_relations, &st.frozen_generated_relations);
+    let rules = merged_sorted(u, authored_rules, &st.frozen_generated_rules);
+    let resolved = check_resolved_rules(u, &relations, &rules)?;
+    let seeds = compiler_round_seeds(u, base_seeds, &st.frozen_edges, &st.frozen_requests);
+    if !resolved.diagnostics.is_empty() {
+        return Ok(Err(RoundOutcome::failed(resolved.diagnostics)));
+    }
+    let (closure, evaluation_diagnostics) = evaluate_round(u, &rules, &seeds)?;
+    if !evaluation_diagnostics.is_empty() {
+        return Ok(Err(RoundOutcome::failed(evaluation_diagnostics)));
+    }
+    Ok(Ok(Pass {
+        resolved,
+        closure: strip_snapshot_rows(u, &closure),
+        rules: rules.len(),
+        seeds: seeds.len(),
+    }))
+}
+
 /// `:1173`. The inner compiler fixpoint as a reducer over its frozen lists.
 pub struct Rounds<'a>(PhantomData<&'a ()>);
 
@@ -182,24 +218,16 @@ impl<'a> Slice for Rounds<'a> {
             outer,
         } = ev;
         loop {
-            let relations = merged_sorted(u, base_relations, &st.frozen_generated_relations);
-            let rules = merged_sorted(u, authored_rules, &st.frozen_generated_rules);
-            let resolved = check_resolved_rules(u, &relations, &rules)?;
-            let seeds = compiler_round_seeds(u, base_seeds, &st.frozen_edges, &st.frozen_requests);
-            if !resolved.diagnostics.is_empty() {
-                return Ok(RoundOutcome::failed(resolved.diagnostics));
-            }
-
-            let (closure, evaluation_diagnostics) = evaluate_round(u, &rules, &seeds)?;
-            if !evaluation_diagnostics.is_empty() {
-                return Ok(RoundOutcome::failed(evaluation_diagnostics));
-            }
-            let closure = strip_snapshot_rows(u, &closure);
+            let pass = match round_closure(u, st, authored_rules, base_relations, base_seeds)? {
+                Ok(pass) => pass,
+                Err(outcome) => return Ok(outcome),
+            };
+            let (resolved, closure) = (pass.resolved, pass.closure);
             fx(Round::Evaluate {
                 outer,
                 round: st.round,
-                rules: rules.len(),
-                seeds: seeds.len(),
+                rules: pass.rules,
+                seeds: pass.seeds,
                 closure: closure.len(),
             });
 

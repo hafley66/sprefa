@@ -2,7 +2,7 @@
 //! Port of `0_lowerer.pl:295-670`.
 
 use super::cx::{CallPolicy, Cx};
-use super::express::{is_partial, lower_expression};
+use super::express::{is_partial, lower_expression, Lowering};
 use super::host::{host_metadata_rules, indexed_goal_origins};
 use super::index::reservation_parts;
 use super::partial::{partial_bind_rules, LabelSpec};
@@ -28,6 +28,15 @@ pub struct Derived {
     pub origins: Vec<TermId>,
 }
 
+impl Derived {
+    /// One reservation's block; the ordinal advances by the rules it added.
+    pub fn push(&mut self, rule_index: &mut i64, block: Block) {
+        *rule_index += block.rules.len() as i64;
+        self.rules.extend(block.rules);
+        self.origins.extend(block.origins);
+    }
+}
+
 /// `:295`. A deferrable diagnostic advances no ordinal.
 pub fn lower_derived_bind_rules(
     cx: &mut Cx,
@@ -43,38 +52,15 @@ pub fn lower_derived_bind_rules(
             cx.u.functor_or_atom(parts.kind)
                 .map(|(n, _)| n.to_string())
                 .unwrap_or_default();
-        match kind.as_str() {
-            "host" => {
-                let Some((rules, origins)) =
-                    host_metadata_rules(cx.u, parts.owner, parts.target, rule_index)
-                else {
-                    continue;
-                };
-                rule_index += rules.len() as i64;
-                out.rules.extend(rules);
-                out.origins.extend(origins);
-            }
-            "compound_edge" => {
-                match compound_edge_rule(cx, parts.owner, parts.target, rule_index)? {
-                    Some(block) => {
-                        rule_index += block.rules.len() as i64;
-                        out.rules.extend(block.rules);
-                        out.origins.extend(block.origins);
-                    }
-                    None => continue,
-                }
-            }
-            "expression" => {
-                match expression_rule(cx, parts.owner, parts.name, parts.target, rule_index)? {
-                    Some(block) => {
-                        rule_index += block.rules.len() as i64;
-                        out.rules.extend(block.rules);
-                        out.origins.extend(block.origins);
-                    }
-                    None => continue,
-                }
-            }
-            _ => continue,
+        let block = match kind.as_str() {
+            "host" => host_metadata_rules(cx.u, parts.owner, parts.target, rule_index)
+                .map(|(rules, origins)| Block { rules, origins }),
+            "compound_edge" => compound_edge_rule(cx, parts.owner, parts.target, rule_index)?,
+            "expression" => expression_rule(cx, parts.owner, parts.name, parts.target, rule_index)?,
+            _ => None,
+        };
+        if let Some(block) = block {
+            out.push(&mut rule_index, block);
         }
     }
     Ok(out)
@@ -185,18 +171,43 @@ fn compound_edge_rule(
         if deferrable_skip(cx, &diagnostics) {
             return Ok(None);
         }
-        // :563. A deferrable diagnostic never masks a real one.
-        let chosen = diagnostics
-            .iter()
-            .find(|d| !cx.deferrable(**d))
-            .copied()
-            .unwrap_or(diagnostics[0]);
-        return Err(Stop::Diagnostic(chosen));
+        return Err(Stop::Diagnostic(chosen_diagnostic(cx, &diagnostics)));
     }
+    Ok(Some(compound_edge_plain_rule(
+        cx,
+        owner,
+        label,
+        outcome,
+        bind_node_id,
+        index,
+        rule_index,
+    )))
+}
+
+/// `:563`. A deferrable diagnostic never masks a real one.
+fn chosen_diagnostic(cx: &Cx, diagnostics: &[TermId]) -> TermId {
+    diagnostics
+        .iter()
+        .find(|d| !cx.deferrable(**d))
+        .copied()
+        .unwrap_or(diagnostics[0])
+}
+
+/// `:305` with nothing partial: one `:/4` rule whose label goals, and a
+/// non-structural target's goals, are inlined into the body.
+fn compound_edge_plain_rule(
+    cx: &mut Cx,
+    owner: TermId,
+    label: Lowering,
+    outcome: Outcome,
+    bind_node_id: TermId,
+    index: TermId,
+    rule_index: i64,
+) -> Block {
     let derived = cx.compound("derived_label", vec![bind_node_id]);
     let derived_label = cx.compound("var", vec![derived]);
     let mut goals = replace_in(cx, label.value, derived_label, &label.goals);
-    let mut goal_nodes = label.origins.clone();
+    let mut goal_nodes = label.origins;
     let rule_target = if outcome.structural {
         outcome.value
     } else {
@@ -204,17 +215,17 @@ fn compound_edge_rule(
         let target_variable = cx.compound("var", vec![key]);
         let replaced = replace_in(cx, outcome.value, target_variable, &outcome.goals);
         goals.extend(replaced);
-        goal_nodes.extend(outcome.origins.clone());
+        goal_nodes.extend(outcome.origins);
         target_variable
     };
     let index_const = cx.compound("const", vec![index]);
     let head = colon_head(cx, owner, derived_label, rule_target, index_const);
     let body = cx.u.list(&goals);
     let rule = cx.compound("rule", vec![head, body]);
-    Ok(Some(Block {
+    Block {
         rules: vec![rule],
         origins: rule_origins(cx, rule_index, bind_node_id, &goal_nodes),
-    }))
+    }
 }
 
 struct Outcome {

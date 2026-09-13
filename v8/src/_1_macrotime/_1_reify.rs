@@ -75,18 +75,9 @@ impl Reifier<'_> {
                 return Some(syntax_graph_diagnostic(self.u, none, payload));
             }
         };
-        let found: Vec<TermId> = self.sources.get(&id).cloned().unwrap_or_default();
-        let source = match found.len() {
-            1 => found[0],
-            0 => {
-                let payload = self.u.atom("missing_source");
-                return Some(syntax_graph_diagnostic(self.u, id, payload));
-            }
-            _ => {
-                let list = self.u.list(&found);
-                let payload = self.u.compound("duplicate_source", vec![list]);
-                return Some(syntax_graph_diagnostic(self.u, id, payload));
-            }
+        let source = match self.source_row(id) {
+            Ok(source) => source,
+            Err(diagnostic) => return Some(diagnostic),
         };
         let node_row = self.u.compound("node", vec![id]);
         let (name, args) = match self.u.functor(payload) {
@@ -112,39 +103,63 @@ impl Reifier<'_> {
                 self.u
                     .compound("syntax_variable", vec![id, args[0], args[1]])
             }
-            ("form", 1) => {
-                let children = match self.u.as_list(args[0]) {
-                    Some(children) => children,
-                    None => {
-                        let payload = self.u.compound("invalid_form_children", vec![args[0]]);
-                        return Some(syntax_graph_diagnostic(self.u, id, payload));
-                    }
-                };
-                let form_row = self.u.compound("syntax_form", vec![id]);
-                self.rows.push(node_row);
-                self.rows.push(form_row);
-                self.rows.push(source);
-                for (index, &child) in children.iter().enumerate() {
-                    if let Some(d) = self.node(child) {
-                        return Some(d);
-                    }
-                    let child_id = match args_of(self.u, child, "node", 2) {
-                        Some(a) => a[0],
-                        None => continue,
-                    };
-                    let target = self.u.compound("ref", vec![child_id]);
-                    let ordinal = self.u.int(index as i64);
-                    let item = self.item;
-                    let edge = self.u.compound(":", vec![id, item, target, ordinal]);
-                    self.rows.push(edge);
-                }
-                return None;
-            }
+            ("form", 1) => return self.form_node(id, args[0], node_row, source),
             _ => return Some(self.invalid_payload(id, payload)),
         };
         self.rows.push(node_row);
         self.rows.push(payload_row);
         self.rows.push(source);
+        None
+    }
+
+    /// Exactly one `source/8` row per node id; zero or many is a diagnostic.
+    fn source_row(&mut self, id: TermId) -> Result<TermId, TermId> {
+        let found: Vec<TermId> = self.sources.get(&id).cloned().unwrap_or_default();
+        match found.len() {
+            1 => Ok(found[0]),
+            0 => {
+                let payload = self.u.atom("missing_source");
+                Err(syntax_graph_diagnostic(self.u, id, payload))
+            }
+            _ => {
+                let list = self.u.list(&found);
+                let payload = self.u.compound("duplicate_source", vec![list]);
+                Err(syntax_graph_diagnostic(self.u, id, payload))
+            }
+        }
+    }
+
+    /// A form pushes its own three rows, then one `item` edge per child.
+    fn form_node(
+        &mut self,
+        id: TermId,
+        children_term: TermId,
+        node_row: TermId,
+        source: TermId,
+    ) -> Option<TermId> {
+        let Some(children) = self.u.as_list(children_term) else {
+            let payload = self
+                .u
+                .compound("invalid_form_children", vec![children_term]);
+            return Some(syntax_graph_diagnostic(self.u, id, payload));
+        };
+        let form_row = self.u.compound("syntax_form", vec![id]);
+        self.rows.push(node_row);
+        self.rows.push(form_row);
+        self.rows.push(source);
+        for (index, &child) in children.iter().enumerate() {
+            if let Some(d) = self.node(child) {
+                return Some(d);
+            }
+            let Some(child_id) = args_of(self.u, child, "node", 2).map(|a| a[0]) else {
+                continue;
+            };
+            let target = self.u.compound("ref", vec![child_id]);
+            let ordinal = self.u.int(index as i64);
+            let item = self.item;
+            let edge = self.u.compound(":", vec![id, item, target, ordinal]);
+            self.rows.push(edge);
+        }
         None
     }
 
