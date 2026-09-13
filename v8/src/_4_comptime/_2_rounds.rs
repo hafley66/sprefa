@@ -343,7 +343,7 @@ pub fn round_program(
         program.rules.push(rule_from_term(u, *rule)?);
     }
     for seed in seeds {
-        let Some(("call", args)) = u.functor(*seed).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(args) = u.args::<2>(*seed, "call") else {
             return Err(Stop::Fail("seed is not a call/2"));
         };
         let Some(items) = u.as_list(args[1]) else {
@@ -358,7 +358,7 @@ pub fn round_program(
 }
 
 fn rule_from_term(u: &mut Universe, rule: TermId) -> Result<Rule, Stop> {
-    let Some(("rule", parts)) = u.functor(rule).map(|(n, a)| (n, a.to_vec())) else {
+    let Some(parts) = u.args::<2>(rule, "rule") else {
         return Err(Stop::Fail("rule/2 expected"));
     };
     let mut vars: Vec<TermId> = Vec::new();
@@ -368,7 +368,7 @@ fn rule_from_term(u: &mut Universe, rule: TermId) -> Result<Rule, Stop> {
     };
     let mut body = Vec::with_capacity(goals.len());
     for goal in goals {
-        let Some(("checked_goal", g)) = u.functor(goal).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(g) = u.args::<2>(goal, "checked_goal") else {
             return Err(Stop::Fail("checked_goal/2 expected"));
         };
         let polarity = match u.functor_or_atom(g[0]).map(|(n, _)| n) {
@@ -396,7 +396,7 @@ fn call_from_term(
     term: TermId,
     vars: &mut Vec<TermId>,
 ) -> Result<(TermId, Vec<Arg>), Stop> {
-    let Some(("call", parts)) = u.functor(term).map(|(n, a)| (n, a.to_vec())) else {
+    let Some(parts) = u.args::<2>(term, "call") else {
         return Err(Stop::Fail("call/2 expected"));
     };
     let Some(items) = u.as_list(parts[1]) else {

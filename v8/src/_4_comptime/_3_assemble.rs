@@ -214,11 +214,9 @@ fn node_family(
     variable: bool,
 ) -> HashMap<TermId, Vec<TermId>> {
     let mut out: HashMap<TermId, Vec<TermId>> = HashMap::new();
-    let empty = Vec::new();
-    let relations = named.get(family).unwrap_or(&empty).clone();
+    let relations = named.get(family).map_or(&[][..], |v| v.as_slice());
     for rel in relations {
-        let rows = by_rel.get(&rel).cloned().unwrap_or_default();
-        for args in rows {
+        for args in by_rel.get(rel).into_iter().flatten() {
             if args.len() != 3 {
                 continue;
             }
@@ -396,7 +394,7 @@ fn assemble_body(
             diagnostics.push(diagnostic(u, "assemble", reason));
             continue;
         };
-        let Some(("goal", parts)) = u.functor(*only).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(parts) = u.args::<2>(*only, "goal") else {
             continue;
         };
         let (polarity_term, application) = (parts[0], parts[1]);
@@ -560,7 +558,7 @@ fn node_result(
     let literals = sorted_unique(u, cx.literals.get(&node).cloned().unwrap_or_default());
     if literals.is_empty() {
         if let [only] = variables.as_slice() {
-            if let Some(("variable", parts)) = u.functor(*only).map(|(n, a)| (n, a.to_vec())) {
+            if let Some(parts) = u.args::<2>(*only, "variable") {
                 let named = matches!(u.get(parts[1]), Term::Atom(_) | Term::Str(_));
                 if parts[0] == rule_id && named {
                     let generated = u.compound("generated", vec![rule_id, parts[1]]);
@@ -571,7 +569,7 @@ fn node_result(
     }
     if variables.is_empty() {
         if let [only] = literals.as_slice() {
-            if let Some(("literal", parts)) = u.functor(*only).map(|(n, a)| (n, a.to_vec())) {
+            if let Some(parts) = u.args::<2>(*only, "literal") {
                 if u.unary(parts[1], "const").is_some() {
                     return Ok(parts[1]);
                 }

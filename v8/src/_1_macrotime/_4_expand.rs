@@ -106,21 +106,23 @@ fn expand_rows(
     }
 
     let selected = macro_rules(u, &protocol, &macro_program.program.rules);
-    let rules: Vec<_> = selected
-        .iter()
-        .map(|i| macro_program.program.rules[*i].clone())
-        .collect();
+    // The rule cone is fixed for the whole expansion; only the seeds move.
+    let mut program = Program {
+        rules: selected
+            .iter()
+            .map(|i| macro_program.program.rules[*i].clone())
+            .collect(),
+        seeds: Vec::new(),
+    };
     let none = u.atom("none");
     let mut seen: Vec<Vec<TermId>> = vec![graph.rows.clone()];
     let mut origin: Vec<TermId> = Vec::new();
 
     for wave in 0..WAVE_LIMIT {
-        let mut seeds = macro_program.program.seeds.clone();
-        seeds.extend(syntax_seeds(u, &protocol, &graph.rows));
-        let program = Program {
-            rules: rules.clone(),
-            seeds,
-        };
+        program.seeds = macro_program.program.seeds.clone();
+        program
+            .seeds
+            .extend(syntax_seeds(u, &protocol, &graph.rows));
         let closure = evaluate(u, &program, &mut |_: Trace| {});
         if !closure.diagnostics.is_empty() {
             let terms = closure

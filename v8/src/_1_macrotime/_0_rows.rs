@@ -23,25 +23,21 @@ pub fn is_prolog_atom(u: &Universe, id: TermId) -> bool {
 
 /// `atom_string(Name, Text)` read right to left.
 pub fn atom_of_text(u: &mut Universe, text: TermId) -> TermId {
-    match u.get(text).clone() {
-        Term::Str(s) => {
-            let name = u.sym_str(s).to_string();
-            u.atom(&name)
-        }
-        Term::Int(n) => u.atom(&n.to_string()),
-        _ => text,
-    }
+    let spelling = match u.get(text) {
+        Term::Str(s) => u.sym_str(*s).to_string(),
+        Term::Int(n) => n.to_string(),
+        _ => return text,
+    };
+    u.atom(&spelling)
 }
 
 /// `atom_string(Name, Text)` read left to right.
 pub fn text_of_atom(u: &mut Universe, name: TermId) -> TermId {
-    match u.get(name).clone() {
-        Term::Atom(s) => {
-            let text = u.sym_str(s).to_string();
-            u.string(&text)
-        }
-        _ => name,
-    }
+    let Term::Atom(symbol) = u.get(name) else {
+        return name;
+    };
+    let text = u.sym_str(*symbol).to_string();
+    u.string(&text)
 }
 
 pub fn sort_terms(u: &Universe, rows: &mut Vec<TermId>) {

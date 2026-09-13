@@ -243,7 +243,7 @@ pub fn derived_bind_diagnostics(
     let mut bind = Vec::new();
     let mut label = Vec::new();
     for rule in rules {
-        let Some(("rule", args)) = u.functor(*rule).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(args) = u.args::<2>(*rule, "rule") else {
             continue;
         };
         let Some([owner, name, value, index]) = colon_call_parts(u, args[0]) else {
@@ -308,7 +308,7 @@ pub fn validate_functional_rows(
     let by_relation = rows_by_relation(u, rows);
     let mut out = Vec::new();
     for declaration in relations {
-        let Some(("relation", args)) = u.functor(*declaration).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(args) = u.args::<3>(*declaration, "relation") else {
             continue;
         };
         let (relation, key_sets) = (args[0], args[2]);
@@ -421,7 +421,7 @@ pub fn generated_expression_environment(
 ) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
     let mut relations = Vec::with_capacity(generated_relations.len());
     for row in generated_relations {
-        let Some(("relation", args)) = u.functor(*row).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(args) = u.args::<3>(*row, "relation") else {
             continue;
         };
         let Some(id) = u.unary(args[0], "ref") else {

@@ -136,7 +136,7 @@ fn compound_edge_rule(
     let label = lower_expression(cx, label_node, owner);
     let outcome = compound_edge_target(cx, target_term, owner);
     let mut diagnostics = label.diagnostics.clone();
-    diagnostics.extend(outcome.diagnostics.clone());
+    diagnostics.extend(outcome.diagnostics.iter().copied());
     if diagnostics.is_empty() && is_partial(cx, label.value) {
         let reason = cx.atom("partial_edge_label_requires_more_arguments");
         return Err(Stop::Diagnostic(cx.diagnostic(bind_node_id, reason)));

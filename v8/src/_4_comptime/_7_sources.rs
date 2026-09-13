@@ -138,17 +138,16 @@ pub fn freeze_module_basements(
 ) -> Vec<TermId> {
     let mut out = Vec::with_capacity(basements.len());
     for row in basements {
-        let Some(("module_basement", args)) = u.functor(*row).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(args) = u.args::<2>(*row, "module_basement") else {
             out.push(*row);
             continue;
         };
         let (owner, basement) = (args[0], args[1]);
-        let Some(("basement_program", parts)) = u.functor(basement).map(|(n, a)| (n, a.to_vec()))
-        else {
+        let Some(parts) = u.args::<2>(basement, "basement_program") else {
             out.push(*row);
             continue;
         };
-        let Some(("root_graph", graph)) = u.functor(parts[0]).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(graph) = u.args::<2>(parts[0], "root_graph") else {
             out.push(*row);
             continue;
         };
@@ -170,7 +169,7 @@ pub fn freeze_module_basements(
 
 /// `:1016`.
 fn freeze_pending_edge(u: &mut Universe, reservations: &[TermId], edge: TermId) -> TermId {
-    let Some(("pending_edge", args)) = u.functor(edge).map(|(n, a)| (n, a.to_vec())) else {
+    let Some(args) = u.args::<4>(edge, "pending_edge") else {
         return edge;
     };
     if u.unary(args[2], "deferred_expression").is_none() {
@@ -214,17 +213,15 @@ pub fn add_generated_relations(
     basement: TermId,
     generated_relations: &[TermId],
 ) -> TermId {
-    let Some(("basement_program", parts)) = u.functor(basement).map(|(n, a)| (n, a.to_vec()))
-    else {
+    let Some(parts) = u.args::<2>(basement, "basement_program") else {
         return basement;
     };
-    let Some(("datalog_program", program)) = u.functor(parts[1]).map(|(n, a)| (n, a.to_vec()))
-    else {
+    let Some(program) = u.args::<3>(parts[1], "datalog_program") else {
         return basement;
     };
     let mut relations = u.as_list(program[0]).unwrap_or_default();
     for row in generated_relations {
-        let Some(("relation", args)) = u.functor(*row).map(|(n, a)| (n, a.to_vec())) else {
+        let Some(args) = u.args::<3>(*row, "relation") else {
             continue;
         };
         let Some(inner) = u.unary(args[0], "ref") else {

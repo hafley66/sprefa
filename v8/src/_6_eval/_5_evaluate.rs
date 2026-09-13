@@ -391,7 +391,7 @@ fn aggregate_rows(
     let mut groups: HashMap<Vec<TermId>, i64> = HashMap::new();
     let mut order: Vec<Vec<TermId>> = Vec::new();
     for proof in proofs {
-        let mut key = proof.clone();
+        let mut key = proof;
         key.remove(count_pos);
         let e = groups.entry(key.clone()).or_insert_with(|| {
             order.push(key);

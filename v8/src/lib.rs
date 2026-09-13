@@ -189,8 +189,7 @@ pub fn compile_project(
         Ok(expanded) => expanded,
         Err(diagnostics) => return Ok(stopped(u, diagnostics)),
     };
-    let Some(("dl7_project", args)) = u.functor(loaded.project).map(|(n, a)| (n, a.to_vec()))
-    else {
+    let Some(args) = u.args::<2>(loaded.project, "dl7_project") else {
         return Err(Stop::Io("project is not dl7_project/2".into()));
     };
     let unit_list = u.list(&expanded);
