@@ -167,6 +167,7 @@ impl<'a> Eval<'a> {
 
     /// A negative goal with an unbound argument never holds; v7's `\+` is
     /// checked against ground rows only.
+    #[inline]
     fn negative_goal_holds(&self, goal: &Goal, kernel: Option<Kernel>, env: &Env) -> bool {
         let args: Vec<Option<TermId>> = goal.args.iter().map(|a| env.value(a)).collect();
         if args.iter().any(|a| a.is_none()) {
@@ -183,6 +184,7 @@ impl<'a> Eval<'a> {
 
     /// Kernel rows, then stored rows in the goal's plan range, then the
     /// top-down rows a bound pattern demands.
+    #[inline]
     fn positive_solutions(
         &mut self,
         goal: &Goal,
