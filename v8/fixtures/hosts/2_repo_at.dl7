@@ -1,0 +1,25 @@
+; The tracked files of one repository at one revision.
+(: repo_at
+   (* (: root text)
+      (: sha text)
+      (: path text)
+      (: blob text)))
+
+(: repo_at_error
+   (* (: root text)
+      (: sha text)
+      (: message text)))
+
+(: Pin
+   (* (: root text)
+      (: sha text)))
+
+(Pin "__ROOT__" "__SHA__")
+
+(: File
+   (* (: path text)
+      (: blob text)))
+
+(<- (File ?Path ?Blob)
+    (Pin ?Root ?Sha)
+    (repo_at ?Root ?Sha ?Path ?Blob))

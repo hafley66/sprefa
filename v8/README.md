@@ -105,6 +105,32 @@ cargo run -- run /tmp/timer.json --serve timer --max-ticks 3
 cargo test --test _17_reconcile      # real binary, real clock, local HTTP listener
 ```
 
+## Executor roster
+
+Every served name, its columns, and the companion error relation a program
+must declare before `--serve` accepts the name. Git runs only inside `soopy`
+(`hafley-rs/crates/soopy`, a path dependency); `extract` is the
+`sprefa-extract` binary, found the way the extract section above lists.
+
+| served name | columns | cadence | answers | error relation |
+|---|---|---|---|---|
+| `timer` | `period_ms int, tick int` | Continuing | one row per fire | none |
+| `fetch_json` | `url text, body text` | Once | the 2xx JSON body | `fetch_json_error url text, status int, message text` |
+| `soopy_refs` | `root text, name text, sha text` | Continuing | every ref plus `HEAD` at arming, then each moved or added ref; `RepositoryWatcher` wakes it, a failed watcher degrades to a 1 s re-read | `soopy_refs_error root text, message text` |
+| `soopy_history` | `root text, sha text, parent text` | Once | one row per parent edge reachable from `sha`, or `HEAD` when `sha` is unbound; a root commit has no row | `soopy_history_error root text, message text` |
+| `repo_at` | `root text, sha text, path text, blob text` | Once | one row per tracked file at the revision, `blob` the git blob sha | `repo_at_error root text, sha text, message text` |
+| `extract` | `root text, family text, kind text, payload text` | Once | one `extract --family <family> --resolve` run over the root's tracked files, one row per JSONL record; `kind` is its `record` field, `payload` the whole line | `extract_error root text, family text, message text`; a run past 10 s is killed and answers `timeout` |
+
+| rule | where it shows |
+|---|---|
+| a removed ref writes nothing; retraction is not built | `SoopyRefs::delta_rows` |
+| `soopy_history` carries no commit time: soopy's commit reader is private and `GitBatch` reads blobs only | `soopy/src/_12_revision_graph.rs:310`, `soopy/src/_6_git_batch.rs:57` |
+| `payload` stays one text term; structured projection is not built | `Extract::answer` |
+
+```bash
+cargo test --test _20_hosts -- --nocapture   # throwaway git repos, the extract corpus, the org program
+```
+
 ## Logs
 
 Every phase emits one `dl8::phase` event with its name, measured milliseconds,

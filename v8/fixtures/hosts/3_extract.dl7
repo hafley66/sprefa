@@ -1,0 +1,38 @@
+; Three extract families over one root; each record is a row.
+(: extract
+   (* (: root text)
+      (: family text)
+      (: kind text)
+      (: payload text)))
+
+(: extract_error
+   (* (: root text)
+      (: family text)
+      (: message text)))
+
+(: Want
+   (* (: root text)
+      (: family text)))
+
+(Want "__ROOT__" "type")
+
+(Want "__ROOT__" "call")
+
+(Want "__ROOT__" "diet_scip")
+
+(: Fact
+   (* (: family text)
+      (: kind text)
+      (: payload text)))
+
+(<- (Fact ?Family ?Kind ?Payload)
+    (Want ?Root ?Family)
+    (extract ?Root ?Family ?Kind ?Payload))
+
+(: Failed
+   (* (: family text)
+      (: message text)))
+
+(<- (Failed ?Family ?Message)
+    (Want ?Root ?Family)
+    (extract_error ?Root ?Family ?Message))

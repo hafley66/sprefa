@@ -1,0 +1,27 @@
+; Every parent edge reachable from HEAD.
+(: soopy_history
+   (* (: root text)
+      (: sha text)
+      (: parent text)))
+
+(: soopy_history_error
+   (* (: root text)
+      (: message text)))
+
+(: Watch (* (: root text)))
+
+(Watch "__ROOT__")
+
+(: Edge
+   (* (: sha text)
+      (: parent text)))
+
+(<- (Edge ?Sha ?Parent)
+    (Watch ?Root)
+    (soopy_history ?Root ?Sha ?Parent))
+
+(: Failed (* (: message text)))
+
+(<- (Failed ?Message)
+    (Watch ?Root)
+    (soopy_history_error ?Root ?Message))

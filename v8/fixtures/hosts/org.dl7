@@ -1,0 +1,27 @@
+; The hafley66 org's required repositories, each watched for its HEAD.
+(: soopy_refs
+   (* (: root text)
+      (: name text)
+      (: sha text)))
+
+(: soopy_refs_error
+   (* (: root text)
+      (: message text)))
+
+(: repo (* (: root text)))
+
+(repo "__PROJECTS__/instant")
+
+(repo "__PROJECTS__/sprefa")
+
+(repo "__PROJECTS__/hafley-rs")
+
+(repo "__PROJECTS__/hafley-rxjs")
+
+(: head_sha
+   (* (: root text)
+      (: sha text)))
+
+(<- (head_sha ?Root ?Sha)
+    (repo ?Root)
+    (soopy_refs ?Root "HEAD" ?Sha))
