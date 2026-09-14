@@ -10,7 +10,7 @@ use super::table::{Range, Table};
 use super::term::{TermId, Universe};
 use crate::_7_effect::Slice;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,15 +124,33 @@ type Sink = Vec<(TermId, Box<[TermId]>)>;
 
 type Pattern = Vec<Option<TermId>>;
 
-/// One body evaluation. `tables_only` is the aggregate mode of v7
-/// (`completed_body_holds/2`): goals match stored rows only, no kernel
-/// functions, no demanded rules.
-struct Eval<'a> {
-    u: &'a mut Universe,
+/// The relations the effect branch writes into, minted once per evaluation.
+#[derive(Copy, Clone)]
+struct Effects {
+    effect: TermId,
+    intern_snapshot: TermId,
+    /// `_1_slots.rs:13`: `const(none)` fills an argument the goal left unbound.
+    none: TermId,
+}
+
+#[derive(Copy, Clone)]
+struct Context<'a> {
     store: &'a Store,
     rules_by_rel: &'a HashMap<TermId, Vec<&'a Rule>>,
+    served: &'a HashSet<TermId>,
+    effects: Effects,
+}
+
+/// One body evaluation. `tables_only` is the aggregate mode of v7
+/// (`completed_body_holds/2`): goals match stored rows only, no kernel
+/// functions, no demanded rules, no effects.
+struct Eval<'a> {
+    u: &'a mut Universe,
+    cx: Context<'a>,
     tables_only: bool,
     intern_requests: Vec<Box<[TermId]>>,
+    effect_rows: Vec<Box<[TermId]>>,
+    snapshot_rows: Vec<Box<[TermId]>>,
     memo: HashMap<(TermId, Pattern), Vec<Vec<TermId>>>,
 }
 
@@ -178,7 +196,11 @@ impl<'a> Eval<'a> {
             Some(k) => kernel::negative_holds(self.u, k, &args),
             None => {
                 let row: Vec<TermId> = args.iter().map(|a| a.unwrap()).collect();
-                !self.store.table(goal.rel).is_some_and(|t| t.contains(&row))
+                !self
+                    .cx
+                    .store
+                    .table(goal.rel)
+                    .is_some_and(|t| t.contains(&row))
             }
         }
     }
@@ -203,7 +225,7 @@ impl<'a> Eval<'a> {
                 }
             }
         }
-        if let Some(table) = self.store.table(goal.rel) {
+        if let Some(table) = self.cx.store.table(goal.rel) {
             let bound: Vec<(usize, TermId)> = pattern
                 .iter()
                 .enumerate()
@@ -216,15 +238,38 @@ impl<'a> Eval<'a> {
                 }
             }
         }
+        let served = !self.tables_only
+            && self.cx.served.contains(&goal.rel)
+            && !self.cx.rules_by_rel.contains_key(&goal.rel);
+        if served {
+            self.write_effect(goal.rel, &pattern);
+        }
         let demand = !self.tables_only
             && kernel.is_none()
             && pattern.iter().any(|t| t.is_some())
-            && self.rules_by_rel.contains_key(&goal.rel);
+            && self.cx.rules_by_rel.contains_key(&goal.rel);
         if demand {
             let extra = self.demand(goal.rel, &pattern);
             solutions.extend(extra);
         }
         solutions
+    }
+
+    /// `effect(Relation, Application)` on every evaluation of a served goal,
+    /// hit or miss: the row is live interest, not a miss report.
+    fn write_effect(&mut self, rel: TermId, pattern: &Pattern) {
+        let none = self.cx.effects.none;
+        let values: Vec<TermId> = pattern.iter().map(|t| t.unwrap_or(none)).collect();
+        let list = self.u.list(&values);
+        let arguments = self.u.compound("const", vec![list]);
+        let Some(row) = kernel::intern_row(self.u, &[Some(rel), Some(arguments), None]) else {
+            return;
+        };
+        let application = row[2];
+        self.intern_requests.push(row.clone().into_boxed_slice());
+        self.snapshot_rows.push(row.into_boxed_slice());
+        self.effect_rows
+            .push(vec![rel, application].into_boxed_slice());
     }
 
     /// Top-down proof of a derived relation under bindings, the part of v7's
@@ -238,7 +283,7 @@ impl<'a> Eval<'a> {
             return rows.clone();
         }
         self.memo.insert(key.clone(), Vec::new());
-        let rules: Vec<&Rule> = self.rules_by_rel[&rel].clone();
+        let rules: Vec<&Rule> = self.cx.rules_by_rel[&rel].clone();
         let mut found: Vec<Vec<TermId>> = Vec::new();
         for rule in rules {
             if rule.is_aggregate() || rule.head.len() != pattern.len() {
@@ -290,53 +335,63 @@ fn head_row(env: &Env, rule: &Rule) -> Option<Vec<TermId>> {
     rule.head.iter().map(|a| env.value(a)).collect()
 }
 
-fn current_goal_positions(rule: &Rule, strata: &Strata, level: u32, u: &Universe) -> Vec<usize> {
+/// Neither relation the branch writes heads a rule, so `Strata` never levels
+/// them, yet their rows arrive inside a round: a goal on one joins the delta.
+fn current_goal_positions(
+    rule: &Rule,
+    strata: &Strata,
+    level: u32,
+    effects: Effects,
+    u: &Universe,
+) -> Vec<usize> {
     rule.body
         .iter()
         .enumerate()
         .filter(|(_, g)| {
             g.polarity == Polarity::Positive
                 && Kernel::of(u, g.rel).is_none()
-                && strata.levels.get(&g.rel) == Some(&level)
+                && (strata.levels.get(&g.rel) == Some(&level) || g.rel == effects.effect)
         })
         .map(|(i, _)| i)
         .collect()
 }
 
-fn fire(
-    u: &mut Universe,
-    store: &Store,
-    rules_by_rel: &HashMap<TermId, Vec<&Rule>>,
-    rule: &Rule,
-    plan: &Plan,
-    sink: &mut Sink,
-    requests: &mut Vec<Box<[TermId]>>,
-) {
+#[derive(Default)]
+struct Pending {
+    sink: Sink,
+    requests: Vec<Box<[TermId]>>,
+    effects: Vec<Box<[TermId]>>,
+    snapshots: Vec<Box<[TermId]>>,
+}
+
+fn fire(u: &mut Universe, cx: Context, rule: &Rule, plan: &Plan, out: &mut Pending) {
     let mut env = Env::new(rule.vars.len());
     let mut eval = Eval {
         u,
-        store,
-        rules_by_rel,
+        cx,
         tables_only: false,
         intern_requests: Vec::new(),
+        effect_rows: Vec::new(),
+        snapshot_rows: Vec::new(),
         memo: HashMap::new(),
     };
     let rel = rule.rel;
-    let mut out = |_u: &mut Universe, env: &Env| {
+    let mut derived = |_u: &mut Universe, env: &Env| {
         if let Some(row) = head_row(env, rule) {
-            sink.push((rel, row.into_boxed_slice()));
+            out.sink.push((rel, row.into_boxed_slice()));
         }
     };
-    eval.solve(rule, 0, plan, &mut env, &mut out);
-    requests.append(&mut eval.intern_requests);
+    eval.solve(rule, 0, plan, &mut env, &mut derived);
+    out.requests.append(&mut eval.intern_requests);
+    out.effects.append(&mut eval.effect_rows);
+    out.snapshots.append(&mut eval.snapshot_rows);
 }
 
 /// `completed_body_holds/2`: one bag entry per body proof over the stored
 /// rows, with a non-ground head rejecting the whole rule.
 fn aggregate_proofs(
     u: &mut Universe,
-    store: &Store,
-    rules_by_rel: &HashMap<TermId, Vec<&Rule>>,
+    cx: Context,
     rule: &Rule,
 ) -> Result<Vec<Vec<TermId>>, Diagnostic> {
     let plan: Plan = rule.body.iter().map(|_| Range::All).collect();
@@ -346,10 +401,11 @@ fn aggregate_proofs(
         let mut env = Env::new(rule.vars.len());
         let mut eval = Eval {
             u: &mut *u,
-            store,
-            rules_by_rel,
+            cx,
             tables_only: true,
             intern_requests: Vec::new(),
+            effect_rows: Vec::new(),
+            snapshot_rows: Vec::new(),
             memo: HashMap::new(),
         };
         let mut out = |_u: &mut Universe, env: &Env| match head_row(env, rule) {
@@ -371,12 +427,7 @@ fn aggregate_proofs(
 /// Port of `derive_aggregate_rows/4`: every body proof over the completed
 /// lower rows is one bag entry; plain head positions form the group key, and
 /// the aggregate position is folded by kind.
-fn aggregate_rows(
-    u: &mut Universe,
-    store: &Store,
-    rules_by_rel: &HashMap<TermId, Vec<&Rule>>,
-    rule: &Rule,
-) -> Result<Sink, Diagnostic> {
+fn aggregate_rows(u: &mut Universe, cx: Context, rule: &Rule) -> Result<Sink, Diagnostic> {
     let aggregate_args = rule.aggregate_args();
     if aggregate_args != 1 {
         let n = u.int(aggregate_args as i64);
@@ -386,7 +437,7 @@ fn aggregate_rows(
             payload,
         });
     }
-    let proofs = aggregate_proofs(u, store, rules_by_rel, rule)?;
+    let proofs = aggregate_proofs(u, cx, rule)?;
     let (position, aggregation, _) = rule.aggregate_head().unwrap();
     let mut groups: HashMap<Vec<TermId>, Vec<TermId>> = HashMap::new();
     let mut order: Vec<Vec<TermId>> = Vec::new();
@@ -497,8 +548,19 @@ fn evaluate_into(
             diagnostics,
         };
     }
-    let mut requests: Vec<Box<[TermId]>> = Vec::new();
-
+    let kernel_rel = |u: &mut Universe, name: &str| {
+        let n = u.atom(name);
+        let k = u.compound("kernel", vec![n]);
+        u.compound("ref", vec![k])
+    };
+    let effects = Effects {
+        effect: kernel_rel(u, "effect"),
+        intern_snapshot: kernel_rel(u, "intern_snapshot"),
+        none: {
+            let n = u.atom("none");
+            u.compound("const", vec![n])
+        },
+    };
     let nil_rel = {
         let n = u.atom("nil");
         let k = u.compound("kernel", vec![n]);
@@ -546,7 +608,13 @@ fn evaluate_into(
         let mut aggregate_diags = Vec::new();
         let mut aggregate_seeds = Vec::new();
         for rule in &aggregate {
-            match aggregate_rows(u, store, &rules_by_rel, rule) {
+            let cx = Context {
+                store,
+                rules_by_rel: &rules_by_rel,
+                served: &program.served,
+                effects,
+            };
+            match aggregate_rows(u, cx, rule) {
                 Ok(rows) => aggregate_seeds.extend(rows),
                 Err(d) => aggregate_diags.push(d),
             }
@@ -574,21 +642,19 @@ fn evaluate_into(
 
         let mut round: u32 = 0;
         loop {
-            let mut sink: Sink = Vec::new();
+            let mut pending = Pending::default();
             for rule in &plain {
+                let cx = Context {
+                    store,
+                    rules_by_rel: &rules_by_rel,
+                    served: &program.served,
+                    effects,
+                };
                 if round == 0 {
                     let plan: Plan = rule.body.iter().map(|_| Range::All).collect();
-                    fire(
-                        u,
-                        store,
-                        &rules_by_rel,
-                        rule,
-                        &plan,
-                        &mut sink,
-                        &mut requests,
-                    );
+                    fire(u, cx, rule, &plan, &mut pending);
                 } else {
-                    let positions = current_goal_positions(rule, &strata, level, u);
+                    let positions = current_goal_positions(rule, &strata, level, effects, u);
                     for &delta_at in &positions {
                         let plan: Plan = rule
                             .body
@@ -606,27 +672,29 @@ fn evaluate_into(
                                 }
                             })
                             .collect();
-                        fire(
-                            u,
-                            store,
-                            &rules_by_rel,
-                            rule,
-                            &plan,
-                            &mut sink,
-                            &mut requests,
-                        );
+                        fire(u, cx, rule, &plan, &mut pending);
                     }
                 }
             }
             store.mark_all();
             let mut new = 0;
-            for (rel, row) in sink {
+            for (rel, row) in pending.sink {
                 if store.insert(rel, row) {
                     new += 1;
                 }
             }
-            for r in requests.drain(..) {
+            for r in pending.requests {
                 if store.insert(intern_rel, r) {
+                    new += 1;
+                }
+            }
+            for row in pending.effects {
+                if store.insert(effects.effect, row) {
+                    new += 1;
+                }
+            }
+            for row in pending.snapshots {
+                if store.insert(effects.intern_snapshot, row) {
                     new += 1;
                 }
             }

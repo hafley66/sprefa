@@ -4,7 +4,7 @@
 use super::cx::{CallPolicy, Cx};
 use super::express::{expression_callable, lower_argument};
 use super::forms;
-use super::host::indexed_goal_origins;
+use super::origins::indexed_goal_origins;
 use super::slots;
 use crate::_6_eval::term::{Term, TermId};
 

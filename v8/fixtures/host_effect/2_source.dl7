@@ -1,0 +1,7 @@
+; Nothing is bound, so the whole pattern is free: a source.
+(: tick (* (: at int)))
+
+(: Seen (* (: at int)))
+
+(<- (Seen ?At)
+    (tick ?At))

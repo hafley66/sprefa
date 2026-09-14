@@ -1,5 +1,5 @@
 //! The compiler fixpoint. Port of `v7/src/2_comptime/2_compiler.pl:700-1591`,
-//! `1a_generated_program_assembler.pl` and `1d_host_planner.pl`.
+//! and `1a_generated_program_assembler.pl`.
 
 #[path = "_1_api.rs"]
 pub mod api;
@@ -7,8 +7,6 @@ pub mod api;
 pub mod assemble;
 #[path = "_5_finish.rs"]
 pub mod finish;
-#[path = "_4_host.rs"]
-pub mod host;
 #[path = "_6_json.rs"]
 pub mod json;
 #[path = "_0_load/mod.rs"]

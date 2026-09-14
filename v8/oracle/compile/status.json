@@ -93,17 +93,6 @@
   },
   {
    "arguments": [
-    "<root>/test/fixtures/11_host_source_sink.dl7"
-   ],
-   "bytes": 654636,
-   "committed": false,
-   "compiler_rows": 826,
-   "diagnostics": 0,
-   "stem": "test-fixtures-11_host_source_sink",
-   "v7_ms": 400
-  },
-  {
-   "arguments": [
     "<root>/test/fixtures/12_native_runtime.dl7"
    ],
    "bytes": 642840,
@@ -233,17 +222,6 @@
    "diagnostics": 0,
    "stem": "test-fixtures-7_rust_types_region",
    "v7_ms": 392
-  },
-  {
-   "arguments": [
-    "<root>/test/fixtures/8_hosted.dl7"
-   ],
-   "bytes": 652119,
-   "committed": false,
-   "compiler_rows": 829,
-   "diagnostics": 0,
-   "stem": "test-fixtures-8_hosted",
-   "v7_ms": 428
   },
   {
    "arguments": [

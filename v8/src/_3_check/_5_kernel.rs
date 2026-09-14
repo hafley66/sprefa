@@ -10,22 +10,10 @@
 
 use crate::_6_eval::term::{TermId, Universe};
 
-/// A kernel relation absent from the frozen v7 kernel graph has no
-/// `relation/3` row, so its arity comes from the lowerer table.
-pub fn kernel_arity(u: &Universe, target: TermId) -> Option<i64> {
-    let inner = u.unary(target, "ref")?;
-    let name = u.unary(inner, "kernel")?;
-    let (name, args) = u.functor_or_atom(name)?;
-    if !args.is_empty() {
-        return None;
-    }
-    crate::_2_lower::kernel::kernel_relation(name).map(i64::from)
-}
-
 pub const COMPARISONS: [&str; 6] = ["int_lt", "int_le", "int_eq", "int_ne", "int_ge", "int_gt"];
 
 /// `0_lowerer.pl:1958-1973`, in declaration order.
-pub const KERNEL_RELATIONS: [(&str, i64); 17] = [
+pub const KERNEL_RELATIONS: [(&str, i64); 19] = [
     ("node", 1),
     ("module", 1),
     ("product", 1),
@@ -37,6 +25,8 @@ pub const KERNEL_RELATIONS: [(&str, i64); 17] = [
     ("edge_ref", 3),
     ("intern", 3),
     ("intern_snapshot", 3),
+    ("int_add", 3),
+    ("effect", 2),
     ("int_lt", 2),
     ("int_le", 2),
     ("int_eq", 2),
@@ -62,6 +52,7 @@ pub fn kernel_relation_keys(name: &str) -> Vec<Vec<i64>> {
         "nil" => vec![vec![0]],
         "cons" => vec![vec![0, 1], vec![2]],
         "edge_ref" | "intern" | "intern_snapshot" => vec![vec![0, 1]],
+        "int_add" | "effect" => vec![vec![0, 1]],
         other if is_comparison(other) => vec![vec![0, 1]],
         "def" | "head" => vec![vec![0]],
         "body" => vec![vec![0, 1]],
