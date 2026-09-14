@@ -1,1 +1,0 @@
-export { Baz } from "./lib";

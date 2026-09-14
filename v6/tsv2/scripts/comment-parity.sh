@@ -9,7 +9,7 @@ ROOT="$(cd "$TSV2/../.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/comment-parity.XXXXXX")"
 CORPUS="$WORK/corpus"
 DL="${DL_V5_BIN:-$ROOT/target/release/dl}"
-EX="${DL_EXTRACT_BIN:-$ROOT/v6/sprefa-extract/target/release/extract}"
+EX="${DL_EXTRACT_BIN:-$ROOT/hafley-rs/crates/sprefa-extract/target/release/extract}"
 CN="${DL_COMMENT_NODE:-$SCRIPT_DIR/comment_node.py}"
 ARCH="${DL_ARCH_MARKER:-$SCRIPT_DIR/comment_arch_marker.py}"
 FILES="src/main.rs src/lower.rs src/cst.rs src/parse_mod.rs src/strata.rs"
@@ -24,7 +24,7 @@ if [ ! -x "$DL" ]; then
 fi
 if [ ! -x "$EX" ]; then
   say "building release extractor"
-  (cd "$ROOT/v6/sprefa-extract" && cargo build --release --features cli --bin extract) >"$WORK/extract-build.log" 2>&1 \
+  (cd "$ROOT/hafley-rs/crates/sprefa-extract" && cargo build --release --features cli --bin extract) >"$WORK/extract-build.log" 2>&1 \
     || fail "extractor build: $(tail -8 "$WORK/extract-build.log")"
 fi
 [ -x "$DL" ] || fail "v5 engine missing: $DL"

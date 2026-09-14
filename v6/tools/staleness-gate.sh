@@ -130,9 +130,9 @@ check_binary() {
 check_binary "$REPO_ROOT/target/release/dl" "$REPO_ROOT/src" "$REPO_ROOT/Cargo.toml" \
   "cd $REPO_ROOT && cargo build --release --bin dl"
 
-check_binary "$REPO_ROOT/v6/sprefa-extract/target/release/extract" \
-  "$REPO_ROOT/v6/sprefa-extract/src" "$REPO_ROOT/v6/sprefa-extract/Cargo.toml" \
-  "cd $REPO_ROOT/v6/sprefa-extract && cargo build --release --features cli --bin extract"
+check_binary "$REPO_ROOT/hafley-rs/crates/sprefa-extract/target/release/extract" \
+  "$REPO_ROOT/hafley-rs/crates/sprefa-extract/src" "$REPO_ROOT/hafley-rs/crates/sprefa-extract/Cargo.toml" \
+  "cd $REPO_ROOT/hafley-rs/crates/sprefa-extract && cargo build --release --features cli --bin extract"
 
 # ── (c) ARCH-MAP.md half ──────────────────────────────────────────────────────
 # @comment-ok: mandated ARC-MAP staleness gate; self-map entry required by spec

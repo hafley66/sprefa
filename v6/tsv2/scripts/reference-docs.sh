@@ -21,7 +21,7 @@ SERVER_PID=""
 export DL_COMMENT_NODE="${DL_COMMENT_NODE:-$SCRIPT_DIR/comment_node.py}"
 export DL_POLICY_MARKERS="${DL_POLICY_MARKERS:-$SCRIPT_DIR/comment_policy_markers.py}"
 if [ -z "${DL_EXTRACT_BIN:-}" ]; then
-  DL_EXTRACT_BIN="$ROOT/v6/sprefa-extract/target/release/extract"
+  DL_EXTRACT_BIN="$ROOT/hafley-rs/crates/sprefa-extract/target/release/extract"
   export DL_EXTRACT_BIN
 fi
 

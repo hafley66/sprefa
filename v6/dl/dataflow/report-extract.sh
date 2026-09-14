@@ -32,7 +32,7 @@ ROOT="$(cd "$V6/.." && pwd)"
 DL6="${DL6:-$V6/sprefa-engine-rs/target/release/dl6}"
 RAIL="$HERE/report_extract.dl6"
 
-GLOB="${1:-v6/sprefa-extract/src/*.rs}"
+GLOB="${1:-hafley-rs/crates/sprefa-extract/src/*.rs}"
 OUT="${2:-$ROOT/docs/extract-dataflow.md}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/report-extract.XXXXXX")"
