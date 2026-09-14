@@ -9,7 +9,7 @@
 use super::program::{AggregateKind, Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId};
 use super::term::{Term, TermId, Universe};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// SWI's JSON writer turns the atoms `null`, `true` and `false` into JSON
 /// literals; read them back as atoms.
@@ -113,6 +113,158 @@ fn call_parts(v: &Value) -> Result<(&Value, &Vec<Value>), String> {
         .and_then(|a| a.as_array())
         .ok_or("call without args")?;
     Ok((rel, args))
+}
+
+/// A `checked_datalog/4` term that cannot be transported.
+enum Transport {
+    Shape(&'static str),
+    DuplicateName {
+        name: String,
+        first: TermId,
+        second: TermId,
+    },
+}
+
+fn arg_to_json(u: &Universe, id: TermId) -> Value {
+    if let Some(identity) = u.unary(id, "var") {
+        return json!({ "v": term_to_json(u, identity) });
+    }
+    if let Some([kind, subject]) = u.args::<2>(id, "aggregate") {
+        if let Term::Atom(s) = u.get(kind) {
+            let name = u.sym_str(*s);
+            if AggregateKind::of(name).is_some() {
+                return json!({ name: arg_to_json(u, subject) });
+            }
+        }
+    }
+    term_to_json(u, id)
+}
+
+fn call_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
+    let [rel, args] = u.args::<2>(id, "call").ok_or(Transport::Shape("bad_call"))?;
+    let args = u.as_list(args).ok_or(Transport::Shape("bad_call"))?;
+    Ok(json!({
+        "rel": term_to_json(u, rel),
+        "args": args.iter().map(|a| arg_to_json(u, *a)).collect::<Vec<_>>(),
+    }))
+}
+
+fn goal_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
+    let [polarity, call] = u
+        .args::<2>(id, "checked_goal")
+        .ok_or(Transport::Shape("bad_goal"))?;
+    let Term::Atom(s) = u.get(polarity) else {
+        return Err(Transport::Shape("bad_goal"));
+    };
+    let mut out = call_to_json(u, call)?;
+    out["polarity"] = json!(u.sym_str(*s));
+    Ok(out)
+}
+
+fn rule_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
+    let [head, body] = u.args::<2>(id, "rule").ok_or(Transport::Shape("bad_rule"))?;
+    let body = u.as_list(body).ok_or(Transport::Shape("bad_rule"))?;
+    Ok(json!({
+        "head": call_to_json(u, head)?,
+        "body": body
+            .iter()
+            .map(|g| goal_to_json(u, *g))
+            .collect::<Result<Vec<_>, _>>()?,
+    }))
+}
+
+/// Every `:(module(M), Name, ref(Relation), _)` bind in the root graph. A file
+/// module shadows the prelude's bind of one name; two files disagreeing do not.
+fn names_to_json(u: &Universe, graph: TermId) -> Result<Value, Transport> {
+    let [_, edges] = u
+        .args::<2>(graph, "root_graph")
+        .ok_or(Transport::Shape("no_root_graph"))?;
+    let edges = u.as_list(edges).ok_or(Transport::Shape("no_root_graph"))?;
+    let mut out: BTreeMap<String, (bool, TermId)> = BTreeMap::new();
+    for edge in edges {
+        let Some([owner, name, relation, _]) = u.args::<4>(edge, ":") else {
+            continue;
+        };
+        let Some(module) = u.unary(owner, "module") else {
+            continue;
+        };
+        if u.unary(relation, "ref").is_none() {
+            continue;
+        }
+        let Term::Atom(s) = u.get(name) else {
+            continue;
+        };
+        let name = u.sym_str(*s).to_string();
+        let prelude = matches!(u.get(module), Term::Atom(m) if u.sym_str(*m) == "prelude");
+        match out.get(&name) {
+            Some((_, first)) if *first == relation => {}
+            Some((true, _)) if !prelude => {
+                out.insert(name, (prelude, relation));
+            }
+            Some((false, _)) if prelude => {}
+            Some((_, first)) => {
+                return Err(Transport::DuplicateName {
+                    name,
+                    first: *first,
+                    second: relation,
+                })
+            }
+            None => {
+                out.insert(name, (prelude, relation));
+            }
+        }
+    }
+    Ok(Value::Object(
+        out.into_iter()
+            .map(|(name, (_, relation))| (name, term_to_json(u, relation)))
+            .collect(),
+    ))
+}
+
+fn transport(u: &Universe, checked_datalog: TermId) -> Result<Value, Transport> {
+    let [graph, datalog, _, _] = u
+        .args::<4>(checked_datalog, "checked_datalog")
+        .ok_or(Transport::Shape("not_checked_datalog"))?;
+    let [_, seeds, rules] = u
+        .args::<3>(datalog, "datalog_program")
+        .ok_or(Transport::Shape("no_datalog_program"))?;
+    let seeds = u
+        .as_list(seeds)
+        .ok_or(Transport::Shape("no_datalog_program"))?;
+    let rules = u
+        .as_list(rules)
+        .ok_or(Transport::Shape("no_datalog_program"))?;
+    Ok(json!({
+        "rules": rules
+            .iter()
+            .map(|r| rule_to_json(u, *r))
+            .collect::<Result<Vec<_>, _>>()?,
+        "seeds": seeds
+            .iter()
+            .map(|s| call_to_json(u, *s))
+            .collect::<Result<Vec<_>, _>>()?,
+        "names": names_to_json(u, graph)?,
+    }))
+}
+
+/// The runtime program as `dl8 eval` reads it: `{"rules", "seeds", "names"}`.
+/// `Err` is a diagnostic payload term.
+pub fn program_to_json(u: &mut Universe, checked_datalog: TermId) -> Result<Value, TermId> {
+    match transport(u, checked_datalog) {
+        Ok(value) => Ok(value),
+        Err(Transport::Shape(reason)) => {
+            let reason = u.atom(reason);
+            Err(u.compound("program_transport", vec![reason]))
+        }
+        Err(Transport::DuplicateName {
+            name,
+            first,
+            second,
+        }) => {
+            let name = u.atom(&name);
+            Err(u.compound("duplicate_relation_name", vec![name, first, second]))
+        }
+    }
 }
 
 pub fn program_from_json(u: &mut Universe, v: &Value) -> Result<Program, String> {

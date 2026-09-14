@@ -1,7 +1,9 @@
 //! `IRowStore` over one SQLite file. Table names are the program name, a dot,
-//! then the object: `"fetch_json.sym"`, `"fetch_json.rel412_a2"`.
+//! then the object: `"1_settled.sym"`, `"1_settled.Body_a2"`, `"x.rel412_a2"`.
 
-use super::store::{kernel_owned, CellKind, IRowStore, StoreError, Watermark, KERNEL_ARITY};
+use super::store::{
+    kernel_owned, nameable, CellKind, IRowStore, StoreError, Watermark, KERNEL_ARITY,
+};
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::{Sym, Term, TermId, Universe};
 use ordered_float::OrderedFloat;
@@ -24,6 +26,8 @@ pub struct SqliteRowStore {
     /// `Table.frontier`, which is the semi-naive wavefront.
     durable: HashMap<TermId, usize>,
     columns: HashMap<(u32, usize), Vec<CellKind>>,
+    /// Declared name per relation; a db name outranks the running program's.
+    names: HashMap<TermId, String>,
     arena: Watermark,
     variable_limit: usize,
     in_tick: bool,
@@ -39,6 +43,7 @@ impl SqliteRowStore {
             program: String::new(),
             durable: HashMap::new(),
             columns: HashMap::new(),
+            names: HashMap::new(),
             arena: Watermark::default(),
             variable_limit: variable_limit.max(8),
             in_tick: false,
@@ -49,8 +54,13 @@ impl SqliteRowStore {
         format!("{}.{object}", self.program)
     }
 
-    fn product_table(&self, rel: TermId, arity: usize) -> String {
-        self.table(&format!("rel{}_a{arity}", rel.0))
+    /// The arity suffix keeps a named table out of the reserved object names
+    /// (`sym`, `term`, `term_arg`, `relation`, `kernel`), which carry none.
+    fn table_for(&self, rel: TermId, arity: usize) -> String {
+        match self.names.get(&rel) {
+            Some(name) => self.table(&format!("{name}_a{arity}")),
+            None => self.table(&format!("rel{}_a{arity}", rel.0)),
+        }
     }
 
     /// One INSERT per chunk of `variable_limit / per_row` rows, so the
@@ -122,7 +132,7 @@ impl SqliteRowStore {
         arity: usize,
         kinds: &[CellKind],
     ) -> Result<String, StoreError> {
-        let table = self.product_table(rel, arity);
+        let table = self.table_for(rel, arity);
         if let Some(stored) = self.columns.get(&(rel.0, arity)) {
             for (position, (stored, arriving)) in stored.iter().zip(kinds).enumerate() {
                 if stored != arriving {
@@ -139,10 +149,14 @@ impl SqliteRowStore {
         self.create_product(&table, kinds)?;
         self.connection.execute(
             &format!(
-                "INSERT OR IGNORE INTO \"{}\" (\"rel\",\"arity\") VALUES (?,?)",
+                "INSERT OR IGNORE INTO \"{}\" (\"rel\",\"arity\",\"name\") VALUES (?,?,?)",
                 self.table("relation")
             ),
-            (rel.0 as i64, arity as i64),
+            (
+                rel.0 as i64,
+                arity as i64,
+                self.names.get(&rel).map(String::as_str),
+            ),
         )?;
         self.columns.insert((rel.0, arity), kinds.to_vec());
         Ok(table)
@@ -345,7 +359,7 @@ impl SqliteRowStore {
         arity: usize,
         kinds: &[CellKind],
     ) -> Result<usize, StoreError> {
-        let table = self.product_table(rel, arity);
+        let table = self.table_for(rel, arity);
         if arity == 0 {
             let rows: i64 = self.connection.query_row(
                 &format!("SELECT count(*) FROM \"{table}\""),
@@ -454,7 +468,9 @@ impl IRowStore for SqliteRowStore {
                \"__id\" INTEGER PRIMARY KEY,
                \"rel\" INTEGER NOT NULL REFERENCES \"{term}\"(\"id\"),
                \"arity\" INTEGER NOT NULL,
-               UNIQUE (\"rel\", \"arity\"));
+               \"name\" TEXT,
+               UNIQUE (\"rel\", \"arity\"),
+               UNIQUE (\"name\", \"arity\"));
              CREATE TABLE IF NOT EXISTS \"{kernel_table}\" (
                \"__id\" INTEGER PRIMARY KEY, {kernel},
                UNIQUE ({unique}));",
@@ -465,6 +481,16 @@ impl IRowStore for SqliteRowStore {
             kernel_table = self.table("kernel"),
         ))?;
         Ok(())
+    }
+
+    /// Sorted, so two names on one relation always pick the same table.
+    fn name_relations(&mut self, names: &HashMap<String, TermId>) {
+        let sorted: BTreeMap<&String, &TermId> = names.iter().collect();
+        for (name, rel) in sorted {
+            if nameable(name) {
+                self.names.entry(*rel).or_insert_with(|| name.clone());
+            }
+        }
     }
 
     fn load_arena(&mut self, u: &mut Universe) -> Result<Watermark, StoreError> {
@@ -480,7 +506,7 @@ impl IRowStore for SqliteRowStore {
         let mut products = Vec::new();
         {
             let mut statement = self.connection.prepare(&format!(
-                "SELECT \"rel\",\"arity\" FROM \"{}\" ORDER BY \"__id\"",
+                "SELECT \"rel\",\"arity\",\"name\" FROM \"{}\" ORDER BY \"__id\"",
                 self.table("relation")
             ))?;
             let mut cursor = statement.query(())?;
@@ -488,11 +514,17 @@ impl IRowStore for SqliteRowStore {
                 products.push((
                     TermId(row.get::<_, i64>(0)? as u32),
                     row.get::<_, i64>(1)? as usize,
+                    row.get::<_, Option<String>>(2)?,
                 ));
             }
         }
-        for (rel, arity) in products {
-            let kinds = self.product_kinds(&self.product_table(rel, arity))?;
+        for (rel, _, name) in &products {
+            if let Some(name) = name {
+                self.names.insert(*rel, name.clone());
+            }
+        }
+        for (rel, arity, _) in products {
+            let kinds = self.product_kinds(&self.table_for(rel, arity))?;
             loaded += self.load_product(u, store, rel, arity, &kinds)?;
             self.columns.insert((rel.0, arity), kinds);
         }
