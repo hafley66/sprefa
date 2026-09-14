@@ -51,7 +51,7 @@ resolve_v5_bin() {
 
 resolve_extract_bin() {
   if [ -n "${DL_EXTRACT_BIN:-}" ] && [ -x "$DL_EXTRACT_BIN" ]; then return; fi
-  DL_EXTRACT_BIN="$REPO/v6/sprefa-extract/target/release/extract"
+  DL_EXTRACT_BIN="$REPO/hafley-rs/crates/sprefa-extract/target/release/extract"
   [ -x "$DL_EXTRACT_BIN" ] || fail "no v6 release extractor at $DL_EXTRACT_BIN; build cargo --release --features cli --bin extract first"
   export DL_EXTRACT_BIN
 }
@@ -59,9 +59,9 @@ resolve_extract_bin() {
 build_corpus() {
   local count=0 file
   for file in $CORPUS; do
-    [ -f "$REPO/v6/sprefa-extract/$file" ] || fail "pinned corpus file missing: $file"
+    [ -f "$REPO/hafley-rs/crates/sprefa-extract/$file" ] || fail "pinned corpus file missing: $file"
     mkdir -p "$ROOT/$(dirname "$file")"
-    cp -f "$REPO/v6/sprefa-extract/$file" "$ROOT/$file"
+    cp -f "$REPO/hafley-rs/crates/sprefa-extract/$file" "$ROOT/$file"
     count=$((count + 1))
   done
   (cd "$ROOT" && git init -q . && git add -A && git -c user.email=rig@sprefa -c user.name=flagship-rig commit -q -m pinned-corpus) || fail "could not initialize corpus"

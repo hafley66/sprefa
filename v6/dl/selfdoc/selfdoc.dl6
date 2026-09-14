@@ -144,8 +144,6 @@ digit_phase('6', 'plan').   digit_phase('7', 'plan').
 digit_phase('8', 'plan').   digit_phase('9', 'plan').
 
 rel board_prefix(prefix: text, board: text).
-board_prefix('v6/sprefa-extract/src/bin/',  'cli').
-board_prefix('v6/sprefa-extract/src/lang/', 'families').
 
 rel resolve_stem(stem: text).
 resolve_stem('project').  resolve_stem('deps').  resolve_stem('manifests').

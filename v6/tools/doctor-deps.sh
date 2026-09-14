@@ -7,7 +7,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WANT="$(cd "${HAFLEY_RS:-$HOME/projects/hafley-rs}" && pwd -P)"
 rc=0
-for crate in v6/sprefa-engine-rs v6/sprefa-extract v6/sprefa-store; do
+for crate in v6/sprefa-engine-rs hafley-rs/crates/sprefa-extract v6/sprefa-store; do
   manifest="$HERE/$crate/Cargo.toml"
   [ -f "$manifest" ] || continue
   for dep in $(grep -oE 'path *= *"[^"]*hafley-rs[^"]*"' "$manifest" | sed -E 's/.*"([^"]*)".*/\1/'); do

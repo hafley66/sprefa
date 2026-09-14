@@ -5,7 +5,7 @@ REPO="$1"
 ROOT="$HOME/corpora/$REPO"
 R=/Users/chrishafley/projects/sprefa/.boop-worktrees/bench/extract-rust-corpora/plans/extract-bench-2026-08-29
 OUT="$R/rust-corpora"
-BIN="$R/../../v6/sprefa-extract/target/release/extract"
+BIN="$R/../../hafley-rs/crates/sprefa-extract/target/release/extract"
 PROBE="$R/ra_ide_probe/target/release/ra_ide_probe"
 FILES="$OUT/$REPO.files.txt"
 

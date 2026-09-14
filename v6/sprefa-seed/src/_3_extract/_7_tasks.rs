@@ -228,7 +228,7 @@
 //!             every field, per-family kind vocabularies, phase-1 limits);
 //!             `--version` works; PATH is conditionally required so `extract
 //!             --schema` runs standalone. Commit a08ce4b5. `cargo install --path
-//!             v6/sprefa-extract --features cli --locked` puts `extract` on PATH.
+//!             hafley-rs/crates/sprefa-extract --features cli --locked` puts `extract` on PATH.
 //!   (go)     THIRD LANGUAGE LANDED: `GoSource` (lang/go.rs, ~1120 lines), PREPENDED in the
 //!             roster so .go routes to it. Mirror of TsSource/RustSource: cst via ast-grep
 //!             (ast-grep's go grammar) + type/call/df via tree-sitter-go (`go_parse` ->

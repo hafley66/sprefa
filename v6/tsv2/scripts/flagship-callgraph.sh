@@ -133,7 +133,7 @@ REGEN_CMD="FLAGSHIP_V5_WRITE=1 bash scripts/flagship-callgraph.sh"
 WRITE_GOLDEN="${FLAGSHIP_V5_WRITE:-0}"
 SERVER_PID=""
 
-# THE PIN. Paths are relative to v6/sprefa-extract/ and land at the same relative
+# THE PIN. Paths are relative to hafley-rs/crates/sprefa-extract/ and land at the same relative
 # path under the scratch root, so both engines say `src/types.rs`.
 CORPUS="
 src/types.rs
@@ -181,7 +181,7 @@ resolve_extract_bin() {
     say "extract bin: $DL_EXTRACT_BIN (DL_EXTRACT_BIN)"; return
   fi
   local crate release
-  crate="$REPO/v6/sprefa-extract"
+  crate="$REPO/hafley-rs/crates/sprefa-extract"
   release="$crate/target/release/extract"
   if [ ! -x "$release" ]; then
     fail "no release extractor. A gate does not build; run:
@@ -196,9 +196,9 @@ resolve_extract_bin() {
 build_corpus() {
   local count=0 file
   for file in $CORPUS; do
-    [ -f "$REPO/v6/sprefa-extract/$file" ] || fail "pinned corpus file missing: v6/sprefa-extract/$file"
+    [ -f "$REPO/hafley-rs/crates/sprefa-extract/$file" ] || fail "pinned corpus file missing: hafley-rs/crates/sprefa-extract/$file"
     mkdir -p "$ROOT/$(dirname "$file")"
-    cp "$REPO/v6/sprefa-extract/$file" "$ROOT/$file"
+    cp "$REPO/hafley-rs/crates/sprefa-extract/$file" "$ROOT/$file"
     count=$((count + 1))
   done
   (cd "$ROOT" && git init -q . && git add -A \

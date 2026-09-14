@@ -36,7 +36,7 @@ RELS='selfdoc_board,selfdoc_board_edge,selfdoc_module,selfdoc_module_edge,selfdo
     DL_EXTRACT_BIN="${DL_EXTRACT_BIN:-$V6/sprefa-extract/target/release/extract}" \
     "$HARNESS" "$WORK/selfdoc.rs" \
     --arrive 'want=v6/prolog/*.pl' \
-    --arrive 'want=v6/sprefa-extract/src/*.rs' \
+    --arrive 'want=hafley-rs/crates/sprefa-extract/src/*.rs' \
     --arrive 'want=v6/dl/*.dl6' \
     --arrive 'want=v6/dl/*.adapters.json' \
     --live-hosts --final-only --final-tsv --final-rels "$RELS" ) \
@@ -294,6 +294,6 @@ render_board "$EXTRACT" dispatch 'dispatch' 'One file plus a mask to a family ou
 render_board "$EXTRACT" families 'families' 'One module per language front-end. Each projects a tree-sitter parse into the shared record shapes.'
 render_board "$EXTRACT" resolve  'resolve'  'Phase 2: names to files, across a supplied project.'
 render_board "$EXTRACT" scip     'scip'     'A SCIP index in, raw rows out. The one plane a compiler resolved.'
-render_symbols "$EXTRACT" 'v6/sprefa-extract/'
+render_symbols "$EXTRACT" 'hafley-rs/crates/sprefa-extract/'
 
 printf 'wrote %s and %s\n' "$COMPILER" "$EXTRACT"

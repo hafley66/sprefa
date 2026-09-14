@@ -20,9 +20,9 @@ export DL_COMMENT_NODE="${DL_COMMENT_NODE:-$SCRIPT_DIR/comment_node.py}"
 export DL_ARCH_MARKER="${DL_ARCH_MARKER:-$SCRIPT_DIR/comment_arch_marker.py}"
 export DL_POLICY_MARKERS="${DL_POLICY_MARKERS:-$SCRIPT_DIR/comment_policy_markers.py}"
 if [ -z "${DL_EXTRACT_BIN:-}" ]; then
-  DL_EXTRACT_BIN="$ROOT/v6/sprefa-extract/target/release/extract"
+  DL_EXTRACT_BIN="$ROOT/hafley-rs/crates/sprefa-extract/target/release/extract"
   if [ ! -x "$DL_EXTRACT_BIN" ]; then
-    (cd "$ROOT/v6/sprefa-extract" && cargo build --release --features cli --bin extract) >"$WORK/extract-build.log" 2>&1 || {
+    (cd "$ROOT/hafley-rs/crates/sprefa-extract" && cargo build --release --features cli --bin extract) >"$WORK/extract-build.log" 2>&1 || {
       echo "FAIL extractor build: $(tail -8 "$WORK/extract-build.log")"
       exit 1
     }

@@ -6,7 +6,7 @@
 # One served tsv2 process, one .dl6 rail (../dl/fixtures/extraction-live.dl6),
 # one scratch corpus, and REAL `vim`-shaped edits to real files. Nothing is
 # faked: the watcher is node's own fs.watch behind the bind seam, the extractor
-# is the in-tree RELEASE build of v6/sprefa-extract, and every row below came
+# is the in-tree RELEASE build of hafley-rs/crates/sprefa-extract, and every row below came
 # out of SQLite through the program's own emitted decode SELECT.
 #
 # Nine phases, each an assertion. 1-5 are the live loop, 6-7 are restart
