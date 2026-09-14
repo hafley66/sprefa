@@ -64,14 +64,23 @@ fn scratch(name: &str) -> PathBuf {
     path
 }
 
+/// `crates/sprefa-extract` resolves its own lockfile and is `exclude`d from the
+/// hafley-rs workspace, so its manifest is the one to build, and `-p` against
+/// the root manifest would not find the package.
+fn crate_manifest() -> PathBuf {
+    sprefa_root().join("hafley-rs/crates/sprefa-extract/Cargo.toml")
+}
+
 /// Where a built `extract` can sit. `$CARGO_TARGET_DIR` comes first because a
-/// lane sets it, and then the crate's own `target/` never fills.
+/// lane sets it, and then neither target directory ever fills. The workspace
+/// one is second: the crate was a member until hafley-rs excluded it.
 fn built_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(shared) = std::env::var_os("CARGO_TARGET_DIR") {
         out.push(PathBuf::from(shared).join("debug/extract"));
     }
     out.push(sprefa_root().join("hafley-rs/target/debug/extract"));
+    out.push(sprefa_root().join("hafley-rs/crates/sprefa-extract/target/debug/extract"));
     out
 }
 
@@ -90,18 +99,16 @@ fn extract_bin() -> PathBuf {
     if let Some(built) = built_candidates().into_iter().find(|path| path.exists()) {
         return built;
     }
-    let manifest = sprefa_root().join("hafley-rs/Cargo.toml");
+    let manifest = crate_manifest();
     assert!(
         manifest.exists(),
-        "no hafley-rs checkout at {}; link it or set SPREFA_EXTRACT_BIN",
+        "no sprefa-extract crate at {}; link hafley-rs or set SPREFA_EXTRACT_BIN",
         manifest.display()
     );
     let start = Instant::now();
     let output = Command::new("cargo")
         .args([
             "build",
-            "-p",
-            "sprefa-extract",
             "--features",
             "cli",
             "--bin",
@@ -114,7 +121,7 @@ fn extract_bin() -> PathBuf {
     let elapsed = start.elapsed();
     assert!(
         output.status.success(),
-        "cargo build -p sprefa-extract failed: {}",
+        "building extract failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(

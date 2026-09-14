@@ -53,9 +53,10 @@ this order:
 | order | where | note |
 |---|---|---|
 | 1 | `$SPREFA_EXTRACT_BIN` | an absolute path; a miss is an error, never a fallthrough |
-| 2 | `$CARGO_TARGET_DIR/debug/extract` | a lane sets this, and then the crate's own `target/` never fills |
-| 3 | `<sprefa root>/hafley-rs/target/debug/extract` | `hafley-rs` is a gitignored sibling link the lane setup makes |
-| 4 | `cargo build -p sprefa-extract --features cli --bin extract --manifest-path <sprefa root>/hafley-rs/Cargo.toml` | run once, capped at 60 s |
+| 2 | `$CARGO_TARGET_DIR/debug/extract` | a lane sets this, and then neither target directory fills |
+| 3 | `<sprefa root>/hafley-rs/target/debug/extract` | `hafley-rs` is a gitignored sibling link the lane setup makes; the crate was a workspace member until hafley-rs excluded it |
+| 4 | `<sprefa root>/hafley-rs/crates/sprefa-extract/target/debug/extract` | where an excluded crate builds |
+| 5 | `cargo build --features cli --bin extract --manifest-path <sprefa root>/hafley-rs/crates/sprefa-extract/Cargo.toml` | run once, capped at 60 s |
 
 ```bash
 ln -s /Users/chrishafley/projects/hafley-rs hafley-rs   # from the sprefa root
