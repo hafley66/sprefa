@@ -12,6 +12,7 @@ pub enum Kernel {
     EdgeRef,
     Intern,
     Int(IntCmp),
+    IntAdd,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -57,6 +58,7 @@ impl Kernel {
             "int_ne" => Kernel::Int(IntCmp::Ne),
             "int_ge" => Kernel::Int(IntCmp::Ge),
             "int_gt" => Kernel::Int(IntCmp::Gt),
+            "int_add" => Kernel::IntAdd,
             _ => return None,
         })
     }
@@ -86,6 +88,7 @@ pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<Te
         Kernel::EdgeRef => edge_ref_row(u, args),
         Kernel::Intern => intern_row(u, args),
         Kernel::Int(cmp) => int_row(u, cmp, args),
+        Kernel::IntAdd => int_add_row(u, args),
     };
     solution.map(|row| vec![row]).unwrap_or_default()
 }
@@ -152,6 +155,33 @@ pub fn int_row(u: &Universe, cmp: IntCmp, args: &[Option<TermId>]) -> Option<Vec
         .then(|| vec![args[0].unwrap(), args[1].unwrap()])
 }
 
+/// `int_add(Left, Right, Sum)`: the sum is `const(Left + Right)`, and an
+/// overflowing sum has no row. The return is not a key, so a bound wrong sum
+/// fails at unification.
+pub fn int_add_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    if args.len() != 3 {
+        return None;
+    }
+    let (left, right) = (args[0]?, args[1]?);
+    let left_value = u.as_int(u.unary(left, "const")?)?;
+    let right_value = u.as_int(u.unary(right, "const")?)?;
+    let sum = left_value.checked_add(right_value)?;
+    let sum = u.int(sum);
+    let result = u.compound("const", vec![sum]);
+    Some(vec![left, right, result])
+}
+
+/// The three bound `const` integers of `int_add`, all present.
+fn int_add_ground(u: &Universe, args: &[Option<TermId>]) -> Option<(i64, i64, i64)> {
+    if args.len() != 3 {
+        return None;
+    }
+    let left = u.as_int(u.unary(args[0]?, "const")?)?;
+    let right = u.as_int(u.unary(args[1]?, "const")?)?;
+    let sum = u.as_int(u.unary(args[2]?, "const")?)?;
+    Some((left, right, sum))
+}
+
 /// Negative kernel goal, only integer comparisons: the complement. Any other
 /// kernel relation under negation is checked against the (always empty) lower
 /// store, so it holds.
@@ -159,6 +189,10 @@ pub fn negative_holds(u: &Universe, k: Kernel, args: &[Option<TermId>]) -> bool 
     match k {
         Kernel::Int(cmp) => match int_pair(u, args) {
             Some((l, r)) => !cmp.holds(l, r),
+            None => true,
+        },
+        Kernel::IntAdd => match int_add_ground(u, args) {
+            Some((left, right, sum)) => left.checked_add(right) != Some(sum),
             None => true,
         },
         _ => true,

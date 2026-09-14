@@ -1,7 +1,10 @@
 //! `read_dl7/5` from v7 `src/0_reader/0_parser.pl`, control flow for control
 //! flow. The first error wins: forms and source rows are dropped.
 
-use super::tokens::{decoded_escape, integer_token, term_delimiter, valid_atom, valid_identifier};
+use super::tokens::{
+    bool_token, decoded_escape, float_token, integer_token, term_delimiter, valid_atom,
+    valid_identifier,
+};
 use crate::_6_eval::{TermId, Universe};
 
 /// Offsets, lines and columns count CHARACTERS: v7 reads through
@@ -380,6 +383,17 @@ impl Reader<'_> {
                     return Err(self.named_error(node_id, "integer_out_of_range", &token, start))
                 }
             }
+        } else if float_token(&token) {
+            match token.parse::<f64>() {
+                Ok(f) => {
+                    let f = self.u.float(f);
+                    self.u.compound("literal", vec![f])
+                }
+                Err(_) => return Err(self.named_error(node_id, "invalid_float", &token, start)),
+            }
+        } else if bool_token(&token) {
+            let b = self.u.boolean(token == "true");
+            self.u.compound("literal", vec![b])
         } else if valid_atom(&token) {
             let name = self.u.atom(&token);
             self.u.compound("atom", vec![name])

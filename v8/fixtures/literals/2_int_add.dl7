@@ -1,0 +1,11 @@
+(: Input (* (: value int)))
+
+(Input 7)
+
+(Input 35)
+
+(: Plus (* (: value int)))
+
+(<- (Plus ?Sum)
+    (Input ?Value)
+    (int_add ?Value 100 ?Sum))

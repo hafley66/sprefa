@@ -34,6 +34,18 @@ fn relation_arities(u: &Universe, relations: &[TermId]) -> HashMap<TermId, i64> 
     out
 }
 
+/// A kernel relation with no checked `relation/3` row takes its arity from the
+/// lowerer table. `int_add` is the first kernel added after v7's frozen rows.
+fn kernel_arity(u: &Universe, relation: TermId) -> Option<i64> {
+    let inner = u.unary(relation, "ref")?;
+    let name = u.unary(inner, "kernel")?;
+    let (name, args) = u.functor_or_atom(name)?;
+    if !args.is_empty() {
+        return None;
+    }
+    crate::_2_lower::kernel::kernel_relation(name).map(i64::from)
+}
+
 /// `:245`.
 pub fn check_resolved_rules(
     u: &mut Universe,
@@ -153,7 +165,11 @@ fn call_diagnostics(u: &mut Universe, call: TermId, arities: &HashMap<TermId, i6
         let reason = u.compound("invalid_generated_call", vec![call]);
         return vec![diagnostic(u, reason)];
     };
-    match arities.get(&relation).copied() {
+    match arities
+        .get(&relation)
+        .copied()
+        .or_else(|| kernel_arity(u, relation))
+    {
         Some(arity) if arity == arguments.len() as i64 => vec![],
         Some(arity) => {
             let declared = u.int(arity);

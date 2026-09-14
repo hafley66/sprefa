@@ -17,6 +17,7 @@ pub fn kernel_relation(name: &str) -> Option<u32> {
         "node" | "module" | "product" | "sum" | "nil" => 1,
         ":" | "edge_snapshot" | "body" => 4,
         "cons" | "edge_ref" | "intern" | "intern_snapshot" => 3,
+        "int_add" => 3,
         "def" | "head" => 2,
         _ if is_integer_comparison(name) => 2,
         _ => return None,
@@ -39,6 +40,9 @@ pub fn kernel_slot_label(name: &str, index: u32) -> Option<&'static str> {
         ("edge_ref", 1) => "label",
         ("intern", 0) | ("intern_snapshot", 0) => "constructor",
         ("intern", 1) | ("intern_snapshot", 1) => "arguments",
+        ("int_add", 0) => "left",
+        ("int_add", 1) => "right",
+        ("int_add", 2) => "return",
         (other, 0) if is_integer_comparison(other) => "left",
         (other, 1) if is_integer_comparison(other) => "right",
         _ => return None,
@@ -53,6 +57,7 @@ pub fn kernel_keys(name: &str) -> Vec<Vec<u32>> {
         "nil" => vec![vec![]],
         "cons" => vec![vec![0, 1], vec![2]],
         "edge_ref" | "intern" | "intern_snapshot" => vec![vec![0, 1]],
+        "int_add" => vec![vec![0, 1]],
         other if is_integer_comparison(other) => vec![vec![0, 1]],
         _ => vec![],
     }
@@ -63,6 +68,7 @@ pub fn kernel_return_positions(name: &str) -> Vec<u32> {
     match name {
         "nil" => vec![0],
         "cons" | "edge_ref" | "intern" | "intern_snapshot" => vec![2],
+        "int_add" => vec![2],
         _ => vec![],
     }
 }

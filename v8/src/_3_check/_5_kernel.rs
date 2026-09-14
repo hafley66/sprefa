@@ -35,7 +35,7 @@ pub const KERNEL_RELATIONS: [(&str, i64); 17] = [
 
 /// `:617`.
 pub fn primitive_name(name: &str) -> bool {
-    matches!(name, "int" | "text" | "any" | "type")
+    matches!(name, "int" | "float" | "bool" | "text" | "any" | "type")
 }
 
 pub fn is_comparison(name: &str) -> bool {

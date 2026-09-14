@@ -239,6 +239,8 @@ fn partial_call_value_rules(
 fn compiler_literal_type(cx: &mut Cx, value: TermId) -> TermId {
     let name = match cx.u.get(value) {
         Term::Int(_) => "int",
+        Term::Float(_) => "float",
+        Term::Bool(_) => "bool",
         Term::Str(_) => "text",
         _ => "any",
     };

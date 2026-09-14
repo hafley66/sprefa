@@ -23,6 +23,18 @@ fn atom_name(u: &Universe, id: TermId) -> Option<&str> {
     }
 }
 
+/// A kernel relation with no checked `relation/3` row takes its arity from the
+/// lowerer table. `int_add` is the first kernel added after v7's frozen rows.
+fn kernel_arity(u: &Universe, target: TermId) -> Option<i64> {
+    let inner = u.unary(target, "ref")?;
+    let name = u.unary(inner, "kernel")?;
+    let (name, args) = u.functor_or_atom(name)?;
+    if !args.is_empty() {
+        return None;
+    }
+    kernel_relation(name).map(i64::from)
+}
+
 /// `:590`. `None` is a Prolog failure, not a diagnostic.
 pub fn resolve_target(
     u: &mut Universe,
@@ -122,7 +134,12 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
         let reason = u.compound("not_relation", vec![label]);
         return Ok(CallResult::Error(reason));
     }
-    let Some(arity) = cx.relations.get(&target).copied() else {
+    let Some(arity) = cx
+        .relations
+        .get(&target)
+        .copied()
+        .or_else(|| kernel_arity(u, target))
+    else {
         let reason = u.compound("undeclared_relation", vec![label]);
         return Ok(CallResult::Error(reason));
     };

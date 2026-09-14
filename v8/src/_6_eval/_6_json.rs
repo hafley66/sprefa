@@ -21,10 +21,16 @@ fn atom_name(v: &Value) -> Option<String> {
 
 pub fn term_from_json(u: &mut Universe, v: &Value) -> Result<TermId, String> {
     match v {
-        Value::Number(n) => n
-            .as_i64()
-            .map(|i| u.int(i))
-            .ok_or_else(|| format!("non-integer number {n}")),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(u.int(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(u.float(f))
+            } else {
+                Err(format!("non-numeric number {n}"))
+            }
+        }
+        Value::Bool(b) => Ok(u.boolean(*b)),
         Value::Array(items) => {
             let mut ids = Vec::with_capacity(items.len());
             for item in items {
@@ -59,6 +65,8 @@ pub fn term_to_json(u: &Universe, id: TermId) -> Value {
     }
     match u.get(id) {
         Term::Int(n) => json!(n),
+        Term::Float(x) => json!(x.0),
+        Term::Bool(b) => json!(b),
         Term::Atom(s) => json!({ "a": u.sym_str(*s) }),
         Term::Str(s) => json!({ "s": u.sym_str(*s) }),
         Term::Compound(s, args) => json!({

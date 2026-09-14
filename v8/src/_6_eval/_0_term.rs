@@ -3,6 +3,7 @@
 //! arena following SWI-Prolog standard order of terms.
 
 use indexmap::IndexSet;
+use ordered_float::OrderedFloat;
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -17,6 +18,8 @@ pub struct TermId(pub u32);
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Term {
     Int(i64),
+    Float(OrderedFloat<f64>),
+    Bool(bool),
     Atom(Sym),
     Str(Sym),
     Compound(Sym, Vec<TermId>),
@@ -71,6 +74,14 @@ impl Universe {
 
     pub fn int(&mut self, n: i64) -> TermId {
         self.intern(Term::Int(n))
+    }
+
+    pub fn float(&mut self, f: f64) -> TermId {
+        self.intern(Term::Float(OrderedFloat(f)))
+    }
+
+    pub fn boolean(&mut self, b: bool) -> TermId {
+        self.intern(Term::Bool(b))
     }
 
     pub fn atom(&mut self, name: &str) -> TermId {
@@ -158,17 +169,26 @@ impl Universe {
         Some(std::array::from_fn(|i| args[i]))
     }
 
-    /// SWI-Prolog standard order as measured on 9.x:
-    /// Number < String < `[]` < Atom < Compound. Compounds compare by arity,
-    /// then name, then arguments left to right.
+    /// SWI-Prolog standard order as measured on 9.x: Number < Bool < String <
+    /// `[]` < Atom < Compound. Numbers compare by value with Int before Float on
+    /// a tie; Bool is `false` then `true`. Compounds compare by arity, then
+    /// name, then arguments left to right.
     pub fn cmp(&self, a: TermId, b: TermId) -> Ordering {
         if a == b {
             return Ordering::Equal;
         }
         match (self.get(a), self.get(b)) {
             (Term::Int(x), Term::Int(y)) => x.cmp(y),
-            (Term::Int(_), _) => Ordering::Less,
-            (_, Term::Int(_)) => Ordering::Greater,
+            (Term::Float(x), Term::Float(y)) => x.cmp(y),
+            (Term::Int(x), Term::Float(y)) => OrderedFloat(*x as f64).cmp(y).then(Ordering::Less),
+            (Term::Float(x), Term::Int(y)) => {
+                x.cmp(&OrderedFloat(*y as f64)).then(Ordering::Greater)
+            }
+            (Term::Int(_) | Term::Float(_), _) => Ordering::Less,
+            (_, Term::Int(_) | Term::Float(_)) => Ordering::Greater,
+            (Term::Bool(x), Term::Bool(y)) => x.cmp(y),
+            (Term::Bool(_), _) => Ordering::Less,
+            (_, Term::Bool(_)) => Ordering::Greater,
             (Term::Str(x), Term::Str(y)) => self.sym_str(*x).cmp(self.sym_str(*y)),
             (Term::Str(_), _) => Ordering::Less,
             (_, Term::Str(_)) => Ordering::Greater,
@@ -244,6 +264,8 @@ impl fmt::Display for TermDisplay<'_> {
         }
         match u.get(self.id) {
             Term::Int(n) => write!(f, "{n}"),
+            Term::Float(x) => write!(f, "{:?}", x.0),
+            Term::Bool(b) => write!(f, "{b}"),
             Term::Atom(s) => {
                 let name = u.sym_str(*s);
                 if atom_needs_quotes(name) {
