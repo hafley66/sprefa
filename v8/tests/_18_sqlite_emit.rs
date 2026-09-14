@@ -22,24 +22,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const DIRECTORIES: [&str; 5] = ["literals", "aggregates", "term_lt", "fold", "sqlite_emit"];
-
 fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn fixtures() -> Vec<(String, PathBuf)> {
-    let mut out = Vec::new();
-    for directory in DIRECTORIES {
-        let mut found: Vec<PathBuf> = std::fs::read_dir(manifest().join("fixtures").join(directory))
-            .unwrap()
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "dl7"))
-            .collect();
-        found.sort();
-        out.extend(found.into_iter().map(|p| (directory.to_string(), p)));
-    }
-    out
 }
 
 fn extension() -> PathBuf {
@@ -142,18 +126,27 @@ fn compile_closure(compiled: &Value, names: &Value, relations: &[String]) -> Row
 }
 
 fn has_fold_head(program: &Value) -> bool {
-    program["rules"].as_array().into_iter().flatten().any(|rule| {
-        rule["head"]["args"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|arg| arg["f"] == "fold")
-    })
+    program["rules"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|rule| {
+            rule["head"]["args"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|arg| arg["f"] == "fold")
+        })
 }
 
 /// Every view's rows. A `_term` column holds an arena id, an `_int` column the
 /// integer of a `const` cell the view minted.
-fn view_rows(db: &rusqlite::Connection, arena: &Universe, prefix: &str, views: &[Value]) -> Result<Rows, String> {
+fn view_rows(
+    db: &rusqlite::Connection,
+    arena: &Universe,
+    prefix: &str,
+    views: &[Value],
+) -> Result<Rows, String> {
     let mut out = Rows::new();
     for view in views {
         let relation = view["relation"].as_str().unwrap().to_string();
@@ -165,7 +158,11 @@ fn view_rows(db: &rusqlite::Connection, arena: &Universe, prefix: &str, views: &
         let mut statement = db
             .prepare(&format!("SELECT * FROM {table}"))
             .map_err(|e| format!("{prefix} {relation}: {e}"))?;
-        let columns: Vec<String> = statement.column_names().iter().map(|c| c.to_string()).collect();
+        let columns: Vec<String> = statement
+            .column_names()
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
         let rows = statement
             .query_map((), |row| {
                 let mut args = Vec::new();
@@ -194,7 +191,9 @@ fn compare(stage: &str, want: &Rows, got: &Rows) -> Vec<String> {
             format!(
                 "{stage} {name}:\n    closure: {}\n    view:    {}",
                 Value::Array(rows.clone()),
-                got.get(name).map(|r| Value::Array(r.clone())).unwrap_or(Value::Null)
+                got.get(name)
+                    .map(|r| Value::Array(r.clone()))
+                    .unwrap_or(Value::Null)
             )
         })
         .collect()
@@ -223,13 +222,21 @@ struct Receipt {
     diagnostics: usize,
 }
 
-fn check(directory: &str, source: &Path, expected: &Value, ivm: &Path) -> Result<Receipt, Vec<String>> {
+fn check(
+    directory: &str,
+    source: &Path,
+    expected: &Value,
+    ivm: &Path,
+) -> Result<Receipt, Vec<String>> {
     let stem = source.file_stem().unwrap().to_string_lossy().to_string();
     let fixture = format!("{directory}/{stem}");
     let fail = |e: String| vec![format!("{fixture}: {e}")];
     let canonical = std::fs::canonicalize(source).unwrap();
     let path_text = canonical.display().to_string();
-    let scratch = std::env::temp_dir().join(format!("dl8-sqlite-emit-{}-{directory}-{stem}", std::process::id()));
+    let scratch = std::env::temp_dir().join(format!(
+        "dl8-sqlite-emit-{}-{directory}-{stem}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(scratch.join("reduced")).unwrap();
     let program_path = scratch.join(format!("{stem}.json"));
@@ -277,7 +284,11 @@ fn check(directory: &str, source: &Path, expected: &Value, ivm: &Path) -> Result
         .iter()
         .any(|v| v["ddl"].as_str().unwrap().contains("WITH RECURSIVE"));
     if views.is_empty() {
-        return if failures.is_empty() { Ok(receipt) } else { Err(failures) };
+        return if failures.is_empty() {
+            Ok(receipt)
+        } else {
+            Err(failures)
+        };
     }
     let relations: Vec<String> = views
         .iter()
@@ -298,7 +309,8 @@ fn check(directory: &str, source: &Path, expected: &Value, ivm: &Path) -> Result
 
     let db = rusqlite::Connection::open(&db_path).unwrap();
     // SAFETY: the library is this repo's own sqlite_ivm build, loaded once into a test connection.
-    unsafe { db.load_extension(ivm, None::<&str>) }.map_err(|e| fail(format!("load {}: {e}", ivm.display())))?;
+    unsafe { db.load_extension(ivm, None::<&str>) }
+        .map_err(|e| fail(format!("load {}: {e}", ivm.display())))?;
     db.execute_batch("PRAGMA recursive_triggers=ON; PRAGMA trusted_schema=ON;")
         .unwrap();
     for view in &views {
@@ -338,7 +350,11 @@ fn check(directory: &str, source: &Path, expected: &Value, ivm: &Path) -> Result
         .iter()
         .map(|arg| term_from_json(&mut arena, arg).unwrap().0 as i64)
         .collect();
-    assert_eq!(arena.terms.len(), before, "{fixture}: seed cell missing from the arena");
+    assert_eq!(
+        arena.terms.len(),
+        before,
+        "{fixture}: seed cell missing from the arena"
+    );
     let table = format!("\"{stem}.{name}_a{}\"", args.len());
     let filter = if cells.is_empty() {
         "1".to_string()
@@ -367,14 +383,23 @@ fn check(directory: &str, source: &Path, expected: &Value, ivm: &Path) -> Result
             return Err(failures);
         };
         let reduced_source = scratch.join("reduced").join(format!("{stem}.dl7"));
-        std::fs::write(&reduced_source, format!("{}{}", &text[..at], &text[at + line.len()..])).unwrap();
+        std::fs::write(
+            &reduced_source,
+            format!("{}{}", &text[..at], &text[at + line.len()..]),
+        )
+        .unwrap();
         let reduced_source = std::fs::canonicalize(&reduced_source).unwrap();
         let (_, reduced) = run(&["compile"], &[&reduced_source]).map_err(fail)?;
         let reduced = normalize(&reduced, &reduced_source.display().to_string());
-        compile_closure(&reduced, &normalize(names, &path_text), &relations)
+        // The reduced compile's relation terms carry the reduced source's own
+        // reader lines, so matching uses its names, never the original's.
+        compile_closure(&reduced, &reduced["program"]["names"], &relations)
     } else {
         let mut reduced = compiled.clone();
-        reduced["program"]["seeds"].as_array_mut().unwrap().remove(victim);
+        reduced["program"]["seeds"]
+            .as_array_mut()
+            .unwrap()
+            .remove(victim);
         let reduced_path = scratch.join("reduced").join(format!("{stem}.json"));
         std::fs::write(&reduced_path, serde_json::to_vec(&reduced).unwrap()).unwrap();
         eval_closure(&reduced_path, names, &relations).map_err(fail)?
@@ -399,31 +424,49 @@ fn mark(value: Option<bool>) -> &'static str {
     }
 }
 
-#[test]
-fn every_view_equals_the_closure_after_insert_and_delete() {
-    let ivm = extension();
-    let expected_path = manifest().join("fixtures/sqlite_emit/expected_diagnostics.json");
-    let expected: Value = serde_json::from_str(&std::fs::read_to_string(&expected_path).unwrap()).unwrap();
-    let mut failures = Vec::new();
-    let mut receipts = Vec::new();
-    for (directory, source) in fixtures() {
-        match check(&directory, &source, &expected, &ivm) {
-            Ok(receipt) => receipts.push(receipt),
-            Err(found) => failures.extend(found),
+/// One `#[test]` per fixture, so each runs under its own timeout.
+macro_rules! fixture_test {
+    ($test:ident, $directory:literal, $stem:literal) => {
+        #[test]
+        fn $test() {
+            let ivm = extension();
+            let expected_path = manifest().join("fixtures/sqlite_emit/expected_diagnostics.json");
+            let expected: Value =
+                serde_json::from_str(&std::fs::read_to_string(&expected_path).unwrap()).unwrap();
+            let source = manifest()
+                .join("fixtures")
+                .join($directory)
+                .join(format!("{}.dl7", $stem));
+            match check($directory, &source, &expected, &ivm) {
+                Ok(receipt) => println!(
+                    "{}: views {} recursive {} diagnostics {} insert {} delete {}",
+                    receipt.fixture,
+                    receipt.relations,
+                    if receipt.recursive { "yes" } else { "no" },
+                    receipt.diagnostics,
+                    mark(receipt.insert),
+                    mark(receipt.delete)
+                ),
+                Err(found) => panic!("{}", found.join("\n")),
+            }
         }
-    }
-    println!("| fixture | views | recursive | diagnostics | insert | delete |");
-    println!("|---|---|---|---|---|---|");
-    for r in &receipts {
-        println!(
-            "| {} | {} | {} | {} | {} | {} |",
-            r.fixture,
-            r.relations,
-            if r.recursive { "yes" } else { "no" },
-            r.diagnostics,
-            mark(r.insert),
-            mark(r.delete)
-        );
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    };
 }
+
+fixture_test!(literals_0_float, "literals", "0_float");
+fixture_test!(literals_1_bool, "literals", "1_bool");
+fixture_test!(literals_2_int_add, "literals", "2_int_add");
+fixture_test!(aggregates_0_sum, "aggregates", "0_sum");
+fixture_test!(aggregates_1_min_max, "aggregates", "1_min_max");
+fixture_test!(aggregates_2_grouped, "aggregates", "2_grouped");
+fixture_test!(term_lt_0_mixed_kinds, "term_lt", "0_mixed_kinds");
+fixture_test!(term_lt_1_top, "term_lt", "1_top");
+fixture_test!(fold_0_kernel_step, "fold", "0_kernel_step");
+fixture_test!(fold_1_program_step, "fold", "1_program_step");
+fixture_test!(fold_2_order_matters, "fold", "2_order_matters");
+fixture_test!(fold_3_step_no_row, "fold", "3_step_no_row");
+fixture_test!(sqlite_emit_0_union_filter, "sqlite_emit", "0_union_filter");
+fixture_test!(sqlite_emit_1_transitive, "sqlite_emit", "1_transitive");
+fixture_test!(sqlite_emit_2_mutual, "sqlite_emit", "2_mutual");
+fixture_test!(sqlite_emit_3_consumers, "sqlite_emit", "3_consumers");
+fixture_test!(sqlite_emit_4_outside, "sqlite_emit", "4_outside");
