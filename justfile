@@ -198,50 +198,14 @@ perf-reactivity out="target/reactivity/probe" repeats="5" warmup="1":
 boop-start:
     #!/usr/bin/env bash
     set -euo pipefail
-    started=$SECONDS
-    # v6/*/Cargo.toml reach two sibling repos by relative path. A lane worktree
-    # sits at .boop-worktrees/<kind>/<lane>, so a path counted from outside this
-    # repo lands somewhere different per lane and per category dir. The deps
-    # count from this repo root instead, and the two links are recreated in
-    # whatever tree the recipe runs in. Both are gitignored.
+    # Sibling links only. No cargo, no pnpm: a lane spawn must never add rustc
+    # load; each lane builds what its own gate needs, under ~/.cargo jobs.
     root=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
     siblings=$(dirname "$root")
     for repo in hafley-rs sprefa-v6; do
       ln -sfn "$siblings/$repo" "$repo"
     done
     echo "boop-start: sibling links -> $siblings"
-    cache="${BOOP_START_CACHE:-$HOME/.cache/boop}"
-    shared="${BOOP_CARGO_TARGET_DIR:-$cache/cargo-target}"
-    binary=hafley-rs/crates/sprefa-extract/target/release/extract
-    digest=$(find hafley-rs/crates/sprefa-extract/src hafley-rs/crates/sprefa-extract/Cargo.toml -type f \
-             | sort | xargs shasum | shasum | cut -c1-16)
-    keyed="$cache/extract/$digest"
-    if [ -x "$binary" ]; then
-      echo "boop-start: extractor already built"
-    elif [ -x "$keyed" ]; then
-      mkdir -p "$(dirname "$binary")" && cp "$keyed" "$binary"
-      echo "boop-start: extractor from cache $digest"
-    else
-      echo "boop-start: building extractor, shared target $shared"
-      (cd hafley-rs/crates/sprefa-extract && CARGO_TARGET_DIR="$shared" \
-         cargo build --release --features cli --bin extract)
-      mkdir -p "$(dirname "$binary")" "$cache/extract"
-      cp "$shared/release/extract" "$binary"
-      cp "$binary" "$keyed"
-      echo "boop-start: extractor built and cached as $digest"
-    fi
-    for dir in v6/tsv2 v6/sprefa-store/js; do
-      lock=$(shasum "$dir/pnpm-lock.yaml" 2>/dev/null | cut -c1-16 || echo nolock)
-      stamp="$dir/node_modules/.boop-start-lock"
-      if [ -d "$dir/node_modules" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$lock" ]; then
-        echo "boop-start: $dir node_modules current"
-      else
-        (cd "$dir" && pnpm install --silent)
-        echo "$lock" > "$stamp"
-        echo "boop-start: $dir installed"
-      fi
-    done
-    echo "boop-start: ready in $((SECONDS - started))s"
 
 # The .dl6 compiler as one executable at v6/prolog/target/dl6c, HEAD's short
 # sha stamped into `dl6c --version`.
