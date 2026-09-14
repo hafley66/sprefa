@@ -19,6 +19,8 @@ pub mod graph;
 pub mod json;
 #[path = "_1_rows.rs"]
 pub mod rows;
+#[path = "_7_sqlite.rs"]
+pub mod sqlite;
 #[path = "_5_validate.rs"]
 pub mod validate;
 
@@ -27,6 +29,7 @@ pub use calls::{logical_program_calls, logical_program_rows_calls};
 pub use emit::{compiler_view, emit_compiled, Emitter};
 pub use graph::{logical_program_graph_calls, logical_program_graph_rows};
 pub use rows::{logical_program_rows, logical_program_rows_term};
+pub use sqlite::{emit_sqlite, SqliteArtifact, SqliteView};
 pub use validate::validate_functional_rows;
 
 use std::path::Path;

@@ -1,0 +1,30 @@
+(: Start (* (: node text)))
+
+(Start "n0")
+
+(: Next (* (: from text) (: to text)))
+
+(Next "n0" "n1")
+
+(Next "n1" "n2")
+
+(Next "n2" "n3")
+
+(Next "n3" "n4")
+
+(Next "n4" "n2")
+
+(: Even (* (: node text)))
+
+(: Odd (* (: node text)))
+
+(<- (Even ?Node)
+    (Start ?Node))
+
+(<- (Odd ?To)
+    (Even ?From)
+    (Next ?From ?To))
+
+(<- (Even ?To)
+    (Odd ?From)
+    (Next ?From ?To))

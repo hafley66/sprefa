@@ -9,10 +9,12 @@ use super::api::{CompilerView, Emitted, Stop};
 use super::calls::{colon_arguments, emit_diagnostic, logical_program_rows_calls};
 use super::graph::logical_program_graph_calls;
 use super::rows::{checked_parts, logical_program_rows_term};
+use super::sqlite::emit_sqlite;
 use super::validate::validate_functional_rows;
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::strata::eval_program;
 use crate::_4_comptime::Compiled;
+use crate::_6_eval::json::{program_from_json, program_names, program_to_json};
 use crate::_6_eval::program::{Program, Row};
 use crate::_6_eval::term::{Term, TermId, Universe};
 use crate::_6_eval::{evaluate, Trace};
@@ -36,6 +38,9 @@ pub enum Emitter {
     /// `:49`. A host-Prolog callable; see the PLAN's Out of scope table.
     Prolog(TermId),
     Dl7(TermId),
+    /// `sqlite(Prefix)`: one `sqlite_ivm` view per derived relation over the
+    /// store tables named `Prefix.Relation_aN`.
+    Sqlite(TermId),
     Unknown(TermId),
 }
 
@@ -50,6 +55,9 @@ impl Emitter {
         }
         if let Some(callable) = u.unary(term, "prolog") {
             return Emitter::Prolog(callable);
+        }
+        if let Some(prefix) = u.unary(term, "sqlite") {
+            return Emitter::Sqlite(prefix);
         }
         match u.unary(term, "dl7") {
             Some(emitter) => Emitter::Dl7(emitter),
@@ -87,6 +95,7 @@ pub fn emit_compiled(
             let view = compiler_view(u, unit)?;
             dl7_emitter_artifact(u, *identity, &view)
         }
+        Emitter::Sqlite(prefix) => sqlite_artifact(u, *prefix, unit),
         Emitter::Unknown(term) => {
             let reason = u.compound("unknown_emitter", vec![*term]);
             let diagnostic = emit_diagnostic(u, reason);
@@ -96,6 +105,41 @@ pub fn emit_compiled(
             })
         }
     }
+}
+
+/// `artifact(sqlite, [sqlite_view(Relation, Stratum, Ddl)])` over the program
+/// `dl8 eval` reads, so view and closure agree on every relation name.
+fn sqlite_artifact(u: &mut Universe, prefix: TermId, unit: &Compiled) -> Result<Emitted, Stop> {
+    let runtime_program = unit.runtime.to_term(u);
+    let transported = program_to_json(u, runtime_program)
+        .map_err(|_| Stop::Fail("sqlite emitter: runtime program transport"))?;
+    let program = program_from_json(u, &transported)
+        .map_err(|_| Stop::Fail("sqlite emitter: runtime program transport"))?;
+    let names = program_names(u, &transported)
+        .map_err(|_| Stop::Fail("sqlite emitter: runtime program names"))?;
+    let prefix = match u.get(prefix) {
+        Term::Atom(s) => u.sym_str(*s).to_string(),
+        _ => return Err(Stop::Fail("sqlite(Prefix) expects an atom")),
+    };
+    let emitted = emit_sqlite(u, &program, &names, &prefix)?;
+    let mut views = Vec::with_capacity(emitted.views.len());
+    for view in &emitted.views {
+        let relation = u.atom(&view.relation);
+        let stratum = u.int(view.stratum as i64);
+        let ddl = u.string(&view.ddl);
+        views.push(u.compound("sqlite_view", vec![relation, stratum, ddl]));
+    }
+    let name = u.atom("sqlite");
+    let views = u.list(&views);
+    let diagnostics = emitted
+        .diagnostics
+        .iter()
+        .map(|diagnostic| emit_diagnostic(u, diagnostic.payload))
+        .collect();
+    Ok(Emitted {
+        artifact: u.compound("artifact", vec![name, views]),
+        diagnostics,
+    })
 }
 
 /// `:196-209`, the pattern
