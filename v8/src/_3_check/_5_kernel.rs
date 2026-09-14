@@ -10,6 +10,18 @@
 
 use crate::_6_eval::term::{TermId, Universe};
 
+/// A kernel relation absent from the frozen v7 kernel graph has no
+/// `relation/3` row, so its arity comes from the lowerer table.
+pub fn kernel_arity(u: &Universe, target: TermId) -> Option<i64> {
+    let inner = u.unary(target, "ref")?;
+    let name = u.unary(inner, "kernel")?;
+    let (name, args) = u.functor_or_atom(name)?;
+    if !args.is_empty() {
+        return None;
+    }
+    crate::_2_lower::kernel::kernel_relation(name).map(i64::from)
+}
+
 pub const COMPARISONS: [&str; 6] = ["int_lt", "int_le", "int_eq", "int_ne", "int_ge", "int_gt"];
 
 /// `0_lowerer.pl:1958-1973`, in declaration order.
@@ -35,7 +47,7 @@ pub const KERNEL_RELATIONS: [(&str, i64); 17] = [
 
 /// `:617`.
 pub fn primitive_name(name: &str) -> bool {
-    matches!(name, "int" | "text" | "any" | "type")
+    matches!(name, "int" | "float" | "bool" | "text" | "any" | "type")
 }
 
 pub fn is_comparison(name: &str) -> bool {

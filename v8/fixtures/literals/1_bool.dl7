@@ -1,0 +1,11 @@
+(: Flag (* (: value bool)))
+
+(Flag true)
+
+(Flag false)
+
+(: OnlyTrue (* (: value bool)))
+
+(<- (OnlyTrue ?Value)
+    (Flag ?Value)
+    (int_eq 1 1))
