@@ -207,7 +207,12 @@ fn mark_component(
 /// Marks a CTE that recurses; the view's `WITH` takes `RECURSIVE` when any does.
 const RECURSIVE_MARK: &str = "\u{0}recursive\u{0}";
 
-fn unsupported_payload(u: &mut Universe, name: &str, ordinal: usize, reason: &Unsupported) -> TermId {
+fn unsupported_payload(
+    u: &mut Universe,
+    name: &str,
+    ordinal: usize,
+    reason: &Unsupported,
+) -> TermId {
     let relation = u.atom(name);
     let ordinal = u.int(ordinal as i64);
     let rule = u.compound("rule", vec![relation, ordinal]);
@@ -631,11 +636,19 @@ struct Lowering<'a> {
 }
 
 /// The FROM list, the WHERE conjuncts and the payload joins of one SELECT.
+/// `from` keeps the order goals arrived; `joined_from` turns it into a
+/// `JOIN ... ON` chain so sqlite_ivm plans keys instead of a cross product
+/// (`sqlite_ivm/src/0b_relational.rs:789-870`).
 struct Scope {
-    from: Vec<String>,
+    from: Vec<From>,
     conditions: Vec<String>,
     payloads: HashMap<String, Payload>,
     const_sym: Option<String>,
+}
+
+struct From {
+    table: String,
+    alias: String,
 }
 
 #[derive(Clone)]
@@ -676,7 +689,10 @@ impl<'a> Lowering<'a> {
     fn variable_name(&self, rule: &Rule, variable: usize) -> String {
         let identity = rule.vars[variable];
         let u = self.catalog.u;
-        match u.functor(identity).and_then(|(_, args)| args.last().copied()) {
+        match u
+            .functor(identity)
+            .and_then(|(_, args)| args.last().copied())
+        {
             Some(last) => match u.get(last) {
                 Term::Atom(s) => u.sym_str(*s).to_string(),
                 _ => u.display(identity).to_string(),
@@ -745,11 +761,13 @@ impl<'a> Lowering<'a> {
             let source = self.source(goal)?;
             match (goal.polarity, &source) {
                 (Polarity::Positive, Source::Kernel(kernel)) => {
-                    let condition = self.kernel(&mut scope, rule, &mut vars, goal, *kernel, true)?;
+                    let condition =
+                        self.kernel(&mut scope, rule, &mut vars, goal, *kernel, true)?;
                     scope.conditions.push(condition);
                 }
                 (Polarity::Negative, Source::Kernel(kernel)) => {
-                    let condition = self.kernel(&mut scope, rule, &mut vars, goal, *kernel, false)?;
+                    let condition =
+                        self.kernel(&mut scope, rule, &mut vars, goal, *kernel, false)?;
                     scope.conditions.push(format!("NOT ({condition})"));
                 }
                 (Polarity::Positive, _) => {
@@ -760,10 +778,9 @@ impl<'a> Lowering<'a> {
                     let alias = self.alias();
                     let mut inner = Scope::new();
                     self.relation(&mut inner, rule, &mut vars, goal, &source, &alias, false)?;
+                    let (from, where_sql) = inner.joined_from();
                     scope.conditions.push(format!(
-                        "NOT EXISTS (SELECT 1 FROM {} WHERE {})",
-                        inner.from.join(", "),
-                        inner.conjunction()
+                        "NOT EXISTS (SELECT 1 FROM {from} WHERE {where_sql})"
                     ));
                 }
             }
@@ -774,7 +791,9 @@ impl<'a> Lowering<'a> {
             head.push(match argument {
                 Arg::Var(v) => match vars.get(&(v.0 as usize)) {
                     Some(value) => Head::Value(value.clone()),
-                    None => return Err(Unsupported::Unbound(self.variable_name(rule, v.0 as usize))),
+                    None => {
+                        return Err(Unsupported::Unbound(self.variable_name(rule, v.0 as usize)))
+                    }
                 },
                 Arg::Ground(term) => match self.ground_fold(rule, &vars, *term)? {
                     Some(head) => head,
@@ -871,13 +890,12 @@ impl<'a> Lowering<'a> {
     ) -> Result<(), Unsupported> {
         match source {
             Source::Member(cte, member) => {
-                scope.from.push(format!("{cte} AS {alias}"));
-                scope.conditions.push(format!(
-                    "{alias}.{} = {member}",
-                    quote_identifier("member")
-                ));
+                scope.join(format!("{cte} AS {alias}"), alias.to_string());
+                scope
+                    .conditions
+                    .push(format!("{alias}.{} = {member}", quote_identifier("member")));
             }
-            Source::Table(table) => scope.from.push(format!("{table} AS {alias}")),
+            Source::Table(table) => scope.join(format!("{table} AS {alias}"), alias.to_string()),
             Source::Kernel(_) => unreachable!("kernel goals lower in `kernel`"),
         }
         for (position, argument) in goal.args.iter().enumerate() {
@@ -891,7 +909,9 @@ impl<'a> Lowering<'a> {
                     None if positive => {
                         vars.insert(v.0 as usize, column);
                     }
-                    None => return Err(Unsupported::Unbound(self.variable_name(rule, v.0 as usize))),
+                    None => {
+                        return Err(Unsupported::Unbound(self.variable_name(rule, v.0 as usize)))
+                    }
                 },
                 Arg::Ground(term) => {
                     let condition = self.matches(scope, &column, *term)?;
@@ -942,7 +962,9 @@ impl<'a> Lowering<'a> {
                 match &goal.args[2] {
                     Arg::Var(v) if !vars.contains_key(&(v.0 as usize)) => {
                         if !positive {
-                            return Err(Unsupported::Unbound(self.variable_name(rule, v.0 as usize)));
+                            return Err(Unsupported::Unbound(
+                                self.variable_name(rule, v.0 as usize),
+                            ));
                         }
                         vars.insert(
                             v.0 as usize,
@@ -998,7 +1020,10 @@ impl<'a> Lowering<'a> {
         let Arg::Ground(term) = argument else {
             unreachable!("`bound` returns None for ground arguments only");
         };
-        match u.unary(*term, "const").and_then(|payload| u.as_int(payload)) {
+        match u
+            .unary(*term, "const")
+            .and_then(|payload| u.as_int(payload))
+        {
             Some(n) => Ok(n.to_string()),
             None => {
                 guards.push("0".to_string());
@@ -1054,10 +1079,30 @@ impl<'a> Lowering<'a> {
                 KIND_FLOAT.to_string(),
                 "''".into(),
             ],
-            Term::Bool(b) => ["1".into(), (*b as i64).to_string(), KIND_BOOL.to_string(), "''".into()],
-            Term::Str(s) => ["2".into(), "0".into(), KIND_STR.to_string(), quote_text(u.sym_str(*s))],
-            Term::Atom(s) if *s == u.nil => ["3".into(), "0".into(), KIND_ATOM.to_string(), quote_text("[]")],
-            Term::Atom(s) => ["4".into(), "0".into(), KIND_ATOM.to_string(), quote_text(u.sym_str(*s))],
+            Term::Bool(b) => [
+                "1".into(),
+                (*b as i64).to_string(),
+                KIND_BOOL.to_string(),
+                "''".into(),
+            ],
+            Term::Str(s) => [
+                "2".into(),
+                "0".into(),
+                KIND_STR.to_string(),
+                quote_text(u.sym_str(*s)),
+            ],
+            Term::Atom(s) if *s == u.nil => [
+                "3".into(),
+                "0".into(),
+                KIND_ATOM.to_string(),
+                quote_text("[]"),
+            ],
+            Term::Atom(s) => [
+                "4".into(),
+                "0".into(),
+                KIND_ATOM.to_string(),
+                quote_text(u.sym_str(*s)),
+            ],
             _ => return Err(Unsupported::Constant(*term)),
         })
     }
@@ -1077,7 +1122,12 @@ impl<'a> Lowering<'a> {
     }
 
     /// A column holding the constant cell `term`.
-    fn matches(&self, scope: &mut Scope, column: &Value, term: TermId) -> Result<String, Unsupported> {
+    fn matches(
+        &self,
+        scope: &mut Scope,
+        column: &Value,
+        term: TermId,
+    ) -> Result<String, Unsupported> {
         let u = self.catalog.u;
         let Some(payload) = u.unary(term, "const") else {
             return Err(Unsupported::Constant(term));
@@ -1096,7 +1146,10 @@ impl<'a> Lowering<'a> {
             Term::Float(x) if x.0.is_finite() => {
                 format!("{p}.\"kind\" = {KIND_FLOAT} AND {p}.\"rval\" = {:?}", x.0)
             }
-            Term::Bool(b) => format!("{p}.\"kind\" = {KIND_BOOL} AND {p}.\"ival\" = {}", *b as i64),
+            Term::Bool(b) => format!(
+                "{p}.\"kind\" = {KIND_BOOL} AND {p}.\"ival\" = {}",
+                *b as i64
+            ),
             Term::Atom(s) | Term::Str(s) => {
                 let kind = match u.get(payload) {
                     Term::Atom(_) => KIND_ATOM,
@@ -1122,13 +1175,13 @@ impl<'a> Lowering<'a> {
         let term = self.catalog.store_object("term");
         let argument = self.catalog.store_object("term_arg");
         let (wrapper, link, payload) = (self.alias(), self.alias(), self.alias());
-        scope.from.push(format!("{term} AS {wrapper}"));
-        scope.from.push(format!("{argument} AS {link}"));
-        scope.from.push(format!("{term} AS {payload}"));
+        scope.join(format!("{term} AS {wrapper}"), wrapper.clone());
+        scope.join(format!("{argument} AS {link}"), link.clone());
+        scope.join(format!("{term} AS {payload}"), payload.clone());
         scope.conditions.push(format!("{wrapper}.\"id\" = {cell}"));
-        scope
-            .conditions
-            .push(format!("{link}.\"term\" = {cell} AND {link}.\"position\" = 0"));
+        scope.conditions.push(format!(
+            "{link}.\"term\" = {cell} AND {link}.\"position\" = 0"
+        ));
         scope
             .conditions
             .push(format!("{payload}.\"id\" = {link}.\"child\""));
@@ -1147,9 +1200,10 @@ impl<'a> Lowering<'a> {
             return format!("{text}.\"text\"");
         }
         let sym = self.alias();
-        scope
-            .from
-            .push(format!("{} AS {sym}", self.catalog.store_object("sym")));
+        scope.join(
+            format!("{} AS {sym}", self.catalog.store_object("sym")),
+            sym.clone(),
+        );
         scope
             .conditions
             .push(format!("{sym}.\"id\" = {}.\"sym\"", payload.payload));
@@ -1162,9 +1216,10 @@ impl<'a> Lowering<'a> {
             Some(sym) => sym.clone(),
             None => {
                 let sym = self.alias();
-                scope
-                    .from
-                    .push(format!("{} AS {sym}", self.catalog.store_object("sym")));
+                scope.join(
+                    format!("{} AS {sym}", self.catalog.store_object("sym")),
+                    sym.clone(),
+                );
                 scope
                     .conditions
                     .push(format!("{sym}.\"text\" = {}", quote_text("const")));
@@ -1182,9 +1237,10 @@ impl<'a> Lowering<'a> {
     /// has no `term` row, and the rule derives nothing.
     fn constant_cell(&self, scope: &mut Scope, term: TermId) -> Result<String, Unsupported> {
         let alias = self.alias();
-        scope
-            .from
-            .push(format!("{} AS {alias}", self.catalog.store_object("term")));
+        scope.join(
+            format!("{} AS {alias}", self.catalog.store_object("term")),
+            alias.clone(),
+        );
         let cell = Value {
             sql: format!("{alias}.\"id\""),
             kind: CellKind::Term,
@@ -1211,7 +1267,10 @@ impl<'a> Lowering<'a> {
                 Head::Value(value) if value.kind == kinds[position] => value.sql.clone(),
                 Head::Value(_) => return Err(Unsupported::MixedColumn(position)),
                 Head::Ground(term) if kinds[position] == CellKind::Int => {
-                    match u.unary(*term, "const").and_then(|payload| u.as_int(payload)) {
+                    match u
+                        .unary(*term, "const")
+                        .and_then(|payload| u.as_int(payload))
+                    {
                         Some(n) => n.to_string(),
                         None => return Err(Unsupported::MixedColumn(position)),
                     }
@@ -1239,12 +1298,11 @@ impl<'a> Lowering<'a> {
         }
 
         let Some((position, kind, subject)) = reduce else {
+            let (from, where_sql) = scope.joined_from();
             return Ok(format!(
-                "SELECT {}{} FROM {} WHERE {}",
+                "SELECT {}{} FROM {from} WHERE {where_sql}",
                 if distinct { "DISTINCT " } else { "" },
                 columns.join(", "),
-                scope.from.join(", "),
-                scope.conjunction()
             ));
         };
         let groups: Vec<String> = columns
@@ -1274,11 +1332,10 @@ impl<'a> Lowering<'a> {
         } else {
             format!("GROUP BY {}", groups.join(", "))
         };
+        let (from, where_sql) = scope.joined_from();
         Ok(format!(
-            "SELECT {} FROM {} WHERE {} {tail}",
+            "SELECT {} FROM {from} WHERE {where_sql} {tail}",
             columns.join(", "),
-            scope.from.join(", "),
-            scope.conjunction()
         ))
     }
 
@@ -1321,13 +1378,12 @@ impl<'a> Lowering<'a> {
             format!("PARTITION BY {} ", partition.join(", "))
         };
         let rank = quote_identifier("order");
+        let (from, where_sql) = scope.joined_from();
         format!(
-            "SELECT DISTINCT {} FROM (SELECT {}, ROW_NUMBER() OVER ({partition}ORDER BY {}) AS {rank} FROM {} WHERE {}) WHERE {rank} = 1",
+            "SELECT DISTINCT {} FROM (SELECT {}, ROW_NUMBER() OVER ({partition}ORDER BY {}) AS {rank} FROM {from} WHERE {where_sql}) WHERE {rank} = 1",
             outer.join(", "),
             inner.join(", "),
             order.join(", "),
-            scope.from.join(", "),
-            scope.conjunction()
         )
     }
 }
@@ -1342,12 +1398,50 @@ impl Scope {
         }
     }
 
-    fn conjunction(&self) -> String {
-        if self.conditions.is_empty() {
+    fn join(&mut self, table: String, alias: String) {
+        self.from.push(From { table, alias });
+    }
+
+    /// `(FROM t0 JOIN t1 ON (...) ..., WHERE)`. A conjunct moves to the ON of
+    /// the latest-joined alias it mentions; conjuncts that mention one alias,
+    /// or none, stay in WHERE, and WHERE never repeats an ON conjunct.
+    fn joined_from(&self) -> (String, String) {
+        let mut on: Vec<Vec<String>> = vec![Vec::new(); self.from.len()];
+        let mut remaining = Vec::new();
+        for condition in &self.conditions {
+            match self.latest_mention(condition) {
+                Some(0) | None => remaining.push(condition.clone()),
+                Some(at) => on[at].push(condition.clone()),
+            }
+        }
+        let mut sql = self.from[0].table.clone();
+        for (at, item) in self.from.iter().enumerate().skip(1) {
+            let clause = if on[at].is_empty() {
+                "1".to_string()
+            } else {
+                on[at].join(" AND ")
+            };
+            sql.push_str(&format!(" JOIN {} ON ({clause})", item.table));
+        }
+        let where_sql = if remaining.is_empty() {
             "1".to_string()
         } else {
-            self.conditions.join(" AND ")
+            remaining.join(" AND ")
+        };
+        (sql, where_sql)
+    }
+
+    /// The highest index in `from` whose alias the condition mentions; `None`
+    /// for no mention. An alias is matched as `{alias}.`, which cannot occur
+    /// inside a longer alias (`t1.` does not match `t10.`).
+    fn latest_mention(&self, condition: &str) -> Option<usize> {
+        let mut latest = None;
+        for (at, item) in self.from.iter().enumerate() {
+            if condition.contains(&format!("{}.", item.alias)) {
+                latest = Some(at);
+            }
         }
+        latest
     }
 }
 

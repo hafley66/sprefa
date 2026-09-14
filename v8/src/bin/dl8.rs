@@ -1,9 +1,9 @@
 //! The one subscribe: reads a program, runs the pipe, prints the result.
 
 use clap::{Parser, Subcommand};
+use dl8::_5_reify::emit_sqlite;
 use dl8::_6_eval::evaluate::{Evaluate, Store};
 use dl8::_6_eval::json::term_to_json;
-use dl8::_5_reify::emit_sqlite;
 use dl8::_6_eval::json::{
     closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json,
     serve_relations,
@@ -63,7 +63,10 @@ enum Command {
         trace: bool,
     },
     /// Lower a `dl8 compile` output to one target and print the artifact as JSON.
-    Emit { target: EmitTarget, program: PathBuf },
+    Emit {
+        target: EmitTarget,
+        program: PathBuf,
+    },
     /// Evaluate a checked-goal program (JSON) and print its closure as JSON.
     Eval {
         program: PathBuf,
@@ -342,7 +345,13 @@ fn eval_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>) -> Ex
     }
 }
 
-fn run_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>, max_ticks: usize) -> ExitCode {
+fn run_cli(
+    path: &Path,
+    serve: &[String],
+    trace: bool,
+    db: Option<&Path>,
+    max_ticks: usize,
+) -> ExitCode {
     let fail = |error: &dyn std::fmt::Display| {
         tracing::error!(phase = "run", error = %error, path = %path.display());
         ExitCode::from(2)
@@ -401,7 +410,8 @@ fn run_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>, max_ti
         }
     };
     let durable = store.as_mut().map(|s| s as &mut dyn IRowStore);
-    let reconciled = match reconciler.run(&mut u, &program, &mut rows, durable, max_ticks, &mut fx) {
+    let reconciled = match reconciler.run(&mut u, &program, &mut rows, durable, max_ticks, &mut fx)
+    {
         Ok(reconciled) => reconciled,
         Err(e) => return fail(&e),
     };
@@ -458,7 +468,9 @@ fn compile_cli(
         }
     };
     let mut diagnostics = compiled.diagnostics.clone();
-    let empty = u.as_list(compiled.runtime_program).is_some_and(|l| l.is_empty());
+    let empty = u
+        .as_list(compiled.runtime_program)
+        .is_some_and(|l| l.is_empty());
     let program = match empty {
         true => serde_json::Value::Null,
         false => match program_to_json(&mut u, compiled.runtime_program) {
