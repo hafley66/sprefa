@@ -72,3 +72,15 @@ Expected JSON written by hand in the `term_to_json` shape and read back.
 
 ## 5. Receipts and finish
 Same validation commands as the original brief: `cargo test` (all green, count before and after), `cargo clippy --all-targets` 0, `cargo fmt --check`, `git status --short v8/oracle` empty, `git diff --stat cf6326e74...HEAD` listing only `_6_eval/**`, `_2_lower/_9_kernel.rs`, `_3_check/_2_resolve.rs` if needed, `bin/dl8.rs`, tests and fixtures. Force-push the rewritten branch, edit PR #741's title to `feat(v8): effect rows for served relations` and its body to this design, then `boop beep --no-wait --as <lane> sprefa-coordinator "effect: PR #741 rewritten, tests <before>-><after>, clippy 0"`.
+
+## 6. Amendment 3 (Chris, 2026-09-14, after the two design reviews): interest, not miss
+| change | spec |
+|---|---|
+| when the row is written | every evaluation of a goal on a served relation, whether or not a row matched. The effect row is live interest; it disappears when no rule evaluates that goal any more. Loading is `effect` with no data row. |
+| the pattern term | interned through the kernel `intern` relation: `(intern <relation ref> <args list> ?App)` where the list holds the bound arguments in position order and the atom `none` (`_2_lower/_1_slots.rs:13`) at unbound positions. Rules open it with `(intern_snapshot <relation> ?Args ?App)` then `cons`, the way `Partial` reads back in `2_constructor_rules.dl7:7-8`. No `edge_snapshot` side rows, no patch to `current_goal_positions`. Named applications lower to the same positional list through `_1_slots.rs`. |
+| `3_loading.dl7` | `(<- (Loading ?Url) (effect fetch_json ?App) (intern_snapshot fetch_json ?Args ?App) (cons ?Url ?_ ?Args))` |
+| `1_settled.dl7` expected | `Body "https://a" "hello"`, and TWO effect rows (both goals were evaluated); `Loading` would name only `https://b` |
+| v7 `Host` inheritance | delete: the four-item arm at `_2_declare.rs:196`, `_3_host.rs`, `_4_comptime/_4_host.rs`, `Hosted` and `HostPort` in `v7/prelude/1_declarations.dl7`, fixtures `8_hosted.dl7` and `11_host_source_sink.dl7` and their oracle cases |
+| `effect` and the kernels | `effect`, `int_add`, `term_lt` join `KERNEL_RELATIONS` in `_3_check/_5_kernel.rs`; delete `kernel_arity` and its two call sites |
+| `v8/oracle/**` | regenerate every expected output from dl8 itself with a new `v8/oracle/refreeze.sh` (run `dl8 <phase> <case>` and write its stdout as the expected bytes); commit the regenerated files in their own commit so the diff is reviewable; the tests keep comparing bytes, now against dl8's own goldens |
+Receipts: all tests green, clippy 0, fmt clean, and the PR body lists the oracle files whose bytes changed with a one-line reason each (Host rows gone, kernel rows added).
