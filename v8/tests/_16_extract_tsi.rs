@@ -67,8 +67,12 @@ fn scratch(name: &str) -> PathBuf {
 /// `crates/sprefa-extract` resolves its own lockfile and is `exclude`d from the
 /// hafley-rs workspace, so its manifest is the one to build, and `-p` against
 /// the root manifest would not find the package.
+/// Canonical: `hafley-rs` is a sibling symlink, and cargo walks the path as
+/// given, so the uncanonicalized form lands in sprefa's workspace instead of
+/// hafley-rs's and fails with "believes it's in a workspace when it's not".
 fn crate_manifest() -> PathBuf {
-    sprefa_root().join("hafley-rs/crates/sprefa-extract/Cargo.toml")
+    let linked = sprefa_root().join("hafley-rs/crates/sprefa-extract/Cargo.toml");
+    std::fs::canonicalize(&linked).unwrap_or(linked)
 }
 
 /// Where a built `extract` can sit. `$CARGO_TARGET_DIR` comes first because a
