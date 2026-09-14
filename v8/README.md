@@ -43,6 +43,31 @@ bash v8/oracle/compile/freeze.sh          # pins REV=f5018ad23, all 46 cases
 bash v8/oracle/compile/verify.sh          # dl8 over every case, committed or not
 ```
 
+## The extract binary
+
+`tests/_16_extract_tsi.rs` drives `sprefa-extract`, which lives in
+`hafley-rs/crates/sprefa-extract`, over `fixtures/extract/corpus` and feeds the
+resulting TSI JSONL to `dl8 compile --tsi`. The test looks for the binary in
+this order:
+
+| order | where | note |
+|---|---|---|
+| 1 | `$SPREFA_EXTRACT_BIN` | an absolute path; a miss is an error, never a fallthrough |
+| 2 | `$CARGO_TARGET_DIR/debug/extract` | a lane sets this, and then neither target directory fills |
+| 3 | `<sprefa root>/hafley-rs/target/debug/extract` | `hafley-rs` is a gitignored sibling link the lane setup makes; the crate was a workspace member until hafley-rs excluded it |
+| 4 | `<sprefa root>/hafley-rs/crates/sprefa-extract/target/debug/extract` | where an excluded crate builds |
+| 5 | `cargo build --features cli --bin extract --manifest-path <sprefa root>/hafley-rs/crates/sprefa-extract/Cargo.toml` | run once, capped at 60 s |
+
+```bash
+ln -s /Users/chrishafley/projects/hafley-rs hafley-rs   # from the sprefa root
+cargo test --test _16_extract_tsi -- --nocapture         # prints the row counts
+```
+
+`--family tsi` is not a spelling: `tsi` is the envelope `--witness` wraps a run
+in, and the relation rows the loader reads come from `--family type`. More than
+one path in one run needs `--resolve`. The `scip_indexes_the_typescript_corpus`
+case stands down with a printed reason when `scip-typescript` is not on PATH.
+
 ## Logs
 
 Every phase emits one `dl8::phase` event with its name, measured milliseconds,
