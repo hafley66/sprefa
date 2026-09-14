@@ -4,7 +4,7 @@
 # One served tsv2 process, one .dl6 program (../dl/fixtures/scip-families.dl6),
 # one scratch TypeScript corpus, and ONE DEMAND ROW PER FAMILY posted as an
 # arrival. Nothing is faked: the engine is the real served tsv2 runtime, the
-# extractor is the in-tree RELEASE build of v6/sprefa-extract, and the `scip`
+# extractor is the in-tree RELEASE build of hafley-rs/crates/sprefa-extract, and the `scip`
 # family runs REAL scip-typescript over the corpus.
 #
 # THE CORPUS IS THE DISCRIMINATION. alpha.ts and beta.ts each export a function

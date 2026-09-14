@@ -99,7 +99,6 @@ eprintln_count(Path, count(At)) <- eprintln_counted(Path, At).
 # The grandfathered baseline, v5's `eprintln_baseline` in shape. Lower a row
 # when a commit shrinks a file's count; never raise one, and delete it at 0.
 rel eprintln_baseline(path: text, allowed: int).
-eprintln_baseline('v6/sprefa-extract/src/bin/extract.rs', 2).
 eprintln_baseline('v6/sprefa-store/src/engine.rs', 1).
 
 # A grandfathered file grew past its baseline.

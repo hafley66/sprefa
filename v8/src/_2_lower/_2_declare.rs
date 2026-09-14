@@ -2,7 +2,6 @@
 //! Port of `0_lowerer.pl:672-982`.
 
 use super::forms;
-use super::host;
 use crate::_6_eval::term::{TermId, Universe};
 
 #[derive(Default, Debug)]
@@ -193,10 +192,6 @@ pub fn lower_target(
                     let owner = u.compound("owner", vec![module_identity, node.id]);
                     let declared = lower_bind_list(u, &items[1..], owner, module_identity)?;
                     return Ok(finish_constructor_target(u, declared, node.id, owner, kind));
-                }
-                "Host" if items.len() == 4 => {
-                    let owner = u.compound("owner", vec![module_identity, node.id]);
-                    return host::lower_host_target(u, &items, node.id, owner, module_identity);
                 }
                 _ => {}
             }

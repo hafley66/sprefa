@@ -113,6 +113,7 @@ fn expand_rows(
             .map(|i| macro_program.program.rules[*i].clone())
             .collect(),
         seeds: Vec::new(),
+        ..Program::default()
     };
     let none = u.atom("none");
     let mut seen: Vec<Vec<TermId>> = vec![graph.rows.clone()];

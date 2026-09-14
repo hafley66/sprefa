@@ -14,9 +14,9 @@ v6="$(cd "$here/.." && pwd)"
 root="$(cd "$v6/.." && pwd)"
 status=0
 
-extract_bin="$v6/sprefa-extract/target/debug/extract"
+extract_bin="$hafley-rs/crates/sprefa-extract/target/debug/extract"
 if [ ! -x "$extract_bin" ]; then
-  cargo build --quiet --features cli --manifest-path "$v6/sprefa-extract/Cargo.toml"
+  cargo build --quiet --features cli --manifest-path "$hafley-rs/crates/sprefa-extract/Cargo.toml"
 fi
 
 specs="$(mktemp)"

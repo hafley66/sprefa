@@ -16,14 +16,14 @@ pub mod execute;
 pub mod express;
 #[path = "_1_forms.rs"]
 pub mod forms;
-#[path = "_3_host.rs"]
-pub mod host;
 #[path = "_10_index.rs"]
 pub mod index;
 #[path = "_11_json.rs"]
 pub mod json;
 #[path = "_9_kernel.rs"]
 pub mod kernel;
+#[path = "_3_origins.rs"]
+pub mod origins;
 #[path = "_6_partial.rs"]
 pub mod partial;
 #[path = "_4_promote.rs"]

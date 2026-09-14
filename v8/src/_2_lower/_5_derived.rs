@@ -3,8 +3,8 @@
 
 use super::cx::{CallPolicy, Cx};
 use super::express::{is_partial, lower_expression, Lowering};
-use super::host::{host_metadata_rules, indexed_goal_origins};
 use super::index::reservation_parts;
+use super::origins::indexed_goal_origins;
 use super::partial::{partial_bind_rules, LabelSpec};
 use crate::_6_eval::term::TermId;
 
@@ -53,8 +53,6 @@ pub fn lower_derived_bind_rules(
                 .map(|(n, _)| n.to_string())
                 .unwrap_or_default();
         let block = match kind.as_str() {
-            "host" => host_metadata_rules(cx.u, parts.owner, parts.target, rule_index)
-                .map(|(rules, origins)| Block { rules, origins }),
             "compound_edge" => compound_edge_rule(cx, parts.owner, parts.target, rule_index)?,
             "expression" => expression_rule(cx, parts.owner, parts.name, parts.target, rule_index)?,
             _ => None,

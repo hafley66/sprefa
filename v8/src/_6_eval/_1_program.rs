@@ -4,6 +4,7 @@
 //! is one of `count`, `sum`, `min`, `max`.
 
 use super::term::TermId;
+use std::collections::HashSet;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct VarId(pub u32);
@@ -110,4 +111,6 @@ pub struct Diagnostic {
 pub struct Program {
     pub rules: Vec<Rule>,
     pub seeds: Vec<Row>,
+    /// Relation refs the outside settles; a miss on one writes an `effect` row.
+    pub served: HashSet<TermId>,
 }

@@ -2,7 +2,7 @@
 set -uo pipefail
 
 LAB="$(cd "$(dirname "$0")" && pwd)"
-BIN="$LAB/../../v6/sprefa-extract/target/release/extract"
+BIN="$LAB/../../hafley-rs/crates/sprefa-extract/target/release/extract"
 OUT="${OUT_DIR:-$LAB/out}"
 mkdir -p "$OUT"
 

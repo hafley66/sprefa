@@ -6,7 +6,6 @@
 //! in that order.
 
 use super::api::{prolog_sort, Stop};
-use super::kernel::kernel_arity;
 use super::mode::{call_parts, goal_call, goal_failures, head_safety, head_variables};
 use super::strata::{depends_rows, strata_rows, stratify_rules};
 use crate::_6_eval::term::{Term, TermId, Universe};
@@ -154,11 +153,7 @@ fn call_diagnostics(u: &mut Universe, call: TermId, arities: &HashMap<TermId, i6
         let reason = u.compound("invalid_generated_call", vec![call]);
         return vec![diagnostic(u, reason)];
     };
-    match arities
-        .get(&relation)
-        .copied()
-        .or_else(|| kernel_arity(u, relation))
-    {
+    match arities.get(&relation).copied() {
         Some(arity) if arity == arguments.len() as i64 => vec![],
         Some(arity) => {
             let declared = u.int(arity);

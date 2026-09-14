@@ -94,7 +94,11 @@ pub fn slice_macro_program(
         Some(MacroProgram {
             edges,
             relations,
-            program: Program { rules, seeds },
+            program: Program {
+                rules,
+                seeds,
+                ..Program::default()
+            },
         }),
         Vec::new(),
     )

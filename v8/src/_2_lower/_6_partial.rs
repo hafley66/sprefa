@@ -3,7 +3,7 @@
 
 use super::cx::Cx;
 use super::express::decode_bound;
-use super::host::{indexed_empty_rule_origins, indexed_goal_origins};
+use super::origins::{indexed_empty_rule_origins, indexed_goal_origins};
 use super::slots::{self, Slot};
 use crate::_6_eval::term::{Term, TermId};
 

@@ -4,7 +4,7 @@
 set -euo pipefail
 LAB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$LAB"
-BIN="$LAB/../../v6/sprefa-extract/target/release/extract"
+BIN="$LAB/../../hafley-rs/crates/sprefa-extract/target/release/extract"
 lang="$1"; prefix="$2"; runs="${3:-3}"
 case "$lang" in
   go) corpus=/Users/chrishafley/projects/typescript-go; find_args=(-name '*.go' -not -path '*/vendor/*') ;;

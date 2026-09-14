@@ -10,12 +10,9 @@
 //! 2. `_5_finish.rs` `semantic_label` losing its `ref` arm: `2_partial`
 //!    reports `compiled differs`; `:/4` rows whose label is a reference drop
 //!    out of `TypeGraphFacts`.
-//! 3. `_4_host.rs` `rule_uses_any` returning before the body scan:
-//!    `8_hosted` reports `compiled differs` AND `diagnostics differs`.
-//! 4. `_4_host.rs` planning ids dropping `HostPort`: both fixture cases report
-//!    `compiled differs`.
-//! 5. `_5_finish.rs` running `check_resolved_rules` on the pre-erase relation
-//!    list: both fixture cases report `compiled differs`.
+//!
+//! Receipts 3 to 5 covered `_4_host.rs` and the pre-erase relation list; both
+//! the file and the host planning rows are deleted.
 //!
 //! Three mutations did NOT fail and are recorded as uncovered paths:
 //! dropping `sum` from `graph_seeds` (no committed graph carries a `sum/1`

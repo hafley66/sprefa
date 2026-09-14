@@ -1,3 +1,0 @@
-package blankpkg
-
-func Init() {}

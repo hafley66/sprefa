@@ -3,7 +3,7 @@
 use clap::{Parser, Subcommand};
 use dl8::_6_eval::evaluate::{Evaluate, Store};
 use dl8::_6_eval::json::term_to_json;
-use dl8::_6_eval::json::{closure_to_json, program_from_json};
+use dl8::_6_eval::json::{closure_to_json, program_from_json, program_names, serve_relations};
 use dl8::_6_eval::{Trace, Universe};
 use dl8::_7_effect::Slice;
 use dl8::_8_driver::{Event, Stop};
@@ -60,6 +60,9 @@ enum Command {
     /// Evaluate a checked-goal program (JSON) and print its closure as JSON.
     Eval {
         program: PathBuf,
+        /// Relations the outside settles; a miss on one writes an `effect` row.
+        #[arg(long, value_delimiter = ',')]
+        serve: Vec<String>,
         /// Print one line per stratum and round to stderr.
         #[arg(long)]
         trace: bool,
@@ -110,7 +113,12 @@ fn main() -> ExitCode {
             tsi,
             trace,
         } => compile_cli(&file, project.as_deref(), &tsi, trace),
-        Command::Eval { program, trace, db } => eval_cli(&program, trace, db.as_deref()),
+        Command::Eval {
+            program,
+            serve,
+            trace,
+            db,
+        } => eval_cli(&program, &serve, trace, db.as_deref()),
     }
 }
 
@@ -147,7 +155,7 @@ fn persist(store: &mut SqliteRowStore, u: &Universe, rows: &Store) -> Result<usi
     }
 }
 
-fn eval_cli(path: &Path, trace: bool, db: Option<&Path>) -> ExitCode {
+fn eval_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>) -> ExitCode {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) => {
@@ -184,13 +192,27 @@ fn eval_cli(path: &Path, trace: bool, db: Option<&Path>) -> ExitCode {
             }
         }
     }
-    let program = match program_from_json(&mut u, value.get("program").unwrap_or(&value)) {
+    let body = value.get("program").unwrap_or(&value);
+    let mut program = match program_from_json(&mut u, body) {
         Ok(p) => p,
         Err(e) => {
             tracing::error!(phase = "eval", error = %e);
             return ExitCode::from(2);
         }
     };
+    let names = match program_names(&mut u, body) {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::error!(phase = "eval", error = %e);
+            return ExitCode::from(2);
+        }
+    };
+    let unknown = serve_relations(&mut u, &mut program, &names, serve);
+    if !unknown.is_empty() {
+        let out = closure_to_json(&u, &[], &unknown);
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        return ExitCode::from(1);
+    }
     rows.mark_all();
     let mut fx = |t: Trace| {
         if trace {

@@ -4,7 +4,6 @@
 use super::api::{evaluate_checked, Compiled, Refreeze, Sources};
 use super::assemble::assemble_generated_program;
 use super::finish::{generated_expression_environment, validate_functional_rows};
-use super::host::{erase_host_planning_rows, validate_hosted_relations};
 use super::rounds::{Outcome, Round};
 use crate::_3_check::{Checked, Stop};
 use crate::_6_eval::json::{term_from_json, term_to_json};
@@ -211,28 +210,6 @@ pub fn run(case: &Value) -> Result<(Value, u8), String> {
             out.insert("diagnostics".into(), list(&u, &assembled.diagnostics));
             let code = u8::from(!assembled.diagnostics.is_empty());
             Ok((Value::Object(out), code))
-        }
-        "validate_hosted_relations" => {
-            let nodes = terms(&mut u, input.get("nodes"))?;
-            let edges = terms(&mut u, input.get("edges"))?;
-            let relations = terms(&mut u, input.get("relations"))?;
-            let facts = terms(&mut u, input.get("compiler_facts"))?;
-            let diagnostics = validate_hosted_relations(&mut u, &nodes, &edges, &relations, &facts);
-            out.insert("diagnostics".into(), list(&u, &diagnostics));
-            let code = u8::from(!diagnostics.is_empty());
-            Ok((Value::Object(out), code))
-        }
-        "erase_host_planning_rows" => {
-            let nodes = terms(&mut u, input.get("nodes"))?;
-            let edges = terms(&mut u, input.get("edges"))?;
-            let relations = terms(&mut u, input.get("relations"))?;
-            let seeds = terms(&mut u, input.get("seeds"))?;
-            let rules = terms(&mut u, input.get("rules"))?;
-            let erased = erase_host_planning_rows(&u, &nodes, &edges, &relations, &seeds, &rules);
-            out.insert("relations".into(), list(&u, &erased.relations));
-            out.insert("seeds".into(), list(&u, &erased.seeds));
-            out.insert("rules".into(), list(&u, &erased.rules));
-            Ok((Value::Object(out), 0))
         }
         "validate_functional_rows" => {
             let relations = terms(&mut u, input.get("relations"))?;

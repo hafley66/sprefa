@@ -3,7 +3,7 @@
 Reactive datalog-over-code engine ("dl"). v5 rust engine at the repo root. v6 =
 prolog compiles `.dl6` to TypeScript+SQLite and to Rust+SQLite: `v6/prolog`
 (compiler + oracle), `v6/tsv2` (runtime/serve/cli), `v6/sprefa-engine-rs` (the
-Rust runtime), `v6/sprefa-store`, `v6/sprefa-extract`. Overview: `README.md`.
+Rust runtime), `v6/sprefa-store`; `sprefa-extract` lives in `hafley-rs/crates/sprefa-extract` (moved 2026-09-14). Overview: `README.md`.
 Archives: `~/projects/sprefa-archive-20260701` (v3/v4), `-20260428` (OG).
 
 ## THE RULE FOR THIS FILE
@@ -297,7 +297,7 @@ list` shows your own lane name.
   `types.rs` (grep `ModuleF`), deferred by user 2026-08-16.
 - **`sprefa-extract` reads markdown.** `MarkdownSource` (`.md`, `.markdown`)
   and `DataSource` (json/jsonl/yaml/toml) sit in the roster
-  (`v6/sprefa-extract/src/lang/mod.rs` `sources()`); `doc_node` rows carry
+  (`hafley-rs/crates/sprefa-extract/src/lang/mod.rs` `sources()`); `doc_node` rows carry
   heading, code_block (fence language, body span), link (target, title) and
   image (PR #707). XML is the one doc format with no source. The earlier
   "`source_for` returns `None` for `.md`" line was stale (verified 2026-09-03,
