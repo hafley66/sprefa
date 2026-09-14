@@ -175,6 +175,13 @@ fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermI
             let inner = resolve_argument(u, cx, parts[1])?;
             return Ok(u.compound("aggregate", vec![parts[0], inner]));
         }
+        if name == "fold" && parts.len() == 3 {
+            let mut resolved = Vec::with_capacity(3);
+            for part in &parts {
+                resolved.push(resolve_argument(u, cx, *part)?);
+            }
+            return Ok(u.compound("fold", resolved));
+        }
     }
     Ok(argument)
 }

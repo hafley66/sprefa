@@ -152,7 +152,9 @@ fn lower_goal(
                     return Ok(pending_goal_result(cx, lowered, "negative", parsed.id));
                 }
                 Some("not") => return Err(cx.plain(parsed.id, "invalid_negative_goal")),
-                Some("count") => return Err(cx.plain(parsed.id, "aggregate_outside_rule_head")),
+                Some("count") | Some("fold") => {
+                    return Err(cx.plain(parsed.id, "aggregate_outside_rule_head"))
+                }
                 _ => {}
             }
         }
@@ -312,8 +314,9 @@ fn finish_call_arguments(
             .arguments
             .iter()
             .filter(|a| {
-                cx.u.functor(**a)
-                    .is_some_and(|(n, args)| n == "aggregate" && args.len() == 2)
+                cx.u.functor(**a).is_some_and(|(n, args)| {
+                    (n == "aggregate" && args.len() == 2) || (n == "fold" && args.len() == 3)
+                })
             })
             .count();
         if aggregates > 1 {

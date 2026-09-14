@@ -10,7 +10,9 @@ use super::finish::{derived_bind_diagnostics, validate_functional_rows};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::resolved::Resolved;
 use crate::_3_check::{check_resolved_rules, Stop};
-use crate::_6_eval::program::{AggregateKind, Arg, Goal, Polarity, Program, Row, Rule, VarId};
+use crate::_6_eval::program::{
+    AggregateKind, Arg, Fold, Goal, Order, Polarity, Program, Row, Rule, Seed, VarId,
+};
 use crate::_6_eval::term::{TermId, Universe};
 use crate::_6_eval::{evaluate, Trace};
 use crate::_7_effect::Slice;
@@ -425,6 +427,17 @@ fn arg_from_term(u: &Universe, term: TermId, vars: &mut Vec<TermId>) -> Arg {
             {
                 return Arg::Aggregate(aggregation, Box::new(arg_from_term(u, args[1], vars)));
             }
+        }
+    }
+    if let Some(("fold", args)) = u.functor(term) {
+        if args.len() == 3 {
+            let fold = Fold {
+                step: args[0],
+                seed: Seed::Term(args[1]),
+                order: Order::TermLt,
+            };
+            let subject = arg_from_term(u, args[2], vars);
+            return Arg::Fold(fold, Box::new(subject));
         }
     }
     Arg::Ground(term)

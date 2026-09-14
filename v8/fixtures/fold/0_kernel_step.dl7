@@ -1,0 +1,12 @@
+(: Input (* (: value int)))
+
+(Input 7)
+
+(Input 35)
+
+(Input 100)
+
+(: Total (* (: total int)))
+
+(<- (Total (fold int_add 0 ?Value))
+    (Input ?Value))

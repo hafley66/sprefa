@@ -1,0 +1,23 @@
+(: Input (* (: value int)))
+
+(Input 7)
+
+(Input 35)
+
+(Input 100)
+
+; The accumulator is unbound in the head, so the step is proved top-down from
+; the bound accumulator and value the fold supplies.
+(: Doubling
+   (* (: accumulator int)
+      (: value int)
+      (: next int)))
+
+(<- (Doubling ?Accumulator ?Value ?Next)
+    (int_add ?Value ?Value ?Doubled)
+    (int_add ?Accumulator ?Doubled ?Next))
+
+(: Total (* (: total int)))
+
+(<- (Total (fold Doubling 0 ?Value))
+    (Input ?Value))

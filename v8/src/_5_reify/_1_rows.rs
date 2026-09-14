@@ -283,6 +283,21 @@ fn argument_value_rows(
             out.push(u.compound("program_edge", vec![argument_id, input_atom, target, one]));
             argument_value_rows(u, input, child, out)?;
         }
+        ("fold", 3) => {
+            let label = u.atom("fold");
+            let step = u.compound("const", vec![args[0]]);
+            out.push(u.compound("program_edge", vec![argument_id, label, step, zero]));
+            let seed_atom = u.atom("seed");
+            let one = u.int(1);
+            let seed = u.compound("const", vec![args[1]]);
+            out.push(u.compound("program_edge", vec![argument_id, seed_atom, seed, one]));
+            let input_atom = u.atom("input");
+            let child = u.compound("argument_child", vec![argument_id, input_atom]);
+            let target = u.compound("ref", vec![child]);
+            let two = u.int(2);
+            out.push(u.compound("program_edge", vec![argument_id, input_atom, target, two]));
+            argument_value_rows(u, args[2], child, out)?;
+        }
         _ => return Err(Stop::Fail("argument value expected")),
     }
     Ok(())

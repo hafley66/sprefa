@@ -4,7 +4,9 @@
 use super::api::{prolog_sort, Stop};
 use super::graph::OriginArena;
 use super::mode::{call_parts, goal_call};
-use crate::_6_eval::program::{AggregateKind, Arg, Goal, Polarity, Program, Rule, VarId};
+use crate::_6_eval::program::{
+    AggregateKind, Arg, Fold, Goal, Order, Polarity, Program, Rule, Seed, VarId,
+};
 use crate::_6_eval::stratify::stratify;
 use crate::_6_eval::term::{Term, TermId, Universe};
 
@@ -26,6 +28,15 @@ fn arg_of(u: &Universe, term: TermId, vars: &mut Vec<TermId>) -> Arg {
                     return Arg::Aggregate(aggregation, Box::new(arg_of(u, args[1], vars)));
                 }
             }
+        }
+        if name == "fold" && args.len() == 3 {
+            let fold = Fold {
+                step: args[0],
+                seed: Seed::Term(args[1]),
+                order: Order::TermLt,
+            };
+            let subject = arg_of(u, args[2], vars);
+            return Arg::Fold(fold, Box::new(subject));
         }
     }
     Arg::Ground(term)
@@ -199,10 +210,11 @@ fn aggregate_cycle_origin(
         }
         let aggregated = head_args.iter().any(|a| {
             u.functor(*a).is_some_and(|(name, args)| {
-                name == "aggregate"
-                    && args.len() == 2
-                    && u.functor_or_atom(args[0])
-                        .is_some_and(|(tag, _)| AggregateKind::of(tag).is_some())
+                (name == "fold" && args.len() == 3)
+                    || (name == "aggregate"
+                        && args.len() == 2
+                        && u.functor_or_atom(args[0])
+                            .is_some_and(|(tag, _)| AggregateKind::of(tag).is_some()))
             })
         });
         if aggregated {
