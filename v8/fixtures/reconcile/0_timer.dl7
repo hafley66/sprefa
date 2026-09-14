@@ -1,0 +1,14 @@
+; A timer with its period bound is a source; every fire is one row.
+(: timer
+   (* (: period_ms int)
+      (: tick int)))
+
+(: Fired (* (: tick int)))
+
+(<- (Fired ?Tick)
+    (timer 1 ?Tick))
+
+(: FiredCount (* (: fires int)))
+
+(<- (FiredCount (count ?Tick))
+    (Fired ?Tick))
