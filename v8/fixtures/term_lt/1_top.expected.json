@@ -1,0 +1,312 @@
+{
+  "closure": [
+    {
+      "args": [
+        {
+          "args": [
+            []
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "nil"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            []
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "prelude"
+              },
+              {
+                "args": [
+                  {
+                    "a": "prelude"
+                  },
+                  51
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "s": "ann"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            4
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  }
+                ],
+                "f": "file"
+              },
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  },
+                  3
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "s": "bob"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            10
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  }
+                ],
+                "f": "file"
+              },
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  },
+                  3
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "s": "cy"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            7
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  }
+                ],
+                "f": "file"
+              },
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  },
+                  3
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "s": "ann"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  }
+                ],
+                "f": "file"
+              },
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  },
+                  28
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "s": "cy"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  }
+                ],
+                "f": "file"
+              },
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  },
+                  28
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "s": "bob"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  }
+                ],
+                "f": "file"
+              },
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  },
+                  54
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      }
+    }
+  ],
+  "diagnostics": []
+}

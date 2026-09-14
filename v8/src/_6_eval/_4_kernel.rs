@@ -13,6 +13,7 @@ pub enum Kernel {
     Intern,
     Int(IntCmp),
     IntAdd,
+    TermLt,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -59,6 +60,7 @@ impl Kernel {
             "int_ge" => Kernel::Int(IntCmp::Ge),
             "int_gt" => Kernel::Int(IntCmp::Gt),
             "int_add" => Kernel::IntAdd,
+            "term_lt" => Kernel::TermLt,
             _ => return None,
         })
     }
@@ -79,6 +81,16 @@ pub fn int_pair(u: &Universe, args: &[Option<TermId>]) -> Option<(i64, i64)> {
     Some((l, r))
 }
 
+/// `const(Left)`, `const(Right)` with both terms of any kind.
+pub fn term_pair(u: &Universe, args: &[Option<TermId>]) -> Option<(TermId, TermId)> {
+    if args.len() != 2 {
+        return None;
+    }
+    let l = u.unary(args[0]?, "const")?;
+    let r = u.unary(args[1]?, "const")?;
+    Some((l, r))
+}
+
 /// Every kernel is a partial function: at most one solution, as the full
 /// argument vector, with the caller unifying the unbound positions.
 pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<TermId>> {
@@ -89,6 +101,7 @@ pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<Te
         Kernel::Intern => intern_row(u, args),
         Kernel::Int(cmp) => int_row(u, cmp, args),
         Kernel::IntAdd => int_add_row(u, args),
+        Kernel::TermLt => term_lt_row(u, args),
     };
     solution.map(|row| vec![row]).unwrap_or_default()
 }
@@ -155,6 +168,13 @@ pub fn int_row(u: &Universe, cmp: IntCmp, args: &[Option<TermId>]) -> Option<Vec
         .then(|| vec![args[0].unwrap(), args[1].unwrap()])
 }
 
+/// `term_lt(Left, Right)`: holds when `Left` precedes `Right` in the store's
+/// standard term order.
+pub fn term_lt_row(u: &Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    let (l, r) = term_pair(u, args)?;
+    (u.cmp(l, r) == std::cmp::Ordering::Less).then(|| vec![args[0].unwrap(), args[1].unwrap()])
+}
+
 /// `int_add(Left, Right, Sum)`: the sum is `const(Left + Right)`, and an
 /// overflowing sum has no row. The return is not a key, so a bound wrong sum
 /// fails at unification.
@@ -193,6 +213,10 @@ pub fn negative_holds(u: &Universe, k: Kernel, args: &[Option<TermId>]) -> bool 
         },
         Kernel::IntAdd => match int_add_ground(u, args) {
             Some((left, right, sum)) => left.checked_add(right) != Some(sum),
+            None => true,
+        },
+        Kernel::TermLt => match term_pair(u, args) {
+            Some((left, right)) => u.cmp(left, right) != std::cmp::Ordering::Less,
             None => true,
         },
         _ => true,
