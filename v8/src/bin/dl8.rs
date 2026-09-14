@@ -85,7 +85,8 @@ enum Command {
     /// of served relations to their executors, and inserts the answers.
     Run {
         program: PathBuf,
-        /// Relations an executor settles: `timer`, `fetch_json`.
+        /// Relations an executor settles: `timer`, `fetch_json`, `soopy_refs`,
+        /// `soopy_history`, `repo_at`, `extract`.
         #[arg(long, value_delimiter = ',')]
         serve: Vec<String>,
         /// Print one line per stratum, round and tick to stderr.

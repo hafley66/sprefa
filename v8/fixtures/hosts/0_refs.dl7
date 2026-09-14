@@ -1,0 +1,19 @@
+; One repository root; every ref it holds, then every ref that moves, is a row.
+(: soopy_refs
+   (* (: root text)
+      (: name text)
+      (: sha text)))
+
+(: soopy_refs_error
+   (* (: root text)
+      (: message text)))
+
+(: Watch (* (: root text)))
+
+(Watch "__ROOT__")
+
+(: Head (* (: sha text)))
+
+(<- (Head ?Sha)
+    (Watch ?Root)
+    (soopy_refs ?Root "HEAD" ?Sha))
