@@ -2,6 +2,7 @@
 
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::{Term, TermId, Universe};
+use std::collections::HashMap;
 use std::fmt;
 
 /// Dense arena cursor. Everything below each index is already durable.
@@ -117,9 +118,23 @@ impl CellKind {
     }
 }
 
+/// A table name the store will quote: the declared relation names that reach
+/// `name_relations` are program text, never this crate's own strings.
+pub fn nameable(name: &str) -> bool {
+    let mut cells = name.chars();
+    cells
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && cells.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+}
+
 pub trait IRowStore {
     /// Idempotent DDL for one program name. Runs once per open.
     fn open(&mut self, program: &str) -> Result<(), StoreError>;
+
+    /// Declared name per relation, for the tables this store creates. The refs
+    /// are arena ids, so this runs after `load_arena`, never at `open`.
+    fn name_relations(&mut self, names: &HashMap<String, TermId>);
 
     /// `u` must be a fresh `Universe::new()`: stored ids are arena positions.
     fn load_arena(&mut self, u: &mut Universe) -> Result<Watermark, StoreError>;

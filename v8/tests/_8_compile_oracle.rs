@@ -6,8 +6,10 @@
 //! committed subset is whatever fits 6 MB, and `oracle/compile/verify.sh` runs
 //! dl8 over every one of them.
 //!
-//! The comparison is byte equality: `serde_json::to_string` over a `Map` is a
-//! BTreeMap walk with no whitespace, the same bytes `dl8 compile` writes.
+//! The comparison is byte equality per frozen key: `serde_json::to_string` over
+//! a `Map` is a BTreeMap walk with no whitespace, the same bytes `dl8 compile`
+//! writes. v7 never printed `program`, so no case freezes it and the 6 MB
+//! budget below is what keeps it out.
 //!
 //! FAIL-FIRST RECEIPT (2026-09-12), applied, observed, reverted:
 //! `_2_lower/_12_units.rs::install_importer_aliases` starts the alias ordinal
@@ -68,8 +70,14 @@ fn every_committed_case_matches_v7() {
         let ms = started.elapsed().as_millis();
         let got = String::from_utf8(run.stdout).unwrap();
         let got = got.trim_end_matches('\n').replace(&sources, "<root>");
-        let want = serde_json::to_string(&case["expected"]).unwrap();
-        assert_eq!(got, want, "{stem}: stdout differs from v7");
+        let got: serde_json::Value = serde_json::from_str(&got).unwrap();
+        for (key, want) in case["expected"].as_object().unwrap() {
+            assert_eq!(
+                serde_json::to_string(&got[key]).unwrap(),
+                serde_json::to_string(want).unwrap(),
+                "{stem}: {key} differs from v7"
+            );
+        }
         let expected_code = i32::from(
             !case["expected"]["diagnostics"]
                 .as_array()

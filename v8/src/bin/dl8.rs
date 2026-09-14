@@ -3,7 +3,9 @@
 use clap::{Parser, Subcommand};
 use dl8::_6_eval::evaluate::{Evaluate, Store};
 use dl8::_6_eval::json::term_to_json;
-use dl8::_6_eval::json::{closure_to_json, program_from_json, program_names, serve_relations};
+use dl8::_6_eval::json::{
+    closure_to_json, program_from_json, program_names, program_to_json, serve_relations,
+};
 use dl8::_6_eval::{Trace, Universe};
 use dl8::_7_effect::Slice;
 use dl8::_8_driver::{Event, Stop};
@@ -207,6 +209,9 @@ fn eval_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>) -> Ex
             return ExitCode::from(2);
         }
     };
+    if let Some(store) = store.as_mut() {
+        store.name_relations(&names);
+    }
     let unknown = serve_relations(&mut u, &mut program, &names, serve);
     if !unknown.is_empty() {
         let out = closure_to_json(&u, &[], &unknown);
@@ -275,6 +280,18 @@ fn compile_cli(
             return ExitCode::from(3);
         }
     };
+    let mut diagnostics = compiled.diagnostics.clone();
+    let empty = u.as_list(compiled.runtime_program).is_some_and(|l| l.is_empty());
+    let program = match empty {
+        true => serde_json::Value::Null,
+        false => match program_to_json(&mut u, compiled.runtime_program) {
+            Ok(program) => program,
+            Err(payload) => {
+                diagnostics.push(payload);
+                serde_json::Value::Null
+            }
+        },
+    };
     let encode = |ids: &[dl8::_6_eval::TermId]| {
         serde_json::Value::Array(ids.iter().map(|t| term_to_json(&u, *t)).collect())
     };
@@ -284,12 +301,13 @@ fn compile_cli(
         "runtime_program".into(),
         term_to_json(&u, compiled.runtime_program),
     );
-    out.insert("diagnostics".into(), encode(&compiled.diagnostics));
+    out.insert("diagnostics".into(), encode(&diagnostics));
+    out.insert("program".into(), program);
     println!(
         "{}",
         serde_json::to_string(&serde_json::Value::Object(out)).unwrap()
     );
-    if compiled.diagnostics.is_empty() {
+    if diagnostics.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)

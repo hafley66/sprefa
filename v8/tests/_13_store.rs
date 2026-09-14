@@ -4,121 +4,14 @@
 //! rows back and derives only what the new seeds add. The fixture path is
 //! replaced by `<fixture>` so the expected files carry no absolute path.
 //!
-//! `program_json` is the port of `oracle/eval/json_terms.pl`, the same
-//! transport `_10_literals.rs` and `_11_aggregates.rs` carry.
+//! `dl8 compile`'s whole stdout is the program file; `dl8 eval` reads its
+//! `program` key, and the store names each table after the declared relation.
 
 use dl8::_6_eval::{TermId, Universe};
 use dl8::_9_runtime::{IRowStore, SqliteRowStore, Watermark};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-fn aggregate_key(name: &str) -> bool {
-    matches!(name, "count" | "sum" | "min" | "max")
-}
-
-fn arg_json(value: &Value) -> Value {
-    match value.get("f").and_then(Value::as_str) {
-        Some("var") => match value.get("args").and_then(Value::as_array) {
-            Some(args) if !args.is_empty() => json!({ "v": args[0] }),
-            _ => value.clone(),
-        },
-        Some("aggregate") => match aggregate_parts(value) {
-            Some((kind, inner)) => json!({ kind: arg_json(&inner) }),
-            None => value.clone(),
-        },
-        _ => value.clone(),
-    }
-}
-
-fn aggregate_parts(value: &Value) -> Option<(String, Value)> {
-    let args = value.get("args").and_then(Value::as_array)?;
-    if args.len() != 2 {
-        return None;
-    }
-    let kind = args[0].get("a").and_then(Value::as_str)?;
-    if !aggregate_key(kind) {
-        return None;
-    }
-    Some((kind.to_string(), args[1].clone()))
-}
-
-fn call_json(value: &Value) -> Result<Value, String> {
-    let args = value
-        .get("args")
-        .and_then(Value::as_array)
-        .ok_or("call/2 expected")?;
-    let rel = args.first().ok_or("call without relation")?.clone();
-    let list = args
-        .get(1)
-        .and_then(Value::as_array)
-        .ok_or("call without arguments")?;
-    Ok(json!({
-        "rel": rel,
-        "args": list.iter().map(arg_json).collect::<Vec<_>>(),
-    }))
-}
-
-fn goal_json(value: &Value) -> Result<Value, String> {
-    let args = value
-        .get("args")
-        .and_then(Value::as_array)
-        .ok_or("checked_goal/2 expected")?;
-    let polarity = args
-        .first()
-        .and_then(|p| p.get("a"))
-        .and_then(Value::as_str)
-        .ok_or("goal without polarity")?;
-    let mut call = call_json(args.get(1).ok_or("goal without call")?)?;
-    call["polarity"] = json!(polarity);
-    Ok(call)
-}
-
-fn rule_json(value: &Value) -> Result<Value, String> {
-    let args = value
-        .get("args")
-        .and_then(Value::as_array)
-        .ok_or("rule/2 expected")?;
-    let head = call_json(args.first().ok_or("rule without head")?)?;
-    let body = args
-        .get(1)
-        .and_then(Value::as_array)
-        .ok_or("rule without body")?;
-    let body = body
-        .iter()
-        .map(goal_json)
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(json!({ "head": head, "body": body }))
-}
-
-fn program_json(runtime_program: &Value) -> Result<Value, String> {
-    let checked = runtime_program
-        .get("args")
-        .and_then(Value::as_array)
-        .ok_or("runtime program is not checked_datalog/4")?;
-    let program = checked
-        .get(1)
-        .ok_or("checked_datalog without datalog_program")?;
-    let args = program
-        .get("args")
-        .and_then(Value::as_array)
-        .ok_or("datalog_program is not a term")?;
-    let seeds = args
-        .get(1)
-        .and_then(Value::as_array)
-        .ok_or("datalog_program without seeds")?
-        .iter()
-        .map(call_json)
-        .collect::<Result<Vec<_>, _>>()?;
-    let rules = args
-        .get(2)
-        .and_then(Value::as_array)
-        .ok_or("datalog_program without rules")?
-        .iter()
-        .map(rule_json)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(json!({ "program": { "rules": rules, "seeds": seeds } }))
-}
 
 fn normalize(value: &Value, path: &str) -> Value {
     match value {
@@ -173,8 +66,7 @@ fn transport(source: &Path, program: &Path) {
         )
     });
     assert_eq!(compiled["diagnostics"], json!([]), "compile diagnostics");
-    let json = program_json(&compiled["runtime_program"]).unwrap();
-    std::fs::write(program, serde_json::to_string(&json).unwrap()).unwrap();
+    std::fs::write(program, &output.stdout).unwrap();
 }
 
 fn evaluate(program: &Path, db: &Path, source: &Path) -> Run {
@@ -214,24 +106,37 @@ fn inserts(run: &Run) -> Vec<(String, u64)> {
         .collect()
 }
 
-/// Product tables as `(arity, rows)`: their names carry a relation's arena id,
-/// which no fixture may spell out.
-fn products(db: &Path, program: &str) -> Vec<(i64, i64)> {
+/// Every product table of one program, as `(table, arity)`. An unnamed
+/// relation's table carries its arena id, which no fixture may spell out.
+fn dictionary(db: &Path, program: &str) -> Vec<(String, i64)> {
     let connection = rusqlite::Connection::open(db).unwrap();
     let mut statement = connection
         .prepare(&format!(
-            "SELECT \"rel\",\"arity\" FROM \"{program}.relation\" ORDER BY \"__id\""
+            "SELECT \"rel\",\"arity\",\"name\" FROM \"{program}.relation\" ORDER BY \"__id\""
         ))
         .unwrap();
-    let relations: Vec<(i64, i64)> = statement
-        .query_map((), |row| Ok((row.get(0)?, row.get(1)?)))
+    statement
+        .query_map((), |row| {
+            let rel: i64 = row.get(0)?;
+            let arity: i64 = row.get(1)?;
+            let name: Option<String> = row.get(2)?;
+            let object = match name {
+                Some(name) => format!("{name}_a{arity}"),
+                None => format!("rel{rel}_a{arity}"),
+            };
+            Ok((format!("{program}.{object}"), arity))
+        })
         .unwrap()
         .map(Result::unwrap)
-        .collect();
-    let mut out: Vec<(i64, i64)> = relations
+        .collect()
+}
+
+/// Product tables as `(arity, rows)`.
+fn products(db: &Path, program: &str) -> Vec<(i64, i64)> {
+    let connection = rusqlite::Connection::open(db).unwrap();
+    let mut out: Vec<(i64, i64)> = dictionary(db, program)
         .iter()
-        .map(|(rel, arity)| {
-            let table = format!("{program}.rel{rel}_a{arity}");
+        .map(|(table, arity)| {
             let rows = connection
                 .query_row(&format!("SELECT count(*) FROM \"{table}\""), (), |row| {
                     row.get(0)
@@ -239,6 +144,22 @@ fn products(db: &Path, program: &str) -> Vec<(i64, i64)> {
                 .unwrap();
             (*arity, rows)
         })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Table names SQLite itself reports, so a named table that was never created
+/// cannot pass by sitting in the dictionary alone.
+fn sqlite_master(db: &Path) -> Vec<String> {
+    let connection = rusqlite::Connection::open(db).unwrap();
+    let mut statement = connection
+        .prepare("SELECT \"name\" FROM sqlite_master WHERE \"type\" = 'table' ORDER BY \"name\"")
+        .unwrap();
+    let mut out: Vec<String> = statement
+        .query_map((), |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
         .collect();
     out.sort();
     out
@@ -351,5 +272,50 @@ pub fn continuing_a_program_writes_only_the_new_rows() {
         vec![(2, 3), (2, 6)],
         "three Edge rows and six Path rows"
     );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+pub fn a_declared_relation_names_its_own_table() {
+    let directory = scratch("names");
+    let source = directory.join("1_continue.dl7");
+    let program = directory.join("1_continue.json");
+    let db = directory.join("store.db");
+
+    std::fs::copy(fixture("1_continue.dl7"), &source).unwrap();
+    transport(&source, &program);
+    let first = evaluate(&program, &db, &source);
+    assert_eq!(first.closure["diagnostics"], json!([]));
+
+    let tables = sqlite_master(&db);
+    for declared in ["1_continue.Edge_a2", "1_continue.Path_a2"] {
+        assert!(
+            tables.contains(&declared.to_string()),
+            "{declared} missing from sqlite_master: {tables:?}"
+        );
+    }
+    assert!(
+        !tables.iter().any(|t| {
+            t.strip_prefix("1_continue.rel")
+                .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        }),
+        "a declared relation kept an arena-id table: {tables:?}"
+    );
+
+    std::fs::copy(fixture("1_continue_more.dl7"), &source).unwrap();
+    transport(&source, &program);
+    let second = evaluate(&program, &db, &source);
+    assert_eq!(
+        second.closure["closure"],
+        expected("1_continue_more")["closure"],
+        "continued closure"
+    );
+    let rows: u64 = inserts(&second)
+        .iter()
+        .filter(|(table, _)| table.ends_with("_a2"))
+        .map(|(_, rows)| rows)
+        .sum();
+    assert_eq!(rows, 4, "the second run continued into the named tables");
+    assert_eq!(sqlite_master(&db), tables, "a second table set was minted");
     let _ = std::fs::remove_dir_all(&directory);
 }
