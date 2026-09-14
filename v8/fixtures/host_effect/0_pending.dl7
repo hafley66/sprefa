@@ -1,0 +1,18 @@
+; A miss on a served relation writes down the goal instead of failing.
+(: fetch_json
+   (* (: url text)
+      (: body text)))
+
+(: Watch (* (: url text)))
+
+(Watch "https://a")
+
+(Watch "https://b")
+
+(: Body
+   (* (: url text)
+      (: body text)))
+
+(<- (Body ?Url ?Body)
+    (Watch ?Url)
+    (fetch_json ?Url ?Body))

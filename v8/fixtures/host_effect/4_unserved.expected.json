@@ -1,0 +1,138 @@
+{
+  "closure": [
+    {
+      "args": [
+        {
+          "args": [
+            []
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "nil"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            []
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "prelude"
+              },
+              {
+                "args": [
+                  {
+                    "a": "prelude"
+                  },
+                  51
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "s": "https://a"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  }
+                ],
+                "f": "file"
+              },
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  },
+                  16
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "s": "https://b"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  }
+                ],
+                "f": "file"
+              },
+              {
+                "args": [
+                  {
+                    "a": "<fixture>"
+                  },
+                  16
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      }
+    }
+  ],
+  "diagnostics": []
+}

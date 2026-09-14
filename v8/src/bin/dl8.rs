@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use dl8::_6_eval::json::term_to_json;
-use dl8::_6_eval::json::{closure_to_json, program_from_json};
+use dl8::_6_eval::json::{closure_to_json, program_from_json, program_names, serve_relations};
 use dl8::_6_eval::{evaluate, Trace, Universe};
 use dl8::_8_driver::{Event, Stop};
 use hafley_observe::{Config, OutputFormat};
@@ -57,6 +57,9 @@ enum Command {
     /// Evaluate a checked-goal program (JSON) and print its closure as JSON.
     Eval {
         program: PathBuf,
+        /// Relations the outside settles; a miss on one writes an `effect` row.
+        #[arg(long, value_delimiter = ',')]
+        serve: Vec<String>,
         /// Print one line per stratum and round to stderr.
         #[arg(long)]
         trace: bool,
@@ -103,7 +106,11 @@ fn main() -> ExitCode {
             tsi,
             trace,
         } => compile_cli(&file, project.as_deref(), &tsi, trace),
-        Command::Eval { program, trace } => {
+        Command::Eval {
+            program,
+            serve,
+            trace,
+        } => {
             let text = match std::fs::read_to_string(&program) {
                 Ok(t) => t,
                 Err(e) => {
@@ -119,13 +126,27 @@ fn main() -> ExitCode {
                 }
             };
             let mut u = Universe::new();
-            let program = match program_from_json(&mut u, value.get("program").unwrap_or(&value)) {
+            let body = value.get("program").unwrap_or(&value);
+            let mut program = match program_from_json(&mut u, body) {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::error!(phase = "eval", error = %e);
                     return ExitCode::from(2);
                 }
             };
+            let names = match program_names(&mut u, body) {
+                Ok(n) => n,
+                Err(e) => {
+                    tracing::error!(phase = "eval", error = %e);
+                    return ExitCode::from(2);
+                }
+            };
+            let unknown = serve_relations(&mut u, &mut program, &names, &serve);
+            if !unknown.is_empty() {
+                let out = closure_to_json(&u, &[], &unknown);
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+                return ExitCode::from(1);
+            }
             let mut fx = |t: Trace| {
                 if trace {
                     tracing::debug!(target: "dl8::trace", event = ?t);

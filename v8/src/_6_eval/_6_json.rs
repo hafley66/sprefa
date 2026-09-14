@@ -2,12 +2,14 @@
 //! `{"a": name}`, string as `{"s": text}`, proper list as array, compound as
 //! `{"f": name, "args": [...]}`. Rule arguments add `{"v": identity}` and an
 //! aggregate key, one of `{"count": arg}`, `{"sum": arg}`, `{"min": arg}`,
-//! `{"max": arg}`. The oracle dump `v8/oracle/eval/dump_eval.pl` writes the
-//! same shape from v7.
+//! `{"max": arg}`. A program carries an optional `names` table beside its
+//! rules and seeds, which `--serve` resolves against. The oracle dump
+//! `v8/oracle/eval/dump_eval.pl` writes the same shape from v7.
 
 use super::program::{AggregateKind, Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId};
 use super::term::{Term, TermId, Universe};
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 
 /// SWI's JSON writer turns the atoms `null`, `true` and `false` into JSON
 /// literals; read them back as atoms.
@@ -174,6 +176,44 @@ pub fn program_from_json(u: &mut Universe, v: &Value) -> Result<Program, String>
         program.seeds.push(Row { rel, args: ids });
     }
     Ok(program)
+}
+
+/// `{"names": {"<declared name>": <relation ref>}}`; absent means serve nothing.
+pub fn program_names(u: &mut Universe, v: &Value) -> Result<HashMap<String, TermId>, String> {
+    let Some(entries) = v.get("names").and_then(|n| n.as_object()) else {
+        return Ok(HashMap::new());
+    };
+    let mut out = HashMap::with_capacity(entries.len());
+    for (name, rel) in entries {
+        out.insert(name.clone(), term_from_json(u, rel)?);
+    }
+    Ok(out)
+}
+
+/// Fill `Program.served` from the names the driver was asked to serve.
+pub fn serve_relations(
+    u: &mut Universe,
+    program: &mut Program,
+    names: &HashMap<String, TermId>,
+    requested: &[String],
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    for name in requested {
+        match names.get(name) {
+            Some(rel) => {
+                program.served.insert(*rel);
+            }
+            None => {
+                let atom = u.atom(name);
+                let payload = u.compound("served_relation_unknown", vec![atom]);
+                diagnostics.push(Diagnostic {
+                    phase: "eval",
+                    payload,
+                });
+            }
+        }
+    }
+    diagnostics
 }
 
 pub fn row_to_json(u: &Universe, row: &Row) -> Value {

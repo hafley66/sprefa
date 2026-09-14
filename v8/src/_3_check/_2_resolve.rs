@@ -3,7 +3,7 @@
 
 use super::api::Stop;
 use super::graph::{CheckerGraph, OriginArena};
-use super::kernel::{kernel_arity, primitive_name};
+use super::kernel::primitive_name;
 use super::mode::{call_parts, goal_failures, head_safety, head_variables};
 use crate::_2_lower::kernel::kernel_relation;
 use crate::_6_eval::program::AggregateKind;
@@ -123,12 +123,7 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
         let reason = u.compound("not_relation", vec![label]);
         return Ok(CallResult::Error(reason));
     }
-    let Some(arity) = cx
-        .relations
-        .get(&target)
-        .copied()
-        .or_else(|| kernel_arity(u, target))
-    else {
+    let Some(arity) = cx.relations.get(&target).copied() else {
         let reason = u.compound("undeclared_relation", vec![label]);
         return Ok(CallResult::Error(reason));
     };

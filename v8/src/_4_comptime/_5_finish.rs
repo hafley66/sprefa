@@ -5,7 +5,6 @@ use super::api::{
     colon_call_parts, colon_rows, compiler_value_target, diagnostic, graph_seeds, intern_rows,
     kernel_call_args, source_application_edges, Compiled, Generated, Refreeze, Sources,
 };
-use super::host::{erase_host_planning_rows, validate_hosted_relations};
 use super::rounds::{Round, RoundInput, RoundOutcome, RoundState, Rounds, COMPILER_ROUND_LIMIT};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::{check_resolved_rules, Checked, Stop};
@@ -169,14 +168,7 @@ pub fn finish_final_check(
     facts: &[TermId],
     generated: &Generated,
 ) -> Outcome {
-    let mut validation = validate_functional_rows(u, &checked.relations, facts);
-    validation.extend(validate_hosted_relations(
-        u,
-        &checked.nodes,
-        &checked.edges,
-        &checked.relations,
-        facts,
-    ));
+    let validation = validate_functional_rows(u, &checked.relations, facts);
     let validation = prolog_sort(u, validation);
     if !validation.is_empty() {
         return Ok((None, validation));
@@ -190,15 +182,7 @@ pub fn finish_final_check(
     rules.extend_from_slice(&generated.rules);
     let rules = prolog_sort(u, rules);
 
-    let erased = erase_host_planning_rows(
-        u,
-        &checked.nodes,
-        &checked.edges,
-        &relations,
-        &checked.seeds,
-        &rules,
-    );
-    let resolved = check_resolved_rules(u, &erased.relations, &erased.rules)?;
+    let resolved = check_resolved_rules(u, &relations, &rules)?;
     if !resolved.diagnostics.is_empty() {
         return Ok((None, resolved.diagnostics));
     }
@@ -208,9 +192,9 @@ pub fn finish_final_check(
             runtime: Checked {
                 nodes: checked.nodes.clone(),
                 edges: checked.edges.clone(),
-                relations: erased.relations,
-                seeds: erased.seeds,
-                rules: erased.rules,
+                relations,
+                seeds: checked.seeds.clone(),
+                rules,
                 depends: resolved.depends,
                 strata: resolved.strata,
             },

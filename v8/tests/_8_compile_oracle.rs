@@ -94,7 +94,7 @@ fn every_committed_case_matches_v7() {
 fn every_committed_case_file_exists_and_every_case_is_indexed() {
     let cases = status();
     let cases = cases["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 46, "status.json case count");
+    assert_eq!(cases.len(), 44, "status.json case count");
     let mut committed = 0;
     for entry in cases {
         let stem = entry["stem"].as_str().unwrap();
