@@ -10,6 +10,7 @@ pub mod _5_reify;
 pub mod _6_eval;
 pub mod _7_effect;
 pub mod _8_driver;
+pub mod _9_runtime;
 
 use _2_lower::api::Lowered;
 use _2_lower::cx::CallPolicy;

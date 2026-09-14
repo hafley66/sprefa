@@ -1,0 +1,16 @@
+(: Edge (* (: from int) (: to int)))
+
+(: Path (* (: from int) (: to int)))
+
+(<- (Path ?From ?To)
+    (Edge ?From ?To))
+
+(<- (Path ?From ?To)
+    (Edge ?From ?Middle)
+    (Path ?Middle ?To))
+
+(Edge 1 2)
+
+(Edge 2 3)
+
+(Edge 3 4)
