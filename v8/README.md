@@ -68,6 +68,43 @@ in, and the relation rows the loader reads come from `--family type`. More than
 one path in one run needs `--resolve`. The `scip_indexes_the_typescript_corpus`
 case stands down with a printed reason when `scip-typescript` is not on PATH.
 
+## dl8 run
+
+`dl8 run <compile.json> --serve timer,fetch_json [--db <file>] [--max-ticks N]`
+runs a program as a process. The loop lives in `src/_9_runtime/_2_reconcile.rs`,
+the executors in `src/_9_runtime/_3_executors/`.
+
+```mermaid
+flowchart LR
+  T0[tick 0: evaluate, persist] --> A[new effect rows to executors]
+  A --> I[insert answers and fires]
+  I -->|new rows| E[tick N: evaluate, persist]
+  E --> A
+  I -->|nothing new, timer armed| W[wait on the clock]
+  W --> I
+  I -->|nothing new, nothing armed| S[exit]
+```
+
+| served name | cadence | row it writes | declare |
+|---|---|---|---|
+| `timer` | Continuing | `(timer PeriodMs Tick)`, ticks from 1 per period; a late fire is skipped, never replayed | `(: timer (* (: period_ms int) (: tick int)))` |
+| `fetch_json` | Once | `(fetch_json Url Body)`, Body the raw 2xx JSON text | `(: fetch_json (* (: url text) (: body text)))` |
+| `fetch_json` | Once | `(fetch_json_error Url Status Message)` on non-2xx, a non-JSON body, or transport failure (Status 0); 10 s request timeout | `(: fetch_json_error (* (: url text) (: status int) (: message text)))`, required |
+
+| rule | where it shows |
+|---|---|
+| each effect row reaches its executor once per process | `Reconciler.effects_seen` |
+| on a reloaded db, a Once application with a matching data row is answered; an error row is not, so a restart retries it | `data_row_exists` |
+| a timer reloaded from the db numbers past its stored ticks | `Timer::first_tick` |
+| a served name with no executor exits 1 with `served_relation_no_executor` | `executors_for` |
+| stdout is the closure plus `ticks` and, with `--db`, `insert_statements` | `run_cli` in `src/bin/dl8.rs` |
+
+```bash
+cargo run -- compile fixtures/reconcile/0_timer.dl7 > /tmp/timer.json
+cargo run -- run /tmp/timer.json --serve timer --max-ticks 3
+cargo test --test _17_reconcile      # real binary, real clock, local HTTP listener
+```
+
 ## Logs
 
 Every phase emits one `dl8::phase` event with its name, measured milliseconds,

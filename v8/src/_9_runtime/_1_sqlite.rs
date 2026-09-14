@@ -31,6 +31,7 @@ pub struct SqliteRowStore {
     arena: Watermark,
     variable_limit: usize,
     in_tick: bool,
+    insert_statements: std::cell::Cell<usize>,
 }
 
 impl SqliteRowStore {
@@ -47,7 +48,13 @@ impl SqliteRowStore {
             arena: Watermark::default(),
             variable_limit: variable_limit.max(8),
             in_tick: false,
+            insert_statements: std::cell::Cell::new(0),
         })
+    }
+
+    /// INSERT statements this connection has run, for COUNT tests.
+    pub fn insert_statements(&self) -> usize {
+        self.insert_statements.get()
     }
 
     fn table(&self, object: &str) -> String {
@@ -93,6 +100,7 @@ impl SqliteRowStore {
             written += self
                 .connection
                 .execute(&sql, params_from_iter(slice.iter()))?;
+            self.insert_statements.set(self.insert_statements.get() + 1);
             tracing::info!(target: "dl8::store", statement = "insert", table, rows = count);
             offset += count;
         }
@@ -147,6 +155,7 @@ impl SqliteRowStore {
             return Ok(table);
         }
         self.create_product(&table, kinds)?;
+        self.insert_statements.set(self.insert_statements.get() + 1);
         self.connection.execute(
             &format!(
                 "INSERT OR IGNORE INTO \"{}\" (\"rel\",\"arity\",\"name\") VALUES (?,?,?)",
@@ -172,6 +181,7 @@ impl SqliteRowStore {
         let kinds: Vec<CellKind> = rows[0].iter().map(|c| CellKind::of(u.get(*c))).collect();
         let table = self.register_product(rel, arity, &kinds)?;
         if arity == 0 {
+            self.insert_statements.set(self.insert_statements.get() + 1);
             self.connection.execute(
                 &format!("INSERT OR IGNORE INTO \"{table}\" (\"__id\") VALUES (1)"),
                 (),

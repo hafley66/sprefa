@@ -9,7 +9,8 @@ use dl8::_6_eval::json::{
 use dl8::_6_eval::{Trace, Universe};
 use dl8::_7_effect::Slice;
 use dl8::_8_driver::{Event, Stop};
-use dl8::_9_runtime::{IRowStore, SqliteRowStore, StoreError};
+use dl8::_9_runtime::executors::executors_for;
+use dl8::_9_runtime::{IRowStore, Reconciler, SqliteRowStore, StoreError};
 use hafley_observe::{Config, OutputFormat};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -73,13 +74,31 @@ enum Command {
         #[arg(long)]
         db: Option<PathBuf>,
     },
+    /// Run a program as a process: each tick evaluates, hands the `effect` rows
+    /// of served relations to their executors, and inserts the answers.
+    Run {
+        program: PathBuf,
+        /// Relations an executor settles: `timer`, `fetch_json`.
+        #[arg(long, value_delimiter = ',')]
+        serve: Vec<String>,
+        /// Print one line per stratum, round and tick to stderr.
+        #[arg(long)]
+        trace: bool,
+        /// Persist every tick into this SQLite file and continue from it.
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Stop after this many ticks past tick 0; unset runs until settled.
+        #[arg(long)]
+        max_ticks: Option<usize>,
+    },
 }
 
 fn trace_requested(command: &Command) -> bool {
     match command {
         Command::Expand { trace, .. }
         | Command::Compile { trace, .. }
-        | Command::Eval { trace, .. } => *trace,
+        | Command::Eval { trace, .. }
+        | Command::Run { trace, .. } => *trace,
         _ => false,
     }
 }
@@ -121,6 +140,19 @@ fn main() -> ExitCode {
             trace,
             db,
         } => eval_cli(&program, &serve, trace, db.as_deref()),
+        Command::Run {
+            program,
+            serve,
+            trace,
+            db,
+            max_ticks,
+        } => run_cli(
+            &program,
+            &serve,
+            trace,
+            db.as_deref(),
+            max_ticks.unwrap_or(usize::MAX),
+        ),
     }
 }
 
@@ -235,6 +267,84 @@ fn eval_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>) -> Ex
         }
     }
     let out = closure_to_json(&u, &closure.rows, &closure.diagnostics);
+    println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    if closure.diagnostics.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn run_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>, max_ticks: usize) -> ExitCode {
+    let fail = |error: &dyn std::fmt::Display| {
+        tracing::error!(phase = "run", error = %error, path = %path.display());
+        ExitCode::from(2)
+    };
+    let value: serde_json::Value = match std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
+    {
+        Ok(value) => value,
+        Err(e) => return fail(&e),
+    };
+    let mut u = Universe::new();
+    let mut rows = Store::default();
+    let mut store = match db.map(|file| attach(file, path)) {
+        None => None,
+        Some(Ok(store)) => Some(store),
+        Some(Err(e)) => return fail(&e),
+    };
+    if let Some(store) = store.as_mut() {
+        match store
+            .load_arena(&mut u)
+            .and_then(|_| store.load_rows(&mut u, &mut rows))
+        {
+            Ok(loaded) => tracing::info!(target: "dl8::store", phase = "load", rows = loaded),
+            Err(e) => return fail(&e),
+        }
+    }
+    let body = value.get("program").unwrap_or(&value);
+    let (mut program, names) = match program_from_json(&mut u, body)
+        .and_then(|program| Ok((program, program_names(&mut u, body)?)))
+    {
+        Ok(parts) => parts,
+        Err(e) => return fail(&e),
+    };
+    if let Some(store) = store.as_mut() {
+        store.name_relations(&names);
+    }
+    let mut unknown = serve_relations(&mut u, &mut program, &names, serve);
+    let reconciler = match unknown.is_empty() {
+        true => executors_for(&mut u, &names, serve)
+            .and_then(|executors| Reconciler::new(&mut u, &names, executors)),
+        false => Err(Vec::new()),
+    };
+    let mut reconciler = match reconciler {
+        Ok(reconciler) => reconciler,
+        Err(diagnostics) => {
+            unknown.extend(diagnostics);
+            let out = closure_to_json(&u, &[], &unknown);
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            return ExitCode::from(1);
+        }
+    };
+    let mut fx = |t: Trace| {
+        if trace {
+            tracing::debug!(target: "dl8::trace", event = ?t);
+        }
+    };
+    let durable = store.as_mut().map(|s| s as &mut dyn IRowStore);
+    let reconciled = match reconciler.run(&mut u, &program, &mut rows, durable, max_ticks, &mut fx) {
+        Ok(reconciled) => reconciled,
+        Err(e) => return fail(&e),
+    };
+    drop(reconciler);
+    let closure = reconciled.closure;
+    let mut out = closure_to_json(&u, &closure.rows, &closure.diagnostics);
+    out["ticks"] = serde_json::json!(reconciled.ticks);
+    if let Some(store) = store.as_ref() {
+        out["insert_statements"] = serde_json::json!(store.insert_statements());
+    }
     println!("{}", serde_json::to_string_pretty(&out).unwrap());
     if closure.diagnostics.is_empty() {
         ExitCode::SUCCESS
