@@ -6,6 +6,7 @@
 //! in that order.
 
 use super::api::{prolog_sort, Stop};
+use super::kernel::kernel_arity;
 use super::mode::{call_parts, goal_call, goal_failures, head_safety, head_variables};
 use super::strata::{depends_rows, strata_rows, stratify_rules};
 use crate::_6_eval::term::{Term, TermId, Universe};
@@ -32,18 +33,6 @@ fn relation_arities(u: &Universe, relations: &[TermId]) -> HashMap<TermId, i64> 
         }
     }
     out
-}
-
-/// A kernel relation with no checked `relation/3` row takes its arity from the
-/// lowerer table. `int_add` is the first kernel added after v7's frozen rows.
-fn kernel_arity(u: &Universe, relation: TermId) -> Option<i64> {
-    let inner = u.unary(relation, "ref")?;
-    let name = u.unary(inner, "kernel")?;
-    let (name, args) = u.functor_or_atom(name)?;
-    if !args.is_empty() {
-        return None;
-    }
-    crate::_2_lower::kernel::kernel_relation(name).map(i64::from)
 }
 
 /// `:245`.
