@@ -1,0 +1,42 @@
+(: Node (* (: name text)))
+
+(Node "a")
+
+(Node "b")
+
+(Node "c")
+
+(Node "d")
+
+(: Edge (* (: from text) (: to text)))
+
+(Edge "a" "b")
+
+(Edge "b" "c")
+
+(Edge "d" "a")
+
+(: Reach (* (: from text) (: to text)))
+
+(<- (Reach ?From ?To)
+    (Edge ?From ?To))
+
+(<- (Reach ?From ?To)
+    (Reach ?From ?Middle)
+    (Edge ?Middle ?To))
+
+(: Unreached (* (: name text)))
+
+(<- (Unreached ?Name)
+    (Node ?Name)
+    (not (Reach "a" ?Name)))
+
+(: OutDegree (* (: from text) (: count int)))
+
+(<- (OutDegree ?From (count ?To))
+    (Reach ?From ?To))
+
+(: Farthest (* (: from text) (: to text)))
+
+(<- (Farthest ?From (max ?To))
+    (Reach ?From ?To))

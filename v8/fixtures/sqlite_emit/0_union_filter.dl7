@@ -1,0 +1,47 @@
+(: Edge (* (: from text) (: to text)))
+
+(Edge "a" "b")
+
+(Edge "b" "c")
+
+(Edge "c" "a")
+
+(Edge "x" "y")
+
+(: Weight (* (: node text) (: amount int)))
+
+(Weight "a" 3)
+
+(Weight "b" 12)
+
+(Weight "c" 7)
+
+(: Touched (* (: node text)))
+
+(<- (Touched ?Node)
+    (Edge ?Node ?Other))
+
+(<- (Touched ?Node)
+    (Edge ?Other ?Node))
+
+(: FromA (* (: node text)))
+
+(<- (FromA ?Node)
+    (Edge "a" ?Node))
+
+(: Heavy (* (: node text) (: amount int)))
+
+(<- (Heavy ?Node ?Amount)
+    (Weight ?Node ?Amount)
+    (int_gt ?Amount 5))
+
+(: Tagged (* (: node text) (: tag text)))
+
+(<- (Tagged ?Node "heavy")
+    (Heavy ?Node ?Amount))
+
+(: Shifted (* (: node text) (: amount int)))
+
+(<- (Shifted ?Node ?Next)
+    (Weight ?Node ?Amount)
+    (int_add ?Amount 10 ?Next))

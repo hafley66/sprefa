@@ -1,0 +1,172 @@
+{
+  "fold/1_program_step": [
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "Doubling"
+            },
+            0
+          ],
+          "f": "rule"
+        },
+        {
+          "args": [
+            {
+              "a": "Value"
+            }
+          ],
+          "f": "unbound"
+        }
+      ],
+      "f": "emit_sqlite_unsupported"
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "Total"
+            },
+            0
+          ],
+          "f": "rule"
+        },
+        {
+          "args": [
+            {
+              "a": "Doubling"
+            }
+          ],
+          "f": "fold"
+        }
+      ],
+      "f": "emit_sqlite_unsupported"
+    }
+  ],
+  "fold/2_order_matters": [
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "Total"
+            },
+            0
+          ],
+          "f": "rule"
+        },
+        {
+          "args": [
+            {
+              "a": "Weighted"
+            }
+          ],
+          "f": "fold"
+        }
+      ],
+      "f": "emit_sqlite_unsupported"
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "Weighted"
+            },
+            0
+          ],
+          "f": "rule"
+        },
+        {
+          "args": [
+            {
+              "a": "Accumulator"
+            }
+          ],
+          "f": "unbound"
+        }
+      ],
+      "f": "emit_sqlite_unsupported"
+    }
+  ],
+  "sqlite_emit/4_outside": [
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "Empty"
+            },
+            0
+          ],
+          "f": "rule"
+        },
+        {
+          "a": "nil"
+        }
+      ],
+      "f": "emit_sqlite_unsupported"
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "Level"
+            },
+            0
+          ],
+          "f": "rule"
+        },
+        {
+          "args": [
+            0
+          ],
+          "f": "mixed_column"
+        }
+      ],
+      "f": "emit_sqlite_unsupported"
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "Path"
+            },
+            1
+          ],
+          "f": "rule"
+        },
+        {
+          "a": "nonlinear_recursion"
+        }
+      ],
+      "f": "emit_sqlite_unsupported"
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "Uses"
+            },
+            0
+          ],
+          "f": "rule"
+        },
+        {
+          "args": [
+            {
+              "a": "Level"
+            }
+          ],
+          "f": "depends_on"
+        }
+      ],
+      "f": "emit_sqlite_unsupported"
+    }
+  ]
+}

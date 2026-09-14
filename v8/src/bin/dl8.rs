@@ -1,10 +1,12 @@
 //! The one subscribe: reads a program, runs the pipe, prints the result.
 
 use clap::{Parser, Subcommand};
+use dl8::_5_reify::emit_sqlite;
 use dl8::_6_eval::evaluate::{Evaluate, Store};
 use dl8::_6_eval::json::term_to_json;
 use dl8::_6_eval::json::{
-    closure_to_json, program_from_json, program_names, program_to_json, serve_relations,
+    closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json,
+    serve_relations,
 };
 use dl8::_6_eval::{Trace, Universe};
 use dl8::_7_effect::Slice;
@@ -60,6 +62,11 @@ enum Command {
         #[arg(long)]
         trace: bool,
     },
+    /// Lower a `dl8 compile` output to one target and print the artifact as JSON.
+    Emit {
+        target: EmitTarget,
+        program: PathBuf,
+    },
     /// Evaluate a checked-goal program (JSON) and print its closure as JSON.
     Eval {
         program: PathBuf,
@@ -91,6 +98,12 @@ enum Command {
         #[arg(long)]
         max_ticks: Option<usize>,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum EmitTarget {
+    /// One `sqlite_ivm` view per derived relation over the `eval --db` tables.
+    Sqlite,
 }
 
 fn trace_requested(command: &Command) -> bool {
@@ -134,6 +147,7 @@ fn main() -> ExitCode {
             tsi,
             trace,
         } => compile_cli(&file, project.as_deref(), &tsi, trace),
+        Command::Emit { target, program } => emit_cli(target, &program),
         Command::Eval {
             program,
             serve,
@@ -186,6 +200,62 @@ fn persist(store: &mut SqliteRowStore, u: &Universe, rows: &Store) -> Result<usi
             let _ = store.rollback_tick();
             Err(e)
         }
+    }
+}
+
+/// The table prefix is `program_name`, the one `eval --db` gives the same file.
+fn emit_cli(target: EmitTarget, path: &Path) -> ExitCode {
+    let EmitTarget::Sqlite = target;
+    let value: serde_json::Value = match std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
+    {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!(phase = "emit", error = %e, path = %path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let mut u = Universe::new();
+    let body = value.get("program").unwrap_or(&value);
+    let parsed = program_from_json(&mut u, body)
+        .and_then(|program| Ok((program, program_names(&mut u, body)?)));
+    let (program, names) = match parsed {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            tracing::error!(phase = "emit", error = %e);
+            return ExitCode::from(2);
+        }
+    };
+    let artifact = match emit_sqlite(&mut u, &program, &names, &program_name(path)) {
+        Ok(artifact) => artifact,
+        Err(stop) => {
+            tracing::error!(phase = "emit", error = ?stop);
+            return ExitCode::from(3);
+        }
+    };
+    let views: Vec<serde_json::Value> = artifact
+        .views
+        .iter()
+        .map(|view| {
+            serde_json::json!({
+                "relation": view.relation,
+                "stratum": view.stratum,
+                "ddl": view.ddl,
+            })
+        })
+        .collect();
+    let diagnostics: Vec<serde_json::Value> = artifact
+        .diagnostics
+        .iter()
+        .map(|d| diagnostic_to_json(&u, d))
+        .collect();
+    let out = serde_json::json!({ "views": views, "diagnostics": diagnostics });
+    println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    if artifact.diagnostics.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
     }
 }
 
@@ -275,7 +345,13 @@ fn eval_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>) -> Ex
     }
 }
 
-fn run_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>, max_ticks: usize) -> ExitCode {
+fn run_cli(
+    path: &Path,
+    serve: &[String],
+    trace: bool,
+    db: Option<&Path>,
+    max_ticks: usize,
+) -> ExitCode {
     let fail = |error: &dyn std::fmt::Display| {
         tracing::error!(phase = "run", error = %error, path = %path.display());
         ExitCode::from(2)
@@ -334,7 +410,8 @@ fn run_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>, max_ti
         }
     };
     let durable = store.as_mut().map(|s| s as &mut dyn IRowStore);
-    let reconciled = match reconciler.run(&mut u, &program, &mut rows, durable, max_ticks, &mut fx) {
+    let reconciled = match reconciler.run(&mut u, &program, &mut rows, durable, max_ticks, &mut fx)
+    {
         Ok(reconciled) => reconciled,
         Err(e) => return fail(&e),
     };
@@ -391,7 +468,9 @@ fn compile_cli(
         }
     };
     let mut diagnostics = compiled.diagnostics.clone();
-    let empty = u.as_list(compiled.runtime_program).is_some_and(|l| l.is_empty());
+    let empty = u
+        .as_list(compiled.runtime_program)
+        .is_some_and(|l| l.is_empty());
     let program = match empty {
         true => serde_json::Value::Null,
         false => match program_to_json(&mut u, compiled.runtime_program) {

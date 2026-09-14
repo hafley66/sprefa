@@ -1,0 +1,37 @@
+(: Edge (* (: from text) (: to text)))
+
+(Edge "a" "b")
+
+(Edge "b" "c")
+
+(: Path (* (: from text) (: to text)))
+
+(<- (Path ?From ?To)
+    (Edge ?From ?To))
+
+(<- (Path ?From ?To)
+    (Path ?From ?Middle)
+    (Path ?Middle ?To))
+
+(: Input (* (: value int)))
+
+(Input 1)
+
+(: Level (* (: value int)))
+
+(<- (Level ?Value)
+    (Input ?Value))
+
+(<- (Level ?Next)
+    (Input ?Value)
+    (int_add ?Value 1 ?Next))
+
+(: Uses (* (: value int)))
+
+(<- (Uses ?Value)
+    (Level ?Value))
+
+(: Empty (* (: list any)))
+
+(<- (Empty ?List)
+    (nil ?List))

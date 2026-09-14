@@ -1,0 +1,20 @@
+(: Edge (* (: from text) (: to text)))
+
+(Edge "a" "b")
+
+(Edge "b" "c")
+
+(Edge "c" "d")
+
+(Edge "d" "b")
+
+(Edge "x" "y")
+
+(: Reach (* (: from text) (: to text)))
+
+(<- (Reach ?From ?To)
+    (Edge ?From ?To))
+
+(<- (Reach ?From ?To)
+    (Reach ?From ?Middle)
+    (Edge ?Middle ?To))
