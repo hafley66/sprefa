@@ -594,6 +594,40 @@ pub fn decode_bound(cx: &Cx, list: TermId) -> Vec<(i64, TermId)> {
         .unwrap_or_default()
 }
 
+/// `(fold Step Seed Subject)` in a rule head: the step is a relation name, the
+/// seed and the subject ordinary expressions.
+fn lower_fold_argument(
+    cx: &mut Cx,
+    node_id: TermId,
+    items: &[TermId],
+    owner: TermId,
+    head_mode: bool,
+) -> Result<(TermId, Vec<TermId>, Vec<TermId>), TermId> {
+    if !head_mode {
+        return Err(cx.plain(node_id, "aggregate_outside_rule_head"));
+    }
+    if items.len() != 4 {
+        return Err(cx.plain(node_id, "invalid_fold_arity"));
+    }
+    let mut parts = Vec::with_capacity(3);
+    let mut goals = Vec::new();
+    let mut origins = Vec::new();
+    for item in &items[1..] {
+        let lowered = lower_expression(cx, *item, owner);
+        if let Some(first) = lowered.diagnostics.first() {
+            return Err(*first);
+        }
+        parts.push(lowered.value);
+        goals.extend(lowered.goals);
+        origins.extend(lowered.origins);
+    }
+    if cx.u.unary(parts[1], "var").is_some() {
+        return Err(cx.plain(node_id, "fold_seed_not_ground"));
+    }
+    let value = cx.compound("fold", parts);
+    Ok((value, goals, origins))
+}
+
 /// `:1908`.
 pub fn lower_argument(
     cx: &mut Cx,
@@ -605,6 +639,9 @@ pub fn lower_argument(
         if let Some(items) = forms::form(cx.u, parsed.payload) {
             let head_atom = forms::form_head_atom(cx.u, &items)
                 .and_then(|a| cx.u.functor_or_atom(a).map(|(name, _)| name.to_string()));
+            if head_atom.as_deref() == Some("fold") {
+                return lower_fold_argument(cx, parsed.id, &items, owner, head_mode);
+            }
             let aggregation = match head_atom.as_deref() {
                 Some(name) if head_mode => AggregateKind::of(name),
                 Some("count") => Some(AggregateKind::Count),

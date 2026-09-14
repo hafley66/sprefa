@@ -4,6 +4,7 @@
 //! records every request as an output row.
 
 use super::term::{TermId, Universe};
+use std::cmp::Ordering;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Kernel {
@@ -14,6 +15,24 @@ pub enum Kernel {
     Int(IntCmp),
     IntAdd,
     TermLt,
+    CountStep,
+    MinStep,
+    MaxStep,
+}
+
+/// `ref(kernel(Name))`.
+pub fn kernel_ref(u: &mut Universe, name: &str) -> TermId {
+    let atom = u.atom(name);
+    let inner = u.compound("kernel", vec![atom]);
+    u.compound("ref", vec![inner])
+}
+
+/// `linear(Step)`: the step admits an incremental lowering later. Facts only;
+/// nothing reads them yet.
+pub const LINEAR_STEPS: [&str; 2] = ["int_add", "count_step"];
+
+pub fn linear(step: &str) -> bool {
+    LINEAR_STEPS.contains(&step)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -61,6 +80,9 @@ impl Kernel {
             "int_gt" => Kernel::Int(IntCmp::Gt),
             "int_add" => Kernel::IntAdd,
             "term_lt" => Kernel::TermLt,
+            "count_step" => Kernel::CountStep,
+            "min_step" => Kernel::MinStep,
+            "max_step" => Kernel::MaxStep,
             _ => return None,
         })
     }
@@ -102,6 +124,9 @@ pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<Te
         Kernel::Int(cmp) => int_row(u, cmp, args),
         Kernel::IntAdd => int_add_row(u, args),
         Kernel::TermLt => term_lt_row(u, args),
+        Kernel::CountStep => count_step_row(u, args),
+        Kernel::MinStep => extremum_step_row(u, args, Ordering::Less),
+        Kernel::MaxStep => extremum_step_row(u, args, Ordering::Greater),
     };
     solution.map(|row| vec![row]).unwrap_or_default()
 }
@@ -191,6 +216,37 @@ pub fn int_add_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<Term
     Some(vec![left, right, result])
 }
 
+/// `count_step(Acc, Value, Next)`: the value is ignored, `Next` is `Acc + 1`.
+pub fn count_step_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    if args.len() != 3 {
+        return None;
+    }
+    let (accumulator, value) = (args[0]?, args[1]?);
+    let running = u.as_int(u.unary(accumulator, "const")?)?;
+    let next = u.int(running.checked_add(1)?);
+    let next = u.compound("const", vec![next]);
+    Some(vec![accumulator, value, next])
+}
+
+/// `min_step` and `max_step`: `Next` is whichever of `Acc` and `Value` the
+/// standard term order puts on `wins`, with `Acc` keeping a tie.
+pub fn extremum_step_row(
+    u: &mut Universe,
+    args: &[Option<TermId>],
+    wins: Ordering,
+) -> Option<Vec<TermId>> {
+    if args.len() != 3 {
+        return None;
+    }
+    let (accumulator, value) = (args[0]?, args[1]?);
+    let next = if u.cmp(value, accumulator) == wins {
+        value
+    } else {
+        accumulator
+    };
+    Some(vec![accumulator, value, next])
+}
+
 /// The three bound `const` integers of `int_add`, all present.
 fn int_add_ground(u: &Universe, args: &[Option<TermId>]) -> Option<(i64, i64, i64)> {
     if args.len() != 3 {
@@ -216,9 +272,24 @@ pub fn negative_holds(u: &Universe, k: Kernel, args: &[Option<TermId>]) -> bool 
             None => true,
         },
         Kernel::TermLt => match term_pair(u, args) {
-            Some((left, right)) => u.cmp(left, right) != std::cmp::Ordering::Less,
+            Some((left, right)) => u.cmp(left, right) != Ordering::Less,
             None => true,
         },
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linear_steps_are_int_add_and_count_step() {
+        assert_eq!(LINEAR_STEPS, ["int_add", "count_step"]);
+        assert!(linear("int_add"));
+        assert!(linear("count_step"));
+        assert!(!linear("min_step"));
+        assert!(!linear("max_step"));
+        assert!(!linear("cons"));
     }
 }

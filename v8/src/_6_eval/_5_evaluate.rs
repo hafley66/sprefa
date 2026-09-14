@@ -4,7 +4,10 @@
 //! nothing. Every state change is reported to the trace sink.
 
 use super::kernel::{self, Kernel};
-use super::program::{AggregateKind, Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId};
+use super::program::{
+    AggregateKind, Arg, Diagnostic, Fold, Folding, Goal, Order, Polarity, Program, Row, Rule, Seed,
+    VarId,
+};
 use super::stratify::{stratify, Strata};
 use super::table::{Range, Table};
 use super::term::{TermId, Universe};
@@ -95,7 +98,7 @@ impl Env {
         match a {
             Arg::Var(v) => self.vars[v.0 as usize],
             Arg::Ground(t) => Some(*t),
-            Arg::Aggregate(_, subject) => self.value(subject),
+            Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => self.value(subject),
         }
     }
 
@@ -111,7 +114,7 @@ impl Env {
                 }
             },
             Arg::Ground(g) => *g == t,
-            Arg::Aggregate(_, subject) => self.unify(subject, t),
+            Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => self.unify(subject, t),
         }
     }
 }
@@ -438,7 +441,7 @@ fn aggregate_rows(u: &mut Universe, cx: Context, rule: &Rule) -> Result<Sink, Di
         });
     }
     let proofs = aggregate_proofs(u, cx, rule)?;
-    let (position, aggregation, _) = rule.aggregate_head().unwrap();
+    let (position, folding, _) = rule.folding_head().unwrap();
     let mut groups: HashMap<Vec<TermId>, Vec<TermId>> = HashMap::new();
     let mut order: Vec<Vec<TermId>> = Vec::new();
     for proof in proofs {
@@ -454,12 +457,139 @@ fn aggregate_rows(u: &mut Universe, cx: Context, rule: &Rule) -> Result<Sink, Di
     }
     let mut rows = Vec::new();
     for key in order {
-        let result = fold_group(u, aggregation, &groups[&key])?;
+        let result = fold_head_value(u, cx, folding, &groups[&key])?;
         let mut row = key;
         row.insert(position, result);
         rows.push((rule.rel, row.into_boxed_slice()));
     }
     Ok(rows)
+}
+
+/// One group's value. A builtin takes the Rust fast path, and a debug build
+/// re-folds it generically and reports any disagreement.
+fn fold_head_value(
+    u: &mut Universe,
+    cx: Context,
+    folding: Folding,
+    values: &[TermId],
+) -> Result<TermId, Diagnostic> {
+    let aggregation = match folding {
+        Folding::Declared(fold) => return fold_generic(u, cx, &fold, values),
+        Folding::Builtin(aggregation) => aggregation,
+    };
+    let fast = fold_group(u, aggregation, values)?;
+    #[cfg(debug_assertions)]
+    {
+        let fold = aggregation.as_fold(u);
+        let generic = fold_generic(u, cx, &fold, values)?;
+        if generic != fast {
+            let name = u.atom(aggregation.name());
+            let payload = u.compound("fold_path_disagreement", vec![name, fast, generic]);
+            return Err(Diagnostic {
+                phase: "evaluate",
+                payload,
+            });
+        }
+    }
+    Ok(fast)
+}
+
+/// The generic path: values in `order`, then the step run as a goal per value.
+fn fold_generic(
+    u: &mut Universe,
+    cx: Context,
+    fold: &Fold,
+    values: &[TermId],
+) -> Result<TermId, Diagnostic> {
+    let mut sorted = values.to_vec();
+    match fold.order {
+        Order::TermLt => sorted.sort_by(|left, right| u.cmp(*left, *right)),
+    }
+    let (mut accumulator, rest) = match fold.seed {
+        Seed::Zero => {
+            let zero = u.int(0);
+            (u.compound("const", vec![zero]), &sorted[..])
+        }
+        Seed::Term(term) => (term, &sorted[..]),
+        Seed::FirstValue => match sorted.split_first() {
+            Some((first, rest)) => (*first, rest),
+            None => {
+                let payload = u.compound("fold_empty_group", vec![fold.step]);
+                return Err(Diagnostic {
+                    phase: "evaluate",
+                    payload,
+                });
+            }
+        },
+    };
+    for &value in rest {
+        accumulator = fold_step(u, cx, fold.step, accumulator, value)?;
+    }
+    Ok(accumulator)
+}
+
+/// `(Step Acc Value ?Next)` as a one-goal rule; exactly one distinct `Next` is
+/// the only outcome that folds.
+fn fold_step(
+    u: &mut Universe,
+    cx: Context,
+    step: TermId,
+    accumulator: TermId,
+    value: TermId,
+) -> Result<TermId, Diagnostic> {
+    let identity = u.atom("fold_next");
+    let rule = Rule {
+        rel: step,
+        head: vec![Arg::Var(VarId(0))],
+        body: vec![Goal {
+            polarity: Polarity::Positive,
+            rel: step,
+            args: vec![
+                Arg::Ground(accumulator),
+                Arg::Ground(value),
+                Arg::Var(VarId(0)),
+            ],
+        }],
+        vars: vec![identity],
+    };
+    let plan: Plan = vec![Range::All];
+    let mut nexts: Vec<TermId> = Vec::new();
+    let interned;
+    {
+        let mut env = Env::new(1);
+        let mut eval = Eval {
+            u: &mut *u,
+            cx,
+            tables_only: false,
+            intern_requests: Vec::new(),
+            effect_rows: Vec::new(),
+            snapshot_rows: Vec::new(),
+            memo: HashMap::new(),
+        };
+        let mut out = |_u: &mut Universe, env: &Env| {
+            if let Some(next) = env.vars[0] {
+                nexts.push(next);
+            }
+        };
+        eval.solve(&rule, 0, &plan, &mut env, &mut out);
+        interned = !eval.intern_requests.is_empty();
+    }
+    let reason = if interned {
+        "fold_step_interns"
+    } else {
+        nexts.sort_by(|left, right| u.cmp(*left, *right));
+        nexts.dedup();
+        match nexts.len() {
+            1 => return Ok(nexts[0]),
+            0 => "fold_step_no_row",
+            _ => "fold_step_ambiguous",
+        }
+    };
+    let payload = u.compound(reason, vec![step, accumulator, value]);
+    Err(Diagnostic {
+        phase: "evaluate",
+        payload,
+    })
 }
 
 /// One group's folded value. `count` and `sum` produce `const(Int)`; `min`

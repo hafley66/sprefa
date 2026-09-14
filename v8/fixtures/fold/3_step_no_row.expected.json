@@ -1,0 +1,60 @@
+{
+  "diagnostics": [
+    {
+      "args": [
+        {
+          "a": "evaluate"
+        },
+        {
+          "a": "none"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "<fixture>"
+                        }
+                      ],
+                      "f": "file"
+                    },
+                    {
+                      "args": [
+                        {
+                          "a": "<fixture>"
+                        },
+                        18
+                      ],
+                      "f": "reader_node"
+                    }
+                  ],
+                  "f": "owner"
+                }
+              ],
+              "f": "ref"
+            },
+            {
+              "args": [
+                7
+              ],
+              "f": "const"
+            },
+            {
+              "args": [
+                35
+              ],
+              "f": "const"
+            }
+          ],
+          "f": "fold_step_no_row"
+        }
+      ],
+      "f": "diagnostic"
+    }
+  ],
+  "rows": []
+}

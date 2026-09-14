@@ -1,9 +1,10 @@
 //! The checked-goal program shape from v7: `rule(call(Rel, Args), [checked_goal(Polarity, call(Rel, Args))])`.
 //! Relations are terms (`ref(source)`, `ref(kernel(cons))`). Arguments are a
-//! variable, a ground term, or `aggregate(Kind, Arg)` in a head, where `Kind`
-//! is one of `count`, `sum`, `min`, `max`.
+//! variable, a ground term, `aggregate(Kind, Arg)` or `fold(Step, Seed, Arg)`
+//! in a head, where `Kind` is one of `count`, `sum`, `min`, `max`.
 
-use super::term::TermId;
+use super::kernel::kernel_ref;
+use super::term::{TermId, Universe};
 use std::collections::HashSet;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -36,6 +37,47 @@ impl AggregateKind {
             Self::Max => "max",
         }
     }
+
+    /// The step and seed each builtin folds with; `fold_group` is the Rust
+    /// fast path for the same four and must agree with folding these.
+    pub fn as_fold(self, u: &mut Universe) -> Fold {
+        let (step, seed) = match self {
+            Self::Count => ("count_step", Seed::Zero),
+            Self::Sum => ("int_add", Seed::Zero),
+            Self::Min => ("min_step", Seed::FirstValue),
+            Self::Max => ("max_step", Seed::FirstValue),
+        };
+        Fold {
+            step: kernel_ref(u, step),
+            seed,
+            order: Order::TermLt,
+        }
+    }
+}
+
+/// The order values are visited in, so a step that is not commutative still
+/// folds to one answer.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Order {
+    TermLt,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Seed {
+    /// `const(0)`, minted at fold time.
+    Zero,
+    /// The first value in `order`; the rest of the group folds onto it.
+    FirstValue,
+    Term(TermId),
+}
+
+/// `step` is called as `(Step Acc Value Next)` and must yield exactly one
+/// `Next` per value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Fold {
+    pub step: TermId,
+    pub seed: Seed,
+    pub order: Order,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -43,6 +85,15 @@ pub enum Arg {
     Var(VarId),
     Ground(TermId),
     Aggregate(AggregateKind, Box<Arg>),
+    Fold(Fold, Box<Arg>),
+}
+
+/// Which fold a head position carries: one of the four builtins, or a fold the
+/// program declared.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Folding {
+    Builtin(AggregateKind),
+    Declared(Fold),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -69,25 +120,30 @@ pub struct Rule {
 
 impl Rule {
     pub fn is_aggregate(&self) -> bool {
-        self.head.iter().any(|a| matches!(a, Arg::Aggregate(..)))
+        self.head
+            .iter()
+            .any(|a| matches!(a, Arg::Aggregate(..) | Arg::Fold(..)))
     }
 
     pub fn aggregate_args(&self) -> usize {
         self.head
             .iter()
-            .filter(|a| matches!(a, Arg::Aggregate(..)))
+            .filter(|a| matches!(a, Arg::Aggregate(..) | Arg::Fold(..)))
             .count()
     }
 
-    /// Position, aggregate kind and subject argument of the single aggregate
-    /// head, when the head carries one.
-    pub fn aggregate_head(&self) -> Option<(usize, AggregateKind, &Arg)> {
+    /// Position, folding and subject argument of the single folding head,
+    /// when the head carries one.
+    pub fn folding_head(&self) -> Option<(usize, Folding, &Arg)> {
         self.head
             .iter()
             .enumerate()
             .find_map(|(position, a)| match a {
                 Arg::Aggregate(aggregation, subject) => {
-                    Some((position, *aggregation, subject.as_ref()))
+                    Some((position, Folding::Builtin(*aggregation), subject.as_ref()))
+                }
+                Arg::Fold(fold, subject) => {
+                    Some((position, Folding::Declared(*fold), subject.as_ref()))
                 }
                 _ => None,
             })

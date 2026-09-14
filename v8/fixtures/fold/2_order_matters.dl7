@@ -1,0 +1,23 @@
+(: Input (* (: value int)))
+
+(Input 1)
+
+(Input 2)
+
+(Input 4)
+
+; Not commutative: the accumulator doubles before every value lands, so only
+; the standard term order over the values gives 12.
+(: Weighted
+   (* (: accumulator int)
+      (: value int)
+      (: next int)))
+
+(<- (Weighted ?Accumulator ?Value ?Next)
+    (int_add ?Accumulator ?Accumulator ?Twice)
+    (int_add ?Twice ?Value ?Next))
+
+(: Total (* (: total int)))
+
+(<- (Total (fold Weighted 0 ?Value))
+    (Input ?Value))
