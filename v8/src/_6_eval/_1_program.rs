@@ -1,17 +1,47 @@
 //! The checked-goal program shape from v7: `rule(call(Rel, Args), [checked_goal(Polarity, call(Rel, Args))])`.
 //! Relations are terms (`ref(source)`, `ref(kernel(cons))`). Arguments are a
-//! variable, a ground term, or `aggregate(count, Arg)` in a head.
+//! variable, a ground term, or `aggregate(Kind, Arg)` in a head, where `Kind`
+//! is one of `count`, `sum`, `min`, `max`.
 
 use super::term::TermId;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct VarId(pub u32);
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum AggregateKind {
+    Count,
+    Sum,
+    Min,
+    Max,
+}
+
+impl AggregateKind {
+    pub fn of(name: &str) -> Option<Self> {
+        match name {
+            "count" => Some(Self::Count),
+            "sum" => Some(Self::Sum),
+            "min" => Some(Self::Min),
+            "max" => Some(Self::Max),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Count => "count",
+            Self::Sum => "sum",
+            Self::Min => "min",
+            Self::Max => "max",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Arg {
     Var(VarId),
     Ground(TermId),
-    Count(Box<Arg>),
+    Aggregate(AggregateKind, Box<Arg>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -38,14 +68,28 @@ pub struct Rule {
 
 impl Rule {
     pub fn is_aggregate(&self) -> bool {
-        self.head.iter().any(|a| matches!(a, Arg::Count(_)))
+        self.head.iter().any(|a| matches!(a, Arg::Aggregate(..)))
     }
 
-    pub fn count_args(&self) -> usize {
+    pub fn aggregate_args(&self) -> usize {
         self.head
             .iter()
-            .filter(|a| matches!(a, Arg::Count(_)))
+            .filter(|a| matches!(a, Arg::Aggregate(..)))
             .count()
+    }
+
+    /// Position, aggregate kind and subject argument of the single aggregate
+    /// head, when the head carries one.
+    pub fn aggregate_head(&self) -> Option<(usize, AggregateKind, &Arg)> {
+        self.head
+            .iter()
+            .enumerate()
+            .find_map(|(position, a)| match a {
+                Arg::Aggregate(aggregation, subject) => {
+                    Some((position, *aggregation, subject.as_ref()))
+                }
+                _ => None,
+            })
     }
 }
 

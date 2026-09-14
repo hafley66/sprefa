@@ -4,11 +4,12 @@
 //! nothing. Every state change is reported to the trace sink.
 
 use super::kernel::{self, Kernel};
-use super::program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId};
+use super::program::{AggregateKind, Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId};
 use super::stratify::{stratify, Strata};
 use super::table::{Range, Table};
 use super::term::{TermId, Universe};
 use crate::_7_effect::Slice;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
@@ -94,7 +95,7 @@ impl Env {
         match a {
             Arg::Var(v) => self.vars[v.0 as usize],
             Arg::Ground(t) => Some(*t),
-            Arg::Count(inner) => self.value(inner),
+            Arg::Aggregate(_, subject) => self.value(subject),
         }
     }
 
@@ -110,7 +111,7 @@ impl Env {
                 }
             },
             Arg::Ground(g) => *g == t,
-            Arg::Count(inner) => self.unify(inner, t),
+            Arg::Aggregate(_, subject) => self.unify(subject, t),
         }
     }
 }
@@ -368,16 +369,17 @@ fn aggregate_proofs(
 }
 
 /// Port of `derive_aggregate_rows/4`: every body proof over the completed
-/// lower rows is one bag entry; plain head positions form the group key.
+/// lower rows is one bag entry; plain head positions form the group key, and
+/// the aggregate position is folded by kind.
 fn aggregate_rows(
     u: &mut Universe,
     store: &Store,
     rules_by_rel: &HashMap<TermId, Vec<&Rule>>,
     rule: &Rule,
 ) -> Result<Sink, Diagnostic> {
-    let count_args = rule.count_args();
-    if count_args != 1 {
-        let n = u.int(count_args as i64);
+    let aggregate_args = rule.aggregate_args();
+    if aggregate_args != 1 {
+        let n = u.int(aggregate_args as i64);
         let payload = u.compound("malformed_aggregate_head", vec![n]);
         return Err(Diagnostic {
             phase: "evaluate",
@@ -385,32 +387,82 @@ fn aggregate_rows(
         });
     }
     let proofs = aggregate_proofs(u, store, rules_by_rel, rule)?;
-    let count_pos = rule
-        .head
-        .iter()
-        .position(|a| matches!(a, Arg::Count(_)))
-        .unwrap();
-    let mut groups: HashMap<Vec<TermId>, i64> = HashMap::new();
+    let (position, aggregation, _) = rule.aggregate_head().unwrap();
+    let mut groups: HashMap<Vec<TermId>, Vec<TermId>> = HashMap::new();
     let mut order: Vec<Vec<TermId>> = Vec::new();
     for proof in proofs {
         let mut key = proof;
-        key.remove(count_pos);
-        let e = groups.entry(key.clone()).or_insert_with(|| {
-            order.push(key);
-            0
-        });
-        *e += 1;
+        let value = key.remove(position);
+        groups
+            .entry(key.clone())
+            .or_insert_with(|| {
+                order.push(key);
+                Vec::new()
+            })
+            .push(value);
     }
     let mut rows = Vec::new();
     for key in order {
-        let count = groups[&key];
-        let n = u.int(count);
-        let c = u.compound("const", vec![n]);
+        let result = fold_group(u, aggregation, &groups[&key])?;
         let mut row = key;
-        row.insert(count_pos, c);
+        row.insert(position, result);
         rows.push((rule.rel, row.into_boxed_slice()));
     }
     Ok(rows)
+}
+
+/// One group's folded value. `count` and `sum` produce `const(Int)`; `min`
+/// and `max` return the winning subject term unchanged.
+fn fold_group(
+    u: &mut Universe,
+    aggregation: AggregateKind,
+    values: &[TermId],
+) -> Result<TermId, Diagnostic> {
+    match aggregation {
+        AggregateKind::Count => {
+            let n = u.int(values.len() as i64);
+            Ok(u.compound("const", vec![n]))
+        }
+        AggregateKind::Sum => {
+            let mut running: i64 = 0;
+            for &value in values {
+                let Some(addend) = u
+                    .unary(value, "const")
+                    .and_then(|payload| u.as_int(payload))
+                else {
+                    let payload = u.compound("aggregate_type_mismatch", vec![value]);
+                    return Err(Diagnostic {
+                        phase: "evaluate",
+                        payload,
+                    });
+                };
+                let Some(next) = running.checked_add(addend) else {
+                    let payload = u.atom("aggregate_overflow");
+                    return Err(Diagnostic {
+                        phase: "evaluate",
+                        payload,
+                    });
+                };
+                running = next;
+            }
+            let n = u.int(running);
+            Ok(u.compound("const", vec![n]))
+        }
+        AggregateKind::Min | AggregateKind::Max => {
+            let mut best = values[0];
+            for &value in &values[1..] {
+                let ordering = u.cmp(value, best);
+                let wins = match aggregation {
+                    AggregateKind::Min => ordering == Ordering::Less,
+                    _ => ordering == Ordering::Greater,
+                };
+                if wins {
+                    best = value;
+                }
+            }
+            Ok(best)
+        }
+    }
 }
 
 /// The semi-naive fixpoint as a reducer over its own row store.

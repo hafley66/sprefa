@@ -4,6 +4,7 @@ use super::cx::Cx;
 use super::forms;
 use super::kernel;
 use super::slots::{self as slots, Callable, Slot};
+use crate::_6_eval::program::AggregateKind;
 use crate::_6_eval::term::TermId;
 use std::cmp::Ordering;
 
@@ -602,21 +603,30 @@ pub fn lower_argument(
 ) -> Result<(TermId, Vec<TermId>, Vec<TermId>), TermId> {
     if let Some(parsed) = forms::node(cx.u, node) {
         if let Some(items) = forms::form(cx.u, parsed.payload) {
-            let is_count = forms::form_head_atom(cx.u, &items)
-                .is_some_and(|a| cx.u.functor_or_atom(a).is_some_and(|(n, _)| n == "count"));
-            if is_count {
+            let head_atom = forms::form_head_atom(cx.u, &items)
+                .and_then(|a| cx.u.functor_or_atom(a).map(|(name, _)| name.to_string()));
+            let aggregation = match head_atom.as_deref() {
+                Some(name) if head_mode => AggregateKind::of(name),
+                Some("count") => Some(AggregateKind::Count),
+                _ => None,
+            };
+            if let Some(aggregation) = aggregation {
                 if !head_mode {
                     return Err(cx.plain(parsed.id, "aggregate_outside_rule_head"));
                 }
                 if items.len() != 2 {
-                    return Err(cx.plain(parsed.id, "invalid_count_aggregate"));
+                    let reason = match aggregation {
+                        AggregateKind::Count => "invalid_count_aggregate",
+                        _ => "invalid_aggregate_arity",
+                    };
+                    return Err(cx.plain(parsed.id, reason));
                 }
                 let lowered = lower_expression(cx, items[1], owner);
                 if let Some(first) = lowered.diagnostics.first() {
                     return Err(*first);
                 }
-                let count = cx.atom("count");
-                let value = cx.compound("aggregate", vec![count, lowered.value]);
+                let tag = cx.atom(aggregation.name());
+                let value = cx.compound("aggregate", vec![tag, lowered.value]);
                 return Ok((value, lowered.goals, lowered.origins));
             }
         }
