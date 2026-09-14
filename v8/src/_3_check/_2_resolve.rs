@@ -6,6 +6,7 @@ use super::graph::{CheckerGraph, OriginArena};
 use super::kernel::{kernel_arity, primitive_name};
 use super::mode::{call_parts, goal_failures, head_safety, head_variables};
 use crate::_2_lower::kernel::kernel_relation;
+use crate::_6_eval::program::AggregateKind;
 use crate::_6_eval::term::{Term, TermId, Universe};
 use std::collections::HashMap;
 
@@ -172,7 +173,10 @@ fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermI
                 None => Err(u.compound("unresolved_name", vec![parts[1]])),
             };
         }
-        if name == "aggregate" && parts.len() == 2 && atom_name(u, parts[0]) == Some("count") {
+        if name == "aggregate"
+            && parts.len() == 2
+            && atom_name(u, parts[0]).and_then(AggregateKind::of).is_some()
+        {
             let inner = resolve_argument(u, cx, parts[1])?;
             return Ok(u.compound("aggregate", vec![parts[0], inner]));
         }

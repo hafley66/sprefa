@@ -4,7 +4,7 @@
 use super::api::{prolog_sort, Stop};
 use super::graph::OriginArena;
 use super::mode::{call_parts, goal_call};
-use crate::_6_eval::program::{Arg, Goal, Polarity, Program, Rule, VarId};
+use crate::_6_eval::program::{AggregateKind, Arg, Goal, Polarity, Program, Rule, VarId};
 use crate::_6_eval::stratify::stratify;
 use crate::_6_eval::term::{Term, TermId, Universe};
 
@@ -21,10 +21,9 @@ fn arg_of(u: &Universe, term: TermId, vars: &mut Vec<TermId>) -> Arg {
     }
     if let Some((name, args)) = u.functor(term) {
         if name == "aggregate" && args.len() == 2 {
-            if let Term::Atom(s) = u.get(args[0]) {
-                if u.sym_str(*s) == "count" {
-                    let inner = args[1];
-                    return Arg::Count(Box::new(arg_of(u, inner, vars)));
+            if let Some((tag, _)) = u.functor_or_atom(args[0]) {
+                if let Some(aggregation) = AggregateKind::of(tag) {
+                    return Arg::Aggregate(aggregation, Box::new(arg_of(u, args[1], vars)));
                 }
             }
         }
@@ -198,14 +197,15 @@ fn aggregate_cycle_origin(
         if !relations.contains(&head_rel) {
             continue;
         }
-        let counted = head_args.iter().any(|a| {
-            u.functor(*a)
-                .is_some_and(|(n, args)| n == "aggregate" && args.len() == 2)
-                && u.functor(*a).is_some_and(
-                    |(_, args)| matches!(u.get(args[0]), Term::Atom(s) if u.sym_str(*s) == "count"),
-                )
+        let aggregated = head_args.iter().any(|a| {
+            u.functor(*a).is_some_and(|(name, args)| {
+                name == "aggregate"
+                    && args.len() == 2
+                    && u.functor_or_atom(args[0])
+                        .is_some_and(|(tag, _)| AggregateKind::of(tag).is_some())
+            })
         });
-        if counted {
+        if aggregated {
             return origins.rule_origin(rule_index as i64);
         }
     }

@@ -1,10 +1,11 @@
 //! JSON transport for programs and closures. Terms: int as number, atom as
 //! `{"a": name}`, string as `{"s": text}`, proper list as array, compound as
-//! `{"f": name, "args": [...]}`. Rule arguments add `{"v": identity}` and
-//! `{"count": arg}`. The oracle dump `v8/oracle/eval/dump_eval.pl` writes the
+//! `{"f": name, "args": [...]}`. Rule arguments add `{"v": identity}` and an
+//! aggregate key, one of `{"count": arg}`, `{"sum": arg}`, `{"min": arg}`,
+//! `{"max": arg}`. The oracle dump `v8/oracle/eval/dump_eval.pl` writes the
 //! same shape from v7.
 
-use super::program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId};
+use super::program::{AggregateKind, Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId};
 use super::term::{Term, TermId, Universe};
 use serde_json::{json, Map, Value};
 
@@ -89,8 +90,14 @@ fn arg_from_json(u: &mut Universe, v: &Value, vars: &mut Vec<TermId>) -> Result<
             };
             return Ok(Arg::Var(VarId(pos as u32)));
         }
-        if let Some(inner) = m.get("count") {
-            return Ok(Arg::Count(Box::new(arg_from_json(u, inner, vars)?)));
+        if let Some((aggregation, subject)) = m
+            .iter()
+            .find_map(|(name, subject)| Some((AggregateKind::of(name)?, subject)))
+        {
+            return Ok(Arg::Aggregate(
+                aggregation,
+                Box::new(arg_from_json(u, subject, vars)?),
+            ));
         }
     }
     Ok(Arg::Ground(term_from_json(u, v)?))

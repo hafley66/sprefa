@@ -10,7 +10,7 @@ use super::finish::{derived_bind_diagnostics, validate_functional_rows};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::resolved::Resolved;
 use crate::_3_check::{check_resolved_rules, Stop};
-use crate::_6_eval::program::{Arg, Goal, Polarity, Program, Row, Rule, VarId};
+use crate::_6_eval::program::{AggregateKind, Arg, Goal, Polarity, Program, Row, Rule, VarId};
 use crate::_6_eval::term::{TermId, Universe};
 use crate::_6_eval::{evaluate, Trace};
 use crate::_7_effect::Slice;
@@ -418,9 +418,13 @@ fn arg_from_term(u: &Universe, term: TermId, vars: &mut Vec<TermId>) -> Arg {
         return Arg::Var(VarId(position as u32));
     }
     if let Some(("aggregate", args)) = u.functor(term) {
-        if args.len() == 2 && u.functor_or_atom(args[0]).map(|(n, _)| n) == Some("count") {
-            let inner = args[1];
-            return Arg::Count(Box::new(arg_from_term(u, inner, vars)));
+        if args.len() == 2 {
+            if let Some(aggregation) = u
+                .functor_or_atom(args[0])
+                .and_then(|(name, _)| AggregateKind::of(name))
+            {
+                return Arg::Aggregate(aggregation, Box::new(arg_from_term(u, args[1], vars)));
+            }
         }
     }
     Arg::Ground(term)
