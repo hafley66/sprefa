@@ -12,6 +12,7 @@ clap = { version = "4", features = ["derive"] }
 hafley-observe = { version = "0.1", registry = "hafley" }
 indexmap = "2"
 ordered-float = "3"
+rusqlite = { version = "0.40", features = ["bundled", "limits"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"

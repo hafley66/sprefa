@@ -1,13 +1,16 @@
 //! The one subscribe: reads a program, runs the pipe, prints the result.
 
 use clap::{Parser, Subcommand};
+use dl8::_6_eval::evaluate::{Evaluate, Store};
 use dl8::_6_eval::json::term_to_json;
 use dl8::_6_eval::json::{closure_to_json, program_from_json, program_names, serve_relations};
-use dl8::_6_eval::{evaluate, Trace, Universe};
+use dl8::_6_eval::{Trace, Universe};
+use dl8::_7_effect::Slice;
 use dl8::_8_driver::{Event, Stop};
+use dl8::_9_runtime::{IRowStore, SqliteRowStore, StoreError};
 use hafley_observe::{Config, OutputFormat};
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[derive(Parser)]
@@ -63,6 +66,10 @@ enum Command {
         /// Print one line per stratum and round to stderr.
         #[arg(long)]
         trace: bool,
+        /// Persist the closure into this SQLite file, and load it back on the
+        /// next run. The program's table prefix is the JSON file's stem.
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
 }
 
@@ -110,57 +117,124 @@ fn main() -> ExitCode {
             program,
             serve,
             trace,
-        } => {
-            let text = match std::fs::read_to_string(&program) {
-                Ok(t) => t,
-                Err(e) => {
-                    tracing::error!(phase = "eval", error = %e, path = %program.display());
-                    return ExitCode::from(2);
-                }
-            };
-            let value: serde_json::Value = match serde_json::from_str(&text) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!(phase = "eval", error = %e, path = %program.display());
-                    return ExitCode::from(2);
-                }
-            };
-            let mut u = Universe::new();
-            let body = value.get("program").unwrap_or(&value);
-            let mut program = match program_from_json(&mut u, body) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!(phase = "eval", error = %e);
-                    return ExitCode::from(2);
-                }
-            };
-            let names = match program_names(&mut u, body) {
-                Ok(n) => n,
-                Err(e) => {
-                    tracing::error!(phase = "eval", error = %e);
-                    return ExitCode::from(2);
-                }
-            };
-            let unknown = serve_relations(&mut u, &mut program, &names, &serve);
-            if !unknown.is_empty() {
-                let out = closure_to_json(&u, &[], &unknown);
-                println!("{}", serde_json::to_string_pretty(&out).unwrap());
-                return ExitCode::from(1);
-            }
-            let mut fx = |t: Trace| {
-                if trace {
-                    tracing::debug!(target: "dl8::trace", event = ?t);
-                }
-            };
-            let closure = evaluate(&mut u, &program, &mut fx);
-            let out = closure_to_json(&u, &closure.rows, &closure.diagnostics);
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
-            if closure.diagnostics.is_empty() {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
+            db,
+        } => eval_cli(&program, &serve, trace, db.as_deref()),
+    }
+}
+
+/// The store's table prefix. One db holds many programs, so the prefix is the
+/// program's own name and never the file the rows landed in.
+fn program_name(path: &Path) -> String {
+    path.file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_else(|| "program".to_string())
+}
+
+fn attach(file: &Path, program: &Path) -> Result<SqliteRowStore, StoreError> {
+    let mut store = SqliteRowStore::at(file)?;
+    store.open(&program_name(program))?;
+    Ok(store)
+}
+
+/// One transaction per tick: the arena and the rows never disagree after a kill.
+fn persist(store: &mut SqliteRowStore, u: &Universe, rows: &Store) -> Result<usize, StoreError> {
+    store.begin_tick()?;
+    let from = store.watermark();
+    let written = store
+        .commit_arena(u, from)
+        .and_then(|_| store.commit_rows(u, rows));
+    match written {
+        Ok(written) => {
+            store.commit_tick()?;
+            Ok(written)
+        }
+        Err(e) => {
+            let _ = store.rollback_tick();
+            Err(e)
+        }
+    }
+}
+
+fn eval_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>) -> ExitCode {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(phase = "eval", error = %e, path = %path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(phase = "eval", error = %e, path = %path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let mut u = Universe::new();
+    let mut rows = Store::default();
+    let mut store = match db.map(|file| attach(file, path)) {
+        None => None,
+        Some(Ok(store)) => Some(store),
+        Some(Err(e)) => {
+            tracing::error!(phase = "eval", error = %e);
+            return ExitCode::from(2);
+        }
+    };
+    if let Some(store) = store.as_mut() {
+        let loaded = store
+            .load_arena(&mut u)
+            .and_then(|_| store.load_rows(&mut u, &mut rows));
+        match loaded {
+            Ok(loaded) => tracing::info!(target: "dl8::store", phase = "load", rows = loaded),
+            Err(e) => {
+                tracing::error!(phase = "eval", error = %e);
+                return ExitCode::from(2);
             }
         }
+    }
+    let body = value.get("program").unwrap_or(&value);
+    let mut program = match program_from_json(&mut u, body) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(phase = "eval", error = %e);
+            return ExitCode::from(2);
+        }
+    };
+    let names = match program_names(&mut u, body) {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::error!(phase = "eval", error = %e);
+            return ExitCode::from(2);
+        }
+    };
+    let unknown = serve_relations(&mut u, &mut program, &names, serve);
+    if !unknown.is_empty() {
+        let out = closure_to_json(&u, &[], &unknown);
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        return ExitCode::from(1);
+    }
+    rows.mark_all();
+    let mut fx = |t: Trace| {
+        if trace {
+            tracing::debug!(target: "dl8::trace", event = ?t);
+        }
+    };
+    let closure = Evaluate::reduce(&mut rows, (&mut u, &program), &mut fx);
+    if let Some(store) = store.as_mut() {
+        match persist(store, &u, &rows) {
+            Ok(written) => tracing::info!(target: "dl8::store", phase = "commit", rows = written),
+            Err(e) => {
+                tracing::error!(phase = "eval", error = %e);
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let out = closure_to_json(&u, &closure.rows, &closure.diagnostics);
+    println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    if closure.diagnostics.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
     }
 }
 
