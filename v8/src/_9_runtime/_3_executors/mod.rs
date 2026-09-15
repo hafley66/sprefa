@@ -1,5 +1,7 @@
 //! The executor roster: every served name maps to one Rust executor.
 
+#[path = "dylib.rs"]
+pub mod dylib;
 #[path = "extract.rs"]
 pub mod extract;
 #[path = "fetch_json.rs"]
@@ -17,6 +19,7 @@ use super::reconcile::{application_values, IExecutor};
 use crate::_6_eval::{Diagnostic, Term, TermId, Universe};
 use std::collections::HashMap;
 
+pub use dylib::Dylib;
 pub use extract::Extract;
 pub use fetch_json::FetchJson;
 pub use repo_at::RepoAt;
@@ -62,6 +65,13 @@ pub fn executors_for(
         match name.as_str() {
             timer::RELATION => match names.get(timer::RELATION) {
                 Some(rel) => executors.push(Box::new(Timer::new(*rel))),
+                None => missing(u, "served_relation_unknown", name),
+            },
+            dylib::RELATION => match names.get(dylib::RELATION) {
+                Some(rel) => match Dylib::from_env(*rel) {
+                    Ok(executor) => executors.push(Box::new(executor)),
+                    Err(reason) => missing(u, "dylib_load_failed", &reason),
+                },
                 None => missing(u, "served_relation_unknown", name),
             },
             fetch_json::RELATION => {
