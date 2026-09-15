@@ -2,22 +2,24 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  dl7[file.dl7] -->|dl8 compile| compile[compile JSON]
+  compile -->|dl8 eval| closure[closure JSON]
+  compile -->|--serve| run[dl8 run]
+  compile -->|sqlite| emit[dl8 emit sqlite]
+  compile -->|exit 1, 2, 3| exitcode[diagnostic, IO, stop]
+  run -->|--max-ticks| ticks[ticks N on stdout]
+  run -->|--db| db[(SQLite file)]
+  closure -->|--db| db
+```
+
 `dl8` is one binary with one verb per pipeline phase (`v8/src/bin/dl8.rs:28-102`).
 `compile` reads `.dl7` and prints JSON; `eval` evaluates that JSON once; `run` loops ticks with executors; `emit sqlite` lowers it to views.
 Build it with `cargo build --release` in `v8/`; every command in this book runs from `v8/` with `$DL8` set to that binary.
 `book/show.sh <verb> <file.dl7> [flags]` compiles, runs the verb, and prints one line per row of the file's own relations, one per `effect` row, one per diagnostic, then `exit <code>`.
 `book/check_outputs.sh` reruns every `console` block in this book and diffs its output against the page.
 Paths under `v6/`, `v7/`, `plans/` and `sqlite_ivm/` are from the repository root; every other path is from `v8/`.
-
-```mermaid
-flowchart LR
-  S[file.dl7] -->|dl8 compile| C[compile JSON]
-  C -->|dl8 eval| E[closure JSON]
-  C -->|dl8 run --serve| R[tick loop, executors]
-  C -->|dl8 emit sqlite| V[sqlite_ivm DDL]
-  R -->|--db| D[(SQLite file)]
-  E -->|--db| D
-```
 
 ## Why
 

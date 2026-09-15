@@ -2,6 +2,20 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  dl7[file.dl7] -->|dl8 read| syntax[syntax_form, syntax_atom, syntax_literal rows]
+  syntax --> unit[_8_driver/_2_macro.rs: one unit at a time]
+  unit --> wave[_1_macrotime/_4_expand.rs: one wave]
+  standard[macrotime/0_standard.dl7] -->|evaluate| wave
+  wave -->|syntax_claim| rewrite["(<+ Head Body) becomes (<- Head Body)"]
+  rewrite -->|next wave| wave
+  wave -->|repeats a row set| cycle[expansion_cycle]
+  wave -->|64 waves| limit[expansion_round_limit]
+  wave -->|claims nothing, dl8 lower| colon[: rows, the type graph]
+  prelude[prelude/*.dl7: Partial, Option, Key] -->|include_str| colon
+```
+
 Macrotime runs between reading and lowering. The macro program is `macrotime/0_standard.dl7`, compiled into the binary with the prelude and trimmed to its claim and output rule cone (`src/_8_driver/_0_read.rs:17-18`, `src/_8_driver/_2_macro.rs:15-34`).
 Each wave evaluates the macro program over the unit's syntax rows, then rewrites every claimed node. It ends when a wave claims nothing, repeats a row set (`expansion_cycle`), or reaches 64 waves (`expansion_round_limit`) (`src/_1_macrotime/_4_expand.rs:1-4`, `:16`, `:117-178`).
 A macro sees the `syntax_frontier`, `syntax_form`, `syntax_atom`, `syntax_literal`, `syntax_variable` and `syntax_source` rows of one unit, the `(: Node item Child Index)` edges, and the kernel (`macrotime/0_standard.dl7:19-51`, `:73`). It claims a node with `syntax_claim` and names its output with `(: Form expansion Output Index)`; a claim with no expansion edge deletes the node (`oracle/compile/sources/test/fixtures/14_syntax_macros.dl7:70-71`).

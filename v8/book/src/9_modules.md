@@ -2,6 +2,22 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  colon[: rows, the type graph] -->|--project| modname[modules/0_accounts.dl7 is accounts]
+  modname -->|_12_units.rs alias| importer["(: accounts User ?UserType ?Index) in the importer"]
+  importer --> resolve[_3_check/_2_resolve.rs]
+  resolve -->|1| forward[forward edge on the owner]
+  resolve -->|2| parent[parent scope]
+  resolve -->|3| kernelnames[kernel names]
+  resolve -->|4| primnames[primitive names]
+  resolve -->|name revisited| unresolved[unresolved_name]
+  colon --> application["4_generated_call.dl7: (HistoryV1 User HistoryOptions)"]
+  forward & parent & kernelnames & primnames & application --> comptime[_4_comptime rounds]
+  comptime -->|5_curry| refreeze["source_refreeze_limit_exhausted(16)"]
+  comptime -->|dl8 reify| program[reified program JSON]
+```
+
 Modules: `dl8 compile a.dl7 b.dl7 --project <root>` loads one unit per file (`src/bin/dl8.rs:448-458`, `src/_8_driver/_4_project.rs:28-57`). A module's name is its directory parts plus its file stem, each losing a leading `<digits>_` prefix: `modules/0_accounts.dl7` is `accounts` (`src/_4_comptime/_0_load/_2_project.rs:162-190`).
 Every top-level edge of an exporter is aliased into each importer that does not already bind the name (`src/_2_lower/_12_units.rs:310-342`); a unit reads another module's declaration as an edge, `(: accounts User ?UserType ?Index)`.
 Name resolution walks a forward edge on the owner (which commits), then the parent scope, then kernel names, then primitive names; a name revisited on one walk resolves to nothing (`src/_3_check/_2_resolve.rs:44-89`). A cycle of names is `unresolved_name`.

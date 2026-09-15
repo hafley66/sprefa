@@ -1,5 +1,19 @@
 # Not built yet
 
+```mermaid
+flowchart LR
+  store[(SQLite: pending, settled)] -.-> retraction[retraction: delete-rederive or signed rows]
+  store -.-> pre["pre/1 last-tick rows, now/1"]
+  store -.-> sweep[dictionary release by refCount and sweep]
+  store -.-> latch["keyed latch: key(N) with <+"]
+  effect["(effect Rel App) rows"] -.-> pending[effect pending and settled tables, aborted_at]
+  effect -.-> abort[effect abort]
+  effect -.-> removedref[a removed ref retracting its soopy_refs row]
+  retraction & pre & sweep & latch & pending & abort & removedref -.-> nb[not built]
+  classDef notbuilt stroke-dasharray: 5 5
+  class retraction,pre,sweep,latch,pending,abort,removedref,nb notbuilt
+```
+
 | construct | where it is planned or recorded | status |
 |---|---|---|
 | retraction: delete-rederive or signed rows | `plans/v8/2026-09-14-v8-store.PLAN.md` section 10; `plans/v8/2026-09-14-v8-design-review.fable.md:169` | not built; tables are append-only, `src/_6_eval/_3_table.rs:1-3` |

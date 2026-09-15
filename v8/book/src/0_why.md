@@ -10,8 +10,8 @@ The target is FROM as an Observable, with `sqlite_ivm` as the seam between rules
 flowchart LR
   G[git refs via soopy] --> F[fact rows]
   X[sprefa-extract: TSI, calls, scip] --> F
-  F --> R[dl7 rules]
-  R --> V[sqlite_ivm views]
+  F --> dl7[file.dl7]
+  dl7 --> V[sqlite_ivm views]
   V --> O[readers of FROM]
 ```
 

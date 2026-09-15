@@ -2,6 +2,22 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  colon[: rows, the type graph] -->|dl8 lower| execute[_2_lower/_7_execute.rs]
+  execute -->|fact| seed[seed rows]
+  execute -->|?Var in a fact| inseed[variable_in_seed]
+  execute -->|"<-"| rules[rule rows: head, goals]
+  seed --> round0[round 0: every rule over all rows]
+  rules --> round0
+  round0 --> roundn[round N: one plan per current-stratum goal]
+  roundn -->|new rows| roundn
+  roundn -->|zero new rows| done[stratum ends]
+  rules -->|bound argument, derived goal| demand[top-down proof: rows used, never stored]
+  demand --> roundn
+  round0 -->|nil| nilrow[one nil row per evaluation]
+```
+
 A fact is a form naming a declared relation with no variable in it: `(Edge "a" "b")`. It lowers to a seed row; a variable is `variable_in_seed` (`src/_2_lower/_7_execute.rs:83`).
 A rule is `(<- Head Goal ...)`: the head is one relation form, the body is goals, and `?Name` is one variable across its top form, and each `?_` is its own variable (`src/_0_read/_2_reader.rs:355-367`).
 A head may carry constants: `(Tagged ?Node "heavy")` (`fixtures/sqlite_emit/0_union_filter.dl7:40`).

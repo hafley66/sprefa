@@ -2,6 +2,22 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  dl7[file.dl7] -->|dl8 read| reader[_0_read/_2_reader.rs: literals]
+  reader --> range[integer_out_of_range]
+  reader -->|dl8 lower| declare[_2_lower/_2_declare.rs]
+  declare -->|"(* ...)"| product[product row, one relation of field arity]
+  declare -->|"(+ ...)"| sum[sum row, no relation]
+  declare -->|return| key[every other position is the key]
+  product --> colon[: rows, the type graph]
+  sum --> colon
+  key --> colon
+  prim[_3_check/_5_kernel.rs: int float bool text any type] -->|primitive_name| colon
+  prelude[prelude/5_tsi_primitives.dl7: string] --> colon
+  colon -->|dl8 check| unresolved[unresolved_name naming the field]
+```
+
 `(: Name (* (: field type) ...))` declares a product: a node, a `product` row, one edge per field, and one relation whose arity is the field count (`src/_2_lower/_2_declare.rs:189-194`, `:268-306`).
 `(: Name (+ (: variant type) ...))` declares a sum: the node, a `sum` row and the edges, and no relation (`_2_declare.rs:268` "A sum declares no relation").
 A field type is a primitive, a declared name, a literal, or an application such as `(Option text)`.

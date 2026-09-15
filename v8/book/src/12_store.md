@@ -2,6 +2,18 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  answers[answer rows] -->|persist: one transaction per tick| chunk[INSERT chunked by the variable limit]
+  chunk --> product["{program}.{Name}_a{arity}: typed columns"]
+  chunk --> kerneltable["{program}.kernel: effect rows"]
+  chunk --> arena[sym, term, term_arg: arena ids]
+  product & kerneltable & arena --> store[(SQLite: pending, settled)]
+  store -->|--db reload| once[Once application with a data row: answered]
+  store -->|--db reload| retry[error row: retried]
+  store -->|--db reload| timer[timer numbers past stored ticks]
+```
+
 `--db <file>` on `dl8 eval` or `dl8 run` opens one SQLite file, loads the arena and the rows already there, evaluates, and writes one transaction per tick (`src/bin/dl8.rs:188-205`, `:280-299`, `:369-382`).
 The table prefix is the compile JSON's file stem (`dl8.rs:174-180`). A declared relation's table is `"<program>.<Name>_a<arity>"`, an undeclared one `"<program>.rel<id>_a<arity>"`; `sym`, `term`, `term_arg`, `relation` and `kernel` are reserved objects (`src/_9_runtime/_1_sqlite.rs:1-2`, `:58-70`).
 A product table has `"__id" INTEGER PRIMARY KEY` and one typed column per field; a text or compound cell stores its arena id (`_1_sqlite.rs:116-120`, `src/_9_runtime/_0_store.rs:72-80`). Kernel rows, `effect` among them, go to the `kernel` table (`_1_sqlite.rs:625-626`).

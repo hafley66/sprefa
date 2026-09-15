@@ -2,6 +2,16 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  store[(SQLite: pending, settled)] -->|insert_statements per run| golden[v6/tsv2/goldens/ghcacher_tick_golden]
+  refs[soopy_refs: 4 repositories] -->|HEAD rows| org[fixtures/hosts/org.dl7]
+  extractbin[sprefa-extract --family type] -->|dl8 compile --tsi| main[fixtures/extract/main.dl7]
+  org -->|dl8 run --serve soopy_refs| demo[org.dl7 / extract / ghcacher]
+  main -->|conforms| demo
+  golden -->|6_gate.sh| demo
+```
+
 Three programs exercise several chapters at once.
 
 | demo | what it does | chapters it uses | proved by |

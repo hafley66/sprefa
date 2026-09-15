@@ -2,6 +2,20 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  program[reified program JSON] -->|--serve a,b| served[_6_eval/_6_json.rs: served names]
+  served -->|unknown name| unknown[served_relation_unknown, exit 1]
+  served --> positive[positive goal on a served relation]
+  served --> negative[negative goal or aggregate body]
+  negative --> noeffect[no effect row]
+  positive -->|heads a rule| noeffect
+  positive -->|intern, none when unbound| effect["(effect Rel App) rows"]
+  positive -->|intern| snapshot[intern_snapshot row]
+  effect -->|next round| loading[loading rule over effect, intern_snapshot, cons]
+  snapshot --> loading
+```
+
 `--serve a,b` on `dl8 eval` or `dl8 run` names relations the outside settles, resolved against the program's declared names; an unknown name is `served_relation_unknown` and exit 1 (`src/_6_eval/_6_json.rs:345-366`, `src/bin/dl8.rs:318-323`). Without the flag the served set is empty.
 Every evaluation of a positive goal on a served relation that heads no rule writes one row `(effect Relation Application)`, whether or not a data row matched (`src/_6_eval/_5_evaluate.rs:244-249`, `:261-262`).
 `Application` is the `intern` of the relation over the goal's arguments in position order, the atom `none` at each unbound position (`_5_evaluate.rs:263-276`); the same row is written to `intern_snapshot` so a rule can open it (`:272-273`, `:826-829`).

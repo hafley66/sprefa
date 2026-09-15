@@ -2,6 +2,22 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  program[reified program JSON] -->|dl8 emit sqlite| lowersql[_5_reify/_7_sqlite.rs]
+  tables[eval --db tables, same JSON stem] --> lowersql
+  lowersql -->|upstream derived relation| cte[inlined CTE]
+  lowersql -->|rules with one head| unionall[UNION]
+  lowersql -->|recursive component| recursive[WITH RECURSIVE, member column]
+  lowersql -->|not| notexists[NOT EXISTS]
+  lowersql -->|count| groupby[GROUP BY]
+  lowersql -->|max| rownumber["ROW_NUMBER() by term order"]
+  lowersql -->|fold| foldadd[int_add step, integer seed]
+  cte & unionall & recursive & notexists & groupby & rownumber & foldadd --> ddl[sqlite_ivm DDL]
+  lowersql -->|outside the set| unsupported["emit_sqlite_unsupported(rule, Reason), exit 1"]
+  unsupported -->|a reader of it| dependson["depends_on(Name)"]
+```
+
 `dl8 emit sqlite <compile.json>` prints one `CREATE VIRTUAL TABLE ... USING sqlite_ivm('<SELECT>')` per derived relation, in dependency order, over the tables `dl8 eval --db` writes under the same JSON stem (`src/bin/dl8.rs:65-69`, `:207-261`, `src/_5_reify/_7_sqlite.rs:57-60`).
 `sqlite_ivm` reads ordinary tables only, so every upstream derived relation is inlined as a CTE (`_7_sqlite.rs:1-2`).
 Several rules for one head are `UNION`; a recursive component is one `WITH RECURSIVE` CTE, and mutual recursion shares it through a `member` column; a negative goal is `NOT EXISTS`; `count` is `GROUP BY`; `max` ranks by the term order with `ROW_NUMBER()` (the SQL keywords per view in the example).

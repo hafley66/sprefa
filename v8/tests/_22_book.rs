@@ -345,6 +345,35 @@ pub fn chapter_not_built() {
 }
 
 #[test]
+pub fn every_chapter_has_one_mermaid_block() {
+    let counts: Vec<(&str, usize)> = CHAPTERS
+        .iter()
+        .map(|stem| {
+            let text =
+                std::fs::read_to_string(v8().join("book/src").join(format!("{stem}.md"))).unwrap();
+            (*stem, text.lines().filter(|line| *line == "```mermaid").count())
+        })
+        .collect();
+    let wrong: Vec<_> = counts.iter().filter(|(_, count)| *count != 1).collect();
+    assert!(wrong.is_empty(), "mermaid blocks per chapter: {wrong:?}");
+}
+
+/// `book/check_chain.sh` holds the entry and exit ids of every diagram.
+#[test]
+pub fn diagram_chain_is_continuous() {
+    let (code, stdout, stderr) =
+        finish(Command::new("bash").arg(v8().join("book/check_chain.sh"))).unwrap();
+    assert_eq!(
+        code,
+        0,
+        "{}{}",
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
+    );
+    print!("{}", String::from_utf8_lossy(&stdout));
+}
+
+#[test]
 pub fn mdbook_builds_the_book() {
     let (code, stdout, stderr) = finish(
         Command::new("mdbook")
