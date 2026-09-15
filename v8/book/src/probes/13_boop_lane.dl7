@@ -1,0 +1,23 @@
+; expect: rc=0
+; A boop_lane relation a program would read; no executor serves the name yet.
+(: boop_lane
+   (* (: lane text)
+      (: branch text)
+      (: goal text)
+      (: spawned_ts int)))
+
+(: boop_lane_error
+   (* (: lane text)
+      (: message text)))
+
+(: Watch (* (: lane text)))
+
+(Watch "sprefa-coordinator")
+
+(: Lane
+   (* (: lane text)
+      (: branch text)))
+
+(<- (Lane ?Lane ?Branch)
+    (Watch ?Lane)
+    (boop_lane ?Lane ?Branch ?Goal ?SpawnedTs))

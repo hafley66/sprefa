@@ -1,0 +1,8 @@
+; expect: duplicate_relation_name
+; compile: --project book/src/probes book/src/probes/6_user_a.dl7 book/src/probes/7_user_b.dl7
+; The goal names module user_a; the name table is still one flat map.
+(: picked
+   (* (: result type)))
+
+(<- (picked ?UserType)
+    (: user_a User ?UserType ?Index))
