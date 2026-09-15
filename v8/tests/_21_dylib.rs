@@ -252,3 +252,52 @@ pub fn a_path_that_is_not_a_dylib_is_one_diagnostic_naming_it_and_a_nonzero_exit
         "diagnostic names the path: {payload}"
     );
 }
+
+/// In one process: `answer` with the v1 build, rebuild the same path as v2,
+/// `answer` again; `reload_if_changed` sees the later mtime and the second
+/// answer carries the v2 prefix. The two-run test above never exercises this
+/// path, since run 2 is a fresh process.
+#[test]
+pub fn one_process_reloads_the_plugin_when_its_mtime_moves() {
+    use dl8::_6_eval::evaluate::Store;
+    use dl8::_6_eval::Universe;
+    use dl8::_9_runtime::executors::Dylib;
+    use dl8::_9_runtime::IExecutor;
+
+    let directory = scratch("in-process");
+    let plugins = directory.join("plugin-target");
+    let (v1, _) = build_plugin(&plugins, "v1");
+    std::env::set_var("DL8_DYLIB_PATH", &v1);
+
+    let mut u = Universe::new();
+    let rel = u.atom("dylib_echo");
+    let mut executor = Dylib::from_env(rel).expect("load v1");
+    let input = u.string("a");
+    let none = u.atom("none");
+    let values = u.list(&[input, none]);
+    let application = u.compound("application", vec![rel, values]);
+    let application = u.compound("ref", vec![application]);
+    let store = Store::default();
+
+    let outputs = |u: &Universe, rows: Vec<dl8::_6_eval::Row>| -> Vec<String> {
+        rows.iter()
+            .map(|row| {
+                let out = u.unary(row.args[1], "const").unwrap();
+                match u.get(out) {
+                    dl8::_6_eval::Term::Str(sym) => u.sym_str(*sym).to_string(),
+                    other => panic!("{other:?}"),
+                }
+            })
+            .collect()
+    };
+
+    let first = executor.answer(&mut u, &store, &[application]);
+    assert_eq!(outputs(&u, first), vec!["v1:a".to_string()]);
+
+    std::thread::sleep(Duration::from_millis(1100));
+    let (v2, _) = build_plugin(&plugins, "v2");
+    assert_eq!(v1, v2);
+
+    let second = executor.answer(&mut u, &store, &[application]);
+    assert_eq!(outputs(&u, second), vec!["v2:a".to_string()]);
+}
