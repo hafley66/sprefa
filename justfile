@@ -57,8 +57,11 @@ release-dry:
     set -euo pipefail
     cd "{{repo}}"
     scratch="$(mktemp -d)/release-dry"
-    trap 'git worktree remove --force "$scratch" >/dev/null 2>&1 || true' EXIT
-    git worktree add --detach "$scratch" HEAD >/dev/null
+    branch="release-dry-$$"
+    trap 'cd "{{repo}}"; git worktree remove --force "$scratch" >/dev/null 2>&1 || true; git branch -D "$branch" >/dev/null 2>&1 || true' EXIT
+    # release-plz checks out its starting branch (git_cmd Repo::new): detached HEAD has
+    # none, and an origin/main upstream resolves to `main`, held by the main worktree.
+    git worktree add -q -b "$branch" "$scratch" HEAD
     for link in hafley-rs sprefa-v6; do
         [ -e "$link" ] && ln -s "$(cd "$link" && pwd -P)" "$scratch/$link"
     done
