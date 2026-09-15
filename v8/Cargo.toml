@@ -11,6 +11,7 @@ publish = false
 clap = { version = "4", features = ["derive"] }
 hafley-observe = { version = "0.1", registry = "hafley" }
 indexmap = "2"
+libloading = "0.8"
 ordered-float = "3"
 rusqlite = { version = "0.40", features = ["bundled", "limits"] }
 serde = { version = "1", features = ["derive"] }

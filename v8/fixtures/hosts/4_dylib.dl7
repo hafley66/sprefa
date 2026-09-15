@@ -1,0 +1,25 @@
+; One seeded string echoed by the loaded dylib, then its own output fed back
+; as a second application, so a reload between runs answers with the new build.
+(: dylib_echo
+   (* (: input text)
+      (: output text)))
+
+(: Seed (* (: input text)))
+
+(Seed "a")
+
+(: First
+   (* (: input text)
+      (: output text)))
+
+(<- (First ?In ?Out)
+    (Seed ?In)
+    (dylib_echo ?In ?Out))
+
+(: Second
+   (* (: input text)
+      (: output text)))
+
+(<- (Second ?Out1 ?Out2)
+    (First ?In1 ?Out1)
+    (dylib_echo ?Out1 ?Out2))
