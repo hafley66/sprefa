@@ -118,13 +118,21 @@ fn run(program: &Path, args: &[&str], dylib_path: &Path) -> Ran {
         }
         if started.elapsed() > RUN_CAP {
             let _ = child.kill();
-            panic!("dl8 run {} {args:?} exceeded {RUN_CAP:?}", program.display());
+            panic!(
+                "dl8 run {} {args:?} exceeded {RUN_CAP:?}",
+                program.display()
+            );
         }
         std::thread::sleep(Duration::from_millis(5));
     };
     let wall = started.elapsed();
     let mut stdout = Vec::new();
-    child.stdout.take().unwrap().read_to_end(&mut stdout).unwrap();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_end(&mut stdout)
+        .unwrap();
     let mut stderr = String::new();
     child
         .stderr
@@ -180,10 +188,21 @@ pub fn reload_answers_the_chained_application_without_losing_the_first_row() {
     let (v1, build_v1) = build_plugin(&plugins, "v1");
     let run1 = run(
         &compiled.program,
-        &["--serve", "dylib_echo", "--db", db.to_str().unwrap(), "--max-ticks", "1"],
+        &[
+            "--serve",
+            "dylib_echo",
+            "--db",
+            db.to_str().unwrap(),
+            "--max-ticks",
+            "1",
+        ],
         &v1,
     );
-    assert_eq!(run1.code, 0, "run1 exit; diagnostics {}", run1.out["diagnostics"]);
+    assert_eq!(
+        run1.code, 0,
+        "run1 exit; diagnostics {}",
+        run1.out["diagnostics"]
+    );
     assert_eq!(
         rows(&run1.out, &compiled.names, "dylib_echo"),
         vec![vec![text("a"), text("v1:a")]],
@@ -205,7 +224,11 @@ pub fn reload_answers_the_chained_application_without_losing_the_first_row() {
         &["--serve", "dylib_echo", "--db", db.to_str().unwrap()],
         &v2,
     );
-    assert_eq!(run2.code, 0, "run2 exit; diagnostics {}", run2.out["diagnostics"]);
+    assert_eq!(
+        run2.code, 0,
+        "run2 exit; diagnostics {}",
+        run2.out["diagnostics"]
+    );
     assert_eq!(
         rows(&run2.out, &compiled.names, "dylib_echo"),
         vec![
