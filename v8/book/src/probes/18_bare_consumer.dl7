@@ -1,0 +1,8 @@
+; expect: undeclared_relation
+; compile: --project book/src/probes book/src/probes/10_accounts.dl7
+; A bare User with no alias from the accounts module.
+(: found_user
+   (* (: result type)))
+
+(<- (found_user ?UserType)
+    (User ?UserType))

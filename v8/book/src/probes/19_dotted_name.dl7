@@ -1,0 +1,6 @@
+; expect: rc=0
+; A dotted name is one atom: the reader keeps the dot, the name table keys the whole text.
+(: boop.lane
+   (* (: lane text)))
+
+(boop.lane "sprefa-coordinator")

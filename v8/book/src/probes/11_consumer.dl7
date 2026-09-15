@@ -1,0 +1,7 @@
+; expect: rc=0
+; compile: --project book/src/probes book/src/probes/10_accounts.dl7
+(: found_user
+   (* (: result type)))
+
+(<- (found_user ?UserType)
+    (: accounts User ?UserType ?Index))

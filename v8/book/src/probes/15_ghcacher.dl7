@@ -1,0 +1,44 @@
+; expect: rc=0
+; A clock drives a poll; each poll reads fetch_json for the watched url.
+(: timer
+   (* (: period_ms int)
+      (: tick int)))
+
+(: fetch_json
+   (* (: url text)
+      (: body text)))
+
+(: fetch_json_error
+   (* (: url text)
+      (: status int)
+      (: message text)))
+
+(: Watch (* (: url text)))
+
+(Watch "http://127.0.0.1:9/repos/cli/cli")
+
+(: Poll
+   (* (: url text)
+      (: tick int)))
+
+(<- (Poll ?Url ?Tick)
+    (Watch ?Url)
+    (timer 100 ?Tick))
+
+(: Response
+   (* (: url text)
+      (: tick int)
+      (: body text)))
+
+(<- (Response ?Url ?Tick ?Body)
+    (Poll ?Url ?Tick)
+    (fetch_json ?Url ?Body))
+
+(: Failed
+   (* (: url text)
+      (: tick int)
+      (: status int)))
+
+(<- (Failed ?Url ?Tick ?Status)
+    (Poll ?Url ?Tick)
+    (fetch_json_error ?Url ?Status ?Message))
