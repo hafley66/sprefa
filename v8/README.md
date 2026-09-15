@@ -4,6 +4,8 @@ DL7, compiled in Rust. The filesystem is the pipe: every `src/_<n>_name/`
 folder is one operator, in order. Tests live in `tests/` only; oracle
 fixtures in `oracle/`.
 
+The language book is `book/` (`mdbook build book`); every `dl7` block in it is a fixture, checked by `cargo test --test _22_book`.
+
 | folder | status |
 |---|---|
 | `_0_read` | `read_dl7/5` port over a character stream, 89 oracle fixtures |
