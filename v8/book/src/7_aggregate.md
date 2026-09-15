@@ -2,6 +2,25 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  kernel[20 kernel relations] -->|int_add| sum["(sum ?Value)"]
+  body[body proofs over stored rows: one bag entry each] -->|plain head positions| group[group key]
+  group --> count["(count ?Value)"]
+  group --> sum
+  group --> min["(min ?Value)"]
+  group --> max["(max ?Value)"]
+  group --> foldform["(fold Step Seed ?Value)"]
+  count -->|count_step| fold[Fold: Partition, Order, Step, Seed]
+  sum --> fold
+  min -->|min_step| fold
+  max -->|max_step| fold
+  foldform --> fold
+  fold -->|no Next| nostep[fold_step_no_row]
+  fold -->|two Next| ambiguous[fold_step_ambiguous]
+  fold -->|debug build, both ways| disagree[fold_path_disagreement]
+```
+
 A rule head may hold one aggregate position: `(count ?Value)`, `(sum ?Value)`, `(min ?Value)`, `(max ?Value)`, or `(fold Step Seed ?Value)` (`src/_2_lower/_8_express.rs:597-660`). Outside a head it is `aggregate_outside_rule_head`; two in one head is `malformed_aggregate_head` (`src/_6_eval/_5_evaluate.rs:434-442`).
 Every body proof over stored rows is one bag entry; the plain head positions are the group key; a group with no proof has no row (`_5_evaluate.rs:430-466`).
 An aggregate body matches stored rows only: no kernel functions, no demanded rules, no effects (`_5_evaluate.rs:147-149`).

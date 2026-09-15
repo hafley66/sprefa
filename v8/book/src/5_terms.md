@@ -2,6 +2,25 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  strata[strata order] -->|_6_eval/_4_kernel.rs| kernel[20 kernel relations]
+  kernel --> nil[nil / 1: const of the empty list]
+  kernel --> cons[cons / 3: split a list or build one]
+  kernel --> intern[intern / 3: one term per application]
+  kernel --> edgeref[edge_ref / 3: owner and label]
+  kernel --> edges[": / 4: graph edges"]
+  kernel --> classify[node, module, product, sum / 1]
+  nil -->|tail| cons
+  cons -->|arguments| intern
+  intern --> application["ref(application(Constructor, Arguments))"]
+  edgeref --> edgeterm["ref(edge(Owner, Label))"]
+  intern -->|request row| internsnap[intern_snapshot / 3]
+  edges -->|previous round| edgesnap[edge_snapshot / 4]
+  rounds[_4_comptime/_2_rounds.rs] -->|next round| internsnap
+  rounds -->|next round| edgesnap
+```
+
 Kernel relations are built into the evaluator, one partial function over bound arguments each, never a stored table except that `intern` records every request as a row (`src/_6_eval/_4_kernel.rs:1-4`).
 `(: Owner name Target Index)` in a body reads one graph edge and in a head derives one; every declaration lowers to these rows (`plans/v8/2026-09-13-v8-tour.md` section 5, `oracle/compile/sources/test/fixtures/14_syntax_macros.dl7:116-125`).
 `edge_snapshot` and `intern_snapshot` hold the previous compiler round's `:` edges and `intern` requests as read-only rows (`src/_4_comptime/_2_rounds.rs:279-293`); at runtime the effect branch also writes `intern_snapshot` rows ([Effects](10_effects.md)).

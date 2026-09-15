@@ -2,6 +2,25 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  kernel[20 kernel relations] --> compare[int_lt int_le int_eq int_ne int_ge int_gt]
+  kernel --> add[int_add Left Right Sum]
+  kernel --> termlt[term_lt Left Right]
+  compare -->|non-integer argument| norow[no row]
+  add -->|overflow or wrong Sum| norow
+  compare -->|dl8 check| mismatch[8_int_type_mismatch.dl7: text constant rejected]
+  termlt --> order
+  subgraph order [_6_eval/_0_term.rs standard order]
+    direction LR
+    numbers[numbers by value, int before equal float] --> bools[false, true]
+    bools --> strings[strings]
+    strings --> emptylist["[]"]
+    emptylist --> atoms[atoms]
+    atoms --> compounds[compounds: arity, name, arguments]
+  end
+```
+
 `int_lt int_le int_eq int_ne int_ge int_gt` hold when both arguments are integers in that relation; a non-integer argument gives no row (`src/_6_eval/_4_kernel.rs:96-103`, `:188-192`).
 `(int_add Left Right Sum)` binds `Sum` to `Left + Right`; an overflowing sum has no row, and a bound wrong sum fails (`_4_kernel.rs:200-214`).
 `(term_lt Left Right)` holds when `Left` precedes `Right` in the standard term order (`_4_kernel.rs:194-199`).

@@ -2,6 +2,24 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  effect["(effect Rel App) rows"] -->|once per process| reconcile[_9_runtime/_2_reconcile.rs: tick]
+  reconcile --> roster[_3_executors/mod.rs]
+  roster -->|no executor| noexec[served_relation_no_executor]
+  roster -->|no error relation| noerror[executor_relation_unknown]
+  roster --> timer[timer: Continuing]
+  roster --> fetch[fetch_json: Once]
+  roster --> refs[soopy_refs: Continuing]
+  roster --> history[soopy_history: Once]
+  roster --> repoat[repo_at: Once]
+  roster --> extract[extract: Once, killed past 10 s]
+  fetch -->|non-2xx| fetcherror[fetch_json_error]
+  timer & fetch & refs & history & repoat & extract & fetcherror --> answers[answer rows]
+  answers -->|insert, evaluate| reconcile
+  reconcile -->|nothing new, nothing armed| stop[exit]
+```
+
 `dl8 run <compile.json> --serve <names>` runs ticks: tick 0 evaluates the program; each later tick hands new `effect` rows to the executor of their relation, inserts the answers, evaluates, and persists with `--db` (`src/_9_runtime/_2_reconcile.rs:1-2`, `v8/README.md:71-86`).
 Each served name maps to one Rust executor (`src/_9_runtime/_3_executors/mod.rs:45-106`). A name with no executor is `served_relation_no_executor`; a missing companion error relation is `executor_relation_unknown`; both exit 1 before tick 0.
 Cadence `Once` answers an application once; `Continuing` arms on an application and then writes rows on its own clock (`_2_reconcile.rs:12-18`).

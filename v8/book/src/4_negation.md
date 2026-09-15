@@ -2,6 +2,21 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  rules[rule rows: head, goals] -->|dl8 check| mode[_3_check/_4_mode.rs]
+  mode -->|not, argument unbound| unbound[unbound_negative_goal]
+  mode -->|not cons, nil, intern, edge_ref| negcons[negative_constructive_kernel_goal]
+  rules -->|not int_lt .. int_gt| complement[the complement]
+  rules -->|positive read: gap 0| stratify[_6_eval/_2_stratify.rs]
+  rules -->|not: gap 1| stratify
+  rules -->|aggregate read: gap 1| stratify
+  stratify -->|least fixpoint| strata[strata order]
+  stratify -->|gap 1 on a cycle| strict[strict_dependency_cycle]
+  stratify -->|aggregate on a cycle| aggcycle[aggregate_dependency_cycle]
+  strata -->|NOT EXISTS| consumers[fixtures/sqlite_emit/3_consumers.dl7]
+```
+
 `(not Goal)` in a body holds when no row matches the goal with its variables as bound at that point (`src/_2_lower/_7_execute.rs:150-154`, `src/_6_eval/_5_evaluate.rs:190-209`).
 A negative goal with any argument still unbound never holds in the evaluator (`_5_evaluate.rs:190-197`); the checker rejects such a rule first with `unbound_negative_goal`.
 Negating a constructive kernel goal (`nil`, `cons`, `intern`, `edge_ref`, `src/_3_check/_4_mode.rs:235-237`) is `negative_constructive_kernel_goal`; a negated `int_lt`..`int_gt`, `int_add` or `term_lt` is the complement (`src/_6_eval/_4_kernel.rs:268-290`).

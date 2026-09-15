@@ -2,6 +2,23 @@
 
 ## What
 
+```mermaid
+flowchart LR
+  dl7[file.dl7] -->|dl8 read| reader[_0_read/_2_reader.rs: integer_out_of_range]
+  dl7 -->|dl8 expand| expand[_1_macrotime/_4_expand.rs: expansion_cycle]
+  dl7 -->|dl8 lower| lowerphase[_2_lower/_7_execute.rs: variable_in_seed]
+  dl7 -->|dl8 check| resolve[_3_check/_2_resolve.rs: unresolved_name]
+  dl7 -->|dl8 check| mode[_3_check/_4_mode.rs: underconstrained_kernel_goal]
+  dl7 -->|dl8 check| strata6[_3_check/_6_strata.rs: strict_dependency_cycle]
+  dl7 -->|dl8 comptime| finish[_4_comptime/_5_finish.rs: source_refreeze_limit_exhausted]
+  dl7 -->|dl8 compile| compile[compile JSON]
+  compile -->|dl8 eval| evaluate[_6_eval/_5_evaluate.rs: fold_step_no_row]
+  compile -->|dl8 emit sqlite| emitsql[_5_reify/_7_sqlite.rs: emit_sqlite_unsupported]
+  compile -->|dl8 run| executors[_3_executors/mod.rs: served_relation_no_executor]
+  reader & expand & lowerphase & resolve & mode & strata6 & finish & evaluate & emitsql & executors --> diag[diagnostics JSON, exit 1]
+  status[oracle/check/status.json] -->|diagnostic_reasons| diag
+```
+
 Every case under `oracle/check/cases/` is a `.dl7` file the checker rejects, with one named diagnostic. `dl8 compile` prints it in `diagnostics` and exits 1 (`src/bin/dl8.rs:500-504`).
 A diagnostic is `diagnostic(Phase, Location, Payload)`; the payload functor is its name. `oracle/check/status.json` classifies every checker diagnostic: covered by a case, reached by no `.dl7`, or unreachable by construction.
 The v7 throw sites come from `status.json`; the v8 sites are the `u.compound` calls that build the payload.
