@@ -19,8 +19,57 @@ build:
     cargo build
 
 # release build
-release:
+build-release:
     cargo build --release
+
+# Cargo manifests release-plz versions; each is its own workspace with a
+# release-plz.toml beside it.
+release_manifests := ". v8 sqlite_ivm v6/sprefa-engine-rs v6/sprefa-store"
+
+# Bumps + changelogs from conventional commits since each `<package>-v<version>` tag,
+# pushed, then tags + GitHub releases minted from this machine via gh.
+release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{repo}}"
+    git diff --quiet HEAD || { echo "release: tree is dirty"; exit 1; }
+    # The first update dirties the tree; later manifests need --allow-dirty.
+    for m in {{release_manifests}}; do
+        release-plz update --manifest-path "$m/Cargo.toml" --config "$m/release-plz.toml" --allow-dirty
+    done
+    if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard -- '*CHANGELOG.md')" ]; then
+        for m in {{release_manifests}}; do
+            for f in CHANGELOG.md Cargo.lock Cargo.toml; do
+                [ -e "$m/$f" ] && git add -- "$m/$f"
+            done
+        done
+        git commit -m "chore(release): version bumps and changelog"
+        git push origin main
+    fi
+    for m in {{release_manifests}}; do
+        release-plz release --manifest-path "$m/Cargo.toml" --config "$m/release-plz.toml" --git-token "$(gh auth token)"
+    done
+
+# `release-plz update` in a throwaway worktree of HEAD: prints the proposed bumps
+# and changelog diff, leaves this tree untouched (update has no --dry-run flag).
+release-dry:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{repo}}"
+    scratch="$(mktemp -d)/release-dry"
+    trap 'git worktree remove --force "$scratch" >/dev/null 2>&1 || true' EXIT
+    git worktree add --detach "$scratch" HEAD >/dev/null
+    for link in hafley-rs sprefa-v6; do
+        [ -e "$link" ] && ln -s "$(cd "$link" && pwd -P)" "$scratch/$link"
+    done
+    cd "$scratch"
+    for m in {{release_manifests}}; do
+        echo "== $m"
+        release-plz update --manifest-path "$m/Cargo.toml" --config "$m/release-plz.toml" --allow-dirty
+    done
+    git add -N -- . >/dev/null
+    git diff --stat -- ':!hafley-rs' ':!sprefa-v6'
+    git diff -U0 -- '*Cargo.toml' | grep -E '^[-+]version' || echo "no version bumps proposed"
 
 # run any example by name (without .dl): `just ex callgraph-sg`
 ex name="callgraph-ast":
