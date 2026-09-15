@@ -1,0 +1,20 @@
+name: changelog
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  v8:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: orhun/git-cliff-action@v4
+        with:
+          args: --include-path 'v8/**' --unreleased --output v8/CHANGELOG.md
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(v8): regenerate CHANGELOG.md"
+          file_pattern: v8/CHANGELOG.md
