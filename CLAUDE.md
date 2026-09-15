@@ -176,6 +176,12 @@ list` shows your own lane name.
 
 ## Docs law (user-set 2026-09-15, every doc lane, every page)
 
+- **Every page is written under the `writing-documentation` skill** (Diátaxis,
+  ASD-STE100 house style, link and fact checkers; plugin
+  `writing-documentation@diataxis-documentation-skill`, user scope; source
+  vendored at `~/projects/claude-research/skills_archive/vendor-diataxis-documentation-skill`).
+  No brief re-teaches how to write; it names the skill and the target.
+
 - **Order is ontological, then topological.** A page's sections nest and follow
   each other the way the things they describe nest and depend on each other.
   A reader meets a name only after the page has defined it. Sibling sections
