@@ -1,0 +1,20 @@
+# Summary
+
+[What dl8 is for](0_why.md)
+
+- [Running dl8](1_run.md)
+- [Declarations](2_declare.md)
+- [Facts and rules](3_rules.md)
+- [Negation and strata](4_negation.md)
+- [Terms and the graph](5_terms.md)
+- [Comparison and arithmetic](6_compare.md)
+- [Aggregates and fold](7_aggregate.md)
+- [Macros](8_macros.md)
+- [Modules and application](9_modules.md)
+- [Effects](10_effects.md)
+- [Executors](11_executors.md)
+- [The store](12_store.md)
+- [The SQLite emitter](13_sqlite.md)
+- [Diagnostics](14_diagnostics.md)
+- [Demos](15_demos.md)
+- [Not built yet](16_not_built.md)
