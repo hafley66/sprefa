@@ -1,0 +1,13 @@
+; expect: rc=0
+; A product with a column named return, built by an intern rule, is a label call.
+(: Wrap
+   (* (: source type)
+      (: return type)))
+
+(<- (Wrap ?Source ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments)
+    (intern Wrap ?Arguments ?Result))
+
+(: Holder
+   (* (: (Wrap text) int)))

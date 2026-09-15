@@ -1,0 +1,13 @@
+; expect: arity_mismatch
+; A user intern beside a rule that calls intern with three arguments.
+(: intern
+   (* (: name text)))
+
+(: Wrap
+   (* (: source type)
+      (: return type)))
+
+(<- (Wrap ?Source ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments)
+    (intern Wrap ?Arguments ?Result))

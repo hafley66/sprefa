@@ -1,0 +1,8 @@
+; expect: expression_without_return
+; The same product with no return column is data, never a label call.
+(: Pair
+   (* (: source type)
+      (: target type)))
+
+(: Holder
+   (* (: (Pair text) int)))

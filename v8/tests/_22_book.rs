@@ -344,6 +344,115 @@ pub fn chapter_not_built() {
     chapter_holds("16_not_built");
 }
 
+/// A probe opens with `; expect: rc=0` or `; expect: <diagnostic functor>`,
+/// then optionally `; compile: <flags>`. Diagnostic names here also read a
+/// bare payload such as `duplicate_relation_name`, which has no phase wrapper.
+fn check_probe(path: &Path) -> Result<(), String> {
+    let label = path
+        .strip_prefix(v8())
+        .unwrap_or(path)
+        .display()
+        .to_string();
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{label}: {e}"))?;
+    let mut lines = text.lines();
+    let expect = lines
+        .next()
+        .and_then(|line| line.strip_prefix("; expect: "))
+        .ok_or_else(|| format!("{label}: first line is not `; expect: `"))?
+        .to_string();
+    let flags: Vec<String> = lines
+        .take_while(|line| line.starts_with(';'))
+        .find_map(|line| line.strip_prefix("; compile: "))
+        .map(|flags| flags.split_whitespace().map(String::from).collect())
+        .unwrap_or_default();
+    let (code, stdout, stderr) = finish(
+        Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .current_dir(v8())
+            .arg("compile")
+            .arg(&label)
+            .args(&flags),
+    )
+    .map_err(|e| format!("{label}: {e}"))?;
+    let compiled: Value = serde_json::from_slice(&stdout).map_err(|e| {
+        format!(
+            "{label}: no JSON ({e}); stderr: {}",
+            String::from_utf8_lossy(&stderr)
+        )
+    })?;
+    let mut names = diagnostic_names(&compiled);
+    names.extend(
+        compiled["diagnostics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|d| d["f"] != "diagnostic")
+            .filter_map(|d| d["f"].as_str().map(String::from)),
+    );
+    match expect.as_str() {
+        "rc=0" if code == 0 => Ok(()),
+        "rc=0" => Err(format!("{label}: exit {code}, diagnostics {names:?}")),
+        _ if code == 0 => Err(format!("{label}: exit 0, expected {expect}")),
+        named if names.iter().any(|name| name == named) => Ok(()),
+        named => Err(format!("{label}: no {named} in {names:?}")),
+    }
+}
+
+/// Every probe compiles to what it names; every `{{#include}}` in the
+/// modules and hosting parts names a probe that exists; their console blocks
+/// rerun through `book/check_outputs.sh`.
+#[test]
+pub fn probes_compile_as_their_page_says() {
+    let src = v8().join("book/src");
+    let mut probes: Vec<PathBuf> = std::fs::read_dir(src.join("probes"))
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|x| x == "dl7"))
+        .collect();
+    probes.sort();
+    assert!(!probes.is_empty(), "no probes under book/src/probes");
+    let mut failures = in_lanes(&probes, |path| check_probe(path));
+    let mut pages: Vec<PathBuf> = ["modules", "hosting"]
+        .iter()
+        .flat_map(|part| std::fs::read_dir(src.join(part)).unwrap())
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|x| x == "md"))
+        .collect();
+    pages.sort();
+    for page in &pages {
+        let text = std::fs::read_to_string(page).unwrap();
+        for include in text.split("{{#include ").skip(1) {
+            let target = include.split("}}").next().unwrap_or_default();
+            if !page.parent().unwrap().join(target).is_file() {
+                failures.push(format!(
+                    "{}: include {target} does not exist",
+                    page.display()
+                ));
+            }
+        }
+    }
+    for page in &pages {
+        let outputs = finish(
+            Command::new("bash")
+                .arg(v8().join("book/check_outputs.sh"))
+                .arg(page)
+                .env("DL8", env!("CARGO_BIN_EXE_dl8")),
+        );
+        match outputs {
+            Ok((0, stdout, _)) => {
+                print!("{}: {}", page.display(), String::from_utf8_lossy(&stdout))
+            }
+            Ok((_, stdout, stderr)) => failures.push(format!(
+                "{}{}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr)
+            )),
+            Err(e) => failures.push(format!("{} outputs: {e}", page.display())),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    println!("{} probes compile as they say", probes.len());
+}
+
 #[test]
 pub fn every_chapter_has_one_mermaid_block() {
     let counts: Vec<(&str, usize)> = CHAPTERS

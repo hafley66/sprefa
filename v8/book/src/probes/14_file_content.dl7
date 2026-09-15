@@ -1,0 +1,22 @@
+; expect: rc=0
+; A continuing file relation: one row per path and content id under a root.
+(: soopy_files
+   (* (: root text)
+      (: path text)
+      (: content text)))
+
+(: soopy_files_error
+   (* (: root text)
+      (: message text)))
+
+(: Watch (* (: root text)))
+
+(Watch "__ROOT__")
+
+(: File
+   (* (: path text)
+      (: content text)))
+
+(<- (File ?Path ?Content)
+    (Watch ?Root)
+    (soopy_files ?Root ?Path ?Content))

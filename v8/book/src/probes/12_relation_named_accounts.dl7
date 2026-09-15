@@ -1,0 +1,5 @@
+; expect: duplicate_relation_name
+; compile: --project book/src/probes book/src/probes/10_accounts.dl7
+; A relation that takes the name of a module in the same project.
+(: accounts
+   (* (: id int)))
