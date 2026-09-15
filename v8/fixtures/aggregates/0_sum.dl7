@@ -1,0 +1,12 @@
+(: Input (* (: value int)))
+
+(Input 7)
+
+(Input 35)
+
+(Input 100)
+
+(: Total (* (: sum int)))
+
+(<- (Total (sum ?Value))
+    (Input ?Value))

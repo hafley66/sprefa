@@ -1,0 +1,51 @@
+{
+  "frozen": "dump_reify.pl wraps logical_program_rows/2, logical_program_calls/4,5, logical_program_rows_calls/5, logical_program_graph_calls/3, compiler_view/2 and emit_compiled/4. compile mode drives compile_dl7/4 over every .dl7 under v7/test/fixtures/ and v7/applications/; test mode drives the five v7 plunit suites that name emit_compiled/4 or logical_program_rows/2; case mode drives each cases/*.pl.",
+  "freeze": "bash v8/oracle/reify/freeze.sh [sprefa-repo] [rev]",
+  "skip": [
+    "case-14_emit_prolog_ok_2.json",
+    "case-15_emit_prolog_failed_2.json",
+    "case-16_emit_prolog_exception_2.json"
+  ],
+  "not_ported": {
+    "case-14_emit_prolog_ok_2.json": "emit_compiled(prolog(Callable), ...) at 1_artifact_emitter.pl:49 dispatches to a host-Prolog callable; Rust has none. The dispatch shape and the two diagnostics are ported, the call is not.",
+    "case-15_emit_prolog_failed_2.json": "emit_compiled(prolog(Callable), ...) at 1_artifact_emitter.pl:49 dispatches to a host-Prolog callable; Rust has none. The dispatch shape and the two diagnostics are ported, the call is not.",
+    "case-16_emit_prolog_exception_2.json": "emit_compiled(prolog(Callable), ...) at 1_artifact_emitter.pl:49 dispatches to a host-Prolog callable; Rust has none. The dispatch shape and the two diagnostics are ported, the call is not."
+  },
+  "unfrozen": {
+    "compile_mode_is_empty": "all 42 .dl7 files under v7/test/fixtures/ and v7/applications/ compile with 0 reifier calls. The v7 compiler never reaches src/3_emit, so the test suites are the only driver.",
+    "suite_repeats": "the five suites re-enter logical_program_rows/2 once per emitter call on the same program; byte-identical repeats are dropped before the committed set is chosen.",
+    "real_compile_sizes": "one real-compile case runs 0.26-3.4 MB because the compiler rows and the checked program ride along. The committed set keeps every case at or under 65536 bytes plus the smallest over-limit case of each entry kind."
+  },
+  "v7_red_at_the_pinned_rev": "v7/test/fixtures/5_curry.dl7 does not compile at f5018ad23: compile_dl7/4 returns source_refreeze_limit_exhausted(16), thrown at v7/src/2_comptime/2_compiler.pl:833. Reproduced with no wrapper installed and at two staging path lengths. Three v7 tests in 1_entrypoints.test.pl fail because of it, which costs the suite-driven coverage of the prolog, monomorphic_datalog and relational_program arms. cases/0, cases/1, cases/2 and cases/14-16 cover all four arms instead.",
+  "verified_uncommitted": "every byte-distinct case in the scratch dump was run through the real dl8 binary and matched. The count is in numbers.byte_distinct; re-run freeze.sh plus the sweep in the PR body to reproduce.",
+  "diagnostic_reasons": {
+    "covered_by_authored_case": {
+      "logical_program_protocol_missing": "case-9_calls_protocol_missing_1.json, throw site 0_logical_program_reifier.pl:139",
+      "logical_program_protocol_ambiguous": "case-10_calls_protocol_ambiguous_1.json, throw site 0_logical_program_reifier.pl:141",
+      "unknown_emitter": "case-2_emit_unknown_emitter_0.json, throw site 1_artifact_emitter.pl:68",
+      "emitter_protocol_missing": "case-4_emit_protocol_missing_2.json, throw site 1_artifact_emitter.pl:207",
+      "emitter_protocol_ambiguous": "case-5_emit_protocol_ambiguous_2.json, throw site 1_artifact_emitter.pl:209",
+      "emitter_has_no_outputs": "case-6_emit_no_outputs_2.json, throw site 1_artifact_emitter.pl:212",
+      "duplicate_artifact_name": "case-7_emit_duplicate_artifact_name_2.json, throw site 1_artifact_emitter.pl:228",
+      "functional_key_conflict": "case-8_emit_functional_key_conflict_5.json, throw site 0_evaluator.pl:620"
+    },
+    "frozen_but_not_ported": {
+      "prolog_emitter_failed": "case-15_emit_prolog_failed_2.json, throw site 1_artifact_emitter.pl:76. Frozen, in skip.",
+      "prolog_emitter_exception": "case-16_emit_prolog_exception_2.json, throw site 1_artifact_emitter.pl:56. Frozen, in skip."
+    }
+  },
+  "numbers": {
+    "calls_dumped": 131,
+    "byte_distinct": 91,
+    "committed": 57,
+    "committed_bytes": 3741479,
+    "distinct_checked_but_not_committed": 34,
+    "not_committed_bytes_by_entry": {
+      "compiler_view": 15068615,
+      "emit_compiled": 8428199,
+      "logical_program_graph_calls": 4199642,
+      "logical_program_rows": 8513191,
+      "logical_program_rows_calls": 10728344
+    }
+  }
+}

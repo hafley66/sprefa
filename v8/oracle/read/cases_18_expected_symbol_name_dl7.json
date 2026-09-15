@@ -1,0 +1,1 @@
+{"expected": {"diagnostics": [ {"args": [ {"a":"reader"},  {"a":"cases/18_expected_symbol_name.dl7"},  {"args": [ {"a":"cases/18_expected_symbol_name.dl7"}, 2 ],"f":"reader_node"},  {"a":"expected_symbol_name"},  {"args": [3, 1, 4 ],"f":"position"} ],"f":"diagnostic"} ],"forms": [],"source_rows": []},"input":"(x ' y)\n","path":"cases/18_expected_symbol_name.dl7"}

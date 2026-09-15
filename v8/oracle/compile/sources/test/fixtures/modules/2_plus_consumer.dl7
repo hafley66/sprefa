@@ -1,0 +1,5 @@
+(: fired
+   (* (: result type)))
+
+(<+ (fired ?UserType)
+    (: accounts User ?UserType ?Index))

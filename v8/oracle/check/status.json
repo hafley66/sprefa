@@ -1,0 +1,53 @@
+{
+  "frozen": "dump_check.pl wraps dl7_checker:check_datalog/4 and dl7_checker:check_resolved_rules/5. The corpus mode drives compile_dl7/4 over every v7/test/fixtures/*.dl7 and v7/applications/dl6/*.dl7; the bare mode drives compile_units/3 over each cases/*.dl7 with no prelude.",
+  "freeze": "bash v8/oracle/check/freeze.sh [sprefa-repo] [rev]",
+  "unfrozen": {
+    "prelude_repeats": "the first two checker calls of every compile are the type prelude and are byte identical across all 18 programs; one pair is committed",
+    "fixture_own_units": "only 2_partial, 3_type_algebra and 14_syntax_macros commit their own-unit pair. Each check_datalog case runs about 1.2 MB because the basement carries the merged prelude, so committing all 18 would be 42 MB.",
+    "fixpoint_rounds": "5_curry alone enters the checker 26 times across compiler rounds; only the first own-unit call per entry point is committed"
+  },
+  "verified_uncommitted": "every byte-distinct case in the scratch dump was run through the real dl8 binary and matched. The count is in numbers.byte_distinct; re-run freeze.sh plus the sweep in the PR body to reproduce.",
+  "control": "the same dump was taken against the dirty sprefa working tree (the uncommitted graph_name_seen_before/4 perf experiment in 1_checker.pl and 0_graph_lookup.pl) and every case was byte identical after normalizing the staging path prefix.",
+  "diagnostic_reasons": {
+    "covered_by_authored_case": {
+      "unresolved_name": "cases/0_unresolved_name.dl7, throw site 1_checker.pl:585",
+      "unsafe_head_var": "cases/1_unsafe_head_var.dl7, throw site 1_checker.pl:1070",
+      "unbound_negative_goal": "cases/2_unbound_negative.dl7, throw sites 1_checker.pl:910 and :918",
+      "negative_constructive_kernel_goal": "cases/3_negative_cons.dl7, throw site 1_checker.pl:897",
+      "underconstrained_kernel_goal/cons": "cases/4_under_cons.dl7, throw site 1_checker.pl:861",
+      "underconstrained_kernel_goal/edge_ref": "cases/5_under_edge_ref.dl7, throw site 1_checker.pl:873",
+      "underconstrained_kernel_goal/intern": "cases/6_under_intern.dl7, throw site 1_checker.pl:885",
+      "underconstrained_kernel_goal/int": "cases/7_under_int_lt.dl7, throw site 1_checker.pl:849",
+      "kernel_argument_type_mismatch": "cases/8_int_type_mismatch.dl7, throw site 1_checker.pl:927",
+      "strict_dependency_cycle": "cases/9_strict_cycle.dl7, raised at 0_evaluator.pl:912, relocated at 1_checker.pl:434",
+      "aggregate_dependency_cycle": "cases/10_aggregate_cycle.dl7, raised at 0_evaluator.pl:909, relocated at 1_checker.pl:443"
+    },
+    "no_dl7_reaches_it": {
+      "non_ground_seed": "1_checker.pl:738. lower_seed/5 rejects a variable in a seed first, 0_lowerer.pl:1052 variable_in_seed.",
+      "arity_mismatch": "1_checker.pl:1000. The lowerer pads missing arguments with var(omitted(_, I)) and rejects extra ones at 0_lowerer.pl:1251.",
+      "undeclared_relation": "1_checker.pl:1002. The lowerer resolves or defers the name first, 0_lowerer.pl:1496.",
+      "not_relation": "1_checker.pl:1004. Same.",
+      "duplicate_bind": "1_checker.pl:488. The lowerer mints one edge per owner-name pair.",
+      "duplicate_bind_index": "1_checker.pl:500. The lowerer mints dense zero-based ordinals.",
+      "non_dense_index": "1_checker.pl:526. Same.",
+      "invalid_basement_program": "1_checker.pl:203. The compiler never calls the checker with a non-basement program.",
+      "invalid_generated_rule": "1_checker.pl:373. Reachable only from compiler-generated checked IR.",
+      "generated_arity_mismatch": "1_checker.pl:404. Same.",
+      "generated_undeclared_relation": "1_checker.pl:409. Same."
+    },
+    "unreachable_by_construction": {
+      "invalid_generated_polarity": "1_checker.pl:383. check_goal_transition/6 at :823 and :828 has no clause for a polarity that is neither positive nor negative, so resolved_rule_diagnostic/3 fails before the diagnostic can be returned.",
+      "invalid_generated_goal": "1_checker.pl:391. Same, for a body item that is not checked_goal/2.",
+      "invalid_generated_call": "1_checker.pl:413. goal_variables/2 at :1058 requires call(_, Arguments), so the same failure precedes the diagnostic."
+    }
+  },
+  "skip": [],
+  "skip_reason": "cases the Rust checker cannot reproduce yet; every name here is a file in this directory",
+  "numbers": {
+    "calls_dumped": 172,
+    "byte_distinct": 75,
+    "committed": 19,
+    "committed_bytes": 4989586,
+    "own_unit_cases_checked_but_not_committed": 28
+  }
+}

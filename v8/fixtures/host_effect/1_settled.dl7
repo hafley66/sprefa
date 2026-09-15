@@ -1,0 +1,20 @@
+; A settled row feeds the reader like any fact; the miss stays for the other url.
+(: fetch_json
+   (* (: url text)
+      (: body text)))
+
+(: Watch (* (: url text)))
+
+(Watch "https://a")
+
+(Watch "https://b")
+
+(fetch_json "https://a" "hello")
+
+(: Body
+   (* (: url text)
+      (: body text)))
+
+(<- (Body ?Url ?Body)
+    (Watch ?Url)
+    (fetch_json ?Url ?Body))

@@ -1,0 +1,1190 @@
+[
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                0
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "UserRecord"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                4
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "TeamRecord"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                7
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "formatUser"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                8
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "UserRecord"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                10
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "formatTeam"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                11
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "TeamRecord"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                12
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "reportTeam"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                13
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "TeamRecord"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                15
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "UserRecord"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                20
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "TeamRecord"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                23
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "format_user"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "extract"
+                      },
+                      [
+                        {
+                          "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                        },
+                        {
+                          "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                        },
+                        {
+                          "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                        },
+                        {
+                          "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                        },
+                        {
+                          "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                        }
+                      ]
+                    ],
+                    "f": "tsi"
+                  }
+                ],
+                "f": "module"
+              },
+              {
+                "a": "tsi.name"
+              }
+            ],
+            "f": "tsi_relation"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "extract"
+                        },
+                        [
+                          {
+                            "a": "blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611c6c515a39a5335595b17"
+                          },
+                          {
+                            "a": "blake3:a8bcd7bb980073c6340e1ee6f396ea36e0a4e061826580b33da230f91bdcac5d"
+                          },
+                          {
+                            "a": "blake3:41d0babfbc7a35eb132b95a2c2e529880c0d3f4080d2d29934b8a8f24b4700d2"
+                          },
+                          {
+                            "a": "blake3:8cde85a31cde14d87418c0f15a13245aba31e0bb9e55648987850a148b0a37fa"
+                          },
+                          {
+                            "a": "blake3:47689ed510869321690b42fc0006db8f43503568ecc3c514847ceec5c9a38d2e"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                26
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "s": "format_team"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  }
+]

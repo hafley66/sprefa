@@ -1,0 +1,1 @@
+{"expected":{"compiler_rows":[],"diagnostics":[{"args":[{"a":"check"},{"a":"none"},{"args":[{"a":"accounts"}],"f":"unresolved_name"}],"f":"diagnostic"}],"runtime_program":[]},"input":{"arguments":["<root>/test/fixtures/modules/2_plus_consumer.dl7"]}}

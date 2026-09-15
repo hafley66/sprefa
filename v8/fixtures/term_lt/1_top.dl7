@@ -1,0 +1,20 @@
+(: Score (* (: player text) (: points int)))
+
+(Score "ann" 4)
+
+(Score "bob" 10)
+
+(Score "cy" 7)
+
+(: Beaten (* (: player text)))
+
+(<- (Beaten ?Player)
+    (Score ?Player ?Points)
+    (Score ?Other ?More)
+    (term_lt ?Points ?More))
+
+(: Top (* (: player text)))
+
+(<- (Top ?Player)
+    (Score ?Player ?Points)
+    (not (Beaten ?Player)))

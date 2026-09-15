@@ -1,0 +1,1 @@
+{"expected": {"diagnostics": [ {"args": [ {"a":"reader"},  {"a":"cases/01_stray_close_paren.dl7"},  {"args": [ {"a":"cases/01_stray_close_paren.dl7"}, 2 ],"f":"reader_node"},  {"a":"unexpected_closing_parenthesis"},  {"args": [5, 2, 1 ],"f":"position"} ],"f":"diagnostic"} ],"forms": [],"source_rows": []},"input":"(ok)\n)\n","path":"cases/01_stray_close_paren.dl7"}

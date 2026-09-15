@@ -1,0 +1,17 @@
+(: Input (* (: value int)))
+
+(Input 7)
+
+(Input 35)
+
+(Input 100)
+
+(: Lowest (* (: min int)))
+
+(<- (Lowest (min ?Value))
+    (Input ?Value))
+
+(: Highest (* (: max int)))
+
+(<- (Highest (max ?Value))
+    (Input ?Value))

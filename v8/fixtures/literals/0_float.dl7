@@ -1,0 +1,10 @@
+(: Reading (* (: value float)))
+
+(Reading 1.5)
+
+(Reading -0.25)
+
+(: Copied (* (: value float)))
+
+(<- (Copied ?Value)
+    (Reading ?Value))

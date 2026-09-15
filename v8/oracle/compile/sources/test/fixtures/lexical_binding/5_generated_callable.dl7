@@ -1,0 +1,16 @@
+(: User
+   (* (: id int)
+      (: name text)))
+
+(: UserContract
+   (* (: id int)
+      (: name text)))
+
+(: HistoryOptions
+   (* (: mode "copy")
+      (: contract UserContract)))
+
+(: UserHistory (HistoryV1 User HistoryOptions))
+
+(: Holder
+   (* (: field (Option UserHistory))))

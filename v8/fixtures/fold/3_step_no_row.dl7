@@ -1,0 +1,19 @@
+(: Input (* (: value int)))
+
+(Input 7)
+
+(Input 35)
+
+; The step holds for one pair only; the second value has no row and the fold
+; stops with fold_step_no_row.
+(: Narrow
+   (* (: accumulator int)
+      (: value int)
+      (: next int)))
+
+(Narrow 0 7 7)
+
+(: Total (* (: total int)))
+
+(<- (Total (fold Narrow 0 ?Value))
+    (Input ?Value))

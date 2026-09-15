@@ -1,0 +1,16 @@
+(: Item (* (: value any)))
+
+(Item 3)
+
+(Item "apple")
+
+(Item true)
+
+(Item 1.5)
+
+(: Below (* (: left any) (: right any)))
+
+(<- (Below ?Left ?Right)
+    (Item ?Left)
+    (Item ?Right)
+    (term_lt ?Left ?Right))

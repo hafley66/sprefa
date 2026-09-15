@@ -1,0 +1,23 @@
+{"record":"protocol","version":1}
+{"record":"run","run":1,"mode":"semantic","tool":"tsc","version":"5.4.0","scope":["blake3:user"]}
+{"record":"fact","fact":10,"relation":"tsi.type","args":[{"id":0}]}
+{"record":"fact","fact":11,"relation":"tsi.product","args":[{"id":0}]}
+{"record":"fact","fact":12,"relation":"tsi.type","args":[{"id":1}]}
+{"record":"fact","fact":13,"relation":"tsi.primitive","args":[{"id":1},{"atom":"string"}]}
+{"record":"fact","fact":14,"relation":"tsi.edge","args":[{"id":4},{"id":0},{"text":"id"},{"id":1},{"int":0}]}
+{"record":"fact","fact":15,"relation":"tsi.edge","args":[{"id":5},{"id":0},{"text":"name"},{"id":1},{"int":1}]}
+{"record":"fact","fact":16,"relation":"tsi.origin","args":[{"id":0},{"atom":"typescript"},{"span":["blake3:user",10,14]}]}
+{"record":"witness","fact":10,"run":1,"method":"checker_walk"}
+{"record":"witness","fact":11,"run":1,"method":"checker_walk"}
+{"record":"witness","fact":12,"run":1,"method":"checker_walk"}
+{"record":"witness","fact":13,"run":1,"method":"checker_walk"}
+{"record":"witness","fact":14,"run":1,"method":"checker_walk"}
+{"record":"witness","fact":15,"run":1,"method":"checker_walk"}
+{"record":"witness","fact":16,"run":1,"method":"checker_walk"}
+{"record":"coverage","run":1,"relation":"tsi.type","coverage":"complete"}
+{"record":"coverage","run":1,"relation":"tsi.product","coverage":"complete"}
+{"record":"coverage","run":1,"relation":"tsi.primitive","coverage":"complete"}
+{"record":"coverage","run":1,"relation":"tsi.edge","coverage":"complete"}
+{"record":"coverage","run":1,"relation":"tsi.origin","coverage":"complete"}
+{"record":"coverage","run":1,"relation":"tsi.conforms","coverage":"partial"}
+{"record":"diagnostic","run":1,"relation":"tsi.conforms","detail":"no implements clause in scope"}

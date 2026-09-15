@@ -1,0 +1,1 @@
+{"expected":{"compiler_rows":[],"diagnostics":[{"args":[{"a":"check"},{"args":[{"a":"<root>/test/fixtures/lexical_binding/2_missing_name.dl7"},5],"f":"reader_node"},{"args":[{"a":"field"}],"f":"unresolved_name"}],"f":"diagnostic"}],"runtime_program":[]},"input":{"arguments":["<root>/test/fixtures/lexical_binding/2_missing_name.dl7"]}}

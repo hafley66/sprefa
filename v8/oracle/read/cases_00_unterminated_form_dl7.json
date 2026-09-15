@@ -1,0 +1,1 @@
+{"expected": {"diagnostics": [ {"args": [ {"a":"reader"},  {"a":"cases/00_unterminated_form.dl7"},  {"args": [ {"a":"cases/00_unterminated_form.dl7"}, 0 ],"f":"reader_node"},  {"a":"unterminated_form"},  {"args": [5, 2, 1 ],"f":"position"} ],"f":"diagnostic"} ],"forms": [],"source_rows": []},"input":"(a b\n","path":"cases/00_unterminated_form.dl7"}

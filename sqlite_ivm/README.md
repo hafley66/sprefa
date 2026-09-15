@@ -5,7 +5,7 @@ extension. Ordinary source `INSERT`, `UPDATE`, and `DELETE` statements maintain
 persistent results inside the source transaction. Rollback and savepoints cover
 source rows, intermediate arrangements, and results together.
 
-Version 0.2.0 is a prerelease with the explicitly bounded SQL contract below.
+Version 0.3.0 is a prerelease with the explicitly bounded SQL contract below.
 MIT OR Apache-2.0 licensed. The package is independent of the surrounding compiler.
 
 ## Use
@@ -40,18 +40,18 @@ The general virtual-table reader currently scans stored output rows.
 | Operator | Implemented contract |
 |---|---|
 | Projection and selection | Arithmetic and bit operations, comparisons, CASE, CAST, LIKE/GLOB, NULL tests, literal IN/BETWEEN, deterministic SQLite and registered scalar functions |
-| Joins | INNER, LEFT, RIGHT, FULL, CROSS; ON, USING, NATURAL; composite keys, residual predicates, non-equality conditions, self joins, parenthesized join trees |
+| Joins | INNER, LEFT, RIGHT, FULL, CROSS; ON, USING, NATURAL; comma joins and `JOIN` without ON take their equality keys from WHERE conjuncts; composite keys, residual predicates, non-equality conditions, self joins, parenthesized join trees |
 | Existence | Correlated EXISTS / NOT EXISTS under AND, including filtered and joined subqueries |
 | Aggregation | Composite groups and ordinals; COUNT, SUM, AVG, MIN, MAX; DISTINCT arguments, FILTER, aggregate expressions, HAVING, empty global aggregates |
 | Sets | DISTINCT, UNION ALL, UNION, EXCEPT, INTERSECT |
 | Top-k | Literal LIMIT/OFFSET, output aliases/ordinals, NULLS FIRST/LAST; composition with grouping, DISTINCT, compounds and windows |
 | Windows | Multiple partitioned windows; ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST, NTILE, LAG/LEAD, FIRST/LAST/NTH_VALUE, aggregate windows, frames and named windows |
 | Composition | FROM subqueries, CTEs with explicit column names, shared CTE consumers |
-| Recursion | Unary reachability: anchor UNION distinct one recursive equijoin edge step; cyclic insertion/deletion, NULL endpoints and matching key collations |
+| Recursion | Positive `WITH RECURSIVE` strata: n-ary heads, several anchors, several recursive UNION distinct terms, inner and comma joins over sources, CTEs and subqueries, WHERE, DISTINCT, expression heads; consumers (aggregate, DISTINCT, EXISTS, NOT EXISTS, later recursive CTEs) are later strata; delete-and-rederive with semi-naive rowid-range rounds; cyclic insertion/deletion, NULL members and matching key collations |
 | Values and collations | NULL, conforming INTEGER/REAL/TEXT/BLOB values; BINARY, NOCASE, RTRIM; adjacent IEEE floating values, infinities and empty BLOBs survive trigger transport |
 | Transaction effects | Source triggers, generated columns, foreign-key cascades, savepoint rollback, writer contention, reader snapshots and maintenance failure rollback |
 
-Acceptance includes the original 20 circuit families and 44 additional query
+Acceptance includes the original 20 circuit families and 51 additional query
 combinations, each with 174 source states. The native extension and independent
 DD graphs are compared with a separate SQLite connection that has no extension.
 Ordinary PostgreSQL queries provide another comparison. Exact results and the
@@ -71,9 +71,18 @@ numeric equality; stored row identities preserve types and floating-point bits.
 
 The accepted grammar has explicit boundaries. Aggregate/window composition and
 expressions wrapping window calls require a FROM subquery. Window inheritance,
-scalar subqueries, IN subqueries, aggregate EXISTS, EXISTS under OR, arbitrary
-recursive programs, custom collations, custom aggregates, bind parameters and
-queries without FROM are unsupported. DD comparison uses signed row deltas and
+scalar subqueries, IN subqueries, aggregate EXISTS, EXISTS under OR, custom
+collations, custom aggregates, bind parameters and queries without FROM are
+unsupported. Inside a recursive step, aggregation, EXISTS, NOT EXISTS or IN over
+the step's own relation is rejected as `recursive step may not aggregate or
+negate its own relation`; `UNION ALL` recursion is rejected as `recursive UNION
+ALL unsupported`; outer joins, USING, ORDER BY and LIMIT inside the recursive
+CTE are rejected. SQLite 3.53 itself rejects mutual recursion between two CTEs
+(`circular reference`) and a second reference to the recursive table in one
+step (`multiple references to recursive table`), so "mutual" recursion is
+spelled as one CTE with a discriminator column, for example `parity(node,odd)`.
+A recursive CTE may consume an earlier recursive CTE; a fixpoint nested inside
+another step is not spellable in SQLite and therefore not built. DD comparison uses signed row deltas and
 sequential u64 epochs; the SQLite API exposes transactions and relational bags.
 It does not expose arbitrary DD timestamps, frontiers, negative source bags,
 custom Rust operators or durable DD execution.
@@ -108,23 +117,38 @@ it after managed source DDL; reconnect does not populate results again.
 Source hooks send OLD/NEW row images to `xUpdate`. Projection and filtering emit
 signed rows. Joins look up matching keys. Sets maintain support counts. Aggregates
 and windows emit the difference within the affected group. Top-k reads an indexed
-candidate prefix. Recursive deletion removes and rederives the affected reachable
-region, then emits its net difference. No mutation rebuilds the entire view from
-its defining SELECT. Large affected groups or graph regions can still require
-large work.
+candidate prefix. A recursive CTE keeps one member table per fixpoint; insertion
+runs semi-naive rounds whose delta is a rowid range of that table, deletion
+over-deletes the derivable region into a work table, rederives from the remaining
+facts, then emits the net difference. Every round is one statement per recursive
+term, so statement counts follow the changed rows and rounds, never the member
+size. No mutation rebuilds the entire view from its defining SELECT. Large
+affected groups or graph regions can still require large work.
 
 `xRename` preserves state and index B-trees; `xDestroy` validates the exact owned
 DDL before cleanup. Shared `__ivm_*` catalogs remain after the last view is dropped.
-Storage format 2 records the new operator layouts and typed row identities.
-Databases containing format 1 views require the matching 0.1.x extension; 0.2.0
-rejects incompatible state before maintenance. Automatic format migration is
-unavailable. The original ordinary-view prototypes are not migrated.
+Storage format 2 records the operator layouts and typed row identities; format 3
+adds the recursive member layout and is written only for views with a recursive
+CTE, so the 0.2.x extension still maintains non-recursive views created here.
+Recursive views created by 0.2.x keep format 2 and are rejected at first
+maintenance with `recursive views from storage format 2 must be dropped and
+re-created`. Databases containing format 1 views require the matching 0.1.x
+extension. Automatic format migration is unavailable. The original ordinary-view
+prototypes are not migrated.
 
 Enable `SQLITE_DBCONFIG_DEFENSIVE` to prevent direct shadow-table writes. Reserved
 hidden columns (`__ivm_source`, `__ivm_adding`, `__ivm_row`) and catalogs are internal
 maintenance interfaces, not a security boundary. Direct internal commands and
 catalog edits are outside the supported API. No persistent triggers are installed
 on shadow tables, which is required for reopening on SQLite 3.53.2.
+
+Maintenance emits `tracing` spans through `hafley-observe`, installed once on the
+first `register` (extension load included) unless the host process already owns a
+global subscriber. The default filter is `warn`, so nothing prints until
+`RUST_LOG=sqlite_ivm=debug` (or another `RUST_LOG` filter) asks for it;
+`HAFLEY_LOG_FORMAT=json` switches the format. Spans are `maintain` (view, source
+table, sign), `fixpoint` (view, node, rows in, rounds) and `round` (phase, index,
+rows written). Fields carry names and integers, never row contents.
 
 ## Build, test, package
 
@@ -197,7 +221,7 @@ just ivm-shootout
 
 Builds and runs semantic and performance comparisons across the native extension,
 DD, Prolog, native PostgreSQL/pg_ivm, SQLite queries, and PGlite. The report includes
-13 DD-specific operator/recursion/time contracts, 20 shared circuits, and 44 typed
+13 DD-specific operator/recursion/time contracts, 20 shared circuits, and 51 typed
 query compositions. Unsupported definitions and result mismatches remain visible.
 See [the command contract](bench/54_shootout.md) for dependencies, profiles,
 artifacts and exit codes.

@@ -74,7 +74,7 @@ fi
 mkdir -p "$WORK/v6-dbs" "$WORK/v6-perf"
 
 V5_BIN="${DL_V5_BIN:-$REPO_ROOT/target/release/dl}"
-EXTRACT_BIN="${DL_EXTRACT_BIN:-$REPO_ROOT/v6/sprefa-extract/target/release/extract}"
+EXTRACT_BIN="${DL_EXTRACT_BIN:-$REPO_ROOT/hafley-rs/crates/sprefa-extract/target/release/extract}"
 SERVE_MAIN="$TSV2_DIR/serve/main.ts"
 V6_PROGRAM="$WORK/v6-crawl.dl6"
 V5_PROGRAM="$WORK/v5-crawl.dl"
@@ -105,7 +105,7 @@ ensure_v5_bin() {
 
 ensure_v6_runtime() {
   if [ ! -x "$EXTRACT_BIN" ]; then
-    (cd "$REPO_ROOT/v6/sprefa-extract" && cargo build --release --features cli --bin extract) \
+    (cd "$REPO_ROOT/hafley-rs/crates/sprefa-extract" && cargo build --release --features cli --bin extract) \
       >"$WORK/build-extract.log" 2>&1 \
       || fail "v6 extractor build failed: $(tail -5 "$WORK/build-extract.log")"
   fi

@@ -54,8 +54,8 @@ compiler-flamechart fixture:
 # Extract one source file, run a DL7 analysis over its TSI rows, and print the
 # selected program relation as one JSON array per tuple.
 query program source relation:
-    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
-    swipl -q -s "{{ v7 }}/src/4_tool/0_source_query_mainer.pl" -- "{{ program }}" "{{ source }}" "{{ relation }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract"
+    cargo build --manifest-path "{{ v7 }}/../hafley-rs/crates/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/src/4_tool/0_source_query_mainer.pl" -- "{{ program }}" "{{ source }}" "{{ relation }}" --extract "{{ v7 }}/../hafley-rs/crates/sprefa-extract/target/debug/extract"
 
 # Compile DL7 against an existing SQLite fact layout. Default: emit SQL.
 # Pass --query to read results or --install NAME to create a maintained result.
@@ -88,28 +88,28 @@ dl6-demo:
 # Emit the source-visible positive-rule slice as the operator JSON consumed by
 # dd-runner's pure RAM kernel. The source supplies the hosted TSI relation set.
 dbsp-plan program source:
-    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
-    swipl -q -s "{{ v7 }}/src/4_tool/1_dbsp_plan_mainer.pl" -- "{{ program }}" "{{ source }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract"
+    cargo build --manifest-path "{{ v7 }}/../hafley-rs/crates/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/src/4_tool/1_dbsp_plan_mainer.pl" -- "{{ program }}" "{{ source }}" --extract "{{ v7 }}/../hafley-rs/crates/sprefa-extract/target/debug/extract"
 
 # Render authored DL7 products/sums as Rust and check one Soopy-owned region.
 dl7-rust-check program target region:
-    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
-    swipl -q -s "{{ v7 }}/src/4_tool/2_dl7_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract"
+    cargo build --manifest-path "{{ v7 }}/../hafley-rs/crates/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/src/4_tool/2_dl7_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../hafley-rs/crates/sprefa-extract/target/debug/extract"
 
 # Commit the same generated body through Soopy's content-guarded stage.
 dl7-rust-apply program target region:
-    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
-    swipl -q -s "{{ v7 }}/src/4_tool/2_dl7_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract" --apply
+    cargo build --manifest-path "{{ v7 }}/../hafley-rs/crates/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/src/4_tool/2_dl7_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../hafley-rs/crates/sprefa-extract/target/debug/extract" --apply
 
 # Render one checked DL7 program as native dd-runner constructors and check a
 # Soopy-owned Rust region.
 dbsp-rust-check program target region:
-    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
-    swipl -q -s "{{ v7 }}/src/4_tool/3_dbsp_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract"
+    cargo build --manifest-path "{{ v7 }}/../hafley-rs/crates/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/src/4_tool/3_dbsp_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../hafley-rs/crates/sprefa-extract/target/debug/extract"
 
 dbsp-rust-apply program target region:
-    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
-    swipl -q -s "{{ v7 }}/src/4_tool/3_dbsp_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract" --apply
+    cargo build --manifest-path "{{ v7 }}/../hafley-rs/crates/sprefa-extract/Cargo.toml" --bin extract --features cli
+    swipl -q -s "{{ v7 }}/src/4_tool/3_dbsp_rust_region_mainer.pl" -- "{{ program }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../hafley-rs/crates/sprefa-extract/target/debug/extract" --apply
 
 # Validate exact closure counts on tiny chain and ring graphs.
 runtime-shootout-smoke:
@@ -122,23 +122,23 @@ runtime-shootout n="48":
 # Extract one Rust file's type graph, render compilable DL7, and report whether
 # the named generated region differs. Exit 1 means drift.
 rust-types-check rust target region="rust-types":
-    swipl -q -s "{{ v7 }}/src/3_emit/3_rust_type_region_mainer.pl" -- "{{ rust }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract"
+    swipl -q -s "{{ v7 }}/src/3_emit/3_rust_type_region_mainer.pl" -- "{{ rust }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../hafley-rs/crates/sprefa-extract/target/debug/extract"
 
 # Run the same pipeline and commit only the generated marker body through
 # Soopy's expected-content staging boundary.
 rust-types-apply rust target region="rust-types":
-    swipl -q -s "{{ v7 }}/src/3_emit/3_rust_type_region_mainer.pl" -- "{{ rust }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../v6/sprefa-extract/target/debug/extract" --apply
+    swipl -q -s "{{ v7 }}/src/3_emit/3_rust_type_region_mainer.pl" -- "{{ rust }}" "{{ target }}" "{{ region }}" --extract "{{ v7 }}/../hafley-rs/crates/sprefa-extract/target/debug/extract" --apply
 
 # Build the host command and prove extraction, rendering, Soopy replacement,
 # unchanged detection, outside-byte preservation, and final DL7 compilation.
 rust-types-e2e:
-    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
+    cargo build --manifest-path "{{ v7 }}/../hafley-rs/crates/sprefa-extract/Cargo.toml" --bin extract --features cli
     swipl -q -s "{{ v7 }}/test/7_rust_type_region.e2e.pl"
 
 # Build both resident processes and prove a checkout snapshot reaches a DL7
 # result relation through the signed watch wire.
 watch-e2e:
-    cargo build --manifest-path "{{ v7 }}/../v6/sprefa-extract/Cargo.toml" --bin extract --features cli
+    cargo build --manifest-path "{{ v7 }}/../hafley-rs/crates/sprefa-extract/Cargo.toml" --bin extract --features cli
     cargo build --manifest-path "{{ v7 }}/../v6/dd-runner/Cargo.toml"
     cd "{{ v7 }}/.." && swipl -q -s "{{ v7 }}/test/12_watch_pipeline.e2e.pl" -g '(run_tests -> halt(0); halt(1))'
 

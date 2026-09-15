@@ -1,0 +1,1 @@
+{"expected": {"environment": {"args": [ [],  [],  [] ],"f":"expression_environment"}},"input": {"call":"tsi_expression_environment","importers": [ {"args": [ {"args": [ {"a":"/CASEROOT/v7/applications/dl6/0_catalog.dl7"} ],"f":"file"} ],"f":"module"} ],"rows": []}}

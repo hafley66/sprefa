@@ -1,0 +1,8 @@
+(: KeyOptions (*))
+(: Name (Option text))
+(: Holder
+   (* (: direct Name)
+      (: alias_a Name)
+      (: alias_b alias_a)
+      (: chain alias_b)
+      (: (Key "compound" KeyOptions) alias_b)))

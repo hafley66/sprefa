@@ -1,0 +1,18 @@
+; No relation is served, so no effect row is written and the reader is empty.
+(: fetch_json
+   (* (: url text)
+      (: body text)))
+
+(: Watch (* (: url text)))
+
+(Watch "https://a")
+
+(Watch "https://b")
+
+(: Body
+   (* (: url text)
+      (: body text)))
+
+(<- (Body ?Url ?Body)
+    (Watch ?Url)
+    (fetch_json ?Url ?Body))

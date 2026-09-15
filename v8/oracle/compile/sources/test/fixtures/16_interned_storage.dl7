@@ -1,0 +1,94 @@
+; Product fixture: SourceRevision identity follows source coordinates and
+; content. RefTransition carries moving commit membership separately, so an
+; unchanged file retains its extraction identity across a ref advance.
+(: Repository
+   (* (: url text)))
+
+(: WatchedRef
+   (* (: repository Repository)
+      (: name text)))
+
+(: SourceCoordinate
+   (* (: repository Repository)
+      (: watched_ref WatchedRef)
+      (: path text)))
+
+(: SourceRevision
+   (* (: coordinate SourceCoordinate)
+      (: content_hash text)))
+
+(: RefTransition
+   (* (: watched_ref WatchedRef)
+      (: old_sha text)
+      (: new_sha text)))
+
+(: Span
+   (* (: source SourceRevision)
+      (: start int)
+      (: end int)))
+
+(: Node
+   (* (: primary Span)
+      (: secondary Span)
+      (: kind text)))
+
+; Unrelated points into the selected closure but is not reachable from a root.
+(: Unrelated
+   (* (: span Span)
+      (: note text)))
+
+; Sum fixture verifies that reachable variants use the same ordered field and
+; dependency protocol as products.
+(: SpanChoice
+   (+ (: first Span)
+      (: second Span)))
+
+(: ChoiceRoot
+   (* (: choice SpanChoice)))
+
+; Application-authored capability and policy products. Literal capabilities
+; make the selection protocol explicit without sharing source-module callables.
+(: SharedTextDictionary (*))
+
+(: NodeStorageRoot
+   (* (: capability "storage-root-v1")
+      (: target Node)))
+
+(: RefTransitionStorageRoot
+   (* (: capability "storage-root-v1")
+      (: target RefTransition)))
+
+(: ChoiceStorageRoot
+   (* (: capability "storage-root-v1")
+      (: target ChoiceRoot)))
+
+(: TextDictionarySelection
+   (* (: capability "scalar-dictionary-v1")
+      (: scalar text)
+      (: dictionary SharedTextDictionary)))
+
+(: PlainNodeKind
+   (* (: capability "plain-field-v1")
+      (: owner Node)
+      (: position 2)))
+
+(: InternedPolicy
+   (* (: capability "interned-storage-policy-v1")
+      (: root NodeStorageRoot)
+      (: dictionary TextDictionarySelection)))
+
+(: PlainKindPolicy
+   (* (: capability "interned-storage-policy-v1")
+      (: root NodeStorageRoot)
+      (: dictionary TextDictionarySelection)
+      (: storage_plain PlainNodeKind)))
+
+(: RefTransitionPolicy
+   (* (: capability "interned-storage-policy-v1")
+      (: root RefTransitionStorageRoot)
+      (: dictionary TextDictionarySelection)))
+
+(: SumPolicy
+   (* (: capability "interned-storage-policy-v1")
+      (: root ChoiceStorageRoot)
+      (: dictionary TextDictionarySelection)))

@@ -1,0 +1,17 @@
+; The partial from fixture 6 under a compound label. Both spellings share every
+; Curry row; only the final edge rule carries the derived label and its goals.
+(: KeyOptions (*))
+
+(: User (*))
+(: Order (*))
+(: PairResult (*))
+
+(: Pair
+   (* (left: type)
+      (right: type)
+      (return: type)))
+
+(Pair User Order PairResult)
+
+(: Ledger
+   (* (: (Key "pair" KeyOptions) (Pair User))))

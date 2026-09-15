@@ -1,0 +1,11 @@
+{
+  "frozen": "one swipl run per v7/test/fixtures/*.dl7 captures every lower_datalog/5 and lower_datalog_deferred/5 call; the committed set is the two macrotime lowerings once plus the first deferred lowering of each fixture's own unit",
+  "freeze": "cd ~/projects/sprefa && V7_DIR=v7 bash <worktree>/v8/oracle/lower/freeze.sh",
+  "unfrozen": {
+    "prelude_lowerings": "22 calls, 39.7 MB; the prelude unit lowers near-identically for every fixture",
+    "strict_relowerings": "17 calls, 5.9 MB; the compiler re-lowers each source unit strictly after the fixpoint freezes generated declarations",
+    "fixpoint_rounds": "5_curry alone lowers its own unit 7 times across compiler rounds; only the first is committed"
+  },
+  "skip": [],
+  "skip_reason": "cases the Rust lowerer cannot reproduce yet; every name here is a file in this directory"
+}

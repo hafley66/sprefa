@@ -1,0 +1,1 @@
+{"expected": {"diagnostics": [],"forms": [],"source_rows": []},"input":"; only a comment\n\n; and another\n","path":"cases/22_comments_only.dl7"}

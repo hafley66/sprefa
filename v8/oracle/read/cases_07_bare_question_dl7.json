@@ -1,0 +1,1 @@
+{"expected": {"diagnostics": [ {"args": [ {"a":"reader"},  {"a":"cases/07_bare_question.dl7"},  {"args": [ {"a":"cases/07_bare_question.dl7"}, 2 ],"f":"reader_node"},  {"a":"expected_variable_name"},  {"args": [3, 1, 4 ],"f":"position"} ],"f":"diagnostic"} ],"forms": [],"source_rows": []},"input":"(x ?)\n","path":"cases/07_bare_question.dl7"}

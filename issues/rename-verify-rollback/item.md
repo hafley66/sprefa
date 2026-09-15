@@ -51,3 +51,14 @@ exists in the move path; this is wiring rather than new mechanism.
 The two verbs sharing one flag also means one thing to learn. Today a caller who
 knows `move --verify` reasonably assumes `rename --verify`, tries it, and gets a
 clap error.
+
+## Adjacent ask (boop report 8, 2026-09-11)
+
+The same migration ran sequential single `--commit` renames after a batch dry
+run stopped: two applied, the third stopped at exit 6, and the tree held a
+partially migrated module set. `--list --commit` is all-or-zero (every row is
+planned before any stage commits; pinned by
+`tests/5_rename_rust.rs:list_commit_is_atomic_across_rows`), but a caller doing
+one-rename-at-a-time has no machine-readable rollback plan. A `--verify`
+rollback or an emitted undo plan answers it; tracked here rather than as a
+second issue.

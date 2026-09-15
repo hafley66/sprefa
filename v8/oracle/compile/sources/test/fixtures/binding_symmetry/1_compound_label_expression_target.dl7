@@ -1,0 +1,6 @@
+; Same target, compound label. Before the compound branch reached
+; lower_expression this was diagnostic(lower, _, unsupported_bind_target).
+(: KeyOptions (*))
+
+(: Ledger
+   (* (: (Key "direct" KeyOptions) (Option text))))
