@@ -174,6 +174,30 @@ list` shows your own lane name.
   fixtures/rulings/plans/ARCH, lab files are deleted, the plan doc records the
   last-copy commit hash.
 
+## Docs law (user-set 2026-09-15, every doc lane, every page)
+
+- **Order is ontological, then topological.** A page's sections nest and follow
+  each other the way the things they describe nest and depend on each other.
+  A reader meets a name only after the page has defined it. Sibling sections
+  are peers of the same kind; a subsection is a part of its parent.
+- **No stray numbers.** A number appears only in a table, a step trace, or a
+  command's pasted output, and only when it changes what the reader does.
+  Never in a sentence.
+- **Every claim carries a `path:line`, a fixture, or a command that prints it.**
+  A construct with no fixture is written "no fixture; not shown" with the
+  source line. Where code and a plan disagree, the code wins and the page says
+  so in one line with both paths.
+- **Textbook register.** Short sentences, one idea each, present tense, no
+  chat, no "we", no "let's", no narration of the writer's process, no hedging,
+  no praise. The reader is a person with a coffee, reading for pleasure.
+  Intuition first (one worked example with real values), then the rule, then
+  the receipts table.
+- **Docs are generated where they can be.** Fixture blocks via mdbook
+  `{{#include}}`, command output via `mdbook-cmdrun`, doc comments via
+  `sprefa-extract` `DocFact` rows. A hand-copied block is a defect.
+- **Two files for one fact is a defect.** The source of a sentence is the code
+  or its `///`; the page cites it.
+
 ## Style laws
 
 - **Comment budget.** Comments state only constraints the code cannot show. No
