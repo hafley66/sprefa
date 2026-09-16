@@ -77,6 +77,7 @@ Arguments:
 Options:
       --project <PROJECT>  Project root; `compile_dl7_project/5` instead of `compile_dl7/4`
       --tsi <TSI>          A TSI JSONL stream to load before lowering
+      --openapi <OPENAPI>  An OpenAPI 3.x JSON document to load as types and routes before lowering
       --trace              Print every wave and round to stderr
   -h, --help               Print help
 ```
