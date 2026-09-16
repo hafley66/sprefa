@@ -1,0 +1,14 @@
+; The loaded `Todo` carries no source name, so the probe reaches it through the
+; route that returns it.
+
+(: TodoShape
+   (* (: id string)
+      (: title string)))
+
+(: route_returns_todo
+   (* (: path text)
+      (: method any)))
+
+(<- (route_returns_todo ?Path ?Method)
+    (openapi.route ?Path ?Method ?OperationId ?RequestType ?ResponseType)
+    (Conforms ?ResponseType TodoShape ?Proof))

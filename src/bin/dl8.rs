@@ -58,6 +58,9 @@ enum Command {
         /// A TSI JSONL stream to load before lowering.
         #[arg(long)]
         tsi: Vec<PathBuf>,
+        /// An OpenAPI 3.x JSON document to load as types and routes before lowering.
+        #[arg(long)]
+        openapi: Vec<PathBuf>,
         /// Print every wave and round to stderr.
         #[arg(long)]
         trace: bool,
@@ -146,8 +149,9 @@ fn main() -> ExitCode {
             file,
             project,
             tsi,
+            openapi,
             trace,
-        } => compile_cli(&file, project.as_deref(), &tsi, trace),
+        } => compile_cli(&file, project.as_deref(), &tsi, &openapi, trace),
         Command::Emit { target, program } => emit_cli(target, &program),
         Command::Eval {
             program,
@@ -435,6 +439,7 @@ fn compile_cli(
     files: &[PathBuf],
     project: Option<&std::path::Path>,
     streams: &[PathBuf],
+    documents: &[PathBuf],
     trace: bool,
 ) -> ExitCode {
     let mut u = Universe::new();
@@ -445,8 +450,11 @@ fn compile_cli(
     };
     let paths: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
     let streams: Vec<&std::path::Path> = streams.iter().map(|p| p.as_path()).collect();
+    let documents: Vec<&std::path::Path> = documents.iter().map(|p| p.as_path()).collect();
     let compiled = match (project, paths.as_slice()) {
-        (None, [one]) if streams.is_empty() => dl8::compile(&mut u, one, &mut fx),
+        (None, [one]) if streams.is_empty() && documents.is_empty() => {
+            dl8::compile(&mut u, one, &mut fx)
+        }
         (root, _) => {
             let root = root.map(|r| r.to_path_buf()).unwrap_or_else(|| {
                 paths[0]
@@ -454,7 +462,7 @@ fn compile_cli(
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(|| PathBuf::from("."))
             });
-            dl8::compile_project(&mut u, &root, &paths, &streams, &mut fx)
+            dl8::compile_project(&mut u, &root, &paths, &streams, &documents, &mut fx)
         }
     };
     let compiled = match compiled {

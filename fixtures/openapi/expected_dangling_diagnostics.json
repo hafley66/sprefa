@@ -1,0 +1,26 @@
+[
+  {
+    "args": [
+      {
+        "a": "openapi"
+      },
+      {
+        "args": [
+          {
+            "a": "fixtures/openapi/dangling.json"
+          }
+        ],
+        "f": "document"
+      },
+      {
+        "args": [
+          {
+            "s": "#/components/schemas/User"
+          }
+        ],
+        "f": "openapi_unresolved_ref"
+      }
+    ],
+    "f": "diagnostic"
+  }
+]

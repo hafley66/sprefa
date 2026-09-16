@@ -10,6 +10,8 @@ pub mod api;
 pub mod identity;
 #[path = "_8_json.rs"]
 pub mod json;
+#[path = "_9_openapi.rs"]
+pub mod openapi;
 #[path = "_1_paths.rs"]
 pub mod paths;
 #[path = "_2_project.rs"]
@@ -24,6 +26,7 @@ pub mod tsi;
 pub mod wire;
 
 pub use api::{Installed, Loaded};
+pub use openapi::{install_openapi_graph, openapi_expression_environment, openapi_rows};
 pub use project::install_project_graph;
 pub use source::{install_source_fact_graph, load_source_fact_texts};
 pub use tsi::{install_tsi_graph, tsi_expression_environment};

@@ -1,0 +1,9 @@
+; expect: partial_application_requires_more_arguments
+; A partial application as a field type: Pair takes two inputs, the field gives one.
+(: Pair
+   (* (left: type)
+      (right: type)
+      (return: type)))
+
+(: Holder
+   (* (partial : (Pair int))))

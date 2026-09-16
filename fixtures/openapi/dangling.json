@@ -1,0 +1,18 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Dangling", "version": "0.1.0" },
+  "paths": {
+    "/todos/{id}/owner": {
+      "get": {
+        "operationId": "Todo_query_owner",
+        "responses": {
+          "200": {
+            "description": "A schema this document never declares.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": { "schemas": {} }
+}
