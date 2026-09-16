@@ -38,8 +38,38 @@ pub fn resolve_target(
         ("target", 1) => Some(u.compound("ref", vec![args[0]])),
         ("const", 1) => Some(target),
         ("name", 2) => resolve_name(u, cx, args[0], args[1], visited),
+        ("path", 2) => resolve_path(u, cx, args[0], args[1], visited).ok(),
         _ => None,
     }
+}
+
+/// A path callable or target: every segment but the last must resolve to an
+/// owner, and that owner carries the next segment. The walk is `resolve_name`
+/// itself, so a module needs nothing of its own. `Err` is the segment that
+/// stopped the walk.
+fn resolve_path(
+    u: &mut Universe,
+    cx: &Cx,
+    owner: TermId,
+    segments: TermId,
+    visited: &mut Vec<(TermId, TermId)>,
+) -> Result<TermId, TermId> {
+    let Some(segments) = u.as_list(segments) else {
+        return Err(segments);
+    };
+    let Some((last, prefix)) = segments.split_last() else {
+        return Err(owner);
+    };
+    let mut current = owner;
+    for segment in prefix {
+        let resolved =
+            resolve_name(u, cx, current, *segment, visited).and_then(|r| u.unary(r, "ref"));
+        match resolved {
+            Some(owner) => current = owner,
+            None => return Err(*segment),
+        }
+    }
+    resolve_name(u, cx, current, *last, visited).ok_or(*last)
 }
 
 /// `:599`. The four alternatives are `(Forward -> Target ; Parent ; Kernel ;
@@ -110,14 +140,31 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
     else {
         return Err(Stop::Fail("name/2 callable expected"));
     };
-    if name != "name" || parts.len() != 2 {
-        return Err(Stop::Fail("name/2 callable expected"));
+    if parts.len() != 2 || (name != "name" && name != "path") {
+        return Err(Stop::Fail("name/2 or path/2 callable expected"));
     }
-    let (owner, label) = (parts[0], parts[1]);
     let mut visited = Vec::new();
-    let Some(target) = resolve_name(u, cx, owner, label, &mut visited) else {
-        let reason = u.compound("unresolved_name", vec![label]);
-        return Ok(CallResult::Error(reason));
+    // A path names its call by its last segment, and an unresolved one names
+    // the segment the walk stopped at.
+    let (label, walked) = if name == "path" {
+        let last = u
+            .as_list(parts[1])
+            .and_then(|segments| segments.last().copied())
+            .unwrap_or(parts[1]);
+        (last, resolve_path(u, cx, parts[0], parts[1], &mut visited))
+    } else {
+        let label = parts[1];
+        (
+            label,
+            resolve_name(u, cx, parts[0], label, &mut visited).ok_or(label),
+        )
+    };
+    let target = match walked {
+        Ok(target) => target,
+        Err(segment) => {
+            let reason = u.compound("unresolved_name", vec![segment]);
+            return Ok(CallResult::Error(reason));
+        }
     };
     if u.unary(target, "ref").is_none() {
         let reason = u.compound("not_relation", vec![label]);
@@ -214,7 +261,8 @@ pub fn resolve_edges(
         let resolved = match resolve_target(u, cx, target, &mut visited) {
             Some(resolved) => resolved,
             None => {
-                let reason = u.compound("unresolved_name", vec![name]);
+                let reported = path_failure(u, cx, target).unwrap_or(name);
+                let reason = u.compound("unresolved_name", vec![reported]);
                 diagnostics.push(u.compound("diagnostic", vec![check, node, reason]));
                 target
             }
@@ -223,6 +271,19 @@ pub fn resolve_edges(
         edges.push(u.compound(":", vec![owner, name, resolved, index]));
     }
     (edges, diagnostics)
+}
+
+/// The segment a path target stopped at, so an edge names it rather than the
+/// bind it failed under.
+fn path_failure(u: &mut Universe, cx: &Cx, target: TermId) -> Option<TermId> {
+    let (functor, args) = u
+        .functor(target)
+        .map(|(n, a)| (n.to_string(), a.to_vec()))?;
+    if functor != "path" || args.len() != 2 {
+        return None;
+    }
+    let mut visited = Vec::new();
+    resolve_path(u, cx, args[0], args[1], &mut visited).err()
 }
 
 /// `:727`.

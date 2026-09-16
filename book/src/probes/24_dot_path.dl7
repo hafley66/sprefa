@@ -1,0 +1,8 @@
+; expect: rc=0
+; compile: --project book/src/probes book/src/probes/http/0_fetch.dl7
+; The dotted atom http.fetch.get is the path form, and one : goal per segment
+; replaces the hand-written walk of probe 23.
+(: found
+   (* (: result type)))
+
+(<- (found http.fetch.get))

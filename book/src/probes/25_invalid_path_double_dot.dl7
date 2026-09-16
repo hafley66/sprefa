@@ -1,0 +1,4 @@
+; expect: invalid_path
+; Two dots in a row leave a segment with no name, so the reader stops.
+(: table
+   (* (: row a..b)))

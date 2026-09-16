@@ -8,7 +8,8 @@
 use super::api::{diagnostic, owner_index, parts, sorted, string_text, wire_id, Installed};
 use super::identity::{identity_map, Identities};
 use super::wire::{
-    accepted_rows, facts_of, relation_names, stream_owner, tsi_relation_arity, Fact, Owner,
+    accepted_rows, facts_of, namespace_edges, next_owner_ordinal, relation_names, stream_owner,
+    tsi_relation_arity, Fact, Owner,
 };
 use crate::_6_eval::term::{TermId, Universe};
 
@@ -49,6 +50,10 @@ pub fn install_tsi_graph(
     let (names, relations, seeds, relation_diagnostics) =
         comptime_relations(u, owner, &accepted, &identities);
     let mut edges = relation_edges(u, owner, &names);
+    let spelled: Vec<&str> = names.iter().map(String::as_str).collect();
+    let next = next_owner_ordinal(u, owner, &edges);
+    let spaces = namespace_edges(u, owner, &spelled, next);
+    edges.extend(spaces);
     edges.extend(type_edges);
     let node_origins = node_origins(u, &accepted, &identities);
 

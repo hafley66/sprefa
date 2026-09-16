@@ -2,8 +2,8 @@
 //! flow. The first error wins: forms and source rows are dropped.
 
 use super::tokens::{
-    bool_token, decoded_escape, float_token, integer_token, term_delimiter, valid_atom,
-    valid_identifier,
+    bool_token, decoded_escape, float_token, integer_token, path_segments, term_delimiter,
+    valid_atom, valid_identifier,
 };
 use crate::_6_eval::{TermId, Universe};
 
@@ -394,6 +394,12 @@ impl Reader<'_> {
         } else if bool_token(&token) {
             let b = self.u.boolean(token == "true");
             self.u.compound("literal", vec![b])
+        } else if token.contains('.') {
+            let Some(segments) = path_segments(&token) else {
+                return Err(self.named_error(node_id, "invalid_path", &token, start));
+            };
+            let segments: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
+            return self.read_path(node_id, start, end, &segments);
         } else if valid_atom(&token) {
             let name = self.u.atom(&token);
             self.u.compound("atom", vec![name])
@@ -402,5 +408,39 @@ impl Reader<'_> {
         };
         self.push_row(node_id, start, end);
         Ok(self.node(node_id, payload))
+    }
+
+    /// `a.b.c` is the form `(. a b c)`. The form and every one of its atoms
+    /// carry the span of the one token they were read from.
+    pub fn read_path(
+        &mut self,
+        node_id: TermId,
+        start: Pos,
+        end: Pos,
+        segments: &[String],
+    ) -> Result<TermId, TermId> {
+        let slot = self.rows.len();
+        self.rows.push(node_id);
+        let mut items = Vec::with_capacity(segments.len() + 1);
+        let head = self.path_atom(".", start, end);
+        items.push(head);
+        for segment in segments {
+            let item = self.path_atom(segment, start, end);
+            items.push(item);
+        }
+        self.rows[slot] = self.source_row(node_id, start, end);
+        let list = self.u.list(&items);
+        let payload = self.u.compound("form", vec![list]);
+        Ok(self.node(node_id, payload))
+    }
+
+    fn path_atom(&mut self, text: &str, start: Pos, end: Pos) -> TermId {
+        let index = self.index;
+        self.index += 1;
+        let id = self.node_id(index);
+        self.push_row(id, start, end);
+        let name = self.u.atom(text);
+        let payload = self.u.compound("atom", vec![name]);
+        self.node(id, payload)
     }
 }

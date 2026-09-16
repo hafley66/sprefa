@@ -47,6 +47,27 @@ pub fn variable(u: &Universe, payload: TermId) -> Option<(TermId, TermId)> {
     Some((args[0], args[1]))
 }
 
+/// The segment nodes of a path form `(. seg seg ...)`, the shape the reader
+/// gives a dotted token.
+pub fn path_form(u: &Universe, payload: TermId) -> Option<Vec<TermId>> {
+    let items = form(u, payload)?;
+    if items.len() < 3 || !head_is(u, &items, ".") {
+        return None;
+    }
+    Some(items[1..].to_vec())
+}
+
+/// The atom every path segment carries, or `None` when one segment is not an
+/// atom node.
+pub fn path_names(u: &Universe, segments: &[TermId]) -> Option<Vec<TermId>> {
+    let mut names = Vec::with_capacity(segments.len());
+    for segment in segments {
+        let parsed = node(u, *segment)?;
+        names.push(atom_name(u, parsed.payload)?);
+    }
+    Some(names)
+}
+
 /// The head of a form, when it is an atom node.
 pub fn form_head_atom(u: &Universe, items: &[TermId]) -> Option<TermId> {
     let head = node(u, *items.first()?)?;
@@ -129,7 +150,8 @@ pub fn rule_form(u: &Universe, term: TermId) -> Option<RuleForm> {
 }
 
 /// `:713`. A form target is an expression unless it is empty or headed by
-/// `*`, `+` or `Host`.
+/// `*`, `+`, `Host` or `.`. A path target names a type and resolves in the
+/// checker, so it takes no rule goals.
 pub fn expression_bind_target(u: &Universe, target: TermId) -> bool {
     let Some(n) = node(u, target) else {
         return false;
@@ -140,5 +162,8 @@ pub fn expression_bind_target(u: &Universe, target: TermId) -> bool {
     if items.is_empty() {
         return false;
     }
-    !(head_is(u, &items, "*") || head_is(u, &items, "+") || head_is(u, &items, "Host"))
+    !(head_is(u, &items, "*")
+        || head_is(u, &items, "+")
+        || head_is(u, &items, "Host")
+        || head_is(u, &items, "."))
 }

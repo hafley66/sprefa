@@ -74,6 +74,9 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
         let value = cx.compound("name", vec![owner, empty]);
         return Lowering::value(value);
     }
+    if let Some(segments) = forms::path_form(cx.u, parsed.payload) {
+        return lower_path(cx, &segments, owner);
+    }
     if let Some(head) = forms::form_head_atom(cx.u, &items) {
         return match expression_callable(cx, head, owner) {
             Ok((callable, arity, key_sets)) => lower_expression_call(
@@ -129,6 +132,52 @@ fn lexical_atom_value(
     }
     let value = cx.compound("name", vec![owner, row_name]);
     Lowering::value(value)
+}
+
+/// A path walks the `:` edges: one goal per segment after the first, and the
+/// value of the form is the target the last goal binds.
+fn lower_path(cx: &mut Cx, segments: &[TermId], owner: TermId) -> Lowering {
+    let mut walked = lower_expression(cx, segments[0], owner);
+    if !walked.diagnostics.is_empty() {
+        return walked;
+    }
+    for segment in &segments[1..] {
+        let Some(parsed) = forms::node(cx.u, *segment) else {
+            let reason = cx.plain(*segment, "unresolved_expression_form");
+            return none(cx, vec![reason]);
+        };
+        let Some(name) = forms::atom_name(cx.u, parsed.payload) else {
+            let reason = cx.plain(parsed.id, "path_segment_is_not_an_atom");
+            return none(cx, vec![reason]);
+        };
+        let step = cx.compound("path_step", vec![parsed.id]);
+        let value = cx.compound("var", vec![step]);
+        let ordinal = cx.compound("path_index", vec![parsed.id]);
+        let index = cx.compound("var", vec![ordinal]);
+        let goal = path_goal(cx, owner, walked.value, name, value, index);
+        walked.goals.push(goal);
+        walked.origins.push(parsed.id);
+        walked.value = value;
+    }
+    walked
+}
+
+/// `pending_goal(positive, call(name(Owner, ':'), [Bound, const(Name), Value, Index]))`.
+fn path_goal(
+    cx: &mut Cx,
+    owner: TermId,
+    bound: TermId,
+    name: TermId,
+    value: TermId,
+    index: TermId,
+) -> TermId {
+    let colon = cx.atom(":");
+    let relation = cx.compound("name", vec![owner, colon]);
+    let name_const = cx.compound("const", vec![name]);
+    let arguments = cx.u.list(&[bound, name_const, value, index]);
+    let call = cx.compound("call", vec![relation, arguments]);
+    let positive = cx.atom("positive");
+    cx.compound("pending_goal", vec![positive, call])
 }
 
 /// `pending_goal(positive, call(name(Owner, ':'), [ref(Bind), const(Name), Value, Index]))`.
