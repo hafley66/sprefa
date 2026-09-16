@@ -1,0 +1,10 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Duplicate", "version": "0.1.0" },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "Todo": { "type": "object", "properties": { "id": { "type": "string" } } }
+    }
+  }
+}

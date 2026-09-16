@@ -18,7 +18,6 @@ use _2_lower::units::{lower_compiler_units, merge_module_basements, Units};
 use _3_check::check_datalog;
 use _4_comptime::api::derived_bind_slots;
 use _4_comptime::evaluate_checked;
-use _4_comptime::load::tsi_expression_environment;
 use _4_comptime::sources::{source_unit_module_owners, Live};
 use _4_comptime::Compiled;
 use _6_eval::term::{TermId, Universe};
@@ -26,7 +25,10 @@ use _7_effect::Slice;
 use _8_driver::_0_read::{prelude_text, program_text};
 use _8_driver::_1_unit::{file_unit, prelude_unit, Unit};
 use _8_driver::_2_macro::{expand_units_with_macros, standard_macro_program};
-use _8_driver::_4_project::{install_graphs, load_dl7_project, load_tsi_streams, Loaded, Project};
+use _8_driver::_4_project::{
+    install_graphs, load_dl7_project, load_openapi_documents, load_tsi_streams,
+    project_expression_environment, Loaded, Project,
+};
 use _8_driver::{Event, Stop};
 use std::marker::PhantomData;
 use std::path::Path;
@@ -158,31 +160,37 @@ pub fn compile(u: &mut Universe, path: &Path, fx: &mut dyn FnMut(Event)) -> Resu
     finish_compile(u, &units, None, fx)
 }
 
+/// Prelude, project units, TSI and OpenAPI rows, reader diagnostics.
+type ProjectRead = (Unit, Loaded, (Vec<TermId>, Vec<TermId>), Vec<TermId>);
+
 /// `:195` and `:227`. The project term carries the EXPANDED units.
 pub fn compile_project(
     u: &mut Universe,
     root: &Path,
     paths: &[&Path],
     streams: &[&Path],
+    documents: &[&Path],
     fx: &mut dyn FnMut(Event),
 ) -> Result<Compile, Stop> {
-    let (prelude, loaded, tsi_rows, tsi_diagnostics) = phase(
+    let (prelude, loaded, (tsi_rows, openapi_rows), load_diagnostics) = phase(
         "read",
         || {
             let prelude = prelude_unit(u, &prelude_text())?;
             let loaded = load_dl7_project(u, root, paths)?.map_err(Stop::Io)?;
-            let (tsi_rows, tsi_diagnostics) = load_tsi_streams(u, streams).map_err(Stop::Io)?;
-            Ok((prelude, loaded, tsi_rows, tsi_diagnostics))
+            let (tsi_rows, mut diagnostics) = load_tsi_streams(u, streams).map_err(Stop::Io)?;
+            let (openapi_rows, openapi_diagnostics) =
+                load_openapi_documents(u, documents).map_err(Stop::Io)?;
+            diagnostics.extend(openapi_diagnostics);
+            Ok((prelude, loaded, (tsi_rows, openapi_rows), diagnostics))
         },
-        |(prelude, loaded, _, tsi_diagnostics): &(Unit, Loaded, Vec<TermId>, Vec<TermId>)| {
-            let count =
-                prelude.diagnostics.len() + loaded.diagnostics.len() + tsi_diagnostics.len();
+        |(prelude, loaded, _, diagnostics): &ProjectRead| {
+            let count = prelude.diagnostics.len() + loaded.diagnostics.len() + diagnostics.len();
             (2, count)
         },
     )?;
     let mut reader_diagnostics = prelude.diagnostics;
     reader_diagnostics.extend(loaded.diagnostics);
-    reader_diagnostics.extend(tsi_diagnostics);
+    reader_diagnostics.extend(load_diagnostics);
     if !reader_diagnostics.is_empty() {
         return Ok(stopped(u, reader_diagnostics));
     }
@@ -197,6 +205,7 @@ pub fn compile_project(
     let project = Project {
         project: u.compound("dl7_project", vec![args[0], unit_list]),
         tsi_rows,
+        openapi_rows,
         cwd: std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_default(),
@@ -274,7 +283,7 @@ fn lower_units(
 ) -> Result<Units, Stop> {
     let environment = project.map(|project| {
         let owners = source_unit_module_owners(u, units);
-        tsi_expression_environment(u, &project.tsi_rows, &owners)
+        project_expression_environment(u, project, &owners)
     });
     let lowered = lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, environment)?;
     let Some(project) = project else {
