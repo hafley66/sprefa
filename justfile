@@ -252,3 +252,7 @@ dl6-build prog out="":
 # Native SQLite, DD, Prolog, PostgreSQL/pg_ivm and PGlite: semantics then timing.
 ivm-shootout profile="quick" *args:
     @bash "{{repo}}/sqlite_ivm/scripts/16_shootout.sh" "{{profile}}" {{args}}
+
+# reclaim disk: merged clean worktrees, then target dirs in the rest. dry run without --apply
+reap *ARGS:
+    bash scripts/fleet-reap.sh {{ARGS}}
