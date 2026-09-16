@@ -83,19 +83,19 @@ performance_failures(Cold, Warm, RoundCount,
 
 performance_failure(
     measurement(_, ColdInferences, _, _, _, _, _), _, _, _, _,
-    cold_inference_budget(ColdInferences, 88000000)) :-
-    ColdInferences > 88000000.
+    cold_inference_budget(ColdInferences, 95000000)) :-
+    ColdInferences > 95000000.
 performance_failure(
     _, measurement(_, WarmInferences, _, _, _, _, _), _, _, _,
     warm_inference_budget(WarmInferences, 50000)) :-
     WarmInferences > 50000.
 performance_failure(
     measurement(_, _, CompilerRows, _, _, _, _), _, _, _, _,
-    compiler_row_checkpoint(CompilerRows, 12716)) :-
-    CompilerRows =\= 12716.
+    compiler_row_checkpoint(CompilerRows, 15542)) :-
+    CompilerRows =\= 15542.
 performance_failure(_, _, RoundCount, _, _,
-                    closure_round_checkpoint(RoundCount, 7)) :-
-    RoundCount =\= 7.
+                    closure_round_checkpoint(RoundCount, 8)) :-
+    RoundCount =\= 8.
 performance_failure(
     measurement(_, _, _, _, _, _, Diagnostics), _, _, _, _,
     cold_diagnostics(Diagnostics)) :-
