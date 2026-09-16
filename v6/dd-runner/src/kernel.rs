@@ -75,6 +75,8 @@ pub struct Predicate {
     pub column_equals: Option<[String; 2]>,
     #[serde(default)]
     pub literal_equals: Option<LiteralEquals>,
+    #[serde(default)]
+    pub column_less_than: Option<[String; 2]>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -224,6 +226,7 @@ pub fn shootout(graph_case: &str, n: usize) -> Result<Value> {
         predicates: vec![Predicate {
             column_equals: Some(["b0.to".into(), "b1.from".into()]),
             literal_equals: None,
+            column_less_than: None,
         }],
         projection: vec![
             Projection {
@@ -548,6 +551,7 @@ struct Scan {
 enum Test {
     Columns(Option<usize>, Option<usize>),
     Literal(Option<usize>, Value),
+    LessThan(Option<usize>, Option<usize>),
 }
 
 enum Column<'a> {
@@ -632,6 +636,13 @@ impl Query {
                 let slot = query.slots.get(&literal.column).copied();
                 query.tests.push(Test::Literal(slot, literal.value.clone()));
             }
+            if let Some([left, right]) = &predicate.column_less_than {
+                let sides = (
+                    query.slots.get(left).copied(),
+                    query.slots.get(right).copied(),
+                );
+                query.tests.push(Test::LessThan(sides.0, sides.1));
+            }
         }
         Ok(query)
     }
@@ -657,6 +668,7 @@ impl Query {
         self.tests.iter().all(|test| match test {
             Test::Columns(left, right) => at(row, *left) == at(row, *right),
             Test::Literal(slot, value) => at(row, *slot) == Some(value),
+            Test::LessThan(left, right) => value_less_than(at(row, *left), at(row, *right)),
         })
     }
 }
@@ -677,6 +689,19 @@ impl Scan {
 
 fn at(row: &BoundRow, slot: Option<usize>) -> Option<&Value> {
     slot.and_then(|index| row[index].as_ref())
+}
+
+fn value_less_than(left: Option<&Value>, right: Option<&Value>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => match (left.as_i64(), right.as_i64()) {
+            (Some(a), Some(b)) => a < b,
+            _ => match (left.as_f64(), right.as_f64()) {
+                (Some(a), Some(b)) => a < b,
+                _ => false,
+            },
+        },
+        _ => false,
+    }
 }
 
 fn binding_rows(
@@ -828,6 +853,139 @@ mod tests {
         assert_eq!(
             runtime.tick(5, &[removed]).unwrap(),
             r#"{"tick":5,"deltas":{"input":{"add":[],"del":[["alpha"]]},"output":{"add":[],"del":[["alpha"]]}}}"#
+        );
+    }
+
+    #[test]
+    fn column_less_than_filters_map_and_join_paths() {
+        let rels = vec![
+            Rel {
+                name: "pair".into(),
+                columns: vec!["a".into(), "b".into()],
+                select_all: String::new(),
+            },
+            Rel {
+                name: "left".into(),
+                columns: vec!["a".into()],
+                select_all: String::new(),
+            },
+            Rel {
+                name: "right".into(),
+                columns: vec!["b".into()],
+                select_all: String::new(),
+            },
+            Rel {
+                name: "output".into(),
+                columns: vec!["a".into(), "b".into()],
+                select_all: String::new(),
+            },
+        ];
+        let map = Operator {
+            id: "map_less".into(),
+            kind: "map".into(),
+            head: "output".into(),
+            refs: vec!["pair".into()],
+            bindings: BTreeMap::from([("b0".into(), "pair".into())]),
+            predicates: vec![Predicate {
+                column_equals: None,
+                literal_equals: None,
+                column_less_than: Some(["b0.a".into(), "b0.b".into()]),
+            }],
+            projection: vec![
+                Projection {
+                    head: "a".into(),
+                    source: Some("b0.a".into()),
+                    value: None,
+                },
+                Projection {
+                    head: "b".into(),
+                    source: Some("b0.b".into()),
+                    value: None,
+                },
+            ],
+            aggregate: None,
+        };
+        let join = Operator {
+            id: "join_less".into(),
+            kind: "map".into(),
+            head: "output".into(),
+            refs: vec!["left".into(), "right".into()],
+            bindings: BTreeMap::from([
+                ("b0".into(), "left".into()),
+                ("b1".into(), "right".into()),
+            ]),
+            predicates: vec![Predicate {
+                column_equals: None,
+                literal_equals: None,
+                column_less_than: Some(["b0.a".into(), "b1.b".into()]),
+            }],
+            projection: vec![
+                Projection {
+                    head: "a".into(),
+                    source: Some("b0.a".into()),
+                    value: None,
+                },
+                Projection {
+                    head: "b".into(),
+                    source: Some("b1.b".into()),
+                    value: None,
+                },
+            ],
+            aggregate: None,
+        };
+        let mut runtime = Runtime::open(&rels, &[], vec![map, join]).unwrap();
+        let arrivals = vec![
+            SignedRow {
+                sign: 1,
+                row: Row {
+                    rel: "pair".into(),
+                    values: vec![json!(1), json!(2)],
+                },
+            },
+            SignedRow {
+                sign: 1,
+                row: Row {
+                    rel: "pair".into(),
+                    values: vec![json!(2), json!(1)],
+                },
+            },
+            SignedRow {
+                sign: 1,
+                row: Row {
+                    rel: "left".into(),
+                    values: vec![json!(3)],
+                },
+            },
+            SignedRow {
+                sign: 1,
+                row: Row {
+                    rel: "right".into(),
+                    values: vec![json!(9)],
+                },
+            },
+        ];
+        runtime.tick(1, &arrivals).unwrap();
+        assert_eq!(runtime.row_count("output"), 2);
+    }
+
+    #[test]
+    fn predicate_json_without_less_than_still_deserializes() {
+        let old = r#"{"column_equals":["b0.a","b1.b"],"literal_equals":null}"#;
+        let predicate: Predicate = serde_json::from_str(old).unwrap();
+        assert_eq!(
+            predicate.column_equals,
+            Some(["b0.a".to_string(), "b1.b".to_string()])
+        );
+        assert!(predicate.literal_equals.is_none());
+        assert!(predicate.column_less_than.is_none());
+
+        let new = r#"{"column_equals":null,"literal_equals":null,"column_less_than":["b0.a","b0.b"]}"#;
+        let predicate: Predicate = serde_json::from_str(new).unwrap();
+        assert!(predicate.column_equals.is_none());
+        assert!(predicate.literal_equals.is_none());
+        assert_eq!(
+            predicate.column_less_than,
+            Some(["b0.a".to_string(), "b0.b".to_string()])
         );
     }
 }

@@ -399,6 +399,12 @@ predicate_sql(Predicate, Sql) :-
     source_column_sql(Right, RightSql),
     format(string(Sql), '~s = ~s', [LeftSql, RightSql]).
 predicate_sql(Predicate, Sql) :-
+    get_dict(column_less_than, Predicate, [Left, Right]),
+    !,
+    source_column_sql(Left, LeftSql),
+    source_column_sql(Right, RightSql),
+    format(string(Sql), '~s < ~s', [LeftSql, RightSql]).
+predicate_sql(Predicate, Sql) :-
     get_dict(literal_equals, Predicate, Literal),
     get_dict(column, Literal, Column),
     get_dict(value, Literal, Value),
@@ -522,10 +528,17 @@ unsupported_goal(Goals, _, Index,
                             unsupported_dbsp_negation(rule_id(Index)))) :-
     member(checked_goal(Polarity, _), Goals),
     Polarity \== positive.
+unsupported_goal(Goals, _, Index,
+                 diagnostic(emit, none,
+                            unsupported_dbsp_int_lt_literal(rule_id(Index)))) :-
+    member(checked_goal(_, call(ref(kernel(int_lt)), Arguments)), Goals),
+    member(Argument, Arguments),
+    Argument \= var(_).
 unsupported_goal(Goals, Map, Index,
                  diagnostic(emit, none,
                             hidden_runtime_relation(rule_id(Index), Identity))) :-
     member(checked_goal(_, call(ref(Identity), _)), Goals),
+    Identity \= kernel(int_lt),
     \+ relation_info(Map, Identity, _, _, _).
 
 goal_bindings(Goals, Map, Bindings, Refs, Occurrences, Predicates) :-
@@ -536,6 +549,20 @@ goal_bindings(Goals, Map, Bindings, Refs, Occurrences, Predicates) :-
 goal_bindings([], _, _, Occurrences, Occurrences,
               BindingPairs, BindingPairs, Refs, Refs,
               Predicates, Predicates).
+goal_bindings([checked_goal(positive,
+                            call(ref(kernel(int_lt)),
+                                 [var(Left), var(Right)])) | Goals],
+              Map, Index, Occurrences0, Occurrences,
+              BindingPairs0, BindingPairs, Refs0, Refs,
+              Predicates0, Predicates) :-
+    !,
+    memberchk(Left-LeftSource, Occurrences0),
+    memberchk(Right-RightSource, Occurrences0),
+    append(Predicates0,
+           [_{column_less_than:[LeftSource, RightSource]}], Predicates1),
+    goal_bindings(Goals, Map, Index, Occurrences0, Occurrences,
+                  BindingPairs0, BindingPairs, Refs0, Refs,
+                  Predicates1, Predicates).
 goal_bindings([checked_goal(positive,
                             call(ref(Identity), Arguments)) | Goals],
               Map, Index, Occurrences0, Occurrences,

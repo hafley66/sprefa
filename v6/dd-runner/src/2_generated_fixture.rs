@@ -28,7 +28,7 @@ pub fn ddl() -> Vec<String> {
 #[rustfmt::skip]
 pub fn rules() -> Vec<Rule> {
     vec![
-        Rule { id: String::from("map_121"), head: String::from("Output"), delete: String::from("DELETE FROM \"Output\""), inserts: vec![String::from("INSERT OR IGNORE INTO \"Output\" (\"value\") SELECT \"b0\".\"value\" FROM \"Input\" \"b0\" WHERE \"b0\".\"value\" = \"b0\".\"same\" AND \"b0\".\"tag\" = 7")] },
+        Rule { id: String::from("map_119"), head: String::from("Output"), delete: String::from("DELETE FROM \"Output\""), inserts: vec![String::from("INSERT OR IGNORE INTO \"Output\" (\"value\") SELECT \"b0\".\"value\" FROM \"Input\" \"b0\" WHERE \"b0\".\"value\" = \"b0\".\"same\" AND \"b0\".\"tag\" = 7")] },
     ]
 }
 
@@ -60,7 +60,7 @@ pub fn initial() -> Vec<Row> {
 #[rustfmt::skip]
 pub fn operators() -> Vec<Operator> {
     vec![
-        Operator { id: String::from("map_121"), kind: String::from("map"), head: String::from("Output"), refs: vec![String::from("Input")], bindings: BTreeMap::from([(String::from("b0"), String::from("Input"))]), predicates: vec![Predicate { column_equals: Some([String::from("b0.value"), String::from("b0.same")]), literal_equals: None }, Predicate { column_equals: None, literal_equals: Some(LiteralEquals { column: String::from("b0.tag"), value: serde_json::Value::from(7_i64) }) }], projection: vec![Projection { head: String::from("value"), source: Some(String::from("b0.value")), value: None }], aggregate: None },
+        Operator { id: String::from("map_119"), kind: String::from("map"), head: String::from("Output"), refs: vec![String::from("Input")], bindings: BTreeMap::from([(String::from("b0"), String::from("Input"))]), predicates: vec![Predicate { column_equals: Some([String::from("b0.value"), String::from("b0.same")]), literal_equals: None, column_less_than: None }, Predicate { column_equals: None, literal_equals: Some(LiteralEquals { column: String::from("b0.tag"), value: serde_json::Value::from(7_i64) }), column_less_than: None }], projection: vec![Projection { head: String::from("value"), source: Some(String::from("b0.value")), value: None }], aggregate: None },
     ]
 }
 // sprefa:auto-end dl7-native-runtime

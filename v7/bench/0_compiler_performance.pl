@@ -3,10 +3,10 @@
 % Two fixture profiles share one measured cold/warm loop:
 %
 %   2_partial      traced (DL7_TRACE=collect) structural profile, unchanged:
-%                  cold inference budget 88,000,000, warm 50,000, rows 15,542,
+%                  cold inference budget 88,000,000, warm 50,000, rows 890,
 %                  eight closure rounds, empty diagnostics, warm output parity.
 %   nearest-shadow timed TRACE OFF: cold wall <= 3000 ms, cold inference budget
-%                  16,000,000, compiler rows 14,586, empty diagnostics, warm
+%                  16,000,000, compiler rows 790, empty diagnostics, warm
 %                  inference budget 5,000 (measured warm baseline 2,148), warm
 %                  exact-output parity.
 %
@@ -104,14 +104,14 @@ run_self_check(Mode) :-
     halt(ExitCode).
 
 self_check_measurements(pass,
-                        measurement(1, 1, 14586, 0, 0, 0, []),
-                        measurement(1, 1, 14586, 0, 0, 0, [])).
+                        measurement(1, 1, 790, 0, 0, 0, []),
+                        measurement(1, 1, 790, 0, 0, 0, [])).
 self_check_measurements(wall,
-                        measurement(9999, 1, 14586, 0, 0, 0, []),
-                        measurement(1, 1, 14586, 0, 0, 0, [])).
+                        measurement(9999, 1, 790, 0, 0, 0, []),
+                        measurement(1, 1, 790, 0, 0, 0, [])).
 self_check_measurements(inference,
-                        measurement(1, 99999999, 14586, 0, 0, 0, []),
-                        measurement(1, 1, 14586, 0, 0, 0, [])).
+                        measurement(1, 99999999, 790, 0, 0, 0, []),
+                        measurement(1, 1, 790, 0, 0, 0, [])).
 
 report_unknown_fixture([Fixture | _]) :-
     !,
@@ -157,7 +157,7 @@ timed_trace(collect) :-
 nearest_shadow_checks([
     cold_wall_limit(3000),
     cold_inference_budget(16000000),
-    compiler_rows(14586),
+    compiler_rows(790),
     cold_diagnostics_empty,
     warm_diagnostics_empty,
     warm_inference_budget(5000),
@@ -167,7 +167,7 @@ nearest_shadow_checks([
 partial_checks([
     cold_inference_budget(88000000),
     warm_inference_budget(50000),
-    compiler_rows(15542),
+    compiler_rows(890),
     closure_rounds(8),
     cold_diagnostics_empty,
     warm_diagnostics_empty,

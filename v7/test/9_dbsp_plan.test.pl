@@ -76,9 +76,9 @@ test(source_visible_plan_preserves_dotted_relation_labels) :-
 
 test(negative_goal_is_a_named_emitter_gap) :-
     fixture(checked_datalog(Graph,
-                            datalog_program(Relations, Seeds,
-                                            [rule(Head, [checked_goal(_, Call)])]),
-                            Dependencies, Strata)),
+                             datalog_program(Relations, Seeds,
+                                             [rule(Head, [checked_goal(_, Call)])]),
+                             Dependencies, Strata)),
     Runtime = checked_datalog(
                   Graph,
                   datalog_program(
@@ -89,6 +89,58 @@ test(negative_goal_is_a_named_emitter_gap) :-
     Diagnostics ==
         [diagnostic(emit, none,
                     unsupported_dbsp_negation(rule_id(0)))].
+
+test(int_lt_goal_lowers_to_column_less_than_predicate) :-
+    Input = owner(file('/lt.dl7'), relation(0)),
+    Output = owner(file('/lt.dl7'), relation(1)),
+    Runtime = checked_datalog(
+                  root_graph(
+                      [],
+                      [ ':'(module(file('/lt.dl7')), input,
+                            ref(Input), 0),
+                        ':'(module(file('/lt.dl7')), output,
+                            ref(Output), 1),
+                        ':'(Input, value, ref(primitive(int)), 0),
+                        ':'(Input, limit, ref(primitive(int)), 1),
+                        ':'(Output, value, ref(primitive(int)), 0)
+                      ]),
+                  datalog_program(
+                      [ relation(ref(Input), 2, []),
+                        relation(ref(Output), 1, [])
+                      ],
+                      [],
+                      [ rule(
+                            call(ref(Output), [var(value)]),
+                            [ checked_goal(
+                                  positive,
+                                  call(ref(Input),
+                                       [var(value), var(limit)])),
+                              checked_goal(
+                                  positive,
+                                  call(ref(kernel(int_lt)),
+                                       [var(value), var(limit)]))
+                            ])
+                      ]),
+                  [], []),
+    emit_dbsp_plan(Runtime, Plan, Diagnostics),
+    Diagnostics == [],
+    Plan.operators =@=
+        [ _{ bindings:bindings{b0:input},
+             classification:"level",
+             head:output,
+             id:map_0,
+             kind:"map",
+             predicates:[_{column_less_than:['b0.value', 'b0.limit']}],
+             projection:[_{head:value, source:'b0.value'}],
+             refs:[input]
+           }
+        ],
+    Plan.rules =@=
+        [ _{ delete:"DELETE FROM \"output\"",
+             head:output,
+             id:map_0,
+             inserts:["INSERT OR IGNORE INTO \"output\" (\"value\") SELECT \"b0\".\"value\" FROM \"input\" \"b0\" WHERE \"b0\".\"value\" < \"b0\".\"limit\""]}
+        ].
 
 test(reified_program_graph_reconstructs_the_checked_executable_exactly) :-
     fixture(Runtime),

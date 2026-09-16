@@ -28,7 +28,7 @@ pub fn ddl() -> Vec<String> {
 #[rustfmt::skip]
 pub fn rules() -> Vec<Rule> {
     vec![
-        Rule { id: String::from("map_121"), head: String::from("path"), delete: String::from("DELETE FROM \"path\""), inserts: vec![String::from("INSERT OR IGNORE INTO \"path\" (\"from\", \"to\") SELECT \"b0\".\"from\", \"b0\".\"to\" FROM \"edge\" \"b0\""), String::from("INSERT OR IGNORE INTO \"path\" (\"from\", \"to\") SELECT \"b0\".\"from\", \"b1\".\"to\" FROM \"path\" \"b0\", \"edge\" \"b1\" WHERE \"b0\".\"to\" = \"b1\".\"from\"")] },
+        Rule { id: String::from("map_119"), head: String::from("path"), delete: String::from("DELETE FROM \"path\""), inserts: vec![String::from("INSERT OR IGNORE INTO \"path\" (\"from\", \"to\") SELECT \"b0\".\"from\", \"b0\".\"to\" FROM \"edge\" \"b0\""), String::from("INSERT OR IGNORE INTO \"path\" (\"from\", \"to\") SELECT \"b0\".\"from\", \"b1\".\"to\" FROM \"path\" \"b0\", \"edge\" \"b1\" WHERE \"b0\".\"to\" = \"b1\".\"from\"")] },
     ]
 }
 
@@ -59,8 +59,8 @@ pub fn initial() -> Vec<Row> {
 #[rustfmt::skip]
 pub fn operators() -> Vec<Operator> {
     vec![
-        Operator { id: String::from("map_121"), kind: String::from("map"), head: String::from("path"), refs: vec![String::from("edge")], bindings: BTreeMap::from([(String::from("b0"), String::from("edge"))]), predicates: vec![], projection: vec![Projection { head: String::from("from"), source: Some(String::from("b0.from")), value: None }, Projection { head: String::from("to"), source: Some(String::from("b0.to")), value: None }], aggregate: None },
-        Operator { id: String::from("map_122"), kind: String::from("map"), head: String::from("path"), refs: vec![String::from("path"), String::from("edge")], bindings: BTreeMap::from([(String::from("b0"), String::from("path")), (String::from("b1"), String::from("edge"))]), predicates: vec![Predicate { column_equals: Some([String::from("b0.to"), String::from("b1.from")]), literal_equals: None }], projection: vec![Projection { head: String::from("from"), source: Some(String::from("b0.from")), value: None }, Projection { head: String::from("to"), source: Some(String::from("b1.to")), value: None }], aggregate: None },
+        Operator { id: String::from("map_119"), kind: String::from("map"), head: String::from("path"), refs: vec![String::from("edge")], bindings: BTreeMap::from([(String::from("b0"), String::from("edge"))]), predicates: vec![], projection: vec![Projection { head: String::from("from"), source: Some(String::from("b0.from")), value: None }, Projection { head: String::from("to"), source: Some(String::from("b0.to")), value: None }], aggregate: None },
+        Operator { id: String::from("map_120"), kind: String::from("map"), head: String::from("path"), refs: vec![String::from("path"), String::from("edge")], bindings: BTreeMap::from([(String::from("b0"), String::from("path")), (String::from("b1"), String::from("edge"))]), predicates: vec![Predicate { column_equals: Some([String::from("b0.to"), String::from("b1.from")]), literal_equals: None, column_less_than: None }], projection: vec![Projection { head: String::from("from"), source: Some(String::from("b0.from")), value: None }, Projection { head: String::from("to"), source: Some(String::from("b1.to")), value: None }], aggregate: None },
     ]
 }
 // sprefa:auto-end dl7-native-reachability

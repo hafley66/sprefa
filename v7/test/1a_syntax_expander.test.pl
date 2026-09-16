@@ -112,7 +112,7 @@ test(macro_program_slice_retains_protocol_and_expansion_behavior) :-
                   syntax(Snapshot)),
     Receipt == slice(
                    diagnostics([], [], [], [], []),
-                   counts(7, 7, 0, 75),
+                   counts(7, 7, 0, 73),
                    syntax([frontier(0, 2), frontier(1, 3),
                            atom(2, alpha), atom(3, beta)])).
 
