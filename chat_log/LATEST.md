@@ -1,1 +1,1 @@
-20260910.1.dl7-lexical-sol-handoff.md
+20260915.3.docs-skill-bakeoff-changelog-human-notes-reap.md
