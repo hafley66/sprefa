@@ -1,5 +1,5 @@
-; expect: rc=0
-; A dotted name is one atom: the reader keeps the dot, the name table keys the whole text.
+; expect: unresolved_name
+; A dotted name is a path: `boop` is the first segment and nothing binds it.
 (: boop.lane
    (* (: lane text)))
 

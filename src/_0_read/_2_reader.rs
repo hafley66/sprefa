@@ -2,8 +2,8 @@
 //! flow. The first error wins: forms and source rows are dropped.
 
 use super::tokens::{
-    bool_token, decoded_escape, float_token, integer_token, term_delimiter, valid_atom,
-    valid_identifier,
+    bool_token, decoded_escape, dotted_segments, float_token, integer_token, term_delimiter,
+    valid_atom, valid_identifier,
 };
 use crate::_6_eval::{TermId, Universe};
 
@@ -367,10 +367,42 @@ impl Reader<'_> {
         identity
     }
 
+    /// A dotted token reads as one form: the head `.` and one atom per segment,
+    /// every node at the token's own position.
+    pub fn read_path(&mut self, node_id: TermId, start: Pos, segments: &[&str]) -> TermId {
+        let end = self.pos;
+        self.push_row(node_id, start, end);
+        let head = self.u.atom(".");
+        let mut items = Vec::with_capacity(segments.len() + 1);
+        items.push(self.path_item(head, start, end));
+        for segment in segments {
+            let atom = self.u.atom(segment);
+            items.push(self.path_item(atom, start, end));
+        }
+        let list = self.u.list(&items);
+        let payload = self.u.compound("form", vec![list]);
+        self.node(node_id, payload)
+    }
+
+    fn path_item(&mut self, name: TermId, start: Pos, end: Pos) -> TermId {
+        let index = self.index;
+        self.index += 1;
+        let node_id = self.node_id(index);
+        let payload = self.u.compound("atom", vec![name]);
+        self.push_row(node_id, start, end);
+        self.node(node_id, payload)
+    }
+
     pub fn read_bare(&mut self, node_id: TermId, start: Pos) -> Result<TermId, TermId> {
         let token = self.take_token();
         if token.is_empty() {
             return Err(self.plain_error(node_id, "expected_term", start));
+        }
+        if let Some(segments) = dotted_segments(&token) {
+            if segments.iter().any(|segment| !valid_identifier(segment)) {
+                return Err(self.named_error(node_id, "invalid_path", &token, start));
+            }
+            return Ok(self.read_path(node_id, start, &segments));
         }
         let end = self.pos;
         let payload = if integer_token(&token) {

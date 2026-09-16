@@ -4,6 +4,8 @@
 
 (Reading -0.25)
 
+(Reading -2.25)
+
 (: Copied (* (: value float)))
 
 (<- (Copied ?Value)

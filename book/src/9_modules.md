@@ -152,6 +152,55 @@ diagnostic diagnostic(check, reader_node(oracle/compile/sources/test/fixtures/le
 exit 1
 ```
 
+### Paths
+
+A dotted atom is a path. The reader reads it as one form headed by `.`, one atom per segment:
+
+{{#include ../probes/24_dot_path.dl7}}
+
+```console
+$ bash book/show.sh compile book/src/probes/24_dot_path.dl7 --project book/src/probes book/src/probes/api/0_todos.dl7
+(found list)
+(fetched "https://example.com/todos" "[]")
+(list "https://example.com/todos" "[]")
+exit 0
+```
+
+`api.todos.list` is the form `(. api todos list)`. The lowerer writes one `:` goal per segment after the first, with a fresh variable per segment, and the value of the last segment is the value of the form: `(: api todos ?Segment _)`, then `(: ?Segment list ?Value _)`. A module is a path segment like any other, because the walk reads `:` edges off whatever owner a segment binds. Probe 23 spells the same walk by hand.
+
+In the head of a call the walk runs in the checker instead: `(api.todos.list ?Url ?Body)` is a call of `list`, resolved one segment per level, and the goal carries no `:` join. A declaration target reads the same way, `(: holder (* (: user api.todos.list)))`.
+
+A dot at either end, and two dots in a row, name no segment: `book/src/probes/25_dot_path_malformed.dl7` stops at `invalid_path`.
+
+A consumer of another module's name:
+
+```dl7
+; fixture: oracle/compile/sources/test/fixtures/modules/3_dotted_consumer.dl7
+; compile: --project oracle/compile/sources/test/fixtures/modules oracle/compile/sources/test/fixtures/modules/0_accounts.dl7
+(: found_user
+   (* (: result type)))
+
+(<- (found_user ?UserType)
+    (accounts.User ?UserType ?Index))
+
+(: holder
+   (* (: user accounts.User)))
+```
+
+```console
+$ bash book/show.sh compile oracle/compile/sources/test/fixtures/modules/0_accounts.dl7 oracle/compile/sources/test/fixtures/modules/3_dotted_consumer.dl7 --project oracle/compile/sources/test/fixtures/modules
+exit 0
+```
+
+| claim | path | command |
+|---|---|---|
+| a dotted token reads as one form, one atom per segment | `src/_0_read/_1_tokens.rs:43-55`, `src/_0_read/_2_reader.rs:372-394` | `cargo test --test _1_read_oracle` |
+| a leading, trailing or doubled dot is `invalid_path` | `src/_0_read/_2_reader.rs:401-406` | `bash book/show.sh compile book/src/probes/25_dot_path_malformed.dl7` |
+| the walk is one `:` goal per segment, a fresh variable each | `src/_2_lower/_8_express.rs:79-105` | `cargo test --test _22_book probes_compile_as_their_page_says` |
+| a path head resolves the callable in the checker | `src/_2_lower/_7_execute.rs:233-275`, `src/_3_check/_2_resolve.rs:48-73` | `cargo test --test _22_book probes_compile_as_their_page_says` |
+| the module consumer and the type-position path compile | `oracle/compile/sources/test/fixtures/modules/3_dotted_consumer.dl7` | `bash book/show.sh compile oracle/compile/sources/test/fixtures/modules/0_accounts.dl7 oracle/compile/sources/test/fixtures/modules/3_dotted_consumer.dl7 --project oracle/compile/sources/test/fixtures/modules` |
+| a float literal stays a literal beside the dotted tokens | `fixtures/literals/0_float.dl7` | `cargo test --test _10_literals` |
+
 ## What proves it
 
 | claim | path | command |

@@ -37,9 +37,39 @@ pub fn resolve_target(
     match (name.as_str(), args.len()) {
         ("target", 1) => Some(u.compound("ref", vec![args[0]])),
         ("const", 1) => Some(target),
-        ("name", 2) => resolve_name(u, cx, args[0], args[1], visited),
+        ("name", 2) => resolve_path(u, cx, args[0], args[1], visited).ok(),
         _ => None,
     }
+}
+
+/// A dotted path: `owner` may itself be a `name/2` chain, one level per segment.
+/// The inner level resolves first, and every level but the last must land on a
+/// `ref`. `Err` carries the segment that did not resolve.
+pub fn resolve_path(
+    u: &mut Universe,
+    cx: &Cx,
+    owner: TermId,
+    label: TermId,
+    visited: &mut Vec<(TermId, TermId)>,
+) -> Result<TermId, TermId> {
+    let owner = path_owner(u, cx, owner, visited)?;
+    resolve_name(u, cx, owner, label, visited).ok_or(label)
+}
+
+fn path_owner(
+    u: &mut Universe,
+    cx: &Cx,
+    owner: TermId,
+    visited: &mut Vec<(TermId, TermId)>,
+) -> Result<TermId, TermId> {
+    let parts = match u.functor(owner) {
+        Some(("name", args)) if args.len() == 2 => (args[0], args[1]),
+        _ => return Ok(owner),
+    };
+    let (inner_owner, inner_label) = parts;
+    let inner_owner = path_owner(u, cx, inner_owner, visited)?;
+    let target = resolve_name(u, cx, inner_owner, inner_label, visited).ok_or(inner_label)?;
+    u.unary(target, "ref").ok_or(inner_label)
 }
 
 /// `:599`. The four alternatives are `(Forward -> Target ; Parent ; Kernel ;
@@ -115,9 +145,12 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
     }
     let (owner, label) = (parts[0], parts[1]);
     let mut visited = Vec::new();
-    let Some(target) = resolve_name(u, cx, owner, label, &mut visited) else {
-        let reason = u.compound("unresolved_name", vec![label]);
-        return Ok(CallResult::Error(reason));
+    let target = match resolve_path(u, cx, owner, label, &mut visited) {
+        Ok(target) => target,
+        Err(segment) => {
+            let reason = u.compound("unresolved_name", vec![segment]);
+            return Ok(CallResult::Error(reason));
+        }
     };
     if u.unary(target, "ref").is_none() {
         let reason = u.compound("not_relation", vec![label]);

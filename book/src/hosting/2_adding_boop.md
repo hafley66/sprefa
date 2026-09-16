@@ -93,7 +93,7 @@ Cost doc: `plans/v8/2026-09-15-v8-plugin-abi-cost.md` section 1, on branch `docs
 | spelling | compiles today | serves today | what it would touch |
 |---|---|---|---|
 | `boop_lane` | yes, `probes/13_boop_lane.dl7` | no arm | steps 1 to 10 |
-| `boop.lane` | yes, `probes/19_dotted_name.dl7` | `served_relation_no_executor(boop.lane)` | steps 1 to 10 with the dotted constant |
+| `boop.lane` | no, it reads as a path: `unresolved_name(boop)`, `probes/19_dotted_name.dl7` | not reachable | steps 1 to 10 with a module `boop` exporting `lane` |
 | a module `boop` exporting `lane` | the module graph exists, the name table is flat | no | [Namespacing](../modules/4_namespacing.md) forks C, D, F |
 
 ## Receipts

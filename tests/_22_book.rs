@@ -115,15 +115,18 @@ fn finish(command: &mut Command) -> Result<(i32, Vec<u8>, Vec<u8>), String> {
     ))
 }
 
-/// A diagnostic is `diagnostic(Phase, Location, Payload)`; the payload's
-/// functor, or its atom, is the name.
+/// A diagnostic is `diagnostic(Phase, Location, Payload)`, or
+/// `diagnostic(reader, Path, Node, Payload, Position)`. The payload's functor,
+/// or its atom, is the name.
 fn diagnostic_names(compiled: &Value) -> Vec<String> {
     compiled["diagnostics"]
         .as_array()
         .map(|all| {
             all.iter()
                 .filter_map(|d| {
-                    let payload = &d["args"][2];
+                    let args = d["args"].as_array()?;
+                    let reader = args.first()?["a"].as_str() == Some("reader");
+                    let payload = args.get(if reader { 3 } else { 2 })?;
                     payload["f"]
                         .as_str()
                         .or(payload["a"].as_str())
@@ -458,9 +461,12 @@ pub fn every_chapter_has_one_mermaid_block() {
     let counts: Vec<(&str, usize)> = CHAPTERS
         .iter()
         .map(|stem| {
-            let text =
-                std::fs::read_to_string(root().join("book/src").join(format!("{stem}.md"))).unwrap();
-            (*stem, text.lines().filter(|line| *line == "```mermaid").count())
+            let text = std::fs::read_to_string(root().join("book/src").join(format!("{stem}.md")))
+                .unwrap();
+            (
+                *stem,
+                text.lines().filter(|line| *line == "```mermaid").count(),
+            )
         })
         .collect();
     let wrong: Vec<_> = counts.iter().filter(|(_, count)| *count != 1).collect();

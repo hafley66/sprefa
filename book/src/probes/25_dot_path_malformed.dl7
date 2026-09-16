@@ -1,0 +1,5 @@
+; expect: invalid_path
+; A dot at either end, and two dots in a row, name no segment.
+(.a)
+
+(a..b)

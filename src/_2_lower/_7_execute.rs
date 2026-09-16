@@ -2,7 +2,7 @@
 //! Port of `0_lowerer.pl:984-1225`.
 
 use super::cx::{CallPolicy, Cx};
-use super::express::{expression_callable, lower_argument};
+use super::express::{self, expression_callable, lower_argument};
 use super::forms;
 use super::origins::indexed_goal_origins;
 use super::slots;
@@ -193,7 +193,13 @@ pub fn lower_call(
     let Some(items) = forms::form(cx.u, parsed.payload) else {
         return Err(cx.plain(parsed.id, "expected_call"));
     };
-    let Some(head) = forms::form_head_atom(cx.u, &items) else {
+    let head = forms::form_head_atom(cx.u, &items);
+    if head.is_none() {
+        if let Some(call) = lower_path_call(cx, parsed.id, &items, owner, head_mode)? {
+            return Ok(call);
+        }
+    }
+    let Some(head) = head else {
         return Err(cx.plain(parsed.id, "expected_call"));
     };
     let head_name =
@@ -218,6 +224,54 @@ struct Arguments {
     arguments: Vec<TermId>,
     goals: Vec<TermId>,
     goal_nodes: Vec<TermId>,
+}
+
+/// `((. a b) x y)`: the callable is a dotted path. Every segment but the last
+/// names an owner and the last names the relation, so the callable is a `name/2`
+/// chain the checker walks. Slots are unknown here, so the arguments keep their
+/// source order. `None` when the head is not a path form.
+fn lower_path_call(
+    cx: &mut Cx,
+    node_id: TermId,
+    items: &[TermId],
+    owner: TermId,
+    head_mode: bool,
+) -> Result<Option<Call>, TermId> {
+    let Some(first) = items.first().copied() else {
+        return Ok(None);
+    };
+    let Some(segments) = express::path_segments(cx.u, first) else {
+        return Ok(None);
+    };
+    if segments.len() < 2 {
+        return Err(cx.plain(node_id, "invalid_path"));
+    }
+    let mut callable_owner = owner;
+    for segment in &segments[..segments.len() - 1] {
+        let Some(name) = express::path_segment_atom(cx.u, *segment) else {
+            return Err(cx.plain(node_id, "invalid_path"));
+        };
+        callable_owner = cx.compound("name", vec![callable_owner, name]);
+    }
+    let Some(label) = express::path_segment_atom(cx.u, segments[segments.len() - 1]) else {
+        return Err(cx.plain(node_id, "invalid_path"));
+    };
+    let mut arguments = Vec::with_capacity(items.len() - 1);
+    let mut goals = Vec::new();
+    let mut goal_nodes = Vec::new();
+    for node in &items[1..] {
+        let (value, own_goals, own_nodes) = lower_argument(cx, *node, owner, head_mode)?;
+        arguments.push(value);
+        goals.extend(own_goals);
+        goal_nodes.extend(own_nodes);
+    }
+    let arguments = Arguments {
+        arguments,
+        goals,
+        goal_nodes,
+    };
+    let call = finish_call_arguments(cx, label, node_id, callable_owner, arguments, head_mode)?;
+    Ok(Some(call))
 }
 
 /// `:1169`.
