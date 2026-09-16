@@ -203,8 +203,20 @@ aggregate_rule_proof(CompletedRows, Rule, Head) :-
     completed_body_holds(Body, CompletedRows).
 
 completed_body_holds([], _).
+completed_body_holds(
+    [checked_goal(positive, Call) | Goals], Rows) :-
+    kernel_int_lt_call(Call),
+    !,
+    completed_body_holds(Goals, Rows).
 completed_body_holds([checked_goal(positive, Call) | Goals], Rows) :-
     member(Call, Rows),
+    completed_body_holds(Goals, Rows).
+completed_body_holds(
+    [checked_goal(negative, Call) | Goals], Rows) :-
+    ground(Call),
+    int_lt_arguments(Call, Left, Right),
+    !,
+    \+ Left < Right,
     completed_body_holds(Goals, Rows).
 completed_body_holds([checked_goal(negative, Call) | Goals], Rows) :-
     ground(Call),
@@ -621,6 +633,8 @@ proves(_, call(ref(kernel(edge_ref)),
     ground(Owner),
     ground(Label),
     semantic_argument(Label, SemanticLabel).
+proves(_, Call) :-
+    kernel_int_lt_call(Call).
 proves(EvaluationId,
        call(ref(kernel(intern)), [Constructor, Arguments, Result])) :-
     ground(Constructor),
@@ -648,11 +662,27 @@ goal_call(checked_goal(Polarity, Call), Polarity, Call).
 satisfy_goal(EvaluationId, Goal) :-
     goal_call(Goal, positive, Call),
     proves(EvaluationId, Call).
+satisfy_goal(_, Goal) :-
+    goal_call(Goal, negative, Call),
+    ground(Call),
+    int_lt_arguments(Call, Left, Right),
+    !,
+    \+ Left < Right.
 satisfy_goal(EvaluationId, Goal) :-
     goal_call(Goal, negative, Call),
     ground(Call),
     Call = call(Relation, _),
     \+ evaluation_lower(EvaluationId, Relation, Call).
+
+%% kernel_int_lt_call(+Call) is semidet.
+kernel_int_lt_call(Call) :-
+    int_lt_arguments(Call, Left, Right),
+    Left < Right.
+
+int_lt_arguments(
+    call(ref(kernel(int_lt)), [const(Left), const(Right)]), Left, Right) :-
+    integer(Left),
+    integer(Right).
 
 %% cons_relation(?Head, ?Tail, ?List) is semidet.
 %

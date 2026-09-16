@@ -393,6 +393,12 @@ projection_sql(Projection, Sql) :-
     sqlite_literal_sql(Value, Sql).
 
 predicate_sql(Predicate, Sql) :-
+    get_dict(column_less_than, Predicate, [Left, Right]),
+    !,
+    less_than_operand_sql(Left, LeftSql),
+    less_than_operand_sql(Right, RightSql),
+    format(string(Sql), '~s < ~s', [LeftSql, RightSql]).
+predicate_sql(Predicate, Sql) :-
     get_dict(column_equals, Predicate, [Left, Right]),
     !,
     source_column_sql(Left, LeftSql),
@@ -416,6 +422,13 @@ source_column_sql(Source, Sql) :-
     sqlite_identifier(Alias, QuotedAlias),
     sqlite_identifier(Column, QuotedColumn),
     format(string(Sql), '~s.~s', [QuotedAlias, QuotedColumn]).
+
+less_than_operand_sql(Source, Sql) :-
+    text(Source),
+    !,
+    source_column_sql(Source, Sql).
+less_than_operand_sql(Value, Sql) :-
+    sqlite_literal_sql(Value, Sql).
 
 sqlite_literal_sql(Value, Sql) :-
     integer(Value),
@@ -493,7 +506,9 @@ rule_operator(rule(call(ref(HeadIdentity), HeadArguments), Goals), Map,
        rule_goal_diagnostics(Goals, Map, Index, Diagnostics),
        ( Diagnostics == []
        -> goal_bindings(Goals, Map, Bindings, Refs,
-                        Occurrences, Predicates),
+                        Occurrences, Predicates0),
+          int_lt_predicates(Goals, Occurrences, Predicates1),
+          append(Predicates0, Predicates1, Predicates),
           projection(HeadArguments, HeadColumns, Occurrences, Projection),
           format(atom(Id), 'map_~d', [Index]),
           Operator = _{ id:Id,
@@ -526,7 +541,26 @@ unsupported_goal(Goals, Map, Index,
                  diagnostic(emit, none,
                             hidden_runtime_relation(rule_id(Index), Identity))) :-
     member(checked_goal(_, call(ref(Identity), _)), Goals),
+    Identity \= kernel(int_lt),
     \+ relation_info(Map, Identity, _, _, _).
+unsupported_goal(Goals, _, Index,
+                 diagnostic(emit, none,
+                            unbound_dbsp_int_lt_operand(rule_id(Index), Unbound))) :-
+    findall(Variable,
+            ( member(checked_goal(positive,
+                                  call(ref(kernel(int_lt)), Arguments)),
+                     Goals),
+              member(var(Variable), Arguments),
+              \+ relation_bound_variable(Goals, Variable)
+            ),
+            Unbound0),
+    sort(Unbound0, Unbound),
+    Unbound = [_ | _].
+
+relation_bound_variable(Goals, Variable) :-
+    member(checked_goal(positive, call(ref(Identity), Arguments)), Goals),
+    Identity \= kernel(int_lt),
+    memberchk(var(Variable), Arguments).
 
 goal_bindings(Goals, Map, Bindings, Refs, Occurrences, Predicates) :-
     goal_bindings(Goals, Map, 0, [], Occurrences,
@@ -536,6 +570,14 @@ goal_bindings(Goals, Map, Bindings, Refs, Occurrences, Predicates) :-
 goal_bindings([], _, _, Occurrences, Occurrences,
               BindingPairs, BindingPairs, Refs, Refs,
               Predicates, Predicates).
+goal_bindings([checked_goal(positive, call(ref(kernel(int_lt)), _)) | Goals],
+              Map, Index, Occurrences0, Occurrences,
+              BindingPairs0, BindingPairs, Refs0, Refs,
+              Predicates0, Predicates) :-
+    !,
+    goal_bindings(Goals, Map, Index, Occurrences0, Occurrences,
+                  BindingPairs0, BindingPairs, Refs0, Refs,
+                  Predicates0, Predicates).
 goal_bindings([checked_goal(positive,
                             call(ref(Identity), Arguments)) | Goals],
               Map, Index, Occurrences0, Occurrences,
@@ -581,6 +623,24 @@ argument_predicate(Argument, Source,
     argument_json(Argument, Value),
     append(Predicates0,
            [_{literal_equals:_{column:Source, value:Value}}], Predicates).
+
+%% A bound int_lt goal is one scalar predicate. Each side is a column source
+%% for a variable bound by an earlier relation goal, or an integer literal.
+int_lt_predicates([], _, []).
+int_lt_predicates([Goal | Goals], Occurrences, [Predicate | Predicates]) :-
+    Goal = checked_goal(positive,
+                        call(ref(kernel(int_lt)), [Left, Right])),
+    !,
+    int_lt_operand(Left, Occurrences, LeftOperand),
+    int_lt_operand(Right, Occurrences, RightOperand),
+    Predicate = _{column_less_than:[LeftOperand, RightOperand]},
+    int_lt_predicates(Goals, Occurrences, Predicates).
+int_lt_predicates([_ | Goals], Occurrences, Predicates) :-
+    int_lt_predicates(Goals, Occurrences, Predicates).
+
+int_lt_operand(var(Variable), Occurrences, Source) :-
+    memberchk(Variable-Source, Occurrences).
+int_lt_operand(const(Value), _, Value).
 
 projection([], [], _, []).
 projection([Argument | Arguments], [Column | Columns], Occurrences,

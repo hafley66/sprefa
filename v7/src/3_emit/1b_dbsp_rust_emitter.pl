@@ -159,6 +159,8 @@ write_predicates([Predicate | Predicates]) :-
     write_column_equals(Predicate),
     write(', literal_equals: '),
     write_literal_equals(Predicate),
+    write(', column_less_than: '),
+    write_column_less_than(Predicate),
     write(' }'),
     write_separator(Predicates),
     write_predicates(Predicates).
@@ -182,6 +184,25 @@ write_literal_equals(Predicate) :-
        write(' })')
     ;  write('None')
     ).
+
+write_column_less_than(Predicate) :-
+    ( get_dict(column_less_than, Predicate, [Left, Right])
+    -> write('Some(['),
+       write_less_than_operand(Left),
+       write(', '),
+       write_less_than_operand(Right),
+       write('])')
+    ;  write('None')
+    ).
+
+write_less_than_operand(Value) :-
+    number(Value),
+    !,
+    write_value(Value).
+write_less_than_operand(Source) :-
+    write('serde_json::Value::String('),
+    write_owned_string(Source),
+    write(')').
 
 write_projections([]).
 write_projections([Projection | Projections]) :-
