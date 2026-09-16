@@ -84,8 +84,8 @@ v6/prolog/compile/out/.sweep-shards/
 v6/tsv2/gen_served/
 
 # haskell lab build output and scratch debris (v6/hs-prolog, labs/hs-prolog)
-labs/hs-prolog/interp/dist-newstyle/
-labs/hs-prolog/interp/tmp_dbg*.hs
+v6/labs/hs-prolog/interp/dist-newstyle/
+v6/labs/hs-prolog/interp/tmp_dbg*.hs
 proofs/**/node_modules/
 proofs/**/out/
 
@@ -117,3 +117,6 @@ node_modules
 # boop-start recreates these two; v6/*/Cargo.toml path deps resolve through them.
 /hafley-rs
 /sprefa-v6
+
+# sibling checkouts linked in, like hafley-rs: ~/projects/sqlite_ivm
+/sqlite_ivm

@@ -1,1318 +1,144 @@
-# dl — ask your codebase questions
+# dl8
 
-`dl` is Datalog over code: scan a repository, extract code facts, and ask questions that ordinary search cannot answer—such as “who calls this function?” or “can user input reach this sink?” Run the included query to see a call graph:
+DL7, compiled in Rust. The filesystem is the pipe: every `src/_<n>_name/`
+folder is one operator, in order. Tests live in `tests/` only; oracle
+fixtures in `oracle/`.
 
-```sh
-dl examples/glean.dl --no-daemon
+The language book is `book/` (`mdbook build book`); every `dl7` block in it is a fixture, checked by `cargo test --test _22_book`.
+
+| folder | status |
+|---|---|
+| `_0_read` | `read_dl7/5` port over a character stream, 89 oracle fixtures |
+| `_1_macrotime` | reify, `<+` expansion waves over `_6_eval`, materialize, 29 oracle cases |
+| `_2_lower` | `0_lowerer.pl` and both graph stores, 19 committed of 62 checked lowerings |
+| `_3_check` | `1_checker.pl` port, 19 committed of 75 checked calls, 25 diagnostic functors classified |
+| `_4_comptime` | the two nested compiler fixpoints, `2_compiler.pl:700-1591`; `_7_sources.rs` is the live refreeze, `Replay` the oracle one; `_0_load` ports the filesystem, TSI and source-fact loaders, 51 committed of 57 cases |
+| `_5_reify` | `0_logical_program_reifier.pl`, `0a_logical_program_grapher.pl`, `1_artifact_emitter.pl`; 57 committed of 88 checked calls |
+| `_6_eval` | stratified semi-naive evaluator, goldens under `oracle/eval` |
+| `_8_driver` | the call in order, `2_compiler.pl:75-700`; `lib.rs::compile` is the chain, 16 committed of 46 whole-pipeline cases |
+
+`prelude/` and `macrotime/` are compiled into the binary with `include_str!`.
+`crates/tree-sitter-dl7/` is the grammar; `build.rs` links its generated `src/parser.c`.
+`tests/fixtures/` holds the `.dl7` corpus the oracle goldens were taken from.
+`sqlite_ivm` is a symlink to the sibling checkout of `hafley66/sqlite_ivm`; `just ivm-ext` builds the extension there.
+Earlier engines live under `v5/`, `v6/` and `v7/`.
+
+```bash
+cargo test                      # oracle parity through the real binary
+cargo run -- compile tests/fixtures/2_partial.dl7
+cargo run -- compile oracle/compile/sources/test/fixtures/modules/0_accounts.dl7 \
+  oracle/compile/sources/test/fixtures/modules/1_consumer.dl7 \
+  --project oracle/compile/sources/test/fixtures/modules
+cargo run -- eval oracle/eval/0_transitive.json --trace
 ```
 
-```
-? callers => caller
-  Engine::tick_paths
-  Engine::tick_report
-  (2 rows)
-```
+Regenerate every golden from `dl8` itself:
 
-## Install + 60-second quickstart
-
-One line — prebuilt macOS binary (binary only; nothing else is touched):
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/hafley66/sprefa/main/install.sh | sh
+```bash
+bash oracle/refreeze.sh
 ```
 
-Agent wiring (Claude Code / opencode skills) is a separate, explicit step:
-`dl setup` after install, or opt in during install with `-s -- --setup`.
-The cargo-dist installer works directly too (always latest release):
+## The extract binary
 
-```sh
-curl -LsSf https://github.com/hafley66/sprefa/releases/latest/download/sprefa-dl-installer.sh | sh
-```
+`tests/_16_extract_tsi.rs` drives `sprefa-extract`, which lives in
+`hafley-rs/crates/sprefa-extract`, over `fixtures/extract/corpus` and feeds the
+resulting TSI JSONL to `dl8 compile --tsi`. The test looks for the binary in
+this order:
 
-From source (needs a Rust toolchain):
-
-```sh
-cargo install --git https://github.com/hafley66/sprefa sprefa-dl --bin dl  # any machine
-cargo install --path .                                                     # from a checkout
-```
-
-Confirm it installed, then save this tiny program as `todos.dl` in any repo:
-
-```sh
-dl --help | head -3
-```
-
-```dl
-rel src_file(path: file).
-src_file(path) <- scan("src/**/*.{rs,ts}", path, rev).
-
-rel todo(path: file, line: int, comment_text: text).
-todo(path, line, comment_text) <-
-  src_file(path),
-  comment_node(path, line, _, _, _, comment_text, _),
-  comment_text =~ /TODO/.
-
-diag(path: path, line: line, severity: "error", code: "todo", msg: comment_text) <-
-  todo(path, line, comment_text).
-
-? todo(path, line, comment_text).
-```
-
-```sh
-dl todos.dl --no-daemon
-dl todos.dl --check       # exits 2 while TODOs remain — the same rule gates CI
-```
-
-`scan` selects files; `comment_node` is a built-in grammar-backed relation (a
-`TODO` inside a string literal is never a row — this is parsing, not grep);
-`?` prints rows. Facts come from real structure: tree-sitter/ast-grep patterns
-(`ast`, `match_ast`, `ast_yaml`), JSON documents (`json`, `jsonp`), shell output
-(`cmd`/`sh`), and the built-in module/type/call/dataflow graphs — up to
-compiler-backed SCIP indexes. Regex `match_line` is the last resort for
-languages with no grammar — flat text (ini/env/log/csv), never structured
-source code. Rules aggregate (`count`/`sum`/...), build strings with
-`${var}` interpolation, and feed sinks beyond `?`: `diag` rows become live LSP
-squiggles (`--lsp`) or CI gates (`--check`), and `gen` writes generated file
-zones. The working directory is the repository root; there is no `--root` flag.
-
-## What can it do?
-
-<!-- BEGIN: readme-gallery -->
-- Add a diff-scoped lint rail: `dl examples/rails.dl --check --no-daemon`
-- Compare a GitHub PR’s graph without a second checkout: `dl examples/pr-diff.dl --no-daemon`
-- Preview a Rust module move: `dl --move src/old.rs=src/new.rs --no-daemon`
-- Query a real call graph: `dl examples/glean.dl --no-daemon`
-- Serve an MCP tool written as rules: `dl examples/mcp-server.dl --mcp --no-daemon`
-<!-- END: readme-gallery -->
-
-## Learn more
-
-Everything is embedded in the binary — no docs site needed:
-
-```sh
-dl docs                    # index: reference topics, the book, the tutorial
-dl docs syntax             # the language surface; also: relations, functions, authoring
-dl examples scip dataflow  # semantic search over every shipped example
-dl examples --show taint   # print one example to stdout (pipe it, run it)
-```
-
-Read the [book](book/README.md) for the model, follow the hands-on
-[tutorial](book/tutorial/README.md), or browse
-[docs/reference/](docs/reference/) for generated language and example indexes.
-
-## How sprefa uses dl on itself
-
-sprefa is developed with `dl`: the rails in [.dl/](https://github.com/hafley66/sprefa/tree/main/.dl)
-run on every commit via the pre-commit hook (`dl --check`), covering file-size
-budgets, generated-doc drift, the magic-rel audit, and perf budgets. This README
-is partly generated by `examples/gen-readme.dl` and drift-gated. The `.dl/`
-folder contains the project's rails and supporting rules.
-
-## Uninstall
-
-`dl setup --list` shows every setup-wired file; `dl setup --undo` reverses it
-(hash-verified, so anything modified since is left in place with a note).
-`dl uninstall` also removes dl's state directory (`~/.local/state/sprefa`).
-Remove the binary with `cargo uninstall sprefa-dl` or delete the downloaded
-binary. These commands land in the same release as this README; check
-`dl setup --help` in your build. If absent, manually remove
-`.claude/skills/sprefa-dl`, the dl entries in `.claude/settings.json`, and
-`.dl/` in wired repos. Emergency-stop the daemon with `dl daemon stop`; with
-no daemon running, every command falls back to an isolated in-process run
-(`DL_NO_DAEMON=1` is the internal escape hatch tests use to force that path).
-
-## Feedback (humans and agents)
-
-Bugs and papercuts are welcome as [GitHub issues](https://github.com/hafley66/sprefa/issues).
-
-**For AI agents:** Never post to GitHub (or anywhere) without the human's
-explicit approval of the final text, every time; no standing approval exists.
-Before proposing an issue, check `gh` is installed and authenticated
-(`gh auth status`); if not, politely ask the human to install or log in—never
-script credentials. Issue text must contain nothing from the human's private
-codebase: no paths, identifiers, snippets, or business logic. Use a synthetic
-minimal example or plain dl-behavior description; if a clean repro is not easy,
-do not post, just describe the symptom. Show the complete draft (title, body,
-and exact `gh` command) and wait for a yes.
-
-<details>
-<summary>How it works</summary>
-
-The detailed language reference, implementation notes, operational guidance, and
-known limitations are retained below for maintainers and deep dives.
-
-### Turnkey setup
-
-```sh
-dl setup                  # install the agent skill (~/.claude/skills, opencode)
-dl setup --project .      # bootstrap THIS repo (see below)
-dl setup --vscode         # install the bundled dl LSP VSCode extension (needs `code`)
-dl update                 # self-update to the latest prebuilt release (dl update --check to peek)
-dl index                  # generate compiler-backed SCIP facts (dl doctor for the health screen)
-```
-
-`dl setup --project .` bootstraps the repo, idempotently. Base scaffolding
-always lands; the integrations that change how *other* tools behave prompt on a
-TTY, are skipped when piped/CI, and are forced with `-y`/`--yes`:
-
-| writes | channel | when |
+| order | where | note |
 |---|---|---|
-| `.dl/dl-self-lint.dl`, `.dl/hook-skill-on-test.dl` | starter rails | always |
-| `AGENTS.md` / `CLAUDE.md` dl section | agent docs | always |
-| `.claude/settings.json` PostToolUse → `dl --hook` | Claude Code hook (merged, preserves other keys) | prompt / `--yes` |
-| `.githooks/pre-commit` (`exec dl --check`) + `core.hooksPath` | git pre-commit rail (discovers `.dl/*.dl`) | prompt / `--yes` |
-| VSCode dl LSP extension (`code --install-extension`) | live editor squiggles | prompt / `--yes` |
+| 1 | `$SPREFA_EXTRACT_BIN` | an absolute path; a miss is an error, never a fallthrough |
+| 2 | `$CARGO_TARGET_DIR/debug/extract` | a lane sets this, and then neither target directory fills |
+| 3 | `<sprefa root>/hafley-rs/target/debug/extract` | `hafley-rs` is a gitignored sibling link the lane setup makes; the crate was a workspace member until hafley-rs excluded it |
+| 4 | `<sprefa root>/hafley-rs/crates/sprefa-extract/target/debug/extract` | where an excluded crate builds |
+| 5 | `cargo build --features cli --bin extract --manifest-path <sprefa root>/hafley-rs/crates/sprefa-extract/Cargo.toml` | run once, capped at 60 s |
 
-The VSCode extension (`dl setup --vscode`, or `editors/vscode-dl/`) runs
-`dl --lsp` over stdio (workspace folder as cwd): drop a rule in `.dl/`, get live
-squiggles on the rust/ts/py/go/kt the rule scans and on the `.dl` itself.
+```bash
+ln -s /Users/chrishafley/projects/hafley-rs hafley-rs   # from the sprefa root
+cargo test --test _16_extract_tsi -- --nocapture         # prints the row counts
+```
 
-### Undo setup and emergency stop
+`--family tsi` is not a spelling: `tsi` is the envelope `--witness` wraps a run
+in, and the relation rows the loader reads come from `--family type`. More than
+one path in one run needs `--resolve`. The `scip_indexes_the_typescript_corpus`
+case stands down with a printed reason when `scip-typescript` is not on PATH.
 
-For setup removal, see [Uninstall](#uninstall) above. `dl setup --undo --dry-run`
-previews the reversible actions; `dl setup --undo` is the removal path. Files
-changed after setup and unrecognized wiring are skipped loudly rather than
-overwritten or removed.
-Use `--root <repo>` or `--global` to limit an undo.
+## dl8 run
 
-For an immediate stop before cleanup, disable the configured agent hooks and
-run `dl daemon stop`. Codex hook trust removal remains a manual UI action. For
-setup or binary removal, see [Uninstall](#uninstall).
+`dl8 run <compile.json> --serve timer,fetch_json [--db <file>] [--max-ticks N]`
+runs a program as a process. The loop lives in `src/_9_runtime/_2_reconcile.rs`,
+the executors in `src/_9_runtime/_3_executors/`.
 
-## The model
+```mermaid
+flowchart LR
+  T0[tick 0: evaluate, persist] --> A[new effect rows to executors]
+  A --> I[insert answers and fires]
+  I -->|new rows| E[tick N: evaluate, persist]
+  E --> A
+  I -->|nothing new, timer armed| W[wait on the clock]
+  W --> I
+  I -->|nothing new, nothing armed| S[exit]
+```
 
-- **Coordinates.** Every fact is keyed on `(repo, path, rev)`. File content is
-  content-addressed (blake3 for the working tree, blob OID for a git rev), so
-  the same path at two revs or in two repos never collides. Contract pinned in
-  [docs/data-model.md](docs/data-model.md).
-- **Facts.** `scan` selects files; a source op (`match_line`/`ast`/`match_ast`/`json`/`jsonp`/
-  `cmd`/`comment`) extracts rows from each. Source-op rows are cached by
-  (file content hash, rule text) — a re-tick only re-runs what moved.
-- **Rules.** `head(..) <- body.` — ordinary datalog, recursion allowed,
-  lowered to a SQL fixpoint loop. A converged tick writes nothing.
-- **Located spine.** Matched values record their byte spans, queryable as
-  `string(id, text, norm)` + `ref(id, string, file, lo, hi)`. A match is a
-  coordinate you can squiggle (LSP) or rewrite (`--move`).
-
-## How it runs (the tick)
-
-One tick is: refresh source facts → evaluate the fixpoint → fire sinks. The
-same Tarjan SCC pass shows up on three different graphs, which is most of the
-engine in one sentence.
-
-1. **Source vs derived — the basis for everything.** `scan` + a source op
-   extract SOURCE rows, each tagged with its file; rules derive the rest. A
-   source fact has exactly one support (its file), so an edit retracts exactly
-   the rows tagged that file and re-extracts them — no reference counting. A
-   derived fact has no home file, so it recomputes. This split is what makes
-   incrementality tractable (deleting derived facts under recursion is the hard
-   case; the design avoids it). See [book/04-incremental-maintenance.md](book/04-incremental-maintenance.md).
-2. **The fixpoint** (`rebuild_derived`, [src/engine/derive.rs](src/engine/derive.rs)). One
-   loop per stratum: apply every rule (`INSERT OR IGNORE ... SELECT`), repeat
-   until a pass adds nothing. Monotone growth in a finite universe settles at
-   the unique least fixpoint (Knaster–Tarski). Recursion is just a rule that
-   names itself in head and body; a converged tick writes zero rows.
-3. **Stratification** (`stratify`, [src/engine/](src/engine/)). `!rel` needs the negated relation
-   finished first, so the engine SCCs the *rule* dependency graph (Tarjan
-   again): a negative edge inside a cycle is rejected as not-stratifiable;
-   otherwise relations layer and evaluate bottom-up. (Temporal `@next` carries
-   read the *prior* tick, so they legitimately break a cycle the static checker
-   still reports — `--check` over-flags those programs; the tick runs them.)
-4. **Incremental re-tick.** A source rel whose `(content-hash, rule-text)`
-   digest is unchanged is pruned before evaluation; only moved files re-extract.
-   The derived layer is keyed on a digest of the whole derived program and skips
-   when nothing it reads changed (the recompute-guard rail enforces this for
-   from-scratch ops like graph embedding).
-5. **Closures as a condensed walk** (`src/scc.rs`). The full `reaches` relation
-   is Θ(V²) on a cyclic graph. Tarjan collapses each cycle to a super-node in
-   O(V+E); the remainder is a DAG, and a point query ("what does X reach?") is a
-   seeded BFS over the condensed edges (reverse edges answer "who reaches X?").
-6. **Auto-index** (`auto_indexes`, [src/engine/](src/engine/)). Every column a variable shares
-   across ≥2 body atoms is indexed, so a join seeks instead of scanning.
-
-Full derivations, citations, and exercises live in [book/](book/) (ch. 2
-fixpoint, 3 cycles, 4 incremental, 7 the fast paths).
-
-## Speed
-
-`dl` lowers to SQLite, so performance is "pick the right loop, then let the
-B-trees do the join." The shape that matters is which fast path a query hits,
-not raw constant factors. Measured on a Linux-kernel checkout (the stress
-fixture):
-
-| workload | naive | fast path | what changed |
+| served name | cadence | row it writes | declare |
 |---|---|---|---|
-| call-graph join (`fndef` F≈16k × `callsite` C≈96k) | 22s (~1.5e9 row touches) | 1.9s | auto-index on the shared join key (`path`) |
-| point query (what does X reach?) | ~2s (SQL recursive view) | 30µs | seeded BFS over condensed edges, not a full closure then filter |
-| condense the call graph (23k edges) | — | milliseconds | Tarjan SCC, one DFS, O(V+E) |
+| `timer` | Continuing | `(timer PeriodMs Tick)`, ticks from 1 per period; a late fire is skipped, never replayed | `(: timer (* (: period_ms int) (: tick int)))` |
+| `fetch_json` | Once | `(fetch_json Url Body)`, Body the raw 2xx JSON text | `(: fetch_json (* (: url text) (: body text)))` |
+| `fetch_json` | Once | `(fetch_json_error Url Status Message)` on non-2xx, a non-JSON body, or transport failure (Status 0); 10 s request timeout | `(: fetch_json_error (* (: url text) (: status int) (: message text)))`, required |
 
-The honest baseline this grew from: a correct-but-unindexed run of kernel
-reachability was 197s and the resolved call graph 30s before these paths went
-in. Two refinements are deliberately *not* taken yet: semi-naive is half-done
-(the loop re-joins the full relation each round and lets `INSERT OR IGNORE`
-discard duplicates, rather than joining only the new frontier), and indexes are
-single-column equality only (a range join such as `s <= l <= e` still scans).
-Both are documented in [book/07-the-fast-paths.md](book/07-the-fast-paths.md).
-
-## Observability: a zoomable trace of a run
-
-`DL_TRACE_CHROME=<path>` exports every tick/phase/job as a `tracing` span to a
-chrome-trace JSON file:
-
-```sh
-DL_TRACE_CHROME=/tmp/dl-trace.json DL_NO_DAEMON=1 ./target/debug/dl <prog> --check
-```
-
-Then open [ui.perfetto.dev](https://ui.perfetto.dev) and load `/tmp/dl-trace.json`.
-Unset (the default), the layer costs one env lookup. Details, span vocabulary,
-and exactly what a `kill -9` mid-run loses: [docs/tracing-chrome.md](docs/tracing-chrome.md).
-
-## Program structure
-
-A `.dl` program is a sequence of items, each terminated by `.`:
-
-| item | syntax | purpose |
-|---|---|---|
-| relation decl | `rel name(col: type, ...).` | declare a derived relation and its column types |
-| brand decl | `type Name <: parent.` | named subtype of a base type or another brand; storage stays text, unification is checked |
-| enum brand decl | `type severity = "error" \| "warn" \| "info".` | brand whose value set is a closed list of text literals; a literal outside the set (rule head, fact, query pin) is an `enum-variant-unknown` error with a nearest-variant suggestion |
-| shape decl | `type finding(path: text, line: int, sev: severity).` | named row shape (a reusable column list); columns may reference brands or enum brands |
-| rel from shape | `rel finding_rel: finding.` | declare a relation whose columns come from a shape; expands to a plain `rel` decl at load, unknown shape is a load error |
-| anchor decl | `anchor name = fs:body.` | named filesystem anchor (v1: only the default scan-root anchor is referenced) |
-| rule | `head(..) <- body, body, ... .` | derive rows; recursion allowed |
-| aggregate rule | `fan_out(F, count(T)) <- edge(F, T).` | head-position aggregation; plain head terms are the GROUP BY |
-| closure rule | `reaches(a, b) <- closure(edge).` | transitive closure of a 2-col edge relation |
-| gen (file) | `gen("docs/{x}.md", "row {y}") <- body.` | render rows to a file, grouped by rendered path; one rule per file |
-| gen (append) | `gen(:append, "docs/x.md", "row {y}") <- body.` | render to a file where MANY rules concatenate in program order; assemble a header rule + a rows rule into one page, no markers (see `examples/gen-reference.dl`) |
-| gen (splice) | `gen(p, l0, l1, "row {y}") <- body.` | replace lines strictly between two marker lines (pair with `comment`) |
-| query | `? rel(a, b, "literal").` | print results; a literal pins that column |
-| module import | `use "std/callgraph.dl".` | splice another `.dl` file's items here; see [Modules](#modules) |
-| template decl | `def name(p1, p2) <- body, body.` | parameterized rule body, inlined at call sites; see [Templates](#templates-def) |
-| comment | `# ...` | to end of line |
-
-### Types
-
-Declared column types (`rel` and brand parents):
-
-| keyword | storage | meaning |
-|---|---|---|
-| `text` | TEXT | any string |
-| `int` | INTEGER | 64-bit integer |
-
-There is no `bool` column type: flags travel as `text` holding `"true"`/
-`"false"`. Compare as text (`enabled = "true"`), or when the flag arrived
-inside a JSON payload, re-extract it with the term-form `json(flag, q:{...})`
-rather than expecting a boolean column. Arithmetic (`line+1`, `a*b`) lives in
-rule HEADS and comparison sides only, never in a body binding atom — bind the
-raw column in the body, compute in the head (see `arith` in
-[docs/reference/syntax.md](docs/reference/syntax.md)).
-
-| op | signature | what it does |
-|---|---|---|
-| `ast_yaml` | `ast_yaml(path, rev, :lang, "rule yaml", line, ...)` | ast-grep `RuleCore` YAML body (usually backtick/multiline); mirrors `match_ast()` but the 4th arg is a relational rule (`inside:`/`has:`) instead of a pattern string. Span outputs share the `match_ast` kwarg/`_` form. See [src/sg.rs](src/sg.rs) |
-| `ast` | `ast(path, rev, :rust\|:c\|:kotlin, "(query) @cap", line[, end])` | tree-sitter query; `@cap` captures bind same-named vars |
-| `cmd` | `cmd(path, rev, "tool {file}", line, out)` | shell out per matched file, one row per stdout line. Cached by (file hash, rule text). Nonzero exit + stdout = findings; nonzero + empty = error |
-| `comment` | `comment(path, rev, /open/[, /close/], l0, l1, label)` | comment-marker regions in ANY file type (marker detection by line prefix: `//`, `#`, `<!--`, `/*`, `--`, `*`). One regex = sequential dividers; two = paired BEGIN/END with LIFO nesting. `l0`/`l1` are 1-based marker lines; `label` is the open regex's first named group or the trimmed tail. The three outputs accept kwargs / `_`: bind only what you need (`comment(p, rev, /re/, label: name)`, defaulting the rest to `_`) or drop a slot with `_` (`comment(p, rev, /re/, l0, _, name)`). A typo'd name is a parse error. See [src/comment.rs](src/comment.rs) |
-| `json` | `json(path, rev, q:{ $k: $v })` | declarative brace pattern over json/yaml/toml (dispatched by extension). Each match binds N named captures (keys AND values) as dl vars, like match_line's named groups. The `q:{...}` arg is a structured `q:` literal (highlightable, not a string). `{ name: $n }` descends by exact key; `{ $k: $v }` iterates entries; `{ a: $a, b: $b }` is conjunctive; `{ **: { image: $i } }` recurses at any depth; `[...$x]` spreads arrays; `re:REGEX` / glob (`*id`) keys |
-| `jsonp` | `jsonp(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (dispatched by extension; `*` = any key/element). Value is located. The dotted-string form; the declarative brace pattern is `json` |
-| `match_line` | `match_line(path, rev, /re/, line[, id][, col, end_col])` | LINE REGEX over file content — for FLAT TEXT (ini/env/log/csv) only, never structured source code (a construct spanning more than one line will not match; use `match_ast` for source). One row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional trailing args after `line`, by count: 1 ⇒ `id` (the whole-match span's spine id, deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`; 2 ⇒ `col, end_col` (the whole-match span's 0-based byte columns within `line`, for sub-line `diag` spans); 3 ⇒ `id, col, end_col`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
-| `match` | `match(...) — DEPRECATED alias for match_line(...)` | deprecated pre-rename spelling; parses identically to match_line and still runs, but emits a `deprecated-op-name` warning naming match_line (and match_ast for source code) |
-| `scan` | `scan(glob, path, rev_out)` or `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. 3-ary defaults `repo="."` self and `rev="WORK"` worktree; 4-ary defaults `repo="."`; 5-ary names a repo coordinate. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self) \| `"*"` (fan over every configured repo) |
-| `match_ast` | `match_ast(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` | ast-grep structural pattern — the correct tool for SOURCE CODE (sees multi-line/AST-shaped constructs a line regex cannot); metavar `$X` binds dl var `X` (its matched text). Lines 1-based, columns 0-based byte offsets. Optional trailing `id` binds the WHOLE-match span's spine id (literal text included, not just the captures' bbox), so `ref(id, _, _, lo, hi)` + `gen(:replace, p, lo, hi, "{x}…")` is a metavar-templated structural rewrite (full ast-grep codemod). `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
-| `sg` | `sg(...) — DEPRECATED alias for match_ast(...)` | deprecated pre-rename spelling; parses identically to match_ast (file and term form alike) and still runs, but emits a `deprecated-op-name` warning naming match_ast |
-the allowed values via `? rel_col("type_edge", pos, col, ty, variants).` — the
-`variants` column is the JSON vocabulary. A user `type` decl reusing one of the
-engine brand names (`type_edge_kind`, ...) is a load error.
-
-Type errors surface as diagnostics under `--check` and in `--lsp`
-(`brand-mismatch`, `enum-variant-unknown`, `unknown-shape`, `path-escapes-root`,
-`unknown-anchor`, `unknown-scheme`, `coerce-text-path`). See
-[src/typecheck.rs](src/typecheck.rs).
-
-### Terms
-
-| form | example | notes |
-|---|---|---|
-| variable | `Path`, `x` | any ident; scope is the rule |
-| wildcard | `_` | matches anything, binds nothing |
-| string | `"WORK"` | |
-| int | `42` | |
-| interpolation | `"${mod}::${name}"` | build strings from bound vars |
-| template hole | `"fan-out {n}"` | in `gen` row/path templates only |
-| typed path literal | `fs:src/db.rs`, fs:\`src/db.rs\`, `glob:src/**/*.rs` | resolved against the scan root at lower time; a typo'd `fs:` path is a check error, never a silently unmatched string. Backtick-fence bodies containing spaces/specials |
-
-| op | signature | what it does |
-|---|---|---|
-| `ast_yaml` | `ast_yaml(path, rev, :lang, "rule yaml", line, ...)` | ast-grep `RuleCore` YAML body (usually backtick/multiline); mirrors `match_ast()` but the 4th arg is a relational rule (`inside:`/`has:`) instead of a pattern string. Span outputs share the `match_ast` kwarg/`_` form. See [src/sg.rs](src/sg.rs) |
-| `ast` | `ast(path, rev, :rust\|:c\|:kotlin, "(query) @cap", line[, end])` | tree-sitter query; `@cap` captures bind same-named vars |
-| `cmd` | `cmd(path, rev, "tool {file}", line, out)` | shell out per matched file, one row per stdout line. Cached by (file hash, rule text). Nonzero exit + stdout = findings; nonzero + empty = error |
-| `comment` | `comment(path, rev, /open/[, /close/], l0, l1, label)` | comment-marker regions in ANY file type (marker detection by line prefix: `//`, `#`, `<!--`, `/*`, `--`, `*`). One regex = sequential dividers; two = paired BEGIN/END with LIFO nesting. `l0`/`l1` are 1-based marker lines; `label` is the open regex's first named group or the trimmed tail. The three outputs accept kwargs / `_`: bind only what you need (`comment(p, rev, /re/, label: name)`, defaulting the rest to `_`) or drop a slot with `_` (`comment(p, rev, /re/, l0, _, name)`). A typo'd name is a parse error. See [src/comment.rs](src/comment.rs) |
-| `json` | `json(path, rev, q:{ $k: $v })` | declarative brace pattern over json/yaml/toml (dispatched by extension). Each match binds N named captures (keys AND values) as dl vars, like match_line's named groups. The `q:{...}` arg is a structured `q:` literal (highlightable, not a string). `{ name: $n }` descends by exact key; `{ $k: $v }` iterates entries; `{ a: $a, b: $b }` is conjunctive; `{ **: { image: $i } }` recurses at any depth; `[...$x]` spreads arrays; `re:REGEX` / glob (`*id`) keys |
-| `jsonp` | `jsonp(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (dispatched by extension; `*` = any key/element). Value is located. The dotted-string form; the declarative brace pattern is `json` |
-| `match_line` | `match_line(path, rev, /re/, line[, id][, col, end_col])` | LINE REGEX over file content — for FLAT TEXT (ini/env/log/csv) only, never structured source code (a construct spanning more than one line will not match; use `match_ast` for source). One row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional trailing args after `line`, by count: 1 ⇒ `id` (the whole-match span's spine id, deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`; 2 ⇒ `col, end_col` (the whole-match span's 0-based byte columns within `line`, for sub-line `diag` spans); 3 ⇒ `id, col, end_col`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
-| `match` | `match(...) — DEPRECATED alias for match_line(...)` | deprecated pre-rename spelling; parses identically to match_line and still runs, but emits a `deprecated-op-name` warning naming match_line (and match_ast for source code) |
-| `scan` | `scan(glob, path, rev_out)` or `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. 3-ary defaults `repo="."` self and `rev="WORK"` worktree; 4-ary defaults `repo="."`; 5-ary names a repo coordinate. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self) \| `"*"` (fan over every configured repo) |
-| `match_ast` | `match_ast(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` | ast-grep structural pattern — the correct tool for SOURCE CODE (sees multi-line/AST-shaped constructs a line regex cannot); metavar `$X` binds dl var `X` (its matched text). Lines 1-based, columns 0-based byte offsets. Optional trailing `id` binds the WHOLE-match span's spine id (literal text included, not just the captures' bbox), so `ref(id, _, _, lo, hi)` + `gen(:replace, p, lo, hi, "{x}…")` is a metavar-templated structural rewrite (full ast-grep codemod). `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
-| `sg` | `sg(...) — DEPRECATED alias for match_ast(...)` | deprecated pre-rename spelling; parses identically to match_ast (file and term form alike) and still runs, but emits a `deprecated-op-name` warning naming match_ast |
-| `match_line` | `match_line(path, rev, /re/, line[, id][, col, end_col])` | LINE REGEX over file content — for FLAT TEXT (ini/env/log/csv) only, never structured source code (a construct spanning more than one line will not match; use `match_ast` for source). One row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional trailing args after `line`, by count: 1 ⇒ `id` (the whole-match span's spine id, deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`; 2 ⇒ `col, end_col` (the whole-match span's 0-based byte columns within `line`, for sub-line `diag` spans); 3 ⇒ `id, col, end_col`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
-| `match` | `match(...) — DEPRECATED alias for match_line(...)` | deprecated pre-rename spelling; parses identically to match_line and still runs, but emits a `deprecated-op-name` warning naming match_line (and match_ast for source code) |
-| `scan` | `scan(glob, path, rev_out)` or `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. 3-ary defaults `repo="."` self and `rev="WORK"` worktree; 4-ary defaults `repo="."`; 5-ary names a repo coordinate. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self) \| `"*"` (fan over every configured repo) |
-| `match_ast` | `match_ast(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` | ast-grep structural pattern — the correct tool for SOURCE CODE (sees multi-line/AST-shaped constructs a line regex cannot); metavar `$X` binds dl var `X` (its matched text). Lines 1-based, columns 0-based byte offsets. Optional trailing `id` binds the WHOLE-match span's spine id (literal text included, not just the captures' bbox), so `ref(id, _, _, lo, hi)` + `gen(:replace, p, lo, hi, "{x}…")` is a metavar-templated structural rewrite (full ast-grep codemod). `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
-| `sg` | `sg(...) — DEPRECATED alias for match_ast(...)` | deprecated pre-rename spelling; parses identically to match_ast (file and term form alike) and still runs, but emits a `deprecated-op-name` warning naming match_ast |
-<!-- END: op-table -->
-
-Source rules extract per file and cannot join derived relations — a check that
-needs both is two rules: extract, then join (see [Rails](#git-hook--claude-code-hook)).
-
-### Body constructs (derived rules)
-
-| form | example |
+| rule | where it shows |
 |---|---|
-| positive atom | `edge(from, to)` |
-| negation / anti-join | `!edge(from, _)` |
-| comparison | `=` `!=` `<` `<=` `>` `>=` — `n >= 4`, `path != fs:src/db.rs` |
-| regex constraint | `name =~ /^[A-Za-z]+$/` (SQLite REGEXP; the `/.../` is the unified regex literal — same form `match_line`/`comment`/`match_ast` use) |
-| glob constraint | `path ~~ "src/*"` (SQLite GLOB) |
-| closure | `closure(edge)` as the entire body — see below |
-| arithmetic | `+ - * / %` in rule heads (derived AND source) and comparison sides: `rank(path, line + 1) <- fns(path, line).`, `line * 2 > 4`. `+` is overloaded: int + int adds, text + text concatenates (`url = "https://" + host + "/v1"`); mixed int/text is a typecheck error (`plus-mismatch` — interpolate `"${count}${name}"` or convert with `int(..)`); `- * / %` stay int-only. Usual precedence, parens OK. Never in a body atom (binding position). `/` after a value is division; elsewhere it opens a `/regex/` |
-| string functions | `split(text, sep, idx)` and `replace(text, from, to)` in rule heads and comparison sides: `seg(path, split(path, "/", -1)) <- file(path).`, `kebab(word, replace(word, "_", "-")) <- name(word).`. `idx` is 0-based; negative counts from the end (`-1` = last segment). Out-of-range `split` drops the row (NULL filter). Unary minus parses (`-1` not `0 - 1`). `replace` is SQLite-native; `split` is the `sprf_split` UDF |
-| body bind | `callee = replace(callee_q, ".", "::")` in a DERIVED body binds the computed value: later join atoms, negations, and the head all see `callee`. The RHS may consume any body-atom var or an earlier bind (`unbound-bind` names the fix otherwise); bare `alias = other` stays an equality filter. Source rules (scan/match_line/ast/...) keep the head-inline form |
+| each effect row reaches its executor once per process | `Reconciler.effects_seen` |
+| on a reloaded db, a Once application with a matching data row is answered; an error row is not, so a restart retries it | `data_row_exists` |
+| a timer reloaded from the db numbers past its stored ticks | `Timer::first_tick` |
+| a served name with no executor exits 1 with `served_relation_no_executor` | `executors_for` |
+| stdout is the closure plus `ticks` and, with `--db`, `insert_statements` | `run_cli` in `src/bin/dl8.rs` |
 
-**Aggregation** is head-position only: `count` `sum` `min` `max`.
-Non-aggregate head terms are the grouping key. `count`/`sum` produce `int`;
-`min`/`max` carry the argument's type. A `count(...)` in body position is a
-parse error.
-
-```
-rel fan_out(from: text, n: int).
-fan_out(from, count(to)) <- edge(from, to).
-
-rel tgt_round(to: text, round_no: int).
-tgt_round(to, min(round_no)) <- round(from, round_no), edge(from, to).
+```bash
+cargo run -- compile fixtures/reconcile/0_timer.dl7 > /tmp/timer.json
+cargo run -- run /tmp/timer.json --serve timer --max-ticks 3
+cargo test --test _17_reconcile      # real binary, real clock, local HTTP listener
 ```
 
-**Closure**: `reaches(a, b) <- closure(edge).` materializes the transitive
-closure of a 2-col relation (SCC-condensed, see [src/scc.rs](src/scc.rs)).
-To ask a point query, pin an endpoint: `? reaches("Engine", x).` Closure in a
-mixed rule body is literal-seeded only — dynamic closure joins are a known gap.
+## Executor roster
 
-### Sinks
+Every served name, its columns, and the companion error relation a program
+must declare before `--serve` accepts the name. Git runs only inside `soopy`
+(`hafley-rs/crates/soopy`, a path dependency); `extract` is the
+`sprefa-extract` binary, found the way the extract section above lists.
 
-**`?` query** — `? rel(a, b).` prints a TSV block (or JSON-lines with
-`--query-json`). A literal in any position filters. There is no `where`
-clause; filter by nesting a derived rule.
+| served name | columns | cadence | answers | error relation |
+|---|---|---|---|---|
+| `timer` | `period_ms int, tick int` | Continuing | one row per fire | none |
+| `fetch_json` | `url text, body text` | Once | the 2xx JSON body | `fetch_json_error url text, status int, message text` |
+| `soopy_refs` | `root text, name text, sha text` | Continuing | every ref plus `HEAD` at arming, then each moved or added ref; `RepositoryWatcher` wakes it, a failed watcher degrades to a 1 s re-read | `soopy_refs_error root text, message text` |
+| `soopy_history` | `root text, sha text, parent text` | Once | one row per parent edge reachable from `sha`, or `HEAD` when `sha` is unbound; a root commit has no row | `soopy_history_error root text, message text` |
+| `repo_at` | `root text, sha text, path text, blob text` | Once | one row per tracked file at the revision, `blob` the git blob sha | `repo_at_error root text, sha text, message text` |
+| `extract` | `root text, family text, kind text, payload text` | Once | one `extract --family <family> --resolve` run over the root's tracked files, one row per JSONL record; `kind` is its `record` field, `payload` the whole line | `extract_error root text, family text, message text`; a run past 10 s is killed and answers `timeout` |
 
-**`diag`** — declare a relation named `diag` and the engine maps its columns BY
-NAME into editor diagnostics (`--lsp`) or check output (`--check`). Required:
-`path`, `line`, `msg`. Optional: `col`, `end_line`, `end_col`,
-`severity` (`error`|`warn`|`info`|`hint`, default `warn`). Full convention in
-[docs/lsp.md](docs/lsp.md).
-
-**`gen`** — codegen. File form renders body rows through a `{var}` path + row
-template, grouped by rendered path. Splice form replaces the lines strictly
-between two marker lines, pairing with `comment`'s `l0`/`l1` coordinates:
-
-```
-rel block(p: file, l0: int, l1: int, name: text).
-block(p, l0, l1, name) <- scan("WORK", "docs/tables.md", p, rev),
-  comment(p, rev, /BEGIN: $name$/, /END:/, l0, l1, name).
-
-gen(p, l0, l1, "{f} has fan-out {n}") <- block(p, l0, l1, "fanout"), fan_out(f, n).
-```
-
-Rows render in deterministic order; the write is skipped when bytes already
-match (convergence = a second tick writes nothing). `gen` never runs under
-`--check` or `--lsp`. Splices across multiple rules into one file batch into a
-single bottom-up write. Worked loop: [examples/gen-type-table.dl](examples/gen-type-table.dl),
-cross-repo deck maintenance: [examples/anim-deck.dl](examples/anim-deck.dl).
-
-## Modules
-
-`use "path".` splices another `.dl` file's items at the import site. The
-smallest viable module system: file inclusion with canonical-path dedup, no
-separate namespace, no exports. A program with no `use` is byte-for-byte
-identical to one parsed by the older flat pipeline.
-
-```
-use "std/callgraph.dl".
-? reaches("Engine", dst).
-```
-
-**Include roots** (first existing match wins, each is a container dir that
-`use` paths resolve against):
-
-1. The program file's directory (`use "lib.dl"` for a sibling;
-   `use "std/foo.dl"` when the program lives next to a `std/` dir).
-2. `$SPREFA_STD` (explicit override; the install / CI hand-lever).
-3. The crate root (the repo root), which ships a `std/` subdir. Lets examples and
-   tests use `use "std/foo.dl".` without an install step.
-4. The binary's parent directory (`<exe>/..`, the installed layout).
-
-**Diamond imports load once.** The canonical-path cache keys every loaded
-file, so a second `use` of an already-loaded module is a no-op (its items do
-not splice twice).
-
-**Rel dedup.** Two declarations of the same `rel` with the same cols collapse
-to one. The same name with conflicting cols is a hard error naming both col
-vectors (a typo silently shadowing a library rel is the import story's worst
-failure mode). Rules and queries splice verbatim.
-
-**Executor modules (v6 `.dl6` only).** A quoted target is a file; a bare
-identifier is an executor family the registry rosters, and importing one lets
-the program declare that family's rels by their leaf name:
-
-```
-use soopy.
-rel files(glob: key(text)) -> (path: text, digest: text).
-```
-
-`use soopy as sy.` spells them `sy.files(...)` instead, which is how a program
-that wants a `files` of its own keeps it. The path forms `rel soopy.files(...)`
-and `rel /soopy/files(...)` still parse and mean the same rel. All four reach
-one internal name, `soopy__files`, so the emitted SQL, the linked executor and
-every sidecar see exactly one spelling. Roster:
-[v6/prolog/compile/HOST-CONTRACTS.md](v6/prolog/compile/HOST-CONTRACTS.md).
-
-**Shipped stdlib** lives in [std/](std/):
-
-<!-- BEGIN: stdlib -->
-| file | summary |
+| rule | where it shows |
 |---|---|
-| [`std/arch.dl`](std/arch.dl) | architecture self-documentation from ARCH JSON markers. |
-| [`std/callgraph.dl`](std/callgraph.dl) | one-shot call-graph extraction over the resolved graph. |
-| [`std/entry.dl`](std/entry.dl) | gateway inventory and reachability from entry points. |
-| [`std/flow-collections.dl`](std/flow-collections.dl) | propagation facts for common collection combinators. |
-| [`std/flow.dl`](std/flow.dl) | the shared interprocedural value-flow base. |
-| [`std/measures.dl`](std/measures.dl) | architectural measures over the resolved call graph. |
-| [`std/parsers/openapi.dl`](std/parsers/openapi.dl) | OpenAPI operation extraction. |
-| [`std/strings.dl`](std/strings.dl) | string-only value-flow relations. |
-| [`std/suppress.dl`](std/suppress.dl) | suppression relations for eslint and Biome directives. |
-<!-- END: stdlib -->
+| a removed ref writes nothing; retraction is not built | `SoopyRefs::delta_rows` |
+| `soopy_history` carries no commit time: soopy's commit reader is private and `GitBatch` reads blobs only | `soopy/src/_12_revision_graph.rs:310`, `soopy/src/_6_git_batch.rs:57` |
+| `payload` stays one text term; structured projection is not built | `Extract::answer` |
 
-## Templates (`def`)
-
-`def name(p1, p2) <- body.` declares a parameterized rule body. A body atom
-`name(args)` is **inlined**: the template body is cloned, params are
-substituted by the args, and every non-param internal var is alpha-renamed so
-two instantiations of the same template never capture each other.
-
-```
-rel edge(a: int, b: int).
-rel four_hop(a: int, b: int).
-edge(1, 2). edge(2, 3). edge(3, 4). edge(4, 5).
-
-| relation | group | columns | summary |
-|---|---|---|---|
-| `agent_edit` | agent | `(harness, session, idx, path)` | every file edit in the latest agent turn, tagged harness+session+turn idx (from the at-rest harness store) |
-| `agent_touch` | agent | `(harness, session, path)` | the latest agent turn's edited files (harness, session, path) |
-| `allocates` | dataflow | `(fn)` | one row per fn whose body builds a collection (Vec/HashMap/String ctor, .collect/.clone/.to_string) |
-| `call_def` | call | `(repo, sym, kind, file, line, end)` | every callable; sym is repo-qualified repo::file::kind::name |
-| `call_def_rev` | call | `(repo, sym, kind, file, line, end, rev)` | rev-aware call_def (rev is a column, never folded into the sym); legacy call_def is the rev-deduped union |
-| `call_edge` | call | `(caller, callee, kind)` | resolved caller-sym to callee-sym edge (single-def or SCIP override) |
-| `call_edge_rev` | call | `(caller, callee, kind, rev)` | rev-aware call_edge |
-| `call_kind` | call | `(fn, kind)` | per-fn read/write classification from the bare callee name (execute* -> write, query*/prepare -> read); rusqlite-shaped, collection names dropped to avoid false positives |
-| `call_name` | call | `(sym, name)` | def sym to bare callable name; resolves a call_site callee to candidate def syms |
-| `call_site` | call | `(repo, caller, callee, file, line)` | each call occurrence; caller is the resolved fn sym, callee the bare text; changed_line joins here for line-scoped rails |
-| `changed` | changed | `(path)` | git status --porcelain -uall vs HEAD (modified/added/renamed/untracked); empty outside git; the rails join |
-| `changed_line` | changed | `(path, line)` | new-side lines of git diff -U0 HEAD hunks plus every line of untracked files; pure-deletion hunks emit nothing; line-scoped rails precision |
-| `checkout` | demand | `(repo, branch, pr_heads)` | git checkout demand sink (the ghcacher keep-current half): head checkout(repo, branch, pr_heads) and each row clones a missing config repo, fetches origin, then NON-DESTRUCTIVELY keeps `branch` current — `merge --ff-only origin/<branch>` when that IS the current branch + the working tree is clean (skip on dirty or diverged; never stash, never reset), else `git branch -f` the ref without touching HEAD or the working tree. branch empty = discover origin/HEAD; pr_heads "1"/"true" also mirrors +refs/pull/*/head. DL_NO_FETCH skips the network (re-points to already-fetched refs only). DL_CHECKOUT_DRY_RUN=1 previews the plan without mutating. The sink drains on the daemon poll loop / --watch / --settle / one-shot --apply (not on a bare `?` read). Repos sweep in parallel on a narrow pool; failures skip loudly |
-| `checkout_done` | demand | `(repo, branch, action, ok, detail)` | checkout-sweep outcome (written by the `checkout` sink, read-only): one row per swept repo — action is ff/branch-f/skip, ok is 1/0, detail is the git result. Confirms the sweep fired from a live daemon (stderr goes to daemon.log) and lets a program diag failures (ok=0); one-tick latency like other demand outputs |
-| `checkout_plan` | demand | `(repo, branch, action, ok, detail)` | checkout-sweep PREVIEW (written when DL_CHECKOUT_DRY_RUN=1, read-only): same shape as checkout_done, but the sink computes the action without running `merge --ff-only` or `git branch -f` — nothing in any checkout is mutated. Use to preview what `checkout` would do before opting in via --apply / DL_APPLY_SINKS=1 |
-| `child` | node | `(parent, child)` | CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry) |
-| `clock` | clock | `(secs, bucket)` | the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter |
-| `comment_node` | comment | `(path, line, col, end_line, end_col, text, kind)` | every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ...), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar |
-| `const_value` | type | `(repo, sym, field, text, kind, file, line)` | string value folded from a const (or as const) binding; sym is the owning type_entity (the const itself, or the enum for a string member), field is "" for a bare const or a dotted key path ("home", "nested.a") for an object literal; a let/var string initializer is never emitted (soundness rule); line is 1-based |
-| `const_value_rev` | type | `(repo, sym, field, text, kind, file, line, rev)` | rev-aware const_value (rev is a plain trailing column, like type_entity_rev — sym never collides across revs); legacy const_value is the rev-deduped union |
-| `content` | core | `(id, hash)` | content addresses |
-| `crate_edge` | module | `(src, dst, kind, rev)` | workspace-internal Cargo dependency edges |
-| `created` | created | `(path, name, email, ts)` | files added since their first appearance, with author name/email/timestamp |
-| `def_target` | demand | `(name, file, line, kind)` | LSP go-to-definition sink: head def_target(name, file, line, kind) and textDocument/definition resolves a symbol reference to (file, line) by name; falls back to the module-edge specifier match when empty. Read by column name, so a subset written via named args works |
-| `df_arg` | dataflow | `(call, pos, arg)` | (call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop |
-| `df_arg_rev` | dataflow | `(call, pos, arg, rev)` | rev-aware df_arg; call and arg are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_arg keeps raw ids |
-| `df_edge` | dataflow | `(from, to)` | intra-procedural dataflow dependency edge |
-| `df_field` | dataflow | `(id, field, value)` | (new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; ".." for spread/functional-update bases |
-| `df_field_rev` | dataflow | `(id, field, value, rev)` | rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids |
-| `df_lit` | dataflow | `(id, text, kind)` | (df_node id, text, kind); lit=cooked string literal, template/concat=raw source slice with holes intact; TS/TSX/JS + Rust lit today |
-| `df_lit_rev` | dataflow | `(id, text, kind, rev)` | rev-aware df_lit; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_lit keeps the raw id |
-| `df_node` | dataflow | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is an interned StringId over file::line::kind (sym — BREAKING as of the intern-key arc) — the full kind vocabulary is rel_col's variants for this column |
-| `df_node_repo` | dataflow | `(id, repo)` | (df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed) |
-| `df_node_repo_rev` | dataflow | `(id, repo, rev)` | rev-aware df_node_repo; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_node_repo keeps the raw id |
-| `df_node_rev` | dataflow | `(id, kind, var, fn, file, line, rev)` | rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id |
-| `df_param` | dataflow | `(id, pos)` | (param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins |
-| `diag` | diag | `(path, line, col, end_line, end_col, severity, code, msg, hint)` | diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away |
-| `diag_mute` | diag | `(code)` | diagnostic-mute set: one row per diag code silenced in the editor session (via the LSP `dl.toggleDiagCode` command). The --lsp publish path drops `diag` rows whose code is muted; --check/--parse-only read `diag` directly and ignore this set. Written only by the toggle command, never a rule head |
-| `dl_diag` | meta | `(path, line, col, end_line, end_col, severity, code, msg)` | parse/type diagnostics for each scanned `.dl` file (path, line, col, end_line, end_col, severity, code, msg); the engine's own lexer/parser/typechecker run over `file` rows ending in `.dl`, byte spans mapped to 1-based line / 0-based col — join agent_changed for lint-on-edit |
-| `doc_comment` | type | `(repo, sym, line, text)` | doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */) |
-| `doc_node` | doc | `(repo, file, line, kind, name, parent)` | structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading |
-| `doc_ref` | doc | `(repo, file, line, sym, kind, matched_name)` | doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations |
-| `doc_tag` | type | `(repo, sym, tag, arg, text)` | structured doc tags per sym: (repo, sym, tag, arg, text); @param/@returns/@deprecated for JSDoc/KDoc, # Section headings for rustdoc |
-| `effect_cmd` | demand | `(kind, template)` | effect-template overlay sink: head effect_cmd(kind, template) to override the shell command for an effect kind at drain time (dynamic per-kind template), read as the effect executor is built |
-| `effect_log` | effect | `(id, kind, head, state, args, req_tx)` | the @async/@stream drain queue: one row per request (id, kind, head rel, state queued/running/done/failed, args JSON, req_tx); the dl-native call log, queryable live and parity-comparable to an external cache's call log |
-| `env` | sys | `(name, value)` | allowlisted process environment variables (name, value) captured at process start; constant for the process lifetime; scoped to SPREFA_/DL_/SG_ prefixes plus CI markers so secrets stay off disk |
-| `every` | clock | `(secs)` | holds interval N only on ticks that cross an N-second boundary (and the first tick); an every(30) body atom self-throttles its rule |
-| `file` | core | `(repo, rev, path, content)` | scanned files, keyed by (repo, rev, path, content) |
-| `file_lines` | file | `(repo, path, rev, line_count)` | line count per scanned file, from the corpus walk's byte count (no lossy read); line_count = -1 when unknown (git revs — counting blob contents would spawn a read per blob, so only WORK files are counted) and those rows are excluded here |
-| `fn_catalog` | meta | `(name, arity, group, doc)` | every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs |
-| `git_ref` | git-ref | `(repo, refname, kind, sha)` | every branch/tag/remote ref plus HEAD across self + config repos (repo, refname, kind, sha); annotated tags peeled to the commit |
-| `graph_edge` | graph | `(src, dst, kind)` | drawable-graph edge sink: head graph_edge(src, dst, kind) from a rule to connect two graph_node ids; kind is the wire label/style. Read by the Graph preset alongside graph_node |
-| `graph_node` | graph | `(id, label, kind, file, line, parent)` | drawable-graph vertex sink: head graph_node(id, label, kind[, file, line, parent]) from a rule and the flow panel's always-available Graph preset draws it — no bespoke node SQL. Fixed 6-col schema; write only the cols you need via named args (graph_node(id: sym, label: name, kind: k)); file/line place the node in the fs-tree + jump target, parent nests it in list view, all NULL by default |
-| `head` | daemon | `(repo, name, oid)` | git HEAD per repo (repo, ref name, oid) |
-| `hook_event` | hook | `(kind, session, seq, json)` | harness-hook event log: one accumulating row per `dl --hook` invocation (kind = the event name UserPromptSubmit/PostToolUse/..., session = the event session id, seq = an ingest-time monotone millis stamp ordering events within a session, json = the raw event JSON). Written by the hook feed, never a refresh; extract fields with term-form json/jsonp |
-| `hover_note` | diag | `(path, line, col, end_line, end_col, md)` | markdown hover note attached to a source span; head it from a rule, shown by the LSP on hover. Positions are 0-based, same convention as diag (end_line/end_col inclusive); several notes on one span all show, appended after the synthesized entity hover |
-| `loop_over` | dataflow | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
-| `module_binding` | module | `(file, local_name, source_module, imported_name, kind)` | rev-deduped union of module_binding_rev |
-| `module_binding_resolved` | module | `(file, local, source, dst)` | rev-deduped union of module_binding_resolved_rev |
-| `module_binding_resolved_rev` | module | `(file, local, source, dst, rev)` | the resolved subset (dst = resolved file, alias-only today) of module_binding: aliased-import local bindings from the module resolvers' own parse (Rust use..as, TS import{a as b}/default, Kotlin import..as) — the index-free equivalent of scip_binding; local is the binding name in scope at file, source is the exported name at dst ("default" for a default import) |
-| `module_binding_rev` | module | `(file, local_name, source_module, imported_name, kind, rev)` | every local binding an import introduces, parsed off the import AST so aliased/library symbols resolve without scip — unlike module_binding_resolved_rev (alias-hop only, resolved-file-only), this fires for EVERY resolution incl. External (library) and Unresolved, and covers plain named/namespace/default/side-effect bindings too, not just aliased ones; source_module is the specifier as written (module_import's specifier text), imported_name the canonical exported name at the import site ("default"/"*"/"" for default/namespace/side-effect), kind = named/default/namespace/side_effect/reexport (Rust pub use). Two-line join for "which library does this local name come from": binds_lib(local_name, source_module) <- module_binding(file, local_name, source_module, _, _). then query ? binds_lib("myAlias", lib) |
-| `module_edge` | module | `(src, dst)` | resolved file-to-file import graph (rev-deduped union) |
-| `module_edge_rev` | module | `(src, dst, rev)` | rev-aware module_edge |
-| `module_import` | module | `(file, rev, specifier, kind, line)` | import statements (Rust + TS + Kotlin); Kotlin adds kind=same-package rows for bare uses of another file's column-0 decl, and an expect/actual decl fans edges to all declaring files |
-| `module_unresolved` | module | `(file, specifier, reason, line)` | broken imports: a reference that resolved to no project file (the linter question) |
-| `module_unresolved_rev` | module | `(file, rev, specifier, reason, line)` | rev-aware module_unresolved |
-| `nest` | dataflow | `(call_id, loop_id, depth, collection)` | one row per (call, enclosing loop); depth is nesting rank (1=outermost); raw material for symbolic Big-O over call_edge |
-| `node` | node | `(id, kind, file, lo, hi, parent)` | CST nodes (nested-set spans): id, kind, file, lo, hi, parent |
-| `op_catalog` | meta | `(op, kind, syntax, doc)` | every body/sink op (source ops, derived constructs, sinks) with its syntax sketch and one-line semantics; sourced from op_docs |
-| `program` | daemon | `(path, hash, mtime)` | dl programs the daemon tracks (path, content hash, mtime) |
-| `propose_clone` | propose | `(kernel, path, lo, hi, param)` | proposed clone/near-duplicate groups keyed by a shared kernel |
-| `propose_extract` | propose | `(path, lo, hi, param)` | proposed extract-function refactor spans (path, lo, hi, param) |
-| `query_log` | daemon | `(ts, source, method, body, params)` | history of server query requests: one row per daemon `query`/`query_sql` RPC (ts = ISO-8601 UTC, source = daemon, method = RPC name, body = SQL text or empty, params = JSON array text); the LSP `dl/query` path no longer logs (panel-read hot path); append-only, no retention — a polling client accumulates its own rows too, by design |
-| `ref` | spine | `(id, string, file, lo, hi)` | byte span per interned string; id is the rewrite coordinate — 'where does Foo occur' is string(s, Foo, _), ref(_, s, f, lo, hi) |
-| `rel_catalog` | meta | `(name, group, cols, doc)` | this table: every built-in relation with its group, columns, and one-line doc |
-| `rel_col` | meta | `(rel, pos, col, type, variants)` | one row per built-in relation column: (rel, 0-based pos, col name, type keyword, variants); variants is the JSON array of allowed values for an enum-vocabulary column (e.g. type_edge.kind), empty for an open column — query it instead of guessing a kind literal |
-| `rel_count` | perf | `(rel, rows)` | row count per declared relation at refresh time; derived rels report the previous tick's counts (source-phase refresh, one-tick lag) — the cardinality-blowup rail joins here |
-| `repo` | core | `(slug, root, url)` | configured + dynamically-pulled repos whose root exists; writable as a sink — a repo(...) rule clones+registers when the github org is in `org` (hard filter); see docs/dynamic-reaching.md |
-| `rev` | core | `(id, repo, oid, ts)` | git revs seen by scans |
-| `rev_advanced` | daemon | `(repo, name, old, new)` | daemon signal that a repo ref advanced (repo, name, old oid, new oid) |
-| `rev_behind` | git-ref | `(repo, refname, upstream, behind, ahead)` | demand-driven ancestry counts: derive rev_cmp_want(repo, refname, upstream) and each wanted pair yields behind/ahead commit counts (ahead>0 = the ref diverged from upstream); one-tick latency like a data-driven scan; unresolvable refs and shallow clones skip loudly |
-| `rev_cmp_want` | demand | `(repo, refname, upstream)` | git ancestry demand sink: head rev_cmp_want(repo, refname, upstream) and each wanted triple runs git rev-list, filling rev_behind(repo, refname, upstream, behind, ahead); unresolvable refs and shallow clones skip loudly |
-| `scip_binding` | scip | `(file, symbol, local_name, line, col, repo)` | an occurrence's LOCAL binding text (source slice at its range) joined to the canonical symbol — resolves an alias/default import (import { foo as bar }) that scip_name's canonical-only name drops; WORK content slice, 0-based line/col |
-| `scip_callee_type` | scip | `(sym, type)` | receiver type parsed from a method moniker's impl/for segment |
-| `scip_def` | scip | `(symbol, file, repo)` | symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX); repo = origin index |
-| `scip_edge` | scip | `(src, dst, repo)` | file-to-file SCIP dependency edges (with origin repo) |
-| `scip_fn_edge` | scip | `(caller, callee)` | function-level call edge; caller is the innermost enclosing fn def |
-| `scip_impl` | scip | `(impl, iface)` | interface/supertype dispatch edge from SCIP is_implementation (impl to iface) |
-| `scip_local` | scip | `(fn, name)` | local-variable + parameter declarations attributed to their enclosing fn |
-| `scip_name` | scip | `(symbol, name)` | descriptor name (last identifier run) of a moniker, computed in-engine |
-| `scip_occurrence` | scip | `(file, symbol, line, col, end_line, end_col, role, repo)` | every SCIP occurrence with its 0-based line/col span, role (definition/import/write/read/reference), and origin repo — the position handle scip_ref lacked |
-| `scip_ref` | scip | `(file, symbol, def_file, repo)` | compiler-backed references (ref file, symbol, def file, origin repo) |
-| `scip_want` | demand | `(repo)` | SCIP index demand sink: head scip_want(repo) to make the importer ensure + load that repo's index.scip (runs installed indexers when missing, merges, loads into scip_def/scip_ref/scip_edge); one-tick latency, shallow clones skip loudly |
-| `similar` | embed | `(a, b, score)` | content-addressed nearest-neighbor pairs from the embedding backend, with score |
-| `skill_loaded` | agent | `(harness, session, name)` | skills loaded in the newest agent session (harness, session, name): explicit Skill tool calls + dl's own prior `dl --hook` injections — negate it for a declarative load-once guard |
-| `stmt_ms` | perf | `(rel, ms, n)` | statement cost of each derived rel's most recent rebuild: ms = SUM of wall ms across its rules/passes/delta variants, n = how many statement executions that sum covers (n=1 is one big join, large n is many fixpoint passes); prefixed sibling buckets (closure:<edge> / cond_cache:<edge> / extract:<rel> / closure_seed:<rel> / scc:<rel> / node2vec:<edge>) time the engine-side derived work; empty until a rebuild has landed in this db, so a one-shot CLI run reports on the second invocation — the slow-rule rail joins here |
-| `string` | spine | `(id, text, norm)` | interned strings (ref spine): id (StringId::sqlite(), an INTEGER — BREAKING as of the intern-key arc, was decimal TEXT), text, normalized text |
-| `template_parts` | template | `(file, line, node, idx, kind, text)` | every template literal's ordered static/interpolated pieces: (file, line, node, idx, kind is static/expr, text); TS/TSX/JS/JSX/MJS/CJS only (oxc), one line per file's occurrence group via node = the df_node/df_lit id for the SAME template occurrence (join key: node = df_lit.id, node = df_edge.to for whatever flows in); text is verbatim (raw static chunk or the interpolated expression's exact source); template-built import paths/URLs/keys become joinable |
-| `true` | core | `()` | zero-arity singleton; the always-succeeds atom |
-| `type_decl_row` | types | `(shape, pos, col, type)` | derived-shape sink: head type_decl_row(shape, pos, col, type) from a derived rule to compute a relation schema from data. At end of tick its rows persist; on the next tick a `rel name: shape.` decl with no syntax `type name(...)` resolves its columns from them (shape-pending info diag until then, shape-shadowed warn if a syntax shape shares the name). the type column is a base type keyword or a declared brand; an unknown type keeps that shape pending. Derived-only (route a jsonp/json extract through its own rel first) |
-| `type_edge` | type | `(from, to, kind, repo)` | type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected) |
-| `type_edge_rev` | type | `(from, to, kind, rev, repo)` | rev-aware type_edge (WORK-vs-HEAD type diff) |
-| `type_entity` | type | `(repo, sym, name, kind, parent, file, line)` | every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present |
-| `type_entity_rev` | type | `(repo, sym, name, kind, parent, file, line, rev)` | rev-aware type_entity (rev is a column, never folded into the sym, so a diff compares the same sym across revs); legacy type_entity is the rev-deduped union |
-| `type_lgg` | type-shape | `(a, b, vars)` | least-general generalization of two type shapes (shape-iso experiment) |
-| `type_link` | type | `(src, dst, kind)` | cross-type links not carried by type_edge (SCIP-resolved sym to sym); src/dst are already repo-prefixed via type_entity's sym, so no separate repo column is needed |
-| `type_link_rev` | type | `(src, dst, kind, rev)` | rev-aware type_link (SCIP-resolved sym-to-sym per rev); legacy type_link is the rev-deduped union |
-| `type_shape` | type-shape | `(name, hash)` | structural type-shape fingerprint per type (shape-iso experiment) |
-| `type_sig` | type | `(sym, slot, pos, ref)` | type signature slots (params, fields) per sym |
-| `unresolved` | unresolved | `(file, line, reason, detail)` | an edge that could exist but whose target is computed at runtime (as opposed to module_unresolved's no-edge-at-all case); (file, line 1-based, reason, detail is the computed thing's exact source text); TS/TSX/JS/JSX/MJS/CJS only (oxc) in v1; reason is a closed vocabulary: dynamic-import (import(expr)/require(expr) with a non-literal argument), computed-member-call (obj[key]() callee), spread-call-args (f(...args)); Python star-imports/sys.path mutation stay out of v1 (already surfaced via module_unresolved / an eprintln) |
-| `verb_catalog` | meta | `(verb, args, doc)` | every `dl q <verb>` concept verb (who-calls / where-defined / ...) with its arg sketch and one-line doc; sourced from crate::verbs |
-| `nest` | dataflow | `(call_id, loop_id, depth, collection)` | one row per (call, enclosing loop); depth is nesting rank (1=outermost); raw material for symbolic Big-O over call_edge |
-| `node` | node | `(id, kind, file, lo, hi, parent)` | CST nodes (nested-set spans): id, kind, file, lo, hi, parent |
-| `op_catalog` | meta | `(op, kind, syntax, doc)` | every body/sink op (source ops, derived constructs, sinks) with its syntax sketch and one-line semantics; sourced from op_docs |
-| `program` | daemon | `(path, hash, mtime)` | dl programs the daemon tracks (path, content hash, mtime) |
-| `propose_clone` | propose | `(kernel, path, lo, hi, param)` | proposed clone/near-duplicate groups keyed by a shared kernel |
-| `propose_extract` | propose | `(path, lo, hi, param)` | proposed extract-function refactor spans (path, lo, hi, param) |
-| `query_log` | daemon | `(ts, source, method, body, params)` | history of server query requests: one row per daemon `query`/`query_sql` RPC (ts = ISO-8601 UTC, source = daemon, method = RPC name, body = SQL text or empty, params = JSON array text); the LSP `dl/query` path no longer logs (panel-read hot path); append-only, no retention — a polling client accumulates its own rows too, by design |
-| `ref` | spine | `(id, string, file, lo, hi)` | byte span per interned string; id is the rewrite coordinate — 'where does Foo occur' is string(s, Foo, _), ref(_, s, f, lo, hi) |
-| `rel_catalog` | meta | `(name, group, cols, doc)` | this table: every built-in relation with its group, columns, and one-line doc |
-| `rel_col` | meta | `(rel, pos, col, type, variants)` | one row per built-in relation column: (rel, 0-based pos, col name, type keyword, variants); variants is the JSON array of allowed values for an enum-vocabulary column (e.g. type_edge.kind), empty for an open column — query it instead of guessing a kind literal |
-| `rel_count` | perf | `(rel, rows)` | row count per declared relation at refresh time; derived rels report the previous tick's counts (source-phase refresh, one-tick lag) — the cardinality-blowup rail joins here |
-| `repo` | core | `(slug, root, url)` | configured + dynamically-pulled repos whose root exists; writable as a sink — a repo(...) rule clones+registers when the github org is in `org` (hard filter); see docs/dynamic-reaching.md |
-| `rev` | core | `(id, repo, oid, ts)` | git revs seen by scans |
-| `rev_advanced` | daemon | `(repo, name, old, new)` | daemon signal that a repo ref advanced (repo, name, old oid, new oid) |
-| `rev_behind` | git-ref | `(repo, refname, upstream, behind, ahead)` | demand-driven ancestry counts: derive rev_cmp_want(repo, refname, upstream) and each wanted pair yields behind/ahead commit counts (ahead>0 = the ref diverged from upstream); one-tick latency like a data-driven scan; unresolvable refs and shallow clones skip loudly |
-| `rev_cmp_want` | demand | `(repo, refname, upstream)` | git ancestry demand sink: head rev_cmp_want(repo, refname, upstream) and each wanted triple runs git rev-list, filling rev_behind(repo, refname, upstream, behind, ahead); unresolvable refs and shallow clones skip loudly |
-| `scip_binding` | scip | `(file, symbol, local_name, line, col, repo)` | an occurrence's LOCAL binding text (source slice at its range) joined to the canonical symbol — resolves an alias/default import (import { foo as bar }) that scip_name's canonical-only name drops; WORK content slice, 0-based line/col |
-| `scip_callee_type` | scip | `(sym, type)` | receiver type parsed from a method moniker's impl/for segment |
-| `scip_def` | scip | `(symbol, file, repo)` | symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX); repo = origin index |
-| `scip_edge` | scip | `(src, dst, repo)` | file-to-file SCIP dependency edges (with origin repo) |
-| `scip_fn_edge` | scip | `(caller, callee)` | function-level call edge; caller is the innermost enclosing fn def |
-| `scip_impl` | scip | `(impl, iface)` | interface/supertype dispatch edge from SCIP is_implementation (impl to iface) |
-| `scip_local` | scip | `(fn, name)` | local-variable + parameter declarations attributed to their enclosing fn |
-| `scip_name` | scip | `(symbol, name)` | descriptor name (last identifier run) of a moniker, computed in-engine |
-| `scip_occurrence` | scip | `(file, symbol, line, col, end_line, end_col, role, repo)` | every SCIP occurrence with its 0-based line/col span, role (definition/import/write/read/reference), and origin repo — the position handle scip_ref lacked |
-| `scip_ref` | scip | `(file, symbol, def_file, repo)` | compiler-backed references (ref file, symbol, def file, origin repo) |
-| `scip_want` | demand | `(repo)` | SCIP index demand sink: head scip_want(repo) to make the importer ensure + load that repo's index.scip (runs installed indexers when missing, merges, loads into scip_def/scip_ref/scip_edge); one-tick latency, shallow clones skip loudly |
-| `similar` | embed | `(a, b, score)` | content-addressed nearest-neighbor pairs from the embedding backend, with score |
-| `skill_loaded` | agent | `(harness, session, name)` | skills loaded in the newest agent session (harness, session, name): explicit Skill tool calls + dl's own prior `dl --hook` injections — negate it for a declarative load-once guard |
-| `stmt_ms` | perf | `(rel, ms, n)` | statement cost of each derived rel's most recent rebuild: ms = SUM of wall ms across its rules/passes/delta variants, n = how many statement executions that sum covers (n=1 is one big join, large n is many fixpoint passes); prefixed sibling buckets (closure:<edge> / cond_cache:<edge> / extract:<rel> / closure_seed:<rel> / scc:<rel> / node2vec:<edge>) time the engine-side derived work; empty until a rebuild has landed in this db, so a one-shot CLI run reports on the second invocation — the slow-rule rail joins here |
-| `string` | spine | `(id, text, norm)` | interned strings (ref spine): id (StringId::sqlite(), an INTEGER — BREAKING as of the intern-key arc, was decimal TEXT), text, normalized text |
-| `template_parts` | template | `(file, line, node, idx, kind, text)` | every template literal's ordered static/interpolated pieces: (file, line, node, idx, kind is static/expr, text); TS/TSX/JS/JSX/MJS/CJS only (oxc), one line per file's occurrence group via node = the df_node/df_lit id for the SAME template occurrence (join key: node = df_lit.id, node = df_edge.to for whatever flows in); text is verbatim (raw static chunk or the interpolated expression's exact source); template-built import paths/URLs/keys become joinable |
-| `true` | core | `()` | zero-arity singleton; the always-succeeds atom |
-| `type_decl_row` | types | `(shape, pos, col, type)` | derived-shape sink: head type_decl_row(shape, pos, col, type) from a derived rule to compute a relation schema from data. At end of tick its rows persist; on the next tick a `rel name: shape.` decl with no syntax `type name(...)` resolves its columns from them (shape-pending info diag until then, shape-shadowed warn if a syntax shape shares the name). the type column is a base type keyword or a declared brand; an unknown type keeps that shape pending. Derived-only (route a jsonp/json extract through its own rel first) |
-| `type_edge` | type | `(from, to, kind, repo)` | type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected) |
-| `type_edge_rev` | type | `(from, to, kind, rev, repo)` | rev-aware type_edge (WORK-vs-HEAD type diff) |
-| `type_entity` | type | `(repo, sym, name, kind, parent, file, line)` | every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present |
-| `type_entity_rev` | type | `(repo, sym, name, kind, parent, file, line, rev)` | rev-aware type_entity (rev is a column, never folded into the sym, so a diff compares the same sym across revs); legacy type_entity is the rev-deduped union |
-| `type_lgg` | type-shape | `(a, b, vars)` | least-general generalization of two type shapes (shape-iso experiment) |
-| `type_link` | type | `(src, dst, kind)` | cross-type links not carried by type_edge (SCIP-resolved sym to sym); src/dst are already repo-prefixed via type_entity's sym, so no separate repo column is needed |
-| `type_link_rev` | type | `(src, dst, kind, rev)` | rev-aware type_link (SCIP-resolved sym-to-sym per rev); legacy type_link is the rev-deduped union |
-| `type_shape` | type-shape | `(name, hash)` | structural type-shape fingerprint per type (shape-iso experiment) |
-| `type_sig` | type | `(sym, slot, pos, ref)` | type signature slots (params, fields) per sym |
-| `unresolved` | unresolved | `(file, line, reason, detail)` | an edge that could exist but whose target is computed at runtime (as opposed to module_unresolved's no-edge-at-all case); (file, line 1-based, reason, detail is the computed thing's exact source text); TS/TSX/JS/JSX/MJS/CJS only (oxc) in v1; reason is a closed vocabulary: dynamic-import (import(expr)/require(expr) with a non-literal argument), computed-member-call (obj[key]() callee), spread-call-args (f(...args)); Python star-imports/sys.path mutation stay out of v1 (already surfaced via module_unresolved / an eprintln) |
-| `verb_catalog` | meta | `(verb, args, doc)` | every `dl q <verb>` concept verb (who-calls / where-defined / ...) with its arg sketch and one-line doc; sourced from crate::verbs |
-<!-- END: builtin-rels -->
-
-The table above is generated from the engine's self-describing `rel_catalog` by `examples/builtin-rels.dl` (run it, or `dl daemon load` it; the daemon regenerates when the engine declarations change). It is the single source of relation docs: group, columns, and the one-line summary all come from `builtin_rel_docs` + the `*_rel_decls` functions in [src/engine/](src/engine/), so the table can't drift from the declarations, and a new built-in is forced to appear by the doc-completeness test (`tests/it/rel_catalog.rs`). To document a new relation, add its `(name, group, summary)` row to `builtin_rel_docs` — do not hand-edit the block above; it is regenerated.
-
-## CLI
-
-Two usage forms, then the flag reference:
-
-| invocation | effect |
-|---|---|
-| `dl prog.dl` | run; print `?` queries as TSV |
-| `dl` (no positional) | discovery: merge every `<root>/.dl/*.dl` (filename order, shared `rel` decls dedupe); auto-cache at the shared per-root `$XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite` (the same db a daemon serves) |
-
-**State home** (where the per-root dbs, socket, and logs live). Override
-precedence, highest first: an explicit `--db <path>` (db-level) > `DL_STATE_DIR`
-(the sprefa state dir itself — the honored sandbox knob) > `XDG_STATE_HOME`
-(`<XDG_STATE_HOME>/sprefa`) > platform default (`~/.local/state/sprefa`). To run
-`dl` fully isolated (agents, tests, CI): set `DL_STATE_DIR=<scratch>` — nothing
-touches the real home. A file-scoped `dl <file> --check`/`--diag-json`/`--lsp`
-runs on an ephemeral in-memory db by default and never writes the real
-served-root cache; pass `--attach` to opt into the warm cache on purpose.
-
-The flag table below is generated from the clap `Cli` struct (each flag's
-`///` doc-comment) by [examples/cli-doc.dl](examples/cli-doc.dl), so it can't
-drift from the parser: every flag auto-appears, and a flag with no doc-comment
-renders an empty cell (visible drift). Daemon control is the `dl daemon <verb>`
-subcommand (not a flag), so it lives in [docs/daemon.md](docs/daemon.md), not
-this table. Do not hand-edit between the markers; to change a row, edit the
-doc-comment in [src/cli/mod.rs](src/cli/mod.rs) and rerun the generator.
-
-<!-- BEGIN: cli -->
-| flag | effect |
-|---|---|
-| `--apply` | _undocumented_ |
-| `--attach` | Attach a file-scoped run to the REAL served-root db (`<state-home>/roots/<key>/db.sqlite`, the warm cache the daemon serves) instead of the default ephemeral in-memory db. Opt-in only: a bare `dl <file> --check`/`--diag-json`/`--lsp` defaults to `:memory:` so a read-shaped check never narrows the real analysis cache. Discovery mode (no positional) still attaches by default; `--db` overrides both |
-| `--changed <CHANGED>` | Drive one incremental tick for these changed paths (the delta path the watcher uses), instead of a full run. Repeatable |
-| `--check` | Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if any `error`-severity row exists (Claude Code's blocking-hook code), 1 on a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md |
-| `--cmd-budget <CMD_BUDGET>` | Cap `cmd` invocations per tick (or DL_CMD_BUDGET); over budget is a loud error, never a silent truncation. Default: unlimited |
-| `--db <DB>` | Persist derived tables to a SQLite db at this path (default: in-memory; discovery mode defaults to the per-root `$XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite` the daemon also serves). Derived relations land as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite |
-| `--diag-json` | Like --check but emit the diagnostics as a JSON array on stdout |
-| `--dialect` | _undocumented_ |
-| `--fix` | With --move, write the rewritten files instead of previewing |
-| `--format <FORMAT>` | Emit `?` query results as JSON instead of the human TSV block: one JSON array of row-objects (each row keyed by column name), one array per query. Only `json` is recognized today |
-| `--hook` | Harness-hook mode: read a Claude Code hook event (PostToolUse JSON) on stdin, tick the rules, emit the hook output (additionalContext / block) on stdout. The program heads `inject`/`inject_skill`/`block` over the agent built-ins. The condition is a dl rule; no editor, no bash. See docs/skill-injection.md |
-| `--lsp` | Run as an LSP server over stdio: the program's `diag` relation becomes live editor diagnostics (lint on open/save). See docs/lsp.md |
-| `--max-wall` | _undocumented_ |
-| `--mcp` | _undocumented_ |
-| `--move <MOVE>` | Auto-refactor: rewrite `use`-path references for a module move `OLD_FILE=NEW_FILE` (repo-relative Rust paths). Dry-run unless --fix. Repeatable. Ignores the `program` positional |
-| `--parse-only` | _undocumented_ |
-| `--profile` | Profile mode (or DL_PROFILE=1): log slow SQL statements (threshold DL_PROFILE_SQL_MS, default 25), per-repo scan times, tick phase breakdown, and per-tick statement counts |
-| `--query-json` | Emit `?` query results as JSON-lines (one object per query: {query, columns, rows, count}) instead of the human TSV block |
-| `--repo <REPO>` | With --move, which repo to rewrite: a config slug, or `*`/`all` for every configured repo. Omitted = the cwd repo (self) |
-| `--settle-max` | _undocumented_ |
-| `--settle` | _undocumented_ |
-| `--stage <STAGE>` | R7 diag routing stage whose diagnostics to surface — `live` \| `commit` \| `agent-turn` \| `agent-session`. Default `commit` (the pre-commit / `--check` surface). A code with no `diag_stage` row routes by severity: an error reaches every stage, a warning only `commit`. Rails opt a code into other stages by heading `diag_stage(code, stage)` |
-| `--tick-audit` | After each tick, print every relation's row count (or DL_TICK_AUDIT=1) |
-| `--verify <VERIFY>` | Verify-rollback: run the program (applying `gen` edits), then run this shell command as a checker in the root. Keep the edits only if it exits 0; otherwise restore every touched file to its pre-run state and exit 1. Transactional codemod — apply, test, keep-if-pass. See christmas #14 |
-| `--watch` | Re-tick on file changes in the source root (in-process watcher, the pre-daemon path). For the warm long-lived watcher, use `dl daemon start` |
-<!-- END: cli -->
-
-## Git hook / Claude Code hook
-
-Rails = `diag` rules joined against `changed(p)`, so pre-existing repo debt
-never fires — only the current diff can trip a check. Full doc:
-[docs/rails.md](docs/rails.md), starter rules: [examples/rails.dl](examples/rails.dl).
-
-1. Put rules in `<repo>/.dl/*.dl`.
-2. **Git pre-commit**: `dl setup --project .` writes `.githooks/pre-commit`
-   (`exec dl --check`) and sets `core.hooksPath` for you. By hand it is that
-   file plus once per clone:
-   ```sh
-   git config core.hooksPath .githooks
-   ```
-   Non-zero exit blocks the commit (`git commit -n` bypasses). Same command is
-   the CI step. Grain caveat: `changed` is worktree-vs-HEAD, not staged-only.
-3. **Claude Code**: `.claude/settings.json` in the repo:
-   ```json
-   {
-     "hooks": {
-       "PostToolUse": [
-         { "matcher": "Edit|Write|NotebookEdit",
-           "hooks": [{ "type": "command", "command": "dl --check" }] }
-       ]
-     }
-   }
-   ```
-   Exit 2 feeds stderr back to the agent (blocking-hook contract); exit 1
-   (broken rails) surfaces to the user only. No flags needed — root and
-   program discovery are cwd-independent.
-
-A rail is two rules (source ops cannot join relations):
-
-```
-rel diag(path: text, line: int, severity: text, code: text, msg: text).
-
-rel todo_hit(p: file, l: int).
-todo_hit(p, l) <- scan("WORK", "src/**/*.rs", p, rev), match_line(p, rev, /TODO/, l).
-
-diag(p, l, "error", "no-todo", "TODO in a changed file") <- todo_hit(p, l), changed(p).
+```bash
+cargo test --test _20_hosts -- --nocapture   # throwaway git repos, the extract corpus, the org program
 ```
 
-## MCP server (ports)
+## Logs
 
-A dl program can BE a JSON-RPC server: declare its boundary as **ports** —
-rels marked `@in(class)` / `@out(class)` — and bind them to a transport at
-the CLI. The class names the contract, never a transport (`rpc` = one reply
-per request id closes it; `stream`/`duplex` reserved), so the same program
-serves any wire that speaks the class.
+Every phase emits one `dl8::phase` event with its name, measured milliseconds,
+row count and diagnostic count. Tracing goes to stderr; stdout stays the oracle.
 
-```
-rel req(id: text, method: text, params: text) @in(rpc).
-rel resp(id: text, result: text) @out(rpc).
-
-rel route(id: text, result: text, prio: int) key(id) merge(MaxBy(prio)).
-route(id, "pong", 100) <- req(id, "ping", _).
-route(id, "unknown", 1) <- req(id, m, _), !known(m).
-resp(id, r) <- route(id, r, _).
+```bash
+RUST_LOG=dl8=debug dl8 compile f.dl7      # phase events, wave/round trace, io reads
+HAFLEY_LOG_FORMAT=json dl8 compile f.dl7  # one JSON object per event
+dl8 compile f.dl7 --trace                 # wave and round lines, RUST_LOG unset
 ```
 
-`dl prog.dl --mcp` is the binding profile: rpc ports over stdio x jsonrpc
-(newline-delimited). Each inbound request injects one `req` row (id = the
-request id's raw JSON text, so int and string ids round-trip), ticks, drains
-`resp` back, and retires the answered row — a request can never re-answer.
-An unanswered id gets `-32601`, so a client never hangs. Notifications (no
-id) are silent. Dispatch is the lattice: `key(id) merge(MaxBy(prio))` picks
-the winning rule per request, a prio-1 fallback catches the rest.
+`RUST_LOG` picks the filter when set; `--trace` raises the default to
+`dl8=debug` when it is not. `HAFLEY_LOG_FORMAT=human|json` picks the encoding.
 
-Rules for ports: an `@in` rel is written ONLY by the serving loop (a rule or
-fact heading it bails loudly); the envelope columns are checked by name at
-declare time. Internally, join the dispatch rels directly — the port exists
-for the boundary.
-
-Daemon-first, like `--hook`: with `.dl/` at the root the `--mcp` process is
-a thin stdio adapter over the daemon's warm engine (`mcp_request` /
-`mcp_retire` RPCs), so requests between edits see fresh facts with no cold
-scan. With no daemon running (CI), the same command falls back to a hermetic
-in-process engine.
-
-The MCP lifecycle is just methods, so a registerable server is plain rules —
-[examples/mcp-server.dl](examples/mcp-server.dl) implements `initialize` /
-`tools/list` / `tools/call` and registers with:
-
-```sh
-claude mcp add dl-demo -- dl /abs/path/examples/mcp-server.dl --mcp
-```
-
-The repeatable handshake harness is `cargo test --test it mcp_lifecycle`
-(drives the real example through initialize → initialized → tools/list →
-tools/call over stdio); `mcp_daemon` covers the daemon-attached mode.
-
-## LSP
-
-```sh
-cd <repo> && dl <rules.dl> --lsp
-```
-
-Any program with a `diag` relation becomes a live linter: save a file, the
-engine ticks that path, rows become squiggles. Save-driven, disk-truth,
-deterministic. Editor glue (VSCode generic-LSP client settings) and the full
-column convention: [docs/lsp.md](docs/lsp.md). Claude Code's IDE bridge
-consumes the published diagnostics with no extra integration. Tight squiggles:
-bind `match_ast`'s span outputs (`line, col, end_line, end_col`) straight into the
-matching `diag` columns — [examples/lint-unwrap.dl](examples/lint-unwrap.dl).
-
-`textDocument/hover` auto-synthesizes a markdown summary from `type_entity` +
-`call_def` (no rel to declare; opt in by referencing those rels).
-`textDocument/definition` consults a program-declared `def_target(name, file,
-line, kind)` rel first — go-to-def lands on real definition lines, not just
-import-specifier module edges. See [docs/lsp.md](docs/lsp.md).
-
-The [vscode-dl extension](editors/vscode-dl/) also ships a TextMate grammar
-(comments, keywords, the `<-` arrow, regex/string/scheme-literal coloring) so
-`.dl` files render with syntax highlighting, not plain text.
-
-## Multi-repo
-
-`~/.config/sprefa/config.toml` (or `$SPREFA_CONFIG` / `$XDG_CONFIG_HOME`):
-
-```toml
-[[repos]]
-slug = "alpha/one"
-root = "/path/to/checkout-a"
-
-[[repos]]
-slug = "gamma/three"
-root = "/path/to/cache/gamma"
-url  = "git@github.com:org/gamma.git"   # cloned on first scan if root is absent
-
-[[repos]]
-slug = "delta/four"
-root = "/path/to/maybe-delta"
-allow_missing = true                    # missing root is non-fatal: scan yields
-                                        # zero rows, engine prints one stderr line.
-                                        # The slug is omitted from `repo(...)` so a
-                                        # program can derive `missing_repo(S)` via
-                                        # antijoin against its referenced set.
-
-[[org]]                                 # the multi-root shape: point at a folder
-dir = "~/orgs/grafana"                  # of checkouts and every git repo under it
-# max_depth = 3                         # expands into a [[repos]] at load. Slug =
-                                        # <foldername>/<path-under-dir>; descent
-                                        # stops at each .git. An explicit [[repos]]
-                                        # at the same root wins.
-# foldername = "."                      # override the slug prefix (default: dir
-                                        # basename); "." FLATTENS it away so the
-                                        # slug is the bare path under dir.
-```
-
-`scan("alpha/one", "WORK", glob, p, rev)` targets one repo;
-`scan("*", "WORK", ...)` fans the rule over every configured repo. Or point
-`--root`-free: run from a parent directory and use root-relative globs
-(`"sprefa/src/**/*.rs"`), as [examples/anim-deck.dl](examples/anim-deck.dl) does.
-
-**Progressive analysis.** A multi-repo program does not have to bail when one
-clone is missing. Mark the config row `allow_missing = true` and the engine
-prints one stderr line, omits the slug from the `repo` builtin, and proceeds.
-A program surfaces the miss for an agent or UI to route:
-
-```
-rel referenced(slug: text).
-rel candidate_url(slug: text, url: text).
-rel missing_repo(slug: text, hinted_url: text).
-
-referenced("dep-a").
-candidate_url("dep-a", "https://github.com/org/dep-a").
-
-missing_repo(s, u) <- referenced(s), !repo(s, _, _), candidate_url(s, u).
-? missing_repo(s, u).
-```
-
-Worked example: [examples/missing-repo.dl](examples/missing-repo.dl).
-
-## Examples
-
-All in [examples/](examples/), runnable as `dl examples/<name>.dl` (root = cwd):
-
-| file | shows |
-|---|---|
-| [glean.dl](examples/glean.dl) | the 5 canonical questions: definitions, callers, blast radius, type fan-in, broken imports |
-| [callgraph.dl](examples/callgraph.dl) + `callgraph-{ast,sg,c,typed,resolved}.dl` | call graphs at increasing precision |
-| [typegraph.dl](examples/typegraph.dl) | `type_edge` + closure: type blast radius |
-| [lint-unwrap.dl](examples/lint-unwrap.dl) | `match_ast` spans → tight LSP squiggles |
-| [lint-imports.dl](examples/lint-imports.dl) | `module_unresolved` as a check |
-| [lint-docs.dl](examples/lint-docs.dl) | doc hygiene as agent rails: `needs-doc` (new + >2 refs + no `doc_ref`) + `chat-comment` (`///` block over an arity-derived budget). Patterns: sum-aggregate over a union, `max` for contiguous-block detection |
-| [rails.dl](examples/rails.dl) | diff-scoped agent rails: banned words, exemptions via `fs:` literals, aggregate budgets |
-| [rails-call-kind.dl](examples/rails-call-kind.dl) | the `call_kind` write-precision cut: warn on `.conn()` only when the enclosing fn actually writes (execute/execute_batch), not just reads (prepare/query_row) |
-| [ban.dl](examples/ban.dl) | minimal banned-pattern check |
-| [string-fns.dl](examples/string-fns.dl) | `split` / `replace` / computed bindings / unary minus / NULL-drop over v5's own fns |
-| [openapi.dl](examples/openapi.dl) | `jsonp` op + anti-join over a spec |
-| [openapi-lsp.dl](examples/openapi-lsp.dl) | OpenAPI ↔ code cross-link as `diag` rows (the spine joins across TS/RS by shared operationId string) |
-| [lsp-def-target.dl](examples/lsp-def-target.dl) | `def_target` declaration that drives go-to-def to real definition lines, with the `=~` regex literal routing type vs fn kinds |
-| [time.dl](examples/time.dl) | cross-rev diff (WORK vs HEAD) |
-| [module-history.dl](examples/module-history.dl) | rev-aware module graph |
-| [repo-nearest.dl](examples/repo-nearest.dl) | multi-repo queries |
-| [gen-type-table.dl](examples/gen-type-table.dl) | the marker-splice codegen loop: `comment` + `gen` keep a table fresh inside the program's own comments |
-| [gen-doc-index.dl](examples/gen-doc-index.dl) | dogfoods the doc tools together: `doc_node` (markdown titles) + `comment` (Rust `//!` module docs) → one `gen` splice. Query-time doc/code unification |
-| [auto-doc.dl](examples/auto-doc.dl) | the gen FILE-sink form: render `type_entity` rows to a fresh markdown reference (no marker pair, regenerated each tick, converges). The lexical indexer end-to-end as a doc generator |
-| [anim-deck.dl](examples/anim-deck.dl) | cross-repo splice: aggregates + round tiers written into a slide deck's d2 fences |
-| [typegraph-anim.dl](examples/typegraph-anim.dl) | gen → d2 `steps:` boards, `d2 --animate-interval` |
-| [typeports.dl](examples/typeports.dl) | hub structs as d2 `sql_table` nodes, wires anchored to field rows |
-| [missing-repo.dl](examples/missing-repo.dl) | `allow_missing` config + antijoin-derived `missing_repo(slug, url)` for the clone prompt |
-| [pin-skew.dl](examples/pin-skew.dl) | which repos pin an internal dep at a ref its main line moved past (stale) or never had (diverged): go.mod seam → `pin` → `rev_cmp_want` → `rev_behind` |
-| [version-skew.dl](examples/version-skew.dl) | one dep pinned at differing versions across an org; min/max witnesses + blast-radius by repo count over `SPREFA_CONFIG` |
-| [phantom-deps.dl](examples/phantom-deps.dl) | Go imports covered by no `require` in any go.mod — the transitive import that breaks the day its provider drops it |
-| [vendored-drift.dl](examples/vendored-drift.dl) | a `third_party/` copy vs its upstream config repo by content address: `in_sync` / `drift` / `local_only` |
-| [taint.dl](examples/taint.dl) | source/sink/sanitizer preset over the interprocedural flow graph; recursive propagation, stops at sanitized nodes; rides `use "std/flow.dl"` |
-| [flow-slice.dl](examples/flow-slice.dl) | the value slice of ONE local or instance: forward ("what does `token` touch?") + backward ("what feeds it?") + field-accurate reads of a single `new`, via a seeded recursive walk of `std/flow.dl`'s `flow_edge` |
-| [flow-services.dl](examples/flow-services.dl) | value flow ACROSS the wire: a spec-seeded `operationId` seam bridges a client's call argument to the handler's param (and its return back) where no call edge exists |
-| [checked-notes.dl](examples/checked-notes.dl) | review notes that POINT AT CODE and warn when it moves: `note(claim, symbol)` / `link_note(claim, from, to)` joined against the live `call_name`/`type_entity`/`call_edge` graph, a `diag` when the referent is gone — the reviewer's stale-pointer rail |
-| [route-norm.dl](examples/route-norm.dl) | client paths vs server routes across `{id}`/`:id`/`%s` dialects, joined on the punctuation-stripped lowercase normal form |
-| [arch-conformance.dl](examples/arch-conformance.dl) | declared layers + allowed arrows vs the real `module_edge` graph; every unpermitted cross-layer edge is a `violation` |
-
-The highlights above are hand-picked. The **full corpus index** below is
-generated by [examples/gen-reference.dl](examples/gen-reference.dl) (a `scan` +
-| example | summary |
-|---|---|
-| [`agent-live.dl`](examples/agent-live.dl) | Live probe for the built-in agent-harness relations (agent.rs). |
-| [`anim-deck.dl`](examples/anim-deck.dl) | Maintains the machine-written regions of the sprefa chapter in the anim deck |
-| [`anim-self.dl`](examples/anim-self.dl) | The deck tours its own diff. Scan anim's TypeScript (readable by dl as of |
-| [`arch-conformance.dl`](examples/arch-conformance.dl) | arch-conformance.dl — declared layering vs the import graph that actually |
-| [`arch-expr.dl`](examples/arch-expr.dl) | arch-expr.dl — the architecture draws ITSELF as an rx-flavored expression. |
-| [`arch-flow.dl`](examples/arch-flow.dl) | arch-flow.dl — how ARCH nodes literally intersect in the code, three ways, |
-| [`author-test-clones.dl`](examples/author-test-clones.dl) | "What is the most-used / most-similar code in the test files created by ONE |
-| [`auto-doc.dl`](examples/auto-doc.dl) | auto-doc.dl — generate a code reference doc from the lexical indexer. |
-| [`autodoc-plans.dl`](examples/autodoc-plans.dl) | Autodoc: transclude tagged markdown comments from session logs into PLANS.md. |
-| [`ban.dl`](examples/ban.dl) | Ban a code move with ast-grep + the CLI. Each rule is one banned pattern. |
-| [`banned-word-guard.dl`](examples/banned-word-guard.dl) | Flag a banned word in the agent's OWN output — turn text OR a plan-tool body — |
-| [`builtin-rels.dl`](examples/builtin-rels.dl) | builtin-rels.dl — render the engine's self-describing `rel_catalog` into the |
-| [`call-seams.dl`](examples/call-seams.dl) | Call-seam finder: where can a big file be cut with the LEAST call traffic |
-| [`callable-coverage.dl`](examples/callable-coverage.dl) | callable-coverage: a self-verifying rail for the per-language callable |
-| [`callgraph-ast.dl`](examples/callgraph-ast.dl) | Call graph of dl's own source, this time via tree-sitter AST queries |
-| [`callgraph-c.dl`](examples/callgraph-c.dl) | Resolved call graph for C, e.g. the Linux kernel. Same shape as |
-| [`callgraph-resolved.dl`](examples/callgraph-resolved.dl) | Resolved call graph: A calls B only when a bare call B(...) appears INSIDE A's |
-| [`callgraph-sg.dl`](examples/callgraph-sg.dl) | Same call graph as callgraph-ast.dl, but using ast-grep PATTERNS instead of |
-| [`callgraph-typed.dl`](examples/callgraph-typed.dl) | Typed call graph: nodes are QUALIFIED names (Type::method), so two functions |
-| [`callgraph.dl`](examples/callgraph.dl) | Call graph of dl's own source, queried as a graph. `path: file` is a checked |
-| [`chaos-soak.dl`](examples/chaos-soak.dl) | chaos-soak.dl — the engine's own coverage soak, authored as one dl program. |
-| [`chat-marks.dl`](examples/chat-marks.dl) | chat-marks.dl — chat sectioning authored as datalog, off the harness-hook seam. |
-| [`checked-notes.dl`](examples/checked-notes.dl) | checked-notes.dl — notes that POINT AT CODE and warn when the code moves out |
-| [`cli-doc.dl`](examples/cli-doc.dl) | cli-doc.dl — keep the README CLI flag table fresh from the clap `Cli` struct |
-| [`context-object.dl`](examples/context-object.dl) | context-object.dl — detect missing structs from local-name co-occurrence. |
-| [`coupling-metrics.dl`](examples/coupling-metrics.dl) | coupling-metrics.dl — the dogfood instrument. dl measures the engine module's |
-| [`dag-layers.dl`](examples/dag-layers.dl) | dag-layers.dl — longest-path topological tiering of the RA oracle file graph. |
-| [`db-seam-callgraph-audit.dl`](examples/db-seam-callgraph-audit.dl) | Db-seam call-graph audit — three spot-check receipts, all resolved-graph |
-| [`debug_lgg.dl`](examples/debug_lgg.dl) | debug_lgg.dl — inspect what type_edge rows exist for specific types |
-| [`debug_type.dl`](examples/debug_type.dl) | debug_type.dl — check what's in type_edge and type_entity |
-| [`debug_type_link.dl`](examples/debug_type_link.dl) | debug_type_link.dl — inspect type_link content |
-| [`doc-coverage.dl`](examples/doc-coverage.dl) | doc-coverage.dl — the "undocumented API" rail, built on the doc spine. A |
-| [`doc-marks.dl`](examples/doc-marks.dl) | doc-marks.dl — marker-driven doc routing from agent/user chat. |
-| [`dup-collapse.dl`](examples/dup-collapse.dl) | dup-collapse.dl — RECOMMENDER, bootstrapped from measured tuples #1 and #2. |
-| [`endpoint-flows.dl`](examples/endpoint-flows.dl) | endpoint-flows.dl — "which HTTP endpoints is this function involved in?" |
-| [`experiment-auto-arch.dl`](examples/experiment-auto-arch.dl) | experiment-auto-arch.dl — test graph-topology zonings against manual ARCH markers. |
-| [`feature-envy.dl`](examples/feature-envy.dl) | feature-envy.dl — automatic refactor hints from the RA oracle. |
-| [`field_matrix.dl`](examples/field_matrix.dl) | Extract the Engine method×field incidence matrix for spectral co-clustering. |
-| [`flow-ctor.dl`](examples/flow-ctor.dl) | flow-ctor.dl — instantiation-centric value flow: who constructs what, which |
-| [`flow-interproc.dl`](examples/flow-interproc.dl) | flow-interproc.dl — cross-function, SCIP-resolved value flow. |
-| [`flow-jsx.dl`](examples/flow-jsx.dl) | flow-jsx.dl — JSX prop flow. `<Card title={t}/>` IS a call in costume — |
-| [`flow-services.dl`](examples/flow-services.dl) | flow-services.dl — value flow ACROSS the wire. Two services never share a |
-| [`flow-slice.dl`](examples/flow-slice.dl) | flow-slice.dl — the value slice of ONE local or ONE instance. "What does |
-| [`fn-graph.dl`](examples/fn-graph.dl) | fn-graph.dl — the 100%-recall function-level call graph from the RA oracle. |
-| [`fuzzy-traits.dl`](examples/fuzzy-traits.dl) | Fuzzy latent traits over a Rust file (defaults to src/engine.rs). Last session's |
-| [`gen-doc-index.dl`](examples/gen-doc-index.dl) | gen-doc-index.dl — dogfoods the doc tools on v5's own docs + source. |
-| [`gen-doc-indexes.dl`](examples/gen-doc-indexes.dl) | gen-doc-indexes.dl — one scan of book/ drives every hand-maintained doc list. |
-| [`gen-engine-anchors.dl`](examples/gen-engine-anchors.dl) | gen-engine-anchors.dl — index dl's OWN language/engine features through dl's |
-| [`gen-js-html.dl`](examples/gen-js-html.dl) | gen-js-html.dl — generate JS / HTML / CSS with `gen` without fighting the |
-| [`gen-lang-skill.dl`](examples/gen-lang-skill.dl) | gen-lang-skill.dl — LANG-JUNCTION markers drive the add-a-language skill. |
-| [`gen-plans-index.dl`](examples/gen-plans-index.dl) | gen-plans-index.dl — todo comments inside plans/*.md and src/**/*.rs drive PLANS.md. |
-| [`gen-readme.dl`](examples/gen-readme.dl) | gen-readme.dl — regenerate the README's code-derived overview zones. |
-| [`gen-reference.dl`](examples/gen-reference.dl) | gen-reference.dl — programmable rustdoc/jsdoc for the engine's OWN surface. |
-| [`gen-skill-ref.dl`](examples/gen-skill-ref.dl) | gen-skill-ref.dl — keep the SHIPPED skill (assets/sprefa-dl.skill.md) fresh with |
-| [`gen-skill.dl`](examples/gen-skill.dl) | gen-skill.dl — generate a DYNAMIC skill page whose code references are CHECKED |
-| [`gen-type-table.dl`](examples/gen-type-table.dl) | The marker-splice codegen loop on v5's own type graph: keep a fan-out table |
-| [`gen-zone-info.dl`](examples/gen-zone-info.dl) | Make dl's generated-zone markers VISIBLE in the editor: a subtle info dot on |
-| [`gh-cache-batch.dl`](examples/gh-cache-batch.dl) | gh-cache-batch.dl — ghcacher's API-COST-AT-SCALE feature: the BATCHED PR sweep. |
-| [`gh-cache-config.dl`](examples/gh-cache-config.dl) | gh-cache-config.dl — the reusable/configurable ghcacher: the watch set comes |
-| [`gh-cache-full.dl`](examples/gh-cache-full.dl) | gh-cache-full.dl — the FULL ghcacher feature set as a datalog program, so the |
-| [`gh-cache.dl`](examples/gh-cache.dl) | gh-cache.dl — ghcacher, as a datalog program. |
-| [`gh-checkout.dl`](examples/gh-checkout.dl) | gh-checkout.dl — ghcacher's OTHER half, as a datalog program. |
-| [`glean.dl`](examples/glean.dl) | glean.dl — the "ask this codebase questions" showpiece, over v5's own source. |
-| [`goto-flows.dl`](examples/goto-flows.dl) | goto-flows.dl: named dataflows reverse-derived from editor navigation. |
-| [`graph-measure.dl`](examples/graph-measure.dl) | graph-measure.dl — objective graph measurements over sprefa's own call graph. |
-| [`graph_score.dl`](examples/graph_score.dl) | graph_score.dl — TurboMQ (Mitchell & Mancoridis 2002) modularity scoring. |
-| [`hook-skill-on-test.dl`](examples/hook-skill-on-test.dl) | dl --hook condition: inject the "testing" skill when the agent reads OR edits a |
-| [`inspect_pairs.dl`](examples/inspect_pairs.dl) | inspect_pairs.dl — dump the field structure of specific LGG pairs |
-| [`interface-soup.dl`](examples/interface-soup.dl) | Interface composition soup + over-abstraction smell, cross-language. |
-| [`json-out.dl`](examples/json-out.dl) | json-out.dl - dl produces nested JSON. |
-| [`latest-turn-guardrail.dl`](examples/latest-turn-guardrail.dl) | Latest agent turn ∩ worktree change -> a diag for the LSP. |
-| [`lint-dl-self.dl`](examples/lint-dl-self.dl) | lint-dl-self.dl — dl validates dl, scoped to what the agent just edited. |
-| [`lint-docs.dl`](examples/lint-docs.dl) | Documentation hygiene lints. Two warnings: |
-| [`lint-imports.dl`](examples/lint-imports.dl) | Broken-import linter: the module graph as a diagnostic source. |
-| [`lint-no-touch.dl`](examples/lint-no-touch.dl) | No-touch guard: fence regions an agent must not hand-edit, and squiggle the |
-| [`lint-unwrap.dl`](examples/lint-unwrap.dl) | Lint: flag `.unwrap()` outside test code. Run as a live linter: |
-| [`lints/rust.dl`](examples/lints/rust.dl) | Rust lint pack — ast-grep patterns surfaced as LSP diagnostics. |
-| [`lints/ts.dl`](examples/lints/ts.dl) | TypeScript/JS lint pack — ast-grep patterns surfaced as LSP diagnostics. |
-| [`loop-nests.dl`](examples/loop-nests.dl) | loop-nests.dl — nested loop paths, lexical AND through the call graph. |
-| [`lsp-def-target.dl`](examples/lsp-def-target.dl) | lsp-def-target.dl — go-to-def driven by a program-declared relation. |
-| [`madge.dl`](examples/madge.dl) | madge.dl — madge's readout as dl rules: the resolved JS/TS module dependency |
-| [`mcp-echo.dl`](examples/mcp-echo.dl) | mcp-echo.dl — a JSON-RPC server authored as datalog. |
-| [`mcp-server.dl`](examples/mcp-server.dl) | mcp-server.dl — a REAL, registerable MCP server authored as datalog. |
-| [`md-fences.dl`](examples/md-fences.dl) | md-fences.dl — the embedded-language seam over markdown: pull fenced code |
-| [`measures-proto.dl`](examples/measures-proto.dl) | Architectural measure prototypes — round 1 (R6). |
-| [`missing-repo.dl`](examples/missing-repo.dl) | Progressive multi-repo: a missing clone is non-fatal when its config row |
-| [`missing-type.dl`](examples/missing-type.dl) | missing-type.dl — auto-detect "missing type" smells from local-name repetition. |
-| [`module-history.dl`](examples/module-history.dl) | Rev-aware module graph. |
-| [`n-plus-one.dl`](examples/n-plus-one.dl) | n-plus-one.dl — static N+1 hunt: SQL issued per loop iteration. |
-| [`net-atlas.dl`](examples/net-atlas.dl) | net-atlas.dl — networking concepts modeled as facts and rules, teaching the |
-| [`node2vec-callgraph.dl`](examples/node2vec-callgraph.dl) | structural embedding of the v5 call graph |
-| [`npm-crawl.dl`](examples/npm-crawl.dl) | npm-crawl.dl — point at ONE public npm package, progressively crawl its whole |
-| [`op-table.dl`](examples/op-table.dl) | op-table.dl — keep the README source-op table fresh from parse.rs dispatch. |
-| [`openapi-lsp.dl`](examples/openapi-lsp.dl) | OpenAPI -> code cross-link. Demonstrates: (1) one spec extract (json wildcard |
-| [`openapi.dl`](examples/openapi.dl) | OpenAPI coverage: which API operations have no frontend hook? |
-| [`oracle-autopsy.dl`](examples/oracle-autopsy.dl) | oracle-autopsy.dl — where does sprefa's heuristic fail vs RA, in-scope? |
-| [`oracle-check.dl`](examples/oracle-check.dl) | oracle-check.dl — RA (SCIP) vs sprefa (syn) at file granularity. |
-| [`param-fan-out.dl`](examples/param-fan-out.dl) | param-fan-out.dl — god-fn signal: fns that declare many locals. |
-| [`perf-rails.dl`](examples/perf-rails.dl) | perf-rails.dl — the engine's own telemetry as lint rails. |
-| [`phantom-deps.dl`](examples/phantom-deps.dl) | phantom-deps.dl — imports the manifest never declared. |
-| [`pin-skew.dl`](examples/pin-skew.dl) | pin-skew.dl — which repos pin an internal dep at a ref the dep's main line |
-| [`poll-head.dl`](examples/poll-head.dl) | Repo-HEAD watcher: poll each watched repo's git HEAD on an interval, cache the |
-| [`pr-diff.dl`](examples/pr-diff.dl) | pr-diff.dl -- diff a GitHub PR's graph WITHOUT a second checkout (D5.8, |
-| [`rails-call-kind.dl`](examples/rails-call-kind.dl) | rails-call-kind.dl — the call_kind write-precision cut, as a standalone rail. |
-| [`rails.dl`](examples/rails.dl) | Agent rails: checks scoped to the worktree diff, not the whole repo. |
-| [`recall-lever.dl`](examples/recall-lever.dl) | recall-lever.dl — how much would a NAME-RESOLUTION pass over the ref spine |
-| [`recall.dl`](examples/recall.dl) | recall.dl — fair recall of sprefa's FULL diet extraction vs RA's oracle. |
-| [`recompute-guard.dl`](examples/recompute-guard.dl) | Static recompute-guard rail (sprefa over its own source). |
-| [`refactor-clusters.dl`](examples/refactor-clusters.dl) | refactor-clusters.dl — refactor starting points from the RA-oracle graph, |
-| [`refactor-discovery.dl`](examples/refactor-discovery.dl) | refactor-discovery.dl — refactor signals from the engine's resolved call graph. |
-| [`refactor-init.dl`](examples/refactor-init.dl) | refactor-init.dl — from the 100%-recall SCIP oracle: where to START. |
-| [`repo-nearest.dl`](examples/repo-nearest.dl) | Run with no --root from anywhere:  dl examples/repo-nearest.dl |
-| [`route-norm.dl`](examples/route-norm.dl) | route-norm.dl — do the client's request paths match the server's declared |
-| [`rtkq-op-recovery.dl`](examples/rtkq-op-recovery.dl) | RTK Query op-name recovery. RTKQ generates a hook identifier from each |
-| [`stale-doc.dl`](examples/stale-doc.dl) | stale-doc.dl — you changed a documented declaration; is its doc still true? |
-| [`string-fns.dl`](examples/string-fns.dl) | string-fns.dl — split / replace / computed binding / unary minus / NULL drop. |
-| [`string-values.dl`](examples/string-values.dl) | string-values.dl — the route-table use case end to end (string-values arc, |
-| [`styled-components.dl`](examples/styled-components.dl) | styled-components.dl — the embedded-language seam: tsx source -> css bodies -> |
-| [`symbol-profile.dl`](examples/symbol-profile.dl) | symbol-profile.dl — the "ask about one symbol" view. Pin a symbol in |
-| [`taint.dl`](examples/taint.dl) | taint.dl — source/sink/sanitizer preset over interprocedural value flow. |
-| [`time.dl`](examples/time.dl) | The time axis: same pattern run against two revs of the tree, then an |
-| [`topo-analysis.dl`](examples/topo-analysis.dl) | topo.dl — topology analysis from manually-seeded entry points. |
-| [`type-from-json.dl`](examples/type-from-json.dl) | type-from-json.dl — a relation SCHEMA derived from data, not written by hand. |
-| [`type_coincidence.dl`](examples/type_coincidence.dl) | type_coincidence.dl — which types co-occur in fn signatures. |
-| [`type_lgg_query.dl`](examples/type_lgg_query.dl) | type_lgg_query.dl — filtered for actionable signal. |
-| [`type_profile.dl`](examples/type_profile.dl) | type_profile.dl — per-type intelligence profile. |
-| [`typegraph-anim.dl`](examples/typegraph-anim.dl) | Animated type-graph reveal: three d2 `steps:` boards, hottest hubs first. |
-| [`typegraph.dl`](examples/typegraph.dl) | Self-hosted Rust type graph. |
-| [`typeports.dl`](examples/typeports.dl) | Node-editor rendering of the type graph: each hub struct is a d2 sql_table |
-| [`vendored-drift.dl`](examples/vendored-drift.dl) | vendored-drift.dl — has the vendored copy drifted from its upstream? |
-| [`version-skew.dl`](examples/version-skew.dl) | version-skew.dl — one dependency, how many pinned versions across the org? |
-| [`type-from-json.dl`](examples/type-from-json.dl) | type-from-json.dl — a relation SCHEMA derived from data, not written by hand. |
-| [`type_coincidence.dl`](examples/type_coincidence.dl) | type_coincidence.dl — which types co-occur in fn signatures. |
-| [`type_lgg_query.dl`](examples/type_lgg_query.dl) | type_lgg_query.dl — filtered for actionable signal. |
-| [`type_profile.dl`](examples/type_profile.dl) | type_profile.dl — per-type intelligence profile. |
-| [`typegraph-anim.dl`](examples/typegraph-anim.dl) | Animated type-graph reveal: three d2 `steps:` boards, hottest hubs first. |
-| [`typegraph.dl`](examples/typegraph.dl) | Self-hosted Rust type graph. |
-| [`typeports.dl`](examples/typeports.dl) | Node-editor rendering of the type graph: each hub struct is a d2 sql_table |
-| [`vendored-drift.dl`](examples/vendored-drift.dl) | vendored-drift.dl — has the vendored copy drifted from its upstream? |
-| [`version-skew.dl`](examples/version-skew.dl) | version-skew.dl — one dependency, how many pinned versions across the org? |
-<!-- END: examples-index -->
-
-## Where things live
-
-| path | contents |
-|---|---|
-| [src/parse/mod.rs](src/parse/mod.rs) / [src/lex.rs](src/lex.rs) / [src/ast.rs](src/ast.rs) | DSL grammar; `ast.rs` is the syntax's single source of truth |
-| [src/frontend.rs](src/frontend.rs) | module surface: `use` inclusion + `def` inlining (`load_program`, `expand_with`, `inline_template_calls`) |
-| [src/engine/](src/engine/) | tick loop, fixpoint lowering, built-in relation refresh, gen writes |
-| [src/typecheck.rs](src/typecheck.rs) | brands, anchors, path-literal resolution, stratification diags |
-| [src/lower.rs](src/lower.rs) | rule → SQL |
-| [src/db.rs](src/db.rs) | the plural-only SQL chokepoint (`insert_rows`); per-row writes are counted and screamed about |
-| [src/comment.rs](src/comment.rs) | comment-marker region scanner |
-| [src/modgraph.rs](src/modgraph.rs) | Rust+TS import resolver |
-| [src/typegraph.rs](src/typegraph.rs) | type graph: Rust (syn) + Kotlin (tree-sitter) + TS (oxc) type-edge extractor; the `TypeLang` registry |
-| [src/ingest/mod.rs](src/ingest/mod.rs) | document ingestion: the `IngestLang` registry + `doc_node` extractor (markdown via `tree-sitter-md` block grammar) |
-| [src/scc.rs](src/scc.rs) | closure / SCC condensation |
-| [src/spine.rs](src/spine.rs) / [src/datapath.rs](src/datapath.rs) | ref-spine IDs, located spans |
-| [src/lsp.rs](src/lsp.rs) | the LSP server |
-| [src/daemon.rs](src/daemon.rs) / [src/rpc.rs](src/rpc.rs) / [src/tray.rs](src/tray.rs) | warm-state daemon + spawn-if-missing client, JSON-RPC codec, menu-bar tray (see [docs/daemon.md](docs/daemon.md)) |
-| [src/rspath.rs](src/rspath.rs) / [src/ktpath.rs](src/ktpath.rs) / [src/refactor.rs](src/refactor.rs) | `--move` rewriting (Rust use-paths / Kotlin imports) |
-| [src/scip_import.rs](src/scip_import.rs) | SCIP index ingestion |
-| [docs/data-model.md](docs/data-model.md) | the (repo, path, rev) coordinate contract |
-| [docs/lsp.md](docs/lsp.md) | diag convention + editor setup |
-| [docs/rails.md](docs/rails.md) | hook setup + exit-code contract |
-| [docs/extract-rename.md](docs/extract-rename.md) | `extract rename` and `extract move`: per-language symbol and file rehoming, stops, exit codes |
-| [docs/extract-tsi.md](docs/extract-tsi.md) | TSI: the `--witness --family type` type-graph wire, tiers per language, `tsi.name`, the dl7 consumer, open forks, ledger; living doc |
-| [docs/](docs/) | research: portable relation-store seam, SQLite×graph landscape, ext-library extracts (Cozo/DBSP/petgraph/datafrog/lsp-server) |
-| [book/](book/) | the datalog-engine book: facts→rules→fixpoint→incremental→storage |
-| [tests/](tests/) | e2e + the SCIP differential oracles (`oracle_rust.rs` vs rust-analyzer, `oracle_kotlin.rs` vs scip-java; both skip when the tool is absent) |
-| `plans/`, `../CLAUDE.md` | task ledger and design plans |
-
-The engine lives at the repo root (v5 lifted, 2026-07-01). Prior iterations:
-v3/v4 working trees in `../sprefa-archive-20260701` (and git history); the
-original coordinate model in `../sprefa-archive-20260428`.
-
-## Known gaps
-
-- **`Value` is `Text | Int`** — no float; `<` on text is lexical. Arithmetic
-  (`+ - * / %`) works in heads and comparisons; `+` concatenates text.
-- **String manipulation** — `${}` interp or `+` concat; `split(text, sep, idx)`
-  and `replace(text, from, to)` in heads/comparisons (see Body constructs above);
-  no substr, no regex capture over an already-bound value (use the `match_line`
-  source op at scan time with `(?<name>...)` groups instead).
-- **Closure in a mixed rule body is literal-seeded only** — dynamic transitive
-  closure is a seeded point query, not a fixpoint join. Recursive rules over
-  the `_edge` relations substitute (see [examples/callgraph.dl](examples/callgraph.dl)).
-- **`doc_node` bridges to code via `doc_ref`** — markdown headings/code-blocks
-  extract today, and `doc_ref(file, line, sym, kind, matched_name)` matches those
-  headings to `type_entity` symbols (exact + normalized), plus scans code-block
-  text for identifier mentions. Comments are not auto-extracted (syn strips
-  them); the `comment` op pulls regions on demand at query time instead.
-- **No per-language symbol literal** — `rs:`/`kt:`/`ts:`/`md:` addressing is
-  deferred. Symbols are reachable today via column conjunctions (`name = "tick"`
-  + `file = fs:src/engine.rs`); a terse module-path literal would collapse that
-  but needs a resolver/UDF choice (see chat_log session 4).
-
-## Papercuts
-
-UX friction hit while authoring a real lint (the smash confinement-lint session:
-fence raw input-device symbols to an allowlisted file). Each cost a round-trip.
-None are blockers; all are cheap wins.
-
-- **`scan` rev_out = `_` errors as "expected variable, got Wild"** — writing
-  `scan("WORK", "**/*.rs", p, _)` (don't-care the git rev) is rejected with a
-  parse error that names neither `scan` nor the offending slot. Either accept `_`
-  for rev_out (it reads as a don't-care everywhere else) or make the message say
-  "scan rev_out must be a named variable". Cost me one failed run to locate.
-- **`agent_touch` / `agent_changed` silently empty on the daemon fallback** — an
-  ad-hoc run prints `[daemon] attach failed, falling back to in-process` and then
-  the agent-harness relations come back EMPTY, so a rail scoped to
-  `agent_changed(p)` returns 0 rows that read as "clean" when really the relation
-  never populated. A false green is the worst failure for a lint. Either populate
-  `agent_*` in the in-process path, or have `--check` warn when a referenced
-  `agent_*` relation is empty because the store wasn't reachable.
-- **daemon-attach banner + 5s wait on every ad-hoc invocation** — `[daemon]
-  attach failed, falling back to in-process: daemon did not become ready in 5s`
-  prints (and stalls 5s) on a plain `dl prog.dl`. `--no-daemon` skips it
-  but isn't the default for a one-off. Consider a shorter attach timeout, or
-  suppressing the banner unless `--verbose`. Root cause found: the daemon runs
-  its cold `eng.tick` BEFORE binding the socket (`daemon.rs` run_daemon:
-  tick at ~489, `UnixListener::bind` at ~533), so on a big program the socket
-  isn't answerable inside the 5s `wait_ready` budget — the daemon is coming up,
-  just slower than the client waits. Worse: each timed-out run respawns another
-  daemon (`is_running` is false until the socket binds), so N cold ticks pile up.
-  Real fix is bind-before-tick (write a "starting" pid marker early so
-  `ensure_daemon` waits on the in-flight daemon instead of spawning a duplicate),
-  not just a shorter timeout. This is the pivot for the whole `--hook` story: a
-  PostToolUse hook firing on every edit eats up to 5s per fire on this path.
-- **`diag` maps columns by NAME in an otherwise positional language, with no
-  error on a misnamed column** — everything else in dl is positional; `diag`
-  silently switches to nominal (`path`/`line`/`msg` required; `severity`/`code`/
-  `hint` optional by name). Writing `diag(path, line, level, ...)` (should be
-  `severity`) is a silent drop, not a diagnostic — same false-green failure class
-  as the `agent_*` one. The op-table already makes a typo'd `comment` label name a
-  parse error; `diag`'s nominal columns should get the same guard. That single
-  fix makes `diag` intuitive-blind instead of intuitive-by-example. Also: the
-  valid severity set (`error`/`warn`/`info`) and "only `error` trips exit 2" are
-  not declared at the sink; they have to be harvested from examples.
-- **`?` queries still render under `--check`** — a rail file with leftover `?`
-  debug queries prints `? foo => …` to output alongside the diag render, polluting
-  CI. Either `--check` should ignore `?` blocks (render only `diag`), or the docs
-  should say "strip `?` before shipping a rail."
-
-Verification tasks for whoever picks these up (observed, not yet confirmed):
-- Confirm whether the in-process path reads the agent harness store at all, or
-  whether the store read is gated on the daemon path (`agent.rs`). Symptom was an
-  empty `agent_touch` from a plain in-process run right after edits — points at
-  in-process not populating rather than a root-keying mismatch.
-- A/B whether a bare `match_ast(:rust, "JoyButton")` pattern matches
-  `use …::JoyButton` and `try_cast::<InputEventKey>()` type/use positions. If
-  ast-grep catches those, `match_ast` beats `match_line` for any-position
-  symbol fencing (skips comments/strings) and the skill's "use match_line for
-  any-position" note is wrong.
-- Confirm `dl examples "<query>"` ranks `ban.dl` high for "ban api" / "restrict
-  symbol to file". If the embedded search doesn't, "lead with dl examples" is bad
-  advice and the ranking is the real papercut.
-
-Worked first try (do NOT "fix" these): `${sym}` interpolation from a `(?<sym>…)`
-match group into the `diag` head; the minimal 6-col `diag` shape (no `col`/
-`end_col`); `!allowed(p)` anti-join.
-
-## Sharp edges (multi-repo + effects at scale)
-
-Traps hit while standing up an 800-repo org scan + a cross-repo dependency graph
-+ progressive rev fetching over the `@async` effect runtime. Each cost real
-round-trips to locate; documented so the next run (human or agent) skips them.
-
-- **Multi-repo `scan` fan: bind the repo in `scan`'s slot, not by joining
-  `file()`.** To fan a scan over every configured repo AND capture which repo a
-  row came from, write `srcfile(r, p) <- repo(r, _, _), scan(r, "HEAD", glob, p,
-  rev).` — the repo variable goes in `scan`'s repo argument (a data-driven scan;
-  it reads the coordinate from `repo`). The intuitive `scan("*", …, p, rev),
-  file(r, p, rev)` FAILS with `head var r unbound in source rule`: a `scan`-headed
-  rule is a source rule and binds head vars only from the source op, so the
-  `file()` join can't supply `r`. Cost a full run to diagnose.
-- **`@async`/`sh` effects only drain under the *persistent* daemon** (FIXED: it
-  now drains by default). A plain `dl prog` (and `--no-daemon`) ticks once
-  and does NOT run the effect drain — `effect_log` stays empty and nothing fires.
-  `dl --lsp prog </dev/null` is worse: the LSP front-end hits EOF immediately
-  (`Error: disconnected channel`) and takes the daemon down with it. So run
-  `dl daemon start` (backgrounded) **plus** `dl daemon load prog`. This
-  used to *also* silently sit at `state='queued'` forever unless you knew to set
-  `DL_POLL_SECS` — the drain runs inside `poll_tick`, which was opt-in. That was
-  the footgun (cost a debug cycle every time). **Now the daemon drains effects by
-  default** (`DEFAULT_POLL_SECS=2`, the poll loop no-ops cheaply when a program has
-  no effects); `DL_POLL_SECS=N` overrides the cadence and `DL_POLL_SECS=0` is the
-  explicit off switch. `examples/crawl <thing>` still owns the whole
-  daemon+load+render lifecycle as one command, over `examples/npm-crawl.dl`.
-- **`@async` fans out ALL distinct requests on the tick they become derivable —
-  and `clock(N,b)` does NOT spread them.** Firing an effect over N derived
-  coordinates queues all N at once; against an external API that means a burst
-  into a *secondary* (anti-abuse) rate limit and mass failure (measured 1/14
-  succeeding). `clock(N,b)` in the args re-fires *each coordinate* once per bucket
-  (retry / re-poll), it does not stagger distinct coordinates across time — a bare
-  `clock` join just re-bursts every bucket. To rate-safe a fan-out: **jitter in
-  the effect body** (`sleep $(( RANDOM % 25 ))`) to desync, and/or presence-gate
-  so completed coordinates stop re-firing. Jitter alone took the dskit rev fetch
-  from 1/14 to 12/14.
-- **Content-addressed effects ignore edits to the shell template.** The
-  `pending_effect` id is `(head, kind, args)` — NOT the command text. Editing an
-  `sh` effect's backtick body and re-running does nothing (the id is unchanged, so
-  it reads as already-done). Force a re-fire with a fresh `--db`. Cost one
-  confused "why didn't my fix run" cycle.
-- **`go.mod` pseudo-versions pin a 12-hex *short* sha that `git fetch` rejects.**
-  `require …/x v0.0.0-DATE-abcdef123456` → `git fetch origin abcdef123456` fails
-  with `couldn't find remote ref`. Resolve short→full first (`gh api
-  repos/OWNER/REPO/commits/<short> -q .sha`), then `git fetch --depth 1 origin
-  <full-sha>`. Semver tags (`v1.6.3`) fetch directly, no resolve.
-- **BSD `xargs` aborts the whole batch if any child exits 255** (`gh` does on
-  empty/odd repos), which silently truncated a 389-repo clone at 85. Wrap each
-  child so it always `exit 0`. (Ops-level, but it read as "the clone just
-  stopped" with no error.)
-
-### Turnkey: crawl a dependency graph without a pre-cloned corpus
-
-The 800-repo flow above needs the corpus on disk first (clone the org, write a
-`config.toml`). `examples/npm-crawl.dl` + the `examples/crawl` driver are the
-*self-seeding* version: name one public npm package, and the `@stream` effect
-runtime crawls its dependency graph straight from the registry (one `curl` per
-package, content-addressed so each is fetched exactly once), expands the frontier
-one BFS layer per tick, rewrites `_npm/graph.d2` progressively as edges land, and
-shallow-pulls each dep's source repo at its rev (`git clone --depth 1` — source
-only, no `npm install`, no build).
-
-```
-examples/crawl express 2      # -> _npm/graph.svg + _npm/src/<pkg>/ (81 edges @ depth 1)
-examples/crawl cross-spawn    # small tree: cross-spawn -> {which->isexe, path-key, shebang-command->shebang-regex}
-```
-
-The driver hides every sharp edge above: it sets `DL_POLL_SECS`, owns the daemon
-lifecycle, waits for the crawl to reach its fixpoint (edge count stable across
-three polls, since a BFS layer takes a poll cycle to fire), and renders. Fan-in
-hubs (`fanin(pkg, count)`) fall out of the same graph — the ecosystem's
-most-depended-on packages, no SCIP, no compile. Same manifest-first shape as the
-`go.mod` graph, but the manifest is the registry and the crawl is progressive.
-Scoped packages (`@scope/name`) need registry URL-encoding (`@scope%2Fname`) —
-the current template passes the slash through, so unscoped names work today.
-
-</details>
-
-## Store schema versions
-
-`~/.agent/boop.db` carries its schema version in `PRAGMA user_version`. A store
-written by an older build is refused by `sync` and `follow` rather than mixed
-with rows that mean something different.
-
-| version | what changed |
-|---|---|
-| 2 | dense per-session turn ordinals, per-transcript sync cursors |
-| 3 | `agent_usage` token rows |
-| 4 | `model_price` rate table |
-| 5 | `agent_fetch` covers searches, not only url fetches |
-
-Moving up a version is one command:
-
-```
-boop db sync create --rebuild
-```
-
-It drops every stored row, recreates the schema, vacuums, and re-projects every
-transcript from byte 0. Measured here: about 18 s over 1.5 GB of claude
-transcripts plus the opencode store. Incremental `boop db sync create` stays
-under a second.
-
-## Using boop as a library
-
-`boop` ships a lib target, so a Rust host links it and runs the queries in
-process instead of shelling out:
-
-```rust
-use boop::{FactKind, FactQuery};
-
-let store = boop::open_default()?;
-let touched = store.query_facts(FactKind::Touch, &FactQuery {
-    limit: Some(50),
-    ..Default::default()
-})?;
-```
-
-`cargo run --example instant_views` is a working consumer of that surface.
+Design: `plans/v8/2026-09-12-v8-eval-api.md`. Buy-vs-build:
+`plans/v8/2026-09-12-v8-buy-vs-build.md`.

@@ -1,9 +1,17 @@
 # sprefa
 
-Reactive datalog-over-code engine ("dl"). v5 rust engine at the repo root. v6 =
-prolog compiles `.dl6` to TypeScript+SQLite and to Rust+SQLite: `v6/prolog`
-(compiler + oracle), `v6/tsv2` (runtime/serve/cli), `v6/sprefa-engine-rs` (the
-Rust runtime), `v6/sprefa-store`; `sprefa-extract` lives in `hafley-rs/crates/sprefa-extract` (moved 2026-09-14). Overview: `README.md`.
+Reactive datalog-over-code engine. **dl8 is the engine and lives at the repo
+root**: `Cargo.toml` (package `dl8`), `src/`, `tests/`, `book/`, `oracle/`
+(frozen goldens), `fixtures/`, `prelude/`, `macrotime/`,
+`crates/tree-sitter-dl7`. `sqlite_ivm` and `hafley-rs` are gitignored symlinks
+to the sibling checkouts `~/projects/sqlite_ivm` (repo `hafley66/sqlite_ivm`)
+and `~/projects/hafley-rs`. Earlier engines are kept
+whole, one directory each, and take no new work: `v5/` (the rust `dl` crate,
+`v5/justfile`), `v6/` (prolog compiles `.dl6` to TypeScript+SQLite and
+Rust+SQLite: `v6/prolog`, `v6/tsv2`, `v6/sprefa-engine-rs`, `v6/sprefa-store`;
+v6-era lab output under `v6/reports`, `v6/labs`, `v6/TASKS`, `v6/sprefa-lanes`),
+`v7/` (the prolog dl7 compiler dl8 was ported from). `sprefa-extract` lives in
+`hafley-rs/crates/sprefa-extract`. Overview: `README.md`.
 Archives: `~/projects/sprefa-archive-20260701` (v3/v4), `-20260428` (OG).
 
 ## THE RULE FOR THIS FILE
@@ -84,7 +92,7 @@ reporting anything as broken or as green.
 - **Failure ledger.** Every incident that bites gets a `docs/failure-modes.md`
   entry: incident, RCA, fail-pre-fix test, rail, entry. No incident closes
   without one.
-- **eprintln never comes back.** No `eprintln!` in `src/**`; `tracing` only.
+- **eprintln never comes back.** No `eprintln!` in `src/**` or `v5/src/**`; `tracing` only.
   Rare CLI-UX lines carry `@eprintln-ok`. `.dl/no-new-eprintln.dl` ratchets to
   zero.
 - **Lang design happens with Chris in the room.** No lane, lab, or coordinator
@@ -237,7 +245,7 @@ list` shows your own lane name.
   subscribes.
 - Recompute guard: any from-scratch re-derive on a reactive rule needs a digest
   early-out or `// @recompute unguarded: <reason>`. Rail:
-  `examples/recompute-guard.dl --check`.
+  `v5/examples/recompute-guard.dl --check`.
 - Colocated consistency: inside a file, follow that file's existing style.
 - Banned words, prose AND identifiers: provenance, substrate, load-bearing,
   regime. Use source, base, critical, mode.
