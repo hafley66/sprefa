@@ -1,0 +1,9 @@
+; expect: rc=0
+; compile: --project book/src/probes book/src/probes/http/0_fetch.dl7
+; The path http, fetch, get as a walk over : edges, one goal per segment.
+(: found
+   (* (: result type)))
+
+(<- (found ?Relation)
+    (: http fetch ?Module ?ModuleIndex)
+    (: ?Module get ?Relation ?Index))

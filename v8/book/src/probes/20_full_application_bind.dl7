@@ -1,0 +1,12 @@
+; expect: rc=0
+; A full application on the right of a declaration names the return column's node.
+(: Wrap
+   (* (: source type)
+      (: return type)))
+
+(<- (Wrap ?Source ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments)
+    (intern Wrap ?Arguments ?Result))
+
+(: WrappedText (Wrap text))
