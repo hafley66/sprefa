@@ -1,0 +1,4 @@
+; expect: invalid_path
+; A leading dot has no first segment, so the reader stops.
+(: table
+   (* (: row .b)))

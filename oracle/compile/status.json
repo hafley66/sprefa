@@ -45,6 +45,20 @@
     "--project",
     "<root>/test/fixtures/modules",
     "<root>/test/fixtures/modules/0_accounts.dl7",
+    "<root>/test/fixtures/modules/3_dotted_consumer.dl7"
+   ],
+   "bytes": 917980,
+   "committed": false,
+   "compiler_rows": 938,
+   "diagnostics": 0,
+   "stem": "project-modules-dotted",
+   "v7_ms": 705
+  },
+  {
+   "arguments": [
+    "--project",
+    "<root>/test/fixtures/modules",
+    "<root>/test/fixtures/modules/0_accounts.dl7",
     "<root>/test/fixtures/modules/2_plus_consumer.dl7"
    ],
    "bytes": 717957,
@@ -475,6 +489,17 @@
    "diagnostics": 1,
    "stem": "test-fixtures-modules-2_plus_consumer",
    "v7_ms": 204
+  },
+  {
+   "arguments": [
+    "<root>/test/fixtures/modules/3_dotted_consumer.dl7"
+   ],
+   "bytes": 435,
+   "committed": true,
+   "compiler_rows": 0,
+   "diagnostics": 2,
+   "stem": "test-fixtures-modules-3_dotted_consumer",
+   "v7_ms": 225
   },
   {
    "arguments": [

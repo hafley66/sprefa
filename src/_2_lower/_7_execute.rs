@@ -193,6 +193,19 @@ pub fn lower_call(
     let Some(items) = forms::form(cx.u, parsed.payload) else {
         return Err(cx.plain(parsed.id, "expected_call"));
     };
+    // A path head is a callable the checker walks: the module graph is
+    // installed after every unit lowers (`_8_driver/_3_units.rs:37`), so the
+    // segments travel whole and the arguments stay positional.
+    if let Some((relation, label)) = items
+        .first()
+        .copied()
+        .and_then(|head| path_relation(cx, head, owner))
+    {
+        let all = positional_slots(items.len() - 1);
+        let arguments =
+            normalize_call_arguments(cx, label, parsed.id, &all, &items[1..], owner, head_mode)?;
+        return finish_call_arguments(cx, relation, label, parsed.id, arguments, head_mode);
+    }
     let Some(head) = forms::form_head_atom(cx.u, &items) else {
         return Err(cx.plain(parsed.id, "expected_call"));
     };
@@ -202,7 +215,8 @@ pub fn lower_call(
             .unwrap_or_default();
     if head_name == ":" && items.len() == 5 {
         let arguments = lower_colon_arguments(cx, &items[1..], owner, head_mode)?;
-        return finish_call_arguments(cx, head, parsed.id, owner, arguments, head_mode);
+        let relation = cx.compound("name", vec![owner, head]);
+        return finish_call_arguments(cx, relation, head, parsed.id, arguments, head_mode);
     }
     let (callable, arity, _) = match expression_callable(cx, head, owner) {
         Ok(found) => found,
@@ -211,7 +225,26 @@ pub fn lower_call(
     let all = slots::callable_slots(cx, &callable, arity);
     let arguments =
         normalize_call_arguments(cx, head, parsed.id, &all, &items[1..], owner, head_mode)?;
-    finish_call_arguments(cx, head, parsed.id, owner, arguments, head_mode)
+    let relation = cx.compound("name", vec![owner, head]);
+    finish_call_arguments(cx, relation, head, parsed.id, arguments, head_mode)
+}
+
+/// `((. a b c) ...)`: the callable `path(Owner, [a,b,c])` and the last segment,
+/// the atom every diagnostic about the call names.
+fn path_relation(cx: &mut Cx, node: TermId, owner: TermId) -> Option<(TermId, TermId)> {
+    let parsed = forms::node(cx.u, node)?;
+    let segments = forms::path_form(cx.u, parsed.payload)?;
+    let names = forms::path_names(cx.u, &segments)?;
+    let last = *names.last()?;
+    let list = cx.u.list(&names);
+    Some((cx.compound("path", vec![owner, list]), last))
+}
+
+/// One unlabelled slot per argument.
+fn positional_slots(count: usize) -> Vec<slots::Slot> {
+    (0..count as i64)
+        .map(|index| slots::Slot { index, label: None })
+        .collect()
 }
 
 struct Arguments {
@@ -303,9 +336,9 @@ fn normalize_call_arguments(
 /// `:1151`.
 fn finish_call_arguments(
     cx: &mut Cx,
+    relation: TermId,
     name: TermId,
     node_id: TermId,
-    owner: TermId,
     arguments: Arguments,
     head_mode: bool,
 ) -> Result<Call, TermId> {
@@ -324,7 +357,6 @@ fn finish_call_arguments(
             return Err(cx.diagnostic(node_id, reason));
         }
     }
-    let relation = cx.compound("name", vec![owner, name]);
     let list = cx.u.list(&arguments.arguments);
     let call = cx.compound("call", vec![relation, list]);
     Ok(Call {

@@ -74,7 +74,7 @@
         },
         {
           "args": [
-            116
+            117
           ],
           "f": "const"
         }
@@ -157,7 +157,7 @@
         },
         {
           "args": [
-            115
+            116
           ],
           "f": "const"
         }
@@ -245,7 +245,7 @@
         },
         {
           "args": [
-            2
+            3
           ],
           "f": "const"
         }
@@ -296,6 +296,198 @@
           "args": [
             {
               "a": "openapi.route"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "openapi"
+                        },
+                        [
+                          {
+                            "a": "fixtures/openapi/todo.json"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                {
+                  "a": "openapi.route"
+                }
+              ],
+              "f": "tsi_relation"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            2
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "a": ":"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "openapi"
+                        },
+                        [
+                          {
+                            "a": "fixtures/openapi/todo.json"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                {
+                  "a": "openapi"
+                }
+              ],
+              "f": "tsi_namespace"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "a": "param"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "openapi"
+                        },
+                        [
+                          {
+                            "a": "fixtures/openapi/todo.json"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                {
+                  "a": "openapi.param"
+                }
+              ],
+              "f": "tsi_relation"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            0
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "a": ":"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "openapi"
+                        },
+                        [
+                          {
+                            "a": "fixtures/openapi/todo.json"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                {
+                  "a": "openapi"
+                }
+              ],
+              "f": "tsi_namespace"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "a": "route"
             }
           ],
           "f": "const"

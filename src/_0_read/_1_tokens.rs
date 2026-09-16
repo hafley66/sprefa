@@ -37,6 +37,17 @@ pub fn valid_atom(token: &str) -> bool {
     valid_identifier(token)
 }
 
+/// A dot inside a token separates path segments: `http.fetch.get` is the
+/// form `(. http fetch get)`. Every segment is an identifier, so a leading, a
+/// trailing or a doubled dot names no segment and the token is no path.
+pub fn path_segments(token: &str) -> Option<Vec<&str>> {
+    let segments: Vec<&str> = token.split('.').collect();
+    if segments.len() < 2 || !segments.iter().all(|segment| valid_identifier(segment)) {
+        return None;
+    }
+    Some(segments)
+}
+
 pub fn integer_token(token: &str) -> bool {
     let digits = token.strip_prefix('-').unwrap_or(token);
     !digits.is_empty() && digits.chars().all(decimal_digit)

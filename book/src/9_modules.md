@@ -152,6 +152,59 @@ diagnostic diagnostic(check, reader_node(oracle/compile/sources/test/fixtures/le
 exit 1
 ```
 
+## Paths
+
+A dotted atom is a path. `http.fetch.get` names the `get` declaration of the
+module `http, fetch`, and stands for the walk probe 23 writes by hand:
+
+```dl7
+; fixture: book/src/probes/24_dot_path.dl7:3-8
+; compile: --project book/src/probes book/src/probes/http/0_fetch.dl7
+; The dotted atom http.fetch.get is the path form, and one : goal per segment
+; replaces the hand-written walk of probe 23.
+(: found
+   (* (: result type)))
+
+(<- (found http.fetch.get))
+```
+
+```console
+$ bash book/show.sh compile book/src/probes/24_dot_path.dl7 --project book/src/probes book/src/probes/http/0_fetch.dl7
+(found get)
+exit 0
+```
+
+The reader gives a dotted token the form `(. seg seg ...)`, one atom per
+segment, at the token's own position. Macros read it as an ordinary form whose
+head is `.`.
+
+In argument position the form lowers to one `:` goal per segment after the
+first, and the value of the form is the target the last goal binds. In the head
+of a call, and as a type, the segments travel whole to the checker, which
+resolves each segment in the owner the segment before it named; that walk is
+`resolve_name` itself, so a module contributes nothing of its own to it.
+
+A segment that names nothing is `unresolved_name` carrying that segment, never
+the whole path. A leading dot, a trailing dot, or two dots in a row leaves a
+segment with no name, and the reader stops with `invalid_path`. A number keeps
+its dot: the reader reads a float literal before it reads a path.
+
+A wire relation's name carries its namespace, `openapi.route`. Source reaches
+it as a path, so the loader gives each namespace an owner of one edge per
+member.
+
+| claim | path | command |
+|---|---|---|
+| a dotted token reads as `(. seg ...)` | `src/_0_read/_1_tokens.rs:43`, `src/_0_read/_2_reader.rs:415` | `cargo test --test _1_read_oracle` |
+| a path in argument position is one `:` goal per segment | `src/_2_lower/_8_express.rs:139` | `bash book/show.sh compile book/src/probes/24_dot_path.dl7 --project book/src/probes book/src/probes/http/0_fetch.dl7` |
+| a path in the head of a call is the callable `path(Owner, Segments)` | `src/_2_lower/_7_execute.rs:234` | `cargo test --test _8_compile_oracle` |
+| a path as a type resolves with no rule goal | `src/_2_lower/_2_declare.rs:198`, `oracle/compile/sources/test/fixtures/modules/3_dotted_consumer.dl7:16` | `cargo test --test _8_compile_oracle` |
+| the checker walk is `resolve_name` per segment | `src/_3_check/_2_resolve.rs:50` | `cargo test --test _8_compile_oracle` |
+| an unresolved path names the segment that stopped the walk | `book/src/probes/19_dotted_name.dl7`, `src/_3_check/_2_resolve.rs:278` | `bash book/show.sh compile book/src/probes/19_dotted_name.dl7` |
+| a dot with no segment beside it is `invalid_path` | `book/src/probes/25_invalid_path_double_dot.dl7`, `book/src/probes/26_invalid_path_leading_dot.dl7` | `cargo test --test _22_book` |
+| a float keeps its dot | `fixtures/literals/0_float.dl7` | `cargo test --test _10_literals` |
+| a wire namespace is an owner of its members | `src/_4_comptime/_0_load/_3_wire.rs:137`, `fixtures/openapi/todo.dl7:13` | `cargo test --test _21_openapi` |
+
 ## What proves it
 
 | claim | path | command |

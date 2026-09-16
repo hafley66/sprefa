@@ -193,6 +193,21 @@ pub fn lower_target(
                     let declared = lower_bind_list(u, &items[1..], owner, module_identity)?;
                     return Ok(finish_constructor_target(u, declared, node.id, owner, kind));
                 }
+                // A path target names a type. Pass 1 has no scope to walk, so
+                // the segments travel to the checker whole.
+                "." => {
+                    if let Some(names) = forms::path_form(u, node.payload)
+                        .and_then(|segments| forms::path_names(u, &segments))
+                    {
+                        let list = u.list(&names);
+                        let term = u.compound("path", vec![parent_owner, list]);
+                        return Ok(Target {
+                            term,
+                            kind: "reference",
+                            declared: Declared::default(),
+                        });
+                    }
+                }
                 _ => {}
             }
         }

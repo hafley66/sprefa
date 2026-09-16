@@ -1,0 +1,16 @@
+; The dotted atom accounts.User is a path. It reaches the accounts module in
+; argument position, in the head of a goal, and as a column type.
+(: found_user
+   (* (: result type)))
+
+(<- (found_user accounts.User))
+
+(: user_name
+   (* (: identity int)
+      (: name text)))
+
+(<- (user_name ?UserIdentity ?UserName)
+    (accounts.User ?UserIdentity ?UserName))
+
+(: holder
+   (* (: user accounts.User)))

@@ -123,7 +123,10 @@ fn diagnostic_names(compiled: &Value) -> Vec<String> {
         .map(|all| {
             all.iter()
                 .filter_map(|d| {
-                    let payload = &d["args"][2];
+                    // `diagnostic(Phase, Node, Reason)`, and the reader's
+                    // `diagnostic(reader, Path, Node, Reason, Position)`.
+                    let args = d["args"].as_array()?;
+                    let payload = if args.len() == 5 { &args[3] } else { args.get(2)? };
                     payload["f"]
                         .as_str()
                         .or(payload["a"].as_str())

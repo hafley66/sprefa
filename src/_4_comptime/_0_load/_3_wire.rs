@@ -129,6 +129,55 @@ pub fn tsi_relation_arity(name: &str) -> Option<i64> {
         .map(|(_, arity)| *arity)
 }
 
+/// A wire relation's name carries its namespace: `openapi.route` is `route`
+/// inside `openapi`. Source spells that as a path (`_0_read/_1_tokens.rs`
+/// `path_segments`), so every namespace is an owner of one edge per member,
+/// reached by one edge off the stream owner. The ordinals continue past the
+/// owner's highest, so no earlier edge moves.
+pub fn namespace_edges(u: &mut Universe, owner: TermId, names: &[&str], first: i64) -> Vec<TermId> {
+    let mut members: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for name in names {
+        if let Some((space, member)) = name.split_once('.') {
+            members.entry(space).or_default().insert(member);
+        }
+    }
+    let mut edges = Vec::new();
+    for (offset, (space, member_names)) in members.iter().enumerate() {
+        let space_atom = u.atom(space);
+        let space_owner = u.compound("tsi_namespace", vec![owner, space_atom]);
+        let target = u.compound("target", vec![space_owner]);
+        let ordinal = u.int(first + offset as i64);
+        edges.push(u.compound("pending_edge", vec![owner, space_atom, target, ordinal]));
+        for (index, member) in member_names.iter().enumerate() {
+            let full = u.atom(&format!("{space}.{member}"));
+            let member_atom = u.atom(member);
+            let callable = u.compound("tsi_relation", vec![owner, full]);
+            let target = u.compound("target", vec![callable]);
+            let ordinal = u.int(index as i64);
+            edges.push(u.compound(
+                "pending_edge",
+                vec![space_owner, member_atom, target, ordinal],
+            ));
+        }
+    }
+    edges
+}
+
+/// The next free ordinal under `owner`.
+pub fn next_owner_ordinal(u: &Universe, owner: TermId, edges: &[TermId]) -> i64 {
+    let mut next = 0;
+    for edge in edges {
+        let Some(row) = parts(u, *edge, "pending_edge", 4) else {
+            continue;
+        };
+        if row[0] != owner {
+            continue;
+        }
+        next = next.max(u.as_int(row[3]).unwrap_or(-1) + 1);
+    }
+    next
+}
+
 /// `:68`. The cap bounds a stream whose application ids never settle.
 pub const IDENTITY_PASSES: u32 = 16;
 

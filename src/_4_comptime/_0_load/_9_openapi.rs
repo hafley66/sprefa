@@ -4,7 +4,9 @@
 use super::api::{diagnostic, parts, sorted, Installed, Loaded};
 use super::identity::{identity_map, Identities};
 use super::tsi::{basement_program, install_tsi_graph, tsi_expression_environment};
-use super::wire::{accepted_rows, facts_of, stream_owner, Owner};
+use super::wire::{
+    accepted_rows, facts_of, namespace_edges, next_owner_ordinal, stream_owner, Owner,
+};
 use crate::_2_lower::units::merge_expression_environments;
 use crate::_6_eval::term::{TermId, Universe};
 use serde_json::Value;
@@ -753,6 +755,10 @@ pub fn install_openapi_graph(
         added_edges.push(u.compound("pending_edge", vec![owner, name_atom, target, index]));
     }
     edges.splice(owned..owned, added_edges);
+    let spelled: Vec<&str> = OPENAPI_RELATIONS.iter().map(|(name, _)| *name).collect();
+    let next = next_owner_ordinal(u, owner, &edges);
+    let spaces = namespace_edges(u, owner, &spelled, next);
+    edges.extend(spaces);
     all_seeds.extend(seeds);
 
     let program = basement_program(u, &nodes, &edges, &relations, &all_seeds);
