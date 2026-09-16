@@ -1,0 +1,48 @@
+; expect: rc=0
+; A book citation with no source line, and a Book doc tag with no page.
+(: source_line
+   (* (: path text)
+      (: line int)))
+
+(: book_cite
+   (* (: page text)
+      (: path text)
+      (: line int)))
+
+(: doc_tag
+   (* (: path text)
+      (: line int)
+      (: tag text)
+      (: argument text)))
+
+(: book_page (* (: page text)))
+
+(source_line "src/_9_runtime/_2_reconcile.rs" 21)
+
+(book_cite "hosting/0_the_seam.md" "src/_9_runtime/_2_reconcile.rs" 21)
+
+(book_cite "hosting/0_the_seam.md" "src/_9_runtime/_2_reconcile.rs" 9999)
+
+(doc_tag "src/_9_runtime/_2_reconcile.rs" 20 "book" "hosting/0_the_seam.md")
+
+(doc_tag "src/_9_runtime/_3_executors/mod.rs" 44 "book" "hosting/9_missing.md")
+
+(book_page "hosting/0_the_seam.md")
+
+(: DanglingCite
+   (* (: page text)
+      (: path text)
+      (: line int)))
+
+(<- (DanglingCite ?Page ?Path ?Line)
+    (book_cite ?Page ?Path ?Line)
+    (not (source_line ?Path ?Line)))
+
+(: UnpagedTag
+   (* (: path text)
+      (: line int)
+      (: page text)))
+
+(<- (UnpagedTag ?Path ?Line ?Page)
+    (doc_tag ?Path ?Line "book" ?Page)
+    (not (book_page ?Page)))

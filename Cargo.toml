@@ -1,243 +1,28 @@
-# The `dl` crate at the repo root (v5 lifted, 2026-07-01; v3/v4 archived to
-# ~/projects/sprefa-archive-20260701 + git history). The workspace exists for
-# the vendored tree-sitter-dl grammar member and to exclude `.claude` so a git
-# worktree created under `.claude/worktrees/<name>/` is NOT captured by this
-# workspace (cargo walking up from a nested worktree would otherwise fail with
-# "believes it's in a workspace when it's not").
-[workspace]
-resolver = "2"
-members = ["tree-sitter-dl"]
-exclude = [".claude"]
-
+# No [workspace] table: `hafley-rs` is a symlink inside this directory and a
+# workspace root here would claim `hafley-rs/crates/soopy` as its own member.
+# `sqlite_ivm` is a gitignored symlink to the sibling checkout of hafley66/sqlite_ivm.
 [package]
-# Installed/published name = `sprefa-dl` (the binary is `dl`). The internal
-# LIBRARY crate keeps the name `sprefa_v5` (see [lib] below) so the ~20 files
-# that `use sprefa_v5::…` don't churn; only the user-facing package + the
-# cargo-dist artifact names change.
-name = "sprefa-dl"
-version = "0.12.0"
+name = "dl8"
+version = "0.1.0"
 edition = "2021"
-description = "dl: a reactive datalog-over-code engine — call/import/type graphs, lint rails, LSP diagnostics, and codemods, welded to SQLite."
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/hafley66/sprefa"
-homepage = "https://github.com/hafley66/sprefa"
-readme = "README.md"
-keywords = ["datalog", "code-analysis", "lsp", "static-analysis"]
-categories = ["development-tools"]
-# build.rs cc-compiles the vendored tree-sitter grammars whose only published
-# crates pin an incompatible tree-sitter ABI (dockerfile 0.20) or ship no crate
-# at all (go-template). C sources live in vendor/grammars/; the extern fns are
-# declared and wrapped in src/engine.rs (ts_lang).
-build = "build.rs"
-# All integration tests compile into ONE binary => ONE link step instead of 58
-# (each tests/*.rs used to be its own crate, re-linking the full dep graph).
-# tests/it.rs `mod`s in every file under tests/it/; subdir files aren't targets.
-autotests = false
-
-# clippy gate baseline (scripts/verify.sh runs `cargo clippy --all-targets`).
-# Counts below are `cargo clippy --all-targets -- --cap-lints warn` diagnostic
-# totals on 2026-07-18 (agent aaca266d75100c3a5, HEAD 8be65a47). None of the 5
-# default-active clippy categories are clean yet, so each is pinned to "warn"
-# (visible in output, non-fatal) instead of clippy's own default (correctness
-# is deny-by-default and would otherwise hard-fail the build). Flip an entry to
-# "deny" once its count reaches 0 so a category can't silently regain findings;
-# don't let a count creep up between now and then — fix the offending line or
-# add a scoped `#[allow(clippy::<lint>)]` with a reason instead.
-[lints.clippy]
-correctness = "warn"  # src/update.rs:30 `never_loop` (only first CLI arg was inspected) fixed 2026-07-18; src/** still in-flight on other agent branches so the category stays "warn" pending a full repo-wide sweep
-suspicious  = "warn"  # 18 diagnostics / 9 files — mostly `empty_line_after_doc_comments` (14)
-perf        = "warn"  # 26 diagnostics / 9 files — `cloned_ref_to_slice_refs` (9), `manual_contains` (6), `unnecessary_to_owned` (4), rest singles/pairs
-style       = "warn"  # 188 diagnostics / 52 files — `doc_lazy_continuation` (66), `needless_return` (17), `ptr_arg` (15), `needless_range_loop` (14), `unnecessary_map_or` (13), rest smaller
-complexity  = "warn"  # 178 diagnostics / 40 files — `type_complexity` (67), `unnecessary_sort_by` (44), `too_many_arguments` (28), rest smaller
-
-[lib]
-# Internal crate name kept as `sprefa_v5` so existing `use sprefa_v5::…` across
-# src/tests is untouched by the package rename (package name != lib name is fine;
-# the lib name is invisible to anyone installing `sprefa-dl`).
-name = "sprefa_v5"
-path = "src/lib.rs"
-
-# The ONLY published binary. `scc_reach` (a debug/proof tool) lives in
-# examples/ instead of src/bin/, so `cargo install --git <url> sprefa-dl` ships
-# just `dl` with no `--bin` flag, and the release tarball carries only `dl`.
-# Build the example with `cargo run --example scc_reach -- <db>`.
-[[bin]]
-name = "dl"
-path = "src/main.rs"
-
-[[test]]
-name = "it"
-path = "tests/it/main.rs"
-
-[features]
-default = []
-# Real embedding backends, each a compile-time switch pulling in a module under
-# src/embed/. The seam (feature flag + cascade + runtime selection) ships now;
-# the model impl + heavy dep are wired per-backend when you want a real model.
-# To wire fastembed: add `fastembed = { version = "4", optional = true }` to
-# [dependencies], change this to `embed-fastembed = ["dep:fastembed"]`, and
-# implement src/embed/fastembed_be.rs::Fe. candle is analogous (see candle_be.rs).
-embed-fastembed = []
-embed-candle = []
+publish = false
 
 [dependencies]
-rusqlite = { version = "0.32.1", features = ["bundled", "functions", "trace"] }
-regex = "1"
-globset = "0.4"
-ignore = "0.4"
-anyhow = "1"
-# life-before-main registry: extraction families self-register (one
-# `inventory::submit!` per family file) instead of a central `call_families()`
-# vec + `static CALL_X`. The v3 op-authoring surface used this to hit the
-# `(1,0,0)` min-author-ops target. See plans/2026-07-16-op-authoring-surface.
-inventory = "0.3"
 clap = { version = "4", features = ["derive"] }
+hafley-observe = { version = "0.1", registry = "hafley" }
+indexmap = "2"
+ordered-float = "3"
+rusqlite = { version = "0.40", features = ["bundled", "limits"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-blake3 = "1"
-libc = "0.2"
-notify = "6"
-rayon = "1"
-syn = { version = "2", features = ["full", "visit"] }
-# span-locations lets syn report 1-based line/col for declaration sites
-# (TypeEntity.line) when parsing a file outside a proc-macro context.
-proc-macro2 = { version = "1", features = ["span-locations"] }
-tree-sitter = "0.25"
-tree-sitter-rust = "0.24"
-tree-sitter-c = "0.24"
-tree-sitter-json = "0.24"
-# ast-grep's kotlin grammar fork; already in the tree via ast-grep-language,
-# so a direct dep adds no new transitive build.
-tree-sitter-kotlin-sg = "0.4"
-# MDeiml/tree-sitter-grammars markdown grammar. Two-parser split (block +
-# inline); we use the block language for headings + fenced code blocks. The
-# hand-rolled extractor it replaced lives in git history (commit preceding
-# 730819a -> here).
-tree-sitter-md = "0.5"
-streaming-iterator = "0.1"
-ast-grep-core = "0.38"
-ast-grep-language = "0.38"
-ast-grep-config = "0.38"
-serde_yaml = "0.9"
-lsp-server = "0.7.9"
-lsp-types = "0.97.0"
-crossbeam-channel = "0.5"
-oxc_resolver = "11.20.0"
-toml = "1.1.2"
-protobuf = "3.7"
-scip = "0.7.1"
-tree-sitter-yaml = "0.7"
-tree-sitter-toml-ng = "0.7"
-# Raw `ast` op grammars (ts_lang dispatch). All resolve against the 0.25 core
-# above. python/go close the ast-vs-sg gap; bash + hcl/terraform + starlark +
-# jsonnet are new coverage. tree-sitter-dockerfile is intentionally absent: its
-# only crate (0.2.0) pins tree-sitter 0.20 and its Language type won't unify
-# with our 0.25 core. go-template has no published crate at all.
-tree-sitter-python = "0.25"
-tree-sitter-bash = "0.25"
-tree-sitter-go = "0.25"
-tree-sitter-hcl = "1"
-tree-sitter-starlark = "1"
-tree-sitter-jsonnet = "0.0.1"
-tree-sitter-css = "0.25"
-oxc_allocator = "0.135.0"
-oxc_parser = "0.135.0"
-oxc_ast = "0.135.0"
-oxc_span = "0.135.0"
-oxc_ast_visit = "0.135.0"
-oxc_syntax = "0.135.0"
-tray-icon = "0.24"
-tao = "0.35"
-# Structured tracing off by default; `RUST_LOG` or `DL_TRACE=<level>` enables.
-# Span-CLOSE formatting surfaces per-phase durations so hotspots need no recompile.
+soopy = { path = "hafley-rs/crates/soopy" }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-hafley-observe = { git = "https://github.com/hafley66/hafley-rs", rev = "ea016d41ced5d337fa26830279286cdeccee2084" }
-# Exact-pinned (not a caret range like the rest of this file): a chrome-trace
-# JSON exporter is a small, rarely-touched vendor surface where an unplanned
-# minor bump changing its Drop/flush timing is a correctness risk (kill-safety
-# depends on exactly when it writes), not just a compile risk. DL_TRACE_CHROME
-# activates it (src/trace.rs); see docs/tracing-chrome.md.
-tracing-chrome = "=0.7.2"
-tree-sitter-dl = { path = "tree-sitter-dl" }
-tree-sitter-language = "0.1"
-# The daemon SHELL (sockets, timers, watchers, dispatch) runs on tokio; the tick
-# ENGINE stays strictly sync and is reached only via `spawn_blocking`. Features:
-# `rt-multi-thread` for a small FIXED worker pool (2, independent of the rayon
-# budget); `net` for the UDS listener + axum's TCP listener; `time` for the
-# poll/idle intervals; `sync` for the job-doorbell `Notify` + subscriber mpsc;
-# `signal` for graceful SIGINT/SIGTERM; `io-util`/`macros` for async framing +
-# `select!`. (Replaces tiny_http; the UDS wire protocol is byte-unchanged.)
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "signal", "io-util", "macros"] }
-# `CancellationToken`: one token both the shutdown RPC and the signal handler
-# cancel; every shell task selects on it for a graceful stop.
-tokio-util = "0.7"
-# axum: the ONE handler layer for the daemon's client-facing serving (plan
-# 2026-07-18-infra-library-adoption.md section 2.4 verdict). One `Router`
-# (POST /rpc, GET /health, GET /watch SSE) served by TWO thin listeners — the
-# localhost TCP socket and the UDS socket both carry HTTP — sharing one
-# shutdown token. 0.8 is the verdict version: `tokio::net::UnixListener`
-# implements `axum::serve::Listener` there, which is what lets the UDS
-# transport ride the same `axum::serve` call as TCP. Chosen over bare hyper:
-# hyper 1.x makes you hand-roll the accept loop + service + graceful shutdown,
-# which is more code than axum's `Router` + `axum::serve`.
-axum = "0.8"
-# Request-scoped tracing spans on every route (`TraceLayer`), per the same
-# verdict — hooks the existing `tracing` spine, no bespoke access plumbing.
-tower-http = { version = "0.6", features = ["trace"] }
-# The CLI/LSP/MCP client half of the HTTP-over-UDS transport (plan 2.5 open
-# question resolved: raw hyper client-conn on a `UnixStream`, not hyperlocal —
-# one non-pooled connection per client needs no connector/URI layer, and hyper
-# is already in the tree under axum). `http1` + `client` only.
-hyper = { version = "1", features = ["client", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
-bytes = "1"
-# `BroadcastStream`: adapts the subscriber broadcast channel into the SSE
-# response stream for `GET /watch`.
-tokio-stream = { version = "0.1", features = ["sync"] }
-# Supervision arc (plans/2026-07-18-infra-library-adoption.md section 3,
-# standing law a1f049ff "infra is bought, never built"): cross-platform OS
-# service-manager adapter (launchd/systemd/rc.d/sc.exe). We use it for
-# install/uninstall only, passing a hand-authored plist/unit through
-# `ServiceInstallCtx.contents`; start/stop/restart are thin `launchctl`/
-# `systemctl` wrappers in src/supervise.rs per the plan's verdict. Exact-pinned:
-# research (plan section 3.3) is done, no drive-by version bumps.
-service-manager = "=0.11.0"
-# Single-instance witness for `run_daemon` (belt-and-suspenders against a
-# `dl daemon start --foreground` racing the launchd-supervised instance, per
-# plan section 3.3): advisory fd lock, kernel-released on SIGKILL, no
-# stale-lock cleanup needed. Doubles as the pid/start-time witness the old
-# bespoke pidfile carried.
-fd-lock = "=4.0.4"
-# Linux systemd readiness/watchdog notification (`Type=notify`, plan section
-# 3.2); a no-op on macOS (returns `Ok(())` immediately when `NOTIFY_SOCKET` is
-# unset, verified in the vendored source — no cfg-gating needed).
-sd-notify = "=0.5.0"
-apalis = "=1.0.0-rc.9"
-apalis-sqlite = "=1.0.0-rc.8"
-futures = "0.3"
-ulid = "1.2.1"
+tree-sitter = "0.27"
+ureq = "3.4"
 
 [build-dependencies]
-# Compiles the vendored grammar C sources (vendor/grammars/) into the crate.
 cc = "1"
 
-# Keep debuginfo off for faster dev/test builds.
-[profile.dev]
-debug = 0
-
 [dev-dependencies]
-# Snapshot testing for the rel schema/size stats (Db::rel_stats JSON): a
-# regression in table bytes, index count, or PK shape is a snapshot diff.
-insta = { version = "1", features = ["json", "redactions"] }
-# Property-based randomized edit scripts for T4 retraction tests.
-proptest = { version = "1" }
-
-[profile.test]
-debug = 0
-
-# The profile that 'dist' will build with
-[profile.dist]
-inherits = "release"
-lto = "thin"
+rusqlite = { version = "0.40", features = ["load_extension"] }
