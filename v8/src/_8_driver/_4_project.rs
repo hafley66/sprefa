@@ -5,8 +5,13 @@ use super::_0_read::{canonical_dir, program_text};
 use super::_1_unit::file_unit;
 use crate::_0_read::expand::Stop;
 use crate::_2_lower::units::install_module_aliases;
+use crate::_2_lower::units::merge_expression_environments;
+use crate::_4_comptime::load::api::diagnostic;
 use crate::_4_comptime::load::read::read_tsi_stream;
-use crate::_4_comptime::load::{install_project_graph, install_tsi_graph, load_tsi_lines};
+use crate::_4_comptime::load::{
+    install_openapi_graph, install_project_graph, install_tsi_graph, load_tsi_lines,
+    openapi_expression_environment, openapi_rows, tsi_expression_environment,
+};
 use crate::_6_eval::term::{TermId, Universe};
 use std::collections::HashSet;
 use std::path::Path;
@@ -16,6 +21,7 @@ use std::path::Path;
 pub struct Project {
     pub project: TermId,
     pub tsi_rows: Vec<TermId>,
+    pub openapi_rows: Vec<TermId>,
     pub cwd: String,
 }
 
@@ -72,6 +78,49 @@ pub fn load_tsi_streams(
     Ok((rows, diagnostics))
 }
 
+/// A document that is not JSON is a diagnostic; one that cannot be read stops.
+pub fn load_openapi_documents(
+    u: &mut Universe,
+    paths: &[&Path],
+) -> Result<(Vec<TermId>, Vec<TermId>), String> {
+    let mut documents = Vec::with_capacity(paths.len());
+    let mut diagnostics = Vec::new();
+    for path in paths {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let origin = u.atom(&path.display().to_string());
+        match serde_json::from_str(&text) {
+            Ok(document) => documents.push((origin, document)),
+            Err(e) => {
+                let detail = u.string(&e.to_string());
+                let payload = u.compound("openapi_not_json", vec![detail]);
+                let subject = u.compound("document", vec![origin]);
+                diagnostics.push(diagnostic(u, "openapi", subject, payload));
+            }
+        }
+    }
+    if documents.is_empty() {
+        return Ok((Vec::new(), diagnostics));
+    }
+    let loaded = openapi_rows(u, &documents);
+    diagnostics.extend(loaded.diagnostics);
+    Ok((loaded.rows, diagnostics))
+}
+
+/// The TSI environment, merged with the OpenAPI one only when a document loaded,
+/// so a TSI-only project keeps v7's unsorted reservation order.
+pub fn project_expression_environment(
+    u: &mut Universe,
+    project: &Project,
+    importers: &[TermId],
+) -> TermId {
+    let tsi = tsi_expression_environment(u, &project.tsi_rows, importers);
+    if project.openapi_rows.is_empty() {
+        return tsi;
+    }
+    let openapi = openapi_expression_environment(u, &project.openapi_rows, importers);
+    merge_expression_environments(u, tsi, openapi)
+}
+
 /// Basements, origins, diagnostics: what every installer hands back.
 pub type Installed = (Vec<TermId>, Vec<TermId>, Vec<TermId>);
 
@@ -97,6 +146,14 @@ pub fn install_graphs(
         &installed.basements,
         &installed.origins,
     );
+    if !tsi.diagnostics.is_empty() {
+        return Ok((tsi.basements, tsi.origins, tsi.diagnostics));
+    }
+    let tsi = if project.openapi_rows.is_empty() {
+        tsi
+    } else {
+        install_openapi_graph(u, &project.openapi_rows, &tsi.basements, &tsi.origins)
+    };
     if !tsi.diagnostics.is_empty() {
         return Ok((tsi.basements, tsi.origins, tsi.diagnostics));
     }

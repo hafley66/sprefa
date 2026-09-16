@@ -8,9 +8,8 @@ use crate::_2_lower::cx::CallPolicy;
 use crate::_2_lower::units::{lower_compiler_units, merge_module_basements};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::{check_datalog, Checked, Stop};
-use crate::_4_comptime::load::tsi_expression_environment;
 use crate::_6_eval::term::{TermId, Universe};
-use crate::_8_driver::_4_project::{install_graphs, Project};
+use crate::_8_driver::_4_project::{install_graphs, project_expression_environment, Project};
 
 /// `compile_context(Units, ProjectContext, DerivedBindSlots)` at `:931`.
 pub struct Live {
@@ -87,7 +86,7 @@ pub fn final_expression_environment(
     let tsi = match project {
         Some(project) => {
             let owners = source_unit_module_owners(u, units);
-            let term = tsi_expression_environment(u, &project.tsi_rows, &owners);
+            let term = project_expression_environment(u, project, &owners);
             environment_lists(u, term)
         }
         None => (Vec::new(), Vec::new(), Vec::new()),

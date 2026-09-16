@@ -1,14 +1,13 @@
 //! `compile_units/3` (`2_compiler.pl:545`) through `compile_after_check/5`
 //! (`:710`), single-file and project arms.
 
-use super::_4_project::{install_graphs, Project};
+use super::_4_project::{install_graphs, project_expression_environment, Project};
 use super::Stop;
 use crate::_2_lower::api::Lowered;
 use crate::_2_lower::cx::CallPolicy;
 use crate::_2_lower::units::{lower_compiler_units, merge_module_basements, Units};
 use crate::_3_check::check_datalog;
 use crate::_4_comptime::api::derived_bind_slots;
-use crate::_4_comptime::load::tsi_expression_environment;
 use crate::_4_comptime::sources::{source_unit_module_owners, Live};
 use crate::_4_comptime::{evaluate_checked, Compiled, Round};
 use crate::_6_eval::term::{TermId, Universe};
@@ -34,7 +33,7 @@ pub fn compile_project_units(
     fx: &mut dyn FnMut(Round),
 ) -> Result<(Option<Compiled>, Vec<TermId>), Stop> {
     let owners = source_unit_module_owners(u, units);
-    let environment = tsi_expression_environment(u, &project.tsi_rows, &owners);
+    let environment = project_expression_environment(u, &project, &owners);
     let lowered = lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, Some(environment))?;
     if !lowered.diagnostics.is_empty() {
         return Ok((None, lowered.diagnostics));

@@ -68,6 +68,37 @@ in, and the relation rows the loader reads come from `--family type`. More than
 one path in one run needs `--resolve`. The `scip_indexes_the_typescript_corpus`
 case stands down with a printed reason when `scip-typescript` is not on PATH.
 
+## OpenAPI documents
+
+`dl8 compile <file.dl7> --project <root> --openapi <doc.json>` loads an OpenAPI
+3.x JSON document before lowering. `src/_4_comptime/_0_load/_9_openapi.rs`
+writes the document as TSI wire rows, so `install_tsi_graph` installs the
+schemas unchanged under the owner `module(tsi(openapi, [<doc path as given>]))`.
+The flag repeats; every document shares that one owner.
+
+| OpenAPI | graph |
+|---|---|
+| `components.schemas.X` object | `product` node, `tsi.name` `X`, one edge per property in map order |
+| property absent from `required` | the edge targets a sum of `value` and `null` |
+| `nullable: true`, `type: [T, "null"]` | the same sum; a property both unrequired and nullable wraps once |
+| `enum` of strings | `sum` node, one edge per value to a node named `X::value` |
+| `oneOf` / `anyOf` | `sum` node, one edge per branch, labelled by the `discriminator.mapping` tag, else the ref name |
+| `type: array` | `application(Array, [Items])`, one named `Array` head |
+| `string`, `boolean`, `number`, `null` | prelude classes `string`, `boolean`, `number`, `null` |
+| `integer` | `i64`, or `i32` under `format: int32`; `number` takes `f32`/`f64` under `float`/`double` |
+| named schema that is a `$ref`, primitive or array | no node; a `$ref` to it lands on its target |
+| `$ref` with no target | `openapi_unresolved_ref(Pointer)` |
+| one schema name in two documents | `openapi_duplicate_schema(Name)` |
+| `allOf`, `not`, a multi-type `type` | `openapi_unmapped_schema(Keyword, Pointer)` |
+| `paths./p.<method>` | `openapi.route(Path, Method, OperationId, RequestType, ResponseType)`; no body or no `2XX` content is `void` |
+| path and operation `parameters` | `openapi.param(OperationId, Name, In, Type, Required)`; an operation parameter replaces a path one with the same name and `in` |
+
+Key-absent stays unspellable: the unrequired property and the nullable one land
+on one sum. `openapi.route` and `openapi.param` are not TSI registry relations,
+so `install_openapi_graph` seeds them on the owner's basement after the TSI
+install. `fixtures/openapi/todo.dl7` joins `openapi.route` with `Conforms`;
+`tests/_21_openapi.rs` pins the rows.
+
 ## dl8 run
 
 `dl8 run <compile.json> --serve timer,fetch_json [--db <file>] [--max-ticks N]`

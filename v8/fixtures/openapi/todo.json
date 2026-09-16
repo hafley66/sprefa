@@ -1,0 +1,162 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Todo", "version": "0.1.0" },
+  "paths": {
+    "/todos": {
+      "get": {
+        "operationId": "Todo_query_list",
+        "parameters": [
+          { "name": "listId", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/ListId" } },
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/Status" } },
+          { "name": "priority", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/Priority" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The todos the filter selects.",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Todo" } } } }
+          }
+        }
+      },
+      "post": {
+        "operationId": "Todo_mut_create_single",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["listId", "title"],
+                "properties": {
+                  "listId": { "$ref": "#/components/schemas/ListId" },
+                  "title": { "type": "string" },
+                  "body": { "type": "string" },
+                  "priority": { "$ref": "#/components/schemas/Priority" },
+                  "tags": { "type": "array", "items": { "$ref": "#/components/schemas/Tag" } },
+                  "dueAt": { "type": "string", "format": "date-time" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The created todo.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Todo" } } }
+          }
+        }
+      }
+    },
+    "/todos/{id}": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/TodoId" } }
+      ],
+      "get": {
+        "operationId": "Todo_query_get",
+        "responses": {
+          "200": {
+            "description": "One todo.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Todo" } } }
+          }
+        }
+      }
+    },
+    "/todos/{id}/lookup": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/TodoId" } }
+      ],
+      "get": {
+        "operationId": "Todo_query_lookup",
+        "responses": {
+          "200": {
+            "description": "The todo, or why there is none.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TodoLookup" } } }
+          }
+        }
+      }
+    },
+    "/todos/count": {
+      "get": {
+        "operationId": "Todo_query_count",
+        "parameters": [
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/Status" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "How many todos the filter selects.",
+            "content": { "application/json": { "schema": { "type": "integer", "format": "int32" } } }
+          }
+        }
+      }
+    },
+    "/todos/overdue": {
+      "get": {
+        "operationId": "Todo_query_overdue",
+        "parameters": [
+          { "name": "listId", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/ListId" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Todos past their due date.",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Todo" } } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TodoId": { "type": "string" },
+      "ListId": { "type": "string" },
+      "UserId": { "type": "string" },
+      "Tag": { "type": "string" },
+      "Priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] },
+      "Status": { "type": "string", "enum": ["pending", "active", "done", "archived"] },
+      "Todo": {
+        "type": "object",
+        "required": ["id", "listId", "ownerId", "title", "status", "priority", "tags", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/TodoId" },
+          "listId": { "$ref": "#/components/schemas/ListId" },
+          "ownerId": { "$ref": "#/components/schemas/UserId" },
+          "title": { "type": "string" },
+          "body": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/Status" },
+          "priority": { "$ref": "#/components/schemas/Priority" },
+          "tags": { "type": "array", "items": { "$ref": "#/components/schemas/Tag" } },
+          "dueAt": { "type": "string", "format": "date-time" },
+          "completedAt": { "type": ["string", "null"], "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Filter": {
+        "type": "object",
+        "properties": {
+          "listId": { "$ref": "#/components/schemas/ListId" },
+          "status": { "$ref": "#/components/schemas/Status" },
+          "priority": { "$ref": "#/components/schemas/Priority" },
+          "tags": { "type": "array", "items": { "$ref": "#/components/schemas/Tag" } },
+          "dueBefore": { "type": "string", "format": "date-time" }
+        }
+      },
+      "NotFound": {
+        "type": "object",
+        "required": ["kind", "id"],
+        "properties": {
+          "kind": { "type": "string" },
+          "id": { "$ref": "#/components/schemas/TodoId" }
+        }
+      },
+      "TodoLookup": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/Todo" },
+          { "$ref": "#/components/schemas/NotFound" }
+        ],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": { "found": "#/components/schemas/Todo", "missing": "#/components/schemas/NotFound" }
+        }
+      }
+    }
+  }
+}
