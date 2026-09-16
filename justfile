@@ -21,3 +21,7 @@ v5 *args:
 
 v6 *args:
     just --justfile v6/justfile --working-directory v6 {{args}}
+
+# reclaim disk: merged clean worktrees, then target dirs in the rest. dry run without --apply
+reap *ARGS:
+    bash scripts/fleet-reap.sh {{ARGS}}
