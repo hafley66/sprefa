@@ -1344,11 +1344,9 @@ derived_bind_diagnostics(Rules, Rows, Diagnostics) :-
 compiler_round_seeds(BaseSeeds, FrozenEdges, FrozenRequests, Seeds) :-
     maplist(snapshot_edge, FrozenEdges, SnapshotRows),
     maplist(snapshot_intern, FrozenRequests, RequestSnapshotRows),
-    frozen_predecessor_rows(FrozenEdges, PredecessorRows),
     append([ BaseSeeds,
              SnapshotRows,
-             RequestSnapshotRows,
-             PredecessorRows
+             RequestSnapshotRows
            ], Seeds0),
     sort(Seeds0, Seeds).
 
@@ -1357,18 +1355,6 @@ snapshot_edge(call(ref(kernel(':')), Arguments),
 
 snapshot_intern(call(ref(kernel(intern)), Arguments),
                 call(ref(kernel(intern_snapshot)), Arguments)).
-
-frozen_predecessor_rows(FrozenEdges, Rows) :-
-    findall(call(ref(kernel(predecessor)),
-                 [Owner, const(EarlierIndex), const(LaterIndex)]),
-            ( member(call(ref(kernel(':')),
-                          [Owner, _, _, const(LaterIndex)]),
-                     FrozenEdges),
-              LaterIndex > 0,
-              EarlierIndex is LaterIndex - 1
-            ),
-            Rows0),
-    sort(Rows0, Rows).
 
 strip_snapshot_rows(Rows0, Rows) :-
     exclude(snapshot_row, Rows0, Rows).
