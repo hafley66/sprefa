@@ -16,7 +16,8 @@ fixture_names([
     '3_self_cycle.dl7',
     '4_two_cycle.dl7',
     '5_generated_callable.dl7',
-    '6_deferred_alias_measure.dl7'
+    '6_deferred_alias_measure.dl7',
+    '7_nearest_shadow.dl7'
 ]).
 
 compile_fixtures :-
@@ -126,6 +127,16 @@ test(deferred_expression_aliases_reuse_final_identity) :-
                edge(4,
                     ref(application(Key, ["compound", KeyOptions])),
                     Expected)
+             ].
+
+test(nearest_non_deferred_shadow_blocks_deferred_alias_promotion) :-
+    compiled_fixture('7_nearest_shadow.dl7', Rows, []),
+    named_owner(Rows, 'Holder', Holder),
+    named_owner(Rows, 'Shadow', Shadow),
+    owner_edges(Rows, Holder, Edges),
+    Edges == [ edge(0, const('Name'), ref(Shadow)),
+               edge(1, const(direct), ref(Shadow)),
+               edge(2, const(deep), ref(Shadow))
              ].
 
 test(promoted_alias_uses_nearest_owner_index_and_alias_origins) :-
