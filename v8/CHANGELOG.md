@@ -66,6 +66,7 @@
 - *(v8)* Regenerate the oracle expected from dl8
 - *(v8)* Term_lt joins KERNEL_RELATIONS after the merge, oracles refrozen
 - *(v8)* Git-cliff changelog, regenerated on every push to main
+- *(v8)* Regenerate CHANGELOG.md
 
 ### 💼 Other
 
