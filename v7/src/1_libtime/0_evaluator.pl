@@ -5,9 +5,11 @@
             validate_functional_rows/3
           ]).
 
+:- use_module(library(assoc), [get_assoc/3, list_to_assoc/2]).
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(gensym), [gensym/2]).
 :- use_module(library(lists), [max_list/2]).
+:- use_module(library(pairs), [group_pairs_by_key/2]).
 :- use_module(library(ugraphs),
               [ neighbors/3,
                 transitive_closure/2,
@@ -16,7 +18,7 @@
 
 :- dynamic evaluation_rule/3.
 :- dynamic evaluation_seed/3.
-:- dynamic evaluation_lower/3.
+:- dynamic evaluation_lower_index/7.
 :- dynamic evaluation_request/2.
 
 :- table proves/2.
@@ -198,21 +200,37 @@ validate_functional_rows(Relations, Rows, Diagnostics) :-
     relation_key_diagnostics(Relations, SortedRows, Diagnostics0),
     sort(Diagnostics0, Diagnostics).
 
-relation_key_diagnostics([], _, []).
-relation_key_diagnostics([relation(Relation, _, KeySets) | Relations], Rows,
-                         Diagnostics) :-
-    relation_rows(Relation, Rows, RelationRows),
+relation_key_diagnostics(Relations, Rows, Diagnostics) :-
+    rows_by_relation(Rows, RelationIndex),
+    relation_key_diagnostics_indexed(Relations, RelationIndex, Diagnostics).
+
+relation_key_diagnostics_indexed([], _, []).
+relation_key_diagnostics_indexed(
+    [relation(Relation, _, KeySets) | Relations],
+    RelationIndex, Diagnostics) :-
+    relation_index_rows(Relation, RelationIndex, RelationRows),
     key_sets_diagnostics(KeySets, Relation, RelationRows, OwnDiagnostics),
-    relation_key_diagnostics(Relations, Rows, RestDiagnostics),
+    relation_key_diagnostics_indexed(Relations, RelationIndex,
+                                     RestDiagnostics),
     append(OwnDiagnostics, RestDiagnostics, Diagnostics).
 
-relation_rows(_, [], []).
-relation_rows(Relation, [call(Relation, Arguments) | Rows],
-              [call(Relation, Arguments) | RelationRows]) :-
-    !,
-    relation_rows(Relation, Rows, RelationRows).
-relation_rows(Relation, [_ | Rows], RelationRows) :-
-    relation_rows(Relation, Rows, RelationRows).
+%% rows_by_relation(+Rows, -RelationIndex) is det.
+%
+% Group one completed row set by relation name once, so each relation's key
+% validation reads only its own rows instead of rescanning the whole closure.
+rows_by_relation(Rows, RelationIndex) :-
+    findall(Relation-Row,
+            ( member(Row, Rows), Row = call(Relation, _) ),
+            Pairs),
+    keysort(Pairs, SortedPairs),
+    group_pairs_by_key(SortedPairs, Groups),
+    list_to_assoc(Groups, RelationIndex).
+
+relation_index_rows(Relation, RelationIndex, RelationRows) :-
+    (   get_assoc(Relation, RelationIndex, RelationRows)
+    ->  true
+    ;   RelationRows = []
+    ).
 
 key_sets_diagnostics([], _, _, []).
 key_sets_diagnostics([Positions | KeySets], Relation, Rows, Diagnostics) :-
@@ -227,9 +245,21 @@ functional_key_conflict(Relation, Positions, Rows,
                                    functional_key_conflict(
                                        Relation, Positions, Values,
                                        Left, Right))) :-
-    ordered_row_pair(Rows, Left, Right),
-    key_values(Left, Positions, Values),
-    key_values(Right, Positions, Values).
+    key_groups(Rows, Positions, Groups),
+    member(Values-Group, Groups),
+    ordered_row_pair(Group, Left, Right).
+
+%% key_groups(+Rows, +Positions, -Groups) is det.
+%
+% Key each row by its functional key once, then stable-sort and group by that
+% key. Only rows inside one equal-key group can conflict, so pairwise
+% comparison stays within a group while row order keeps Left/Right orientation.
+key_groups(Rows, Positions, Groups) :-
+    findall(Key-Row,
+            ( member(Row, Rows), key_values(Row, Positions, Key) ),
+            Pairs),
+    keysort(Pairs, SortedPairs),
+    group_pairs_by_key(SortedPairs, Groups).
 
 ordered_row_pair([Left | Rows], Left, Right) :- member(Right, Rows).
 ordered_row_pair([_ | Rows], Left, Right) :- ordered_row_pair(Rows, Left, Right).
@@ -412,9 +442,44 @@ install_seeds([Seed | Seeds], EvaluationId, [Reference | References]) :-
 
 install_lower_rows([], _, []).
 install_lower_rows([Row | Rows], EvaluationId, [Reference | References]) :-
-    Row = call(Relation, _),
-    assertz(evaluation_lower(EvaluationId, Relation, Row), Reference),
+    Row = call(Relation, Arguments),
+    index_argument_hashes(Arguments, Hash1, Hash2, Hash3, Hash4),
+    assertz(evaluation_lower_index(
+                EvaluationId, Relation, Hash1, Hash2, Hash3, Hash4, Row),
+            Reference),
     install_lower_rows(Rows, EvaluationId, References).
+
+%% evaluation_lower(+EvaluationId, +Relation, ?Row) is nondet.
+%
+% Normal lookup wrapper over the one evaluation_lower_index/7 store. A ground
+% argument contributes its term hash to the lookup; an unknown or absent
+% argument leaves that hash position unbound. The hashes only narrow the
+% candidates: the stored full row is unified exactly afterwards, so a hash
+% collision cannot change an answer. With Row or Relation unbound the index
+% enumerates every stored row for that relation, so the wrapper stays
+% nondeterministic in the modes existing callers use.
+evaluation_lower(EvaluationId, Relation, Row) :-
+    (   Row = call(_, Arguments)
+    ->  index_argument_hashes(Arguments, Hash1, Hash2, Hash3, Hash4)
+    ;   Hash1 = Hash2, Hash2 = Hash3, Hash3 = Hash4
+    ),
+    evaluation_lower_index(EvaluationId, Relation,
+                           Hash1, Hash2, Hash3, Hash4, Stored),
+    Stored = Row.
+
+index_argument_hashes(Arguments, Hash1, Hash2, Hash3, Hash4) :-
+    index_argument_hash(0, Arguments, Hash1),
+    index_argument_hash(1, Arguments, Hash2),
+    index_argument_hash(2, Arguments, Hash3),
+    index_argument_hash(3, Arguments, Hash4).
+
+index_argument_hash(Position, Arguments, Hash) :-
+    (   nonvar(Arguments),
+        nth0(Position, Arguments, Argument),
+        ground(Argument)
+    ->  term_hash(Argument, Hash)
+    ;   true
+    ).
 
 collect_closure(EvaluationId, Closure) :-
     findall(Call, proves(EvaluationId, Call), Calls),

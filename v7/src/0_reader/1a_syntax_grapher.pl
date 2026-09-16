@@ -2,6 +2,8 @@
 
 :- use_module(library(error), [must_be/2]).
 
+:- thread_local source_row_index/2.
+
 %% reify_syntax(+ReaderForms, +SourceRows,
 %%              -SyntaxGraphRows, -Diagnostics) is det.
 %
@@ -12,8 +14,29 @@
 reify_syntax(ReaderForms, SourceRows, SyntaxGraphRows, Diagnostics) :-
     must_be(list, ReaderForms),
     must_be(list, SourceRows),
+    setup_call_cleanup(
+        install_source_row_index(SourceRows),
+        reify_syntax_indexed(ReaderForms, SourceRows,
+                             SyntaxGraphRows, Diagnostics),
+        clear_source_row_index).
+
+reify_syntax_indexed(ReaderForms, SourceRows, SyntaxGraphRows, Diagnostics) :-
     once(reify_frontier(ReaderForms, SourceRows, 0, Result)),
     syntax_graph_result(Result, SyntaxGraphRows, Diagnostics).
+
+% One keyed copy of the immutable source rows per reify call. Without it every
+% node rescans every row: N nodes x M rows. The index is thread-local, torn
+% down at the reify boundary, and cleared again before each install so a
+% partially built index from a failed setup cannot survive into this call.
+install_source_row_index(SourceRows) :-
+    clear_source_row_index,
+    forall((member(Source, SourceRows), source_node(Source, NodeId)),
+           assertz(source_row_index(NodeId, Source))).
+
+clear_source_row_index :-
+    retractall(source_row_index(_, _)).
+
+source_node(source(NodeId, _, _, _, _, _, _, _), NodeId).
 
 syntax_graph_result(ok(Rows0), Rows, []) :-
     sort(Rows0, Rows).
@@ -111,16 +134,9 @@ continue_children(ok(ChildRows), node(ChildId, _), Children, Owner,
     ;   Result = RestResult
     ).
 
-source_row_result(SourceRows, NodeId, Result) :-
-    findall(
-        Source,
-        member(Source,
-               SourceRows),
-        Rows0),
-    include(source_for(NodeId), Rows0, Rows),
+source_row_result(_SourceRows, NodeId, Result) :-
+    findall(Source, source_row_index(NodeId, Source), Rows),
     source_row_count_result(NodeId, Rows, Result).
-
-source_for(NodeId, source(NodeId, _, _, _, _, _, _, _)).
 
 source_row_count_result(_, [Source], ok(Source)) :- !.
 source_row_count_result(NodeId, [],
