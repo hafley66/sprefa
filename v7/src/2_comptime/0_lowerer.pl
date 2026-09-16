@@ -532,6 +532,22 @@ compound_edge_target(deferred_expression(TargetNode), Owner, Environment,
                      TargetValue, TargetGoals, GoalNodes, Diagnostics),
     compound_edge_target_outcome(
         Diagnostics, TargetValue, TargetGoals, GoalNodes, Outcome).
+compound_edge_target(
+    name(ReferenceOwner, Name), _, Environment,
+    Outcome, []) :-
+    Environment = expression_environment(Reservations, _, _),
+    scoped_reservation(
+        ReferenceOwner, Name, Reservations, [], Reservation),
+    Reservation = reservation(
+                      _, _,
+                      deferred_expression(node(NodeId, _), _, _),
+                      expression),
+    !,
+    lexical_atom_value(
+        Reservation, NodeId, ReferenceOwner,
+        TargetValue, TargetGoals, GoalNodes),
+    compound_edge_target_outcome(
+        [], TargetValue, TargetGoals, GoalNodes, Outcome).
 compound_edge_target(TargetTerm, _, _, structural(RuleTarget), []) :-
     edge_rule_target(TargetTerm, RuleTarget).
 
@@ -895,10 +911,7 @@ lower_edge_bind(BindNode, Owner, ModuleIdentity, Index, Result) :-
 % expression_bind_target/1 is the same test the atom-label path applies at
 % lower_bind/5, so both label forms accept the same target forms.
 compound_bind_target_result(TargetNode, Owner, ModuleIdentity, Result) :-
-    (   TargetNode = node(_, atom(_))
-    ->  Result = ok(deferred_expression(TargetNode), reference,
-                    [], [], [], [], [])
-    ;   expression_bind_target(TargetNode)
+    (   expression_bind_target(TargetNode)
     ->  Result = ok(deferred_expression(TargetNode), reference,
                     [], [], [], [], [])
     ;   lower_target(TargetNode, Owner, ModuleIdentity, Result)
