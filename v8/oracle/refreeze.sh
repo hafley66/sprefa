@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Refreeze every v8 oracle expected from dl8 itself: bash v8/oracle/refreeze.sh
 set -eu
-# The per-phase freeze.sh scripts stay; they are how a v7 reading is taken.
+# The per-phase v7 freeze scripts are gone with v7; the JSON files are v8 goldens.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cargo build --manifest-path "$here/../Cargo.toml" --bin dl8
 binary="$(cargo metadata --manifest-path "$here/../Cargo.toml" --format-version 1 --no-deps \

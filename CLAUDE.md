@@ -4,7 +4,7 @@ Reactive datalog-over-code engine ("dl"). v5 rust engine at the repo root. v6 =
 prolog compiles `.dl6` to TypeScript+SQLite and to Rust+SQLite: `v6/prolog`
 (compiler + oracle), `v6/tsv2` (runtime/serve/cli), `v6/sprefa-engine-rs` (the
 Rust runtime), `v6/sprefa-store`; `sprefa-extract` lives in `hafley-rs/crates/sprefa-extract` (moved 2026-09-14). Overview: `README.md`.
-Archives: `~/projects/sprefa-archive-20260701` (v3/v4), `-20260428` (OG).
+Archives: `~/projects/sprefa-archive-20260916-v7` (v7 prolog compiler, superseded by `v8/`), `~/projects/sprefa-archive-20260701` (v3/v4), `-20260428` (OG).
 
 ## THE RULE FOR THIS FILE
 

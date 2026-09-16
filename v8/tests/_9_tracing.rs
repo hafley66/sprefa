@@ -7,9 +7,7 @@ use std::process::Command;
 
 fn fixture(name: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("v7/test/fixtures")
+        .join("tests/fixtures")
         .join(name)
         .display()
         .to_string()

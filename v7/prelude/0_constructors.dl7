@@ -1,9 +1,0 @@
-; Userland unary type constructors.
-(: Partial
-   (* (: source type)
-      (: return type)))
-
-(: Option
-   (* (: source type)
-      (: return type)))
-

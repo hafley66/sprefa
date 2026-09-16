@@ -1,6 +1,6 @@
 """Rewrite every oracle case's `expected` from dl8's own stdout.
 
-The per-phase `freeze.sh` scripts run v7 under swipl; this one runs the dl8
+The frozen JSON files are v8 goldens; this script runs the dl8
 binary instead, so the committed bytes are dl8's goldens. Only the fields a
 case already carries are replaced, which keeps each test comparing what it
 compared before.
@@ -40,7 +40,7 @@ def read_json(path):
 
 
 def write_json(path, case):
-    """One compact line with no trailing newline, the shape v7's dumps wrote."""
+    """One compact line with no trailing newline, the shape the frozen dumps use."""
     with open(path, "w") as handle:
         json.dump(case, handle, sort_keys=True, separators=(",", ":"))
 
