@@ -1,0 +1,18 @@
+; Two seeds share the key "cli"; the later one is the row, and Tagged never
+; derives from the earlier one.
+(: KeyOptions (*))
+
+(: Watch
+   (* (: (Key "repo" KeyOptions) text)
+      (: tag text)))
+
+(Watch "cli" "v1")
+
+(Watch "gh" "v1")
+
+(Watch "cli" "v2")
+
+(: Tagged (* (: repo text) (: tag text)))
+
+(<- (Tagged ?Repo ?Tag)
+    (Watch ?Repo ?Tag))

@@ -1,0 +1,21 @@
+; Aggregates over a keyed timer recompute from the one current row.
+(: KeyOptions (*))
+
+(: timer
+   (* (: (Key "period_ms" KeyOptions) int)
+      (: tick int)))
+
+(: Fired (* (: tick int)))
+
+(<- (Fired ?Tick)
+    (timer 1 ?Tick))
+
+(: FiredCount (* (: fires int)))
+
+(<- (FiredCount (count ?Tick))
+    (Fired ?Tick))
+
+(: TickSum (* (: total int)))
+
+(<- (TickSum (sum ?Tick))
+    (Fired ?Tick))

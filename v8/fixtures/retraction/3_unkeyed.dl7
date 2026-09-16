@@ -1,0 +1,15 @@
+; No Key column: timer rows accumulate, Fired is never cleared, and only the
+; aggregate stratum over it derives again.
+(: timer
+   (* (: period_ms int)
+      (: tick int)))
+
+(: Fired (* (: tick int)))
+
+(<- (Fired ?Tick)
+    (timer 1 ?Tick))
+
+(: FiredCount (* (: fires int)))
+
+(<- (FiredCount (count ?Tick))
+    (Fired ?Tick))

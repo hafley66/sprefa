@@ -1,0 +1,19 @@
+; The measured family: a keyed watch feeds a join stratum and a count stratum.
+(: KeyOptions (*))
+
+(: watch
+   (* (: (Key "repo" KeyOptions) int)
+      (: tag int)))
+
+(: release (* (: tag int) (: channel int)))
+
+(: tracked (* (: repo int) (: channel int)))
+
+(<- (tracked ?Repo ?Channel)
+    (watch ?Repo ?Tag)
+    (release ?Tag ?Channel))
+
+(: channel_repos (* (: channel int) (: repos int)))
+
+(<- (channel_repos ?Channel (count ?Repo))
+    (tracked ?Repo ?Channel))

@@ -1,0 +1,35 @@
+; A timer keyed on its period keeps one row, so each fire retracts what the
+; previous fire proved. Latch is keyed and survives EvenFire emptying.
+(: KeyOptions (*))
+
+(: timer
+   (* (: (Key "period_ms" KeyOptions) int)
+      (: tick int)))
+
+(: Parity (* (: tick int) (: parity text)))
+
+(Parity 1 "odd")
+
+(Parity 2 "even")
+
+(Parity 3 "odd")
+
+(Parity 4 "even")
+
+(: Fired (* (: tick int)))
+
+(<- (Fired ?Tick)
+    (timer 1 ?Tick))
+
+(: EvenFire (* (: tick int)))
+
+(<- (EvenFire ?Tick)
+    (Fired ?Tick)
+    (Parity ?Tick "even"))
+
+(: Latch
+   (* (: (Key "slot" KeyOptions) int)
+      (: tick int)))
+
+(<- (Latch 0 ?Tick)
+    (EvenFire ?Tick))

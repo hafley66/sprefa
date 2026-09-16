@@ -6,7 +6,7 @@ use dl8::_6_eval::evaluate::{Evaluate, Store};
 use dl8::_6_eval::json::term_to_json;
 use dl8::_6_eval::json::{
     closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json,
-    serve_relations,
+    relations_to_json, serve_relations,
 };
 use dl8::_6_eval::{Trace, Universe};
 use dl8::_7_effect::Slice;
@@ -474,7 +474,11 @@ fn compile_cli(
     let program = match empty {
         true => serde_json::Value::Null,
         false => match program_to_json(&mut u, compiled.runtime_program) {
-            Ok(program) => program,
+            Ok(mut program) => {
+                program["relations"] =
+                    relations_to_json(&u, compiled.runtime_program, &compiled.compiler_rows);
+                program
+            }
             Err(payload) => {
                 diagnostics.push(payload);
                 serde_json::Value::Null

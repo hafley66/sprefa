@@ -2,11 +2,13 @@
 //! `{"a": name}`, string as `{"s": text}`, proper list as array, compound as
 //! `{"f": name, "args": [...]}`. Rule arguments add `{"v": identity}` and an
 //! aggregate key, one of `{"count": arg}`, `{"sum": arg}`, `{"min": arg}`,
-//! `{"max": arg}`. A program carries an optional `names` table beside its
-//! rules and seeds, which `--serve` resolves against. The oracle dump
+//! `{"max": arg}`. A program carries optional `names` and `relations` tables
+//! beside its rules and seeds; `--serve` resolves against `names`. The oracle dump
 //! `v8/oracle/eval/dump_eval.pl` writes the same shape from v7.
 
-use super::program::{AggregateKind, Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId};
+use super::program::{
+    AggregateKind, Arg, Diagnostic, Goal, Polarity, Program, Relation, Row, Rule, VarId,
+};
 use super::term::{Term, TermId, Universe};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -141,7 +143,9 @@ fn arg_to_json(u: &Universe, id: TermId) -> Value {
 }
 
 fn call_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
-    let [rel, args] = u.args::<2>(id, "call").ok_or(Transport::Shape("bad_call"))?;
+    let [rel, args] = u
+        .args::<2>(id, "call")
+        .ok_or(Transport::Shape("bad_call"))?;
     let args = u.as_list(args).ok_or(Transport::Shape("bad_call"))?;
     Ok(json!({
         "rel": term_to_json(u, rel),
@@ -162,7 +166,9 @@ fn goal_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
 }
 
 fn rule_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
-    let [head, body] = u.args::<2>(id, "rule").ok_or(Transport::Shape("bad_rule"))?;
+    let [head, body] = u
+        .args::<2>(id, "rule")
+        .ok_or(Transport::Shape("bad_rule"))?;
     let body = u.as_list(body).ok_or(Transport::Shape("bad_rule"))?;
     Ok(json!({
         "head": call_to_json(u, head)?,
@@ -267,6 +273,74 @@ pub fn program_to_json(u: &mut Universe, checked_datalog: TermId) -> Result<Valu
     }
 }
 
+/// `[{"rel", "arity", "keys"}]`, one entry per relation with a `(Key Name
+/// Options)` column, read from the prelude's `keyed_edge` rows in the closure.
+pub fn relations_to_json(u: &Universe, checked_datalog: TermId, compiler_rows: &[TermId]) -> Value {
+    let Some([graph, datalog, _, _]) = u.args::<4>(checked_datalog, "checked_datalog") else {
+        return json!([]);
+    };
+    let keyed_edge = u
+        .args::<2>(graph, "root_graph")
+        .and_then(|[_, edges]| u.as_list(edges))
+        .unwrap_or_default()
+        .into_iter()
+        .find_map(|edge| {
+            let [owner, name, relation, _] = u.args::<4>(edge, ":")?;
+            let module = u.unary(owner, "module")?;
+            let prelude = matches!(u.get(module), Term::Atom(m) if u.sym_str(*m) == "prelude");
+            let named = matches!(u.get(name), Term::Atom(s) if u.sym_str(*s) == "keyed_edge");
+            (prelude && named).then_some(relation)
+        });
+    let Some(keyed_edge) = keyed_edge else {
+        return json!([]);
+    };
+    let arities: HashMap<TermId, i64> = u
+        .args::<3>(datalog, "datalog_program")
+        .and_then(|[relations, _, _]| u.as_list(relations))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|row| {
+            let [relation, arity, _] = u.args::<3>(row, "relation")?;
+            Some((relation, u.as_int(arity)?))
+        })
+        .collect();
+    let mut keys: HashMap<TermId, Vec<i64>> = HashMap::new();
+    for row in compiler_rows {
+        let Some([relation, args]) = u.args::<2>(*row, "call") else {
+            continue;
+        };
+        if relation != keyed_edge {
+            continue;
+        }
+        let Some([source, _, _, _, index]) = u
+            .as_list(args)
+            .and_then(|a| <[TermId; 5]>::try_from(a).ok())
+        else {
+            continue;
+        };
+        let Some(position) = u.unary(index, "const").and_then(|i| u.as_int(i)) else {
+            continue;
+        };
+        keys.entry(source).or_default().push(position);
+    }
+    let mut relations: Vec<(TermId, Vec<i64>)> = keys.into_iter().collect();
+    relations.sort_by(|a, b| u.cmp(a.0, b.0));
+    Value::Array(
+        relations
+            .into_iter()
+            .filter_map(|(relation, mut positions)| {
+                positions.sort_unstable();
+                positions.dedup();
+                Some(json!({
+                    "rel": term_to_json(u, relation),
+                    "arity": arities.get(&relation)?,
+                    "keys": positions,
+                }))
+            })
+            .collect(),
+    )
+}
+
 pub fn program_from_json(u: &mut Universe, v: &Value) -> Result<Program, String> {
     let m = v.as_object().ok_or("program is not an object")?;
     let mut program = Program::default();
@@ -326,6 +400,30 @@ pub fn program_from_json(u: &mut Universe, v: &Value) -> Result<Program, String>
             ids.push(term_from_json(u, a)?);
         }
         program.seeds.push(Row { rel, args: ids });
+    }
+    for entry in m
+        .get("relations")
+        .and_then(|r| r.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let rel = term_from_json(u, entry.get("rel").ok_or("relation without rel")?)?;
+        let arity = entry
+            .get("arity")
+            .and_then(|a| a.as_u64())
+            .ok_or("relation without arity")? as usize;
+        let keys = entry
+            .get("keys")
+            .and_then(|k| k.as_array())
+            .ok_or("relation without keys")?
+            .iter()
+            .map(|k| k.as_u64().map(|k| k as usize))
+            .collect::<Option<Vec<usize>>>()
+            .ok_or("relation key is not a position")?;
+        if keys.iter().any(|k| *k >= arity) {
+            return Err(format!("relation key {keys:?} past arity {arity}"));
+        }
+        program.relations.push(Relation { rel, arity, keys });
     }
     Ok(program)
 }

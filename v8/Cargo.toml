@@ -24,3 +24,8 @@ cc = "1"
 
 [dev-dependencies]
 rusqlite = { version = "0.40", features = ["load_extension"] }
+
+[[bench]]
+name = "retraction"
+path = "bench/retraction/main.rs"
+harness = false

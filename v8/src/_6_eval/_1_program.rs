@@ -163,10 +163,20 @@ pub struct Diagnostic {
     pub payload: TermId,
 }
 
+/// A relation's replacement identity: a row equal to a stored row on every
+/// `keys` column replaces it. `keys` empty is set semantics.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Relation {
+    pub rel: TermId,
+    pub arity: usize,
+    pub keys: Vec<usize>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     pub rules: Vec<Rule>,
     pub seeds: Vec<Row>,
     /// Relation refs the outside settles; a miss on one writes an `effect` row.
     pub served: HashSet<TermId>,
+    pub relations: Vec<Relation>,
 }

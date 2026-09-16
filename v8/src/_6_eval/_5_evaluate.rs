@@ -1,12 +1,13 @@
 //! `evaluate(program) -> closure + diagnostics`, the port of `evaluate/4`.
 //! Strata in order; inside a stratum, aggregate rules first over the completed
 //! lower rows, then semi-naive rounds of the plain rules until a round adds
-//! nothing. Every state change is reported to the trace sink.
+//! nothing. A stratum whose input lost rows is cleared and derived again first.
+//! Every state change is reported to the trace sink.
 
 use super::kernel::{self, Kernel};
 use super::program::{
-    AggregateKind, Arg, Diagnostic, Fold, Folding, Goal, Order, Polarity, Program, Row, Rule, Seed,
-    VarId,
+    AggregateKind, Arg, Diagnostic, Fold, Folding, Goal, Order, Polarity, Program, Relation, Row,
+    Rule, Seed, VarId,
 };
 use super::stratify::{stratify, Strata};
 use super::table::{Range, Table};
@@ -28,6 +29,12 @@ pub enum Trace {
         rules: usize,
         rows: usize,
     },
+    /// A stratum cleared before it derives again: `relations` tables, `rows` rows.
+    Retract {
+        level: u32,
+        relations: usize,
+        rows: usize,
+    },
     Round {
         level: u32,
         round: u32,
@@ -47,11 +54,35 @@ pub struct Closure {
 #[derive(Default)]
 pub struct Store {
     pub tables: HashMap<TermId, Table>,
+    /// Fixed by the first evaluation that declares the relation keyed.
+    pub keys: HashMap<TermId, Relation>,
+    /// Keyed seeds apply once per store, so a later outside row outranks them.
+    seeded: HashSet<(TermId, Box<[TermId]>)>,
+    /// Rows appended and rows removed over the store's life.
+    pub written: usize,
+    pub removed: usize,
 }
 
 impl Store {
+    /// A keyed relation's row replaces the stored row with its key.
     pub fn insert(&mut self, rel: TermId, args: Box<[TermId]>) -> bool {
-        self.tables.entry(rel).or_default().insert(args)
+        let table = self.tables.entry(rel).or_default();
+        let keyed = self
+            .keys
+            .get(&rel)
+            .filter(|relation| relation.arity == args.len());
+        let new = match keyed {
+            Some(relation) => {
+                if table.contains(&args) {
+                    return false;
+                }
+                self.removed += table.replace(&relation.keys, args).len();
+                true
+            }
+            None => table.insert(args),
+        };
+        self.written += new as usize;
+        new
     }
 
     pub fn table(&self, rel: TermId) -> Option<&Table> {
@@ -646,6 +677,75 @@ fn fold_group(
     }
 }
 
+/// Keys a store has not seen take effect now; rows already stored collapse to
+/// the newest row per key.
+fn register_keys(store: &mut Store, program: &Program) {
+    for relation in &program.relations {
+        if relation.keys.is_empty() || store.keys.contains_key(&relation.rel) {
+            continue;
+        }
+        store.keys.insert(relation.rel, relation.clone());
+        let Some(table) = store.tables.get_mut(&relation.rel) else {
+            continue;
+        };
+        let mut seen: HashSet<Vec<TermId>> = HashSet::new();
+        let displaced: Vec<Box<[TermId]>> = table
+            .rows
+            .iter()
+            .rev()
+            .filter(|row| row.len() == relation.arity)
+            .filter(|row| !seen.insert(relation.keys.iter().map(|&k| row[k]).collect()))
+            .cloned()
+            .collect();
+        for row in &displaced {
+            table.remove(row);
+        }
+        store.removed += displaced.len();
+    }
+}
+
+/// A read of a relation that lost a row, or a negated or aggregated read of one
+/// that gained a row, can leave a stored derived row without a proof.
+fn input_lost(store: &Store, rules: &[&Rule]) -> bool {
+    rules.iter().any(|rule| {
+        let aggregate = rule.is_aggregate();
+        rule.body.iter().any(|goal| {
+            store.table(goal.rel).is_some_and(|table| {
+                table.lost || (table.grown && (aggregate || goal.polarity == Polarity::Negative))
+            })
+        })
+    })
+}
+
+/// Delete-and-rederive: every unkeyed relation the stratum derives is emptied,
+/// and its old table is returned for `settle_level`. A keyed relation keeps
+/// its rows; a new derivation replaces them by key.
+fn retract_level(store: &mut Store, rules: &[&Rule]) -> Vec<(TermId, Table)> {
+    let mut retracted: Vec<(TermId, Table)> = Vec::new();
+    for rule in rules {
+        if store.keys.contains_key(&rule.rel) || retracted.iter().any(|(rel, _)| *rel == rule.rel) {
+            continue;
+        }
+        let Some(table) = store.tables.get_mut(&rule.rel) else {
+            continue;
+        };
+        let old = std::mem::take(table);
+        store.removed += old.len();
+        retracted.push((rule.rel, old));
+    }
+    retracted
+}
+
+/// The flags a higher stratum reads describe the net change against the rows
+/// the relation held before it was cleared.
+fn settle_level(store: &mut Store, retracted: Vec<(TermId, Table)>) {
+    for (rel, old) in retracted {
+        let table = store.tables.entry(rel).or_default();
+        table.grown = table.rows.iter().any(|row| !old.contains(row));
+        table.lost = old.rows.iter().any(|row| !table.contains(row));
+    }
+}
+
 /// The semi-naive fixpoint as a reducer over its own row store.
 pub struct Evaluate<'a>(PhantomData<&'a ()>);
 
@@ -707,8 +807,18 @@ fn evaluate_into(
     };
     store.insert(nil_rel, vec![nil_row].into_boxed_slice());
 
+    register_keys(store, program);
     let mut seeds_by_level: HashMap<u32, Vec<&Row>> = HashMap::new();
     for seed in &program.seeds {
+        if store.keys.contains_key(&seed.rel) {
+            if store
+                .seeded
+                .insert((seed.rel, seed.args.clone().into_boxed_slice()))
+            {
+                store.insert(seed.rel, seed.args.clone().into_boxed_slice());
+            }
+            continue;
+        }
         seeds_by_level
             .entry(strata.level(seed.rel))
             .or_default()
@@ -732,6 +842,17 @@ fn evaluate_into(
             rules: rules.len(),
             seeds: seeds.len(),
         });
+        let retracted = match input_lost(store, &rules) {
+            true => retract_level(store, &rules),
+            false => Vec::new(),
+        };
+        if !retracted.is_empty() {
+            fx(Trace::Retract {
+                level,
+                relations: retracted.len(),
+                rows: retracted.iter().map(|(_, table)| table.len()).sum(),
+            });
+        }
 
         let (aggregate, plain): (Vec<&Rule>, Vec<&Rule>) =
             rules.iter().partition(|r| r.is_aggregate());
@@ -835,6 +956,11 @@ fn evaluate_into(
                 break;
             }
         }
+        settle_level(store, retracted);
+    }
+    for table in store.tables.values_mut() {
+        table.grown = false;
+        table.lost = false;
     }
 
     let mut rows: Vec<Row> = Vec::new();
