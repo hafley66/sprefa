@@ -5,7 +5,7 @@ use super::forms;
 use super::kernel;
 use super::slots::{self as slots, Callable, Slot};
 use crate::_6_eval::program::AggregateKind;
-use crate::_6_eval::term::TermId;
+use crate::_6_eval::term::{TermId, Universe};
 use std::cmp::Ordering;
 
 #[derive(Clone, Debug)]
@@ -42,6 +42,75 @@ pub fn is_partial(cx: &Cx, value: TermId) -> bool {
         .is_some_and(|(n, a)| n == "partial_application" && a.len() == 2)
 }
 
+/// The head atom of a dotted path form.
+pub fn is_path_head(u: &Universe, head: TermId) -> bool {
+    u.functor_or_atom(head).is_some_and(|(n, _)| n == ".")
+}
+
+/// The segment nodes of a dotted path form `(. a b ...)`; `None` for every other
+/// node, and for a form whose head is not the atom `.`.
+pub fn path_segments(u: &Universe, node: TermId) -> Option<Vec<TermId>> {
+    let parsed = forms::node(u, node)?;
+    let items = forms::form(u, parsed.payload)?;
+    let head = forms::form_head_atom(u, &items)?;
+    if !is_path_head(u, head) {
+        return None;
+    }
+    Some(items[1..].to_vec())
+}
+
+/// The atom a path segment names; `None` when the node is not an atom node.
+pub fn path_segment_atom(u: &Universe, node: TermId) -> Option<TermId> {
+    forms::node(u, node).and_then(|parsed| forms::atom_name(u, parsed.payload))
+}
+
+/// `pending_goal(positive, call(name(Scope, ':'), Arguments))`.
+pub fn colon_call_goal(cx: &mut Cx, scope: TermId, arguments: &[TermId; 4]) -> TermId {
+    let colon = cx.atom(":");
+    let relation = cx.compound("name", vec![scope, colon]);
+    let list = cx.u.list(arguments);
+    let call = cx.compound("call", vec![relation, list]);
+    let positive = cx.atom("positive");
+    cx.compound("pending_goal", vec![positive, call])
+}
+
+/// A dotted path in an expression position: one `:` goal per segment after the
+/// first, the value of the last segment the value of the form.
+fn lower_path_walk(cx: &mut Cx, node_id: TermId, segments: &[TermId], owner: TermId) -> Lowering {
+    if segments.len() < 2 {
+        let reason = cx.plain(node_id, "invalid_path");
+        return none(cx, vec![reason]);
+    }
+    let head = lower_expression(cx, segments[0], owner);
+    if let Some(reason) = head.diagnostics.first() {
+        return none(cx, vec![*reason]);
+    }
+    let mut value = head.value;
+    let mut goals = head.goals;
+    let mut origins = head.origins;
+    for (ordinal, segment) in segments[1..].iter().enumerate() {
+        let Some(name) = path_segment_atom(cx.u, *segment) else {
+            let reason = cx.plain(node_id, "invalid_path");
+            return none(cx, vec![reason]);
+        };
+        let ordinal = cx.int(ordinal as i64);
+        let step = cx.compound("path_value", vec![node_id, ordinal]);
+        let slot = cx.compound("path_index", vec![node_id, ordinal]);
+        let label = cx.compound("const", vec![name]);
+        let next = cx.compound("var", vec![step]);
+        let index = cx.compound("var", vec![slot]);
+        goals.push(colon_call_goal(cx, owner, &[value, label, next, index]));
+        origins.push(node_id);
+        value = next;
+    }
+    Lowering {
+        value,
+        goals,
+        origins,
+        diagnostics: vec![],
+    }
+}
+
 /// `:1433`. Eight clauses in source order.
 pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
     let Some(parsed) = forms::node(cx.u, node) else {
@@ -75,6 +144,9 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
         return Lowering::value(value);
     }
     if let Some(head) = forms::form_head_atom(cx.u, &items) {
+        if is_path_head(cx.u, head) {
+            return lower_path_walk(cx, parsed.id, &items[1..], owner);
+        }
         return match expression_callable(cx, head, owner) {
             Ok((callable, arity, key_sets)) => lower_expression_call(
                 cx,
@@ -140,15 +212,10 @@ pub fn colon_goal(
     value: TermId,
     index: TermId,
 ) -> TermId {
-    let colon = cx.atom(":");
-    let relation = cx.compound("name", vec![owner, colon]);
     let bind_ref = cx.compound("ref", vec![bind_owner]);
     let name_const = cx.compound("const", vec![name]);
     let index_const = cx.compound("const", vec![index]);
-    let arguments = cx.u.list(&[bind_ref, name_const, value, index_const]);
-    let call = cx.compound("call", vec![relation, arguments]);
-    let positive = cx.atom("positive");
-    cx.compound("pending_goal", vec![positive, call])
+    colon_call_goal(cx, owner, &[bind_ref, name_const, value, index_const])
 }
 
 /// `:1488`. `Err` carries the bare reason term.

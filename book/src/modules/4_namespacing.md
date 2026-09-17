@@ -39,7 +39,7 @@ The full inspection, with every probe's pasted output: `plans/v8/2026-09-15-v8-n
 | a goal qualified by module, same two modules | `probes/8_pick_user_a.dl7` | the goal resolves; `duplicate_relation_name` still stops |
 | a relation named like a module | `probes/12_relation_named_accounts.dl7` | `duplicate_relation_name(accounts, ...)` |
 | bare `User` from another user module | `probes/18_bare_consumer.dl7` | `undeclared_relation(User)` |
-| dotted name | `probes/19_dotted_name.dl7` | rc=0, one atom `boop.lane` |
+| dotted name | `probes/19_dotted_name.dl7` | `unresolved_name(boop)`: a path, never one atom |
 | `accounts/User`, `accounts:User`, `accounts::User`, `http:fetch:get` | inspection sections 2 and 3 | `invalid_atom` |
 | the path `http`, `fetch`, `get` as `:` goals | `probes/23_colon_path_walk.dl7` | rc=0, `(found get)` |
 | a partial application as a field type | `probes/21_partial_in_field.dl7` | `partial_application_requires_more_arguments` |

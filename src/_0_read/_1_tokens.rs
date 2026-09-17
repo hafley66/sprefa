@@ -37,6 +37,23 @@ pub fn valid_atom(token: &str) -> bool {
     valid_identifier(token)
 }
 
+/// `a.b` and its malformed neighbours `.a`, `a.`, `a..b`: identifier characters
+/// with at least one dot. `None` for a token with no dot and for one whose first
+/// character is neither a letter nor `_`.
+pub fn dotted_segments(token: &str) -> Option<Vec<&str>> {
+    if !token.contains('.') {
+        return None;
+    }
+    match token.chars().next() {
+        Some(first) if ascii_alpha(first) || first == '_' || first == '.' => {}
+        _ => return None,
+    }
+    if !token.chars().all(identifier_rest_char) {
+        return None;
+    }
+    Some(token.split('.').collect())
+}
+
 pub fn integer_token(token: &str) -> bool {
     let digits = token.strip_prefix('-').unwrap_or(token);
     !digits.is_empty() && digits.chars().all(decimal_digit)

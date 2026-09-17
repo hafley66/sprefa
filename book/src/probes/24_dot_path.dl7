@@ -1,0 +1,14 @@
+; expect: rc=0
+; compile: --project book/src/probes book/src/probes/api/0_todos.dl7
+; The path api, todos, list: one `:` goal per segment, the value the relation.
+(: found
+   (* (: result type)))
+
+(<- (found api.todos.list))
+
+(: fetched
+   (* (: url text)
+      (: body text)))
+
+(<- (fetched ?Url ?Body)
+    (api.todos.list ?Url ?Body))
