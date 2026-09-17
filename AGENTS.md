@@ -65,6 +65,49 @@ Verbatim from Chris, 2026-09-15. These outrank any skill, brief, or agent taste.
   human notes above in its brief and a human reading the result.
 </human-notes>
 
+## Language decisions (auto memory, user-confirmed)
+
+Chris said (2026-09-16): put confirmed decisions here and keep it current
+without asking. Every row is a decision made with Chris in the room, dated.
+A row is removed only by Chris. Candidates and forks stay in `plans/` and
+`chat_log/`; they never enter this list. Older decisions (2026-09-01 to
+09-15) are in `plans/2026-09-16-human-decisions-ledger.md`.
+
+| date | decision | where it bites |
+|---|---|---|
+| 2026-09-16 | A dotted token reads as a path: `a.b.c` is `(. a b c)`, one `:` goal per segment, value of the last segment is the value of the form. Reader-side, no module knowledge. | `src/_0_read/_1_tokens.rs`, `src/_2_lower/_8_express.rs` (PR #783 shape) |
+| 2026-09-16 | Loaders never mint namespace owner nodes for dotted relation names (`openapi.route`, `tsi.*`). Loader-provided families become real modules a program imports. | PR #781's `_3_wire.rs` `namespace_edges` rejected |
+| 2026-09-17 | The import form is the edge form and nothing else: `(<name>: (import "<path>"))`, the infix edge. `import` is a comptime call that returns a module node; the `:` edge binds it. Never `(import <name> "<path>")`: a form does not declare a name in its own argument list. The local name is the only binding; no bare-name splice into the importer. Members are reached by dot. | retires the implicit every-unit alias at `src/_2_lower/_12_units.rs:310-342` for program units; the prelude stays the one implicitly visible unit |
+| 2026-09-16 | `pub` is an annotation edge, never a keyword. Outward visibility is a prelude rule over `pub` rows. | `:\2` annotation form |
+| 2026-09-16 | `module(name)` is an ordinary node; its members are `:` edges. No module row kind. A soopy-served kernel rel for files and directories is acceptable as the base the module graph derives from. | grapher, `_12_units.rs` |
+| 2026-09-16 | Explicit `return` field stays as the rule for calls in argument position. "Last field is the return" is a footnote, not a design. | `src/_2_lower/_8_express.rs:214-240`, `expression_without_return` |
+| 2026-09-16 | `str.cons` is text concatenation, two-way like list `cons`; `str.nil` is the empty string. | kernel op table, `src/_6_eval/_4_kernel.rs` |
+| 2026-09-16 | The type is the namespace for scalar ops: `int.add`, `str.cons`, `bool.and` are folder arrows off the primitive nodes to flat kernel ops taken from the Rust stdlib, as v5 did. | `prelude/`, `_4_kernel.rs:71-80` |
+| 2026-09-16 | Lists are kernel `nil/1`, `cons/3` (two-way), `intern/3` only. No list literal, no `List` constructor. | `book/src/5_terms.md:31-32` |
+| 2026-09-16 | `intern` is construction (a function symbol). Build-mode `cons`, `intern`, `str.cons` inside a recursive cycle is refused; off a cycle they stratify like negation. Runtime rules otherwise split only; build mode lives in seeds and comptime rounds. | `src/_3_check/_6_strata.rs` (fork A, `recursion_through_constructor`), `_4_mode.rs` |
+| 2026-09-16 | Language design stays minimally branched: one form per idea, alternatives recorded as footnotes in `plans/` for later. | every brief |
+| 2026-09-16 | User-facing artifacts (diagrams, probes, docs) live in the repo (`plans/v8/diagrams/`, `plans/v8/probes/`), never in a scratch or `/tmp` directory. | every agent |
+| 2026-09-17 | Defaults spell `(: name (text "title"))`, superseding the 09-16 fourth-item form. Applying a node with no rows is `intern` (construction); applying a node with rows is a goal. `(text "title")` is `intern text ["title"]`, a value node with `(: v type text)` and `(: v value "title")`. A column whose target is a value node has that type and that default; `(: n 3)` infers the type from the literal. Defaults are consumed only in build mode (seeds, value-position calls); runtime rows are always full. Item 4 of `:` is free. | prelude rules `column_type`, `default`; `2_constructor_rules.dl7` is the `intern` precedent |
+| 2026-09-17 | Column typing is a comptime prelude rule (`column_type`), mismatch is a diagnostic row. No Rust type pass before comptime reads column types; it would be blind to every derived type (imported, `Option text`, value node). | `_3_check` column type pass moves out; same direction as keys |
+| 2026-09-16 | A rule has no name of its own. Its head references a declared relation and the rule releases rows into it. No `(label: (<- ...))` form. | `src/_3_check/_4_mode.rs` head safety |
+| 2026-09-16 | Rule construction (a rule node minted from rows) is allowed at macrotime and in comptime rounds, refused in runtime rules. Same law as `cons`/`intern` build mode. | `prelude/3_derived_rules.dl7:174-191` is the allowed case |
+| 2026-09-16 | Dot paths landed as PR #783 (flash r4); PR #781 closed. `_21_openapi` stays red until the import arc. | `.github/CI-KNOWN-RED.md`, dl8 battery section |
+| 2026-09-16 | Rules are products; scope capture follows the same walk as any product member. A rule with no edge label is an anonymous member of its scope, a `(rule ...)` fact line. | `src/_2_lower/_12_units.rs` parent walk |
+| 2026-09-16 | Footnote, not today: constructing rules from rules (rule as head, or rules minted by other rules) needs scope amendment, which is the same machinery module scoping and namespacing need. Capture it under the module arc. | `plans/v8/2026-09-16-modules-future-sight.md` |
+| 2026-09-17 | Import paths: `@std/<name>` is the one magic alias; every other path is an ordinary relative or absolute path. The compiler's cwd may be `~/`; no search list, no shadowing order. | `(api: (import "@std/oai"))`, `(x: (import "./x.dl7"))` |
+| 2026-09-17 | Std modules own their seeds: `(oai.document "todo.json")` is a line inside `@std/oai.dl7` and an executor fills the rows. No CLI flag seeds a std module. The namespace is `oai`, never `openapi`. | `src/_4_comptime/_0_load/_9_openapi.rs`, `dl8 compile --openapi` retires |
+| 2026-09-17 | Import cycles are a diagnostic row (`import_cycle`), never a check error. The fixpoint tolerates them. | prelude rule over `reaches` |
+| 2026-09-17 | Reload unit is one file: retract that unit's edges, relower, rederive. The dev server is the comptime loop kept running; it reuses the runtime's retraction (sqlite_ivm delete-and-rederive), no second mechanism. | `_2_rounds.rs`, `sqlite_ivm` `1a_relational.rs:725` |
+| 2026-09-17 | Rules are stored as edges: a rule is a product node with head and body edges, queryable by prelude rules (`dead_rule`, `import_cycle`, retraction by intern of head plus body). No side list. | `src/_2_lower/_2_declare.rs`, `_12_units.rs` |
+| 2026-09-17 | `cons` is a list; a product is a list that is also callable. Same lowering arm for the row shape, but product and cons are not one atom: only a product node takes a call. | `_2_declare.rs:190-194`, `_8_express.rs` |
+| 2026-09-17 | Hosted namespaces are short and name the idea, never the tool: `fs.` for files (uses git when a repo is present, plain disk otherwise), `git.` for refs and history, `oai.` for OpenAPI, `env.` for process facts. No user-facing `soopy` name. | `src/_9_runtime/_3_executors/{soopy_refs,soopy_history,repo_at}.rs` RELATION consts |
+| 2026-09-17 | `^x` marks the subterm a form evaluates to. A macrotime rewrite (see the `^` is a macro row), never kernel or lower. At most one `^` per level (`ambiguous_return`). `(^User: (* ...))` evaluates to `User`; `(User: ^(* ...))` to the product; `(* (a: text) (^b: str))` makes the callable return column `b`. `(: return type)` and `^` both spell the same `return` edge; both stay. No implicit LHS return anywhere. | `src/_0_read/_1_tokens.rs`, `src/_2_lower/_2_declare.rs:278-290`, `_8_express.rs:287` |
+| 2026-09-17 | A fully formed edge is a term. A colon after it, `((User: (* ...)): X)`, takes the whole edge node as its LHS; X hangs on the edge (annotation). With `^` the LHS is the marked part instead. A form with no `^` evaluates to itself. | `edge_ref` kernel slot, `_9_kernel.rs:40-42` |
+| 2026-09-17 | Keys are userland. `relation(Rel, Arity, Keys)` is derived by prelude rules from `Key` edges (inputs) and `return` edges (outputs), dl6 `key(..)` incarnate. The Rust loop that computes key sets from the label `return` is a duplicate and goes. dl6 put keys in the kernel; dl7/dl8 phases exist so this lives in userland. A value-position call lowers to goals over `relation/3` and settles at eval, like the dot walk. | `src/_2_lower/_2_declare.rs:278-305` retires; `prelude/3_derived_rules.dl7:43-63` (`keyed_edge`, `key_rank`) is the base |
+| 2026-09-17 | `^` is a macro, not kernel and not lower. `(^Name: T): (body)` reparents every body edge under `Name`'s own node id (no minted node, no curry, no `return`). `(: ^b str)` inside a product collects into one `(: return (* ...))` member edge. Lowers to plain `:` rows. | `macrotime/1_caret.dl7` (new), protocol at `book/src/8_macros.md:21` |
+| 2026-09-17 | One `^` per level. A second `^` at the same level is `ambiguous_return`, goal form only. Not permanent: call-site selection (plan section 8, fork B) is the intended end state; today `^` exists to keep relational forms DRY, nothing more. | `_8_express.rs:297` diagnostic; `plans/v8/2026-09-16-modules-future-sight.md` section 8 |
+| 2026-09-11 | Tests are integration and end-to-end through the real binary; the only seam is replay (llmock). Pure computation may keep unit tests. | every brief |
+
 ## Compiler reading support
 
 Keep explanations concise while covering the relevant details. For longer
