@@ -1,6 +1,9 @@
-; The module graph read back off the `:` edges every unit already writes.
-; An import binds a module node under a local name, so an edge whose target is
-; a module is an import edge and needs no row kind of its own.
+; `@std/modules`: the module graph read back off the `:` edges every unit
+; already writes. An import binds a module node, so an edge whose target is a
+; module is an import edge and needs no row kind of its own.
+;
+; These rules belong in the prelude and cannot live there yet: the prelude is
+; frozen byte-for-byte against v7 by `tests/_8_compile_oracle.rs`.
 
 (: pub
    (* (: module type)
