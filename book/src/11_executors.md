@@ -13,9 +13,10 @@ flowchart LR
   roster --> refs[git.refs: Continuing]
   roster --> history[git.history: Once]
   roster --> fsat[fs.at: Once]
+  roster --> fsjson[fs.json: Once]
   roster --> extract[extract: Once, killed past 10 s]
   fetch -->|non-2xx| fetcherror[fetch_json_error]
-  timer & fetch & refs & history & fsat & extract & fetcherror --> answers[answer rows]
+  timer & fetch & refs & history & fsat & fsjson & extract & fetcherror --> answers[answer rows]
   answers -->|insert, evaluate| reconcile
   reconcile -->|nothing new, nothing armed| stop[exit]
 ```
@@ -32,6 +33,7 @@ Each `effect` row reaches its executor once per process (`_2_reconcile.rs:44-47`
 | `git.refs` | `root text, name text, sha text` | Continuing | every ref plus `HEAD` at arming, then each moved or added ref | `git.refs_error root text, message text` | `_3_executors/git_refs.rs` |
 | `git.history` | `root text, sha text, parent text` | Once | one row per parent edge reachable from `sha`, or `HEAD` when unbound | `git.history_error root text, message text` | `_3_executors/git_history.rs` |
 | `fs.at` | `root text, sha text, path text, blob text` | Once | one row per tracked file at the revision | `fs.at_error root text, sha text, message text` | `_3_executors/fs_at.rs` |
+| `fs.json` | `path text, return type` | Once | the document's root node, plus one `:` edge per object member; a file over 16 MiB is an error row | `fs.json_error path text, message text` | `_3_executors/fs_json.rs` |
 | `extract` | `root text, family text, kind text, payload text` | Once | one `extract --family <family> --resolve` run, one row per JSONL record; past 10 s the run is killed | `extract_error root text, family text, message text` | `_3_executors/extract.rs` |
 
 Rows from `README.md:115-122`.
@@ -51,12 +53,14 @@ Use it when:
 - the commit graph: `git.history`, `fixtures/hosts/1_history.dl7`
 - the files at a revision: `fs.at`, `fixtures/hosts/2_fs_at.dl7`
 - code facts: `extract`, `fixtures/hosts/3_extract.dl7`
+- a JSON document as graph: `fs.json`, `fixtures/hosts/4_fs_json.dl7`
 
 Do not use it when:
 
 - a removed ref must retract its row: a removed ref writes nothing (`README.md:126`)
 - a commit time is needed: `git.history` carries none (`README.md:127`)
 - a field of an extract record is needed as a column: `payload` stays one text term (`README.md:128`)
+- a `fs.json` scalar must come back out as a column: a value node is `intern`'s return, and `intern` keys on its constructor and its arguments (`src/_3_check/_5_kernel.rs:55`), so reading one with the arguments unbound is `underconstrained_kernel_goal(intern, [[0, 1]])`
 
 ## Example
 
@@ -222,6 +226,91 @@ ticks 1
 exit 0
 ```
 
+`fs.json` reads one document as graph. JSON is not a second value world: an
+object is a level of `:` edges, an array is a list, a scalar is the `intern` of
+its primitive, a null is the prelude's `none` (`prelude/0_constructors.dl7:14`).
+Keys keep document order as the edge index.
+
+```json
+{{#include ../../fixtures/hosts/todo.json}}
+```
+
+```dl7
+; fixture: fixtures/hosts/4_fs_json.dl7
+; One JSON document as `:` rows under one root node.
+(fs: (import "@std/fs"))
+
+(: Doc
+   (* (: path text)))
+
+(Doc "__DOC__")
+
+(: Root
+   (* (: path text)
+      (: node any)))
+
+(<- (Root ?Path ?Node)
+    (Doc ?Path)
+    (fs.json ?Path ?Node))
+
+(: Member
+   (* (: name any)
+      (: target any)
+      (: index int)))
+
+(<- (Member ?Name ?Target ?Index)
+    (Doc ?Path)
+    (fs.json ?Path ?Root)
+    (: ?Root ?Name ?Target ?Index))
+
+(: Edge
+   (* (: owner any)
+      (: name any)
+      (: target any)
+      (: index int)))
+
+(<- (Edge ?Owner ?Name ?Target ?Index)
+    (: ?Owner ?Name ?Target ?Index))
+
+(: Failed
+   (* (: path text)
+      (: message text)))
+
+(<- (Failed ?Path ?Message)
+    (fs.json_error ?Path ?Message))
+```
+
+```console
+$ d=$(mktemp -d) && sed "s|__DOC__|$PWD/fixtures/hosts/todo.json|" fixtures/hosts/4_fs_json.dl7 > $d/doc.dl7 && bash book/show.sh run $d/doc.dl7 --serve fs.json | grep '^(Root \|^(Member \|^(Edge ref(edge\|^ticks\|^exit'
+(Root "fixtures/hosts/todo.json" ref(application(fs.json, ["fixtures/hosts/todo.json"])))
+(Member meta ref(edge(application(fs.json, ["fixtures/hosts/todo.json"]), meta)) 4)
+(Member n ref(application(primitive(int), [3])) 1)
+(Member owner none 3)
+(Member tags [ref(application(primitive(text), ["a"])) ref(application(primitive(text), ["b"]))] 2)
+(Member title ref(application(primitive(text), ["x"])) 0)
+(Edge ref(edge(application(fs.json, ["fixtures/hosts/todo.json"]), meta)) v ref(application(primitive(int), [1])) 0)
+ticks 1
+exit 0
+```
+
+A member node is `edge(Owner, Label)`, the shape the `edge_ref` kernel builds
+(`src/_6_eval/_4_kernel.rs:161-171`), so `meta.v` is reachable without reading a
+row. The pure-rxjs lowering of the same relation, returning the stream rather
+than subscribing to it:
+
+```ts
+const jsonEdges = (path$: Observable<string>): Observable<Edge> =>
+  path$.pipe(
+    mergeMap((path) =>
+      readFile(path).pipe(
+        map((text) => ({ root: application(FS_JSON, [path]), value: parse(text) })),
+        mergeMap(({ root, value }) => from(walk(root, value))),
+        catchError((failure) => of(jsonError(path, failure))),
+      ),
+    ),
+  );
+```
+
 ## What proves it
 
 | claim | path | command |
@@ -229,6 +318,7 @@ exit 0
 | timer fires, count reads every fire, numbering continues past a db | `tests/_17_reconcile.rs:161-201` | `cargo test --test _17_reconcile` |
 | fetch body, non-2xx, non-JSON, closed port | `tests/_17_reconcile.rs:203-267` | `cargo test --test _17_reconcile` |
 | no executor, no error relation | `tests/_17_reconcile.rs:291-326` | `cargo test --test _17_reconcile` |
-| refs snapshot then moved ref; history; files per revision; missing repository | `tests/_20_hosts.rs:228-345` | `cargo test --test _20_hosts` |
-| extract rows per family over the corpus, and with no binary | `tests/_20_hosts.rs:407-466` | `cargo test --test _20_hosts` |
-| the roster in code | `src/_9_runtime/_3_executors/mod.rs:61-100` | `sed -n 61,100p src/_9_runtime/_3_executors/mod.rs` |
+| refs snapshot then moved ref; history; files per revision; missing repository | `tests/_20_hosts.rs:228-343` | `cargo test --test _20_hosts` |
+| object, array, scalar, present-null, absent key, nested object, unreadable file | `tests/_20_hosts.rs:394-494` | `cargo test --test _20_hosts` |
+| extract rows per family over the corpus, and with no binary | `tests/_20_hosts.rs:558-617` | `cargo test --test _20_hosts` |
+| the roster in code | `src/_9_runtime/_3_executors/mod.rs:65-120` | `sed -n 65,120p src/_9_runtime/_3_executors/mod.rs` |

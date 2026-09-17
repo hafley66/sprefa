@@ -11,3 +11,12 @@
    (* (: root text)
       (: sha text)
       (: message text)))
+
+; `json` reads one document into `:` rows under the node it returns.
+(: json
+   (* (: path text)
+      (: return type)))
+
+(: json_error
+   (* (: path text)
+      (: message text)))

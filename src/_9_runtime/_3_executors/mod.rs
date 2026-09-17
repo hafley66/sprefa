@@ -6,6 +6,8 @@ pub mod extract;
 pub mod fetch_json;
 #[path = "fs_at.rs"]
 pub mod fs_at;
+#[path = "fs_json.rs"]
+pub mod fs_json;
 #[path = "git_history.rs"]
 pub mod git_history;
 #[path = "git_refs.rs"]
@@ -14,12 +16,14 @@ pub mod git_refs;
 pub mod timer;
 
 use super::reconcile::{application_values, IExecutor};
+use crate::_6_eval::kernel::kernel_ref;
 use crate::_6_eval::{Diagnostic, Term, TermId, Universe};
 use std::collections::HashMap;
 
 pub use extract::Extract;
 pub use fetch_json::FetchJson;
 pub use fs_at::FsAt;
+pub use fs_json::FsJson;
 pub use git_history::GitHistory;
 pub use git_refs::GitRefs;
 pub use timer::Timer;
@@ -74,6 +78,22 @@ pub fn executors_for(
                     }
                     (None, _) => missing(u, "served_relation_unknown", name),
                     (_, None) => missing(u, "executor_relation_unknown", fetch_json::ERROR),
+                }
+            }
+            fs_json::RELATION => {
+                match (
+                    names.get(fs_json::RELATION),
+                    names.get(fs_json::ERROR),
+                    names.get(fs_json::NONE),
+                ) {
+                    (Some(rel), Some(error), Some(none)) => {
+                        let (rel, error, none) = (*rel, *error, *none);
+                        let colon = kernel_ref(u, ":");
+                        executors.push(Box::new(FsJson::new(rel, error, colon, none)))
+                    }
+                    (None, _, _) => missing(u, "served_relation_unknown", name),
+                    (_, None, _) => missing(u, "executor_relation_unknown", fs_json::ERROR),
+                    (_, _, None) => missing(u, "executor_relation_unknown", fs_json::NONE),
                 }
             }
             git_refs::RELATION

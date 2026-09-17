@@ -1,0 +1,41 @@
+; One JSON document as `:` rows under one root node.
+(fs: (import "@std/fs"))
+
+(: Doc
+   (* (: path text)))
+
+(Doc "__DOC__")
+
+(: Root
+   (* (: path text)
+      (: node any)))
+
+(<- (Root ?Path ?Node)
+    (Doc ?Path)
+    (fs.json ?Path ?Node))
+
+(: Member
+   (* (: name any)
+      (: target any)
+      (: index int)))
+
+(<- (Member ?Name ?Target ?Index)
+    (Doc ?Path)
+    (fs.json ?Path ?Root)
+    (: ?Root ?Name ?Target ?Index))
+
+(: Edge
+   (* (: owner any)
+      (: name any)
+      (: target any)
+      (: index int)))
+
+(<- (Edge ?Owner ?Name ?Target ?Index)
+    (: ?Owner ?Name ?Target ?Index))
+
+(: Failed
+   (* (: path text)
+      (: message text)))
+
+(<- (Failed ?Path ?Message)
+    (fs.json_error ?Path ?Message))
