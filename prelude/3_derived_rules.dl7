@@ -40,6 +40,24 @@
     (cons ?Head ?Tail ?List)
     (closed_names ?Tail))
 
+; A column target that reads back as an intern is a value node, never a type.
+(<- (column_value ?Product ?Name ?Value)
+    (edge_snapshot ?Product ?Name ?Value ?Position)
+    (intern_snapshot ?Type ?Arguments ?Value))
+
+(<- (column_type ?Product ?Name ?Type)
+    (column_value ?Product ?Name ?Value)
+    (intern_snapshot ?Type ?Arguments ?Value))
+
+(<- (column_type ?Product ?Name ?Target)
+    (edge_snapshot ?Product ?Name ?Target ?Position)
+    (not (column_value ?Product ?Name ?Target)))
+
+(<- (default ?Product ?Name ?Literal)
+    (column_value ?Product ?Name ?Value)
+    (intern_snapshot ?Type ?Arguments ?Value)
+    (cons ?Literal ?Tail ?Arguments))
+
 (<- (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
     (edge_snapshot ?Source ?Label ?Target ?SourceIndex)
     (intern_snapshot Key ?Arguments ?Label)

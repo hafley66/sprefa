@@ -210,8 +210,14 @@ pub fn lower_call(
         let arguments = lower_colon_arguments(cx, &items[1..], owner, head_mode)?;
         return finish_call_arguments(cx, head, parsed.id, owner, arguments, head_mode);
     }
-    let (callable, arity, _) = match expression_callable(cx, head, owner) {
-        Ok(found) => found,
+    let (callable, arity) = match expression_callable(cx, head, owner) {
+        Ok(express::Applied::Relation(callable, arity, _)) => (callable, arity),
+        // A goal position takes a relation only; construction is spelled with
+        // `intern` here, so the head names no relation.
+        Ok(express::Applied::Construction(_)) => {
+            let reason = express::not_a_relation(cx, head, owner);
+            return Err(cx.diagnostic(parsed.id, reason));
+        }
         Err(reason) => return Err(cx.diagnostic(parsed.id, reason)),
     };
     let all = slots::callable_slots(cx, &callable, arity);

@@ -55,6 +55,23 @@
       (: options type)
       (: return type)))
 
+; A column whose target is a value node carries a type and a default. The
+; value node is `intern Type [Literal]`, so both read out of one intern.
+(: column_value
+   (* (: source type)
+      (: name any)
+      (: return type)))
+
+(: column_type
+   (* (: source type)
+      (: name any)
+      (: return type)))
+
+(: default
+   (* (: source type)
+      (: name any)
+      (: return any)))
+
 (: keyed_edge
    (* (: source type)
       (: name text)

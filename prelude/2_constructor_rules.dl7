@@ -59,7 +59,7 @@
 ; mode plus a source contract and interns source plus options as the
 ; specialization identity.
 (<- (HistoryV1 ?Source ?Options ?Result)
-    (edge_snapshot ?Options ?Mode "copy" 0)
+    (default ?Options ?Mode "copy")
     (edge_snapshot ?Options ?ContractName ?Contract 1)
     (Conforms ?Source ?Contract ?Proof)
     (nil ?Empty)
@@ -72,6 +72,6 @@
     (cons ?Source ?TailArguments ?Arguments)
     (nil ?Empty)
     (cons ?Options ?Empty ?TailArguments)
-    (edge_snapshot ?Options ?Mode "copy" 0)
+    (default ?Options ?Mode "copy")
     (edge_snapshot ?Options ?ContractName ?Contract 1)
     (Conforms ?Source ?Contract ?Proof))
