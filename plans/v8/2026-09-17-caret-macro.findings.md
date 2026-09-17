@@ -70,6 +70,13 @@ once something downstream consumes the caret.
 
 It is the last commit on the branch so it drops with one `git revert`.
 
+What the arm accepts, measured against `valid_atom`: `^Name` and `^Name:` pass,
+`^`, `^:` and `^^a` are still `invalid_atom`. One caret, and only in front.
+`^a.b` reads as the single atom `^a.b`, not as a caret on a path:
+`dotted_segments` (`src/_0_read/_1_tokens.rs:43-55`) rejects a token whose first
+character is neither a letter nor `_`, so the path arm never sees it. Fork C
+below is the one that makes `^` compose with the dot.
+
 ## 5. The forks, for Chris
 
 Each fork settles language design, so none is a lane's call.
