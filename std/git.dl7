@@ -1,0 +1,20 @@
+; `@std/git`: refs and history of a repository root. Every rel here is served
+; by an executor; a program that never serves one gets no rows.
+
+(: refs
+   (* (: root text)
+      (: name text)
+      (: sha text)))
+
+(: refs_error
+   (* (: root text)
+      (: message text)))
+
+(: history
+   (* (: root text)
+      (: sha text)
+      (: parent text)))
+
+(: history_error
+   (* (: root text)
+      (: message text)))

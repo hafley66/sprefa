@@ -17,6 +17,23 @@ pub const PRELUDE: [&str; 6] = [
 /// `v7/macrotime/*.dl7` at `f5018ad23`.
 pub const MACROTIME: [&str; 1] = [include_str!("../../macrotime/0_standard.dl7")];
 
+/// `std/*.dl7`, bundled in the binary like the prelude. The first field is the
+/// tail of `@std/<name>`.
+pub const STD: [(&str, &str); 3] = [
+    ("fs", include_str!("../../std/fs.dl7")),
+    ("git", include_str!("../../std/git.dl7")),
+    ("oai", include_str!("../../std/oai.dl7")),
+];
+
+/// The one magic import prefix.
+pub const STD_PREFIX: &str = "@std/";
+
+pub fn std_text(name: &str) -> Option<&'static str> {
+    STD.iter()
+        .find(|(bundled, _)| *bundled == name)
+        .map(|(_, text)| *text)
+}
+
 /// `join_prelude_texts/2` at `:371`: one newline between texts.
 pub fn join(texts: &[&str]) -> String {
     texts.join("\n")

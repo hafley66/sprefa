@@ -1,0 +1,4 @@
+(: exported_thing
+   (* (: label text)))
+
+(exported_thing "from unit a")

@@ -1,0 +1,4 @@
+(: greeting
+   (* (: label text)))
+
+(greeting "hello from the sibling")

@@ -16,6 +16,9 @@ pub struct Live {
     pub units: Vec<TermId>,
     pub project: Option<Project>,
     pub derived_bind_slots: Vec<TermId>,
+    /// `import(ImporterOrigin, Name, ImportedOrigin)`, the same rows the first
+    /// lowering saw: a refreeze rebinds every imported module node.
+    pub imports: Vec<TermId>,
 }
 
 impl Sources for Live {
@@ -43,7 +46,7 @@ impl Sources for Live {
             .map(|(_, args)| args[0])
             .and_then(|list| u.as_list(list))
             .unwrap_or_default();
-        let lowered = lower_compiler_units(u, policy, &self.units, Some(environment))
+        let lowered = lower_compiler_units(u, policy, &self.units, Some(environment), &self.imports)
             .map_err(|_| Stop::Fail("lowering reached an unported construct"))?;
         if !lowered.diagnostics.is_empty() {
             return Ok((None, lowered.diagnostics));

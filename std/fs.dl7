@@ -1,0 +1,13 @@
+; `@std/fs`: files read through git when the root is a repository, off the disk
+; otherwise. `at` is the tracked tree of one root at one revision.
+
+(: at
+   (* (: root text)
+      (: sha text)
+      (: path text)
+      (: blob text)))
+
+(: at_error
+   (* (: root text)
+      (: sha text)
+      (: message text)))

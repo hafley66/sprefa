@@ -18,7 +18,7 @@ pub fn compile_units(
     units: &[TermId],
     fx: &mut dyn FnMut(Round),
 ) -> Result<(Option<Compiled>, Vec<TermId>), Stop> {
-    let lowered = lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, None)?;
+    let lowered = lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, None, &[])?;
     if !lowered.diagnostics.is_empty() {
         return Ok((None, lowered.diagnostics));
     }
@@ -34,7 +34,8 @@ pub fn compile_project_units(
 ) -> Result<(Option<Compiled>, Vec<TermId>), Stop> {
     let owners = source_unit_module_owners(u, units);
     let environment = project_expression_environment(u, &project, &owners);
-    let lowered = lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, Some(environment))?;
+    let lowered =
+        lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, Some(environment), &[])?;
     if !lowered.diagnostics.is_empty() {
         return Ok((None, lowered.diagnostics));
     }
@@ -76,6 +77,7 @@ pub fn compile_after_unit_lower(
         derived_bind_slots: derived_bind_slots(u, &checked.rules),
         units: units.to_vec(),
         project,
+        imports: Vec::new(),
     };
     Ok(evaluate_checked(u, &checked, &mut sources, fx)?)
 }

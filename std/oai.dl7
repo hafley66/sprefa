@@ -1,0 +1,20 @@
+; `@std/oai`: an OpenAPI 3.x document as rows. A `document` seed names the
+; file; the loader fills `route` and `param` from it and mints the type nodes
+; the `request` and `response` columns point at.
+
+(: document
+   (* (: path text)))
+
+(: route
+   (* (: path text)
+      (: method any)
+      (: operation_id text)
+      (: request type)
+      (: response type)))
+
+(: param
+   (* (: operation_id text)
+      (: name text)
+      (: location any)
+      (: type type)
+      (: required any)))
