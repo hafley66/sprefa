@@ -209,13 +209,6 @@ pub fn compile_project(
     if !reader_diagnostics.is_empty() {
         return Ok(stopped(u, reader_diagnostics));
     }
-    let documents = oai_document_paths(u, &loaded.units, &imported.rows);
-    let document_paths: Vec<&Path> = documents.iter().map(|p| p.as_path()).collect();
-    let (openapi_rows, openapi_diagnostics) =
-        load_openapi_documents(u, &document_paths).map_err(Stop::Io)?;
-    if !openapi_diagnostics.is_empty() {
-        return Ok(stopped(u, openapi_diagnostics));
-    }
     let project_count = loaded.units.len();
     let mut sources = loaded.units.clone();
     sources.extend(imported.units.iter().copied());
@@ -230,7 +223,7 @@ pub fn compile_project(
     let project = Project {
         project: u.compound("dl7_project", vec![args[0], unit_list]),
         tsi_rows,
-        openapi_rows,
+        openapi_rows: Vec::new(),
         cwd: working_directory().display().to_string(),
     };
     let mut units = vec![prelude.unit];
@@ -242,13 +235,13 @@ pub fn compile_project(
 fn finish_compile(
     u: &mut Universe,
     units: &[TermId],
-    project: Option<Project>,
+    mut project: Option<Project>,
     imports: &[TermId],
     fx: &mut dyn FnMut(Event),
 ) -> Result<Compile, Stop> {
     let lowered = phase(
         "lower",
-        || lower_units(u, units, project.as_ref(), imports),
+        || lower_units(u, units, project.as_mut(), imports),
         |lowered: &Units| (lowered.basements.len(), lowered.diagnostics.len()),
     )?;
     if !lowered.diagnostics.is_empty() {
@@ -304,20 +297,34 @@ fn finish_compile(
 fn lower_units(
     u: &mut Universe,
     units: &[TermId],
-    project: Option<&Project>,
+    project: Option<&mut Project>,
     imports: &[TermId],
 ) -> Result<Units, Stop> {
-    let environment = project.map(|project| {
+    let environment = project.as_deref().map(|project| {
         let owners = source_unit_module_owners(u, units);
         project_expression_environment(u, project, &owners)
     });
-    let lowered = lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, environment, imports)?;
+    let lowered =
+        lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, environment, imports)?;
     let Some(project) = project else {
         return Ok(lowered);
     };
     if !lowered.diagnostics.is_empty() {
         return Ok(lowered);
     }
+    // The `oai.document` seeds are lowered rows by now, so the loader reads
+    // its own input from the graph and never from the source text.
+    let documents = oai_document_paths(u, &lowered.basements, imports);
+    let paths: Vec<&Path> = documents.iter().map(|p| p.as_path()).collect();
+    let (rows, document_diagnostics) = load_openapi_documents(u, &paths).map_err(Stop::Io)?;
+    if !document_diagnostics.is_empty() {
+        return Ok(Units {
+            basements: Vec::new(),
+            origins: Vec::new(),
+            diagnostics: document_diagnostics,
+        });
+    }
+    project.openapi_rows = rows;
     let (basements, origins, diagnostics) =
         install_graphs(u, project, &lowered.basements, &lowered.origins).map_err(Stop::Load)?;
     Ok(if diagnostics.is_empty() {

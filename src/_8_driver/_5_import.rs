@@ -104,44 +104,6 @@ fn import_call_path(u: &Universe, target: TermId) -> Option<String> {
     string_of(u, forms::literal_value(u, argument.payload)?)
 }
 
-/// Every top-level `(<local>.<label> "<text>")` call of a unit, where `<local>`
-/// is the name an import bound. The seed a loader reads its own input from.
-pub fn unit_member_seeds(u: &mut Universe, unit: TermId, local: TermId, label: &str) -> Vec<String> {
-    let Some(parts) = u.args::<5>(unit, "dl7_unit") else {
-        return Vec::new();
-    };
-    let forms = u.as_list(parts[2]).unwrap_or_default();
-    let mut out = Vec::new();
-    for item in forms {
-        let Some(text) = member_call_text(u, item, local, label) else {
-            continue;
-        };
-        out.push(text);
-    }
-    out
-}
-
-fn member_call_text(u: &Universe, item: TermId, local: TermId, label: &str) -> Option<String> {
-    let node = forms::node(u, item)?;
-    let items = forms::form(u, node.payload)?;
-    if items.len() != 2 {
-        return None;
-    }
-    let segments = crate::_2_lower::express::path_segments(u, items[0])?;
-    if segments.len() != 2 {
-        return None;
-    }
-    if crate::_2_lower::express::path_segment_atom(u, segments[0])? != local {
-        return None;
-    }
-    let member = crate::_2_lower::express::path_segment_atom(u, segments[1])?;
-    if u.functor_or_atom(member).map(|(n, _)| n) != Some(label) {
-        return None;
-    }
-    let argument = forms::node(u, items[1])?;
-    string_of(u, forms::literal_value(u, argument.payload)?)
-}
-
 /// `import(ImporterOrigin, Name, ImportedOrigin)`.
 fn import_row(u: &mut Universe, importer: TermId, name: TermId, imported: TermId) -> TermId {
     u.compound("import", vec![importer, name, imported])
@@ -198,39 +160,83 @@ fn read_stop(e: ReadStop) -> Stop {
     Stop::Read(e)
 }
 
-/// The local name each unit bound `@std/<module>` to, if any.
-fn std_local(u: &Universe, rows: &[TermId], importer: TermId, module: &str) -> Option<TermId> {
+/// `import(Origin, Local, std(Module))` read backwards: the unit that bound
+/// `@std/<module>` under `Local`.
+fn std_importer(
+    u: &Universe,
+    rows: &[TermId],
+    local: TermId,
+    module: &str,
+) -> Option<TermId> {
     rows.iter().find_map(|row| {
-        let [row_importer, name, imported] = u.args::<3>(*row, "import")?;
+        let [importer, name, imported] = u.args::<3>(*row, "import")?;
         let atom = u.unary(imported, "std")?;
-        (row_importer == importer && u.functor_or_atom(atom).map(|(n, _)| n) == Some(module))
-            .then_some(name)
+        (name == local && u.functor_or_atom(atom).map(|(n, _)| n) == Some(module))
+            .then_some(importer)
     })
 }
 
-/// Every `<local>.document "<path>"` line of a unit that imported `@std/oai`,
-/// resolved against the importing file's own directory.
-pub fn oai_document_paths(u: &mut Universe, units: &[TermId], rows: &[TermId]) -> Vec<PathBuf> {
+/// The seed list of every lowered basement, in basement order.
+fn basement_seeds(u: &Universe, basements: &[TermId]) -> Vec<TermId> {
     let mut out = Vec::new();
-    for unit in units {
-        let Some(parts) = u.args::<5>(*unit, "dl7_unit") else {
+    for row in basements {
+        let Some([_, program]) = u.args::<2>(*row, "module_basement") else {
             continue;
         };
-        let Some(local) = std_local(u, rows, parts[0], "oai") else {
+        let Some([_, datalog]) = u.args::<2>(program, "basement_program") else {
             continue;
         };
-        let Some(file) = u.unary(parts[0], "file") else {
+        let Some([_, seeds, _]) = u.args::<3>(datalog, "datalog_program") else {
             continue;
         };
-        let Some((path, _)) = u.functor_or_atom(file) else {
+        out.extend(u.as_list(seeds).unwrap_or_default());
+    }
+    out
+}
+
+/// A lowered seed `call(name(name(module(Origin), Local), Member), Arguments)`:
+/// the dot walk `lower_path_call` writes for `(<local>.<member> ...)`.
+fn member_seed(u: &Universe, seed: TermId, member: &str) -> Option<(TermId, TermId, TermId)> {
+    let [callable, arguments] = u.args::<2>(seed, "call")?;
+    let [scope, label] = u.args::<2>(callable, "name")?;
+    if u.functor_or_atom(label).map(|(n, _)| n) != Some(member) {
+        return None;
+    }
+    let [owner, local] = u.args::<2>(scope, "name")?;
+    let origin = u.unary(owner, "module")?;
+    let first = u.as_list(arguments)?.into_iter().next()?;
+    Some((origin, local, first))
+}
+
+/// Every document an `@std/oai` member seed names, against the importing
+/// unit's directory. Before the fixpoint only a `const` argument is a value.
+pub fn oai_document_paths(
+    u: &Universe,
+    basements: &[TermId],
+    imports: &[TermId],
+) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for seed in basement_seeds(u, basements) {
+        let Some((origin, local, argument)) = member_seed(u, seed, "document") else {
             continue;
         };
-        let directory = Path::new(path).parent().map(Path::to_path_buf);
-        let Some(directory) = directory else {
+        if std_importer(u, imports, local, "oai") != Some(origin) {
+            continue;
+        }
+        let Some(spec) = u.unary(argument, "const").and_then(|v| string_of(u, v)) else {
             continue;
         };
-        for spec in unit_member_seeds(u, *unit, local, "document") {
-            out.push(directory.join(spec));
+        let Some(path) = u.unary(origin, "file").and_then(|f| u.functor_or_atom(f)) else {
+            continue;
+        };
+        if let Some(directory) = Path::new(path.0).parent() {
+            let resolved = directory.join(spec);
+            tracing::debug!(
+                target: "dl8::io",
+                seed = %crate::_6_eval::json::term_to_json(u, seed),
+                path = %resolved.display(),
+            );
+            out.push(resolved);
         }
     }
     out
