@@ -1,0 +1,20 @@
+; RFC 7396 sections 1 and 2: present-null and key-absent are two graphs.
+; Run from the repo root: dl8 run <compiled> --serve fs.json
+(fs: (import "@std/fs"))
+
+(: Document
+   (* (: path text)))
+
+(Document "plans/v8/probes/2026-09-17-json-null-present.json")
+(Document "plans/v8/probes/2026-09-17-json-null-absent.json")
+
+(: Member
+   (* (: path text)
+      (: name any)
+      (: target any)
+      (: index int)))
+
+(<- (Member ?Path ?Name ?Target ?Index)
+    (Document ?Path)
+    (fs.json ?Path ?Root)
+    (: ?Root ?Name ?Target ?Index))
