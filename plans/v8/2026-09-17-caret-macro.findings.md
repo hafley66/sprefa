@@ -10,7 +10,8 @@ section 6 forbids this lane from touching.
 2. The four missing capabilities
 3. What each probe does today
 4. Why the reader arm cannot ship alone
-5. The forks, for Chris
+5. One red leg that is not this lane's
+6. The forks, for Chris
 
 ## 1. Where it stands
 
@@ -77,7 +78,24 @@ What the arm accepts, measured against `valid_atom`: `^Name` and `^Name:` pass,
 character is neither a letter nor `_`, so the path arm never sees it. Fork C
 below is the one that makes `^` compose with the dot.
 
-## 5. The forks, for Chris
+## 5. One red leg that is not this lane's and not on the allowlist
+
+`cargo test --no-fail-fast` on this branch fails three legs. Two are the
+`.github/CI-KNOWN-RED.md:161-166` rows, both path assumptions. The third is not
+on the allowlist:
+
+```
+book/src/probes/12_relation_named_accounts.dl7: exit 0, expected duplicate_relation_name
+tests/_22_book.rs:455
+```
+
+Measured on the base reader: `git checkout origin/main -- src/_0_read/_1_tokens.rs`,
+rebuild, same failure. It predates this branch. The probe declares a relation
+named `accounts` in a project that also holds the module `accounts`
+(`book/src/probes/10_accounts.dl7`), and the collision no longer raises, which
+is the ground the import arc moved at PR #784.
+
+## 6. The forks, for Chris
 
 Each fork settles language design, so none is a lane's call.
 
