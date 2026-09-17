@@ -25,10 +25,13 @@ pub fn valid_identifier(token: &str) -> bool {
     }
 }
 
+/// A leading `^` marks the subterm its form evaluates to; the caret stays in
+/// the atom's text and `macrotime/` reads it back off `syntax_atom`.
 pub fn valid_atom(token: &str) -> bool {
     if matches!(token, ":" | "*" | "+" | "->" | "<-" | "<+") {
         return true;
     }
+    let token = token.strip_prefix('^').unwrap_or(token);
     if let Some(name) = token.strip_suffix(':') {
         if valid_identifier(name) {
             return true;
