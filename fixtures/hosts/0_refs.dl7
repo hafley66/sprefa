@@ -1,12 +1,5 @@
 ; One repository root; every ref it holds, then every ref that moves, is a row.
-(: soopy_refs
-   (* (: root text)
-      (: name text)
-      (: sha text)))
-
-(: soopy_refs_error
-   (* (: root text)
-      (: message text)))
+(git: (import "@std/git"))
 
 (: Watch (* (: root text)))
 
@@ -16,4 +9,4 @@
 
 (<- (Head ?Sha)
     (Watch ?Root)
-    (soopy_refs ?Root "HEAD" ?Sha))
+    (git.refs ?Root "HEAD" ?Sha))

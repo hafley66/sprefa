@@ -1,14 +1,5 @@
 ; The tracked files of one repository at one revision.
-(: repo_at
-   (* (: root text)
-      (: sha text)
-      (: path text)
-      (: blob text)))
-
-(: repo_at_error
-   (* (: root text)
-      (: sha text)
-      (: message text)))
+(fs: (import "@std/fs"))
 
 (: Pin
    (* (: root text)
@@ -22,4 +13,4 @@
 
 (<- (File ?Path ?Blob)
     (Pin ?Root ?Sha)
-    (repo_at ?Root ?Sha ?Path ?Blob))
+    (fs.at ?Root ?Sha ?Path ?Blob))

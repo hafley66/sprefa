@@ -1,4 +1,4 @@
-//! `(soopy_refs ?Root ?Name ?Sha)`: one ref watcher per bound root. The opening
+//! `(git.refs ?Root ?Name ?Sha)`: one ref watcher per bound root. The opening
 //! snapshot is rows; each wake's `diff_refs` delta is new rows; a removed ref writes nothing.
 
 use super::{message, text_at};
@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub const RELATION: &str = "soopy_refs";
-pub const ERROR: &str = "soopy_refs_error";
+pub const RELATION: &str = "git.refs";
+pub const ERROR: &str = "git.refs_error";
 
 /// How often a root whose watcher failed to open is re-read.
 const RESNAPSHOT_EVERY: Duration = Duration::from_secs(1);
@@ -42,7 +42,7 @@ impl Wake {
             match watcher.recv_timeout(slice) {
                 Ok(batch) => return batch.is_some(),
                 Err(error) => {
-                    tracing::warn!(target: "dl8::soopy_refs", root, error = %error, "watcher closed, re-reading every second")
+                    tracing::warn!(target: "dl8::git_refs", root, error = %error, "watcher closed, re-reading every second")
                 }
             }
             *self = Wake::Every(Instant::now() + RESNAPSHOT_EVERY);
@@ -91,7 +91,7 @@ impl SoopyRefs {
         let wake = match soopy::SourceTree::open(repository.clone()).watch_repository(watch) {
             Ok(watcher) => Wake::Watcher(Box::new(watcher)),
             Err(error) => {
-                tracing::warn!(target: "dl8::soopy_refs", root, error = %error, "watcher unavailable, re-reading every second");
+                tracing::warn!(target: "dl8::git_refs", root, error = %error, "watcher unavailable, re-reading every second");
                 Wake::Every(Instant::now() + RESNAPSHOT_EVERY)
             }
         };
@@ -189,7 +189,7 @@ impl IExecutor for SoopyRefs {
             match Self::open(&root_text) {
                 Ok((refs, query, last, wake)) => {
                     rows.extend(self.snapshot_rows(u, root_cell, &last));
-                    tracing::info!(target: "dl8::soopy_refs", root = %root_text, refs = last.refs.len(), watcher = matches!(wake, Wake::Watcher(_)), "armed");
+                    tracing::info!(target: "dl8::git_refs", root = %root_text, refs = last.refs.len(), watcher = matches!(wake, Wake::Watcher(_)), "armed");
                     self.roots.insert(
                         root_text,
                         WatchedRoot {
@@ -224,7 +224,7 @@ impl IExecutor for SoopyRefs {
             match snapshot {
                 Ok(after) => {
                     let found = self.delta_rows(u, root_cell, &watched.last, &after);
-                    tracing::debug!(target: "dl8::soopy_refs", root = %root_text, rows = found.len(), "re-read");
+                    tracing::debug!(target: "dl8::git_refs", root = %root_text, rows = found.len(), "re-read");
                     rows.extend(found);
                     if let Some(watched) = self.roots.get_mut(&root_text) {
                         watched.last = after;

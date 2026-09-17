@@ -1,4 +1,4 @@
-//! `(soopy_history ?Root ?Sha ?Parent)`: one row per parent edge reachable from
+//! `(git.history ?Root ?Sha ?Parent)`: one row per parent edge reachable from
 //! `?Sha`, or `HEAD` when unbound. A root commit has no parent and so no row.
 
 use super::{message, text_at};
@@ -7,8 +7,8 @@ use crate::_6_eval::{Row, TermId, Universe};
 use crate::_9_runtime::reconcile::{Cadence, IExecutor};
 use std::time::Duration;
 
-pub const RELATION: &str = "soopy_history";
-pub const ERROR: &str = "soopy_history_error";
+pub const RELATION: &str = "git.history";
+pub const ERROR: &str = "git.history_error";
 
 pub struct SoopyHistory {
     relation: TermId,
@@ -71,7 +71,7 @@ impl IExecutor for SoopyHistory {
             let root_cell = u.compound("const", vec![root]);
             match walk(&root_text, &start) {
                 Ok(commits) => {
-                    tracing::info!(target: "dl8::soopy_history", root = %root_text, start = %start, commits = commits.len());
+                    tracing::info!(target: "dl8::git_history", root = %root_text, start = %start, commits = commits.len());
                     for commit in commits {
                         let sha = u.string(&commit.commit.0);
                         let sha_cell = u.compound("const", vec![sha]);

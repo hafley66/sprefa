@@ -226,14 +226,14 @@ fn text(value: &str) -> Value {
 }
 
 #[test]
-pub fn soopy_refs_answers_the_snapshot_then_the_ref_that_moved() {
+pub fn git_refs_answers_the_snapshot_then_the_ref_that_moved() {
     let directory = scratch("refs");
     let (root, first) = repository(&directory);
     let root_text = root.to_string_lossy().to_string();
     let compiled = compile(&directory, "0_refs.dl7", &[("__ROOT__", &root_text)]);
     let mut running = spawn(
         &compiled.program,
-        &["--serve", "soopy_refs", "--max-ticks", "2"],
+        &["--serve", "git.refs", "--max-ticks", "2"],
         &[],
     );
     running.wait_for_line("armed");
@@ -248,38 +248,38 @@ pub fn soopy_refs_answers_the_snapshot_then_the_ref_that_moved() {
         vec![text(&root_text), text("refs/heads/main"), text(&second)],
     ];
     expected.sort_by_key(|row| row.iter().map(|v| v.to_string()).collect::<Vec<_>>());
-    assert_eq!(rows(&out, &compiled.names, "soopy_refs"), expected);
+    assert_eq!(rows(&out, &compiled.names, "git.refs"), expected);
     let mut heads = vec![vec![text(&first)], vec![text(&second)]];
     heads.sort_by_key(|row| row[0].to_string());
     assert_eq!(rows(&out, &compiled.names, "Head"), heads);
-    assert!(rows(&out, &compiled.names, "soopy_refs_error").is_empty());
+    assert!(rows(&out, &compiled.names, "git.refs_error").is_empty());
 }
 
 #[test]
-pub fn soopy_refs_on_a_directory_that_is_no_repository_is_an_error_row() {
+pub fn git_refs_on_a_directory_that_is_no_repository_is_an_error_row() {
     let directory = scratch("refs-missing");
     let root_text = directory.join("nothing").to_string_lossy().to_string();
     let compiled = compile(&directory, "0_refs.dl7", &[("__ROOT__", &root_text)]);
     let (out, code) = run(
         &compiled.program,
-        &["--serve", "soopy_refs", "--max-ticks", "1"],
+        &["--serve", "git.refs", "--max-ticks", "1"],
         &[],
     );
     assert_eq!(code, 0, "exit code");
-    assert!(rows(&out, &compiled.names, "soopy_refs").is_empty());
-    let errors = rows(&out, &compiled.names, "soopy_refs_error");
+    assert!(rows(&out, &compiled.names, "git.refs").is_empty());
+    let errors = rows(&out, &compiled.names, "git.refs_error");
     assert_eq!(errors.len(), 1, "errors {errors:?}");
     assert_eq!(errors[0][0], text(&root_text));
 }
 
 #[test]
-pub fn soopy_history_answers_one_edge_per_parent() {
+pub fn git_history_answers_one_edge_per_parent() {
     let directory = scratch("history");
     let (root, first) = repository(&directory);
     let second = commit(&root, SECOND_DATE, "b.txt", "two\n");
     let root_text = root.to_string_lossy().to_string();
     let compiled = compile(&directory, "1_history.dl7", &[("__ROOT__", &root_text)]);
-    let (out, code) = run(&compiled.program, &["--serve", "soopy_history"], &[]);
+    let (out, code) = run(&compiled.program, &["--serve", "git.history"], &[]);
     assert_eq!(code, 0, "exit code; diagnostics {}", out["diagnostics"]);
     assert_eq!(
         rows(&out, &compiled.names, "Edge"),
@@ -290,18 +290,18 @@ pub fn soopy_history_answers_one_edge_per_parent() {
 }
 
 #[test]
-pub fn soopy_history_on_a_directory_that_is_no_repository_is_an_error_row() {
+pub fn git_history_on_a_directory_that_is_no_repository_is_an_error_row() {
     let directory = scratch("history-missing");
     let root_text = directory.join("nothing").to_string_lossy().to_string();
     let compiled = compile(&directory, "1_history.dl7", &[("__ROOT__", &root_text)]);
-    let (out, code) = run(&compiled.program, &["--serve", "soopy_history"], &[]);
+    let (out, code) = run(&compiled.program, &["--serve", "git.history"], &[]);
     assert_eq!(code, 0, "exit code");
     assert!(rows(&out, &compiled.names, "Edge").is_empty());
     assert_eq!(rows(&out, &compiled.names, "Failed").len(), 1);
 }
 
 #[test]
-pub fn repo_at_answers_the_files_and_blobs_of_each_revision() {
+pub fn fs_at_answers_the_files_and_blobs_of_each_revision() {
     let directory = scratch("repo-at");
     let (root, first) = repository(&directory);
     let second = commit(&root, SECOND_DATE, "b.txt", "two\n");
@@ -331,14 +331,14 @@ pub fn repo_at_answers_the_files_and_blobs_of_each_revision() {
             "2_repo_at.dl7",
             &[("__ROOT__", &root_text), ("__SHA__", &revision)],
         );
-        let (out, code) = run(&compiled.program, &["--serve", "repo_at"], &[]);
+        let (out, code) = run(&compiled.program, &["--serve", "fs.at"], &[]);
         assert_eq!(code, 0, "exit code; diagnostics {}", out["diagnostics"]);
         assert_eq!(
             rows(&out, &compiled.names, "File"),
             expected,
             "at {revision}"
         );
-        assert!(rows(&out, &compiled.names, "repo_at_error").is_empty());
+        assert!(rows(&out, &compiled.names, "fs.at_error").is_empty());
     }
 }
 
@@ -488,11 +488,11 @@ pub fn org_program_reads_the_head_of_each_required_repository() {
     let compiled = compile(&directory, "org.dl7", &[("__PROJECTS__", &projects_text)]);
     let (out, code) = run(
         &compiled.program,
-        &["--serve", "soopy_refs", "--max-ticks", "1"],
+        &["--serve", "git.refs", "--max-ticks", "1"],
         &[],
     );
     assert_eq!(code, 0, "exit code; diagnostics {}", out["diagnostics"]);
-    assert!(rows(&out, &compiled.names, "soopy_refs_error").is_empty());
+    assert!(rows(&out, &compiled.names, "git.refs_error").is_empty());
     let heads = rows(&out, &compiled.names, "head_sha");
     let roots: Vec<Value> = heads.iter().map(|row| row[0].clone()).collect();
     let mut expected: Vec<Value> = required
