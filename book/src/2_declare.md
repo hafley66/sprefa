@@ -25,10 +25,21 @@ The primitive names are `int float bool text any type` (`src/_3_check/_5_kernel.
 Literals: 64-bit integers, decimal floats, `true`, `false`, and double-quoted text (`src/_0_read/_2_reader.rs:376-397`). A wider integer is `integer_out_of_range` (`_2_reader.rs:383`).
 A product field whose name is `return` makes every other position the key (`_2_declare.rs:292-303`).
 
+A field target is a type node or a value node.
+A type node is a primitive or a declared name, and the field has that type and no default.
+A value node is an application of a type to literals, and the field has that type and that literal as its default.
+`(text "untitled")` is the value node `intern text ["untitled"]` (`src/_2_lower/_8_express.rs`, `lower_construction`).
+`(: count 3)` names no type, so the literal's own primitive is the constructor (`src/_2_lower/_5_derived.rs`, `literal_construction`).
+Applying a node that declares a relation is a goal; applying a node that declares none is construction (`_8_express.rs`, `expression_callable`).
+
+The field's type and its default are prelude rules over that one value node, not a pass in the compiler (`prelude/3_derived_rules.dl7`, `column_value`, `column_type`, `default`).
+`column_type` also holds for a field whose target is a type node, so one relation answers the type of every field of every product and every kernel relation.
+
 ## Why
 
 `plans/v8/2026-09-13-v8-tour.md` section 5: `(: owner name target index)` is the one row every declaration lowers to, so a declaration is data a rule can read ([Terms and the graph](5_terms.md)).
 No written decision names why a sum carries no relation; the source line is `_2_declare.rs:268`.
+A default is a value node rather than a fourth item of `:`, and its type is a comptime rule rather than a Rust pass, because a Rust pass runs before comptime and would be blind to every derived type (`AGENTS.md`, the two rows dated 2026-09-17 on defaults and on column typing).
 
 ## When to use
 
@@ -90,6 +101,48 @@ $ $DL8 compile oracle/compile/sources/test/fixtures/16_interned_storage.dl7 | jq
 [[":",612],["module",2],["nil",1],["node",164],["product",159],["sum",1]]
 ```
 
+A typed default, and one inferred from its literal:
+
+```dl7
+; fixture: plans/v8/probes/2026-09-17-defaults.dl7
+; A typed default: the column target is a value node, not a type node.
+(User: (* (: name text)
+          (: title (text "untitled"))
+          (: n 3)
+          (: return type)))
+```
+
+Its rx lowering. `nil`, `cons` and `intern` are the three kernel goals
+`lower_construction` writes, and the stream is returned rather than subscribed:
+
+```ts
+const title$ = nil().pipe(
+  mergeMap((tail) => cons("untitled", tail)),
+  mergeMap((argumentList) => intern(text, argumentList)),
+  map((value) => colon(User, "title", value, 1)),
+);
+
+const count$ = nil().pipe(
+  mergeMap((tail) => cons(3, tail)),
+  mergeMap((argumentList) => intern(int, argumentList)),
+  map((value) => colon(User, "n", value, 2)),
+);
+```
+
+The field's type and default read back out of that one value node:
+
+```console
+$ $DL8 compile plans/v8/probes/2026-09-17-defaults.dl7 | jq -r '.diagnostics | length'
+0
+```
+
+| field | target | `column_type` | `default` |
+|---|---|---|---|
+| `name` | `text` | `text` | none |
+| `title` | `(text "untitled")` | `text` | `"untitled"` |
+| `n` | `3` | `int` | `3` |
+| `return` | `type` | `type` | none |
+
 A field type nobody declared:
 
 ```dl7
@@ -114,3 +167,6 @@ exit 1
 | a sum declares no relation | `src/_2_lower/_2_declare.rs:268-277` | `sed -n 268,277p src/_2_lower/_2_declare.rs` |
 | six primitive names | `src/_3_check/_5_kernel.rs:40-42` | `grep -n primitive_name src/_3_check/_5_kernel.rs` |
 | an undeclared field type is `unresolved_name` naming the field | `oracle/check/cases/0_unresolved_name.dl7`, `oracle/check/status.json` | `cargo test --test _4_check_oracle` |
+| a typed default and a bare literal both compile clean | `plans/v8/probes/2026-09-17-defaults.dl7` | `$DL8 compile plans/v8/probes/2026-09-17-defaults.dl7 \| jq '.diagnostics'` |
+| the field type and the default are prelude rules | `prelude/3_derived_rules.dl7`, `prelude/1_declarations.dl7` | `grep -n 'column_value\|column_type\|default' prelude/3_derived_rules.dl7` |
+| a value-node option reads through `default` | `prelude/2_constructor_rules.dl7`, `HistoryV1` | `cargo test --test _8_compile_oracle` |
