@@ -116,7 +116,12 @@ def refreeze_eval(binary, directory):
 
 
 def refreeze_compile(binary, directory):
-    """The compile test compares whole stdout, with the source root elided."""
+    """The compile test compares stdout key by key, with the source root elided.
+
+    `replace` and not a whole-value assignment: `compile` prints `program`,
+    which no case freezes and which puts the committed set over the 6 MB the
+    test asserts.
+    """
     sources = os.path.join(directory, "sources")
     count = 0
     for path in cases(os.path.join(directory, "cases")):
@@ -125,8 +130,7 @@ def refreeze_compile(binary, directory):
         got = json.loads(
             json.dumps(door(binary, ["compile"] + arguments)).replace(sources, "<root>")
         )
-        if case["expected"] != got:
-            case["expected"] = got
+        if replace(case, got):
             write_json(path, case)
             count += 1
     return count
