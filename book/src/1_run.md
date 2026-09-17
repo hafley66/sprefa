@@ -77,7 +77,6 @@ Arguments:
 Options:
       --project <PROJECT>  Project root; `compile_dl7_project/5` instead of `compile_dl7/4`
       --tsi <TSI>          A TSI JSONL stream to load before lowering
-      --openapi <OPENAPI>  An OpenAPI 3.x JSON document to load as types and routes before lowering
       --trace              Print every wave and round to stderr
   -h, --help               Print help
 ```
@@ -108,7 +107,7 @@ Arguments:
   <PROGRAM>  
 
 Options:
-      --serve <SERVE>          Relations an executor settles: `timer`, `fetch_json`, `soopy_refs`, `soopy_history`, `repo_at`, `extract`
+      --serve <SERVE>          Relations an executor settles: `timer`, `fetch_json`, `git.refs`, `git.history`, `fs.at`, `extract`
       --trace                  Print one line per stratum, round and tick to stderr
       --db <DB>                Persist every tick into this SQLite file and continue from it
       --max-ticks <MAX_TICKS>  Stop after this many ticks past tick 0; unset runs until settled

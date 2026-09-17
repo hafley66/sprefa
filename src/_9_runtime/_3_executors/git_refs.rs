@@ -15,7 +15,7 @@ pub const ERROR: &str = "git.refs_error";
 /// How often a root whose watcher failed to open is re-read.
 const RESNAPSHOT_EVERY: Duration = Duration::from_secs(1);
 
-pub struct SoopyRefs {
+pub struct GitRefs {
     relation: TermId,
     error: TermId,
     roots: BTreeMap<String, WatchedRoot>,
@@ -62,9 +62,9 @@ impl Wake {
     }
 }
 
-impl SoopyRefs {
-    pub fn new(relation: TermId, error: TermId) -> SoopyRefs {
-        SoopyRefs {
+impl GitRefs {
+    pub fn new(relation: TermId, error: TermId) -> GitRefs {
+        GitRefs {
             relation,
             error,
             roots: BTreeMap::new(),
@@ -167,7 +167,7 @@ fn peeled(observation: &soopy::RefObservation) -> &str {
     &observation.peeled.as_ref().unwrap_or(&observation.direct).0
 }
 
-impl IExecutor for SoopyRefs {
+impl IExecutor for GitRefs {
     fn relation(&self) -> &str {
         RELATION
     }

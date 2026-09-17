@@ -189,8 +189,11 @@ fn names_to_json(u: &Universe, graph: TermId) -> Result<Value, Transport> {
         let Some(module) = u.unary(owner, "module") else {
             continue;
         };
-        if u.unary(relation, "ref").is_none() {
-            continue;
+        // An import binds a module node, never a relation `--serve` can settle.
+        match u.unary(relation, "ref") {
+            None => continue,
+            Some(target) if u.unary(target, "module").is_some() => continue,
+            Some(_) => {}
         }
         let Term::Atom(s) = u.get(name) else {
             continue;

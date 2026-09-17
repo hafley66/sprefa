@@ -10,14 +10,14 @@ use std::time::Duration;
 pub const RELATION: &str = "git.history";
 pub const ERROR: &str = "git.history_error";
 
-pub struct SoopyHistory {
+pub struct GitHistory {
     relation: TermId,
     error: TermId,
 }
 
-impl SoopyHistory {
-    pub fn new(relation: TermId, error: TermId) -> SoopyHistory {
-        SoopyHistory { relation, error }
+impl GitHistory {
+    pub fn new(relation: TermId, error: TermId) -> GitHistory {
+        GitHistory { relation, error }
     }
 }
 
@@ -51,7 +51,7 @@ fn walk(root: &str, start: &str) -> Result<Vec<soopy::CommitParents>, String> {
     Ok(answer.parents)
 }
 
-impl IExecutor for SoopyHistory {
+impl IExecutor for GitHistory {
     fn relation(&self) -> &str {
         RELATION
     }

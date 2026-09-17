@@ -35,9 +35,9 @@ Columns and answers per served name: [Executors](../11_executors.md). This table
 |---|---|---|---|---|---|
 | `timer` | a thread in `dl8`, one per `Timer`, sending fires on an `mpsc` channel | Continuing | its own clock: the earliest due period (`timer.rs:52-79`) | none | `src/_9_runtime/_3_executors/timer.rs:29-38`, `:154` |
 | `fetch_json` | the tick loop thread in `dl8`: `ureq` blocking GET, 10 s global timeout, urls one after another | Once | an `effect` row | `fetch_json_error` | `fetch_json.rs:12-13`, `:29-59`, `:71-109` |
-| `soopy_refs` | `dl8`, through the `soopy` path dependency; `soopy::Refs` and `RepositoryWatcher` | Continuing | `RepositoryWatcher::recv_timeout`, degrading to a 1 s re-read when the watcher fails to open or closes | `soopy_refs_error` | `soopy_refs.rs:15-16`, `:33-63`, `:74-101`, `:210-237` |
-| `soopy_history` | `dl8` through `soopy::RevisionGraph`, which spawns `git` children | Once | an `effect` row | `soopy_history_error` | `soopy_history.rs:24-45`; `hafley-rs/crates/soopy/src/_12_revision_graph.rs:114` |
-| `repo_at` | `dl8` through `soopy::SourceTree::git_files`, which spawns `git ls-files` | Once | an `effect` row | `repo_at_error` | `repo_at.rs:24-44`; `hafley-rs/crates/soopy/src/_9_git_files.rs:74` |
+| `git.refs` | `dl8`, through the `soopy` path dependency; `soopy::Refs` and `RepositoryWatcher` | Continuing | `RepositoryWatcher::recv_timeout`, degrading to a 1 s re-read when the watcher fails to open or closes | `git.refs_error` | `git_refs.rs:15-16`, `:33-63`, `:74-101`, `:210-237` |
+| `git.history` | `dl8` through `soopy::RevisionGraph`, which spawns `git` children | Once | an `effect` row | `git.history_error` | `git_history.rs:24-45`; `hafley-rs/crates/soopy/src/_12_revision_graph.rs:114` |
+| `fs.at` | `dl8` through `soopy::SourceTree::git_files`, which spawns `git ls-files` | Once | an `effect` row | `fs.at_error` | `fs_at.rs:24-44`; `hafley-rs/crates/soopy/src/_9_git_files.rs:74` |
 | `extract` | a child process, the `sprefa-extract` binary, one run per root and family, killed past 10 s | Once | an `effect` row | `extract_error` | `extract.rs:17-18`, `:37-61`, `:111-146` |
 
 Dependencies: `soopy` is a path dependency and `ureq` a crates.io one (`Cargo.toml:18`, `:21`).
@@ -58,7 +58,7 @@ Dependencies: `soopy` is a path dependency and `ureq` a crates.io one (`Cargo.to
 ## Rule
 
 - Every executor is a Rust type compiled into `dl8`; `executors_for` is the only place a served name meets one (`src/_9_runtime/_3_executors/mod.rs:61-100`).
-- `extract` is the one executor that spawns its own child process; `soopy_history` and `repo_at` call `soopy` in `dl8`, and `soopy` spawns `git`.
+- `extract` is the one executor that spawns its own child process; `git.history` and `fs.at` call `soopy` in `dl8`, and `soopy` spawns `git`.
 - Continuing executors are polled on the tick loop; the loop splits one `IDLE_SLICE` across the armed ones (`_2_reconcile.rs:34-35`, `:157-167`).
 
 ## Receipts

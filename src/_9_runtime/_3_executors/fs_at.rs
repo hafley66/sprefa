@@ -10,14 +10,14 @@ use std::time::Duration;
 pub const RELATION: &str = "fs.at";
 pub const ERROR: &str = "fs.at_error";
 
-pub struct RepoAt {
+pub struct FsAt {
     relation: TermId,
     error: TermId,
 }
 
-impl RepoAt {
-    pub fn new(relation: TermId, error: TermId) -> RepoAt {
-        RepoAt { relation, error }
+impl FsAt {
+    pub fn new(relation: TermId, error: TermId) -> FsAt {
+        FsAt { relation, error }
     }
 }
 
@@ -43,7 +43,7 @@ fn files_at(root: &str, revision: &str) -> Result<Vec<(String, String)>, String>
         .collect()
 }
 
-impl IExecutor for RepoAt {
+impl IExecutor for FsAt {
     fn relation(&self) -> &str {
         RELATION
     }

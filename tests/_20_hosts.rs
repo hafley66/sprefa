@@ -328,7 +328,7 @@ pub fn fs_at_answers_the_files_and_blobs_of_each_revision() {
     ] {
         let compiled = compile(
             &directory,
-            "2_repo_at.dl7",
+            "2_fs_at.dl7",
             &[("__ROOT__", &root_text), ("__SHA__", &revision)],
         );
         let (out, code) = run(&compiled.program, &["--serve", "fs.at"], &[]);

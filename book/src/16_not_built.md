@@ -8,7 +8,7 @@ flowchart LR
   store -.-> latch["keyed latch: key(N) with <+"]
   effect["(effect Rel App) rows"] -.-> pending[effect pending and settled tables, aborted_at]
   effect -.-> abort[effect abort]
-  effect -.-> removedref[a removed ref retracting its soopy_refs row]
+  effect -.-> removedref[a removed ref retracting its git.refs row]
   retraction & pre & sweep & latch & pending & abort & removedref -.-> nb[not built]
   classDef notbuilt stroke-dasharray: 5 5
   class retraction,pre,sweep,latch,pending,abort,removedref,nb notbuilt
@@ -17,7 +17,7 @@ flowchart LR
 | construct | where it is planned or recorded | status |
 |---|---|---|
 | retraction: delete-rederive or signed rows | `plans/v8/2026-09-14-v8-store.PLAN.md` section 10; `plans/v8/2026-09-14-v8-design-review.fable.md:169` | not built; tables are append-only, `src/_6_eval/_3_table.rs:1-3` |
-| a removed ref retracting its `soopy_refs` row | `README.md:126` | not built |
+| a removed ref retracting its `git.refs` row | `README.md:126` | not built |
 | keyed latch, `key(N)` with `<+` | `v6/tsv2/goldens/ghcacher_tick_golden/0_ghcacher_clock_golden.dl6:10-11`, `:24-25`; `design-review.fable.md:125` | not built; `<+` rewrites to `<-`, `macrotime/0_standard.dl7:101-102` |
 | log relations with retention, `keep(all)` | `design-review.fable.md:126` | not built |
 | `pre/1` last-tick rows, `now/1` | `design-review.fable.md:127` | not built |
@@ -27,7 +27,7 @@ flowchart LR
 | dictionary release by refCount and sweep | `store.PLAN.md:907` | not built |
 | `fold` in the `dl8 eval` JSON transport | `tests/_15_fold.rs:6-8` | not built; `dl8 eval` keeps the fold term as a value |
 | structured projection of an `extract` payload | `README.md:128` | not built |
-| commit time in `soopy_history` | `README.md:127` | not built |
+| commit time in `git.history` | `README.md:127` | not built |
 | schedule-fed replay of arrivals | `v6/tsv2/goldens/ghcacher_tick_golden/README.md:3-11` | not built in dl8 |
 | statement count per tick | `v6/tsv2/goldens/ghcacher_tick_golden/5_expected.statements.jsonl` | not built; `insert_statements` is per run, `src/bin/dl8.rs:423-425` |
 | deleting `Hosted` and `HostPort` from the prelude | `plans/v8/2026-09-14-v8-effect-demand.brief.md:83` | partly done: `_2_lower/_3_host.rs` and `_4_comptime/_4_host.rs` are gone; `src/_2_lower/_1_forms.rs:143` still names `Host`; the declarations remain at `prelude/1_declarations.dl7:292-305` |
