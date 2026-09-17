@@ -5,7 +5,7 @@
    "arguments": [
     "<root>/applications/dl6/0_catalog.dl7"
    ],
-   "bytes": 685951,
+   "bytes": 709172,
    "committed": true,
    "compiler_rows": 859,
    "diagnostics": 0,
@@ -20,7 +20,7 @@
     "<root>/applications/dl6/0_catalog.dl7"
    ],
    "bytes": 961214,
-   "committed": true,
+   "committed": false,
    "compiler_rows": 1166,
    "diagnostics": 0,
    "stem": "project-dl6-catalog",
@@ -33,7 +33,7 @@
     "<root>/test/fixtures/modules/0_accounts.dl7",
     "<root>/test/fixtures/modules/1_consumer.dl7"
    ],
-   "bytes": 716637,
+   "bytes": 744566,
    "committed": true,
    "compiler_rows": 929,
    "diagnostics": 0,
@@ -47,7 +47,7 @@
     "<root>/test/fixtures/modules/0_accounts.dl7",
     "<root>/test/fixtures/modules/2_plus_consumer.dl7"
    ],
-   "bytes": 717957,
+   "bytes": 745951,
    "committed": true,
    "compiler_rows": 929,
    "diagnostics": 0,
@@ -62,7 +62,7 @@
     "--tsi",
     "<root>/test/fixtures/tsi/1_semantic_user.jsonl"
    ],
-   "bytes": 921113,
+   "bytes": 955018,
    "committed": true,
    "compiler_rows": 1242,
    "diagnostics": 0,
@@ -73,7 +73,7 @@
    "arguments": [
     "<root>/test/fixtures/0_minimal.dl7"
    ],
-   "bytes": 196,
+   "bytes": 270,
    "committed": true,
    "compiler_rows": 0,
    "diagnostics": 1,
@@ -117,7 +117,7 @@
    "arguments": [
     "<root>/test/fixtures/14_syntax_macros.dl7"
    ],
-   "bytes": 730423,
+   "bytes": 753688,
    "committed": true,
    "compiler_rows": 861,
    "diagnostics": 0,
@@ -161,7 +161,7 @@
    "arguments": [
     "<root>/test/fixtures/2_partial.dl7"
    ],
-   "bytes": 732688,
+   "bytes": 755876,
    "committed": true,
    "compiler_rows": 910,
    "diagnostics": 0,
@@ -172,7 +172,7 @@
    "arguments": [
     "<root>/test/fixtures/3_type_algebra.dl7"
    ],
-   "bytes": 806014,
+   "bytes": 829257,
    "committed": true,
    "compiler_rows": 987,
    "diagnostics": 0,
@@ -194,7 +194,7 @@
    "arguments": [
     "<root>/test/fixtures/5_curry.dl7"
    ],
-   "bytes": 166,
+   "bytes": 238,
    "committed": true,
    "compiler_rows": 0,
    "diagnostics": 1,
@@ -260,7 +260,7 @@
    "arguments": [
     "<root>/test/fixtures/binding_symmetry/11_mixed_deferrable_and_real_error.dl7"
    ],
-   "bytes": 278,
+   "bytes": 394,
    "committed": true,
    "compiler_rows": 0,
    "diagnostics": 1,
@@ -381,7 +381,7 @@
    "arguments": [
     "<root>/test/fixtures/lexical_binding/2_missing_name.dl7"
    ],
-   "bytes": 241,
+   "bytes": 336,
    "committed": true,
    "compiler_rows": 0,
    "diagnostics": 1,
@@ -392,7 +392,7 @@
    "arguments": [
     "<root>/test/fixtures/lexical_binding/3_self_cycle.dl7"
    ],
-   "bytes": 417,
+   "bytes": 510,
    "committed": true,
    "compiler_rows": 0,
    "diagnostics": 2,
@@ -403,7 +403,7 @@
    "arguments": [
     "<root>/test/fixtures/lexical_binding/4_two_cycle.dl7"
    ],
-   "bytes": 593,
+   "bytes": 685,
    "committed": true,
    "compiler_rows": 0,
    "diagnostics": 3,
@@ -458,7 +458,7 @@
    "arguments": [
     "<root>/test/fixtures/modules/1_consumer.dl7"
    ],
-   "bytes": 162,
+   "bytes": 245,
    "committed": true,
    "compiler_rows": 0,
    "diagnostics": 1,
@@ -469,7 +469,7 @@
    "arguments": [
     "<root>/test/fixtures/modules/2_plus_consumer.dl7"
    ],
-   "bytes": 162,
+   "bytes": 250,
    "committed": true,
    "compiler_rows": 0,
    "diagnostics": 1,

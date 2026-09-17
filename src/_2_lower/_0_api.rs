@@ -5,7 +5,7 @@ use super::cx::{CallPolicy, Cx};
 use super::declare::{lower_declarations, Declared};
 use super::derived::{lower_derived_bind_rules, Stop};
 use super::execute::lower_executables;
-use super::index::{EdgeIndex, ReservationIndex};
+use super::index::{edge_parts, reservation_parts, EdgeIndex, ReservationIndex};
 use super::promote::{promote_deferred_aliases, promoted_alias_rules, Promoted};
 use crate::_6_eval::term::{TermId, Universe};
 use std::collections::HashMap;
@@ -125,6 +125,47 @@ fn unbound_program(diagnostic: TermId) -> Lowered {
     }
 }
 
+/// `(<name>: (import "<path>"))` minted a deferred expression, and no expression
+/// lowers to a module. The import rows make it a structural edge instead.
+fn bind_imports(
+    u: &mut Universe,
+    declared: &mut Declared,
+    module_owner: TermId,
+    module_identity: TermId,
+    imports: &[TermId],
+) {
+    let reference = u.atom("reference");
+    for row in imports {
+        let Some([importer, name, imported]) = u.args::<3>(*row, "import") else {
+            continue;
+        };
+        if importer != module_identity {
+            continue;
+        }
+        let module = u.compound("module", vec![imported]);
+        let target = u.compound("target", vec![module]);
+        for edge in declared.edges.iter_mut() {
+            let Some(parts) = edge_parts(u, *edge) else {
+                continue;
+            };
+            if parts.owner != module_owner || parts.name != name {
+                continue;
+            }
+            let index = u.int(parts.index);
+            *edge = u.compound("pending_edge", vec![module_owner, name, target, index]);
+        }
+        for reservation in declared.reservations.iter_mut() {
+            let Some(parts) = reservation_parts(u, *reservation) else {
+                continue;
+            };
+            if parts.owner != module_owner || parts.name != name {
+                continue;
+            }
+            *reservation = u.compound("reservation", vec![module_owner, name, target, reference]);
+        }
+    }
+}
+
 /// `:52`.
 #[tracing::instrument(skip_all)]
 pub fn lower_datalog(
@@ -132,6 +173,7 @@ pub fn lower_datalog(
     policy: CallPolicy,
     unit_term: TermId,
     environment_term: TermId,
+    imports: &[TermId],
 ) -> Result<Lowered, Stop> {
     let Some(unit) = unit_parts(u, unit_term) else {
         return Ok(invalid_unit(u, unit_term));
@@ -140,10 +182,11 @@ pub fn lower_datalog(
     let module_identity = unit.origin;
     let module_owner = u.compound("module", vec![module_identity]);
 
-    let declared = match lower_declarations(u, &unit.forms, module_owner, module_identity) {
+    let mut declared = match lower_declarations(u, &unit.forms, module_owner, module_identity) {
         Ok(declared) => declared,
         Err(diagnostic) => return Ok(stopped(u, diagnostic)),
     };
+    bind_imports(u, &mut declared, module_owner, module_identity, imports);
     let scope = build_scope(u, &declared, &imported);
     let promoted = scope.promoted;
     let mut cx = Cx {

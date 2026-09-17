@@ -1,0 +1,5 @@
+(: seen
+   (* (: label text)))
+
+(<- (seen ?Label)
+    (exported_thing ?Label))

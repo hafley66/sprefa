@@ -1,4 +1,4 @@
-//! `(repo_at ?Root ?Sha ?Path ?Blob)`: one row per tracked file at the revision,
+//! `(fs.at ?Root ?Sha ?Path ?Blob)`: one row per tracked file at the revision,
 //! with the git blob sha. `?Sha` is any revision git names: a sha, a branch, `HEAD`.
 
 use super::{message, text_at};
@@ -7,17 +7,17 @@ use crate::_6_eval::{Row, TermId, Universe};
 use crate::_9_runtime::reconcile::{Cadence, IExecutor};
 use std::time::Duration;
 
-pub const RELATION: &str = "repo_at";
-pub const ERROR: &str = "repo_at_error";
+pub const RELATION: &str = "fs.at";
+pub const ERROR: &str = "fs.at_error";
 
-pub struct RepoAt {
+pub struct FsAt {
     relation: TermId,
     error: TermId,
 }
 
-impl RepoAt {
-    pub fn new(relation: TermId, error: TermId) -> RepoAt {
-        RepoAt { relation, error }
+impl FsAt {
+    pub fn new(relation: TermId, error: TermId) -> FsAt {
+        FsAt { relation, error }
     }
 }
 
@@ -43,7 +43,7 @@ fn files_at(root: &str, revision: &str) -> Result<Vec<(String, String)>, String>
         .collect()
 }
 
-impl IExecutor for RepoAt {
+impl IExecutor for FsAt {
     fn relation(&self) -> &str {
         RELATION
     }
@@ -64,7 +64,7 @@ impl IExecutor for RepoAt {
             let sha_cell = u.compound("const", vec![sha]);
             match files_at(&root_text, &sha_text) {
                 Ok(files) => {
-                    tracing::info!(target: "dl8::repo_at", root = %root_text, sha = %sha_text, files = files.len());
+                    tracing::info!(target: "dl8::fs_at", root = %root_text, sha = %sha_text, files = files.len());
                     for (path, blob) in files {
                         let path = u.string(&path);
                         let blob = u.string(&blob);

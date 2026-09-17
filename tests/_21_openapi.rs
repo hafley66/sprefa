@@ -1,11 +1,10 @@
-//! `dl8 compile --openapi` through the real binary over
-//! `fixtures/openapi/todo.json`, a hand rendering of
-//! `hafley-tsp/examples/todo-app.tsp`.
+//! `dl8 compile` through the real binary over `fixtures/openapi/todo.json`, a
+//! hand rendering of `hafley-tsp/examples/todo-app.tsp`. The program imports
+//! `@std/oai` and names its own document; no CLI flag seeds the module.
 //!
 //! FAIL-FIRST RECEIPT: drop the `optional` wrap in `fill_node` and
 //! `mapping_rows_land_in_the_type_graph` fails at "Todo.body is not a sum";
-//! point `route_fact` at no relation and every compile reports
-//! `tsi_unknown_relation('openapi.route')`.
+//! point `route_fact` at no relation and every route seed disappears.
 
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -13,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const ROOT_TOKEN: &str = "/V8ROOT";
-const OWNER: &str = "module(tsi('openapi',['fixtures/openapi/todo.json']))";
+const OWNER: &str = "module(tsi('openapi',['/V8ROOT/fixtures/openapi/todo.json']))";
 
 fn v8_root() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -26,16 +25,14 @@ struct Compiled {
     diagnostics: Vec<Value>,
 }
 
-/// Paths relative to the v8 root, because the document path is the owner scope.
-fn compile(documents: &[&str]) -> Compiled {
+/// The program names its documents; the run is from the v8 root so the owner
+/// scope is the same absolute path in every environment.
+fn compile(program: &str) -> Compiled {
     let mut command = Command::new(env!("CARGO_BIN_EXE_dl8"));
     command
         .current_dir(v8_root())
-        .args(["compile", "fixtures/openapi/todo.dl7"])
+        .args(["compile", &format!("fixtures/openapi/{program}.dl7")])
         .args(["--project", "fixtures/openapi"]);
-    for document in documents {
-        command.args(["--openapi", document]);
-    }
     let output = command.output().expect("dl8 runs");
     let text = String::from_utf8(output.stdout)
         .expect("dl8 writes utf8")
@@ -92,14 +89,30 @@ fn frozen(name: &str) -> Value {
         .expect("frozen file is JSON")
 }
 
+/// The callable `@std/oai` declares for one member, read off its own `:` edge
+/// so the frozen rows never pin a reader node id.
+fn oai_member(rows: &[Value], member: &str) -> String {
+    let prefix =
+        format!("call(ref(kernel(':')),[ref(module(std('oai'))),const('{member}'),ref(");
+    let row = rows
+        .iter()
+        .map(render)
+        .find(|row| row.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("no @std/oai edge for {member}"));
+    let rest = &row[prefix.len()..];
+    rest[..rest.rfind("),const(").expect("edge index")].to_string()
+}
+
 fn fixture_rows(compiled: &Compiled) -> Vec<Value> {
+    let route = format!("call(ref({}),", oai_member(&compiled.rows, "route"));
+    let param = format!("call(ref({}),", oai_member(&compiled.rows, "param"));
     compiled
         .rows
         .iter()
         .filter(|row| {
             let text = render(row);
-            text.contains("'openapi.route'")
-                || text.contains("'openapi.param'")
+            text.starts_with(&route)
+                || text.starts_with(&param)
                 || text.starts_with("call(ref(owner(file('/V8ROOT/fixtures/openapi/todo.dl7')")
         })
         .cloned()
@@ -108,7 +121,7 @@ fn fixture_rows(compiled: &Compiled) -> Vec<Value> {
 
 #[test]
 fn todo_routes_params_and_conforms_match_the_frozen_rows() {
-    let compiled = compile(&["fixtures/openapi/todo.json"]);
+    let compiled = compile("todo");
     assert!(
         compiled.diagnostics.is_empty(),
         "dl8 reported {:?}",
@@ -136,12 +149,14 @@ fn todo_routes_params_and_conforms_match_the_frozen_rows() {
 /// `name -> node` from the `tsi.name` seeds, then one assertion per mapping row.
 #[test]
 fn mapping_rows_land_in_the_type_graph() {
-    let compiled = compile(&["fixtures/openapi/todo.json"]);
+    let compiled = compile("todo");
     assert!(
         compiled.diagnostics.is_empty(),
         "{:?}",
         compiled.diagnostics
     );
+    let route_callable = oai_member(&compiled.rows, "route");
+    let param_callable = oai_member(&compiled.rows, "param");
     let rows: Vec<String> = compiled
         .rows
         .iter()
@@ -175,7 +190,7 @@ fn mapping_rows_land_in_the_type_graph() {
     let route = |operation: &str| -> String {
         rows.iter()
             .find(|row| {
-                row.starts_with("call(ref(tsi_relation(OA,'openapi.route'))")
+                row.starts_with(&format!("call(ref({route_callable}),"))
                     && row.contains(&format!("const(\"{operation}\")"))
             })
             .unwrap_or_else(|| panic!("no route {operation}"))
@@ -239,13 +254,13 @@ fn mapping_rows_land_in_the_type_graph() {
         "an operation with no request body takes void"
     );
     assert!(has(&format!(
-        "call(ref(tsi_relation(OA,'openapi.param')),[const(\"Todo_query_get\"),const(\"id\"),const('path'),ref({string}),const('true')])"
+        "call(ref({param_callable}),[const(\"Todo_query_get\"),const(\"id\"),const('path'),ref({string}),const('true')])"
     )));
 }
 
 #[test]
 fn dangling_ref_is_a_diagnostic_naming_the_pointer() {
-    let compiled = compile(&["fixtures/openapi/dangling.json"]);
+    let compiled = compile("dangling");
     assert_eq!(compiled.code, Some(1));
     assert_eq!(
         Value::Array(compiled.diagnostics),
@@ -255,14 +270,11 @@ fn dangling_ref_is_a_diagnostic_naming_the_pointer() {
 
 #[test]
 fn schema_declared_by_two_documents_is_a_diagnostic() {
-    let compiled = compile(&[
-        "fixtures/openapi/todo.json",
-        "fixtures/openapi/duplicate.json",
-    ]);
+    let compiled = compile("duplicate");
     assert_eq!(compiled.code, Some(1));
     let rendered: Vec<String> = compiled.diagnostics.iter().map(render).collect();
     assert_eq!(
         rendered,
-        ["diagnostic('openapi',document('fixtures/openapi/duplicate.json'),openapi_duplicate_schema(\"Todo\"))"]
+        ["diagnostic('openapi',document('/V8ROOT/fixtures/openapi/duplicate.json'),openapi_duplicate_schema(\"Todo\"))"]
     );
 }

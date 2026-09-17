@@ -37,12 +37,13 @@ fn lower_one(
     policy: CallPolicy,
     unit: TermId,
     environment: TermId,
+    imports: &[TermId],
     out: &mut Units,
 ) -> Result<(), Stop> {
     let owner = unit_module_owner(u, unit).unwrap_or(unit);
     // `0_lowerer.pl:271`: a declaration error is Program `[]`, no origins, one
     // diagnostic, never a failure.
-    let lowered = match lower_datalog(u, policy, unit, environment) {
+    let lowered = match lower_datalog(u, policy, unit, environment, imports) {
         Ok(lowered) => lowered,
         Err(Stop::Diagnostic(diagnostic)) => Lowered {
             program: Some(u.empty_list()),
@@ -69,10 +70,11 @@ pub fn lower_units_flat(
     policy: CallPolicy,
     units: &[TermId],
     environment: TermId,
+    imports: &[TermId],
 ) -> Result<Units, Stop> {
     let mut out = Units::default();
     for unit in units {
-        lower_one(u, policy, *unit, environment, &mut out)?;
+        lower_one(u, policy, *unit, environment, imports, &mut out)?;
     }
     Ok(out)
 }
@@ -85,6 +87,7 @@ pub fn lower_units_with_exporter(
     exporter: TermId,
     importers: &[TermId],
     generated: Option<TermId>,
+    imports: &[TermId],
 ) -> Result<Units, Stop> {
     let exporter_owner = unit_module_owner(u, exporter).unwrap_or(exporter);
     let exporter_environment = match generated {
@@ -92,7 +95,7 @@ pub fn lower_units_with_exporter(
         None => empty_environment(u),
     };
     let mut out = Units::default();
-    lower_one(u, policy, exporter, exporter_environment, &mut out)?;
+    lower_one(u, policy, exporter, exporter_environment, imports, &mut out)?;
     if !out.diagnostics.is_empty() {
         // :127, :199, :222. The exporter's own basement is the whole result.
         return Ok(out);
@@ -109,7 +112,7 @@ pub fn lower_units_with_exporter(
             None => reowned,
         };
         let mut one = Units::default();
-        lower_one(u, policy, *unit, environment, &mut one)?;
+        lower_one(u, policy, *unit, environment, imports, &mut one)?;
         out.basements.extend(one.basements);
         out.origins.extend(one.origins);
         importer_diagnostics.extend(one.diagnostics);
@@ -478,6 +481,7 @@ pub fn lower_compiler_units(
     policy: CallPolicy,
     units: &[TermId],
     environment: Option<TermId>,
+    imports: &[TermId],
 ) -> Result<Units, Stop> {
     let prelude = u.atom("prelude");
     let exporter = units.iter().position(|unit| match u.functor(*unit) {
@@ -488,14 +492,14 @@ pub fn lower_compiler_units(
         Some(slot) => {
             let mut importers = units.to_vec();
             let exporter = importers.remove(slot);
-            lower_units_with_exporter(u, policy, exporter, &importers, environment)
+            lower_units_with_exporter(u, policy, exporter, &importers, environment, imports)
         }
         None => {
             let environment = match environment {
                 Some(environment) => environment,
                 None => empty_environment(u),
             };
-            lower_units_flat(u, policy, units, environment)
+            lower_units_flat(u, policy, units, environment, imports)
         }
     }
 }

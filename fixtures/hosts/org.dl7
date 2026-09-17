@@ -1,12 +1,5 @@
 ; The hafley66 org's required repositories, each watched for its HEAD.
-(: soopy_refs
-   (* (: root text)
-      (: name text)
-      (: sha text)))
-
-(: soopy_refs_error
-   (* (: root text)
-      (: message text)))
+(git: (import "@std/git"))
 
 (: repo (* (: root text)))
 
@@ -24,4 +17,4 @@
 
 (<- (head_sha ?Root ?Sha)
     (repo ?Root)
-    (soopy_refs ?Root "HEAD" ?Sha))
+    (git.refs ?Root "HEAD" ?Sha))

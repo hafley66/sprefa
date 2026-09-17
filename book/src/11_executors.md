@@ -10,12 +10,12 @@ flowchart LR
   roster -->|no error relation| noerror[executor_relation_unknown]
   roster --> timer[timer: Continuing]
   roster --> fetch[fetch_json: Once]
-  roster --> refs[soopy_refs: Continuing]
-  roster --> history[soopy_history: Once]
-  roster --> repoat[repo_at: Once]
+  roster --> refs[git.refs: Continuing]
+  roster --> history[git.history: Once]
+  roster --> fsat[fs.at: Once]
   roster --> extract[extract: Once, killed past 10 s]
   fetch -->|non-2xx| fetcherror[fetch_json_error]
-  timer & fetch & refs & history & repoat & extract & fetcherror --> answers[answer rows]
+  timer & fetch & refs & history & fsat & extract & fetcherror --> answers[answer rows]
   answers -->|insert, evaluate| reconcile
   reconcile -->|nothing new, nothing armed| stop[exit]
 ```
@@ -29,9 +29,9 @@ Each `effect` row reaches its executor once per process (`_2_reconcile.rs:44-47`
 |---|---|---|---|---|---|
 | `timer` | `period_ms int, tick int` | Continuing | one row per fire, ticks from 1; a late fire is skipped | none | `_3_executors/timer.rs` |
 | `fetch_json` | `url text, body text` | Once | the 2xx JSON body | `fetch_json_error url text, status int, message text`; status 0 on transport failure | `_3_executors/fetch_json.rs` |
-| `soopy_refs` | `root text, name text, sha text` | Continuing | every ref plus `HEAD` at arming, then each moved or added ref | `soopy_refs_error root text, message text` | `_3_executors/soopy_refs.rs` |
-| `soopy_history` | `root text, sha text, parent text` | Once | one row per parent edge reachable from `sha`, or `HEAD` when unbound | `soopy_history_error root text, message text` | `_3_executors/soopy_history.rs` |
-| `repo_at` | `root text, sha text, path text, blob text` | Once | one row per tracked file at the revision | `repo_at_error root text, sha text, message text` | `_3_executors/repo_at.rs` |
+| `git.refs` | `root text, name text, sha text` | Continuing | every ref plus `HEAD` at arming, then each moved or added ref | `git.refs_error root text, message text` | `_3_executors/git_refs.rs` |
+| `git.history` | `root text, sha text, parent text` | Once | one row per parent edge reachable from `sha`, or `HEAD` when unbound | `git.history_error root text, message text` | `_3_executors/git_history.rs` |
+| `fs.at` | `root text, sha text, path text, blob text` | Once | one row per tracked file at the revision | `fs.at_error root text, sha text, message text` | `_3_executors/fs_at.rs` |
 | `extract` | `root text, family text, kind text, payload text` | Once | one `extract --family <family> --resolve` run, one row per JSONL record; past 10 s the run is killed | `extract_error root text, family text, message text` | `_3_executors/extract.rs` |
 
 Rows from `README.md:115-122`.
@@ -47,15 +47,15 @@ Use it when:
 
 - rows arrive on a clock: `timer`, `fixtures/reconcile/0_timer.dl7`
 - one HTTP JSON body per url: `fetch_json`, `fixtures/reconcile/1_fetch.dl7`
-- refs of a repository, live: `soopy_refs`, `fixtures/hosts/0_refs.dl7`
-- the commit graph: `soopy_history`, `fixtures/hosts/1_history.dl7`
-- the files at a revision: `repo_at`, `fixtures/hosts/2_repo_at.dl7`
+- refs of a repository, live: `git.refs`, `fixtures/hosts/0_refs.dl7`
+- the commit graph: `git.history`, `fixtures/hosts/1_history.dl7`
+- the files at a revision: `fs.at`, `fixtures/hosts/2_fs_at.dl7`
 - code facts: `extract`, `fixtures/hosts/3_extract.dl7`
 
 Do not use it when:
 
 - a removed ref must retract its row: a removed ref writes nothing (`README.md:126`)
-- a commit time is needed: `soopy_history` carries none (`README.md:127`)
+- a commit time is needed: `git.history` carries none (`README.md:127`)
 - a field of an extract record is needed as a column: `payload` stays one text term (`README.md:128`)
 
 ## Example
@@ -132,19 +132,12 @@ ticks 1
 exit 0
 ```
 
-`soopy_history` and `repo_at` over a two-commit repository made on the spot:
+`git.history` and `fs.at` over a two-commit repository made on the spot:
 
 ```dl7
 ; fixture: fixtures/hosts/1_history.dl7
 ; Every parent edge reachable from HEAD.
-(: soopy_history
-   (* (: root text)
-      (: sha text)
-      (: parent text)))
-
-(: soopy_history_error
-   (* (: root text)
-      (: message text)))
+(git: (import "@std/git"))
 
 (: Watch (* (: root text)))
 
@@ -156,17 +149,17 @@ exit 0
 
 (<- (Edge ?Sha ?Parent)
     (Watch ?Root)
-    (soopy_history ?Root ?Sha ?Parent))
+    (git.history ?Root ?Sha ?Parent))
 
 (: Failed (* (: message text)))
 
 (<- (Failed ?Message)
     (Watch ?Root)
-    (soopy_history_error ?Root ?Message))
+    (git.history_error ?Root ?Message))
 ```
 
 ```console
-$ d=$(mktemp -d) && export GIT_AUTHOR_NAME=dl8 GIT_AUTHOR_EMAIL=dl8@example.invalid GIT_COMMITTER_NAME=dl8 GIT_COMMITTER_EMAIL=dl8@example.invalid GIT_AUTHOR_DATE="1700000000 +0000" GIT_COMMITTER_DATE="1700000000 +0000" && git -C $d init -q -b main && echo one > $d/a.txt && git -C $d add a.txt && git -C $d commit -q -m a && echo two > $d/b.txt && git -C $d add b.txt && git -C $d commit -q -m b && sed "s|__ROOT__|$d|" fixtures/hosts/1_history.dl7 > $d/history.dl7 && sed -e "s|__ROOT__|$d|" -e "s|__SHA__|$(git -C $d rev-parse HEAD)|" fixtures/hosts/2_repo_at.dl7 > $d/repo_at.dl7 && bash book/show.sh run $d/history.dl7 --serve soopy_history | grep '^(Edge \|^(Failed \|^ticks\|^exit' && bash book/show.sh run $d/repo_at.dl7 --serve repo_at | grep '^(File \|^ticks\|^exit'
+$ d=$(mktemp -d) && export GIT_AUTHOR_NAME=dl8 GIT_AUTHOR_EMAIL=dl8@example.invalid GIT_COMMITTER_NAME=dl8 GIT_COMMITTER_EMAIL=dl8@example.invalid GIT_AUTHOR_DATE="1700000000 +0000" GIT_COMMITTER_DATE="1700000000 +0000" && git -C $d init -q -b main && echo one > $d/a.txt && git -C $d add a.txt && git -C $d commit -q -m a && echo two > $d/b.txt && git -C $d add b.txt && git -C $d commit -q -m b && sed "s|__ROOT__|$d|" fixtures/hosts/1_history.dl7 > $d/history.dl7 && sed -e "s|__ROOT__|$d|" -e "s|__SHA__|$(git -C $d rev-parse HEAD)|" fixtures/hosts/2_fs_at.dl7 > $d/fs_at.dl7 && bash book/show.sh run $d/history.dl7 --serve git.history | grep '^(Edge \|^(Failed \|^ticks\|^exit' && bash book/show.sh run $d/fs_at.dl7 --serve fs.at | grep '^(File \|^ticks\|^exit'
 (Edge "e11e71ad03bcedad1d840052fac86d369363baab" "1bd4c43e7380496d43b8c78be3cb324f0a1aec7f")
 ticks 1
 exit 0

@@ -4,12 +4,12 @@
 pub mod extract;
 #[path = "fetch_json.rs"]
 pub mod fetch_json;
-#[path = "repo_at.rs"]
-pub mod repo_at;
-#[path = "soopy_history.rs"]
-pub mod soopy_history;
-#[path = "soopy_refs.rs"]
-pub mod soopy_refs;
+#[path = "fs_at.rs"]
+pub mod fs_at;
+#[path = "git_history.rs"]
+pub mod git_history;
+#[path = "git_refs.rs"]
+pub mod git_refs;
 #[path = "timer.rs"]
 pub mod timer;
 
@@ -19,9 +19,9 @@ use std::collections::HashMap;
 
 pub use extract::Extract;
 pub use fetch_json::FetchJson;
-pub use repo_at::RepoAt;
-pub use soopy_history::SoopyHistory;
-pub use soopy_refs::SoopyRefs;
+pub use fs_at::FsAt;
+pub use git_history::GitHistory;
+pub use git_refs::GitRefs;
 pub use timer::Timer;
 
 /// The bound text value at `index` of an application, with its term.
@@ -76,21 +76,21 @@ pub fn executors_for(
                     (_, None) => missing(u, "executor_relation_unknown", fetch_json::ERROR),
                 }
             }
-            soopy_refs::RELATION
-            | soopy_history::RELATION
-            | repo_at::RELATION
+            git_refs::RELATION
+            | git_history::RELATION
+            | fs_at::RELATION
             | extract::RELATION => {
                 let error = match name.as_str() {
-                    soopy_refs::RELATION => soopy_refs::ERROR,
-                    soopy_history::RELATION => soopy_history::ERROR,
-                    repo_at::RELATION => repo_at::ERROR,
+                    git_refs::RELATION => git_refs::ERROR,
+                    git_history::RELATION => git_history::ERROR,
+                    fs_at::RELATION => fs_at::ERROR,
                     _ => extract::ERROR,
                 };
                 match (names.get(name.as_str()), names.get(error)) {
                     (Some(rel), Some(error)) => executors.push(match name.as_str() {
-                        soopy_refs::RELATION => Box::new(SoopyRefs::new(*rel, *error)),
-                        soopy_history::RELATION => Box::new(SoopyHistory::new(*rel, *error)),
-                        repo_at::RELATION => Box::new(RepoAt::new(*rel, *error)),
+                        git_refs::RELATION => Box::new(GitRefs::new(*rel, *error)),
+                        git_history::RELATION => Box::new(GitHistory::new(*rel, *error)),
+                        fs_at::RELATION => Box::new(FsAt::new(*rel, *error)),
                         _ => Box::new(Extract::new(*rel, *error)),
                     }),
                     (None, _) => missing(u, "served_relation_unknown", name),

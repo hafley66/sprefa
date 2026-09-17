@@ -1,16 +1,17 @@
-//! OpenAPI 3.x documents as TSI wire rows; `openapi.*` rows sit outside
-//! `TSI_RELATIONS`, so `install_openapi_graph` seeds them itself.
+//! OpenAPI 3.x documents as TSI wire rows. `oai.*` rows sit outside
+//! `TSI_RELATIONS`; their relations are declared in `std/oai.dl7` and
+//! `install_openapi_graph` only seeds them.
 
 use super::api::{diagnostic, parts, sorted, Installed, Loaded};
 use super::identity::{identity_map, Identities};
 use super::tsi::{basement_program, install_tsi_graph, tsi_expression_environment};
 use super::wire::{accepted_rows, facts_of, stream_owner, Owner};
-use crate::_2_lower::units::merge_expression_environments;
 use crate::_6_eval::term::{TermId, Universe};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-pub const OPENAPI_RELATIONS: [(&str, i64); 2] = [("openapi.route", 5), ("openapi.param", 5)];
+/// The wire relation name, then the member label it seeds in `@std/oai`.
+pub const OAI_RELATIONS: [(&str, &str); 2] = [("oai.route", "route"), ("oai.param", "param")];
 
 const METHODS: [&str; 8] = [
     "get", "put", "post", "delete", "options", "head", "patch", "trace",
@@ -491,7 +492,7 @@ impl<'d> Rows<'d> {
         };
         self.fact(
             u,
-            "openapi.route",
+            "oai.route",
             &[
                 Arg::Text(path),
                 Arg::Atom(method),
@@ -533,7 +534,7 @@ impl<'d> Rows<'d> {
                 .unwrap_or(false);
             self.fact(
                 u,
-                "openapi.param",
+                "oai.param",
                 &[
                     Arg::Text(operation_id),
                     Arg::Text(&name),
@@ -661,23 +662,31 @@ fn branch_label(branch: &Value, mapping: &HashMap<String, String>, position: usi
     }
 }
 
-fn openapi_arity(name: &str) -> Option<i64> {
-    OPENAPI_RELATIONS
+/// The `@std/oai` member a wire relation seeds.
+fn oai_member(name: &str) -> Option<&'static str> {
+    OAI_RELATIONS
         .iter()
         .find(|(relation, _)| *relation == name)
-        .map(|(_, arity)| *arity)
+        .map(|(_, member)| *member)
 }
 
 fn route_fact(u: &Universe, row: TermId) -> bool {
     parts(u, row, "extract_fact", 3)
         .and_then(|args| {
-            super::api::atom_text(u, args[1]).map(|name| openapi_arity(name).is_some())
+            super::api::atom_text(u, args[1]).map(|name| oai_member(name).is_some())
         })
         .unwrap_or(false)
 }
 
-/// `install_tsi_graph` over the type rows, then the route and parameter
-/// relations and seeds appended to the basement it minted for the owner.
+/// The module `@std/oai` declares, and the owner its members hang off.
+pub fn oai_module_owner(u: &mut Universe) -> TermId {
+    let name = u.atom("oai");
+    let origin = u.compound("std", vec![name]);
+    u.compound("module", vec![origin])
+}
+
+/// `install_tsi_graph` over the type rows, then one seed per route and
+/// parameter against the relation `std/oai.dl7` declares.
 pub fn install_openapi_graph(
     u: &mut Universe,
     rows: &[TermId],
@@ -696,10 +705,14 @@ pub fn install_openapi_graph(
     let accepted_terms = accepted_rows(u, &types);
     let accepted = facts_of(u, &accepted_terms);
     let (identities, _) = identity_map(u, owner, &accepted, basements);
+    let oai = oai_module_owner(u);
 
     let mut seeds = Vec::new();
     for route in &routes {
         let args = parts(u, *route, "extract_fact", 3).expect("route shape");
+        let Some(member) = super::api::atom_text(u, args[1]).and_then(oai_member) else {
+            continue;
+        };
         let arguments = u.as_list(args[2]).unwrap_or_default();
         let arguments: Option<Vec<TermId>> = arguments
             .iter()
@@ -708,7 +721,8 @@ pub fn install_openapi_graph(
         let Some(arguments) = arguments else {
             continue;
         };
-        let head = u.compound("name", vec![owner, args[1]]);
+        let label = u.atom(member);
+        let head = u.compound("name", vec![oai, label]);
         let argument_list = u.list(&arguments);
         seeds.push(u.compound("call", vec![head, argument_list]));
     }
@@ -731,28 +745,9 @@ pub fn install_openapi_graph(
         .args::<3>(datalog, "datalog_program")
         .expect("datalog shape");
     let nodes = u.as_list(nodes).unwrap_or_default();
-    let mut edges = u.as_list(edges).unwrap_or_default();
-    let mut relations = u.as_list(relations).unwrap_or_default();
+    let edges = u.as_list(edges).unwrap_or_default();
+    let relations = u.as_list(relations).unwrap_or_default();
     let mut all_seeds = u.as_list(old_seeds).unwrap_or_default();
-
-    // The owner's relation edges lead the list with a dense index; these
-    // continue that run.
-    let owned = edges
-        .iter()
-        .take_while(|edge| parts(u, **edge, "pending_edge", 4).is_some_and(|e| e[0] == owner))
-        .count();
-    let mut added_edges = Vec::new();
-    for (offset, (name, arity)) in OPENAPI_RELATIONS.iter().enumerate() {
-        let name_atom = u.atom(name);
-        let callable = u.compound("tsi_relation", vec![owner, name_atom]);
-        let arity = u.int(*arity);
-        let empty = u.empty_list();
-        relations.push(u.compound("relation", vec![callable, arity, empty]));
-        let target = u.compound("target", vec![callable]);
-        let index = u.int((owned + offset) as i64);
-        added_edges.push(u.compound("pending_edge", vec![owner, name_atom, target, index]));
-    }
-    edges.splice(owned..owned, added_edges);
     all_seeds.extend(seeds);
 
     let program = basement_program(u, &nodes, &edges, &relations, &all_seeds);
@@ -779,8 +774,7 @@ fn seed_argument(u: &mut Universe, identities: &Identities, argument: TermId) ->
     }
 }
 
-/// `tsi_expression_environment` over the type rows, merged with a reservation
-/// per importer for each `openapi.*` relation.
+/// The type rows only: the `oai.*` relations come from `@std/oai`, imported.
 pub fn openapi_expression_environment(
     u: &mut Universe,
     rows: &[TermId],
@@ -791,31 +785,5 @@ pub fn openapi_expression_environment(
         .copied()
         .filter(|row| !route_fact(u, *row))
         .collect();
-    let environment = tsi_expression_environment(u, &types, importers);
-    let Owner::Owner(owner) = stream_owner(u, &types) else {
-        return environment;
-    };
-    let product = u.atom("product");
-    let mut reservations = Vec::new();
-    let mut relations = Vec::new();
-    for (name, arity) in OPENAPI_RELATIONS {
-        let name_atom = u.atom(name);
-        let callable = u.compound("tsi_relation", vec![owner, name_atom]);
-        let arity = u.int(arity);
-        let empty = u.empty_list();
-        relations.push(u.compound("relation", vec![callable, arity, empty]));
-        let target = u.compound("target", vec![callable]);
-        for importer in importers {
-            reservations
-                .push(u.compound("reservation", vec![*importer, name_atom, target, product]));
-        }
-    }
-    let reservations = u.list(&reservations);
-    let relations = u.list(&relations);
-    let empty = u.empty_list();
-    let routes = u.compound(
-        "expression_environment",
-        vec![reservations, relations, empty],
-    );
-    merge_expression_environments(u, environment, routes)
+    tsi_expression_environment(u, &types, importers)
 }

@@ -1,0 +1,6 @@
+(other: (import "./2026-09-17-import-cycle.dl7"))
+
+(: right
+   (* (: label text)))
+
+(right "b")

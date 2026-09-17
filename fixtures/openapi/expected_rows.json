@@ -6,348 +6,6 @@
           {
             "args": [
               {
-                "a": ":"
-              }
-            ],
-            "f": "kernel"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "a": "/V8ROOT/fixtures/openapi/todo.dl7"
-                    }
-                  ],
-                  "f": "file"
-                }
-              ],
-              "f": "module"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "openapi.param"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "args": [
-                        {
-                          "a": "openapi"
-                        },
-                        [
-                          {
-                            "a": "fixtures/openapi/todo.json"
-                          }
-                        ]
-                      ],
-                      "f": "tsi"
-                    }
-                  ],
-                  "f": "module"
-                },
-                {
-                  "a": "openapi.param"
-                }
-              ],
-              "f": "tsi_relation"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            116
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
-              {
-                "a": ":"
-              }
-            ],
-            "f": "kernel"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "a": "/V8ROOT/fixtures/openapi/todo.dl7"
-                    }
-                  ],
-                  "f": "file"
-                }
-              ],
-              "f": "module"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "openapi.route"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "args": [
-                        {
-                          "a": "openapi"
-                        },
-                        [
-                          {
-                            "a": "fixtures/openapi/todo.json"
-                          }
-                        ]
-                      ],
-                      "f": "tsi"
-                    }
-                  ],
-                  "f": "module"
-                },
-                {
-                  "a": "openapi.route"
-                }
-              ],
-              "f": "tsi_relation"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            115
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
-              {
-                "a": ":"
-              }
-            ],
-            "f": "kernel"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "a": "openapi"
-                    },
-                    [
-                      {
-                        "a": "fixtures/openapi/todo.json"
-                      }
-                    ]
-                  ],
-                  "f": "tsi"
-                }
-              ],
-              "f": "module"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "openapi.param"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "args": [
-                        {
-                          "a": "openapi"
-                        },
-                        [
-                          {
-                            "a": "fixtures/openapi/todo.json"
-                          }
-                        ]
-                      ],
-                      "f": "tsi"
-                    }
-                  ],
-                  "f": "module"
-                },
-                {
-                  "a": "openapi.param"
-                }
-              ],
-              "f": "tsi_relation"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            2
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
-              {
-                "a": ":"
-              }
-            ],
-            "f": "kernel"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "a": "openapi"
-                    },
-                    [
-                      {
-                        "a": "fixtures/openapi/todo.json"
-                      }
-                    ]
-                  ],
-                  "f": "tsi"
-                }
-              ],
-              "f": "module"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "openapi.route"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "args": [
-                        {
-                          "a": "openapi"
-                        },
-                        [
-                          {
-                            "a": "fixtures/openapi/todo.json"
-                          }
-                        ]
-                      ],
-                      "f": "tsi"
-                    }
-                  ],
-                  "f": "module"
-                },
-                {
-                  "a": "openapi.route"
-                }
-              ],
-              "f": "tsi_relation"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            1
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
-              {
                 "args": [
                   {
                     "a": "/V8ROOT/fixtures/openapi/todo.dl7"
@@ -360,7 +18,7 @@
                   {
                     "a": "/V8ROOT/fixtures/openapi/todo.dl7"
                   },
-                  16
+                  27
                 ],
                 "f": "reader_node"
               }
@@ -410,7 +68,7 @@
                   {
                     "a": "/V8ROOT/fixtures/openapi/todo.dl7"
                   },
-                  16
+                  27
                 ],
                 "f": "reader_node"
               }
@@ -450,691 +108,22 @@
               {
                 "args": [
                   {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
+                    "a": "oai"
                   }
                 ],
-                "f": "module"
+                "f": "std"
               },
-              {
-                "a": "openapi.param"
-              }
-            ],
-            "f": "tsi_relation"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "s": "Todo_query_count"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "s": "status"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "a": "query"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "args": [
-                        {
-                          "a": "openapi"
-                        },
-                        [
-                          {
-                            "a": "fixtures/openapi/todo.json"
-                          }
-                        ]
-                      ],
-                      "f": "tsi"
-                    }
-                  ],
-                  "f": "module"
-                },
-                22
-              ],
-              "f": "tsi_node"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "false"
-            }
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
               {
                 "args": [
                   {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
-                  }
+                    "a": "@std/oai"
+                  },
+                  12
                 ],
-                "f": "module"
-              },
-              {
-                "a": "openapi.param"
+                "f": "reader_node"
               }
             ],
-            "f": "tsi_relation"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "s": "Todo_query_get"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "s": "id"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "a": "path"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "a": "prelude"
-                },
-                {
-                  "args": [
-                    {
-                      "a": "prelude"
-                    },
-                    3792
-                  ],
-                  "f": "reader_node"
-                }
-              ],
-              "f": "owner"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "true"
-            }
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
-              {
-                "args": [
-                  {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
-                  }
-                ],
-                "f": "module"
-              },
-              {
-                "a": "openapi.param"
-              }
-            ],
-            "f": "tsi_relation"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "s": "Todo_query_list"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "s": "listId"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "a": "query"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "a": "prelude"
-                },
-                {
-                  "args": [
-                    {
-                      "a": "prelude"
-                    },
-                    3792
-                  ],
-                  "f": "reader_node"
-                }
-              ],
-              "f": "owner"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "false"
-            }
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
-              {
-                "args": [
-                  {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
-                  }
-                ],
-                "f": "module"
-              },
-              {
-                "a": "openapi.param"
-              }
-            ],
-            "f": "tsi_relation"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "s": "Todo_query_list"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "s": "priority"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "a": "query"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "args": [
-                        {
-                          "a": "openapi"
-                        },
-                        [
-                          {
-                            "a": "fixtures/openapi/todo.json"
-                          }
-                        ]
-                      ],
-                      "f": "tsi"
-                    }
-                  ],
-                  "f": "module"
-                },
-                9
-              ],
-              "f": "tsi_node"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "false"
-            }
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
-              {
-                "args": [
-                  {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
-                  }
-                ],
-                "f": "module"
-              },
-              {
-                "a": "openapi.param"
-              }
-            ],
-            "f": "tsi_relation"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "s": "Todo_query_list"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "s": "status"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "a": "query"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "args": [
-                    {
-                      "args": [
-                        {
-                          "a": "openapi"
-                        },
-                        [
-                          {
-                            "a": "fixtures/openapi/todo.json"
-                          }
-                        ]
-                      ],
-                      "f": "tsi"
-                    }
-                  ],
-                  "f": "module"
-                },
-                22
-              ],
-              "f": "tsi_node"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "false"
-            }
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
-              {
-                "args": [
-                  {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
-                  }
-                ],
-                "f": "module"
-              },
-              {
-                "a": "openapi.param"
-              }
-            ],
-            "f": "tsi_relation"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "s": "Todo_query_lookup"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "s": "id"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "a": "path"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "a": "prelude"
-                },
-                {
-                  "args": [
-                    {
-                      "a": "prelude"
-                    },
-                    3792
-                  ],
-                  "f": "reader_node"
-                }
-              ],
-              "f": "owner"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "true"
-            }
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
-              {
-                "args": [
-                  {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
-                  }
-                ],
-                "f": "module"
-              },
-              {
-                "a": "openapi.param"
-              }
-            ],
-            "f": "tsi_relation"
-          }
-        ],
-        "f": "ref"
-      },
-      [
-        {
-          "args": [
-            {
-              "s": "Todo_query_overdue"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "s": "listId"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "a": "query"
-            }
-          ],
-          "f": "const"
-        },
-        {
-          "args": [
-            {
-              "args": [
-                {
-                  "a": "prelude"
-                },
-                {
-                  "args": [
-                    {
-                      "a": "prelude"
-                    },
-                    3792
-                  ],
-                  "f": "reader_node"
-                }
-              ],
-              "f": "owner"
-            }
-          ],
-          "f": "ref"
-        },
-        {
-          "args": [
-            {
-              "a": "false"
-            }
-          ],
-          "f": "const"
-        }
-      ]
-    ],
-    "f": "call"
-  },
-  {
-    "args": [
-      {
-        "args": [
-          {
-            "args": [
-              {
-                "args": [
-                  {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
-                  }
-                ],
-                "f": "module"
-              },
-              {
-                "a": "openapi.route"
-              }
-            ],
-            "f": "tsi_relation"
+            "f": "owner"
           }
         ],
         "f": "ref"
@@ -1201,7 +190,7 @@
                             },
                             [
                               {
-                                "a": "fixtures/openapi/todo.json"
+                                "a": "/V8ROOT/fixtures/openapi/todo.json"
                               }
                             ]
                           ],
@@ -1226,7 +215,7 @@
                               },
                               [
                                 {
-                                  "a": "fixtures/openapi/todo.json"
+                                  "a": "/V8ROOT/fixtures/openapi/todo.json"
                                 }
                               ]
                             ],
@@ -1259,26 +248,22 @@
               {
                 "args": [
                   {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
+                    "a": "oai"
                   }
                 ],
-                "f": "module"
+                "f": "std"
               },
               {
-                "a": "openapi.route"
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  12
+                ],
+                "f": "reader_node"
               }
             ],
-            "f": "tsi_relation"
+            "f": "owner"
           }
         ],
         "f": "ref"
@@ -1321,7 +306,7 @@
                         },
                         [
                           {
-                            "a": "fixtures/openapi/todo.json"
+                            "a": "/V8ROOT/fixtures/openapi/todo.json"
                           }
                         ]
                       ],
@@ -1350,7 +335,7 @@
                         },
                         [
                           {
-                            "a": "fixtures/openapi/todo.json"
+                            "a": "/V8ROOT/fixtures/openapi/todo.json"
                           }
                         ]
                       ],
@@ -1379,26 +364,22 @@
               {
                 "args": [
                   {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
+                    "a": "oai"
                   }
                 ],
-                "f": "module"
+                "f": "std"
               },
               {
-                "a": "openapi.route"
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  12
+                ],
+                "f": "reader_node"
               }
             ],
-            "f": "tsi_relation"
+            "f": "owner"
           }
         ],
         "f": "ref"
@@ -1485,26 +466,22 @@
               {
                 "args": [
                   {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
+                    "a": "oai"
                   }
                 ],
-                "f": "module"
+                "f": "std"
               },
               {
-                "a": "openapi.route"
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  12
+                ],
+                "f": "reader_node"
               }
             ],
-            "f": "tsi_relation"
+            "f": "owner"
           }
         ],
         "f": "ref"
@@ -1571,7 +548,7 @@
                             },
                             [
                               {
-                                "a": "fixtures/openapi/todo.json"
+                                "a": "/V8ROOT/fixtures/openapi/todo.json"
                               }
                             ]
                           ],
@@ -1596,7 +573,7 @@
                               },
                               [
                                 {
-                                  "a": "fixtures/openapi/todo.json"
+                                  "a": "/V8ROOT/fixtures/openapi/todo.json"
                                 }
                               ]
                             ],
@@ -1629,26 +606,22 @@
               {
                 "args": [
                   {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
+                    "a": "oai"
                   }
                 ],
-                "f": "module"
+                "f": "std"
               },
               {
-                "a": "openapi.route"
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  12
+                ],
+                "f": "reader_node"
               }
             ],
-            "f": "tsi_relation"
+            "f": "owner"
           }
         ],
         "f": "ref"
@@ -1713,7 +686,7 @@
                         },
                         [
                           {
-                            "a": "fixtures/openapi/todo.json"
+                            "a": "/V8ROOT/fixtures/openapi/todo.json"
                           }
                         ]
                       ],
@@ -1742,26 +715,22 @@
               {
                 "args": [
                   {
-                    "args": [
-                      {
-                        "a": "openapi"
-                      },
-                      [
-                        {
-                          "a": "fixtures/openapi/todo.json"
-                        }
-                      ]
-                    ],
-                    "f": "tsi"
+                    "a": "oai"
                   }
                 ],
-                "f": "module"
+                "f": "std"
               },
               {
-                "a": "openapi.route"
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  12
+                ],
+                "f": "reader_node"
               }
             ],
-            "f": "tsi_relation"
+            "f": "owner"
           }
         ],
         "f": "ref"
@@ -1826,7 +795,7 @@
                         },
                         [
                           {
-                            "a": "fixtures/openapi/todo.json"
+                            "a": "/V8ROOT/fixtures/openapi/todo.json"
                           }
                         ]
                       ],
@@ -1841,6 +810,643 @@
             }
           ],
           "f": "ref"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "oai"
+                  }
+                ],
+                "f": "std"
+              },
+              {
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  37
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "s": "Todo_query_count"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "s": "status"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "query"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "openapi"
+                        },
+                        [
+                          {
+                            "a": "/V8ROOT/fixtures/openapi/todo.json"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                22
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "a": "false"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "oai"
+                  }
+                ],
+                "f": "std"
+              },
+              {
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  37
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "s": "Todo_query_get"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "s": "id"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "path"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "prelude"
+                },
+                {
+                  "args": [
+                    {
+                      "a": "prelude"
+                    },
+                    3792
+                  ],
+                  "f": "reader_node"
+                }
+              ],
+              "f": "owner"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "a": "true"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "oai"
+                  }
+                ],
+                "f": "std"
+              },
+              {
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  37
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "s": "Todo_query_list"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "s": "listId"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "query"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "prelude"
+                },
+                {
+                  "args": [
+                    {
+                      "a": "prelude"
+                    },
+                    3792
+                  ],
+                  "f": "reader_node"
+                }
+              ],
+              "f": "owner"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "a": "false"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "oai"
+                  }
+                ],
+                "f": "std"
+              },
+              {
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  37
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "s": "Todo_query_list"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "s": "priority"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "query"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "openapi"
+                        },
+                        [
+                          {
+                            "a": "/V8ROOT/fixtures/openapi/todo.json"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                9
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "a": "false"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "oai"
+                  }
+                ],
+                "f": "std"
+              },
+              {
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  37
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "s": "Todo_query_list"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "s": "status"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "query"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "a": "openapi"
+                        },
+                        [
+                          {
+                            "a": "/V8ROOT/fixtures/openapi/todo.json"
+                          }
+                        ]
+                      ],
+                      "f": "tsi"
+                    }
+                  ],
+                  "f": "module"
+                },
+                22
+              ],
+              "f": "tsi_node"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "a": "false"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "oai"
+                  }
+                ],
+                "f": "std"
+              },
+              {
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  37
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "s": "Todo_query_lookup"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "s": "id"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "path"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "prelude"
+                },
+                {
+                  "args": [
+                    {
+                      "a": "prelude"
+                    },
+                    3792
+                  ],
+                  "f": "reader_node"
+                }
+              ],
+              "f": "owner"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "a": "true"
+            }
+          ],
+          "f": "const"
+        }
+      ]
+    ],
+    "f": "call"
+  },
+  {
+    "args": [
+      {
+        "args": [
+          {
+            "args": [
+              {
+                "args": [
+                  {
+                    "a": "oai"
+                  }
+                ],
+                "f": "std"
+              },
+              {
+                "args": [
+                  {
+                    "a": "@std/oai"
+                  },
+                  37
+                ],
+                "f": "reader_node"
+              }
+            ],
+            "f": "owner"
+          }
+        ],
+        "f": "ref"
+      },
+      [
+        {
+          "args": [
+            {
+              "s": "Todo_query_overdue"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "s": "listId"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "query"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "prelude"
+                },
+                {
+                  "args": [
+                    {
+                      "a": "prelude"
+                    },
+                    3792
+                  ],
+                  "f": "reader_node"
+                }
+              ],
+              "f": "owner"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "a": "false"
+            }
+          ],
+          "f": "const"
         }
       ]
     ],

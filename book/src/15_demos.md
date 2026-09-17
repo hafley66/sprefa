@@ -5,9 +5,9 @@
 ```mermaid
 flowchart LR
   store[(SQLite: pending, settled)] -->|insert_statements per run| golden[v6/tsv2/goldens/ghcacher_tick_golden]
-  refs[soopy_refs: 4 repositories] -->|HEAD rows| org[fixtures/hosts/org.dl7]
+  refs[git.refs: 4 repositories] -->|HEAD rows| org[fixtures/hosts/org.dl7]
   extractbin[sprefa-extract --family type] -->|dl8 compile --tsi| main[fixtures/extract/main.dl7]
-  org -->|dl8 run --serve soopy_refs| demo[org.dl7 / extract / ghcacher]
+  org -->|dl8 run --serve git.refs| demo[org.dl7 / extract / ghcacher]
   main -->|conforms| demo
   golden -->|6_gate.sh| demo
 ```
@@ -16,7 +16,7 @@ Three programs exercise several chapters at once.
 
 | demo | what it does | chapters it uses | proved by |
 |---|---|---|---|
-| org watcher, `fixtures/hosts/org.dl7` | reads `HEAD` of the 4 required repositories of the hafley66 org through `soopy_refs` | [Declarations](2_declare.md), [Facts and rules](3_rules.md), [Effects](10_effects.md), [Executors](11_executors.md) | `tests/_20_hosts.rs:468-510` |
+| org watcher, `fixtures/hosts/org.dl7` | reads `HEAD` of the 4 required repositories of the hafley66 org through `git.refs` | [Declarations](2_declare.md), [Facts and rules](3_rules.md), [Effects](10_effects.md), [Executors](11_executors.md) | `tests/_20_hosts.rs:468-510` |
 | extract TSI, `fixtures/extract/main.dl7` | loads `sprefa-extract` type facts over a TypeScript and Rust corpus, then proves a loaded product conforms to a declared shape | [Terms and the graph](5_terms.md), [Modules and application](9_modules.md) | `tests/_16_extract_tsi.rs:328-372` |
 | ghcacher tick golden, `v6/tsv2/goldens/ghcacher_tick_golden/` | the v6 program dl8 is aimed at: a clock, an etag latch, a fetch host, a keyed cache view | every chapter; the gap table in Example lists what dl8 lacks | `v6/tsv2/goldens/ghcacher_tick_golden/6_gate.sh` (v6, dl6 syntax) |
 
@@ -46,14 +46,7 @@ The org watcher over four repositories made on the spot:
 ```dl7
 ; fixture: fixtures/hosts/org.dl7
 ; The hafley66 org's required repositories, each watched for its HEAD.
-(: soopy_refs
-   (* (: root text)
-      (: name text)
-      (: sha text)))
-
-(: soopy_refs_error
-   (* (: root text)
-      (: message text)))
+(git: (import "@std/git"))
 
 (: repo (* (: root text)))
 
@@ -71,11 +64,11 @@ The org watcher over four repositories made on the spot:
 
 (<- (head_sha ?Root ?Sha)
     (repo ?Root)
-    (soopy_refs ?Root "HEAD" ?Sha))
+    (git.refs ?Root "HEAD" ?Sha))
 ```
 
 ```console
-$ p=$(mktemp -d) && export GIT_AUTHOR_NAME=dl8 GIT_AUTHOR_EMAIL=dl8@example.invalid GIT_COMMITTER_NAME=dl8 GIT_COMMITTER_EMAIL=dl8@example.invalid GIT_AUTHOR_DATE="1700000000 +0000" GIT_COMMITTER_DATE="1700000000 +0000" && for r in instant sprefa hafley-rs hafley-rxjs; do git -C $p init -q -b main $r && echo $r > $p/$r/README && git -C $p/$r add README && git -C $p/$r commit -q -m $r; done && sed "s|__PROJECTS__|$p|" fixtures/hosts/org.dl7 > $p/org.dl7 && bash book/show.sh run $p/org.dl7 --serve soopy_refs --max-ticks 1 | grep '^(head_sha \|^ticks\|^exit' | sed "s|$p|\$PROJECTS|"
+$ p=$(mktemp -d) && export GIT_AUTHOR_NAME=dl8 GIT_AUTHOR_EMAIL=dl8@example.invalid GIT_COMMITTER_NAME=dl8 GIT_COMMITTER_EMAIL=dl8@example.invalid GIT_AUTHOR_DATE="1700000000 +0000" GIT_COMMITTER_DATE="1700000000 +0000" && for r in instant sprefa hafley-rs hafley-rxjs; do git -C $p init -q -b main $r && echo $r > $p/$r/README && git -C $p/$r add README && git -C $p/$r commit -q -m $r; done && sed "s|__PROJECTS__|$p|" fixtures/hosts/org.dl7 > $p/org.dl7 && bash book/show.sh run $p/org.dl7 --serve git.refs --max-ticks 1 | grep '^(head_sha \|^ticks\|^exit' | sed "s|$p|\$PROJECTS|"
 (head_sha "$PROJECTS/hafley-rs" "12fe934dee0803dbd0f40876e67390f4a06abf1a")
 (head_sha "$PROJECTS/hafley-rxjs" "9bbbb10c12012cf79e996039083378c5034afdbd")
 (head_sha "$PROJECTS/instant" "97e8c7149a942c9726858c9ff87a563d6349947b")

@@ -1,0 +1,42 @@
+; The module graph read back off the `:` edges every unit already writes.
+; An import binds a module node under a local name, so an edge whose target is
+; a module is an import edge and needs no row kind of its own.
+
+(: pub
+   (* (: module type)
+      (: name any)))
+
+(: export
+   (* (: module type)
+      (: name any)
+      (: target type)))
+
+(<- (export ?Module ?Name ?Target)
+    (: ?Module ?Name ?Target ?Index)
+    (pub ?Module ?Name))
+
+(: imports
+   (* (: importer type)
+      (: imported type)))
+
+(<- (imports ?Importer ?Imported)
+    (: ?Importer ?Label ?Imported ?Index)
+    (module ?Imported))
+
+(: reaches
+   (* (: importer type)
+      (: reached type)))
+
+(<- (reaches ?Importer ?Imported)
+    (imports ?Importer ?Imported))
+
+(<- (reaches ?Importer ?Reached)
+    (imports ?Importer ?Intermediate)
+    (reaches ?Intermediate ?Reached))
+
+; A cycle is a row, never a check error: the fixpoint tolerates it.
+(: import_cycle
+   (* (: module type)))
+
+(<- (import_cycle ?Module)
+    (reaches ?Module ?Module))

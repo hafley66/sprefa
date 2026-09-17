@@ -56,19 +56,19 @@ step 4  after 1 no new effect rows, nothing armed                         -> sto
 
 ## The files to add
 
-`repo_at` is the nearest shape: Once, one text key bound, many rows, one error relation.
+`fs.at` is the nearest shape: Once, one text key bound, many rows, one error relation.
 
-| step | file | what | analogous line in `repo_at.rs` or `mod.rs` |
+| step | file | what | analogous line in `fs_at.rs` or `mod.rs` |
 |---|---|---|---|
-| 1 | `src/_9_runtime/_3_executors/boop_lane.rs` | `RELATION = "boop_lane"`, `ERROR = "boop_lane_error"` | `repo_at.rs:10-11` |
-| 2 | same | struct with the two relation ids and `new` | `repo_at.rs:13-22` |
-| 3 | same | the read: open the store read-only, one `SELECT` joining `agent_lane` to `dict_session` and `dict_branch` for the bound lane | `repo_at.rs:24-44` (`files_at`); `boop-store/src/ident.rs:685-690` `Store::open_readonly`; join shape `boop-store/src/_0_session_graph.rs:288-298` |
-| 4 | same | `impl IExecutor`: `Cadence::Once`, `answer` reads the bound text at position 0 and pushes rows or an error row | `repo_at.rs:46-92`; `mod.rs:28-37` `text_at` |
-| 5 | same | `poll` empty, `armed` false | `repo_at.rs:94-100` |
+| 1 | `src/_9_runtime/_3_executors/boop_lane.rs` | `RELATION = "boop_lane"`, `ERROR = "boop_lane_error"` | `fs_at.rs:10-11` |
+| 2 | same | struct with the two relation ids and `new` | `fs_at.rs:13-22` |
+| 3 | same | the read: open the store read-only, one `SELECT` joining `agent_lane` to `dict_session` and `dict_branch` for the bound lane | `fs_at.rs:24-44` (`files_at`); `boop-store/src/ident.rs:685-690` `Store::open_readonly`; join shape `boop-store/src/_0_session_graph.rs:288-298` |
+| 4 | same | `impl IExecutor`: `Cadence::Once`, `answer` reads the bound text at position 0 and pushes rows or an error row | `fs_at.rs:46-92`; `mod.rs:28-37` `text_at` |
+| 5 | same | `poll` empty, `armed` false | `fs_at.rs:94-100` |
 | 6 | `src/_9_runtime/_3_executors/mod.rs` | `#[path]` module line and `pub use` | `mod.rs:7-8`, `:22` |
 | 7 | same | the name in the error-bearing arm, its error constant, its constructor | `mod.rs:79-98` |
 | 8 | `Cargo.toml` | `boop-store` as a path dependency, or `rusqlite` alone, already present | `Cargo.toml:15`, `:18` (the `soopy` path line) |
-| 9 | `fixtures/hosts/5_boop_lane.dl7` | the probe on this page with a lane name from a scratch db | `fixtures/hosts/2_repo_at.dl7` |
+| 9 | `fixtures/hosts/5_boop_lane.dl7` | the probe on this page with a lane name from a scratch db | `fixtures/hosts/2_fs_at.dl7` |
 | 10 | `tests/_20_hosts.rs` | a scratch `boop.db`, one lane row, `dl8 run --serve boop_lane`, assert `Lane` | `tests/_20_hosts.rs:228-345` |
 
 Reading `boop-store` pulls its own dependencies (`boop-mux`, `sysinfo`, `time`, `dirs`: `hafley-rs/crates/boop-store/Cargo.toml:22-47`); reading the tables with `rusqlite` pulls none new and copies the join text instead.

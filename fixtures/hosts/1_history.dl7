@@ -1,12 +1,5 @@
 ; Every parent edge reachable from HEAD.
-(: soopy_history
-   (* (: root text)
-      (: sha text)
-      (: parent text)))
-
-(: soopy_history_error
-   (* (: root text)
-      (: message text)))
+(git: (import "@std/git"))
 
 (: Watch (* (: root text)))
 
@@ -18,10 +11,10 @@
 
 (<- (Edge ?Sha ?Parent)
     (Watch ?Root)
-    (soopy_history ?Root ?Sha ?Parent))
+    (git.history ?Root ?Sha ?Parent))
 
 (: Failed (* (: message text)))
 
 (<- (Failed ?Message)
     (Watch ?Root)
-    (soopy_history_error ?Root ?Message))
+    (git.history_error ?Root ?Message))

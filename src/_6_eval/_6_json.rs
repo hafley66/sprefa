@@ -175,6 +175,7 @@ fn rule_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
 
 /// Every `:(module(M), Name, ref(Relation), _)` bind in the root graph. A file
 /// module shadows the prelude's bind of one name; two files disagreeing do not.
+/// A `@std/<space>` member carries its namespace, so `--serve git.refs` names it.
 fn names_to_json(u: &Universe, graph: TermId) -> Result<Value, Transport> {
     let [_, edges] = u
         .args::<2>(graph, "root_graph")
@@ -188,13 +189,20 @@ fn names_to_json(u: &Universe, graph: TermId) -> Result<Value, Transport> {
         let Some(module) = u.unary(owner, "module") else {
             continue;
         };
-        if u.unary(relation, "ref").is_none() {
-            continue;
+        // An import binds a module node, never a relation `--serve` can settle.
+        match u.unary(relation, "ref") {
+            None => continue,
+            Some(target) if u.unary(target, "module").is_some() => continue,
+            Some(_) => {}
         }
         let Term::Atom(s) = u.get(name) else {
             continue;
         };
         let name = u.sym_str(*s).to_string();
+        let name = match u.unary(module, "std").map(|space| u.get(space)) {
+            Some(Term::Atom(space)) => format!("{}.{name}", u.sym_str(*space)),
+            _ => name,
+        };
         let prelude = matches!(u.get(module), Term::Atom(m) if u.sym_str(*m) == "prelude");
         match out.get(&name) {
             Some((_, first)) if *first == relation => {}

@@ -24,7 +24,7 @@ pub fn run(case: &Value) -> Result<Value, String> {
             u.compound("expression_environment", vec![empty, empty, empty])
         }
     };
-    match lower_datalog(&mut u, policy, unit, environment) {
+    match lower_datalog(&mut u, policy, unit, environment, &[]) {
         Ok(lowered) => Ok(encode(&u, &lowered)),
         Err(Stop::Diagnostic(diagnostic)) => {
             let lowered = Lowered {

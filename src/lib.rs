@@ -29,6 +29,7 @@ use _8_driver::_4_project::{
     install_graphs, load_dl7_project, load_openapi_documents, load_tsi_streams,
     project_expression_environment, Loaded, Project,
 };
+use _8_driver::_5_import::{load_import_chain, oai_document_paths, Imported};
 use _8_driver::{Event, Stop};
 use std::marker::PhantomData;
 use std::path::Path;
@@ -151,80 +152,96 @@ pub fn compile(u: &mut Universe, path: &Path, fx: &mut dyn FnMut(Event)) -> Resu
     if !reader_diagnostics.is_empty() {
         return Ok(stopped(u, reader_diagnostics));
     }
-    let expanded = match macro_phase(u, &[program.unit], fx)? {
+    let roots = vec![program.unit];
+    let imported = load_import_chain(u, &working_directory(), &roots)?;
+    if !imported.diagnostics.is_empty() {
+        return Ok(stopped(u, imported.diagnostics));
+    }
+    let mut sources = roots;
+    sources.extend(imported.units.iter().copied());
+    let expanded = match macro_phase(u, &sources, fx)? {
         Ok(expanded) => expanded,
         Err(diagnostics) => return Ok(stopped(u, diagnostics)),
     };
     let mut units = vec![prelude.unit];
     units.extend(expanded);
-    finish_compile(u, &units, None, fx)
+    finish_compile(u, &units, None, &imported.rows, fx)
 }
 
-/// Prelude, project units, TSI and OpenAPI rows, reader diagnostics.
-type ProjectRead = (Unit, Loaded, (Vec<TermId>, Vec<TermId>), Vec<TermId>);
+/// The one base every ordinary import path resolves against.
+fn working_directory() -> std::path::PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
 
-/// `:195` and `:227`. The project term carries the EXPANDED units.
+/// Prelude, project units, TSI rows, the import chain, reader diagnostics.
+type ProjectRead = (Unit, Loaded, Vec<TermId>, Imported, Vec<TermId>);
+
+/// `:195` and `:227`. The project term carries the EXPANDED project units and
+/// never the imported ones: only a project unit has a path under the root.
 pub fn compile_project(
     u: &mut Universe,
     root: &Path,
     paths: &[&Path],
     streams: &[&Path],
-    documents: &[&Path],
     fx: &mut dyn FnMut(Event),
 ) -> Result<Compile, Stop> {
-    let (prelude, loaded, (tsi_rows, openapi_rows), load_diagnostics) = phase(
+    let (prelude, loaded, tsi_rows, imported, load_diagnostics) = phase(
         "read",
         || {
             let prelude = prelude_unit(u, &prelude_text())?;
             let loaded = load_dl7_project(u, root, paths)?.map_err(Stop::Io)?;
-            let (tsi_rows, mut diagnostics) = load_tsi_streams(u, streams).map_err(Stop::Io)?;
-            let (openapi_rows, openapi_diagnostics) =
-                load_openapi_documents(u, documents).map_err(Stop::Io)?;
-            diagnostics.extend(openapi_diagnostics);
-            Ok((prelude, loaded, (tsi_rows, openapi_rows), diagnostics))
+            let (tsi_rows, diagnostics) = load_tsi_streams(u, streams).map_err(Stop::Io)?;
+            let imported = load_import_chain(u, &working_directory(), &loaded.units)?;
+            Ok((prelude, loaded, tsi_rows, imported, diagnostics))
         },
-        |(prelude, loaded, _, diagnostics): &ProjectRead| {
-            let count = prelude.diagnostics.len() + loaded.diagnostics.len() + diagnostics.len();
+        |(prelude, loaded, _, imported, diagnostics): &ProjectRead| {
+            let count = prelude.diagnostics.len()
+                + loaded.diagnostics.len()
+                + imported.diagnostics.len()
+                + diagnostics.len();
             (2, count)
         },
     )?;
     let mut reader_diagnostics = prelude.diagnostics;
     reader_diagnostics.extend(loaded.diagnostics);
+    reader_diagnostics.extend(imported.diagnostics.clone());
     reader_diagnostics.extend(load_diagnostics);
     if !reader_diagnostics.is_empty() {
         return Ok(stopped(u, reader_diagnostics));
     }
-    let expanded = match macro_phase(u, &loaded.units, fx)? {
+    let project_count = loaded.units.len();
+    let mut sources = loaded.units.clone();
+    sources.extend(imported.units.iter().copied());
+    let expanded = match macro_phase(u, &sources, fx)? {
         Ok(expanded) => expanded,
         Err(diagnostics) => return Ok(stopped(u, diagnostics)),
     };
     let Some(args) = u.args::<2>(loaded.project, "dl7_project") else {
         return Err(Stop::Io("project is not dl7_project/2".into()));
     };
-    let unit_list = u.list(&expanded);
+    let unit_list = u.list(&expanded[..project_count]);
     let project = Project {
         project: u.compound("dl7_project", vec![args[0], unit_list]),
         tsi_rows,
-        openapi_rows,
-        cwd: std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default(),
+        openapi_rows: Vec::new(),
+        cwd: working_directory().display().to_string(),
     };
     let mut units = vec![prelude.unit];
     units.extend(expanded);
-    finish_compile(u, &units, Some(project), fx)
+    finish_compile(u, &units, Some(project), &imported.rows, fx)
 }
 
 /// The lower, check and comptime phases with their own span and event each.
 fn finish_compile(
     u: &mut Universe,
     units: &[TermId],
-    project: Option<Project>,
+    mut project: Option<Project>,
+    imports: &[TermId],
     fx: &mut dyn FnMut(Event),
 ) -> Result<Compile, Stop> {
     let lowered = phase(
         "lower",
-        || lower_units(u, units, project.as_ref()),
+        || lower_units(u, units, project.as_mut(), imports),
         |lowered: &Units| (lowered.basements.len(), lowered.diagnostics.len()),
     )?;
     if !lowered.diagnostics.is_empty() {
@@ -256,6 +273,7 @@ fn finish_compile(
         derived_bind_slots: derived_bind_slots(u, &checked.rules),
         units: units.to_vec(),
         project,
+        imports: imports.to_vec(),
     };
     let (compiled, diagnostics) = phase(
         "comptime",
@@ -279,19 +297,34 @@ fn finish_compile(
 fn lower_units(
     u: &mut Universe,
     units: &[TermId],
-    project: Option<&Project>,
+    project: Option<&mut Project>,
+    imports: &[TermId],
 ) -> Result<Units, Stop> {
-    let environment = project.map(|project| {
+    let environment = project.as_deref().map(|project| {
         let owners = source_unit_module_owners(u, units);
         project_expression_environment(u, project, &owners)
     });
-    let lowered = lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, environment)?;
+    let lowered =
+        lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, environment, imports)?;
     let Some(project) = project else {
         return Ok(lowered);
     };
     if !lowered.diagnostics.is_empty() {
         return Ok(lowered);
     }
+    // The `oai.document` seeds are lowered rows by now, so the loader reads
+    // its own input from the graph and never from the source text.
+    let documents = oai_document_paths(u, &lowered.basements, imports);
+    let paths: Vec<&Path> = documents.iter().map(|p| p.as_path()).collect();
+    let (rows, document_diagnostics) = load_openapi_documents(u, &paths).map_err(Stop::Io)?;
+    if !document_diagnostics.is_empty() {
+        return Ok(Units {
+            basements: Vec::new(),
+            origins: Vec::new(),
+            diagnostics: document_diagnostics,
+        });
+    }
+    project.openapi_rows = rows;
     let (basements, origins, diagnostics) =
         install_graphs(u, project, &lowered.basements, &lowered.origins).map_err(Stop::Load)?;
     Ok(if diagnostics.is_empty() {
