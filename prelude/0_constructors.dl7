@@ -7,3 +7,7 @@
    (* (: source type)
       (: return type)))
 
+; The zero-column product every `(Option T)` reaches for when the value is
+; absent. A JSON null is this node; a key with no edge is a different graph.
+(: none (*))
+
