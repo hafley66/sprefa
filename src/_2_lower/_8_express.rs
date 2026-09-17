@@ -339,6 +339,12 @@ pub fn lower_construction(
         if let Some(first) = lowered.diagnostics.first() {
             return none(cx, vec![*first]);
         }
+        // A half-applied argument has no term the argument list can hold.
+        if is_partial(cx, lowered.value) {
+            let reason = cx.compound("partial_construction_argument", vec![constructor]);
+            let diagnostic = cx.diagnostic(node_id, reason);
+            return none(cx, vec![diagnostic]);
+        }
         goals.extend(lowered.goals);
         origins.extend(lowered.origins);
         values.push(lowered.value);

@@ -1,13 +1,13 @@
 {
- "budget_bytes": 6291456,
+ "budget_bytes": 8388608,
  "cases": [
   {
    "arguments": [
     "<root>/applications/dl6/0_catalog.dl7"
    ],
-   "bytes": 709172,
+   "bytes": 957419,
    "committed": true,
-   "compiler_rows": 859,
+   "compiler_rows": 1520,
    "diagnostics": 0,
    "stem": "applications-dl6-0_catalog",
    "v7_ms": 457
@@ -33,9 +33,9 @@
     "<root>/test/fixtures/modules/0_accounts.dl7",
     "<root>/test/fixtures/modules/1_consumer.dl7"
    ],
-   "bytes": 744566,
+   "bytes": 1014062,
    "committed": true,
-   "compiler_rows": 929,
+   "compiler_rows": 1677,
    "diagnostics": 0,
    "stem": "project-modules-consumer",
    "v7_ms": 416
@@ -47,9 +47,9 @@
     "<root>/test/fixtures/modules/0_accounts.dl7",
     "<root>/test/fixtures/modules/2_plus_consumer.dl7"
    ],
-   "bytes": 745951,
+   "bytes": 1016107,
    "committed": true,
-   "compiler_rows": 929,
+   "compiler_rows": 1677,
    "diagnostics": 0,
    "stem": "project-modules-plus",
    "v7_ms": 427
@@ -62,9 +62,9 @@
     "--tsi",
     "<root>/test/fixtures/tsi/1_semantic_user.jsonl"
    ],
-   "bytes": 955018,
+   "bytes": 1180959,
    "committed": true,
-   "compiler_rows": 1242,
+   "compiler_rows": 1885,
    "diagnostics": 0,
    "stem": "project-tsi-contract",
    "v7_ms": 996
@@ -117,9 +117,9 @@
    "arguments": [
     "<root>/test/fixtures/14_syntax_macros.dl7"
    ],
-   "bytes": 753688,
+   "bytes": 987368,
    "committed": true,
-   "compiler_rows": 861,
+   "compiler_rows": 1510,
    "diagnostics": 0,
    "stem": "test-fixtures-14_syntax_macros",
    "v7_ms": 432
@@ -161,9 +161,9 @@
    "arguments": [
     "<root>/test/fixtures/2_partial.dl7"
    ],
-   "bytes": 755876,
+   "bytes": 1014784,
    "committed": true,
-   "compiler_rows": 910,
+   "compiler_rows": 1579,
    "diagnostics": 0,
    "stem": "test-fixtures-2_partial",
    "v7_ms": 663
@@ -172,9 +172,9 @@
    "arguments": [
     "<root>/test/fixtures/3_type_algebra.dl7"
    ],
-   "bytes": 829257,
+   "bytes": 1103432,
    "committed": true,
-   "compiler_rows": 987,
+   "compiler_rows": 1685,
    "diagnostics": 0,
    "stem": "test-fixtures-3_type_algebra",
    "v7_ms": 531
@@ -499,7 +499,7 @@
    "v7_ms": 977
   }
  ],
- "committed_bytes": 6275917,
+ "committed_bytes": 7277059,
  "rev": "f5018ad23",
  "root_token": "<root>"
 }

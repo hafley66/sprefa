@@ -116,9 +116,11 @@ fn every_committed_case_file_exists_and_every_case_is_indexed() {
             committed += std::fs::metadata(&path).unwrap().len();
         }
     }
+    // `oracle/compile/status.json` carries the same number for a reader.
+    let budget = status()["budget_bytes"].as_u64().unwrap();
     assert!(
-        committed <= 6 * 1024 * 1024,
-        "committed bytes {committed} over budget"
+        committed <= budget,
+        "committed bytes {committed} over budget {budget}"
     );
 }
 
