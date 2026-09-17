@@ -62,6 +62,165 @@ pub fn term_from_json(u: &mut Universe, v: &Value) -> Result<TermId, String> {
     }
 }
 
+/// An arbitrary document, not the transport encoding above. `serde_json::Value`
+/// stores an object in a `BTreeMap` and cannot carry the order a row index is.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Json {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Text(String),
+    Array(Vec<Json>),
+    Object(Vec<(String, Json)>),
+}
+
+struct JsonVisitor;
+
+impl<'de> serde::de::Visitor<'de> for JsonVisitor {
+    type Value = Json;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a json value")
+    }
+
+    fn visit_unit<E>(self) -> Result<Json, E> {
+        Ok(Json::Null)
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Json, E> {
+        Ok(Json::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Json, E> {
+        Ok(Json::Int(value))
+    }
+
+    /// A magnitude past `i64` keeps its value as a float, the split
+    /// `term_from_json` makes.
+    fn visit_u64<E>(self, value: u64) -> Result<Json, E> {
+        Ok(match i64::try_from(value) {
+            Ok(value) => Json::Int(value),
+            Err(_) => Json::Float(value as f64),
+        })
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Json, E> {
+        Ok(Json::Float(value))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Json, E> {
+        Ok(Json::Text(value.to_string()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Json, E> {
+        Ok(Json::Text(value))
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut access: A) -> Result<Json, A::Error> {
+        let mut items = Vec::new();
+        while let Some(item) = access.next_element()? {
+            items.push(item);
+        }
+        Ok(Json::Array(items))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut access: A) -> Result<Json, A::Error> {
+        let mut members = Vec::new();
+        while let Some((name, value)) = access.next_entry()? {
+            members.push((name, value));
+        }
+        Ok(Json::Object(members))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Json {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Json, D::Error> {
+        d.deserialize_any(JsonVisitor)
+    }
+}
+
+/// `ref(application(primitive(Name), [Value]))`: the `intern` of one primitive,
+/// the node `(text "x")` names, `kernel::intern_row` incarnate.
+fn value_node(u: &mut Universe, primitive: &str, value: TermId) -> TermId {
+    let name = u.atom(primitive);
+    let constructor = u.compound("primitive", vec![name]);
+    let arguments = u.list(&[value]);
+    let application = u.compound("application", vec![constructor, arguments]);
+    u.compound("ref", vec![application])
+}
+
+/// `identity` is `edge(Owner, Label)`, `kernel::edge_ref_row`'s own shape, so a
+/// member is reachable by `edge_ref`. serde_json's 128-level cap bounds this.
+fn walk(
+    u: &mut Universe,
+    colon: TermId,
+    none: TermId,
+    identity: TermId,
+    json: &Json,
+    rows: &mut Vec<Row>,
+) -> TermId {
+    match json {
+        Json::Null => none,
+        Json::Bool(value) => {
+            let value = u.boolean(*value);
+            value_node(u, "bool", value)
+        }
+        Json::Int(value) => {
+            let value = u.int(*value);
+            value_node(u, "int", value)
+        }
+        Json::Float(value) => {
+            let value = u.float(*value);
+            value_node(u, "float", value)
+        }
+        Json::Text(value) => {
+            let value = u.string(value);
+            value_node(u, "text", value)
+        }
+        Json::Array(items) => {
+            let mut cells = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                let label = u.int(index as i64);
+                let child = u.compound("edge", vec![identity, label]);
+                cells.push(walk(u, colon, none, child, item, rows));
+            }
+            let list = u.list(&cells);
+            u.compound("const", vec![list])
+        }
+        Json::Object(members) => {
+            let owner = u.compound("ref", vec![identity]);
+            for (index, (name, value)) in members.iter().enumerate() {
+                let label = u.atom(name);
+                let child = u.compound("edge", vec![identity, label]);
+                let target = walk(u, colon, none, child, value, rows);
+                let name = u.compound("const", vec![label]);
+                let index = u.int(index as i64);
+                let index = u.compound("const", vec![index]);
+                rows.push(Row {
+                    rel: colon,
+                    args: vec![owner, name, target, index],
+                });
+            }
+            owner
+        }
+    }
+}
+
+/// One document as `:` rows under `identity`, with the cell its root binds to.
+/// Keys keep document order as the row index; nothing is sorted.
+pub fn rows_from_json(
+    u: &mut Universe,
+    colon: TermId,
+    none: TermId,
+    identity: TermId,
+    document: &Json,
+) -> (TermId, Vec<Row>) {
+    let mut rows = Vec::new();
+    let root = walk(u, colon, none, identity, document, &mut rows);
+    (root, rows)
+}
+
 pub fn term_to_json(u: &Universe, id: TermId) -> Value {
     if let Some(items) = u.as_list(id) {
         return Value::Array(items.iter().map(|i| term_to_json(u, *i)).collect());
