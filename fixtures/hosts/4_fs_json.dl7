@@ -6,6 +6,14 @@
 
 (Doc "__DOC__")
 
+(: Root
+   (* (: path text)
+      (: node any)))
+
+(<- (Root ?Path ?Node)
+    (Doc ?Path)
+    (fs.json ?Path ?Node))
+
 (: Member
    (* (: name any)
       (: target any)

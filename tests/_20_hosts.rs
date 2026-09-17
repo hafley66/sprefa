@@ -342,6 +342,157 @@ pub fn fs_at_answers_the_files_and_blobs_of_each_revision() {
     }
 }
 
+/// A `const(Atom)` cell as `rows` projects it.
+fn atom(name: &str) -> Value {
+    json!({ "a": name })
+}
+
+/// `ref(application(primitive(Name), [Value]))`: the `intern` of one primitive.
+fn value_node(primitive: &str, value: Value) -> Value {
+    json!({
+        "f": "application",
+        "args": [{ "f": "primitive", "args": [{ "a": primitive }] }, [value]]
+    })
+}
+
+/// A list cell keeps each element's own `ref` tag.
+fn tagged(node: Value) -> Value {
+    json!({ "f": "ref", "args": [node] })
+}
+
+/// The untagged identity the program's `names` table carries for a name.
+fn identity(names: &Value, name: &str) -> Value {
+    names[name]["args"][0].clone()
+}
+
+/// `application(<fs.json>, [Path])`: the root node of one document.
+fn document(names: &Value, path: &str) -> Value {
+    json!({ "f": "application", "args": [identity(names, "fs.json"), [{ "s": path }]] })
+}
+
+/// `edge(Owner, Label)`: a member node, `edge_ref`'s own shape.
+fn member(owner: Value, label: Value) -> Value {
+    json!({ "f": "edge", "args": [owner, label] })
+}
+
+fn sorted(mut rows: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
+    rows.sort_by_key(|row| row.iter().map(|v| v.to_string()).collect::<Vec<_>>());
+    rows
+}
+
+/// `4_fs_json.dl7` over one document written into the scratch directory.
+fn json_run(directory: &Path, name: &str, body: &str) -> (Value, Value, String) {
+    let path = directory.join(name);
+    std::fs::write(&path, body).unwrap();
+    let path = path.to_string_lossy().to_string();
+    let compiled = compile(directory, "4_fs_json.dl7", &[("__DOC__", &path)]);
+    let (out, code) = run(&compiled.program, &["--serve", "fs.json"], &[]);
+    assert_eq!(code, 0, "exit code; diagnostics {}", out["diagnostics"]);
+    (out, compiled.names, path)
+}
+
+#[test]
+pub fn fs_json_reads_an_object_into_edges_under_one_root() {
+    let directory = scratch("fs-json");
+    let document_path = std::fs::canonicalize(fixture("todo.json")).unwrap();
+    let path = document_path.to_string_lossy().to_string();
+    let compiled = compile(&directory, "4_fs_json.dl7", &[("__DOC__", &path)]);
+    let (out, code) = run(&compiled.program, &["--serve", "fs.json"], &[]);
+    assert_eq!(code, 0, "exit code; diagnostics {}", out["diagnostics"]);
+    assert_eq!(out["ticks"], json!(1));
+    let names = &compiled.names;
+    let root = document(names, &path);
+    let meta = member(root.clone(), atom("meta"));
+    assert_eq!(
+        rows(&out, names, "Root"),
+        vec![vec![text(&path), root.clone()]]
+    );
+    assert_eq!(
+        rows(&out, names, "Member"),
+        sorted(vec![
+            vec![atom("title"), value_node("text", json!({ "s": "x" })), json!(0)],
+            vec![atom("n"), value_node("int", json!(3)), json!(1)],
+            vec![
+                atom("tags"),
+                json!([
+                    tagged(value_node("text", json!({ "s": "a" }))),
+                    tagged(value_node("text", json!({ "s": "b" })))
+                ]),
+                json!(2)
+            ],
+            vec![atom("owner"), identity(names, "none"), json!(3)],
+            vec![atom("meta"), meta.clone(), json!(4)],
+        ])
+    );
+    let edges = rows(&out, names, "Edge");
+    assert_eq!(edges.len(), 6, "one edge per member, nested included");
+    assert!(
+        edges.contains(&vec![meta, atom("v"), value_node("int", json!(1)), json!(0)]),
+        "the nested object owns its own edge: {edges:?}"
+    );
+    assert!(rows(&out, names, "Failed").is_empty());
+}
+
+#[test]
+pub fn fs_json_reads_a_top_level_array_and_a_top_level_scalar() {
+    let directory = scratch("fs-json-roots");
+    let (out, names, path) = json_run(&directory, "list.json", "[1, \"a\"]");
+    assert_eq!(
+        rows(&out, &names, "Root"),
+        vec![vec![
+            text(&path),
+            json!([
+                tagged(value_node("int", json!(1))),
+                tagged(value_node("text", json!({ "s": "a" })))
+            ])
+        ]]
+    );
+    assert!(rows(&out, &names, "Edge").is_empty(), "a list owns no edge");
+
+    let (out, names, path) = json_run(&directory, "scalar.json", "3");
+    assert_eq!(
+        rows(&out, &names, "Root"),
+        vec![vec![text(&path), value_node("int", json!(3))]]
+    );
+    assert!(rows(&out, &names, "Edge").is_empty(), "a scalar owns no edge");
+}
+
+/// RFC 7396 sections 1 and 2, the case `plans/v8/probes/2026-09-17-json-null-vs-absent.dl7`
+/// spells: `{"owner": null}` and `{}` are two graphs.
+#[test]
+pub fn fs_json_tells_present_null_from_an_absent_key() {
+    let directory = scratch("fs-json-null");
+    let (out, names, _) = json_run(&directory, "present.json", "{\"title\": \"x\", \"owner\": null}");
+    let title = vec![atom("title"), value_node("text", json!({ "s": "x" })), json!(0)];
+    assert_eq!(
+        rows(&out, &names, "Member"),
+        sorted(vec![
+            title.clone(),
+            vec![atom("owner"), identity(&names, "none"), json!(1)],
+        ])
+    );
+
+    let (out, names, _) = json_run(&directory, "absent.json", "{\"title\": \"x\"}");
+    assert_eq!(rows(&out, &names, "Member"), vec![title]);
+}
+
+#[test]
+pub fn fs_json_on_a_file_that_is_no_document_is_an_error_row() {
+    let directory = scratch("fs-json-missing");
+    let missing = directory.join("nothing.json").to_string_lossy().to_string();
+    let compiled = compile(&directory, "4_fs_json.dl7", &[("__DOC__", &missing)]);
+    let (out, code) = run(&compiled.program, &["--serve", "fs.json"], &[]);
+    assert_eq!(code, 0, "exit code");
+    assert!(rows(&out, &compiled.names, "Root").is_empty());
+    let failed = rows(&out, &compiled.names, "Failed");
+    assert_eq!(failed.len(), 1, "errors {failed:?}");
+    assert_eq!(failed[0][0], text(&missing));
+
+    let (out, names, _) = json_run(&directory, "bad.json", "{not json");
+    assert!(rows(&out, &names, "Root").is_empty());
+    assert_eq!(rows(&out, &names, "Failed").len(), 1);
+}
+
 fn sprefa_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
