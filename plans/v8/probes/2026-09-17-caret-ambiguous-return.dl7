@@ -1,0 +1,14 @@
+; Probe 3 of the caret arc: a second `^` at one level is `ambiguous_return`
+; (AGENTS.md:108).
+;
+; Reads rc=0 once `valid_atom` carries the `^` arm.
+; Compiles rc=0 TODAY AND IS WRONG: two columns named `^a` and `^b`, no
+; diagnostic. A dl7 macro rule has no channel to author one. Macrotime
+; diagnostics come from a fixed Rust set only:
+;   src/_1_macrotime/_3_rewrite.rs:122  conflicting_macro_claims
+;   src/_1_macrotime/_3_rewrite.rs:133  non_dense_expansion_ordinals
+;   src/_1_macrotime/_3_rewrite.rs:138  unknown_expansion_output
+;   src/_1_macrotime/_4_expand.rs:162   expansion_cycle
+;   src/_1_macrotime/_4_expand.rs:177   expansion_round_limit
+
+(: Bad (* (: ^a int) (: ^b int)))
