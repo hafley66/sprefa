@@ -1,5 +1,3 @@
-(modules: (import "@std/modules"))
-
 (other: (import "./2026-09-17-import-cycle-b.dl7"))
 
 (: left
