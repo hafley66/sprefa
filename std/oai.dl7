@@ -16,5 +16,5 @@
    (* (: operation_id text)
       (: name text)
       (: location any)
-      (: type type)
+      (: schema type)
       (: required any)))

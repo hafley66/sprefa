@@ -1,6 +1,10 @@
 ; The loaded `Todo` carries no source name, so the probe reaches it through the
 ; route that returns it.
 
+(api: (import "@std/oai"))
+
+(api.document "todo.json")
+
 (: TodoShape
    (* (: id string)
       (: title string)))
@@ -10,5 +14,5 @@
       (: method any)))
 
 (<- (route_returns_todo ?Path ?Method)
-    (openapi.route ?Path ?Method ?OperationId ?RequestType ?ResponseType)
+    (api.route ?Path ?Method ?OperationId ?RequestType ?ResponseType)
     (Conforms ?ResponseType TodoShape ?Proof))

@@ -1,0 +1,6 @@
+; Two documents declaring one schema name: the second is the collision.
+
+(api: (import "@std/oai"))
+
+(api.document "todo.json")
+(api.document "duplicate.json")

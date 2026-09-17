@@ -1,0 +1,6 @@
+; A document whose `$ref` points at nothing: the load reports and the compile
+; carries no rows.
+
+(api: (import "@std/oai"))
+
+(api.document "dangling.json")

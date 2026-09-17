@@ -7,7 +7,7 @@
       {
         "args": [
           {
-            "a": "fixtures/openapi/dangling.json"
+            "a": "/V8ROOT/fixtures/openapi/dangling.json"
           }
         ],
         "f": "document"
