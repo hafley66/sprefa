@@ -5,7 +5,7 @@ use super::forms;
 use super::kernel;
 use super::slots::{self as slots, Callable, Slot};
 use crate::_6_eval::program::AggregateKind;
-use crate::_6_eval::term::{TermId, Universe};
+use crate::_6_eval::term::{Term, TermId, Universe};
 use std::cmp::Ordering;
 
 #[derive(Clone, Debug)]
@@ -148,7 +148,7 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
             return lower_path_walk(cx, parsed.id, &items[1..], owner);
         }
         return match expression_callable(cx, head, owner) {
-            Ok((callable, arity, key_sets)) => lower_expression_call(
+            Ok(Applied::Relation(callable, arity, key_sets)) => lower_expression_call(
                 cx,
                 callable,
                 arity,
@@ -158,6 +158,9 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
                 &items[1..],
                 owner,
             ),
+            Ok(Applied::Construction(constructor)) => {
+                lower_construction(cx, constructor, parsed.id, &items[1..], owner)
+            }
             Err(reason) => {
                 let diagnostic = cx.diagnostic(parsed.id, reason);
                 none(cx, vec![diagnostic])
@@ -218,12 +221,23 @@ pub fn colon_goal(
     colon_call_goal(cx, owner, &[bind_ref, name_const, value, index_const])
 }
 
+/// What a head position resolved to.
+pub enum Applied {
+    /// A node with rows: the application is a goal over that relation.
+    Relation(Callable, i64, TermId),
+    /// A node with no rows: the application is construction, and the term is
+    /// the constructor the interned value carries.
+    Construction(TermId),
+}
+
+/// The primitive classes a type node can name. `_3_check/_5_kernel.rs:41`
+/// pins the same list on the check side.
+fn primitive_type(name: &str) -> bool {
+    matches!(name, "int" | "float" | "bool" | "text" | "any" | "type")
+}
+
 /// `:1488`. `Err` carries the bare reason term.
-pub fn expression_callable(
-    cx: &mut Cx,
-    name: TermId,
-    owner: TermId,
-) -> Result<(Callable, i64, TermId), TermId> {
+pub fn expression_callable(cx: &mut Cx, name: TermId, owner: TermId) -> Result<Applied, TermId> {
     if let Some(found) = cx.reservations.scoped(owner, name) {
         let (target, kind) = (found.target, found.kind);
         let kind_name =
@@ -234,9 +248,18 @@ pub fn expression_callable(
         if kind_name == "product" || kind_name == "derived_callable" {
             if let Some(callable) = cx.u.unary(target, "target") {
                 return match cx.relations.get(&callable) {
-                    Some((arity, key_sets)) => Ok((Callable::Target(callable), *arity, *key_sets)),
+                    Some((arity, key_sets)) => {
+                        Ok(Applied::Relation(Callable::Target(callable), *arity, *key_sets))
+                    }
                     None => Err(cx.compound("undeclared_relation", vec![callable])),
                 };
+            }
+        }
+        // A sum declares no relation, so applying it constructs.
+        if kind_name == "sum" {
+            if let Some(inner) = cx.u.unary(target, "target") {
+                let constructor = cx.compound("ref", vec![inner]);
+                return Ok(Applied::Construction(constructor));
             }
         }
         return Err(cx.compound("not_relation", vec![name]));
@@ -247,9 +270,106 @@ pub fn expression_callable(
             .unwrap_or_default();
     if let Some(arity) = kernel::kernel_relation(&text) {
         let key_sets = key_sets_term(cx, &kernel::kernel_keys(&text));
-        return Ok((Callable::Kernel(text), arity as i64, key_sets));
+        return Ok(Applied::Relation(
+            Callable::Kernel(text),
+            arity as i64,
+            key_sets,
+        ));
+    }
+    if primitive_type(&text) {
+        let constructor = cx.compound("name", vec![owner, name]);
+        return Ok(Applied::Construction(constructor));
     }
     Err(cx.compound("undeclared_relation", vec![name]))
+}
+
+/// The primitive class a literal belongs to. `_6_partial.rs:239` maps the same
+/// terms to `primitive(Name)` for a reified `Literal` row.
+pub fn literal_primitive(cx: &mut Cx, value: TermId) -> TermId {
+    let name = match cx.u.get(value) {
+        Term::Int(_) => "int",
+        Term::Float(_) => "float",
+        Term::Bool(_) => "bool",
+        Term::Str(_) => "text",
+        _ => "any",
+    };
+    cx.atom(name)
+}
+
+/// A bound name is not a relation; an unbound one is undeclared.
+pub fn not_a_relation(cx: &mut Cx, name: TermId, owner: TermId) -> TermId {
+    let reason = match cx.reservations.scoped(owner, name) {
+        Some(_) => "not_relation",
+        None => "undeclared_relation",
+    };
+    cx.compound(reason, vec![name])
+}
+
+/// One kernel goal `pending_goal(positive, call(name(Owner, Relation), Args))`.
+fn kernel_goal(cx: &mut Cx, owner: TermId, relation: &str, arguments: &[TermId]) -> TermId {
+    let atom = cx.atom(relation);
+    let name = cx.compound("name", vec![owner, atom]);
+    let list = cx.u.list(arguments);
+    let call = cx.compound("call", vec![name, list]);
+    let positive = cx.atom("positive");
+    cx.compound("pending_goal", vec![positive, call])
+}
+
+/// A fresh variable for one step of a construction.
+fn construction_var(cx: &mut Cx, node_id: TermId, ordinal: i64) -> TermId {
+    let index = cx.int(ordinal);
+    let key = cx.compound("construction", vec![node_id, index]);
+    cx.compound("var", vec![key])
+}
+
+/// `(<Type> <Argument>...)` where the head names a node with no rows. The
+/// argument list is built tail first, because `cons/3` takes head and tail.
+pub fn lower_construction(
+    cx: &mut Cx,
+    constructor: TermId,
+    node_id: TermId,
+    argument_nodes: &[TermId],
+    owner: TermId,
+) -> Lowering {
+    let mut goals = Vec::new();
+    let mut origins = Vec::new();
+    let mut values = Vec::with_capacity(argument_nodes.len());
+    for node in argument_nodes {
+        let lowered = lower_expression(cx, *node, owner);
+        if let Some(first) = lowered.diagnostics.first() {
+            return none(cx, vec![*first]);
+        }
+        // A half-applied argument has no term the argument list can hold.
+        if is_partial(cx, lowered.value) {
+            let reason = cx.compound("partial_construction_argument", vec![constructor]);
+            let diagnostic = cx.diagnostic(node_id, reason);
+            return none(cx, vec![diagnostic]);
+        }
+        goals.extend(lowered.goals);
+        origins.extend(lowered.origins);
+        values.push(lowered.value);
+    }
+    let mut ordinal: i64 = 0;
+    let mut tail = construction_var(cx, node_id, ordinal);
+    goals.push(kernel_goal(cx, owner, "nil", &[tail]));
+    origins.push(node_id);
+    for value in values.iter().rev() {
+        ordinal += 1;
+        let next = construction_var(cx, node_id, ordinal);
+        goals.push(kernel_goal(cx, owner, "cons", &[*value, tail, next]));
+        origins.push(node_id);
+        tail = next;
+    }
+    ordinal += 1;
+    let value = construction_var(cx, node_id, ordinal);
+    goals.push(kernel_goal(cx, owner, "intern", &[constructor, tail, value]));
+    origins.push(node_id);
+    Lowering {
+        value,
+        goals,
+        origins,
+        diagnostics: vec![],
+    }
 }
 
 fn key_sets_term(cx: &mut Cx, key_sets: &[Vec<u32>]) -> TermId {

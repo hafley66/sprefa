@@ -128,6 +128,12 @@ pub fn rule_form(u: &Universe, term: TermId) -> Option<RuleForm> {
     })
 }
 
+/// A bare literal target carries its own type, so it is constructed rather
+/// than stored as a constant.
+pub fn literal_bind_target(u: &Universe, target: TermId) -> bool {
+    node(u, target).is_some_and(|n| literal_value(u, n.payload).is_some())
+}
+
 /// `:713`. A form target is an expression unless it is empty or headed by
 /// `*`, `+` or `Host`.
 pub fn expression_bind_target(u: &Universe, target: TermId) -> bool {

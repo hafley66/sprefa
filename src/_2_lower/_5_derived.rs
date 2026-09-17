@@ -82,7 +82,10 @@ fn expression_rule(
         return Ok(None);
     };
     let (target_node, bind_node_id, index) = (args[0], args[1], args[2]);
-    let lowered = lower_expression(cx, target_node, owner);
+    let lowered = match literal_construction(cx, target_node, owner) {
+        Some(lowered) => lowered,
+        None => lower_expression(cx, target_node, owner),
+    };
     if lowered.diagnostics.is_empty() && is_partial(cx, lowered.value) {
         // :369. A half-applied target emits the Curry block instead of one rule.
         let block = partial_bind_rules(
@@ -118,6 +121,25 @@ fn expression_rule(
         rules: vec![rule],
         origins: rule_origins(cx, rule_index, bind_node_id, &lowered.origins),
     }))
+}
+
+/// `(: name 3)`: the literal's own primitive is the constructor, so the edge
+/// target is a value node and the column reads its type and default from it.
+fn literal_construction(cx: &mut Cx, target_node: TermId, owner: TermId) -> Option<Lowering> {
+    if !super::forms::literal_bind_target(cx.u, target_node) {
+        return None;
+    }
+    let node = super::forms::node(cx.u, target_node)?;
+    let value = super::forms::literal_value(cx.u, node.payload)?;
+    let primitive = super::express::literal_primitive(cx, value);
+    let constructor = cx.compound("name", vec![owner, primitive]);
+    Some(super::express::lower_construction(
+        cx,
+        constructor,
+        node.id,
+        &[target_node],
+        owner,
+    ))
 }
 
 /// `:305`. `derived_compound_edge(LabelNode, TargetTerm, BindNodeId, Index)`.

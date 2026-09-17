@@ -72,7 +72,7 @@ pub fn lower_bind(
         let r = reason(u, "expected_bind");
         return Err(diagnostic(u, node, r));
     };
-    if forms::expression_bind_target(u, bind.target) {
+    if forms::expression_bind_target(u, bind.target) || forms::literal_bind_target(u, bind.target) {
         return Ok(finish_derived_bind(
             u,
             bind.bind_node,
