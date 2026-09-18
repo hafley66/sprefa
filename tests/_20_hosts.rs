@@ -410,13 +410,13 @@ pub fn fs_json_reads_an_object_into_edges_under_one_root() {
     assert_eq!(
         rows(&out, names, "Member"),
         sorted(vec![
-            vec![atom("title"), value_node("text", json!({ "s": "x" })), json!(0)],
+            vec![atom("title"), value_node("str", json!({ "s": "x" })), json!(0)],
             vec![atom("n"), value_node("int", json!(3)), json!(1)],
             vec![
                 atom("tags"),
                 json!([
-                    tagged(value_node("text", json!({ "s": "a" }))),
-                    tagged(value_node("text", json!({ "s": "b" })))
+                    tagged(value_node("str", json!({ "s": "a" }))),
+                    tagged(value_node("str", json!({ "s": "b" })))
                 ]),
                 json!(2)
             ],
@@ -443,7 +443,7 @@ pub fn fs_json_reads_a_top_level_array_and_a_top_level_scalar() {
             text(&path),
             json!([
                 tagged(value_node("int", json!(1))),
-                tagged(value_node("text", json!({ "s": "a" })))
+                tagged(value_node("str", json!({ "s": "a" })))
             ])
         ]]
     );
@@ -463,7 +463,7 @@ pub fn fs_json_reads_a_top_level_array_and_a_top_level_scalar() {
 pub fn fs_json_tells_present_null_from_an_absent_key() {
     let directory = scratch("fs-json-null");
     let (out, names, _) = json_run(&directory, "present.json", "{\"title\": \"x\", \"owner\": null}");
-    let title = vec![atom("title"), value_node("text", json!({ "s": "x" })), json!(0)];
+    let title = vec![atom("title"), value_node("str", json!({ "s": "x" })), json!(0)];
     assert_eq!(
         rows(&out, &names, "Member"),
         sorted(vec![
