@@ -1,0 +1,351 @@
+; The caret macro. The reader turns `^x` into the form `(^ x)`; these rules
+; rewrite every `(^ X)` form to plain `:` forms. Every caret claim is the one
+; macro "^"; the three claim shapes never land on the same node, and a claimed
+; ancestor is replaced whole before its marks are visited.
+;
+; TypeScript-shaped row signatures (NodeId and Relation as in 0_standard.dl7):
+;
+; type CaretMark = Relation<readonly [mark: NodeId, target: NodeId]>
+; type CaretLevelMark = Relation<readonly [item: NodeId, mark: NodeId]>
+; type CaretKey = Relation<readonly [
+;   invocation: NodeId,
+;   outputOrdinal: number,
+;   templatePath: number,
+; ]>
+; type CaretMint = Relation<readonly [
+;   invocation: NodeId,
+;   outputOrdinal: number,
+;   templatePath: number,
+;   output: NodeId,
+; ]>
+; type CaretForm = Relation<readonly [output: NodeId, invocation: NodeId]>
+; type CaretAtom = Relation<readonly [
+;   output: NodeId,
+;   invocation: NodeId,
+;   name: string,
+; ]>
+; type CaretReparent = Relation<readonly [
+;   invocation: NodeId,
+;   edge: NodeId,
+;   name: NodeId,
+;   body: NodeId,
+; ]>
+; type CaretReparentMember = Relation<readonly [
+;   invocation: NodeId,
+;   member: NodeId,
+;   outputOrdinal: number,
+; ]>
+; type CaretReturn = Relation<readonly [member: NodeId, target: NodeId]>
+; type CaretTemplatePath = Relation<readonly [templatePath: number]>
+
+(: caret_mark
+   (* (: mark type)
+      (: target type)))
+
+(: caret_level_mark
+   (* (: item type)
+      (: mark type)))
+
+(: caret_key
+   (* (: invocation type)
+      (: output_ordinal int)
+      (: template_path int)))
+
+(: caret_mint
+   (* (: invocation type)
+      (: output_ordinal int)
+      (: template_path int)
+      (: output type)))
+
+(: caret_form
+   (* (: output type)
+      (: invocation type)))
+
+(: caret_atom
+   (* (: output type)
+      (: invocation type)
+      (: name str)))
+
+(: caret_reparent
+   (* (: invocation type)
+      (: edge type)
+      (: name type)
+      (: body type)))
+
+(: caret_reparent_member
+   (* (: invocation type)
+      (: member type)
+      (: output_ordinal int)))
+
+(: caret_return
+   (* (: member type)
+      (: target type)))
+
+; The four nodes of the minted `(: return Name)` edge: form, `:`, `return`,
+; name copy.
+(: caret_template_path
+   (* (: template_path int)))
+
+(caret_template_path 0)
+(caret_template_path 1)
+(caret_template_path 2)
+(caret_template_path 3)
+
+; function caretMark(mark: FormNode<[AtomNode<"^">, Node]>): Node
+(<- (caret_mark ?Mark ?Target)
+    (syntax_form ?Mark)
+    (: ?Mark item ?Caret 0)
+    (syntax_atom ?Caret "^")
+    (: ?Mark item ?Target 1))
+
+; An item of one form carries a mark when it is the mark, or a `:` edge whose
+; label is the mark.
+(<- (caret_level_mark ?Mark ?Mark)
+    (caret_mark ?Mark ?Target))
+
+(<- (caret_level_mark ?Edge ?Mark)
+    (syntax_form ?Edge)
+    (: ?Edge item ?Colon 0)
+    (syntax_atom ?Colon ":")
+    (: ?Edge item ?Mark 1)
+    (caret_mark ?Mark ?Target))
+
+; GeneratedSyntax(invocation, output ordinal, template path), as `<+` mints.
+(<- (caret_mint ?Invocation ?OutputOrdinal ?TemplatePath ?Output)
+    (caret_key ?Invocation ?OutputOrdinal ?TemplatePath)
+    (nil ?Empty)
+    (cons ?TemplatePath ?Empty ?TemplateArguments)
+    (cons ?OutputOrdinal ?TemplateArguments ?OutputArguments)
+    (cons ?Invocation ?OutputArguments ?Arguments)
+    (intern GeneratedSyntax ?Arguments ?Output))
+
+(<- (node ?Output)
+    (caret_form ?Output ?Invocation))
+
+(<- (node ?Output)
+    (caret_atom ?Output ?Invocation ?Name))
+
+(<- (syntax_form ?Output)
+    (caret_form ?Output ?Invocation))
+
+(<- (syntax_atom ?Output ?Name)
+    (caret_atom ?Output ?Invocation ?Name))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (caret_form ?Output ?Invocation)
+    (syntax_source ?Invocation ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (caret_atom ?Output ?Invocation ?Name)
+    (syntax_source ?Invocation ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+; function ambiguousReturn(level: FormNode): Diagnostic<"ambiguous_return">
+; Two items of one form each carry a mark.
+(<- (syntax_diagnostic ?Level "ambiguous_return")
+    (: ?Level item ?First ?FirstIndex)
+    (caret_level_mark ?First ?FirstMark)
+    (: ?Level item ?Second ?SecondIndex)
+    (caret_level_mark ?Second ?SecondMark)
+    (int.lt ?FirstIndex ?SecondIndex)
+    (: ?FirstMark item ?Caret 0)
+    (syntax_atom ?Caret "^"))
+
+; Reparent.
+;
+; function reparent(invocation: FormNode<[
+;   AtomNode<":">,
+;   FormNode<[AtomNode<":">, Mark<AtomNode<Name>>, Target]>,
+;   FormNode<FormNode<[AtomNode<":">, Label, ...Rest]>[]>,
+; ]>): readonly [
+;   FormNode<[AtomNode<":">, AtomNode<Name>, Target]>,
+;   ...FormNode<[AtomNode<":">, AtomNode<Name>, Label, ...Rest]>[],
+; ]
+(<- (caret_reparent ?Form ?Edge ?Name ?Body)
+    (syntax_form ?Form)
+    (: ?Form item ?Colon 0)
+    (syntax_atom ?Colon ":")
+    (: ?Form item ?Edge 1)
+    (syntax_form ?Edge)
+    (: ?Edge item ?EdgeColon 0)
+    (syntax_atom ?EdgeColon ":")
+    (: ?Edge item ?Mark 1)
+    (caret_mark ?Mark ?Name)
+    (syntax_atom ?Name ?NameText)
+    (: ?Form item ?Body 2)
+    (syntax_form ?Body))
+
+(<- (syntax_claim ?Form "^")
+    (caret_reparent ?Form ?Edge ?Name ?Body)
+    (: ?Edge item ?Mark 1)
+    (: ?Mark item ?Caret 0)
+    (syntax_atom ?Caret "^"))
+
+(<- (caret_key ?Form 0 0)
+    (caret_reparent ?Form ?Edge ?Name ?Body))
+
+(<- (caret_form ?Output ?Form)
+    (caret_reparent ?Form ?Edge ?Name ?Body)
+    (caret_mint ?Form 0 0 ?Output))
+
+(<- (: ?Form expansion ?Output 0)
+    (caret_reparent ?Form ?Edge ?Name ?Body)
+    (caret_mint ?Form 0 0 ?Output))
+
+(<- (: ?Output item ?Colon 0)
+    (caret_reparent ?Form ?Edge ?Name ?Body)
+    (caret_mint ?Form 0 0 ?Output)
+    (: ?Edge item ?Colon 0))
+
+(<- (: ?Output item ?Name 1)
+    (caret_reparent ?Form ?Edge ?Name ?Body)
+    (caret_mint ?Form 0 0 ?Output))
+
+(<- (: ?Output item ?Child ?Index)
+    (caret_reparent ?Form ?Edge ?Name ?Body)
+    (caret_mint ?Form 0 0 ?Output)
+    (: ?Edge item ?Child ?Index)
+    (int.lt 1 ?Index))
+
+; A body item that is not a `:` edge leaves a hole in the output ordinals, which
+; the rewriter reports as `non_dense_expansion_ordinals`.
+(<- (caret_reparent_member ?Form ?Member ?OutputOrdinal)
+    (caret_reparent ?Form ?Edge ?Name ?Body)
+    (: ?Body item ?Member ?Index)
+    (syntax_form ?Member)
+    (: ?Member item ?MemberColon 0)
+    (syntax_atom ?MemberColon ":")
+    (int.add ?Index 1 ?OutputOrdinal))
+
+(<- (caret_key ?Form ?OutputOrdinal 0)
+    (caret_reparent_member ?Form ?Member ?OutputOrdinal))
+
+(<- (caret_key ?Form ?OutputOrdinal 1)
+    (caret_reparent_member ?Form ?Member ?OutputOrdinal))
+
+(<- (caret_form ?Output ?Form)
+    (caret_reparent_member ?Form ?Member ?OutputOrdinal)
+    (caret_mint ?Form ?OutputOrdinal 0 ?Output))
+
+(<- (caret_atom ?Owner ?Form ?NameText)
+    (caret_reparent ?Form ?Edge ?Name ?Body)
+    (syntax_atom ?Name ?NameText)
+    (caret_reparent_member ?Form ?Member ?OutputOrdinal)
+    (caret_mint ?Form ?OutputOrdinal 1 ?Owner))
+
+(<- (: ?Form expansion ?Output ?OutputOrdinal)
+    (caret_reparent_member ?Form ?Member ?OutputOrdinal)
+    (caret_mint ?Form ?OutputOrdinal 0 ?Output))
+
+(<- (: ?Output item ?Colon 0)
+    (caret_reparent_member ?Form ?Member ?OutputOrdinal)
+    (caret_mint ?Form ?OutputOrdinal 0 ?Output)
+    (: ?Member item ?Colon 0))
+
+(<- (: ?Output item ?Owner 1)
+    (caret_reparent_member ?Form ?Member ?OutputOrdinal)
+    (caret_mint ?Form ?OutputOrdinal 0 ?Output)
+    (caret_mint ?Form ?OutputOrdinal 1 ?Owner))
+
+(<- (: ?Output item ?Child ?Shifted)
+    (caret_reparent_member ?Form ?Member ?OutputOrdinal)
+    (caret_mint ?Form ?OutputOrdinal 0 ?Output)
+    (: ?Member item ?Child ?Index)
+    (int.lt 0 ?Index)
+    (int.add ?Index 1 ?Shifted))
+
+; Return collect.
+;
+; function returnCollect(member: FormNode<[
+;   AtomNode<":">, Mark<AtomNode<Name>>, ...Rest,
+; ]>): readonly [
+;   FormNode<[AtomNode<":">, AtomNode<Name>, ...Rest]>,
+;   FormNode<[AtomNode<":">, AtomNode<"return">, AtomNode<Name>]>,
+; ]
+(<- (caret_return ?Member ?Target)
+    (syntax_form ?Level)
+    (: ?Level item ?Star 0)
+    (syntax_atom ?Star "*")
+    (: ?Level item ?Member ?Index)
+    (int.lt 0 ?Index)
+    (syntax_form ?Member)
+    (: ?Member item ?Colon 0)
+    (syntax_atom ?Colon ":")
+    (: ?Member item ?Mark 1)
+    (caret_mark ?Mark ?Target)
+    (syntax_atom ?Target ?TargetText))
+
+(<- (syntax_claim ?Member "^")
+    (caret_return ?Member ?Target)
+    (: ?Member item ?Mark 1)
+    (: ?Mark item ?Caret 0)
+    (syntax_atom ?Caret "^"))
+
+(<- (caret_key ?Member 0 0)
+    (caret_return ?Member ?Target))
+
+(<- (caret_key ?Member 1 ?TemplatePath)
+    (caret_return ?Member ?Target)
+    (caret_template_path ?TemplatePath))
+
+(<- (caret_form ?Output ?Member)
+    (caret_return ?Member ?Target)
+    (caret_mint ?Member 0 0 ?Output))
+
+(<- (caret_form ?Output ?Member)
+    (caret_return ?Member ?Target)
+    (caret_mint ?Member 1 0 ?Output))
+
+(<- (caret_atom ?Colon ?Member ":")
+    (caret_return ?Member ?Target)
+    (caret_mint ?Member 1 1 ?Colon))
+
+(<- (caret_atom ?Return ?Member "return")
+    (caret_return ?Member ?Target)
+    (caret_mint ?Member 1 2 ?Return))
+
+(<- (caret_atom ?Copy ?Member ?TargetText)
+    (caret_return ?Member ?Target)
+    (syntax_atom ?Target ?TargetText)
+    (caret_mint ?Member 1 3 ?Copy))
+
+(<- (: ?Member expansion ?Output ?OutputOrdinal)
+    (caret_return ?Member ?Target)
+    (caret_mint ?Member ?OutputOrdinal 0 ?Output))
+
+(<- (: ?Output item ?Colon 0)
+    (caret_return ?Member ?Target)
+    (caret_mint ?Member 0 0 ?Output)
+    (: ?Member item ?Colon 0))
+
+(<- (: ?Output item ?Target 1)
+    (caret_return ?Member ?Target)
+    (caret_mint ?Member 0 0 ?Output))
+
+(<- (: ?Output item ?Child ?Index)
+    (caret_return ?Member ?Target)
+    (caret_mint ?Member 0 0 ?Output)
+    (: ?Member item ?Child ?Index)
+    (int.lt 1 ?Index))
+
+(<- (: ?Output item ?Child ?TemplatePath)
+    (caret_return ?Member ?Target)
+    (caret_mint ?Member 1 0 ?Output)
+    (caret_template_path ?Path)
+    (int.lt 0 ?Path)
+    (caret_mint ?Member 1 ?Path ?Child)
+    (int.add ?Path -1 ?TemplatePath))
+
+; Mark drop: a mark no claimed ancestor consumed evaluates to its target.
+;
+; function markDrop(mark: FormNode<[AtomNode<"^">, Target]>): readonly [Target]
+(<- (syntax_claim ?Mark "^")
+    (syntax_form ?Mark)
+    (: ?Mark item ?Caret 0)
+    (syntax_atom ?Caret "^"))
+
+(<- (: ?Mark expansion ?Target 0)
+    (caret_mark ?Mark ?Target))
