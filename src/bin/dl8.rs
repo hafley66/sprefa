@@ -134,7 +134,13 @@ fn main() -> ExitCode {
             ansi,
         });
     let _ = hafley_observe::init(config);
-    match cli.command {
+    let exit = run(cli.command);
+    hafley_observe::shutdown();
+    exit
+}
+
+fn run(command: Command) -> ExitCode {
+    match command {
         Command::Read { file } => dl8::_0_read::cli(&file),
         Command::Expand { case, trace } => dl8::_1_macrotime::cli(&case, trace),
         Command::Lower { case } => dl8::_2_lower::cli(&case),
