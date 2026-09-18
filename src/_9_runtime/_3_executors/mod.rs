@@ -125,3 +125,29 @@ pub fn executors_for(
         false => Err(diagnostics),
     }
 }
+
+/// Every relation name `executors_for` builds an executor for.
+pub const ROSTER: [&str; 7] = [
+    timer::RELATION,
+    fetch_json::RELATION,
+    fs_json::RELATION,
+    git_refs::RELATION,
+    git_history::RELATION,
+    fs_at::RELATION,
+    extract::RELATION,
+];
+
+/// The Once executors the program's names can build. A name whose companion
+/// relation is undeclared builds nothing here; the runtime still reports it.
+pub fn once_executors(
+    u: &mut Universe,
+    names: &HashMap<String, TermId>,
+) -> Vec<Box<dyn IExecutor>> {
+    ROSTER
+        .iter()
+        .filter(|name| names.contains_key(**name))
+        .filter_map(|name| executors_for(u, names, &[name.to_string()]).ok())
+        .flatten()
+        .filter(|executor| executor.cadence() == super::reconcile::Cadence::Once)
+        .collect()
+}

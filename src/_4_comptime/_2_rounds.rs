@@ -2,7 +2,7 @@
 //! `2_compiler.pl:1173-1206`, `:1384-1467` and `:1505-1517`.
 
 use super::api::{
-    colon_rows, diagnostic, intern_rows, is_kernel_ref, strip_intern_rows, strip_snapshot_rows,
+    colon_call_parts, colon_rows, diagnostic, intern_rows, is_kernel_ref, strip_intern_rows, strip_snapshot_rows,
     Generated,
 };
 use super::assemble::{assemble_generated_program, Assembled};
@@ -10,12 +10,16 @@ use super::finish::{derived_bind_diagnostics, validate_functional_rows};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::resolved::Resolved;
 use crate::_3_check::{check_resolved_rules, Stop};
+use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::program::{
     AggregateKind, Arg, Fold, Goal, Order, Polarity, Program, Row, Rule, Seed, VarId,
 };
-use crate::_6_eval::term::{TermId, Universe};
+use crate::_6_eval::term::{Term, TermId, Universe};
 use crate::_6_eval::{evaluate, Trace};
 use crate::_7_effect::Slice;
+use crate::_9_runtime::executors::once_executors;
+use crate::_9_runtime::Answerer;
+use std::collections::HashMap;
 use std::marker::PhantomData;
 
 /// `debug_round_decision/2` at `:1376` prints exactly these three.
@@ -51,14 +55,27 @@ pub enum Round {
         outer: i64,
         deferred: bool,
     },
+    /// `effects` applications went to Once executors; `rows` of their answers
+    /// were new.
+    Answer {
+        outer: i64,
+        round: i64,
+        effects: usize,
+        rows: usize,
+    },
 }
 
-/// The four frozen lists plus the counter; one struct, reduced per round.
+/// The frozen lists plus the counter; one struct, reduced per round.
 pub struct RoundState {
     pub frozen_edges: Vec<TermId>,
     pub frozen_requests: Vec<TermId>,
     pub frozen_generated_relations: Vec<TermId>,
     pub frozen_generated_rules: Vec<TermId>,
+    /// Executor answers as `call/2` rows, re-seeded every round.
+    pub frozen_answers: Vec<TermId>,
+    /// Built on the first round from the module binds in the base seeds;
+    /// `None` when no declared relation has a Once executor.
+    pub answerer: Option<Answerer>,
     pub round: i64,
 }
 
@@ -104,6 +121,8 @@ impl RoundState {
             frozen_requests,
             frozen_generated_relations,
             frozen_generated_rules,
+            frozen_answers: Vec::new(),
+            answerer: None,
             round: 1,
         }
     }
@@ -181,11 +200,22 @@ pub fn round_closure(
     let relations = merged_sorted(u, base_relations, &st.frozen_generated_relations);
     let rules = merged_sorted(u, authored_rules, &st.frozen_generated_rules);
     let resolved = check_resolved_rules(u, &relations, &rules)?;
-    let seeds = compiler_round_seeds(u, base_seeds, &st.frozen_edges, &st.frozen_requests);
+    let seeds = compiler_round_seeds(
+        u,
+        base_seeds,
+        &st.frozen_edges,
+        &st.frozen_requests,
+        &st.frozen_answers,
+    );
     if !resolved.diagnostics.is_empty() {
         return Ok(Err(RoundOutcome::failed(resolved.diagnostics)));
     }
-    let (closure, evaluation_diagnostics) = evaluate_round(u, &rules, &seeds)?;
+    let served: Vec<TermId> = st
+        .answerer
+        .as_ref()
+        .map(|answerer| answerer.relations().collect())
+        .unwrap_or_default();
+    let (closure, evaluation_diagnostics) = evaluate_round(u, &rules, &seeds, &served)?;
     if !evaluation_diagnostics.is_empty() {
         return Ok(Err(RoundOutcome::failed(evaluation_diagnostics)));
     }
@@ -219,6 +249,9 @@ impl<'a> Slice for Rounds<'a> {
             base_seeds,
             outer,
         } = ev;
+        if st.answerer.is_none() {
+            st.answerer = comptime_answerer(u, base_seeds);
+        }
         loop {
             let pass = match round_closure(u, st, authored_rules, base_relations, base_seeds)? {
                 Ok(pass) => pass,
@@ -232,6 +265,16 @@ impl<'a> Slice for Rounds<'a> {
                 seeds: pass.seeds,
                 closure: closure.len(),
             });
+            let answered = answer_round(u, st, &closure);
+            if let Some((effects, rows)) = answered {
+                fx(Round::Answer {
+                    outer,
+                    round: st.round,
+                    effects,
+                    rows,
+                });
+            }
+            let answered = answered.map_or(0, |(_, rows)| rows);
 
             let next_edges = colon_rows(u, &closure);
             let next_requests = intern_rows(u, &closure);
@@ -246,7 +289,8 @@ impl<'a> Slice for Rounds<'a> {
                 return Ok(RoundOutcome::failed(assembled.diagnostics));
             }
 
-            if next_edges == st.frozen_edges
+            if answered == 0
+                && next_edges == st.frozen_edges
                 && next_requests == st.frozen_requests
                 && assembled.relations == st.frozen_generated_relations
                 && assembled.rules == st.frozen_generated_rules
@@ -277,14 +321,99 @@ impl<'a> Slice for Rounds<'a> {
     }
 }
 
-/// `:1505`. Last round's edges and intern requests re-enter as read-only rows.
+/// The Once executors of every relation the program binds at module level.
+fn comptime_answerer(u: &mut Universe, base_seeds: &[TermId]) -> Option<Answerer> {
+    let names = module_names(u, base_seeds);
+    let executors = once_executors(u, &names);
+    if executors.is_empty() {
+        return None;
+    }
+    Answerer::new(u, &names, executors).ok()
+}
+
+/// The `:(module(M), Name, ref(Relation), _)` binds among the graph seeds, the
+/// in-memory twin of `program.names` (`_6_eval/_6_json.rs` `names_to_json`).
+/// A `@std/<space>` member carries its namespace; a file bind shadows the
+/// prelude's.
+fn module_names(u: &mut Universe, base_seeds: &[TermId]) -> HashMap<String, TermId> {
+    let mut out: HashMap<String, (bool, TermId)> = HashMap::new();
+    for seed in base_seeds {
+        let Some([owner, name, relation, _]) = colon_call_parts(u, *seed) else {
+            continue;
+        };
+        let Some(module) = u.unary(owner, "ref").and_then(|o| u.unary(o, "module")) else {
+            continue;
+        };
+        match u.unary(relation, "ref") {
+            Some(target) if u.unary(target, "module").is_none() => {}
+            _ => continue,
+        }
+        let Some(Term::Atom(s)) = u.unary(name, "const").map(|n| u.get(n)) else {
+            continue;
+        };
+        let name = u.sym_str(*s).to_string();
+        let name = match u.unary(module, "std").map(|space| u.get(space)) {
+            Some(Term::Atom(space)) => format!("{}.{name}", u.sym_str(*space)),
+            _ => name,
+        };
+        let prelude = matches!(u.get(module), Term::Atom(m) if u.sym_str(*m) == "prelude");
+        match out.get(&name) {
+            Some((true, _)) if !prelude => {
+                out.insert(name, (prelude, relation));
+            }
+            Some(_) => {}
+            None => {
+                out.insert(name, (prelude, relation));
+            }
+        }
+    }
+    out.into_iter().map(|(name, (_, rel))| (name, rel)).collect()
+}
+
+/// Hands this round's new `effect` rows to the Once executors and freezes the
+/// answers not seen before. `None` when nothing was asked.
+fn answer_round(
+    u: &mut Universe,
+    st: &mut RoundState,
+    closure: &[TermId],
+) -> Option<(usize, usize)> {
+    let answerer = st.answerer.as_mut()?;
+    let mut store = Store::default();
+    for row in closure {
+        let Some([rel, args]) = u.args::<2>(*row, "call") else {
+            continue;
+        };
+        if let Some(items) = u.as_list(args) {
+            store.insert(rel, items.into_boxed_slice());
+        }
+    }
+    let (answers, effects) = answerer.answer(u, &store);
+    if effects == 0 {
+        return None;
+    }
+    let mut rows = 0;
+    for answer in answers {
+        let args = u.list(&answer.args);
+        let row = u.compound("call", vec![answer.rel, args]);
+        if !st.frozen_answers.contains(&row) {
+            st.frozen_answers.push(row);
+            rows += 1;
+        }
+    }
+    Some((effects, rows))
+}
+
+/// `:1505`. Last round's edges, intern requests and executor answers re-enter
+/// as read-only rows.
 pub fn compiler_round_seeds(
     u: &mut Universe,
     base_seeds: &[TermId],
     frozen_edges: &[TermId],
     frozen_requests: &[TermId],
+    frozen_answers: &[TermId],
 ) -> Vec<TermId> {
     let mut out = base_seeds.to_vec();
+    out.extend_from_slice(frozen_answers);
     for edge in frozen_edges {
         out.push(rename_kernel_call(u, *edge, ":", "edge_snapshot"));
     }
@@ -314,8 +443,10 @@ pub fn evaluate_round(
     u: &mut Universe,
     rules: &[TermId],
     seeds: &[TermId],
+    served: &[TermId],
 ) -> Result<(Vec<TermId>, Vec<TermId>), Stop> {
-    let program = round_program(u, rules, seeds)?;
+    let mut program = round_program(u, rules, seeds)?;
+    program.served.extend(served.iter().copied());
     let closure = evaluate(u, &program, &mut |_: Trace| {});
     let mut diagnostics = Vec::with_capacity(closure.diagnostics.len());
     for d in &closure.diagnostics {
