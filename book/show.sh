@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# show.sh compile|eval|run|emit <file.dl7 or program.json> [dl8 flags], run from the repository root; DL8 overrides the binary, paths print relative to it.
+# show.sh compile|expand|eval|run|emit <file.dl7 or program.json> [dl8 flags], run from the repository root; DL8 overrides the binary, paths print relative to it.
 set -uo pipefail
 
-verb=${1:?compile, eval, run or emit}
+verb=${1:?compile, expand, eval, run or emit}
 source=${2:?a .dl7 file}
 shift 2
 
@@ -40,6 +40,33 @@ names as $n
   ((.diagnostics // [])[] | "diagnostic " + (if has("payload") then .payload else . end | cell($n))),
   (if has("ticks") then "ticks \(.ticks)" else empty end)
 '
+
+# `expand` prints the unit's forms after macrotime, one per line.
+forms='
+def short: sub("^\($ENV.PWD)/"; "");
+def sx: .args[1] as $p
+  | if $p.f == "form" then "(" + ($p.args[0] | map(sx) | join(" ")) + ")"
+    elif $p.f == "atom" then $p.args[0].a
+    elif $p.f == "variable" then "?" + $p.args[1].a
+    elif ($p.args[0] | type == "object" and has("s")) then ($p.args[0].s | tojson)
+    else ($p.args[0] | tojson) end;
+def cell:
+  if type == "string" then short
+  elif type == "array" then "[" + (map(cell) | join(" ")) + "]"
+  elif type != "object" then tostring
+  elif has("s") then (.s | short | tojson)
+  elif has("a") then (.a | short)
+  else .f + "(" + (.args | map(cell) | join(", ")) + ")" end;
+(.forms[] | sx), (.diagnostics[] | "diagnostic " + cell)
+'
+
+if [ "$verb" = expand ]; then
+  "$dl8" expand "$source" > "$scratch/expanded.json" 2> "$scratch/expand.err"
+  code=$?
+  jq -r "$forms" "$scratch/expanded.json"
+  echo "exit $code"
+  exit 0
+fi
 
 compile_flags=()
 [ "$verb" = compile ] && compile_flags=("$@")

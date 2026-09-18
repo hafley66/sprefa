@@ -2,6 +2,7 @@
 ; dot arm runs first; the caret wraps the path form.
 ;
 ; Return collect copies an atom target only, so this mark takes the mark-drop
-; rule: `dl8 expand` gives (: Pick (* (: a type) (: (. a b) type))).
+; rule: `dl8 expand` gives (: Pick (* (: a type) (: (. a b) type))). `dl8 compile`
+; is rc=1, missing_derived_edge_label: a dot path is a compound edge label.
 
 (: Pick (* (: a type) (: ^a.b type)))
