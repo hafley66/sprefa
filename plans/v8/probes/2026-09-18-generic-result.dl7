@@ -1,0 +1,38 @@
+; Probe: Zig-style comptime constructor, no template, no substitution. Result(ok, error)
+; is a product signature; rules over the frozen memo hang the sum edges on the node
+; `intern` returns. `dl8 compile` on main b4f5e36b0: rc=0, no diagnostics. Rows:
+;   :(application(Result, [Body str]), ok, Body, 0)
+;   :(application(Result, [Body str]), error, str, 1)
+;   sum(application(Result, [Body str]))
+;   :(Fetched, outcome, application(Result, [Body str]), 1)
+; Read-back rules must use `intern_snapshot`: `intern` with unbound arguments is
+; `underconstrained_kernel_goal(intern, [[0,1]])`, which is why the prelude clause
+; pairs exist (prelude/2_constructor_rules.dl7:12-18).
+(: Result
+   (* (: ok type)
+      (: error type)
+      (: return type)))
+
+(<- (Result ?Ok ?Err ?Node)
+    (nil ?Empty)
+    (cons ?Err ?Empty ?Tail)
+    (cons ?Ok ?Tail ?Arguments)
+    (intern Result ?Arguments ?Node))
+
+; Read-back goes through the frozen memo, as prelude/2_constructor_rules.dl7:17 does:
+; `intern` with unbound arguments is underconstrained_kernel_goal.
+(<- (sum ?Node)
+    (intern_snapshot Result ?Arguments ?Node))
+
+(<- (: ?Node ok ?Ok 0)
+    (intern_snapshot Result ?Arguments ?Node)
+    (cons ?Ok ?Tail ?Arguments))
+
+(<- (: ?Node error ?Err 1)
+    (intern_snapshot Result ?Arguments ?Node)
+    (cons ?Ok ?Tail ?Arguments)
+    (cons ?Err ?Empty ?Tail))
+
+(: Body (* (: text str)))
+
+(: Fetched (* (: url str) (: outcome (Result Body str))))

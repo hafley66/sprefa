@@ -132,3 +132,20 @@ emitter annotation. Own lane after caret 3.
 | 2 | shadow policy | diagnostic only, first wins (proposed); or check error |
 | 3 | up walk probes each stop's proto chain (Ruby: lexical, then ancestors) | yes (trace above); or up walk is own labels only |
 | 4 | `User.1` and `User.proto` | plain label lookups, no int-segment arm (proposed) |
+
+## Addendum, effect type and Result (user 2026-09-18)
+
+- `Result` is a function on types: two type inputs, one type output, the output a sum whose branches name the inputs.
+
+```
+(: Result
+   (* (: ok type)
+      (: error type)
+      (: return
+         (+ (: ok ok)
+            (: error error)))))
+```
+
+- `(Result Body str)` interns a node where the return sum's branches resolve with `ok = Body`, `error = str`. That substitution at intern is the generics work (`docs/generics-wrapper-inspection.md`); the caret-3 scope walk is how a branch target finds its parameter column.
+- Effect: `(: json (effect (* (: url str)) (Result type str)))`. Input product row = request; output sum variant = answer. Served by rows; `--serve`, `_error` products, Rust cadence retire.
+- AGENTS.md is edited by Chris only. The 2026-09-18 rows there that describe `Result` are superseded by this addendum until he edits them.
