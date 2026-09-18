@@ -59,9 +59,10 @@ lane load.
 - Every lane spawn goes through `boop beep lane create --branch <kind>/<name>
   --brief <ABS path> --goal "..." --preset <preset> --base-sha <origin/main sha>`.
   `--dry-run` first for an unfamiliar shape. Never a bare tmux spawn.
-- Lane model: what Chris names per lane (sonnet default this week, opus when
-  trade-offs must be weighed). Never spawn unasked; present lane name, preset,
-  base sha, brief path and wait for go.
+- Lane model (user 2026-09-18): sonnet-level tasks run `glm53f-omp` (omp
+  harness, `zai-plan/glm-5.3-flash`, z.ai plan); `glm53f-omp-max` for the
+  heaviest; opus when trade-offs must be weighed. Never spawn unasked; present
+  lane name, preset, base sha, brief path and wait for go.
 - Briefs carry every file, receipt, command and style law inline. Concurrent
   lanes get disjoint file ownership with forbidden paths named.
 - Every worktree branches from `origin/main`. Before a PR: `git diff --stat
