@@ -135,7 +135,17 @@ emitter annotation. Own lane after caret 3.
 
 ## Addendum, effect type and Result (user 2026-09-18)
 
-- `Result` is a sum: `(: Result (+ (: ok type) (: error type)))`. `(Result Body str)` interns a sum node with `ok = Body`, `error = str`.
-- A sum with no rows is a constructor like a product with no rows. `_8_express.rs:297` `Applied::Construction` gains the sum arm; the "only a product node takes a call" row is amended by Chris, not by an agent.
+- `Result` is a function on types: two type inputs, one type output, the output a sum whose branches name the inputs.
+
+```
+(: Result
+   (* (: ok type)
+      (: error type)
+      (: return
+         (+ (: ok ok)
+            (: error error)))))
+```
+
+- `(Result Body str)` interns a node where the return sum's branches resolve with `ok = Body`, `error = str`. That substitution at intern is the generics work (`docs/generics-wrapper-inspection.md`); the caret-3 scope walk is how a branch target finds its parameter column.
 - Effect: `(: json (effect (* (: url str)) (Result type str)))`. Input product row = request; output sum variant = answer. Served by rows; `--serve`, `_error` products, Rust cadence retire.
-- The AGENTS.md rows of 2026-09-18 that say `Result` is declared with `*` are wrong on that one point; this addendum wins until Chris edits the row.
+- AGENTS.md is edited by Chris only. The 2026-09-18 rows there that describe `Result` are superseded by this addendum until he edits them.
