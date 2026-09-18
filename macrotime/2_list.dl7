@@ -1,0 +1,141 @@
+; The list-literal macro. The reader turns `[a b]` into the form `(list a b)`;
+; these rules rewrite every claimed `(list ...)` form to a right-nested
+; `cons`/`nil` chain in value position, one minted node per list position.
+;
+; TypeScript-shaped row signatures (NodeId and Relation as in 0_standard.dl7):
+;
+; type ListForm = Relation<readonly [form: NodeId]>
+; type ListHas = Relation<readonly [form: NodeId, index: number]>
+; type ListIndexKey = Relation<readonly [form: NodeId, index: number]>
+; type ListKey = Relation<readonly [form: NodeId, index: number, templatePath: number]>
+; type ListMint = Relation<readonly [
+;   form: NodeId,
+;   index: number,
+;   templatePath: number,
+;   output: NodeId,
+; ]>
+
+(: list_form
+   (* (: form type)))
+
+(: list_has
+   (* (: form type)
+      (: index int)))
+
+(: list_index_key
+   (* (: form type)
+      (: index int)))
+
+(: list_key
+   (* (: form type)
+      (: index int)
+      (: template_path int)))
+
+(: list_mint
+   (* (: form type)
+      (: index int)
+      (: template_path int)
+      (: output type)))
+
+; function listForm(form: FormNode<[AtomNode<"list">, ...Node[]]>): NodeId
+(<- (list_form ?Form)
+    (syntax_form ?Form)
+    (: ?Form item ?Head 0)
+    (syntax_atom ?Head "list"))
+
+(<- (syntax_claim ?Form "list")
+    (list_form ?Form))
+
+(<- (list_has ?Form ?Index)
+    (list_form ?Form)
+    (: ?Form item ?Item ?Index)
+    (int.lt 0 ?Index))
+
+(<- (list_index_key ?Form ?Index)
+    (list_has ?Form ?Index))
+
+; The empty list mints a nil at index 1: no item exists there at all.
+(<- (list_index_key ?Form 1)
+    (list_form ?Form)
+    (not (list_has ?Form 1)))
+
+; One past the last real item mints the chain's terminal nil.
+(<- (list_index_key ?Form ?Next)
+    (list_has ?Form ?Index)
+    (not (list_has ?Form ?Next))
+    (int.add ?Index 1 ?Next))
+
+(<- (list_key ?Form ?Index 0)
+    (list_index_key ?Form ?Index))
+
+(<- (list_key ?Form ?Index 1)
+    (list_index_key ?Form ?Index))
+
+; GeneratedSyntax(form, index, template path): 0 is the call node at this
+; position (`cons`/`nil`), 1 is its own head atom node.
+(<- (list_mint ?Form ?Index ?TemplatePath ?Output)
+    (list_key ?Form ?Index ?TemplatePath)
+    (nil ?Empty)
+    (cons ?TemplatePath ?Empty ?TemplateArguments)
+    (cons ?Index ?TemplateArguments ?OutputArguments)
+    (cons ?Form ?OutputArguments ?Arguments)
+    (intern GeneratedSyntax ?Arguments ?Output))
+
+(<- (node ?Output)
+    (list_mint ?Form ?Index 0 ?Output))
+
+(<- (node ?Output)
+    (list_mint ?Form ?Index 1 ?Output))
+
+(<- (syntax_form ?Output)
+    (list_mint ?Form ?Index 0 ?Output))
+
+(<- (syntax_atom ?Output "cons")
+    (list_has ?Form ?Index)
+    (list_mint ?Form ?Index 1 ?Output))
+
+(<- (syntax_atom ?Output "nil")
+    (list_index_key ?Form ?Index)
+    (not (list_has ?Form ?Index))
+    (list_mint ?Form ?Index 1 ?Output))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (list_mint ?Form ?Index 0 ?Output)
+    (syntax_source ?Form ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (list_mint ?Form ?Index 1 ?Output)
+    (syntax_source ?Form ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (: ?Form expansion ?Output 0)
+    (list_form ?Form)
+    (list_mint ?Form 1 0 ?Output))
+
+; A `cons` call node carries its own head atom, the original item, and the
+; mint at the next position as its tail.
+(<- (: ?Output item ?Atom 0)
+    (list_has ?Form ?Index)
+    (list_mint ?Form ?Index 0 ?Output)
+    (list_mint ?Form ?Index 1 ?Atom))
+
+(<- (: ?Output item ?Item 1)
+    (list_has ?Form ?Index)
+    (list_mint ?Form ?Index 0 ?Output)
+    (: ?Form item ?Item ?Index))
+
+(<- (: ?Output item ?Tail 2)
+    (list_has ?Form ?Index)
+    (list_mint ?Form ?Index 0 ?Output)
+    (int.add ?Index 1 ?Next)
+    (list_mint ?Form ?Next 0 ?Tail))
+
+; A `nil` call node carries only its own head atom.
+(<- (: ?Output item ?Atom 0)
+    (list_index_key ?Form ?Index)
+    (not (list_has ?Form ?Index))
+    (list_mint ?Form ?Index 0 ?Output)
+    (list_mint ?Form ?Index 1 ?Atom))

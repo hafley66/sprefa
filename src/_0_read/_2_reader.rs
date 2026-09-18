@@ -239,8 +239,10 @@ impl Reader<'_> {
         let start = self.pos;
         match self.peek() {
             Some('(') => self.read_form(top, node_id, start),
+            Some('[') => self.read_list(top, node_id, start),
             Some('{') => self.read_query_term(node_id, start),
             Some(')') => Err(self.plain_error(node_id, "unexpected_closing_parenthesis", start)),
+            Some(']') => Err(self.plain_error(node_id, "unexpected_closing_bracket", start)),
             Some('}') => Err(self.plain_error(node_id, "unexpected_closing_query_brace", start)),
             Some('"') => self.read_string_term(node_id, start),
             Some('\'') => self.read_symbol(node_id, start),
@@ -268,6 +270,44 @@ impl Reader<'_> {
                     return Err(self.plain_error(node_id, "unterminated_form", at));
                 }
                 Some(')') => {
+                    self.bump();
+                    break;
+                }
+                _ => {
+                    let item = self.read_term(top)?;
+                    items.push(item);
+                    if let Some((from, to)) = self.colon.take() {
+                        let colon = self.u.atom(":");
+                        items.push(self.path_item(colon, from, to));
+                    }
+                }
+            }
+        }
+        let end = self.pos;
+        self.rows[slot] = self.source_row(node_id, start, end);
+        let list = self.u.list(&items);
+        let payload = self.u.compound("form", vec![list]);
+        Ok(self.node(node_id, payload))
+    }
+
+    /// `[a b]` reads as `(list a b)`, the `list` atom synthesized at the
+    /// bracket position, the `read_path`/`read_caret` precedent.
+    pub fn read_list(&mut self, top: u32, node_id: TermId, start: Pos) -> Result<TermId, TermId> {
+        self.bump();
+        let slot = self.rows.len();
+        self.rows.push(node_id);
+        let head_end = self.pos;
+        let head_atom = self.u.atom("list");
+        let head = self.path_item(head_atom, start, head_end);
+        let mut items = vec![head];
+        loop {
+            self.skip_layout();
+            match self.peek() {
+                None => {
+                    let at = self.pos;
+                    return Err(self.plain_error(node_id, "unterminated_form", at));
+                }
+                Some(']') => {
                     self.bump();
                     break;
                 }
