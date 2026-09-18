@@ -1,0 +1,6 @@
+; `@std/dl6` declares `relation`, so a program can name the emitter's row shape
+; without any Rust phase computing it.
+(dl6: (import "@std/dl6"))
+
+(Todo: (* (: title text)
+          (: return type)))
