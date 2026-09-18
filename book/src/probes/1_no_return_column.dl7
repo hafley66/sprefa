@@ -5,4 +5,4 @@
       (: target type)))
 
 (: Holder
-   (* (: (Pair text) int)))
+   (* (: (Pair str) int)))

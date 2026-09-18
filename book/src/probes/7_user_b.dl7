@@ -1,4 +1,4 @@
 ; expect: duplicate_relation_name
 ; compile: --project book/src/probes book/src/probes/6_user_a.dl7
 (: User
-   (* (: name text)))
+   (* (: name str)))

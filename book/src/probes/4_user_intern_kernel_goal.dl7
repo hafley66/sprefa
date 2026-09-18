@@ -1,7 +1,7 @@
 ; expect: arity_mismatch
 ; A user intern beside a rule that calls intern with three arguments.
 (: intern
-   (* (: name text)))
+   (* (: name str)))
 
 (: Wrap
    (* (: source type)

@@ -1,13 +1,13 @@
 ; expect: rc=0
-; A user timer with a text column, read by a rule; --serve timer binds the Rust timer to it.
+; A user timer with a str column, read by a rule; --serve timer binds the Rust timer to it.
 (: timer
-   (* (: label text)))
+   (* (: label str)))
 
-(: Want (* (: label text)))
+(: Want (* (: label str)))
 
 (Want "mine")
 
-(: Seen (* (: label text)))
+(: Seen (* (: label str)))
 
 (<- (Seen ?Label)
     (Want ?Label)

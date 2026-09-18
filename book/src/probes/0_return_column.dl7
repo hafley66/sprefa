@@ -10,4 +10,4 @@
     (intern Wrap ?Arguments ?Result))
 
 (: Holder
-   (* (: (Wrap text) int)))
+   (* (: (Wrap str) int)))

@@ -5,20 +5,20 @@
       (: tick int)))
 
 (: fetch_json
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
 (: fetch_json_error
-   (* (: url text)
+   (* (: url str)
       (: status int)
-      (: message text)))
+      (: message str)))
 
-(: Watch (* (: url text)))
+(: Watch (* (: url str)))
 
 (Watch "http://127.0.0.1:9/repos/cli/cli")
 
 (: Poll
-   (* (: url text)
+   (* (: url str)
       (: tick int)))
 
 (<- (Poll ?Url ?Tick)
@@ -26,16 +26,16 @@
     (timer 100 ?Tick))
 
 (: Response
-   (* (: url text)
+   (* (: url str)
       (: tick int)
-      (: body text)))
+      (: body str)))
 
 (<- (Response ?Url ?Tick ?Body)
     (Poll ?Url ?Tick)
     (fetch_json ?Url ?Body))
 
 (: Failed
-   (* (: url text)
+   (* (: url str)
       (: tick int)
       (: status int)))
 
