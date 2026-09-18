@@ -1,12 +1,12 @@
 (: User
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (User 7 "Ada")
 
 (: UserContract
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (: HistoryOptions
    (* (: mode "copy")
@@ -18,14 +18,14 @@
 
 (: copied
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (<- (copied ?id ?name)
     (UserHistory ?id ?name))
 
 (: SourceCopy
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (SourceCopy 8 "Grace")
 
@@ -33,7 +33,7 @@
     (SourceCopy ?id ?name))
 
 (: names
-   (* (: name text)))
+   (* (: name str)))
 
 (<- (names ?name)
     (UserHistory ?name))

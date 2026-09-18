@@ -233,7 +233,7 @@ pub enum Applied {
 /// The primitive classes a type node can name. `_3_check/_5_kernel.rs:41`
 /// pins the same list on the check side.
 fn primitive_type(name: &str) -> bool {
-    matches!(name, "int" | "float" | "bool" | "text" | "any" | "type")
+    matches!(name, "int" | "float" | "bool" | "str" | "any" | "type")
 }
 
 /// `:1488`. `Err` carries the bare reason term.
@@ -296,7 +296,7 @@ pub fn literal_primitive(cx: &mut Cx, value: TermId) -> TermId {
         Term::Int(_) => "int",
         Term::Float(_) => "float",
         Term::Bool(_) => "bool",
-        Term::Str(_) => "text",
+        Term::Str(_) => "str",
         _ => "any",
     };
     cx.atom(name)

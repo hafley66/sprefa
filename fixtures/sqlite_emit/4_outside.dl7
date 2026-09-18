@@ -1,10 +1,10 @@
-(: Edge (* (: from text) (: to text)))
+(: Edge (* (: from str) (: to str)))
 
 (Edge "a" "b")
 
 (Edge "b" "c")
 
-(: Path (* (: from text) (: to text)))
+(: Path (* (: from str) (: to str)))
 
 (<- (Path ?From ?To)
     (Edge ?From ?To))

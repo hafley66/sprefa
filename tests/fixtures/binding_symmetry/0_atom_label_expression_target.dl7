@@ -3,4 +3,4 @@
 (: KeyOptions (*))
 
 (: Holder
-   (* (: direct (Option text))))
+   (* (: direct (Option str))))

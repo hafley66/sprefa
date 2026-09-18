@@ -1,4 +1,4 @@
-(: Score (* (: player text) (: points int)))
+(: Score (* (: player str) (: points int)))
 
 (Score "ann" 3)
 
@@ -6,7 +6,7 @@
 
 (Score "bob" 10)
 
-(: PlayerTotal (* (: player text) (: sum int)))
+(: PlayerTotal (* (: player str) (: sum int)))
 
 (<- (PlayerTotal ?Player (sum ?Points))
     (Score ?Player ?Points))

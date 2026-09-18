@@ -5,4 +5,4 @@
 (: KeyName (Key "name"))
 
 (: Holder
-   (* (: (KeyName KeyOptions) (Option text))))
+   (* (: (KeyName KeyOptions) (Option str))))

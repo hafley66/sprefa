@@ -5,6 +5,6 @@
 (: Base (*))
 
 (: Structural
-   (* (: (Key "primitive" KeyOptions) text)
+   (* (: (Key "primitive" KeyOptions) str)
       (: (Key "reference" KeyOptions) Base)
       (: (Key "literal" KeyOptions) "pinned")))

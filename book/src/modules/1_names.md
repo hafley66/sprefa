@@ -8,7 +8,7 @@ A field named `Name` inside `Holder` hides the top-level `Name`.
 
 ```console
 $ cat oracle/compile/sources/test/fixtures/lexical_binding/7_nearest_shadow.dl7
-(: Name (Option text))
+(: Name (Option str))
 (: Shadow (*))
 (: Holder
    (* (: Name Shadow)
@@ -31,7 +31,7 @@ step 1  owner=Holder              name=Shadow  no forward edge; parent
 step 2  owner=module(file(...))   name=Shadow  forward edge -> the product Shadow
 ```
 
-`deep` names `direct`, which walks the same steps: `(: Holder deep Shadow)`. The top-level `Name`, `(Option text)`, is never reached.
+`deep` names `direct`, which walks the same steps: `(: Holder deep Shadow)`. The top-level `Name`, `(Option str)`, is never reached.
 
 ## Two resolvers
 
@@ -68,7 +68,7 @@ Order for a bare name, nearest first: the enclosing products, the file, the prel
 | `def`, `head` | 2 | none | none | `_9_kernel.rs:23` |
 | `int_lt`, `int_le`, `int_gt`, `int_ge`, `int_eq`, `int_ne` | 2 | none | `[0,1]` | `_9_kernel.rs:7-8`, `:24`, `:67` |
 
-Primitive names: `int`, `float`, `bool`, `text`, `any`, `type` (`src/_3_check/_5_kernel.rs:40-42`).
+Primitive names: `int`, `float`, `bool`, `str`, `any`, `type` (`src/_3_check/_5_kernel.rs:40-42`).
 
 ## Shadowing
 
@@ -107,6 +107,8 @@ $ $DL8 compile book/src/probes/17_bool_field.dl7 | jq -r --arg owner Holder '(.p
 (: Holder count primitive(int))
 (: Holder flag bool)
 ```
+
+The primitive `str` (`AGENTS.md`, the rename dated 2026-09-17) hits the same edge: `prelude/5_tsi_primitives.dl7:59` already declares a product `str`, Rust's own primitive class on the TSI wire. A bare `str` shadows exactly like `bool` above; [Application in a declaration](2_the_return_column.md#application-in-a-declaration) shows the compiled shape.
 
 ## Receipts
 

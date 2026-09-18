@@ -3,4 +3,4 @@
 (: KeyOptions (*))
 
 (: Ledger
-   (* (: (Key "direct" KeyOptions) (Option text))))
+   (* (: (Key "direct" KeyOptions) (Option str))))

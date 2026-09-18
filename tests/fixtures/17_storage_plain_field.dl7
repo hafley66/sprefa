@@ -1,11 +1,11 @@
 ; Plain-field selection over targets a dictionary does not map. PlainIntPolicy
 ; selects an int column; NoDictionaryPolicy declares no dictionary at all.
 (: Repository
-   (* (: url text)))
+   (* (: url str)))
 
 (: Blob
    (* (: repository Repository)
-      (: ordinary text)
+      (: ordinary str)
       (: size int)))
 
 (: SharedTextDictionary (*))
@@ -16,7 +16,7 @@
 
 (: TextDictionarySelection
    (* (: capability "scalar-dictionary-v1")
-      (: scalar text)
+      (: scalar str)
       (: dictionary SharedTextDictionary)))
 
 (: PlainSize

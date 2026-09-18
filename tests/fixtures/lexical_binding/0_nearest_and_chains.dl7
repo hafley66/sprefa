@@ -1,7 +1,7 @@
 (: Base (*))
 
 (: Outer
-   (* (: Name (Option text))
+   (* (: Name (Option str))
       (: OuterAlias Base)
       (: Inner
          (* (: Name Base)

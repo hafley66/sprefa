@@ -31,12 +31,12 @@
 (: storage_reachable
    (* (: policy type)
       (: node type)
-      (: kind text)))
+      (: kind str)))
 
 (: storage_type_layout
    (* (: policy type)
       (: constructor type)
-      (: kind text)))
+      (: kind str)))
 
 (: storage_field_layout
    (* (: policy type)
@@ -44,7 +44,7 @@
       (: label any)
       (: position int)
       (: logical_target type)
-      (: representation text)
+      (: representation str)
       (: storage_domain type)))
 
 ; Parent-to-child direction lets a boundary planner process the child before
@@ -55,7 +55,7 @@
       (: required_domain type)
       (: label any)
       (: position int)
-      (: role text)))
+      (: role str)))
 
 ; Reverse boundary metadata retains the logical field label, position, and
 ; target beside the stored domain used to reconstruct or selectively join it.
@@ -66,7 +66,7 @@
       (: label any)
       (: storage_domain type)
       (: logical_target type)
-      (: representation text)))
+      (: representation str)))
 
 (: storage_dictionary_layout
    (* (: policy type)
@@ -78,9 +78,9 @@
 (: storage_identity_domain
    (* (: policy type)
       (: domain type)
-      (: role text)
-      (: local_identity text)
-      (: semantic_identity text)))
+      (: role str)
+      (: local_identity str)
+      (: semantic_identity str)))
 
 (emits InternedStorageEmitter "types" storage_type_layout)
 (emits InternedStorageEmitter "fields" storage_field_layout)

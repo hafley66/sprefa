@@ -48,7 +48,7 @@ Do not use it when:
 
 ```dl7
 ; fixture: fixtures/sqlite_emit/1_transitive.dl7
-(: Edge (* (: from text) (: to text)))
+(: Edge (* (: from str) (: to str)))
 
 (Edge "a" "b")
 
@@ -60,7 +60,7 @@ Do not use it when:
 
 (Edge "x" "y")
 
-(: Reach (* (: from text) (: to text)))
+(: Reach (* (: from str) (: to str)))
 
 (<- (Reach ?From ?To)
     (Edge ?From ?To))

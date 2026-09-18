@@ -7,7 +7,7 @@
 A program that declares only `Holder` still has the prelude's names:
 
 ```console
-$ printf '(: Holder\n   (* (: direct (Option text))))\n' > /tmp/dl8-prelude-probe.dl7 && $DL8 compile /tmp/dl8-prelude-probe.dl7 | jq -r '.program.names | keys[] | select(. == "Option" or . == "Key" or . == "Conforms" or . == "string" or . == "Holder")'
+$ printf '(: Holder\n   (* (: direct (Option str))))\n' > /tmp/dl8-prelude-probe.dl7 && $DL8 compile /tmp/dl8-prelude-probe.dl7 | jq -r '.program.names | keys[] | select(. == "Option" or . == "Key" or . == "Conforms" or . == "string" or . == "Holder")'
 Conforms
 Holder
 Key
@@ -47,7 +47,7 @@ One example per dependency step:
 ```console
 $ sed -n 53,56p prelude/1_declarations.dl7 && sed -n 22,26p prelude/2_constructor_rules.dl7
 (: Key
-   (* (: name text)
+   (* (: name str)
       (: options type)
       (: return type)))
 (<- (Key ?Name ?Options ?Result)

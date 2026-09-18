@@ -1,27 +1,27 @@
 ; One url, fetched once; an answer lands as a row the reader joins like a fact.
 (: fetch_json
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
 (: fetch_json_error
-   (* (: url text)
+   (* (: url str)
       (: status int)
-      (: message text)))
+      (: message str)))
 
-(: Watch (* (: url text)))
+(: Watch (* (: url str)))
 
 (Watch "__URL__")
 
 (: Body
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
 (<- (Body ?Url ?Body)
     (Watch ?Url)
     (fetch_json ?Url ?Body))
 
 (: Failed
-   (* (: url text)
+   (* (: url str)
       (: status int)))
 
 (<- (Failed ?Url ?Status)

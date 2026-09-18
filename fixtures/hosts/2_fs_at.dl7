@@ -2,14 +2,14 @@
 (fs: (import "@std/fs"))
 
 (: Pin
-   (* (: root text)
-      (: sha text)))
+   (* (: root str)
+      (: sha str)))
 
 (Pin "__ROOT__" "__SHA__")
 
 (: File
-   (* (: path text)
-      (: blob text)))
+   (* (: path str)
+      (: blob str)))
 
 (<- (File ?Path ?Blob)
     (Pin ?Root ?Sha)

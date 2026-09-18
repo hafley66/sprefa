@@ -31,7 +31,7 @@
    (*))
 
 (: View
-   (* (: text str)
+   (* (: str str)
       (: owned Box)
       (: shared std)))
 
@@ -79,7 +79,7 @@
    (* (: parameter type)
       (: owner type)
       (: position int)
-      (: variance text)))
+      (: variance str)))
 (tsi_parameter Mapper_T Mapper 0 "unspecified")
 (tsi_parameter User_T User 0 "unspecified")
 (tsi_parameter User_Mapper_impl_T User_Mapper_impl 0 "unspecified")
@@ -93,5 +93,5 @@
 (: tsi_conforms
    (* (: source type)
       (: target type)
-      (: mode text)))
+      (: mode str)))
 (tsi_conforms User Mapper "syntax")

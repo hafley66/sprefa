@@ -1,4 +1,4 @@
 ; expect: expression_without_return
 ; A declaration form in label position.
 (: Holder
-   (* (: (: a 5) text)))
+   (* (: (: a 5) str)))

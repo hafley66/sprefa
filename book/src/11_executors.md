@@ -29,12 +29,12 @@ Each `effect` row reaches its executor once per process (`_2_reconcile.rs:44-47`
 | served name | columns | cadence | answers | error relation | source |
 |---|---|---|---|---|---|
 | `timer` | `period_ms int, tick int` | Continuing | one row per fire, ticks from 1; a late fire is skipped | none | `_3_executors/timer.rs` |
-| `fetch_json` | `url text, body text` | Once | the 2xx JSON body | `fetch_json_error url text, status int, message text`; status 0 on transport failure | `_3_executors/fetch_json.rs` |
-| `git.refs` | `root text, name text, sha text` | Continuing | every ref plus `HEAD` at arming, then each moved or added ref | `git.refs_error root text, message text` | `_3_executors/git_refs.rs` |
-| `git.history` | `root text, sha text, parent text` | Once | one row per parent edge reachable from `sha`, or `HEAD` when unbound | `git.history_error root text, message text` | `_3_executors/git_history.rs` |
-| `fs.at` | `root text, sha text, path text, blob text` | Once | one row per tracked file at the revision | `fs.at_error root text, sha text, message text` | `_3_executors/fs_at.rs` |
-| `fs.json` | `path text, return type` | Once | the document's root node, plus one `:` edge per object member; a file over 16 MiB is an error row | `fs.json_error path text, message text` | `_3_executors/fs_json.rs` |
-| `extract` | `root text, family text, kind text, payload text` | Once | one `extract --family <family> --resolve` run, one row per JSONL record; past 10 s the run is killed | `extract_error root text, family text, message text` | `_3_executors/extract.rs` |
+| `fetch_json` | `url str, body str` | Once | the 2xx JSON body | `fetch_json_error url str, status int, message str`; status 0 on transport failure | `_3_executors/fetch_json.rs` |
+| `git.refs` | `root str, name str, sha str` | Continuing | every ref plus `HEAD` at arming, then each moved or added ref | `git.refs_error root str, message str` | `_3_executors/git_refs.rs` |
+| `git.history` | `root str, sha str, parent str` | Once | one row per parent edge reachable from `sha`, or `HEAD` when unbound | `git.history_error root str, message str` | `_3_executors/git_history.rs` |
+| `fs.at` | `root str, sha str, path str, blob str` | Once | one row per tracked file at the revision | `fs.at_error root str, sha str, message str` | `_3_executors/fs_at.rs` |
+| `fs.json` | `path str, return type` | Once | the document's root node, plus one `:` edge per object member; a file over 16 MiB is an error row | `fs.json_error path str, message str` | `_3_executors/fs_json.rs` |
+| `extract` | `root str, family str, kind str, payload str` | Once | one `extract --family <family> --resolve` run, one row per JSONL record; past 10 s the run is killed | `extract_error root str, family str, message str` | `_3_executors/extract.rs` |
 
 Rows from `README.md:115-122`.
 
@@ -97,28 +97,28 @@ exit 1
 ; fixture: fixtures/reconcile/1_fetch.dl7
 ; One url, fetched once; an answer lands as a row the reader joins like a fact.
 (: fetch_json
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
 (: fetch_json_error
-   (* (: url text)
+   (* (: url str)
       (: status int)
-      (: message text)))
+      (: message str)))
 
-(: Watch (* (: url text)))
+(: Watch (* (: url str)))
 
 (Watch "__URL__")
 
 (: Body
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
 (<- (Body ?Url ?Body)
     (Watch ?Url)
     (fetch_json ?Url ?Body))
 
 (: Failed
-   (* (: url text)
+   (* (: url str)
       (: status int)))
 
 (<- (Failed ?Url ?Status)
@@ -143,19 +143,19 @@ exit 0
 ; Every parent edge reachable from HEAD.
 (git: (import "@std/git"))
 
-(: Watch (* (: root text)))
+(: Watch (* (: root str)))
 
 (Watch "__ROOT__")
 
 (: Edge
-   (* (: sha text)
-      (: parent text)))
+   (* (: sha str)
+      (: parent str)))
 
 (<- (Edge ?Sha ?Parent)
     (Watch ?Root)
     (git.history ?Root ?Sha ?Parent))
 
-(: Failed (* (: message text)))
+(: Failed (* (: message str)))
 
 (<- (Failed ?Message)
     (Watch ?Root)
@@ -179,19 +179,19 @@ exit 0
 ; fixture: fixtures/hosts/3_extract.dl7
 ; Three extract families over one root; each record is a row.
 (: extract
-   (* (: root text)
-      (: family text)
-      (: kind text)
-      (: payload text)))
+   (* (: root str)
+      (: family str)
+      (: kind str)
+      (: payload str)))
 
 (: extract_error
-   (* (: root text)
-      (: family text)
-      (: message text)))
+   (* (: root str)
+      (: family str)
+      (: message str)))
 
 (: Want
-   (* (: root text)
-      (: family text)))
+   (* (: root str)
+      (: family str)))
 
 (Want "__ROOT__" "type")
 
@@ -200,17 +200,17 @@ exit 0
 (Want "__ROOT__" "diet_scip")
 
 (: Fact
-   (* (: family text)
-      (: kind text)
-      (: payload text)))
+   (* (: family str)
+      (: kind str)
+      (: payload str)))
 
 (<- (Fact ?Family ?Kind ?Payload)
     (Want ?Root ?Family)
     (extract ?Root ?Family ?Kind ?Payload))
 
 (: Failed
-   (* (: family text)
-      (: message text)))
+   (* (: family str)
+      (: message str)))
 
 (<- (Failed ?Family ?Message)
     (Want ?Root ?Family)
@@ -241,12 +241,12 @@ Keys keep document order as the edge index.
 (fs: (import "@std/fs"))
 
 (: Doc
-   (* (: path text)))
+   (* (: path str)))
 
 (Doc "__DOC__")
 
 (: Root
-   (* (: path text)
+   (* (: path str)
       (: node any)))
 
 (<- (Root ?Path ?Node)
@@ -273,8 +273,8 @@ Keys keep document order as the edge index.
     (: ?Owner ?Name ?Target ?Index))
 
 (: Failed
-   (* (: path text)
-      (: message text)))
+   (* (: path str)
+      (: message str)))
 
 (<- (Failed ?Path ?Message)
     (fs.json_error ?Path ?Message))
@@ -286,8 +286,8 @@ $ d=$(mktemp -d) && sed "s|__DOC__|$PWD/fixtures/hosts/todo.json|" fixtures/host
 (Member meta ref(edge(application(fs.json, ["fixtures/hosts/todo.json"]), meta)) 4)
 (Member n ref(application(primitive(int), [3])) 1)
 (Member owner none 3)
-(Member tags [ref(application(primitive(text), ["a"])) ref(application(primitive(text), ["b"]))] 2)
-(Member title ref(application(primitive(text), ["x"])) 0)
+(Member tags [ref(application(primitive(str), ["a"])) ref(application(primitive(str), ["b"]))] 2)
+(Member title ref(application(primitive(str), ["x"])) 0)
 (Edge ref(edge(application(fs.json, ["fixtures/hosts/todo.json"]), meta)) v ref(application(primitive(int), [1])) 0)
 ticks 1
 exit 0

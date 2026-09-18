@@ -1,7 +1,7 @@
 ; expect: expression_without_return
-; A user Option is nearer than the prelude Option, so (Option text) reads the user's.
+; A user Option is nearer than the prelude Option, so (Option str) reads the user's.
 (: Option
-   (* (: label text)))
+   (* (: label str)))
 
 (: Holder
-   (* (: direct (Option text))))
+   (* (: direct (Option str))))

@@ -1,4 +1,4 @@
-(: Name (Option text))
+(: Name (Option str))
 (: Shadow (*))
 (: Holder
    (* (: Name Shadow)

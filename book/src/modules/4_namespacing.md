@@ -22,7 +22,7 @@ The full inspection, with every probe's pasted output: `plans/v8/2026-09-15-v8-n
 | directory module | the edge `accounts` on the project root | through parents | `src/_4_comptime/_0_load/_2_project.rs:195-247` |
 | prelude alias | `Option`, `bool` | after the file, only when the file does not bind the name | `src/_2_lower/_12_units.rs:310-342` |
 | kernel | `intern`, `effect` | after every edge | `src/_2_lower/_8_express.rs:181-184`, `_2_resolve.rs:78-83` |
-| primitive | `int`, `text` | last | `_2_resolve.rs:84-87` |
+| primitive | `int`, `str` | last | `_2_resolve.rs:84-87` |
 | runtime name table | every top-level name of every module, one flat map | not ordered: prelude yields, two user names stop | `src/_6_eval/_6_json.rs:178-221`, read by `program_names` `:333-343` |
 | served name | `timer`, `fetch_json_error` | the `--serve` string against one arm each | `src/_9_runtime/_3_executors/mod.rs:61-100` |
 
@@ -34,6 +34,7 @@ The full inspection, with every probe's pasted output: `plans/v8/2026-09-15-v8-n
 | user `intern` beside a kernel `intern` goal | `probes/4_user_intern_kernel_goal.dl7` | `arity_mismatch(intern, 1, 3)` |
 | user `Option` without a `return` column | `probes/5_user_option_shadows.dl7` | `expression_without_return` |
 | field typed `bool` | `probes/17_bool_field.dl7` | the prelude product `bool`, never the primitive |
+| bare `str` as a value | `probes/0_return_column.dl7` | the prelude product `str` (`prelude/5_tsi_primitives.dl7:59`), never the primitive |
 | user `timer` served with `--serve timer` | `probes/9_user_timer_rule.dl7` | rc=0, an `effect` row, no answer |
 | two modules declaring `User` | `probes/6_user_a.dl7`, `7_user_b.dl7` | `duplicate_relation_name(User, ...)` |
 | a goal qualified by module, same two modules | `probes/8_pick_user_a.dl7` | the goal resolves; `duplicate_relation_name` still stops |

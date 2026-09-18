@@ -7,8 +7,8 @@
 (<- (found api.todos.list))
 
 (: fetched
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
 (<- (fetched ?Url ?Body)
     (api.todos.list ?Url ?Body))

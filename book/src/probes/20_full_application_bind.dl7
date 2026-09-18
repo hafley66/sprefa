@@ -9,4 +9,4 @@
     (cons ?Source ?Empty ?Arguments)
     (intern Wrap ?Arguments ?Result))
 
-(: WrappedText (Wrap text))
+(: WrappedText (Wrap str))

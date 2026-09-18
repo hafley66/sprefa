@@ -3,6 +3,6 @@
 (: KeyOptions (*))
 
 (: Ordered
-   (* (: first text)
-      (: (Key "second" KeyOptions) (Option text))
+   (* (: first str)
+      (: (Key "second" KeyOptions) (Option str))
       (: third int)))

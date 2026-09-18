@@ -1,6 +1,6 @@
 ; expect: unresolved_name
 ; A dotted name is a path: `boop` is the first segment and nothing binds it.
 (: boop.lane
-   (* (: lane text)))
+   (* (: lane str)))
 
 (boop.lane "sprefa-coordinator")

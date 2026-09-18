@@ -1,17 +1,17 @@
 ; No relation is served, so no effect row is written and the reader is empty.
 (: fetch_json
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
-(: Watch (* (: url text)))
+(: Watch (* (: url str)))
 
 (Watch "https://a")
 
 (Watch "https://b")
 
 (: Body
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
 (<- (Body ?Url ?Body)
     (Watch ?Url)

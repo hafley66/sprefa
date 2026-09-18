@@ -1,11 +1,11 @@
 ; One repository root; every ref it holds, then every ref that moves, is a row.
 (git: (import "@std/git"))
 
-(: Watch (* (: root text)))
+(: Watch (* (: root str)))
 
 (Watch "__ROOT__")
 
-(: Head (* (: sha text)))
+(: Head (* (: sha str)))
 
 (<- (Head ?Sha)
     (Watch ?Root)

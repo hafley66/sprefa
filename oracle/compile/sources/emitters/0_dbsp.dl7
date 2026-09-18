@@ -10,12 +10,12 @@
 (: dbsp_operator
    (* (: rule any)
       (: head type)
-      (: classification text)))
+      (: classification str)))
 
 (: dbsp_read
    (* (: rule any)
       (: position int)
-      (: polarity text)
+      (: polarity str)
       (: relation type)))
 
 (: dbsp_projection
@@ -25,7 +25,7 @@
 
 (: dbsp_call
    (* (: rule any)
-      (: role text)
+      (: role str)
       (: position int)
       (: call any)
       (: relation type)))

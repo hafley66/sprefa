@@ -1,31 +1,31 @@
 (: Node
-   (* (: input_path text)
-      (: content_id text)
-      (: family text)
+   (* (: input_path str)
+      (: content_id str)
+      (: family str)
       (: span_start int)
       (: span_end int)
-      (: kind text)))
+      (: kind str)))
 
 (: Edge
-   (* (: input_path text)
-      (: content_id text)
-      (: family text)
-      (: kind text)
+   (* (: input_path str)
+      (: content_id str)
+      (: family str)
+      (: kind str)
       (: from_start int)
       (: from_end int)
       (: to_start int)
       (: to_end int)))
 
 (: CstEdgeKinds
-   (* (: input_path text)
-      (: content_id text)
-      (: edge_kind text)
+   (* (: input_path str)
+      (: content_id str)
+      (: edge_kind str)
       (: from_start int)
       (: from_end int)
-      (: source_kind text)
+      (: source_kind str)
       (: to_start int)
       (: to_end int)
-      (: target_kind text)))
+      (: target_kind str)))
 
 (<- (CstEdgeKinds
        ?InputPath ?ContentId ?EdgeKind

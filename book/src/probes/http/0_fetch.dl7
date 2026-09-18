@@ -1,4 +1,4 @@
 ; A module file one directory down: its module path is http, fetch.
 (: get
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))

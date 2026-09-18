@@ -1,19 +1,19 @@
 ; Every parent edge reachable from HEAD.
 (git: (import "@std/git"))
 
-(: Watch (* (: root text)))
+(: Watch (* (: root str)))
 
 (Watch "__ROOT__")
 
 (: Edge
-   (* (: sha text)
-      (: parent text)))
+   (* (: sha str)
+      (: parent str)))
 
 (<- (Edge ?Sha ?Parent)
     (Watch ?Root)
     (git.history ?Root ?Sha ?Parent))
 
-(: Failed (* (: message text)))
+(: Failed (* (: message str)))
 
 (<- (Failed ?Message)
     (Watch ?Root)

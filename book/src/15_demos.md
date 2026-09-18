@@ -48,7 +48,7 @@ The org watcher over four repositories made on the spot:
 ; The hafley66 org's required repositories, each watched for its HEAD.
 (git: (import "@std/git"))
 
-(: repo (* (: root text)))
+(: repo (* (: root str)))
 
 (repo "__PROJECTS__/instant")
 
@@ -59,8 +59,8 @@ The org watcher over four repositories made on the spot:
 (repo "__PROJECTS__/hafley-rxjs")
 
 (: head_sha
-   (* (: root text)
-      (: sha text)))
+   (* (: root str)
+      (: sha str)))
 
 (<- (head_sha ?Root ?Sha)
     (repo ?Root)

@@ -19,20 +19,20 @@
     (cons ?Source ?Empty ?Arguments))
 
 (: Repository
-   (* (: url text)))
+   (* (: url str)))
 
 ; path and name select the same specialization from two different owners.
-; language is the plain-text neighbour that must stay scalar under a policy
+; language is the plain-str neighbour that must stay scalar under a policy
 ; that maps only the wrapper.
 (: SourceFile
    (* (: repository Repository)
-      (: path (Interned text))
-      (: language text)
+      (: path (Interned str))
+      (: language str)
       (: size int)))
 
 (: Symbol
    (* (: file SourceFile)
-      (: name (Interned text))
+      (: name (Interned str))
       (: line int)))
 
 (: SharedTextDictionary (*))
@@ -45,12 +45,12 @@
 ; arm claims the field and the existing scalar arm is already excluded.
 (: WrappedTextSelection
    (* (: capability "scalar-dictionary-v1")
-      (: scalar (Interned text))
+      (: scalar (Interned str))
       (: dictionary SharedTextDictionary)))
 
 (: PrimitiveTextSelection
    (* (: capability "scalar-dictionary-v1")
-      (: scalar text)
+      (: scalar str)
       (: dictionary SharedTextDictionary)))
 
 (: SelectivePolicy

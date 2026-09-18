@@ -2,25 +2,25 @@
 ; content. RefTransition carries moving commit membership separately, so an
 ; unchanged file retains its extraction identity across a ref advance.
 (: Repository
-   (* (: url text)))
+   (* (: url str)))
 
 (: WatchedRef
    (* (: repository Repository)
-      (: name text)))
+      (: name str)))
 
 (: SourceCoordinate
    (* (: repository Repository)
       (: watched_ref WatchedRef)
-      (: path text)))
+      (: path str)))
 
 (: SourceRevision
    (* (: coordinate SourceCoordinate)
-      (: content_hash text)))
+      (: content_hash str)))
 
 (: RefTransition
    (* (: watched_ref WatchedRef)
-      (: old_sha text)
-      (: new_sha text)))
+      (: old_sha str)
+      (: new_sha str)))
 
 (: Span
    (* (: source SourceRevision)
@@ -30,12 +30,12 @@
 (: Node
    (* (: primary Span)
       (: secondary Span)
-      (: kind text)))
+      (: kind str)))
 
 ; Unrelated points into the selected closure but is not reachable from a root.
 (: Unrelated
    (* (: span Span)
-      (: note text)))
+      (: note str)))
 
 ; Sum fixture verifies that reachable variants use the same ordered field and
 ; dependency protocol as products.
@@ -64,7 +64,7 @@
 
 (: TextDictionarySelection
    (* (: capability "scalar-dictionary-v1")
-      (: scalar text)
+      (: scalar str)
       (: dictionary SharedTextDictionary)))
 
 (: PlainNodeKind

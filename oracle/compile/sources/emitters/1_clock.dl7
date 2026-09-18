@@ -5,9 +5,9 @@
 (: ClockEmitter (*))
 
 (: level_clock_role
-   (* (: polarity text)
-      (: sign text)
-      (: role text)))
+   (* (: polarity str)
+      (: sign str)
+      (: role str)))
 
 (level_clock_role "positive" "positive" "level_read")
 (level_clock_role "negative" "negative" "level_absence")
@@ -16,11 +16,11 @@
    (* (: rule any)
       (: from type)
       (: to type)
-      (: read_plane text)
-      (: write_plane text)
-      (: sign text)
+      (: read_plane str)
+      (: write_plane str)
+      (: sign str)
       (: grade int)
-      (: role text)))
+      (: role str)))
 
 (emits ClockEmitter "dependencies" clock_dependency)
 

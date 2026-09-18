@@ -2,12 +2,12 @@
 (fs: (import "@std/fs"))
 
 (: Doc
-   (* (: path text)))
+   (* (: path str)))
 
 (Doc "__DOC__")
 
 (: Root
-   (* (: path text)
+   (* (: path str)
       (: node any)))
 
 (<- (Root ?Path ?Node)
@@ -34,8 +34,8 @@
     (: ?Owner ?Name ?Target ?Index))
 
 (: Failed
-   (* (: path text)
-      (: message text)))
+   (* (: path str)
+      (: message str)))
 
 (<- (Failed ?Path ?Message)
     (fs.json_error ?Path ?Message))

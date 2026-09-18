@@ -1,4 +1,4 @@
 ; expect: rc=0
 (: User
    (* (: id int)
-      (: name text)))
+      (: name str)))

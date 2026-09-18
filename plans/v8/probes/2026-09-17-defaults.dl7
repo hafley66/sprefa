@@ -1,5 +1,5 @@
 ; A typed default: the column target is a value node, not a type node.
-(User: (* (: name text)
-          (: title (text "untitled"))
+(User: (* (: name str)
+          (: title (int 5))
           (: n 3)
           (: return type)))

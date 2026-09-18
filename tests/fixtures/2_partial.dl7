@@ -1,12 +1,12 @@
 (: User
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (User 7 "Ada")
 
 (: UserContract
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (: HistoryOptions
    (* (: mode "copy")
@@ -26,7 +26,7 @@
 
 (: Ledger
    (* (: (Key "account" PrimaryKeyOptions) int)
-      (: payload text)
+      (: payload str)
       (: (Key "revision" PrimaryKeyOptions) int)))
 
 (: selected_request
