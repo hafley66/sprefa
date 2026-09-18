@@ -155,3 +155,11 @@ emitter annotation. Own lane after caret 3.
 - `gh.` is GitHub, `git.` is git, `http.` is requests. Never `github.`.
 - A userland effect is a view over hosted effects: declared with the same `(effect Input Output)` form, its request rows forwarded down by rules and its answer rows derived up by rules, no executor. `@std/gh` is the first one: `gh.repos`, `gh.prs`, `gh.issues` over `http.json` against `api.github.com`; pure dl7.
 - `str.cons` stays arity 3. Variadic `str.cons` and `"{?x}"` interpolation are macrotime, unbuilt until the pain is earned.
+
+## Addendum, one store (user 2026-09-18)
+
+- Comptime rounds run on sqlite_ivm. The db is the compile artifact: edges, interns, effect answers, rules, names are tables. `dl8 eval app.db` resumes it; no re-lower, no refetch of answered requests. Compiler and runtime are one loop over one store at different times.
+- Retires: the `Compile` JSON `program` object and `program_from_json`; the in-memory comptime `Store`; `RoundState`'s `Vec` freezes. Reload stays retract-relower-rederive, now on the shipped db.
+- The `@std/dl6` emitter writes into this store; `fs.write` is for text targets (`@std/cli`) only.
+- Executor verb: the boundary crossing is named by Chris from `handle` / `cross` / `admit`; `poll` stays.
+- Lane order: list literal, effect type, comptime on sqlite_ivm, oai-rules, `@std/gh`, `@std/cli`.
