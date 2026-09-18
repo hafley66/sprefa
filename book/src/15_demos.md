@@ -85,9 +85,11 @@ The extract demo. It needs the `sprefa-extract` binary, so `book/check_outputs.s
 ; Shape copied from `oracle/compile/sources/test/fixtures/tsi_project/0_contract.dl7`:
 ; a loaded type carries no source name, so the probe reaches it structurally.
 
+(tsi: (import "@std/tsi"))
+
 (: UserShape
-   (* (: id string)
-      (: name string)))
+   (* (: id tsi.string)
+      (: name tsi.string)))
 
 (: extracted_user_conforms
    (* (: loaded type)
@@ -100,7 +102,7 @@ The extract demo. It needs the `sprefa-extract` binary, so `book/check_outputs.s
 
 ```text
 $ d=$(mktemp -d) && ../hafley-rs/crates/sprefa-extract/target/debug/extract --witness --resolve --family type fixtures/extract/corpus/ts/records.ts fixtures/extract/corpus/ts/format.ts fixtures/extract/corpus/ts/report.ts fixtures/extract/corpus/rust/shapes.rs fixtures/extract/corpus/rust/report.rs > $d/corpus.tsi.jsonl && bash book/show.sh compile fixtures/extract/main.dl7 --project fixtures/extract --tsi $d/corpus.tsi.jsonl | cut -c1-110
-(extracted_user_conforms UserShape ref(application(Conforms, [UserShape UserShape])))
+(extracted_user_conforms UserShape ref(application(tsi.Conforms, [UserShape UserShape])))
 (extracted_user_conforms ref(tsi_node(module(tsi(extract, [blake3:d1c9ac910c41b289ca8993768ed08d77466273f2a611
 exit 0
 ```

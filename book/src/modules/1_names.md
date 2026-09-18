@@ -96,7 +96,7 @@ diagnostic diagnostic(lower, reader_node(book/src/probes/5_user_option_shadows.d
 exit 1
 ```
 
-The prelude declares a product `bool` (`prelude/5_tsi_primitives.dl7:55`), and its alias is a forward edge, so a field typed `bool` never reaches the primitive `bool`. `int` has no prelude product and reaches the primitive. `prelude/5_tsi_primitives.dl7:26-28` leaves `any` out for this reason:
+A field typed `bool` and a field typed `int` both reach the primitive. `@std/tsi` declares a product `bool` (`std/tsi.dl7:55`), and a program reaches it only as `tsi.bool` after `(tsi: (import "@std/tsi"))`:
 
 ```dl7
 {{#include ../probes/17_bool_field.dl7}}
@@ -105,10 +105,10 @@ The prelude declares a product `bool` (`prelude/5_tsi_primitives.dl7:55`), and i
 ```console
 $ $DL8 compile book/src/probes/17_bool_field.dl7 | jq -r --arg owner Holder '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"'
 (: Holder count primitive(int))
-(: Holder flag bool)
+(: Holder flag primitive(bool))
 ```
 
-The primitive `str` (`AGENTS.md`, the rename dated 2026-09-17) hits the same edge: `prelude/5_tsi_primitives.dl7:59` already declares a product `str`, Rust's own primitive class on the TSI wire. A bare `str` shadows exactly like `bool` above; [Application in a declaration](2_the_return_column.md#application-in-a-declaration) shows the compiled shape.
+A bare `str` reaches the primitive the same way; [Application in a declaration](2_the_return_column.md#application-in-a-declaration) shows the compiled shape.
 
 ## Receipts
 

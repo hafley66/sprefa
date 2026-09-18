@@ -598,7 +598,7 @@ fn scalar_type(schema: &Value) -> Result<Option<&str>, String> {
     }
 }
 
-/// `integer` has no class in `prelude/5_tsi_primitives.dl7` but a Rust width.
+/// `integer` has no class in `std/tsi.dl7` but a Rust width.
 fn primitive_class(written: &str, schema: &Value) -> Option<&'static str> {
     let format = schema.get("format").and_then(Value::as_str);
     Some(match (written, format) {
