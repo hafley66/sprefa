@@ -1,15 +1,17 @@
-//! Kernel relations: `ref(kernel(Name))`. Ported from the `proves/2` clauses
+//! Kernel relations: `ref(kernel(Label))` and `ref(kernel(Owner, Label))`. Ported from the `proves/2` clauses
 //! and `integer_comparison/3` in `v7/src/1_libtime/0_evaluator.pl`. Each is a
 //! function over bound arguments, never a stored table, except that `intern`
 //! records every request as an output row.
 
-use super::term::{TermId, Universe};
+use super::term::{Term, TermId, Universe};
 use std::cmp::Ordering;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Kernel {
     Nil,
     Cons,
+    StrNil,
+    StrCons,
     EdgeRef,
     Intern,
     Int(IntCmp),
@@ -27,11 +29,22 @@ pub fn kernel_ref(u: &mut Universe, name: &str) -> TermId {
     u.compound("ref", vec![inner])
 }
 
+/// `ref(kernel(Owner, Label))` for a typed op, `ref(kernel(Label))` otherwise.
+pub fn op_ref(u: &mut Universe, (owner, label): (Option<&str>, &str)) -> TermId {
+    let Some(owner) = owner else {
+        return kernel_ref(u, label);
+    };
+    let owner = u.atom(owner);
+    let label = u.atom(label);
+    let inner = u.compound("kernel", vec![owner, label]);
+    u.compound("ref", vec![inner])
+}
+
 /// `linear(Step)`: the step admits an incremental lowering later. Facts only;
 /// nothing reads them yet.
-pub const LINEAR_STEPS: [&str; 2] = ["int_add", "count_step"];
+pub const LINEAR_STEPS: [(Option<&str>, &str); 2] = [(Some("int"), "add"), (None, "count_step")];
 
-pub fn linear(step: &str) -> bool {
+pub fn linear(step: (Option<&str>, &str)) -> bool {
     LINEAR_STEPS.contains(&step)
 }
 
@@ -59,30 +72,35 @@ impl IntCmp {
 }
 
 impl Kernel {
-    /// `ref(kernel(name))` to the kernel, `None` for every other relation.
+    /// `ref(kernel(..))` to the kernel, `None` for every other relation.
     pub fn of(u: &Universe, rel: TermId) -> Option<Kernel> {
         let inner = u.unary(rel, "ref")?;
-        let name = u.unary(inner, "kernel")?;
-        let (name, args) = u.functor_or_atom(name)?;
-        if !args.is_empty() {
-            return None;
-        }
-        Some(match name {
-            "nil" => Kernel::Nil,
-            "cons" => Kernel::Cons,
-            "edge_ref" => Kernel::EdgeRef,
-            "intern" => Kernel::Intern,
-            "int_lt" => Kernel::Int(IntCmp::Lt),
-            "int_le" => Kernel::Int(IntCmp::Le),
-            "int_eq" => Kernel::Int(IntCmp::Eq),
-            "int_ne" => Kernel::Int(IntCmp::Ne),
-            "int_ge" => Kernel::Int(IntCmp::Ge),
-            "int_gt" => Kernel::Int(IntCmp::Gt),
-            "int_add" => Kernel::IntAdd,
-            "term_lt" => Kernel::TermLt,
-            "count_step" => Kernel::CountStep,
-            "min_step" => Kernel::MinStep,
-            "max_step" => Kernel::MaxStep,
+        let atom = |id: TermId| match u.functor_or_atom(id)? {
+            (name, []) => Some(name),
+            _ => None,
+        };
+        let (owner, label) = match u.args::<2>(inner, "kernel") {
+            Some([owner, label]) => (Some(atom(owner)?), atom(label)?),
+            None => (None, atom(u.unary(inner, "kernel")?)?),
+        };
+        Some(match (owner, label) {
+            (None, "nil") => Kernel::Nil,
+            (None, "cons") => Kernel::Cons,
+            (None, "edge_ref") => Kernel::EdgeRef,
+            (None, "intern") => Kernel::Intern,
+            (None, "count_step") => Kernel::CountStep,
+            (None, "min_step") => Kernel::MinStep,
+            (None, "max_step") => Kernel::MaxStep,
+            (Some("int"), "lt") => Kernel::Int(IntCmp::Lt),
+            (Some("int"), "le") => Kernel::Int(IntCmp::Le),
+            (Some("int"), "eq") => Kernel::Int(IntCmp::Eq),
+            (Some("int"), "ne") => Kernel::Int(IntCmp::Ne),
+            (Some("int"), "ge") => Kernel::Int(IntCmp::Ge),
+            (Some("int"), "gt") => Kernel::Int(IntCmp::Gt),
+            (Some("int"), "add") => Kernel::IntAdd,
+            (Some("any"), "lt") => Kernel::TermLt,
+            (Some("str"), "cons") => Kernel::StrCons,
+            (Some("str"), "nil") => Kernel::StrNil,
             _ => return None,
         })
     }
@@ -119,11 +137,13 @@ pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<Te
     let solution = match k {
         Kernel::Nil => nil_row(u, args),
         Kernel::Cons => cons_row(u, args),
+        Kernel::StrNil => str_nil_row(u, args),
+        Kernel::StrCons => str_cons_row(u, args),
         Kernel::EdgeRef => edge_ref_row(u, args),
         Kernel::Intern => intern_row(u, args),
         Kernel::Int(cmp) => int_row(u, cmp, args),
-        Kernel::IntAdd => int_add_row(u, args),
-        Kernel::TermLt => term_lt_row(u, args),
+        Kernel::IntAdd => int_dot_add_row(u, args),
+        Kernel::TermLt => any_lt_row(u, args),
         Kernel::CountStep => count_step_row(u, args),
         Kernel::MinStep => extremum_step_row(u, args, Ordering::Less),
         Kernel::MaxStep => extremum_step_row(u, args, Ordering::Greater),
@@ -156,6 +176,45 @@ pub fn cons_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>
     let full = u.list(&items);
     let list = u.compound("const", vec![full]);
     Some(vec![head, tail, list])
+}
+
+/// `str.nil(Empty)`: `Empty` is `""`.
+pub fn str_nil_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    (args.len() == 1).then(|| {
+        let empty = u.string("");
+        vec![u.compound("const", vec![empty])]
+    })
+}
+
+fn text(u: &Universe, tagged: TermId) -> Option<String> {
+    match u.get(u.unary(tagged, "const")?) {
+        Term::Str(s) => Some(u.sym_str(*s).to_string()),
+        _ => None,
+    }
+}
+
+/// `str.cons(Head, Tail, Text)`: with head and tail bound, `Text` is their
+/// concatenation; with only `Text` bound, `Head` is its first character and
+/// `Tail` the rest, so `""` has no row.
+pub fn str_cons_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    if args.len() != 3 {
+        return None;
+    }
+    if let (Some(head), Some(tail)) = (args[0], args[1]) {
+        let joined = text(u, head)? + &text(u, tail)?;
+        let joined = u.string(&joined);
+        let joined = u.compound("const", vec![joined]);
+        return Some(vec![head, tail, joined]);
+    }
+    let whole = args[2]?;
+    let full = text(u, whole)?;
+    let first = full.chars().next()?;
+    let (head, rest) = full.split_at(first.len_utf8());
+    let head = u.string(head);
+    let head = u.compound("const", vec![head]);
+    let rest = u.string(rest);
+    let rest = u.compound("const", vec![rest]);
+    Some(vec![head, rest, whole])
 }
 
 pub fn edge_ref_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
@@ -193,17 +252,17 @@ pub fn int_row(u: &Universe, cmp: IntCmp, args: &[Option<TermId>]) -> Option<Vec
         .then(|| vec![args[0].unwrap(), args[1].unwrap()])
 }
 
-/// `term_lt(Left, Right)`: holds when `Left` precedes `Right` in the store's
+/// `any.lt(Left, Right)`: holds when `Left` precedes `Right` in the store's
 /// standard term order.
-pub fn term_lt_row(u: &Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+pub fn any_lt_row(u: &Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
     let (l, r) = term_pair(u, args)?;
     (u.cmp(l, r) == std::cmp::Ordering::Less).then(|| vec![args[0].unwrap(), args[1].unwrap()])
 }
 
-/// `int_add(Left, Right, Sum)`: the sum is `const(Left + Right)`, and an
+/// `int.add(Left, Right, Sum)`: the sum is `const(Left + Right)`, and an
 /// overflowing sum has no row. The return is not a key, so a bound wrong sum
 /// fails at unification.
-pub fn int_add_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+pub fn int_dot_add_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
     if args.len() != 3 {
         return None;
     }
@@ -247,8 +306,8 @@ pub fn extremum_step_row(
     Some(vec![accumulator, value, next])
 }
 
-/// The three bound `const` integers of `int_add`, all present.
-fn int_add_ground(u: &Universe, args: &[Option<TermId>]) -> Option<(i64, i64, i64)> {
+/// The three bound `const` integers of `int.add`, all present.
+fn int_dot_add_ground(u: &Universe, args: &[Option<TermId>]) -> Option<(i64, i64, i64)> {
     if args.len() != 3 {
         return None;
     }
@@ -267,7 +326,7 @@ pub fn negative_holds(u: &Universe, k: Kernel, args: &[Option<TermId>]) -> bool 
             Some((l, r)) => !cmp.holds(l, r),
             None => true,
         },
-        Kernel::IntAdd => match int_add_ground(u, args) {
+        Kernel::IntAdd => match int_dot_add_ground(u, args) {
             Some((left, right, sum)) => left.checked_add(right) != Some(sum),
             None => true,
         },
@@ -284,12 +343,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn linear_steps_are_int_add_and_count_step() {
-        assert_eq!(LINEAR_STEPS, ["int_add", "count_step"]);
-        assert!(linear("int_add"));
-        assert!(linear("count_step"));
-        assert!(!linear("min_step"));
-        assert!(!linear("max_step"));
-        assert!(!linear("cons"));
+    fn linear_steps_are_int_dot_add_and_count_step() {
+        assert_eq!(LINEAR_STEPS, [(Some("int"), "add"), (None, "count_step")]);
+        assert!(linear((Some("int"), "add")));
+        assert!(linear((None, "count_step")));
+        assert!(!linear((None, "min_step")));
+        assert!(!linear((None, "max_step")));
+        assert!(!linear((None, "cons")));
     }
 }
