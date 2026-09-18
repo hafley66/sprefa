@@ -1,9 +1,8 @@
-//! The lowering frame: the term arena plus the two indexes and the relation
-//! dictionary, all built once per `lower_datalog/5` boundary.
+//! The lowering frame: the term arena plus the two indexes, built once per
+//! `lower_datalog/5` boundary.
 
 use super::index::{EdgeIndex, ReservationIndex};
 use crate::_6_eval::term::{TermId, Universe};
-use std::collections::HashMap;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CallPolicy {
@@ -15,8 +14,6 @@ pub struct Cx<'a> {
     pub u: &'a mut Universe,
     pub reservations: &'a ReservationIndex,
     pub edges: &'a EdgeIndex,
-    /// `memberchk(relation(Callable, Arity, KeySets), Relations)`: first wins.
-    pub relations: &'a HashMap<TermId, (i64, TermId)>,
     pub policy: CallPolicy,
 }
 

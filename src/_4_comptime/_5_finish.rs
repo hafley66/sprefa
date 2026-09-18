@@ -6,7 +6,7 @@ use super::api::{
     kernel_call_args, source_application_edges, Compiled, Generated, Refreeze, Sources,
 };
 use super::rounds::{Round, RoundInput, RoundOutcome, RoundState, Rounds, COMPILER_ROUND_LIMIT};
-use crate::_3_check::api::prolog_sort;
+use crate::_3_check::api::{prolog_sort, return_key_sets};
 use crate::_3_check::{check_resolved_rules, Checked, Stop};
 use crate::_6_eval::term::{Term, TermId, Universe};
 use crate::_7_effect::Slice;
@@ -521,14 +521,10 @@ pub fn generated_return_key_sets(
     let [only] = indices.as_slice() else {
         return u.empty_list();
     };
-    let except = u.as_int(*only);
+    // A non-integer ordinal filters no position, as `Some(n) != None` did.
+    let only = u.as_int(*only).unwrap_or(-1);
     let arity = u.as_int(arity).unwrap_or(0);
-    let inputs: Vec<TermId> = (0..arity)
-        .filter(|n| Some(*n) != except)
-        .map(|n| u.int(n))
-        .collect();
-    let inputs = u.list(&inputs);
-    u.list(&[inputs])
+    return_key_sets(u, arity, &[only])
 }
 
 /// `:1106`.

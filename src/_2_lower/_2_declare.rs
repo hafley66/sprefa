@@ -8,7 +8,6 @@ use crate::_6_eval::term::{TermId, Universe};
 pub struct Declared {
     pub nodes: Vec<TermId>,
     pub edges: Vec<TermId>,
-    pub relations: Vec<TermId>,
     pub origins: Vec<TermId>,
     pub reservations: Vec<TermId>,
 }
@@ -17,7 +16,6 @@ impl Declared {
     pub fn extend(&mut self, other: Declared) {
         self.nodes.extend(other.nodes);
         self.edges.extend(other.edges);
-        self.relations.extend(other.relations);
         self.origins.extend(other.origins);
         self.reservations.extend(other.reservations);
     }
@@ -115,7 +113,6 @@ fn finish_derived_bind(
     Declared {
         nodes: vec![],
         edges: vec![edge],
-        relations: vec![],
         origins: vec![origin],
         reservations: vec![reservation],
     }
@@ -163,7 +160,6 @@ fn finish_bind(
     Declared {
         nodes: declared.nodes,
         edges,
-        relations: declared.relations,
         origins,
         reservations,
     }
@@ -245,8 +241,6 @@ pub fn finish_constructor_target(
     let identity = u.compound("node", vec![owner]);
     let mut nodes = vec![identity, classifier];
     nodes.append(&mut declared.nodes);
-    let mut relations = constructor_relations(u, kind, owner, &declared.edges);
-    relations.append(&mut declared.relations);
     let node_origin = u.compound("node", vec![owner]);
     let origin = u.compound("origin", vec![node_origin, node_id]);
     let mut origins = vec![origin];
@@ -258,52 +252,10 @@ pub fn finish_constructor_target(
         declared: Declared {
             nodes,
             edges: declared.edges,
-            relations,
             origins,
             reservations: declared.reservations,
         },
     }
-}
-
-/// `:884`. A sum declares no relation.
-fn constructor_relations(
-    u: &mut Universe,
-    kind: &str,
-    owner: TermId,
-    edges: &[TermId],
-) -> Vec<TermId> {
-    if kind != "product" {
-        return vec![];
-    }
-    let return_atom = u.atom("return");
-    let mut arity: i64 = 0;
-    let mut return_indices: Vec<i64> = Vec::new();
-    for edge in edges {
-        let Some(parts) = super::index::edge_parts(u, *edge) else {
-            continue;
-        };
-        if parts.owner != owner {
-            continue;
-        }
-        arity += 1;
-        if parts.name == return_atom {
-            return_indices.push(parts.index);
-        }
-    }
-    // :893. One return edge gives one key set of every other position.
-    let key_sets = if return_indices.len() == 1 {
-        let except = return_indices[0];
-        let positions: Vec<TermId> = (0..arity)
-            .filter(|i| *i != except)
-            .map(|i| u.int(i))
-            .collect();
-        let inner = u.list(&positions);
-        u.list(&[inner])
-    } else {
-        u.empty_list()
-    };
-    let arity_term = u.int(arity);
-    vec![u.compound("relation", vec![owner, arity_term, key_sets])]
 }
 
 /// `:917`.
@@ -400,7 +352,6 @@ fn finish_compound_edge_bind(
     Declared {
         nodes: declared.nodes,
         edges,
-        relations: declared.relations,
         origins,
         reservations,
     }

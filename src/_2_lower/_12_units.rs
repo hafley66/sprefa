@@ -180,15 +180,12 @@ pub fn module_expression_environment(
     exporter_owner: TermId,
     basement: TermId,
 ) -> TermId {
-    let Some([_, edges, relations, _, _]) = basement_lists(u, basement) else {
+    let Some([nodes, edges, relations, _, _]) = basement_lists(u, basement) else {
         return empty_environment(u);
     };
-    let declared: HashSet<TermId> = relations
+    let declared: HashSet<TermId> = nodes
         .iter()
-        .filter_map(|row| match u.functor(*row) {
-            Some(("relation", args)) if args.len() == 3 => Some(args[0]),
-            _ => None,
-        })
+        .filter_map(|row| u.unary(*row, "product"))
         .collect();
     let mut reservations = Vec::new();
     let imported = u.atom("imported");

@@ -93,8 +93,48 @@ fn basement_parts(u: &Universe, program: TermId) -> Option<Basement> {
     })
 }
 
+/// The `@std/dl6` seam: one `return` edge gives one key set of every other
+/// position, zero or many give none, and no other site derives keys.
+pub fn return_key_sets(u: &mut Universe, arity: i64, return_indices: &[i64]) -> TermId {
+    let [only] = return_indices else {
+        return u.empty_list();
+    };
+    let positions: Vec<TermId> = (0..arity).filter(|i| i != only).map(|i| u.int(i)).collect();
+    let inner = u.list(&positions);
+    u.list(&[inner])
+}
+
+/// Arity is the product's own `:` edge count, keys its one `return` edge.
+/// `origin(relation(Id), _)` declares; `product(Id)` only classifies a type.
+fn product_relation_rows(u: &mut Universe, graph: &CheckerGraph, origins: &[TermId]) -> Vec<TermId> {
+    let mut owners: Vec<TermId> = origins
+        .iter()
+        .filter_map(|row| match u.functor(*row) {
+            Some(("origin", args)) if args.len() == 2 => u.unary(args[0], "relation"),
+            _ => None,
+        })
+        .collect();
+    owners.sort_by(|a, b| u.cmp(*a, *b));
+    owners.dedup();
+    let mut out = Vec::with_capacity(owners.len());
+    for owner in owners {
+        let arity = graph.owner_slots.get(&owner).map_or(0, |s| s.len() as i64);
+        let indices = graph
+            .owner_return_indices
+            .get(&owner)
+            .cloned()
+            .unwrap_or_default();
+        let keys = return_key_sets(u, arity, &indices);
+        let reference = u.compound("ref", vec![owner]);
+        let arity = u.int(arity);
+        out.push(u.compound("relation", vec![reference, arity, keys]));
+    }
+    out
+}
+
 /// `:1099`. `relation(Target, A, K)` becomes `relation(ref(Target), A, K)`.
-fn relations_refs(u: &mut Universe, rows: &[TermId]) -> Option<Vec<TermId>> {
+/// Left on this channel: loader families and the comptime `def` rows only.
+fn relations_refs(u: &mut Universe, rows: &[TermId], covered: &[TermId]) -> Option<Vec<TermId>> {
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let (name, args) = u.functor(*row).map(|(n, a)| (n.to_string(), a.to_vec()))?;
@@ -102,6 +142,9 @@ fn relations_refs(u: &mut Universe, rows: &[TermId]) -> Option<Vec<TermId>> {
             return None;
         }
         let reference = u.compound("ref", vec![args[0]]);
+        if covered.contains(&reference) {
+            continue;
+        }
         out.push(u.compound("relation", vec![reference, args[1], args[2]]));
     }
     Some(out)
@@ -148,10 +191,19 @@ pub fn check_datalog(
     };
     let origins = OriginArena::build(u, &lowered.origins);
 
-    let Some(source_relations) = relations_refs(u, &basement.relations) else {
+    let declared = product_relation_rows(u, &graph, &lowered.origins);
+    let covered: Vec<TermId> = declared
+        .iter()
+        .filter_map(|row| match u.functor(*row) {
+            Some(("relation", args)) => Some(args[0]),
+            _ => None,
+        })
+        .collect();
+    let Some(supplied) = relations_refs(u, &basement.relations, &covered) else {
         return Err(Stop::Fail("relation/3 expected"));
     };
-    let mut all = source_relations;
+    let mut all = declared;
+    all.extend(supplied);
     all.extend(kernel_relation_rows(u));
     let relations = prolog_sort(u, all);
     let arities = relation_arities(u, &relations);

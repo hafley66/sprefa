@@ -1,0 +1,8 @@
+; `@std/dl6`: the sqlite_ivm application emitter. `relation` is the emitter's
+; own word for a stored rel: `rel` is the node, `arity` its column count, and
+; `keys` the UNIQUE positions dl6 writes. No rule derives it yet.
+
+(: relation
+   (* (: rel type)
+      (: arity int)
+      (: keys any)))

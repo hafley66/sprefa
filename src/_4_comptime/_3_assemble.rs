@@ -2,7 +2,7 @@
 //! `1a_generated_program_assembler.pl:17-397`.
 
 use super::api::{diagnostic, is_kernel_ref};
-use crate::_3_check::api::prolog_sort;
+use crate::_3_check::api::{prolog_sort, return_key_sets};
 use crate::_6_eval::term::{Term, TermId, Universe};
 use std::collections::{HashMap, HashSet};
 
@@ -264,7 +264,9 @@ fn assemble_definitions(u: &mut Universe, cx: &Cx) -> (Vec<TermId>, Vec<TermId>)
                 let arity = *only;
                 if u.as_int(arity).is_some_and(|n| n >= 0) {
                     let reference = u.compound("ref", vec![*id]);
-                    let keys = u.empty_list();
+                    // `def` names no return position; `generated_return_key_sets`
+                    // fills the column from the `:` rows of the next round.
+                    let keys = return_key_sets(u, 0, &[]);
                     relations.push(u.compound("relation", vec![reference, arity, keys]));
                 } else {
                     let reason = u.compound("invalid_generated_arity", vec![*id, arity]);
