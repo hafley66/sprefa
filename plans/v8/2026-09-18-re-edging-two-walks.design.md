@@ -149,3 +149,9 @@ emitter annotation. Own lane after caret 3.
 - `(Result Body str)` interns a node where the return sum's branches resolve with `ok = Body`, `error = str`. That substitution at intern is the generics work (`docs/generics-wrapper-inspection.md`); the caret-3 scope walk is how a branch target finds its parameter column.
 - Effect: `(: json (effect (* (: url str)) (Result type str)))`. Input product row = request; output sum variant = answer. Served by rows; `--serve`, `_error` products, Rust cadence retire.
 - AGENTS.md is edited by Chris only. The 2026-09-18 rows there that describe `Result` are superseded by this addendum until he edits them.
+
+## Addendum, namespaces and userland effects (user 2026-09-18)
+
+- `gh.` is GitHub, `git.` is git, `http.` is requests. Never `github.`.
+- A userland effect is a view over hosted effects: declared with the same `(effect Input Output)` form, its request rows forwarded down by rules and its answer rows derived up by rules, no executor. `@std/gh` is the first one: `gh.repos`, `gh.prs`, `gh.issues` over `http.json` against `api.github.com`; pure dl7.
+- `str.cons` stays arity 3. Variadic `str.cons` and `"{?x}"` interpolation are macrotime, unbuilt until the pain is earned.
