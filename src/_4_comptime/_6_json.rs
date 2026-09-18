@@ -166,6 +166,13 @@ fn rounds_to_json(events: &[Round]) -> Value {
                 Round::Refreeze { outer, deferred } => {
                     json!({"event": "refreeze", "outer": outer, "deferred": deferred})
                 }
+                Round::Answer {
+                    outer,
+                    round,
+                    effects,
+                    rows,
+                } => json!({"event": "answer", "outer": outer, "round": round,
+                            "effects": effects, "rows": rows}),
             })
             .collect(),
     )

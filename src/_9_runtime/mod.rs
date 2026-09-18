@@ -10,6 +10,6 @@ pub mod sqlite;
 #[path = "_0_store.rs"]
 pub mod store;
 
-pub use reconcile::{Cadence, IExecutor, Reconciled, Reconciler};
+pub use reconcile::{Answerer, Cadence, IExecutor, Reconciled, Reconciler};
 pub use sqlite::SqliteRowStore;
 pub use store::{CellKind, IRowStore, StoreError, Watermark};

@@ -1,0 +1,17 @@
+; A relation with no executor stays unasked: no effect row, no answer step.
+(: load
+   (* (: path str)
+      (: return type)))
+
+(: Doc (* (: path str)))
+
+(Doc "fixtures/comptime_effect/0.json")
+
+(: Member
+   (* (: name any)
+      (: target any)))
+
+(<- (Member ?Name ?Target)
+    (Doc ?Path)
+    (load ?Path ?Root)
+    (: ?Root ?Name ?Target ?Index))

@@ -217,7 +217,7 @@ pub fn fetch_json_body_lands_as_a_row_the_reader_joins() {
         vec![vec![json!(url), body]]
     );
     assert!(rows(&out, &compiled.names, "fetch_json_error").is_empty());
-    assert_eq!(hits.load(Ordering::SeqCst), 1, "requests");
+    assert_eq!(hits.load(Ordering::SeqCst), 2, "requests: one at comptime (fetch_json is Once), one at runtime");
     assert_eq!(out["ticks"], json!(1));
 }
 
@@ -236,7 +236,7 @@ pub fn fetch_json_non_2xx_is_one_error_row_and_no_body_row() {
         rows(&out, &compiled.names, "Failed"),
         vec![vec![json!(url), json!(500)]]
     );
-    assert_eq!(hits.load(Ordering::SeqCst), 1, "requests");
+    assert_eq!(hits.load(Ordering::SeqCst), 2, "requests: one at comptime, one at runtime");
 }
 
 #[test]
@@ -281,7 +281,7 @@ pub fn a_second_run_against_the_db_answers_nothing_and_inserts_nothing() {
     assert_eq!(code, 0, "second exit code");
     assert_eq!(second["ticks"], json!(0), "second run ticks");
     assert_eq!(second["insert_statements"], json!(0), "second run inserts");
-    assert_eq!(hits.load(Ordering::SeqCst), 1, "requests across both runs");
+    assert_eq!(hits.load(Ordering::SeqCst), 2, "requests across compile and both runs");
     assert_eq!(
         rows(&second, &compiled.names, "Body"),
         vec![vec![json!(url), json!("[1,2,3]")]]
