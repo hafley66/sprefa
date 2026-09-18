@@ -132,3 +132,10 @@ emitter annotation. Own lane after caret 3.
 | 2 | shadow policy | diagnostic only, first wins (proposed); or check error |
 | 3 | up walk probes each stop's proto chain (Ruby: lexical, then ancestors) | yes (trace above); or up walk is own labels only |
 | 4 | `User.1` and `User.proto` | plain label lookups, no int-segment arm (proposed) |
+
+## Addendum, effect type and Result (user 2026-09-18)
+
+- `Result` is a sum: `(: Result (+ (: ok type) (: error type)))`. `(Result Body str)` interns a sum node with `ok = Body`, `error = str`.
+- A sum with no rows is a constructor like a product with no rows. `_8_express.rs:297` `Applied::Construction` gains the sum arm; the "only a product node takes a call" row is amended by Chris, not by an agent.
+- Effect: `(: json (effect (* (: url str)) (Result type str)))`. Input product row = request; output sum variant = answer. Served by rows; `--serve`, `_error` products, Rust cadence retire.
+- The AGENTS.md rows of 2026-09-18 that say `Result` is declared with `*` are wrong on that one point; this addendum wins until Chris edits the row.
