@@ -383,23 +383,56 @@ fn arg_vars(arg: &Arg) -> Vec<VarId> {
 }
 
 /// The rule proves a row only under a caller's binding: some kernel or
-/// negative goal reads a head variable no earlier positive non-kernel goal
-/// binds, so bottom-up derivation cannot reach its rows.
-fn needs_bound_head(u: &Universe, rule: &Rule) -> bool {
+/// negative goal reads a head variable no earlier goal binds, so bottom-up
+/// derivation cannot reach its rows. A positive kernel goal never blocks
+/// when the op computes its row from the arguments bound at that point,
+/// matching each op's row function: comparisons need both sides, `cons`
+/// and `str.cons` take head and tail or the whole list, `nil` and
+/// `str.nil` need nothing, every other op takes its first two arguments.
+/// That readiness argument only holds while every table the rule reads is
+/// present when its stratum starts. A rule reading `intern_snapshot` fires
+/// against the rows known at round zero and never revisits them, so such a
+/// rule keeps the plain blocking walk and demand answers it in place.
+fn needs_bound_head(u: &Universe, rule: &Rule, snapshots: TermId) -> bool {
     if rule.is_aggregate() {
         return false;
     }
+    let anchored = rule
+        .body
+        .iter()
+        .all(|g| g.polarity != Polarity::Positive || g.rel != snapshots);
     let head: HashSet<VarId> = rule.head.iter().flat_map(arg_vars).collect();
     let mut bound: HashSet<VarId> = HashSet::new();
     for goal in &rule.body {
-        let kernel = Kernel::of(u, goal.rel).is_some();
+        let op = Kernel::of(u, goal.rel);
         let vars: HashSet<VarId> = goal.args.iter().flat_map(arg_vars).collect();
-        let blocking = kernel || goal.polarity == Polarity::Negative;
-        if blocking && vars.iter().any(|v| head.contains(v) && !bound.contains(v)) {
-            return true;
-        }
-        if !kernel && goal.polarity == Polarity::Positive {
+        if let (Some(op), Polarity::Positive) = (op, goal.polarity) {
+            if anchored {
+                let at = |i: usize| {
+                    goal.args
+                        .get(i)
+                        .map(|a| arg_vars(a).into_iter().all(|v| bound.contains(&v)))
+                        .unwrap_or(false)
+                };
+                let ready = match op {
+                    Kernel::Nil | Kernel::StrNil => true,
+                    Kernel::Cons | Kernel::StrCons => at(2) || (at(0) && at(1)),
+                    _ => at(0) && at(1),
+                };
+                if !ready {
+                    return true;
+                }
+            } else if vars.iter().any(|v| head.contains(v) && !bound.contains(v)) {
+                return true;
+            }
             bound.extend(vars);
+        } else if op.is_none() && goal.polarity == Polarity::Positive {
+            bound.extend(vars);
+        } else {
+            let blocking = op.is_some() || goal.polarity == Polarity::Negative;
+            if blocking && vars.iter().any(|v| head.contains(v) && !bound.contains(v)) {
+                return true;
+            }
         }
     }
     false
@@ -807,7 +840,11 @@ fn evaluate_into(
     }
     let demanded: HashSet<TermId> = rules_by_rel
         .iter()
-        .filter(|(_, rules)| rules.iter().any(|rule| needs_bound_head(u, rule)))
+        .filter(|(_, rules)| {
+            rules
+                .iter()
+                .any(|rule| needs_bound_head(u, rule, effects.intern_snapshot))
+        })
         .map(|(relation, _)| *relation)
         .collect();
 
