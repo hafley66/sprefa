@@ -54,8 +54,9 @@ pub fn identity_map(
     (identities, diagnostics)
 }
 
-/// `:431-449`. Claims are sorted by class then id, and a class the prelude
-/// does not export is named once per class.
+/// `:431-449`. Claims are sorted by class then id, and a class `@std/tsi` does
+/// not export is named once per class. With no `@std/tsi` unit loaded, one row
+/// names the module instead.
 fn primitive_identities(
     u: &mut Universe,
     accepted: &[Fact],
@@ -79,11 +80,21 @@ fn primitive_identities(
     claims.sort();
     claims.dedup();
 
-    let prelude_edges = prelude_edges(u, basements);
+    let module = tsi_module(u);
     let mut rows = Vec::new();
     let mut diagnostics = Vec::new();
+    if claims.is_empty() {
+        return (rows, diagnostics);
+    }
+    let Some(edges) = module_edges(u, basements, module) else {
+        let origin = u.unary(module, "module").unwrap_or(module);
+        let payload = u.compound("tsi_primitive_class_absent", vec![origin]);
+        let none = u.atom("none");
+        diagnostics.push(diagnostic(u, "extract", none, payload));
+        return (rows, diagnostics);
+    };
     for (class, id) in claims {
-        match prelude_primitive(u, &prelude_edges, &class) {
+        match module_primitive(u, &edges, module, &class) {
             Some(identity) => rows.push((id, identity)),
             None => {
                 let class = u.atom(&class);
@@ -96,16 +107,21 @@ fn primitive_identities(
     (rows, diagnostics)
 }
 
-/// `:451-457`. The first prelude basement and, inside it, the first edge with
-/// the class label.
-fn prelude_edges(u: &mut Universe, basements: &[TermId]) -> Vec<TermId> {
-    let prelude_atom = u.atom("prelude");
-    let prelude = u.compound("module", vec![prelude_atom]);
+/// `module(std(tsi))`: the owner the import chain gives the `@std/tsi` unit.
+fn tsi_module(u: &mut Universe) -> TermId {
+    let name = u.atom("tsi");
+    let origin = u.compound("std", vec![name]);
+    u.compound("module", vec![origin])
+}
+
+/// `:451-457`. The edges of the first basement the module owns; `None` when no
+/// unit loaded it.
+fn module_edges(u: &mut Universe, basements: &[TermId], module: TermId) -> Option<Vec<TermId>> {
     for basement in basements {
         let Some(row) = parts(u, *basement, "module_basement", 2) else {
             continue;
         };
-        if row[0] != prelude {
+        if row[0] != module {
             continue;
         }
         let Some(program) = parts(u, row[1], "basement_program", 2) else {
@@ -114,22 +130,25 @@ fn prelude_edges(u: &mut Universe, basements: &[TermId]) -> Vec<TermId> {
         let Some(graph) = parts(u, program[0], "root_graph", 2) else {
             continue;
         };
-        return u.as_list(graph[1]).unwrap_or_default();
+        return Some(u.as_list(graph[1]).unwrap_or_default());
     }
-    Vec::new()
+    None
 }
 
-fn prelude_primitive(u: &mut Universe, edges: &[TermId], class: &str) -> Option<TermId> {
-    // :459-460. The unit class is spelled `()` in the prelude.
+fn module_primitive(
+    u: &mut Universe,
+    edges: &[TermId],
+    module: TermId,
+    class: &str,
+) -> Option<TermId> {
+    // :459-460. The unit class is spelled `()` in the module.
     let label = if class == "unit" { "()" } else { class };
     let label = u.atom(label);
-    let prelude_atom = u.atom("prelude");
-    let prelude = u.compound("module", vec![prelude_atom]);
     for edge in edges {
         let Some(row) = parts(u, *edge, "pending_edge", 4) else {
             continue;
         };
-        if row[0] != prelude || row[1] != label {
+        if row[0] != module || row[1] != label {
             continue;
         }
         if let Some(target) = u.unary(row[2], "target") {

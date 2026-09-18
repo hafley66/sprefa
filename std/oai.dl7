@@ -1,3 +1,5 @@
+(tsi: (import "@std/tsi"))
+
 ; `@std/oai`: an OpenAPI 3.x document as rows. A `document` seed names the
 ; file; the loader fills `route` and `param` from it and mints the type nodes
 ; the `request` and `response` columns point at.

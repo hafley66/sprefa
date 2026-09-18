@@ -196,7 +196,7 @@ fn mapping_rows_land_in_the_type_graph() {
             .unwrap_or_else(|| panic!("no route {operation}"))
             .clone()
     };
-    let prelude = |class: &str| edge("module('prelude')", class);
+    let tsi = |class: &str| edge("module(std('tsi'))", class);
 
     let todo = node("Todo");
     assert!(
@@ -204,11 +204,11 @@ fn mapping_rows_land_in_the_type_graph() {
         "Todo is not a product"
     );
 
-    let string = prelude("string");
+    let string = tsi("string");
     assert_eq!(
         edge(&todo, "title"),
         string,
-        "a required string column is the prelude class"
+        "a required string column is the @std/tsi class"
     );
     assert_eq!(
         edge(&todo, "id"),
@@ -222,7 +222,7 @@ fn mapping_rows_land_in_the_type_graph() {
         "Todo.body is not a sum"
     );
     assert_eq!(edge(&body, "value"), string);
-    assert_eq!(edge(&body, "null"), prelude("null"));
+    assert_eq!(edge(&body, "null"), tsi("null"));
     assert_eq!(
         edge(&todo, "completedAt"),
         body,
@@ -247,10 +247,10 @@ fn mapping_rows_land_in_the_type_graph() {
     let array_of_todo = format!("ref(application({},[{todo}]))", node("Array"));
     assert!(route("Todo_query_list").ends_with(&format!("{array_of_todo}])")));
 
-    let i32_class = prelude("i32");
+    let i32_class = tsi("i32");
     assert!(route("Todo_query_count").ends_with(&format!("ref({i32_class})])")));
     assert!(
-        route("Todo_query_get").contains(&format!("ref({})", prelude("void"))),
+        route("Todo_query_get").contains(&format!("ref({})", tsi("void"))),
         "an operation with no request body takes void"
     );
     assert!(has(&format!(

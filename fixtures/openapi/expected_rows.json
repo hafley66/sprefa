@@ -18,7 +18,7 @@
                   {
                     "a": "/V8ROOT/fixtures/openapi/todo.dl7"
                   },
-                  27
+                  38
                 ],
                 "f": "reader_node"
               }
@@ -68,7 +68,7 @@
                   {
                     "a": "/V8ROOT/fixtures/openapi/todo.dl7"
                   },
-                  27
+                  38
                 ],
                 "f": "reader_node"
               }
@@ -118,7 +118,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  12
+                  17
                 ],
                 "f": "reader_node"
               }
@@ -158,14 +158,19 @@
             {
               "args": [
                 {
-                  "a": "prelude"
+                  "args": [
+                    {
+                      "a": "tsi"
+                    }
+                  ],
+                  "f": "std"
                 },
                 {
                   "args": [
                     {
-                      "a": "prelude"
+                      "a": "@std/tsi"
                     },
-                    3948
+                    28
                   ],
                   "f": "reader_node"
                 }
@@ -258,7 +263,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  12
+                  17
                 ],
                 "f": "reader_node"
               }
@@ -374,7 +379,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  12
+                  17
                 ],
                 "f": "reader_node"
               }
@@ -414,14 +419,19 @@
             {
               "args": [
                 {
-                  "a": "prelude"
+                  "args": [
+                    {
+                      "a": "tsi"
+                    }
+                  ],
+                  "f": "std"
                 },
                 {
                   "args": [
                     {
-                      "a": "prelude"
+                      "a": "@std/tsi"
                     },
-                    3948
+                    28
                   ],
                   "f": "reader_node"
                 }
@@ -436,14 +446,19 @@
             {
               "args": [
                 {
-                  "a": "prelude"
+                  "args": [
+                    {
+                      "a": "tsi"
+                    }
+                  ],
+                  "f": "std"
                 },
                 {
                   "args": [
                     {
-                      "a": "prelude"
+                      "a": "@std/tsi"
                     },
-                    3983
+                    63
                   ],
                   "f": "reader_node"
                 }
@@ -476,7 +491,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  12
+                  17
                 ],
                 "f": "reader_node"
               }
@@ -516,14 +531,19 @@
             {
               "args": [
                 {
-                  "a": "prelude"
+                  "args": [
+                    {
+                      "a": "tsi"
+                    }
+                  ],
+                  "f": "std"
                 },
                 {
                   "args": [
                     {
-                      "a": "prelude"
+                      "a": "@std/tsi"
                     },
-                    3948
+                    28
                   ],
                   "f": "reader_node"
                 }
@@ -616,7 +636,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  12
+                  17
                 ],
                 "f": "reader_node"
               }
@@ -656,14 +676,19 @@
             {
               "args": [
                 {
-                  "a": "prelude"
+                  "args": [
+                    {
+                      "a": "tsi"
+                    }
+                  ],
+                  "f": "std"
                 },
                 {
                   "args": [
                     {
-                      "a": "prelude"
+                      "a": "@std/tsi"
                     },
-                    3948
+                    28
                   ],
                   "f": "reader_node"
                 }
@@ -725,7 +750,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  12
+                  17
                 ],
                 "f": "reader_node"
               }
@@ -765,14 +790,19 @@
             {
               "args": [
                 {
-                  "a": "prelude"
+                  "args": [
+                    {
+                      "a": "tsi"
+                    }
+                  ],
+                  "f": "std"
                 },
                 {
                   "args": [
                     {
-                      "a": "prelude"
+                      "a": "@std/tsi"
                     },
-                    3948
+                    28
                   ],
                   "f": "reader_node"
                 }
@@ -834,7 +864,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  37
+                  42
                 ],
                 "f": "reader_node"
               }
@@ -929,7 +959,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  37
+                  42
                 ],
                 "f": "reader_node"
               }
@@ -969,14 +999,19 @@
             {
               "args": [
                 {
-                  "a": "prelude"
+                  "args": [
+                    {
+                      "a": "tsi"
+                    }
+                  ],
+                  "f": "std"
                 },
                 {
                   "args": [
                     {
-                      "a": "prelude"
+                      "a": "@std/tsi"
                     },
-                    3923
+                    3
                   ],
                   "f": "reader_node"
                 }
@@ -1017,7 +1052,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  37
+                  42
                 ],
                 "f": "reader_node"
               }
@@ -1057,14 +1092,19 @@
             {
               "args": [
                 {
-                  "a": "prelude"
+                  "args": [
+                    {
+                      "a": "tsi"
+                    }
+                  ],
+                  "f": "std"
                 },
                 {
                   "args": [
                     {
-                      "a": "prelude"
+                      "a": "@std/tsi"
                     },
-                    3923
+                    3
                   ],
                   "f": "reader_node"
                 }
@@ -1105,7 +1145,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  37
+                  42
                 ],
                 "f": "reader_node"
               }
@@ -1200,7 +1240,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  37
+                  42
                 ],
                 "f": "reader_node"
               }
@@ -1295,7 +1335,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  37
+                  42
                 ],
                 "f": "reader_node"
               }
@@ -1335,14 +1375,19 @@
             {
               "args": [
                 {
-                  "a": "prelude"
+                  "args": [
+                    {
+                      "a": "tsi"
+                    }
+                  ],
+                  "f": "std"
                 },
                 {
                   "args": [
                     {
-                      "a": "prelude"
+                      "a": "@std/tsi"
                     },
-                    3923
+                    3
                   ],
                   "f": "reader_node"
                 }
@@ -1383,7 +1428,7 @@
                   {
                     "a": "@std/oai"
                   },
-                  37
+                  42
                 ],
                 "f": "reader_node"
               }
@@ -1423,14 +1468,19 @@
             {
               "args": [
                 {
-                  "a": "prelude"
+                  "args": [
+                    {
+                      "a": "tsi"
+                    }
+                  ],
+                  "f": "std"
                 },
                 {
                   "args": [
                     {
-                      "a": "prelude"
+                      "a": "@std/tsi"
                     },
-                    3923
+                    3
                   ],
                   "f": "reader_node"
                 }

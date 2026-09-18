@@ -33,8 +33,8 @@ The full inspection, with every probe's pasted output: `plans/v8/2026-09-15-v8-n
 | user product named `intern` | `probes/3_user_intern.dl7` | rc=0 |
 | user `intern` beside a kernel `intern` goal | `probes/4_user_intern_kernel_goal.dl7` | `arity_mismatch(intern, 1, 3)` |
 | user `Option` without a `return` column | `probes/5_user_option_shadows.dl7` | `expression_without_return` |
-| field typed `bool` | `probes/17_bool_field.dl7` | the prelude product `bool`, never the primitive |
-| bare `str` as a value | `probes/0_return_column.dl7` | the prelude product `str` (`prelude/5_tsi_primitives.dl7:59`), never the primitive |
+| field typed `bool` | `probes/17_bool_field.dl7` | the primitive `bool` |
+| bare `str` as a value | `probes/0_return_column.dl7` | the primitive `str` |
 | user `timer` served with `--serve timer` | `probes/9_user_timer_rule.dl7` | rc=0, an `effect` row, no answer |
 | two modules declaring `User` | `probes/6_user_a.dl7`, `7_user_b.dl7` | `duplicate_relation_name(User, ...)` |
 | a goal qualified by module, same two modules | `probes/8_pick_user_a.dl7` | the goal resolves; `duplicate_relation_name` still stops |

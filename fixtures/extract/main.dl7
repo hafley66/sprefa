@@ -1,9 +1,11 @@
 ; Shape copied from `oracle/compile/sources/test/fixtures/tsi_project/0_contract.dl7`:
 ; a loaded type carries no source name, so the probe reaches it structurally.
 
+(tsi: (import "@std/tsi"))
+
 (: UserShape
-   (* (: id string)
-      (: name string)))
+   (* (: id tsi.string)
+      (: name tsi.string)))
 
 (: extracted_user_conforms
    (* (: loaded type)

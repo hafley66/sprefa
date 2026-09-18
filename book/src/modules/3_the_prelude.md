@@ -12,7 +12,6 @@ Conforms
 Holder
 Key
 Option
-string
 ```
 
 `Holder` is the program's; the other four come from four different prelude files.
@@ -23,12 +22,12 @@ Each file is an ordinary `.dl7` text; they read in file order, one after another
 
 ```console
 $ for f in prelude/*.dl7; do printf '%s declarations=%s rules=%s lines=%s\n' "$f" "$(grep -c '^(: ' "$f")" "$(grep -c '^(<- ' "$f")" "$(grep -c '' "$f")"; done
-prelude/0_constructors.dl7 declarations=2 rules=0 lines=9
-prelude/1_declarations.dl7 declarations=58 rules=0 lines=305
+prelude/0_constructors.dl7 declarations=3 rules=0 lines=13
+prelude/1_declarations.dl7 declarations=61 rules=0 lines=322
 prelude/2_constructor_rules.dl7 declarations=0 rules=12 lines=77
-prelude/3_derived_rules.dl7 declarations=0 rules=71 lines=303
+prelude/3_derived_rules.dl7 declarations=0 rules=75 lines=321
 prelude/4_type_algebra.dl7 declarations=24 rules=36 lines=339
-prelude/5_tsi_primitives.dl7 declarations=28 rules=0 lines=66
+prelude/6_modules.dl7 declarations=5 rules=5 lines=42
 ```
 
 | file | what it declares | depends on | one line to read |
@@ -38,7 +37,7 @@ prelude/5_tsi_primitives.dl7 declarations=28 rules=0 lines=66
 | `2_constructor_rules.dl7` | no declarations; the `intern` rules that make `Partial`, `Option`, `Key`, `HistoryV1`, `Pick`, `Exclude` callable | files 0 and 1 | `prelude/2_constructor_rules.dl7:12-15` |
 | `3_derived_rules.dl7` | no declarations; rules for the helpers of file 1, plus rules whose heads are kernel names `:`, `node`, `product`, `def`, `head`, `body` | files 1 and 2 | `prelude/3_derived_rules.dl7:1-4` |
 | `4_type_algebra.dl7` | `Conforms`, `ConformsAll`, `Intersect`, `Extend` and their candidate relations, with rules | the kernel | `prelude/4_type_algebra.dl7:3-6` |
-| `5_tsi_primitives.dl7` | empty products for TypeScript and Rust primitive classes: `string`, `number`, `bool`, `str`, `i64` | nothing | `prelude/5_tsi_primitives.dl7:26-30` |
+| `@std/tsi` (`std/tsi.dl7`), imported, never prelude | empty products for TypeScript and Rust primitive classes: `string`, `number`, `bool`, `str`, `i64` | nothing | `std/tsi.dl7:26-30` |
 
 The "depends on" column reads the rule bodies; the load does not need it, because a name resolves against the whole unit whatever its order (`oracle/compile/sources/test/fixtures/binding_symmetry/3_declaration_order.dl7`).
 
@@ -58,7 +57,7 @@ $ sed -n 53,56p prelude/1_declarations.dl7 && sed -n 22,26p prelude/2_constructo
 ```
 
 ```console
-$ sed -n 3,6p prelude/4_type_algebra.dl7 && sed -n 55p prelude/5_tsi_primitives.dl7
+$ sed -n 3,6p prelude/4_type_algebra.dl7 && sed -n 55p std/tsi.dl7
 (: Conforms
    (* (: source type)
       (: contract type)

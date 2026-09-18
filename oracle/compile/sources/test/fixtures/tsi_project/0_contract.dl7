@@ -1,7 +1,9 @@
 ; A loaded type carries no source name, so the probe reaches it structurally.
 
+(tsi: (import "@std/tsi"))
+
 (: Mapper
-   (* (: id string)))
+   (* (: id tsi.string)))
 
 (: tsi_conforms_probe
    (* (: source type)

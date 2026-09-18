@@ -3,11 +3,13 @@
 
 (api: (import "@std/oai"))
 
+(tsi: (import "@std/tsi"))
+
 (api.document "todo.json")
 
 (: TodoShape
-   (* (: id string)
-      (: title string)))
+   (* (: id tsi.string)
+      (: title tsi.string)))
 
 (: route_returns_todo
    (* (: path str)
