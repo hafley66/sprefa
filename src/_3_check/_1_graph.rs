@@ -5,8 +5,14 @@
 //! Rust analogue.
 
 use crate::_2_lower::index::{edge_parts, Edge};
-use crate::_6_eval::term::{TermId, Universe};
+use crate::_6_eval::term::{Term, TermId, Universe};
 use std::collections::{HashMap, HashSet};
+
+/// The edge label that names a product's output position. `build` takes an
+/// immutable `Universe`, so the atom is compared by text rather than interned.
+fn named_return(u: &Universe, name: TermId) -> bool {
+    matches!(u.get(name), Term::Atom(s) if u.sym_str(*s) == "return")
+}
 
 pub struct CheckerGraph {
     /// Source-list order. `assertz/1` keeps duplicates in this order, so the
@@ -15,8 +21,11 @@ pub struct CheckerGraph {
     pub forward: HashMap<(TermId, TermId), usize>,
     pub parent: HashMap<TermId, TermId>,
     pub modules: HashSet<TermId>,
-    /// `owner_edge_count_index/2` at `1_checker.pl:546`.
+    /// `owner_edge_count_index/2` at `1_checker.pl:546`. Also the arity of the
+    /// product that owns the edges.
     pub owner_edge_count: HashMap<TermId, i64>,
+    /// Sorted, deduplicated ordinals of each owner's `return` edges.
+    pub owner_return_indices: HashMap<TermId, Vec<i64>>,
 }
 
 impl CheckerGraph {
@@ -30,6 +39,7 @@ impl CheckerGraph {
             parent: HashMap::new(),
             modules: HashSet::new(),
             owner_edge_count: HashMap::new(),
+            owner_return_indices: HashMap::new(),
         };
         for row in edge_rows {
             let parts = edge_parts(u, *row)?;
@@ -42,7 +52,18 @@ impl CheckerGraph {
                 graph.parent.entry(target).or_insert(parts.owner);
             }
             *graph.owner_edge_count.entry(parts.owner).or_insert(0) += 1;
+            if named_return(u, parts.name) {
+                graph
+                    .owner_return_indices
+                    .entry(parts.owner)
+                    .or_default()
+                    .push(parts.index);
+            }
             graph.edges.push(parts);
+        }
+        for indices in graph.owner_return_indices.values_mut() {
+            indices.sort_unstable();
+            indices.dedup();
         }
         for node in nodes {
             if let Some(owner) = u.unary(*node, "module") {
