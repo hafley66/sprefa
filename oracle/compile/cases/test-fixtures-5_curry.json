@@ -1,1 +1,1 @@
-{"expected":{"compiler_rows":[],"diagnostics":[{"args":[{"a":"compile"},{"a":"none"},{"args":[16],"f":"source_refreeze_limit_exhausted"}],"f":"diagnostic"}],"runtime_program":[]},"input":{"arguments":["<root>/test/fixtures/5_curry.dl7"]}}
+{"expected":{"compiler_rows":[],"diagnostics":[{"args":[{"a":"check"},{"args":[{"a":"<root>/test/fixtures/5_curry.dl7"},63],"f":"reader_node"},{"args":[{"a":"literal"}],"f":"unresolved_name"}],"f":"diagnostic"}],"runtime_program":[]},"input":{"arguments":["<root>/test/fixtures/5_curry.dl7"]}}
