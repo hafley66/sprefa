@@ -1,0 +1,78 @@
+direction: right
+
+inputs: {
+  label: "Inputs"
+  style.fill: "#263238"
+  style.font-color: "#e0f7fa"
+  editor: "Editor or harness\nLSP client"
+  edit: "didChange\nversion=42"
+  request: "hover id=9\ngeneration=7"
+  disk: "Saved files\nrepo + revision"
+}
+
+per_session: {
+  label: "A  Per-session child"
+  style.fill: "#37474f"
+  client: "Session transport\nstdio JSON-RPC"
+  overlay: "Overlay\n(uri, version)"
+  child: "Language adapter\nprocess_generation=3"
+  client -> overlay: "writes"
+  overlay -> child: "snapshot"
+}
+
+broker: {
+  label: "B  Shared workspace broker"
+  style.fill: "#455a64"
+  lease: "Workspace lease\n(repo, revision)"
+  queue: "Bounded queue\nQ=128"
+  snapshot: "Immutable snapshot\ngeneration=7"
+  ivm: "SQLite + sqlite_ivm\ncommitted facts"
+  adapter: "Adapter pool\nmax P=2"
+  lease -> queue: "routes"
+  queue -> snapshot: "cancellable work"
+  snapshot -> ivm: "source facts"
+  queue -> adapter: "leased requests"
+}
+
+compiler: {
+  label: "C  Adapter inside compiler"
+  style.fill: "#546e7a"
+  host: "Compiler runtime\nAnalysisHost"
+  lower: "parse -> lower ->\nSurface facts"
+  store: "Durable fact store\nrepo/revision/path"
+  host -> lower: "snapshot"
+  lower -> store: "transaction"
+}
+
+fence: {
+  label: "Shared correctness gates"
+  style.fill: "#5d4037"
+  cancel: "cancel token\nclose/crash/restart"
+  generation: "stale-result fence\n(uri, generation)"
+  cleanup: "teardown ledger\nqueues, watchers, children"
+}
+
+edit -> per_session.client: "notification"
+request -> per_session.client: "request"
+disk -> broker.lease: "identity"
+disk -> compiler.host: "identity"
+
+per_session.child -> fence.cancel: "owned by session"
+broker.queue -> fence.cancel: "bounded + cancel"
+compiler.host -> fence.generation: "snapshot tag"
+broker.ivm -> fence.generation: "commit generation"
+fence.cancel -> fence.cleanup: "ordered close"
+fence.generation -> per_session.client: "publish or discard"
+fence.generation -> broker.queue: "discard stale"
+
+note1: "sqlite_ivm maintains rows and recursive views inside SQLite transactions.\nIt does not own LSP queues, child processes, watcher handles, cancellation,\nor cache bounds." {
+  shape: rectangle
+  style.fill: "#fff8e1"
+}
+broker.ivm -> note1: "boundary"
+
+note2: "Volar-style virtual code needs an offset map before injected DSL\nfeatures can become semantic LSP responses." {
+  shape: rectangle
+  style.fill: "#e0f7fa"
+}
+compiler.lower -> note2: "semantic injection"
