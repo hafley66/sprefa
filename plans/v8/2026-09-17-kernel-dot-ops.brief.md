@@ -77,7 +77,7 @@ Commit after every step; subject names the step.
 
 ```bash
 cargo test --no-fail-fast 2>&1 | grep -E "^test result|FAILED|panicked"
-cargo test --test _4_check_oracle --test _6_eval_oracle --test _12_term_lt --test _18_sqlite_emit --test _22_book 2>&1 | grep -E "^test |test result"
+cargo test --test _4_check_oracle --test _0_eval_oracle --test _12_term_lt --test _18_sqlite_emit --test _22_book 2>&1 | grep -E "^test |test result"
 grep -rnE "\b(int_(add|lt|le|eq|ne|ge|gt)|term_lt)\b" src fixtures tests book/src | wc -l
 git diff --stat origin/main...HEAD
 ```
