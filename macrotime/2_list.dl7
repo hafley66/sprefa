@@ -1,141 +1,130 @@
-; The list-literal macro. The reader turns `[a b]` into the form `(list a b)`;
-; these rules rewrite every claimed `(list ...)` form to a right-nested
-; `cons`/`nil` chain in value position, one minted node per list position.
+; The list-literal macro. The reader turns `[a b]` into
+; `(list a (list b (list_nil)))`: one item per level, right-nested, the two
+; head spellings telling cons from nil so no macro rule ever counts items.
 ;
 ; TypeScript-shaped row signatures (NodeId and Relation as in 0_standard.dl7):
 ;
-; type ListForm = Relation<readonly [form: NodeId]>
-; type ListHas = Relation<readonly [form: NodeId, index: number]>
-; type ListIndexKey = Relation<readonly [form: NodeId, index: number]>
-; type ListKey = Relation<readonly [form: NodeId, index: number, templatePath: number]>
+; type ListConsForm = Relation<readonly [form: NodeId]>
+; type ListNilForm = Relation<readonly [form: NodeId]>
 ; type ListMint = Relation<readonly [
 ;   form: NodeId,
-;   index: number,
 ;   templatePath: number,
 ;   output: NodeId,
 ; ]>
 
-(: list_form
+(: list_cons_form
    (* (: form type)))
 
-(: list_has
-   (* (: form type)
-      (: index int)))
+(: list_nil_form
+   (* (: form type)))
 
-(: list_index_key
+(: list_cons_mint
    (* (: form type)
-      (: index int)))
-
-(: list_key
-   (* (: form type)
-      (: index int)
-      (: template_path int)))
-
-(: list_mint
-   (* (: form type)
-      (: index int)
       (: template_path int)
       (: output type)))
 
-; function listForm(form: FormNode<[AtomNode<"list">, ...Node[]]>): NodeId
-(<- (list_form ?Form)
+(: list_nil_mint
+   (* (: form type)
+      (: template_path int)
+      (: output type)))
+
+; The two minted nodes per claim: 0 the call, 1 its own head atom.
+(: list_template_path
+   (* (: template_path int)))
+
+(list_template_path 0)
+(list_template_path 1)
+
+; function listConsForm(form: FormNode<[AtomNode<"list">, Item, Tail]>): NodeId
+(<- (list_cons_form ?Form)
     (syntax_form ?Form)
     (: ?Form item ?Head 0)
     (syntax_atom ?Head "list"))
 
+; function listNilForm(form: FormNode<[AtomNode<"list_nil">]>): NodeId
+(<- (list_nil_form ?Form)
+    (syntax_form ?Form)
+    (: ?Form item ?Head 0)
+    (syntax_atom ?Head "list_nil"))
+
 (<- (syntax_claim ?Form "list")
-    (list_form ?Form))
+    (list_cons_form ?Form))
 
-(<- (list_has ?Form ?Index)
-    (list_form ?Form)
-    (: ?Form item ?Item ?Index)
-    (int.lt 0 ?Index))
+(<- (syntax_claim ?Form "list_nil")
+    (list_nil_form ?Form))
 
-(<- (list_index_key ?Form ?Index)
-    (list_has ?Form ?Index))
-
-; The empty list mints a nil at index 1: no item exists there at all.
-(<- (list_index_key ?Form 1)
-    (list_form ?Form)
-    (not (list_has ?Form 1)))
-
-; One past the last real item mints the chain's terminal nil.
-(<- (list_index_key ?Form ?Next)
-    (list_has ?Form ?Index)
-    (not (list_has ?Form ?Next))
-    (int.add ?Index 1 ?Next))
-
-(<- (list_key ?Form ?Index 0)
-    (list_index_key ?Form ?Index))
-
-(<- (list_key ?Form ?Index 1)
-    (list_index_key ?Form ?Index))
-
-; GeneratedSyntax(form, index, template path): 0 is the call node at this
-; position (`cons`/`nil`), 1 is its own head atom node.
-(<- (list_mint ?Form ?Index ?TemplatePath ?Output)
-    (list_key ?Form ?Index ?TemplatePath)
+; GeneratedSyntax(form, output ordinal, template path): 0 is the single
+; expansion output, template path 0 the call node, 1 its head atom.
+(<- (list_cons_mint ?Form ?TemplatePath ?Output)
+    (list_cons_form ?Form)
+    (list_template_path ?TemplatePath)
     (nil ?Empty)
     (cons ?TemplatePath ?Empty ?TemplateArguments)
-    (cons ?Index ?TemplateArguments ?OutputArguments)
+    (cons 0 ?TemplateArguments ?OutputArguments)
+    (cons ?Form ?OutputArguments ?Arguments)
+    (intern GeneratedSyntax ?Arguments ?Output))
+
+(<- (list_nil_mint ?Form ?TemplatePath ?Output)
+    (list_nil_form ?Form)
+    (list_template_path ?TemplatePath)
+    (nil ?Empty)
+    (cons ?TemplatePath ?Empty ?TemplateArguments)
+    (cons 0 ?TemplateArguments ?OutputArguments)
     (cons ?Form ?OutputArguments ?Arguments)
     (intern GeneratedSyntax ?Arguments ?Output))
 
 (<- (node ?Output)
-    (list_mint ?Form ?Index 0 ?Output))
+    (list_cons_mint ?Form ?TemplatePath ?Output))
 
 (<- (node ?Output)
-    (list_mint ?Form ?Index 1 ?Output))
+    (list_nil_mint ?Form ?TemplatePath ?Output))
 
 (<- (syntax_form ?Output)
-    (list_mint ?Form ?Index 0 ?Output))
+    (list_cons_mint ?Form 0 ?Output))
+
+(<- (syntax_form ?Output)
+    (list_nil_mint ?Form 0 ?Output))
 
 (<- (syntax_atom ?Output "cons")
-    (list_has ?Form ?Index)
-    (list_mint ?Form ?Index 1 ?Output))
+    (list_cons_mint ?Form 1 ?Output))
 
 (<- (syntax_atom ?Output "nil")
-    (list_index_key ?Form ?Index)
-    (not (list_has ?Form ?Index))
-    (list_mint ?Form ?Index 1 ?Output))
+    (list_nil_mint ?Form 1 ?Output))
 
 (<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
                    ?StartLine ?StartColumn ?EndLine ?EndColumn)
-    (list_mint ?Form ?Index 0 ?Output)
+    (list_cons_mint ?Form ?TemplatePath ?Output)
     (syntax_source ?Form ?Path ?StartOffset ?EndOffset
                    ?StartLine ?StartColumn ?EndLine ?EndColumn))
 
 (<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
                    ?StartLine ?StartColumn ?EndLine ?EndColumn)
-    (list_mint ?Form ?Index 1 ?Output)
+    (list_nil_mint ?Form ?TemplatePath ?Output)
     (syntax_source ?Form ?Path ?StartOffset ?EndOffset
                    ?StartLine ?StartColumn ?EndLine ?EndColumn))
 
 (<- (: ?Form expansion ?Output 0)
-    (list_form ?Form)
-    (list_mint ?Form 1 0 ?Output))
+    (list_cons_mint ?Form 0 ?Output))
+
+(<- (: ?Form expansion ?Output 0)
+    (list_nil_mint ?Form 0 ?Output))
 
 ; A `cons` call node carries its own head atom, the original item, and the
-; mint at the next position as its tail.
+; original tail node verbatim; a claimed tail resolves through its own
+; expansion, the general macro protocol, not this rule.
 (<- (: ?Output item ?Atom 0)
-    (list_has ?Form ?Index)
-    (list_mint ?Form ?Index 0 ?Output)
-    (list_mint ?Form ?Index 1 ?Atom))
+    (list_cons_mint ?Form 0 ?Output)
+    (list_cons_mint ?Form 1 ?Atom))
 
 (<- (: ?Output item ?Item 1)
-    (list_has ?Form ?Index)
-    (list_mint ?Form ?Index 0 ?Output)
-    (: ?Form item ?Item ?Index))
+    (list_cons_mint ?Form 0 ?Output)
+    (: ?Form item ?Item 1))
 
 (<- (: ?Output item ?Tail 2)
-    (list_has ?Form ?Index)
-    (list_mint ?Form ?Index 0 ?Output)
-    (int.add ?Index 1 ?Next)
-    (list_mint ?Form ?Next 0 ?Tail))
+    (list_cons_mint ?Form 0 ?Output)
+    (: ?Form item ?Tail 2))
 
 ; A `nil` call node carries only its own head atom.
 (<- (: ?Output item ?Atom 0)
-    (list_index_key ?Form ?Index)
-    (not (list_has ?Form ?Index))
-    (list_mint ?Form ?Index 0 ?Output)
-    (list_mint ?Form ?Index 1 ?Atom))
+    (list_nil_mint ?Form 0 ?Output)
+    (list_nil_mint ?Form 1 ?Atom))
