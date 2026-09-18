@@ -16,17 +16,17 @@ Caret 3 design page. Rows, trees, traces. No mermaid. Sites cite today's code.
 ## Source and expansion
 
 ```
-(^A: (* (: b int))): (* (: greet (* (: u A) (: out str)))
-                        (<- (greet ?U ?Out) (A ?U ?Name) (str.cons "hi " ?Name ?Out)))
-(: A () Mixin)
-(: Mixin (* (: greet (* (: u A) (: out str)))))
+(^User: (* (: age int))): (* (: greet (* (: user User) (: out str)))
+                        (<- (greet ?Who ?Out) (User ?Who ?Name) (str.cons "hi " ?Name ?Out)))
+(: User () Mixin)
+(: Mixin (* (: greet (* (: user User) (: out str)))))
 ```
 
 `dl8 expand` (macro emits two rows, never looks inside the body product):
 
 ```
-(: A (* (: b int)))
-(: A () (* (: greet (* ...)) (<- ...)))
+(: User (* (: age int)))
+(: User () (* (: greet (* ...)) (<- ...)))
 ```
 
 ## Rows
@@ -36,32 +36,32 @@ Caret 3 design page. Rows, trees, traces. No mermaid. Sites cite today's code.
 
 | owner | name | target | index | what |
 |---|---|---|---|---|
-| M | A | P0 | 0 | module edge: the binding |
-| P0 | b | int | 0 | column, arity counts it |
-| P0 | 1 | P1 | 1 | anonymous, product-valued: namespace |
-| P1 | greet | G | 0 | own label of the namespace |
-| P1 | 1 | R | 1 | the rule, anonymous member of P1 |
-| G | u | P0 | 0 | column |
-| G | out | str | 1 | column |
-| P0 | 2 | Mixin | 2 | second namespace edge |
-| Mixin | greet | G2 | 0 | shadows P1.greet on the walk |
+| module | User | user_product | 0 | module edge: the binding |
+| user_product | age | int | 0 | column, arity counts it |
+| user_product | 1 | user_body | 1 | anonymous, product-valued: namespace |
+| user_body | greet | greet_sig | 0 | own label of the namespace |
+| user_body | 1 | greet_rule | 1 | the rule, anonymous member of P1 |
+| greet_sig | user | user_product | 0 | column |
+| greet_sig | out | str | 1 | column |
+| user_product | 2 | Mixin | 2 | second namespace edge |
+| Mixin | greet | mixin_greet | 0 | shadows user_body.greet on the walk |
 
 Columns take indices in source order; the `^` body takes the next index.
-No reserved slot; "namespace is edge 1" holds because `b` is the one column.
+No reserved slot; "namespace is edge 1" holds because `age` is the one column.
 
 ## Tree
 
 ```
-M
-└─ A ─> P0                    M edge 0: the binding
-   ├─ b ─> int                P0 edge 0, column
-   ├─ 1 ─> P1                 P0 edge 1, anonymous, walked
-   │   ├─ greet ─> G          P1 edge 0
-   │   │   ├─ u ─> P0
+module
+└─ User ─> user_product          module edge 0: the binding
+   ├─ age ─> int                 user_product edge 0, column
+   ├─ 1 ─> user_body             user_product edge 1, anonymous, walked
+   │   ├─ greet ─> greet_sig     user_body edge 0
+   │   │   ├─ user ─> user_product
    │   │   └─ out ─> str
-   │   └─ 1 ─> R              P1 edge 1, rule, anonymous
-   └─ 2 ─> Mixin              P0 edge 2, anonymous, walked after P1
-       └─ greet ─> G2         shadowed_member(P0, greet)
+   │   └─ 1 ─> greet_rule        user_body edge 1, rule, anonymous
+   └─ 2 ─> Mixin                 user_product edge 2, anonymous, walked after user_body
+       └─ greet ─> mixin_greet   shadowed_member(user_product, greet)
 ```
 
 ## Two walks, one probe
@@ -73,44 +73,44 @@ Caret 3 adds the second direction with the same probe.
 | walk | direction | step relation | today | caller |
 |---|---|---|---|---|
 | scope (`.closest()`) | up | `parent(owner)`: the owner of the edge whose target is `owner` (`_3_check/_1_graph.rs:55`, `_10_index.rs:191`) | built | free atom in a rule body or expression (`_8_express.rs:127`) |
-| prototype (Ruby ancestors, JS `__proto__`) | down | anonymous edges of `owner` whose target is a product, index order, depth-first | not built | dot segment `A.greet` (`_8_express.rs:105`), dotted head `(A.greet ..)` (`_7_execute.rs:270`), and each stop of the up walk |
+| prototype (Ruby ancestors, JS `__proto__`) | down | anonymous edges of `owner` whose target is a product, index order, depth-first | not built | dot segment `User.greet` (`_8_express.rs:105`), dotted head `(User.greet ..)` (`_7_execute.rs:270`), and each stop of the up walk |
 
 One probe, two `next` relations. Not a macro: a macro cannot see rows that
 arrive from another unit, an import, or a comptime round.
 
 ## Traces
 
-`A.greet` in an expression:
+`User.greet` in an expression:
 
 ```
-step 0  owner=P0   probe (P0, greet)      miss
-step 1  proto(P0) = [P1, Mixin]           index order
-step 2  owner=P1   probe (P1, greet)      hit G       value = G, stop (first wins)
-diag    (Mixin, greet) also on the walk   shadowed_member(P0, greet), prelude rule
+step 0  owner=user_product  probe (user_product, greet)   miss
+step 1  proto(user_product) = [user_body, Mixin]          index order
+step 2  owner=user_body     probe (user_body, greet)      hit greet_sig   value = greet_sig, stop (first wins)
+diag    (Mixin, greet) also on the walk                   shadowed_member(user_product, greet), prelude rule
 ```
 
-`(A ?U ?Name)` inside rule R's body, free atom `A`:
+`(User ?Who ?Name)` inside rule R's body, free atom `A`:
 
 ```
-step 0  owner=R    probe (R, A)           miss   proto(R) = []
-step 1  owner=P1   probe (P1, A)          miss   proto(P1) = [R] (rule: skipped, fork 1)
-step 2  owner=P0   probe (P0, A)          miss   proto(P0) = [P1 visited, Mixin] miss
-step 3  owner=M    probe (M, A)           hit P0  steady state: the module binding
+step 0  owner=greet_rule    probe (greet_rule, User)      miss   proto(greet_rule) = []
+step 1  owner=user_body     probe (user_body, User)       miss   proto(user_body) = [greet_rule] (rule: skipped, fork 1)
+step 2  owner=user_product  probe (user_product, User)    miss   proto(user_product) = [user_body visited, Mixin] miss
+step 3  owner=module        probe (module, User)          hit user_product   steady state: the module binding
 ```
 
-`(greet ?U ?Out)` as R's head: step 0 R miss, step 1 P1 hit G. The rule
+`(greet ?Who ?Out)` as R's head: step 0 R miss, step 1 P1 hit G. The rule
 releases rows into G. `AGENTS.md:92` holds: R has no name, `1` is an index.
 
 ## Re-edging: nothing overwrites
 
 | form | row | key `(owner, name)` | effect |
 |---|---|---|---|
-| `(: A c str)` | P0 c str 3 | fresh | new column; arity 2 |
-| `(: A b str)` | P0 b str 3 | collides with row `P0 b int 0` | key-1 collision; diagnostic name unverified (no `duplicate_*` in `src/_2_lower`, `src/_3_check`, `prelude/`) |
-| `(: A () X)` | P0 3 X 3 | fresh (name = index) | walk order extended; no row replaced |
-| `(: A greet H)` | P0 greet H 3 | fresh on P0 | own label wins over P1.greet at step 0; `shadowed_member(P0, greet)` |
+| `(: User email str)` | user_product email str 3 | fresh | new column; arity 2 |
+| `(: User age str)` | user_product age str 3 | collides with row `user_product age int 0` | key-1 collision; diagnostic name unverified (no `duplicate_*` in `src/_2_lower`, `src/_3_check`, `prelude/`) |
+| `(: User () Extra)` | user_product 3 Extra 3 | fresh (name = index) | walk order extended; no row replaced |
+| `(: User greet own_greet)` | user_product greet own_greet 3 | fresh on P0 | own label wins over user_body.greet at step 0; `shadowed_member(user_product, greet)` |
 
-Arity of P0 = edges whose target is a type or value node = 1 (`b`).
+Arity of user_product = edges whose target is a type or value node = 1 (`age`).
 Anonymous product-valued edges are skipped (`_3_check/_1_graph.rs:60`).
 
 ## `key` decision
@@ -131,4 +131,4 @@ emitter annotation. Own lane after caret 3.
 | 1 | proto step into a rule-valued anonymous edge | skip rules (`not (rule ?T)`), or walk them (exposes `head`/`body` labels) |
 | 2 | shadow policy | diagnostic only, first wins (proposed); or check error |
 | 3 | up walk probes each stop's proto chain (Ruby: lexical, then ancestors) | yes (trace above); or up walk is own labels only |
-| 4 | `A.1` and `A.proto` | plain label lookups, no int-segment arm (proposed) |
+| 4 | `User.1` and `User.proto` | plain label lookups, no int-segment arm (proposed) |
