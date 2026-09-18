@@ -11,7 +11,7 @@
 (<- (Beaten ?Player)
     (Score ?Player ?Points)
     (Score ?Other ?More)
-    (term_lt ?Points ?More))
+    (any.lt ?Points ?More))
 
 (: Top (* (: player str)))
 

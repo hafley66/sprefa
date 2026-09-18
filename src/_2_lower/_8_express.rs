@@ -145,6 +145,10 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
     }
     if let Some(head) = forms::form_head_atom(cx.u, &items) {
         if is_path_head(cx.u, head) {
+            if let Some((call_owner, label)) = primitive_path_head(cx, node, owner) {
+                let value = cx.compound("name", vec![call_owner, label]);
+                return Lowering::value(value);
+            }
             return lower_path_walk(cx, parsed.id, &items[1..], owner);
         }
         return match expression_callable(cx, head, owner) {

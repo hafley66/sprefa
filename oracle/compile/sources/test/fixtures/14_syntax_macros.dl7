@@ -240,7 +240,7 @@
 (<- (: ?Output item ?Child ?Index)
     (plus_form ?Form ?Output)
     (: ?Form item ?Child ?Index)
-    (int_lt 0 ?Index))
+    (int.lt 0 ?Index))
 
 (<- (: ?Form expansion ?Output 0)
     (plus_form ?Form ?Output))

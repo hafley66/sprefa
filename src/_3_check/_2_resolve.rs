@@ -203,9 +203,9 @@ fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermI
     {
         if name == "name" && parts.len() == 2 {
             let mut visited = Vec::new();
-            return match resolve_name(u, cx, parts[0], parts[1], &mut visited) {
-                Some(resolved) => Ok(resolved),
-                None => Err(u.compound("unresolved_name", vec![parts[1]])),
+            return match resolve_path(u, cx, parts[0], parts[1], &mut visited) {
+                Ok(resolved) => Ok(resolved),
+                Err(segment) => Err(u.compound("unresolved_name", vec![segment])),
             };
         }
         if name == "aggregate"

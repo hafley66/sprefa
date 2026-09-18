@@ -13,4 +13,4 @@
 (<- (Below ?Left ?Right)
     (Item ?Left)
     (Item ?Right)
-    (term_lt ?Left ?Right))
+    (any.lt ?Left ?Right))

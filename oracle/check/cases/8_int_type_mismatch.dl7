@@ -6,4 +6,4 @@
 
 (<- (reader ?Value)
     (point ?Value)
-    (int_lt ?Value "three"))
+    (int.lt ?Value "three"))

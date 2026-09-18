@@ -14,8 +14,8 @@
       (: next int)))
 
 (<- (Doubling ?Accumulator ?Value ?Next)
-    (int_add ?Value ?Value ?Doubled)
-    (int_add ?Accumulator ?Doubled ?Next))
+    (int.add ?Value ?Value ?Doubled)
+    (int.add ?Accumulator ?Doubled ?Next))
 
 (: Total (* (: total int)))
 

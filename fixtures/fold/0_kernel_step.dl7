@@ -8,5 +8,5 @@
 
 (: Total (* (: total int)))
 
-(<- (Total (fold int_add 0 ?Value))
+(<- (Total (fold int.add 0 ?Value))
     (Input ?Value))
