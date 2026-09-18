@@ -955,7 +955,9 @@ fn evaluate_into(
                     new += 1;
                 }
             }
-            fx(Trace::Demand { calls: memo.calls });
+            if memo.calls > 0 {
+                fx(Trace::Demand { calls: memo.calls });
+            }
             fx(Trace::Round { level, round, new });
             tracing::trace!(target: "dl8::eval", level, round, new);
             memo = Memo::default();
