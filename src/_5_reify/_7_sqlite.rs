@@ -207,6 +207,18 @@ fn mark_component(
 /// Marks a CTE that recurses; the view's `WITH` takes `RECURSIVE` when any does.
 const RECURSIVE_MARK: &str = "\u{0}recursive\u{0}";
 
+/// `ref(kernel(cons))` as `cons`, `ref(kernel(str, cons))` as `str.cons`.
+fn kernel_label(u: &Universe, rel: TermId) -> Option<String> {
+    let inner = u.unary(rel, "ref")?;
+    if let Some([owner, label]) = u.args::<2>(inner, "kernel") {
+        let (owner, _) = u.functor_or_atom(owner)?;
+        let (label, _) = u.functor_or_atom(label)?;
+        return Some(format!("{owner}.{label}"));
+    }
+    let name = u.unary(inner, "kernel")?;
+    u.functor_or_atom(name).map(|(name, _)| name.to_string())
+}
+
 fn unsupported_payload(
     u: &mut Universe,
     name: &str,
@@ -615,7 +627,7 @@ enum Reduce {
 }
 
 impl Head {
-    /// `count`, `sum` and an `int_add` fold mint an integer no arena holds, so
+    /// `count`, `sum` and an `int.add` fold mint an integer no arena holds, so
     /// their column carries the value under the store's `_int` suffix.
     fn kind(&self) -> Option<CellKind> {
         match self {
@@ -710,11 +722,7 @@ impl<'a> Lowering<'a> {
             {
                 return Ok(Source::Kernel(kernel));
             }
-            let kernel = u
-                .unary(goal.rel, "ref")
-                .and_then(|inner| u.unary(inner, "kernel"))
-                .and_then(|name| u.functor_or_atom(name).map(|(name, _)| name.to_string()));
-            return Err(match kernel {
+            return Err(match kernel_label(u, goal.rel) {
                 Some(name) => Unsupported::Kernel(name),
                 None => Unsupported::Relation(self.catalog.name(goal.rel)),
             });
@@ -863,13 +871,12 @@ impl<'a> Lowering<'a> {
             _ => None,
         };
         match (Kernel::of(u, fold.step), seed) {
-            (Some(Kernel::IntAdd), Some(seed)) if linear("int_add") => Ok(Reduce::Add(seed)),
+            (Some(Kernel::IntAdd), Some(seed)) if linear((Some("int"), "add")) => {
+                Ok(Reduce::Add(seed))
+            }
             _ => {
-                let step = u
-                    .unary(fold.step, "ref")
-                    .and_then(|inner| u.unary(inner, "kernel"))
-                    .map(|name| u.display(name).to_string())
-                    .unwrap_or_else(|| self.catalog.name(fold.step));
+                let step =
+                    kernel_label(u, fold.step).unwrap_or_else(|| self.catalog.name(fold.step));
                 Err(Unsupported::Fold(step))
             }
         }
@@ -957,7 +964,7 @@ impl<'a> Lowering<'a> {
                 let left = self.int_argument(scope, rule, vars, &goal.args[0], &mut guards)?;
                 let right = self.int_argument(scope, rule, vars, &goal.args[1], &mut guards)?;
                 let sum = format!("({left} + {right})");
-                // SQLite turns an overflowing integer sum into a REAL; `int_add` has no row.
+                // SQLite turns an overflowing integer sum into a REAL; `int.add` has no row.
                 guards.push(format!("typeof({sum}) = 'integer'"));
                 match &goal.args[2] {
                     Arg::Var(v) if !vars.contains_key(&(v.0 as usize)) => {
@@ -981,7 +988,7 @@ impl<'a> Lowering<'a> {
                     }
                 }
             }
-            _ => unreachable!("`source` admits comparisons and int_add only"),
+            _ => unreachable!("`source` admits comparisons and int.add only"),
         };
         guards.push(condition);
         Ok(guards.join(" AND "))

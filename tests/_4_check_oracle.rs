@@ -10,7 +10,7 @@
 //! FAIL-FIRST RECEIPTS (2026-09-12), each applied, observed, and reverted:
 //!
 //! 1. `_5_kernel.rs` `COMPARISONS` reordered to the lowerer's spelling
-//!    (`int_lt, int_le, int_gt, int_ge, int_eq, int_ne`): all four
+//!    (`lt, le, gt, ge, eq, ne` off `int`): all four
 //!    `*_check_datalog` cases report `checked differs`. The kernel node list is
 //!    an unsorted append at `1_checker.pl:423`, so the order is observable.
 //! 2. `_5_kernel.rs` `kernel_relation_keys("nil")` set to the lowerer's

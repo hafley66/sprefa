@@ -68,7 +68,7 @@
 (<- (key_predecessor ?Source ?SourceIndex ?PriorIndex)
     (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
     (keyed_edge ?Source ?PriorName ?PriorOptions ?PriorTarget ?PriorIndex)
-    (int_lt ?PriorIndex ?SourceIndex))
+    (int.lt ?PriorIndex ?SourceIndex))
 
 (<- (key_has_predecessor ?Source ?SourceIndex)
     (key_predecessor ?Source ?SourceIndex ?PriorIndex))
@@ -92,7 +92,7 @@
 (<- (pick_predecessor ?Source ?Names ?SourceIndex ?PriorIndex)
     (pick_edge ?Source ?Names ?Name ?Target ?SourceIndex)
     (pick_edge ?Source ?Names ?PriorName ?PriorTarget ?PriorIndex)
-    (int_lt ?PriorIndex ?SourceIndex))
+    (int.lt ?PriorIndex ?SourceIndex))
 
 (<- (pick_has_predecessor ?Source ?Names ?SourceIndex)
     (pick_predecessor ?Source ?Names ?SourceIndex ?PriorIndex))
@@ -123,7 +123,7 @@
 (<- (exclude_predecessor ?Source ?Names ?SourceIndex ?PriorIndex)
     (exclude_edge ?Source ?Names ?Name ?Target ?SourceIndex)
     (exclude_edge ?Source ?Names ?PriorName ?PriorTarget ?PriorIndex)
-    (int_lt ?PriorIndex ?SourceIndex))
+    (int.lt ?PriorIndex ?SourceIndex))
 
 (<- (exclude_has_predecessor ?Source ?Names ?SourceIndex)
     (exclude_predecessor ?Source ?Names ?SourceIndex ?PriorIndex))
@@ -252,7 +252,7 @@
 (<- (curry_predecessor ?Result ?SourceIndex ?PriorIndex)
     (curry_unbound ?Source ?Result ?Name ?Target ?SourceIndex)
     (curry_unbound ?Source ?Result ?PriorName ?PriorTarget ?PriorIndex)
-    (int_lt ?PriorIndex ?SourceIndex))
+    (int.lt ?PriorIndex ?SourceIndex))
 
 (<- (curry_has_predecessor ?Result ?SourceIndex)
     (curry_predecessor ?Result ?SourceIndex ?PriorIndex))

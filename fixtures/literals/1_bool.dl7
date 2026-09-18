@@ -8,4 +8,4 @@
 
 (<- (OnlyTrue ?Value)
     (Flag ?Value)
-    (int_eq 1 1))
+    (int.eq 1 1))

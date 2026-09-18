@@ -2,4 +2,4 @@
    (* (: seen int)))
 
 (<- (reader 1)
-    (int_lt ?Left 3))
+    (int.lt ?Left 3))

@@ -105,9 +105,16 @@ fn resolve_name_body(
             return Some(resolved);
         }
     }
+    if let Some(primitive) = u.unary(owner, "primitive") {
+        let typed = atom_name(u, primitive).map(|s| s.to_string())?;
+        let label = atom_name(u, name)?;
+        kernel_relation(Some(&typed), label)?;
+        let inner = u.compound("kernel", vec![primitive, name]);
+        return Some(u.compound("ref", vec![inner]));
+    }
     if cx.graph.module_member(owner) {
         let label = atom_name(u, name).map(|s| s.to_string())?;
-        if kernel_relation(&label).is_some() {
+        if kernel_relation(None, &label).is_some() {
             let inner = u.compound("kernel", vec![name]);
             return Some(u.compound("ref", vec![inner]));
         }
@@ -196,9 +203,9 @@ fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermI
     {
         if name == "name" && parts.len() == 2 {
             let mut visited = Vec::new();
-            return match resolve_name(u, cx, parts[0], parts[1], &mut visited) {
-                Some(resolved) => Ok(resolved),
-                None => Err(u.compound("unresolved_name", vec![parts[1]])),
+            return match resolve_path(u, cx, parts[0], parts[1], &mut visited) {
+                Ok(resolved) => Ok(resolved),
+                Err(segment) => Err(u.compound("unresolved_name", vec![segment])),
             };
         }
         if name == "aggregate"

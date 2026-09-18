@@ -33,7 +33,7 @@
 
 (<- (Heavy ?Node ?Amount)
     (Weight ?Node ?Amount)
-    (int_gt ?Amount 5))
+    (int.gt ?Amount 5))
 
 (: Tagged (* (: node str) (: tag str)))
 
@@ -44,4 +44,4 @@
 
 (<- (Shifted ?Node ?Next)
     (Weight ?Node ?Amount)
-    (int_add ?Amount 10 ?Next))
+    (int.add ?Amount 10 ?Next))

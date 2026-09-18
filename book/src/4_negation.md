@@ -7,7 +7,7 @@ flowchart LR
   rules[rule rows: head, goals] -->|dl8 check| mode[_3_check/_4_mode.rs]
   mode -->|not, argument unbound| unbound[unbound_negative_goal]
   mode -->|not cons, nil, intern, edge_ref| negcons[negative_constructive_kernel_goal]
-  rules -->|not int_lt .. int_gt| complement[the complement]
+  rules -->|not int.lt .. int.gt| complement[the complement]
   rules -->|positive read: gap 0| stratify[_6_eval/_2_stratify.rs]
   rules -->|not: gap 1| stratify
   rules -->|aggregate read: gap 1| stratify
@@ -19,7 +19,7 @@ flowchart LR
 
 `(not Goal)` in a body holds when no row matches the goal with its variables as bound at that point (`src/_2_lower/_7_execute.rs:150-154`, `src/_6_eval/_5_evaluate.rs:190-209`).
 A negative goal with any argument still unbound never holds in the evaluator (`_5_evaluate.rs:190-197`); the checker rejects such a rule first with `unbound_negative_goal`.
-Negating a constructive kernel goal (`nil`, `cons`, `intern`, `edge_ref`, `src/_3_check/_4_mode.rs:235-237`) is `negative_constructive_kernel_goal`; a negated `int_lt`..`int_gt`, `int_add` or `term_lt` is the complement (`src/_6_eval/_4_kernel.rs:268-290`).
+Negating a constructive kernel goal (`nil`, `cons`, `intern`, `edge_ref`, `src/_3_check/_4_mode.rs:243-249`) is `negative_constructive_kernel_goal`; a negated `int.lt`..`int.gt`, `int.add` or `any.lt` is the complement (`src/_6_eval/_4_kernel.rs:320-339`).
 Strata: a positive read has gap 0, a negative read gap 1, and every read of an aggregate rule gap 1; levels relax to the least fixpoint (`src/_6_eval/_2_stratify.rs:1-3`).
 A gap-1 edge on a dependency cycle is `strict_dependency_cycle`, or `aggregate_dependency_cycle` when an aggregate closes it.
 
@@ -58,7 +58,7 @@ Do not use it when:
 (<- (Beaten ?Player)
     (Score ?Player ?Points)
     (Score ?Other ?More)
-    (term_lt ?Points ?More))
+    (any.lt ?Points ?More))
 
 (: Top (* (: player str)))
 

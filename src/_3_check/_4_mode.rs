@@ -112,14 +112,22 @@ fn polarity(u: &Universe, id: TermId) -> Option<&'static str> {
     }
 }
 
-/// `ref(kernel(Name))`.
+/// `ref(kernel(Label))` as `Label`, `ref(kernel(Owner, Label))` as `Owner.Label`.
 fn kernel_name(u: &Universe, relation: TermId) -> Option<String> {
     let inner = u.unary(relation, "ref")?;
-    let name = u.unary(inner, "kernel")?;
-    match u.get(name) {
-        Term::Atom(s) => Some(u.sym_str(*s).to_string()),
+    let atom = |id: TermId| match u.get(id) {
+        Term::Atom(s) => Some(u.sym_str(*s)),
         _ => None,
+    };
+    if let Some([owner, label]) = u.args::<2>(inner, "kernel") {
+        return Some(format!("{}.{}", atom(owner)?, atom(label)?));
     }
+    atom(u.unary(inner, "kernel")?).map(str::to_string)
+}
+
+fn comparison(name: &str) -> bool {
+    name.split_once('.')
+        .is_some_and(|(owner, label)| is_comparison(Some(owner), label))
 }
 
 /// `:935`.
@@ -178,14 +186,14 @@ fn check_positive(
     bound: &mut Bound,
 ) -> Option<TermId> {
     match kernel_name(u, relation).as_deref() {
-        Some(name) if is_comparison(name) => {
+        Some(name) if comparison(name) => {
             if arguments.iter().all(|a| argument_is_bound(u, *a, bound)) {
                 comparison_argument_types(u, name, arguments)
             } else {
                 Some(underconstrained(u, name, &[&[0, 1]]))
             }
         }
-        Some("cons") if arguments.len() == 3 => {
+        Some(name @ ("cons" | "str.cons")) if arguments.len() == 3 => {
             let ready = argument_is_bound(u, arguments[2], bound)
                 || (argument_is_bound(u, arguments[0], bound)
                     && argument_is_bound(u, arguments[1], bound));
@@ -193,7 +201,7 @@ fn check_positive(
                 bound.add_all(variables);
                 None
             } else {
-                Some(underconstrained(u, "cons", &[&[2], &[0, 1]]))
+                Some(underconstrained(u, name, &[&[2], &[0, 1]]))
             }
         }
         Some("edge_ref") if arguments.len() == 3 => {
@@ -232,11 +240,14 @@ fn check_negative(
     bound: &Bound,
 ) -> Option<TermId> {
     if let Some(name) = kernel_name(u, relation) {
-        if matches!(name.as_str(), "cons" | "edge_ref" | "intern" | "nil") {
+        if matches!(
+            name.as_str(),
+            "cons" | "edge_ref" | "intern" | "nil" | "str.cons" | "str.nil"
+        ) {
             let name = u.atom(&name);
             return Some(u.compound("negative_constructive_kernel_goal", vec![name]));
         }
-        if is_comparison(&name) {
+        if comparison(&name) {
             let unbound = unbound_variables(variables, bound);
             return if unbound.is_empty() {
                 comparison_argument_types(u, &name, arguments)

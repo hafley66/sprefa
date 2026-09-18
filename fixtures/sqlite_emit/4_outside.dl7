@@ -24,7 +24,7 @@
 
 (<- (Level ?Next)
     (Input ?Value)
-    (int_add ?Value 1 ?Next))
+    (int.add ?Value 1 ?Next))
 
 (: Uses (* (: value int)))
 

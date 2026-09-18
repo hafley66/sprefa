@@ -8,4 +8,4 @@
 
 (<- (Plus ?Sum)
     (Input ?Value)
-    (int_add ?Value 100 ?Sum))
+    (int.add ?Value 100 ?Sum))

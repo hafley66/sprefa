@@ -277,7 +277,7 @@
       ?Left ?Right "left" ?Name ?Target ?SourceIndex)
     (intersection_edge_candidate
       ?Left ?Right "left" ?PriorName ?PriorTarget ?PriorIndex)
-    (int_lt ?PriorIndex ?SourceIndex))
+    (int.lt ?PriorIndex ?SourceIndex))
 
 (<- (intersection_predecessor
        ?Left ?Right "right" ?SourceIndex "right" ?PriorIndex)
@@ -285,7 +285,7 @@
       ?Left ?Right "right" ?Name ?Target ?SourceIndex)
     (intersection_edge_candidate
       ?Left ?Right "right" ?PriorName ?PriorTarget ?PriorIndex)
-    (int_lt ?PriorIndex ?SourceIndex))
+    (int.lt ?PriorIndex ?SourceIndex))
 
 ; Every retained left edge precedes every right-only edge.
 (<- (intersection_predecessor

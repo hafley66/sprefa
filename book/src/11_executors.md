@@ -60,7 +60,7 @@ Do not use it when:
 - a removed ref must retract its row: a removed ref writes nothing (`README.md:126`)
 - a commit time is needed: `git.history` carries none (`README.md:127`)
 - a field of an extract record is needed as a column: `payload` stays one text term (`README.md:128`)
-- a `fs.json` scalar must come back out as a column: a value node is `intern`'s return, and `intern` keys on its constructor and its arguments (`src/_3_check/_5_kernel.rs:55`), so reading one with the arguments unbound is `underconstrained_kernel_goal(intern, [[0, 1]])`
+- a `fs.json` scalar must come back out as a column: a value node is `intern`'s return, and `intern` keys on its constructor and its arguments (`src/_3_check/_5_kernel.rs:72`), so reading one with the arguments unbound is `underconstrained_kernel_goal(intern, [[0, 1]])`
 
 ## Example
 
@@ -294,7 +294,7 @@ exit 0
 ```
 
 A member node is `edge(Owner, Label)`, the shape the `edge_ref` kernel builds
-(`src/_6_eval/_4_kernel.rs:161-171`), so `meta.v` is reachable without reading a
+(`src/_6_eval/_4_kernel.rs:220-230`), so `meta.v` is reachable without reading a
 row. The pure-rxjs lowering of the same relation, returning the stream rather
 than subscribing to it:
 

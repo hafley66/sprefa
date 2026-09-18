@@ -8,7 +8,7 @@ The full inspection, with every probe's pasted output: `plans/v8/2026-09-15-v8-n
 
 | relation kind | hosted by | a name meets its id at |
 |---|---|---|
-| kernel, `intern`, `effect` | the evaluator; minted as `ref(kernel(Name))`, never declared in `prelude/` | `src/_2_lower/_1_slots.rs:36-42`, `src/_6_eval/_4_kernel.rs:24-28` |
+| kernel, `intern`, `effect` | the evaluator; minted as `ref(kernel(Name))`, never declared in `prelude/` | `src/_2_lower/_1_slots.rs:40-52`, `src/_6_eval/_4_kernel.rs:26-30` |
 | served, `timer`, `fetch_json` | an executor | `program_names` (`src/_6_eval/_6_json.rs:333-343`) and `executors_for` (`src/_9_runtime/_3_executors/mod.rs:61-100`) |
 | declared | rules and facts | `program_names` only |
 | every kind, past those two places | a relation id: `Program.served` is a `HashSet<TermId>` (`src/_6_eval/_1_program.rs:171`), the effect row keys on it (`src/_6_eval/_5_evaluate.rs:244-249`) | nowhere |
@@ -21,7 +21,7 @@ The full inspection, with every probe's pasted output: `plans/v8/2026-09-15-v8-n
 | file module | `User` in `10_accounts.dl7` | after the fields | same |
 | directory module | the edge `accounts` on the project root | through parents | `src/_4_comptime/_0_load/_2_project.rs:195-247` |
 | prelude alias | `Option`, `bool` | after the file, only when the file does not bind the name | `src/_2_lower/_12_units.rs:310-342` |
-| kernel | `intern`, `effect` | after every edge | `src/_2_lower/_8_express.rs:181-184`, `_2_resolve.rs:78-83` |
+| kernel | `intern`, `effect` | after every edge | `src/_2_lower/_8_express.rs:210-213`, `_2_resolve.rs:78-83` |
 | primitive | `int`, `str` | last | `_2_resolve.rs:84-87` |
 | runtime name table | every top-level name of every module, one flat map | not ordered: prelude yields, two user names stop | `src/_6_eval/_6_json.rs:178-221`, read by `program_names` `:333-343` |
 | served name | `timer`, `fetch_json_error` | the `--serve` string against one arm each | `src/_9_runtime/_3_executors/mod.rs:61-100` |

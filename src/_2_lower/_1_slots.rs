@@ -25,20 +25,30 @@ pub struct Assigned {
     pub node: TermId,
 }
 
-/// The callable a name resolved to: `target(Owner)` or `kernel(Name)`.
+/// The callable a name resolved to: `target(Owner)`, `kernel(Label)` or
+/// `kernel(Owner, Label)`.
 #[derive(Clone, Debug)]
 pub enum Callable {
     Target(TermId),
-    Kernel(String),
+    Kernel {
+        owner: Option<String>,
+        label: String,
+    },
 }
 
 impl Callable {
     pub fn term(&self, cx: &mut Cx) -> TermId {
         match self {
             Callable::Target(owner) => cx.compound("target", vec![*owner]),
-            Callable::Kernel(name) => {
-                let atom = cx.atom(name);
-                cx.compound("kernel", vec![atom])
+            Callable::Kernel { owner, label } => {
+                let label = cx.atom(label);
+                match owner {
+                    Some(owner) => {
+                        let owner = cx.atom(owner);
+                        cx.compound("kernel", vec![owner, label])
+                    }
+                    None => cx.compound("kernel", vec![label]),
+                }
             }
         }
     }
@@ -50,8 +60,9 @@ pub fn callable_slots(cx: &mut Cx, callable: &Callable, arity: i64) -> Vec<Slot>
         .map(|index| {
             let label = match callable {
                 Callable::Target(owner) => cx.edges.callable_slot(cx.u, *owner, index),
-                Callable::Kernel(name) => {
-                    kernel::kernel_slot_label(name, index as u32).map(|l| cx.atom(l))
+                Callable::Kernel { owner, label } => {
+                    kernel::kernel_slot_label(owner.as_deref(), label, index as u32)
+                        .map(|l| cx.atom(l))
                 }
             };
             Slot { index, label }

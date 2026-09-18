@@ -1,4 +1,4 @@
-//! `term_lt` parity through the real binary. Each `fixtures/term_lt/*.dl7`
+//! `any.lt` parity through the real binary. Each `fixtures/term_lt/*.dl7`
 //! compiles to a checked runtime program, which is transported into `dl8 eval`
 //! and evaluated; the closure must match the sibling `*.expected.json`, written
 //! by hand from the program text. The fixture path is replaced by `<fixture>`

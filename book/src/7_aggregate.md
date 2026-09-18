@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-  kernel[20 kernel relations] -->|int_add| sum["(sum ?Value)"]
+  kernel[22 kernel relations] -->|int.add| sum["(sum ?Value)"]
   body[body proofs over stored rows: one bag entry each] -->|plain head positions| group[group key]
   group --> count["(count ?Value)"]
   group --> sum
@@ -21,12 +21,12 @@ flowchart LR
   fold -->|debug build, both ways| disagree[fold_path_disagreement]
 ```
 
-A rule head may hold one aggregate position: `(count ?Value)`, `(sum ?Value)`, `(min ?Value)`, `(max ?Value)`, or `(fold Step Seed ?Value)` (`src/_2_lower/_8_express.rs:597-660`). Outside a head it is `aggregate_outside_rule_head`; two in one head is `malformed_aggregate_head` (`src/_6_eval/_5_evaluate.rs:434-442`).
+A rule head may hold one aggregate position: `(count ?Value)`, `(sum ?Value)`, `(min ?Value)`, `(max ?Value)`, or `(fold Step Seed ?Value)` (`src/_2_lower/_8_express.rs:680-743`). Outside a head it is `aggregate_outside_rule_head`; two in one head is `malformed_aggregate_head` (`src/_6_eval/_5_evaluate.rs:434-442`).
 Every body proof over stored rows is one bag entry; the plain head positions are the group key; a group with no proof has no row (`_5_evaluate.rs:430-466`).
 An aggregate body matches stored rows only: no kernel functions, no demanded rules, no effects (`_5_evaluate.rs:147-149`).
 `count` and `sum` give an integer; `sum` of a non-integer is `aggregate_type_mismatch`, overflow is `aggregate_overflow`; `min` and `max` return the winning value in term order (`_5_evaluate.rs:595-647`).
-A fold is `Fold { step, seed, order }` (`src/_6_eval/_1_program.rs:74-81`): values sorted by term order, then `(Step Accumulator Value ?Next)` per value, exactly one `Next` each, else `fold_step_no_row`, `fold_step_ambiguous` or `fold_step_interns` (`_5_evaluate.rs:497-593`). The seed must be concrete (`fold_seed_not_ground`, `_8_express.rs:622-624`).
-The four builtins are folds over `count_step`, `int_add`, `min_step`, `max_step`; a debug build folds both ways and reports `fold_path_disagreement` (`_1_program.rs:41-56`, `_5_evaluate.rs:468-495`).
+A fold is `Fold { step, seed, order }` (`src/_6_eval/_1_program.rs:74-81`): values sorted by term order, then `(Step Accumulator Value ?Next)` per value, exactly one `Next` each, else `fold_step_no_row`, `fold_step_ambiguous` or `fold_step_interns` (`_5_evaluate.rs:497-593`). The seed must be concrete (`fold_seed_not_ground`, `_8_express.rs:705-707`).
+The four builtins are folds over `count_step`, `int.add`, `min_step`, `max_step`; a debug build folds both ways and reports `fold_path_disagreement` (`_1_program.rs:41-56`, `_5_evaluate.rs:468-495`).
 
 The partition is the plain head positions; the code has no `Partition` field, where `plans/v8/2026-09-14-v8-design-review.astra.md:53` names `Fold(Partition,Order,Step,Seed)`. The code wins.
 
@@ -97,8 +97,8 @@ A fold whose step doubles the accumulator before adding:
       (: next int)))
 
 (<- (Weighted ?Accumulator ?Value ?Next)
-    (int_add ?Accumulator ?Accumulator ?Twice)
-    (int_add ?Twice ?Value ?Next))
+    (int.add ?Accumulator ?Accumulator ?Twice)
+    (int.add ?Twice ?Value ?Next))
 
 (: Total (* (: total int)))
 
@@ -131,7 +131,7 @@ $ bash book/show.sh eval fixtures/fold/2_order_matters.dl7
 (Input 1)
 (Input 2)
 (Input 4)
-(Total fold(Weighted, 0, var(variable(reader_node(fixtures/fold/2_order_matters.dl7, 61), Value))))
+(Total fold(Weighted, 0, var(variable(reader_node(fixtures/fold/2_order_matters.dl7, 67), Value))))
 exit 0
 ```
 

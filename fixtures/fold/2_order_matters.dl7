@@ -14,8 +14,8 @@
       (: next int)))
 
 (<- (Weighted ?Accumulator ?Value ?Next)
-    (int_add ?Accumulator ?Accumulator ?Twice)
-    (int_add ?Twice ?Value ?Next))
+    (int.add ?Accumulator ?Accumulator ?Twice)
+    (int.add ?Twice ?Value ?Next))
 
 (: Total (* (: total int)))
 

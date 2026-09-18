@@ -10,30 +10,46 @@
 
 use crate::_6_eval::term::{TermId, Universe};
 
-pub const COMPARISONS: [&str; 6] = ["int_lt", "int_le", "int_eq", "int_ne", "int_ge", "int_gt"];
+pub const COMPARISONS: [&str; 6] = ["lt", "le", "eq", "ne", "ge", "gt"];
 
-/// `0_lowerer.pl:1958-1973`, in declaration order.
-pub const KERNEL_RELATIONS: [(&str, i64); 20] = [
-    ("node", 1),
-    ("module", 1),
-    ("product", 1),
-    ("sum", 1),
-    (":", 4),
-    ("edge_snapshot", 4),
-    ("nil", 1),
-    ("cons", 3),
-    ("edge_ref", 3),
-    ("intern", 3),
-    ("intern_snapshot", 3),
-    ("int_add", 3),
-    ("effect", 2),
-    ("term_lt", 2),
-    ("int_lt", 2),
-    ("int_le", 2),
-    ("int_eq", 2),
-    ("int_ne", 2),
-    ("int_ge", 2),
-    ("int_gt", 2),
+/// `0_lowerer.pl:1958-1973`, in declaration order: `(owner, label, arity)`.
+pub const KERNEL_RELATIONS: [(Option<&str>, &str, i64); 22] = [
+    (None, "node", 1),
+    (None, "module", 1),
+    (None, "product", 1),
+    (None, "sum", 1),
+    (None, ":", 4),
+    (None, "edge_snapshot", 4),
+    (None, "nil", 1),
+    (None, "cons", 3),
+    (None, "edge_ref", 3),
+    (None, "intern", 3),
+    (None, "intern_snapshot", 3),
+    (Some("int"), "add", 3),
+    (None, "effect", 2),
+    (Some("any"), "lt", 2),
+    (Some("int"), "lt", 2),
+    (Some("int"), "le", 2),
+    (Some("int"), "eq", 2),
+    (Some("int"), "ne", 2),
+    (Some("int"), "ge", 2),
+    (Some("int"), "gt", 2),
+    (Some("str"), "cons", 3),
+    (Some("str"), "nil", 1),
+];
+
+/// The typed ops, each an edge off its primitive node: `(owner, label, slots)`.
+const TYPED_OPS: [(&str, &str, &[(&str, &str)]); 10] = [
+    ("int", "lt", &[("left", "int"), ("right", "int")]),
+    ("int", "le", &[("left", "int"), ("right", "int")]),
+    ("int", "eq", &[("left", "int"), ("right", "int")]),
+    ("int", "ne", &[("left", "int"), ("right", "int")]),
+    ("int", "ge", &[("left", "int"), ("right", "int")]),
+    ("int", "gt", &[("left", "int"), ("right", "int")]),
+    ("int", "add", &[("left", "int"), ("right", "int"), ("return", "int")]),
+    ("any", "lt", &[("left", "any"), ("right", "any")]),
+    ("str", "cons", &[("head", "str"), ("tail", "str"), ("return", "str")]),
+    ("str", "nil", &[("return", "str")]),
 ];
 
 /// `:617`.
@@ -41,29 +57,41 @@ pub fn primitive_name(name: &str) -> bool {
     matches!(name, "int" | "float" | "bool" | "str" | "any" | "type")
 }
 
-pub fn is_comparison(name: &str) -> bool {
-    COMPARISONS.contains(&name)
+/// `int.lt` and its five siblings.
+pub fn is_comparison(owner: Option<&str>, label: &str) -> bool {
+    owner == Some("int") && COMPARISONS.contains(&label)
 }
 
 /// `:629`. The clause with the `integer_comparison/3` guard sits at `:636`,
 /// after the seven explicit names and before `def`.
-pub fn kernel_relation_keys(name: &str) -> Vec<Vec<i64>> {
-    match name {
-        ":" | "edge_snapshot" => vec![vec![0, 1], vec![0, 3]],
-        "nil" => vec![vec![0]],
-        "cons" => vec![vec![0, 1], vec![2]],
-        "edge_ref" | "intern" | "intern_snapshot" => vec![vec![0, 1]],
-        "int_add" | "effect" | "term_lt" => vec![vec![0, 1]],
-        other if is_comparison(other) => vec![vec![0, 1]],
-        "def" | "head" => vec![vec![0]],
-        "body" => vec![vec![0, 1]],
+pub fn kernel_relation_keys(owner: Option<&str>, label: &str) -> Vec<Vec<i64>> {
+    match (owner, label) {
+        (None, ":" | "edge_snapshot") => vec![vec![0, 1], vec![0, 3]],
+        (None | Some("str"), "nil") => vec![vec![0]],
+        (None | Some("str"), "cons") => vec![vec![0, 1], vec![2]],
+        (None, "edge_ref" | "intern" | "intern_snapshot") => vec![vec![0, 1]],
+        (Some("int"), "add") | (None, "effect") | (Some("any"), "lt") => vec![vec![0, 1]],
+        _ if is_comparison(owner, label) => vec![vec![0, 1]],
+        (None, "def" | "head") => vec![vec![0]],
+        (None, "body") => vec![vec![0, 1]],
         _ => vec![],
     }
 }
 
-fn kernel_ref(u: &mut Universe, name: &str) -> TermId {
-    let atom = u.atom(name);
-    let kernel = u.compound("kernel", vec![atom]);
+/// `kernel(Label)` or `kernel(Owner, Label)`.
+fn kernel_term(u: &mut Universe, owner: Option<&str>, label: &str) -> TermId {
+    let label = u.atom(label);
+    match owner {
+        Some(owner) => {
+            let owner = u.atom(owner);
+            u.compound("kernel", vec![owner, label])
+        }
+        None => u.compound("kernel", vec![label]),
+    }
+}
+
+fn kernel_ref(u: &mut Universe, owner: Option<&str>, label: &str) -> TermId {
+    let kernel = kernel_term(u, owner, label);
     u.compound("ref", vec![kernel])
 }
 
@@ -73,18 +101,17 @@ fn primitive_ref(u: &mut Universe, name: &str) -> TermId {
     u.compound("ref", vec![primitive])
 }
 
-/// `:622`. Every kernel relation as `relation(ref(kernel(Name)), Arity, Keys)`.
+/// `:622`. Every kernel relation as `relation(ref(kernel(..)), Arity, Keys)`.
 pub fn kernel_relation_rows(u: &mut Universe) -> Vec<TermId> {
     let mut out = Vec::with_capacity(KERNEL_RELATIONS.len() + 3);
-    for (name, arity) in
-        KERNEL_RELATIONS
-            .iter()
-            .copied()
-            .chain([("def", 2), ("head", 2), ("body", 4)])
-    {
-        let reference = kernel_ref(u, name);
+    for (owner, label, arity) in KERNEL_RELATIONS.iter().copied().chain([
+        (None, "def", 2),
+        (None, "head", 2),
+        (None, "body", 4),
+    ]) {
+        let reference = kernel_ref(u, owner, label);
         let arity = u.int(arity);
-        let keys: Vec<TermId> = kernel_relation_keys(name)
+        let keys: Vec<TermId> = kernel_relation_keys(owner, label)
             .into_iter()
             .map(|set| {
                 let items: Vec<TermId> = set.into_iter().map(|i| u.int(i)).collect();
@@ -97,9 +124,8 @@ pub fn kernel_relation_rows(u: &mut Universe) -> Vec<TermId> {
     out
 }
 
-fn node_pair(u: &mut Universe, name: &str, out: &mut Vec<TermId>) {
-    let reference = u.atom(name);
-    let kernel = u.compound("kernel", vec![reference]);
+fn node_pair(u: &mut Universe, owner: Option<&str>, label: &str, out: &mut Vec<TermId>) {
+    let kernel = kernel_term(u, owner, label);
     let node = u.compound("node", vec![kernel]);
     let product = u.compound("product", vec![kernel]);
     out.push(node);
@@ -107,8 +133,11 @@ fn node_pair(u: &mut Universe, name: &str, out: &mut Vec<TermId>) {
 }
 
 fn edge(u: &mut Universe, owner: &str, label: &str, target: TermId, index: i64) -> TermId {
-    let owner = u.atom(owner);
-    let owner = u.compound("kernel", vec![owner]);
+    let owner = kernel_term(u, None, owner);
+    labelled_edge(u, owner, label, target, index)
+}
+
+fn labelled_edge(u: &mut Universe, owner: TermId, label: &str, target: TermId, index: i64) -> TermId {
     let label = u.atom(label);
     let index = u.int(index);
     u.compound(":", vec![owner, label, target, index])
@@ -136,13 +165,13 @@ pub fn kernel_graph(u: &mut Universe) -> (Vec<TermId>, Vec<TermId>) {
         "intern",
         "intern_snapshot",
     ] {
-        node_pair(u, name, &mut nodes);
+        node_pair(u, None, name, &mut nodes);
     }
-    for name in COMPARISONS {
-        node_pair(u, name, &mut nodes);
+    for (owner, label, _) in TYPED_OPS {
+        node_pair(u, Some(owner), label, &mut nodes);
     }
     for name in ["def", "head", "body"] {
-        node_pair(u, name, &mut nodes);
+        node_pair(u, None, name, &mut nodes);
     }
 
     let int = primitive_ref(u, "int");
@@ -171,9 +200,27 @@ pub fn kernel_graph(u: &mut Universe) -> (Vec<TermId>, Vec<TermId>) {
         edges.push(edge(u, name, "arguments", any, 1));
         edges.push(edge(u, name, "return", kind, 2));
     }
-    for name in COMPARISONS {
-        edges.push(edge(u, name, "left", int, 0));
-        edges.push(edge(u, name, "right", int, 1));
+    let mut ordinals: Vec<(&str, i64)> = Vec::new();
+    for (owner, label, slots) in TYPED_OPS {
+        let kernel = kernel_term(u, Some(owner), label);
+        for (index, (slot, primitive)) in slots.iter().enumerate() {
+            let target = primitive_ref(u, primitive);
+            edges.push(labelled_edge(u, kernel, slot, target, index as i64));
+        }
+        let ordinal = match ordinals.iter_mut().find(|(seen, _)| *seen == owner) {
+            Some((_, next)) => {
+                *next += 1;
+                *next
+            }
+            None => {
+                ordinals.push((owner, 0));
+                0
+            }
+        };
+        let atom = u.atom(owner);
+        let primitive = u.compound("primitive", vec![atom]);
+        let reference = u.compound("ref", vec![kernel]);
+        edges.push(labelled_edge(u, primitive, label, reference, ordinal));
     }
     edges.push(edge(u, "def", "relation", kind, 0));
     edges.push(edge(u, "def", "arity", int, 1));

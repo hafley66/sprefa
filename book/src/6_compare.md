@@ -4,9 +4,9 @@
 
 ```mermaid
 flowchart LR
-  kernel[20 kernel relations] --> compare[int_lt int_le int_eq int_ne int_ge int_gt]
-  kernel --> add[int_add Left Right Sum]
-  kernel --> termlt[term_lt Left Right]
+  kernel[22 kernel relations] --> compare[int.lt int.le int.eq int.ne int.ge int.gt]
+  kernel --> add[int.add Left Right Sum]
+  kernel --> termlt[any.lt Left Right]
   compare -->|non-integer argument| norow[no row]
   add -->|overflow or wrong Sum| norow
   compare -->|dl8 check| mismatch[8_int_type_mismatch.dl7: text constant rejected]
@@ -21,25 +21,25 @@ flowchart LR
   end
 ```
 
-`int_lt int_le int_eq int_ne int_ge int_gt` hold when both arguments are integers in that relation; a non-integer argument gives no row (`src/_6_eval/_4_kernel.rs:96-103`, `:188-192`).
-`(int_add Left Right Sum)` binds `Sum` to `Left + Right`; an overflowing sum has no row, and a bound wrong sum fails (`_4_kernel.rs:200-214`).
-`(term_lt Left Right)` holds when `Left` precedes `Right` in the standard term order (`_4_kernel.rs:194-199`).
+`int.lt int.le int.eq int.ne int.ge int.gt` hold when both arguments are integers in that relation; a non-integer argument gives no row (`src/_6_eval/_4_kernel.rs:114-122`, `:249-253`).
+`(int.add Left Right Sum)` binds `Sum` to `Left + Right`; an overflowing sum has no row, and a bound wrong sum fails (`_4_kernel.rs:259-273`).
+`(any.lt Left Right)` holds when `Left` precedes `Right` in the standard term order (`_4_kernel.rs:255-260`).
 The order: numbers by value, an int before an equal float, then `false`, `true`, then strings, then `[]`, then atoms, then compounds by arity, name, arguments (`src/_6_eval/_0_term.rs:171-219`).
-The checker needs both sides of a comparison bound and rejects a non-integer constant there (`src/_3_check/_4_mode.rs:132-153`, `:181-186`); a variable bound to text passes the checker and yields no row.
-The checker has no mode clause for `int_add` or `term_lt`; they fall to the default that binds every variable (`_4_mode.rs:218-221`).
+The checker needs both sides of a comparison bound and rejects a non-integer constant there (`src/_3_check/_4_mode.rs:140-161`, `:189-195`); a variable bound to text passes the checker and yields no row.
+The checker has no mode clause for `int.add` or `any.lt`; they fall to the default that binds every variable (`_4_mode.rs:226-229`).
 
 ## Why
 
-`plans/v8/2026-09-13-v8-tour.md` section 5: `int_lt .. int_gt` replaced the Peano `before/3` closure rejected in v7.
-`term_lt` answers Chris's "lets keep them somehow programmable", as the design review cites it (`plans/v8/2026-09-14-v8-design-review.fable.md:49`).
+`plans/v8/2026-09-13-v8-tour.md` section 5: `int.lt .. int.gt` replaced the Peano `before/3` closure rejected in v7.
+`any.lt` answers Chris's "lets keep them somehow programmable", as the design review cites it (`plans/v8/2026-09-14-v8-design-review.fable.md:49`).
 
 ## When to use
 
 Use it when:
 
-- a filter on an integer column: `int_gt`, `fixtures/sqlite_emit/0_union_filter.dl7:34-36`
-- a computed column: `int_add`, `fixtures/literals/2_int_add.dl7:9-11`
-- an order over any kind, or a top-k by negation: `term_lt`, `fixtures/term_lt/1_top.dl7`
+- a filter on an integer column: `int.gt`, `fixtures/sqlite_emit/0_union_filter.dl7:34-36`
+- a computed column: `int.add`, `fixtures/literals/2_int_add.dl7:9-11`
+- an order over any kind, or a top-k by negation: `any.lt`, `fixtures/term_lt/1_top.dl7`
 
 Do not use it when:
 
@@ -61,7 +61,7 @@ Do not use it when:
 
 (<- (Plus ?Sum)
     (Input ?Value)
-    (int_add ?Value 100 ?Sum))
+    (int.add ?Value 100 ?Sum))
 ```
 
 ```console
@@ -92,7 +92,7 @@ The kind order across a float, an int, a bool and a string:
 (<- (Below ?Left ?Right)
     (Item ?Left)
     (Item ?Right)
-    (term_lt ?Left ?Right))
+    (any.lt ?Left ?Right))
 ```
 
 ```console
@@ -110,7 +110,7 @@ $ bash book/show.sh eval fixtures/term_lt/0_mixed_kinds.dl7
 exit 0
 ```
 
-Every comparison, a negated one, and a text value at `int_lt` (`text_never` has no row):
+Every comparison, a negated one, and a text value at `int.lt` (`text_never` has no row):
 
 ```console
 $ bash book/show.sh eval oracle/eval/5_int_compare.json
@@ -139,7 +139,7 @@ $ bash book/show.sh eval oracle/eval/5_int_compare.json
 exit 0
 ```
 
-A text constant at `int_lt`:
+A text constant at `int.lt`:
 
 ```dl7
 ; fixture: oracle/check/cases/8_int_type_mismatch.dl7
@@ -152,12 +152,12 @@ A text constant at `int_lt`:
 
 (<- (reader ?Value)
     (point ?Value)
-    (int_lt ?Value "three"))
+    (int.lt ?Value "three"))
 ```
 
 ```console
 $ bash book/show.sh compile oracle/check/cases/8_int_type_mismatch.dl7
-diagnostic diagnostic(check, none, kernel_argument_type_mismatch(int_lt, 1, int, "three"))
+diagnostic diagnostic(check, none, kernel_argument_type_mismatch(int.lt, 1, int, "three"))
 exit 1
 ```
 
@@ -165,9 +165,9 @@ exit 1
 
 | claim | path | command |
 |---|---|---|
-| `int_add` over literals | `fixtures/literals/2_int_add.expected.json` | `cargo test --test _10_literals` |
+| `int.add` over literals | `fixtures/literals/2_int_add.expected.json` | `cargo test --test _10_literals` |
 | mixed-kind order | `fixtures/term_lt/0_mixed_kinds.expected.json` | `cargo test --test _12_term_lt` |
 | the order over atoms, strings, lists and compounds | `oracle/eval/13_deep_terms_order.pl` | `bash book/show.sh eval oracle/eval/13_deep_terms_order.json` |
-| comparison complements and text at `int_lt` | `oracle/eval/5_int_compare.pl` | `cargo test --test _0_eval_oracle` |
+| comparison complements and text at `int.lt` | `oracle/eval/5_int_compare.pl` | `cargo test --test _0_eval_oracle` |
 | a text constant is rejected | `oracle/check/cases/8_int_type_mismatch.dl7` | `cargo test --test _4_check_oracle` |
-| `int_gt` and `int_add` lower to SQL | `fixtures/sqlite_emit/0_union_filter.dl7` | `cargo test --test _18_sqlite_emit` |
+| `int.gt` and `int.add` lower to SQL | `fixtures/sqlite_emit/0_union_filter.dl7` | `cargo test --test _18_sqlite_emit` |

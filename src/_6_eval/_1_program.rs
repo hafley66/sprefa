@@ -3,7 +3,7 @@
 //! variable, a ground term, `aggregate(Kind, Arg)` or `fold(Step, Seed, Arg)`
 //! in a head, where `Kind` is one of `count`, `sum`, `min`, `max`.
 
-use super::kernel::kernel_ref;
+use super::kernel::op_ref;
 use super::term::{TermId, Universe};
 use std::collections::HashSet;
 
@@ -42,13 +42,13 @@ impl AggregateKind {
     /// fast path for the same four and must agree with folding these.
     pub fn as_fold(self, u: &mut Universe) -> Fold {
         let (step, seed) = match self {
-            Self::Count => ("count_step", Seed::Zero),
-            Self::Sum => ("int_add", Seed::Zero),
-            Self::Min => ("min_step", Seed::FirstValue),
-            Self::Max => ("max_step", Seed::FirstValue),
+            Self::Count => ((None, "count_step"), Seed::Zero),
+            Self::Sum => ((Some("int"), "add"), Seed::Zero),
+            Self::Min => ((None, "min_step"), Seed::FirstValue),
+            Self::Max => ((None, "max_step"), Seed::FirstValue),
         };
         Fold {
-            step: kernel_ref(u, step),
+            step: op_ref(u, step),
             seed,
             order: Order::TermLt,
         }

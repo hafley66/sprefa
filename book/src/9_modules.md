@@ -197,7 +197,7 @@ exit 0
 | a dotted token reads as one form, one atom per segment | `src/_0_read/_1_tokens.rs:43-55`, `src/_0_read/_2_reader.rs:372-394` | `cargo test --test _1_read_oracle` |
 | a leading, trailing or doubled dot is `invalid_path` | `src/_0_read/_2_reader.rs:401-406` | `bash book/show.sh compile book/src/probes/25_dot_path_malformed.dl7` |
 | the walk is one `:` goal per segment, a fresh variable each | `src/_2_lower/_8_express.rs:79-105` | `cargo test --test _22_book probes_compile_as_their_page_says` |
-| a path head resolves the callable in the checker | `src/_2_lower/_7_execute.rs:233-275`, `src/_3_check/_2_resolve.rs:48-73` | `cargo test --test _22_book probes_compile_as_their_page_says` |
+| a path head resolves the callable in the checker | `src/_2_lower/_7_execute.rs:253-295`, `src/_3_check/_2_resolve.rs:48-73` | `cargo test --test _22_book probes_compile_as_their_page_says` |
 | the module consumer and the type-position path compile | `oracle/compile/sources/test/fixtures/modules/3_dotted_consumer.dl7` | `bash book/show.sh compile oracle/compile/sources/test/fixtures/modules/0_accounts.dl7 oracle/compile/sources/test/fixtures/modules/3_dotted_consumer.dl7 --project oracle/compile/sources/test/fixtures/modules` |
 | a float literal stays a literal beside the dotted tokens | `fixtures/literals/0_float.dl7` | `cargo test --test _10_literals` |
 

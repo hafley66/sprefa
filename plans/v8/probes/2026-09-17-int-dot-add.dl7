@@ -1,0 +1,18 @@
+; `int.add` in goal and expression position, `int.lt` as a filter.
+(: Input (* (: value int)))
+
+(Input 3)
+
+(Input 40)
+
+(: Next (* (: value int) (: next int)))
+
+(<- (Next ?Value ?Following)
+    (Input ?Value)
+    (int.add ?Value 1 ?Following))
+
+(: Doubled (* (: value int) (: doubled int)))
+
+(<- (Doubled ?Value (int.add ?Value ?Value))
+    (Input ?Value)
+    (int.lt ?Value 10))
