@@ -37,7 +37,7 @@ step 2  owner=module(file(...))   name=Shadow  forward edge -> the product Shado
 
 | position in the source | resolver | order walked | a miss |
 |---|---|---|---|
-| a goal head `(Name ...)`, a label call, an expression target | `expression_callable`, `src/_2_lower/_8_express.rs:155-186` | scoped reservation owner then parents (`src/_2_lower/_10_index.rs:170-193`), then a kernel name (`_8_express.rs:181-184`) | `undeclared_relation`, `not_relation` |
+| a goal head `(Name ...)`, a label call, an expression target | `expression_callable`, `src/_2_lower/_8_express.rs:269-326` | scoped reservation owner then parents (`src/_2_lower/_10_index.rs:170-193`), then a kernel name (`_8_express.rs:210-213`) | `undeclared_relation`, `not_relation` |
 | a bare name as a value: a field target, the owner of a `(: ...)` goal | `resolve_name`, `src/_3_check/_2_resolve.rs:47-90` | forward edge, which commits (`:70-72`); parent (`:73-77`); kernel name, then primitive, only at a module owner (`:78-88`) | `unresolved_name` |
 
 A module owner's forward edges hold its own declarations plus one alias per prelude name it does not bind ([A module is a file](0_a_module_is_a_file.md)). The prelude therefore sits between the file and the kernel:
@@ -53,22 +53,25 @@ Order for a bare name, nearest first: the enclosing products, the file, the prel
 
 ## The kernel names
 
-`KERNEL_RELATIONS` (`src/_3_check/_5_kernel.rs:16-37`) lists every row of the table except `def`, `head` and `body`; the checker appends those three as rows and nodes (`:83`, `:144`), and the lowerer's `kernel_relation` names all of them (`src/_2_lower/_9_kernel.rs:15-28`).
+`KERNEL_RELATIONS` (`src/_3_check/_5_kernel.rs:16-39`) lists every row of the table except `def`, `head` and `body`; the checker appends those three as rows and nodes (`:107-111`, `:173`), and the lowerer's `kernel_relation` names all of them (`src/_2_lower/_9_kernel.rs:16-31`).
 
 | name | arity | return position | lowerer keys | source |
 |---|---|---|---|---|
-| `node`, `module`, `product`, `sum` | 1 | none | none | `_9_kernel.rs:17` |
-| `nil` | 1 | 0 | `[[]]` | `_9_kernel.rs:17`, `:63`, `:75` |
-| `:`, `edge_snapshot` | 4 | none | `[0,1]`, `[0,3]` | `_9_kernel.rs:18`, `:62` |
-| `body` | 4 | none | none | `_9_kernel.rs:18` |
-| `cons` | 3 | 2 | `[0,1]`, `[2]` | `_9_kernel.rs:19`, `:64`, `:76` |
-| `edge_ref`, `intern`, `intern_snapshot` | 3 | 2 | `[0,1]` | `_9_kernel.rs:19`, `:65`, `:76` |
-| `int_add` | 3 | 2 | `[0,1]` | `_9_kernel.rs:20`, `:66`, `:77` |
-| `effect`, `term_lt` | 2 | none | `[0,1]` | `_9_kernel.rs:21-22`, `:66` |
-| `def`, `head` | 2 | none | none | `_9_kernel.rs:23` |
-| `int_lt`, `int_le`, `int_gt`, `int_ge`, `int_eq`, `int_ne` | 2 | none | `[0,1]` | `_9_kernel.rs:7-8`, `:24`, `:67` |
+| `node`, `module`, `product`, `sum` | 1 | none | none | `_9_kernel.rs:19` |
+| `nil` | 1 | 0 | `[[]]` | `_9_kernel.rs:19`, `:67`, `:79` |
+| `:`, `edge_snapshot` | 4 | none | `[0,1]`, `[0,3]` | `_9_kernel.rs:20`, `:66` |
+| `body` | 4 | none | none | `_9_kernel.rs:20` |
+| `cons` | 3 | 2 | `[0,1]`, `[2]` | `_9_kernel.rs:21`, `:68`, `:80` |
+| `edge_ref`, `intern`, `intern_snapshot` | 3 | 2 | `[0,1]` | `_9_kernel.rs:21`, `:69`, `:81` |
+| `effect` | 2 | none | `[0,1]` | `_9_kernel.rs:22`, `:70` |
+| `def`, `head` | 2 | none | none | `_9_kernel.rs:22` |
+| `int.add` | 3 | 2 | `[0,1]` | `_9_kernel.rs:23`, `:70`, `:82` |
+| `any.lt` | 2 | none | `[0,1]` | `_9_kernel.rs:24`, `:70` |
+| `str.cons` | 3 | 2 | `[0,1]`, `[2]` | `_9_kernel.rs:25`, `:68`, `:80` |
+| `str.nil` | 1 | 0 | `[[]]` | `_9_kernel.rs:26`, `:67`, `:79` |
+| `int.lt`, `int.le`, `int.gt`, `int.ge`, `int.eq`, `int.ne` | 2 | none | `[0,1]` | `_9_kernel.rs:9`, `:27`, `:71` |
 
-Primitive names: `int`, `float`, `bool`, `str`, `any`, `type` (`src/_3_check/_5_kernel.rs:40-42`).
+Primitive names: `int`, `float`, `bool`, `str`, `any`, `type` (`src/_3_check/_5_kernel.rs:56-58`).
 
 ## Shadowing
 

@@ -118,7 +118,7 @@ The ghcacher golden against dl8, construct by construct (`v6/tsv2/goldens/ghcach
 | `sh fetch(ep, prev, bucket) -> (status, tag, stars, full_name)` | 15-17 | `fetch_json(url, body)`: no request headers, no status on success, body as one text term | `README.md:118`, `:128` |
 | `poll <- watch, current_etag, current_clock(300, Bucket)` | 27-30 | built: joins and constants | `fixtures/sqlite_emit/0_union_filter.dl7` |
 | `resp <- poll, fetch(...)` | 32-34 | built for `fetch_json`: `effect` row, executor answer | `fixtures/reconcile/1_fetch.dl7` |
-| `Status == 200` | 38 | `int_eq` built | `oracle/eval/5_int_compare.pl` |
+| `Status == 200` | 38 | `int.eq` built | `oracle/eval/5_int_compare.pl` |
 | `etag_event ... log keep(all)` | 9 | not built: no log relation, no retention | no fixture; not shown |
 | `current_etag` and `current_clock` `key(1)` with `<+` | 10-11, 24-25 | not built: `<+` rewrites to `<-`, no key latch | `macrotime/0_standard.dl7:101-102` |
 | `cache_view key(1) <+ fresh_hit` | 22, 40 | not built: same | `macrotime/0_standard.dl7:101-102` |

@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-  strata[strata order] -->|_6_eval/_4_kernel.rs| kernel[20 kernel relations]
+  strata[strata order] -->|_6_eval/_4_kernel.rs| kernel[22 kernel relations]
   kernel --> nil[nil / 1: const of the empty list]
   kernel --> cons[cons / 3: split a list or build one]
   kernel --> intern[intern / 3: one term per application]
@@ -24,11 +24,11 @@ flowchart LR
 Kernel relations are built into the evaluator, one partial function over bound arguments each, never a stored table except that `intern` records every request as a row (`src/_6_eval/_4_kernel.rs:1-4`).
 `(: Owner name Target Index)` in a body reads one graph edge and in a head derives one; every declaration lowers to these rows (`plans/v8/2026-09-13-v8-tour.md` section 5, `oracle/compile/sources/test/fixtures/14_syntax_macros.dl7:116-125`).
 `edge_snapshot` and `intern_snapshot` hold the previous compiler round's `:` edges and `intern` requests as read-only rows (`src/_4_comptime/_2_rounds.rs:279-293`); at runtime the effect branch also writes `intern_snapshot` rows ([Effects](10_effects.md)).
-An application term is `ref(application(Constructor, [Arguments]))`; equal arguments give the same term (`_4_kernel.rs:172-186`).
+An application term is `ref(application(Constructor, [Arguments]))`; equal arguments give the same term (`_4_kernel.rs:231-245`).
 
-| relation | arity | keys (`_3_check/_5_kernel.rs:50-61`) | the checker needs bound (`_3_check/_4_mode.rs:180-217`) | evaluates to |
+| relation | arity | keys (`_3_check/_5_kernel.rs:67-79`) | the checker needs bound (`_3_check/_4_mode.rs:188-231`) | evaluates to |
 |---|---|---|---|---|
-| `nil` | 1 | `[0]` | nothing | `const([])` (`_4_kernel.rs:132-137`) |
+| `nil` | 1 | `[0]` | nothing | `const([])` (`_4_kernel.rs:152-157`) |
 | `cons` | 3 | `[0,1]`, `[2]` | the list, or head and tail | split when the list is bound, else build (`:140-158`) |
 | `edge_ref` | 3 | `[0,1]` | owner and label | `ref(edge(Owner, Label))` (`:160-170`) |
 | `intern` | 3 | `[0,1]` | constructor and arguments | `ref(application(Constructor, Arguments))`, row recorded (`:172-186`) |
@@ -163,6 +163,6 @@ exit 0
 | `cons` splits and builds, never splits `[]` | `oracle/eval/4_cons_lists.json` | `cargo test --test _0_eval_oracle` |
 | `edge_ref` and `intern` terms | `oracle/eval/9_edge_ref.json` | `bash book/show.sh eval oracle/eval/9_edge_ref.json` |
 | an `intern` row from a lower stratum matches with the constructor unbound | `oracle/eval/16_intern_row_reuse.pl:1-2` | `bash book/show.sh eval oracle/eval/16_intern_row_reuse.json` |
-| kernel names, arities and keys | `src/_3_check/_5_kernel.rs:16-61` | `sed -n 16,61p src/_3_check/_5_kernel.rs` |
+| kernel names, arities and keys | `src/_3_check/_5_kernel.rs:16-79` | `sed -n 16,79p src/_3_check/_5_kernel.rs` |
 | each underconstrained kernel goal and its diagnostic | `oracle/check/cases/4_under_cons.dl7` to `7_under_int_lt.dl7` | `cargo test --test _4_check_oracle` |
 | snapshot rows are the last round's edges and requests | `src/_4_comptime/_2_rounds.rs:279-293` | `cargo test --test _6_comptime_oracle` |

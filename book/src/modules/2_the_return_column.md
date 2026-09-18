@@ -49,7 +49,7 @@ The prelude declares them the way `Wrap` is declared; a user product of the same
 
 ## A declaration form is never a label
 
-`(: a 5)` in label position is a goal on the kernel relation `:`, which has no arm in `kernel_return_positions` (`_9_kernel.rs:73-79`).
+`(: a 5)` in label position is a goal on the kernel relation `:`, which has no arm in `kernel_return_positions` (`_9_kernel.rs:76-85`).
 
 ```dl7
 {{#include ../probes/2_colon_form_label.dl7}}
@@ -101,14 +101,14 @@ exit 1
 ## Rule
 
 - A product declares `relation(Owner, Arity, KeySets)`: the arity is its edge count; exactly one edge named `return` makes one key set of every other position (`src/_2_lower/_2_declare.rs:278-306`).
-- An expression needs exactly one return position. A product reads its `return` edges; a kernel name reads `kernel_return_positions` (`src/_2_lower/_8_express.rs:213-242`, `src/_2_lower/_9_kernel.rs:72-80`).
-- None is `expression_without_return`; more than one is `expression_multiple_returns(Callable, Indices)` (`_8_express.rs:235-239`).
+- An expression needs exactly one return position. A product reads its `return` edges; a kernel name reads `kernel_return_positions` (`src/_2_lower/_8_express.rs:242-271`, `src/_2_lower/_9_kernel.rs:76-85`).
+- None is `expression_without_return`; more than one is `expression_multiple_returns(Callable, Indices)` (`_8_express.rs:264-268`).
 
 ## Diagnostics
 
 | diagnostic | raised at | fixture |
 |---|---|---|
-| `expression_without_return(Callable)` | `src/_2_lower/_8_express.rs:231-233` | no fixture; probe only: `probes/1_no_return_column.dl7`, `2_colon_form_label.dl7` |
+| `expression_without_return(Callable)` | `src/_2_lower/_8_express.rs:260-262` | no fixture; probe only: `probes/1_no_return_column.dl7`, `2_colon_form_label.dl7` |
 | `partial_application_requires_more_arguments(Label)` | `src/_2_lower/_6_partial.rs:35-55` | no fixture; probe only: `probes/21_partial_in_field.dl7` |
 
 ## Receipts
