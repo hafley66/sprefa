@@ -195,7 +195,10 @@ pub fn lower_call(
     };
     let head = forms::form_head_atom(cx.u, &items);
     if head.is_none() {
-        if let Some((call_owner, label)) = express::primitive_path_head(cx, items[0], owner) {
+        let typed = items
+            .first()
+            .and_then(|first| express::primitive_path_head(cx, *first, owner));
+        if let Some((call_owner, label)) = typed {
             return lower_named_call(cx, parsed.id, label, &items, call_owner, owner, head_mode);
         }
         if let Some(call) = lower_path_call(cx, parsed.id, &items, owner, head_mode)? {
