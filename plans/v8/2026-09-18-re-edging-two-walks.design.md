@@ -161,5 +161,7 @@ emitter annotation. Own lane after caret 3.
 - Comptime outputs things and its sqlite_ivm db. The db is the IR carrier every emitter reads. Nothing about runtime is decided now.
 - First pass is code generation: OpenAPI in, tsi graph, `@std/cli` text out, `.d.ts` round trip, vitest cases. No runtime work on the path. TypeSpec is the cousin: a compiler whose output is emitters.
 - A Rust emitter (rules as Rust + sqlite_ivm + axum + sqlx or rusqlite) is the first runtime target when runtime work starts; it is meant to surpass `sprefa-engine-rs`. HMR is wanted and unsolved for a compiled target; `dl8 eval` stays the dev interpreter.
-- Executor verb: Chris picks from `handle` / `cross` / `admit`; `poll` stays.
-- Lane order to the demo: list literal, effect type, oai-rules, `@std/cli`, d.ts round trip + vitest. Comptime-on-sqlite_ivm, `@std/gh`, caret 3, `dl6.key` sit off the path.
+- Executor trait is Tower-named: `IService` with `call` (the boundary crossing) and `poll`; no `IEffect`, no `answer`.
+- `@std/doc` is the codegen layer, from the 2026-09-16 doc plan: Wadler's four forms (`text`, `concat`, `nest`, `group`, plus `line`) as a dl7 sum; `doc.layout` an effect over the `pretty` crate; ordered concat as the one aggregate; refkey = a node plus a `name_of(target, node)` rule; `needs_import` a closure rule; a component is a rule returning a Doc row. Alloy's mapping from chat_log/20260802.2: component tree = term tree, refkey = atom, binder = decl/ref join, invariants = goals before render.
+- CLI target library is immaterial; `cmd-ts` by default. The demo proves codegen, not a library.
+- Lane order to the demo: list literal, effect type, oai-rules, `@std/doc`, `@std/cli`, d.ts round trip + vitest. Comptime-on-sqlite_ivm, `@std/gh`, caret 3, `dl6.key` sit off the path.
