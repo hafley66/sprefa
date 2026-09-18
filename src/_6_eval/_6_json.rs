@@ -300,7 +300,9 @@ fn arg_to_json(u: &Universe, id: TermId) -> Value {
 }
 
 fn call_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
-    let [rel, args] = u.args::<2>(id, "call").ok_or(Transport::Shape("bad_call"))?;
+    let [rel, args] = u
+        .args::<2>(id, "call")
+        .ok_or(Transport::Shape("bad_call"))?;
     let args = u.as_list(args).ok_or(Transport::Shape("bad_call"))?;
     Ok(json!({
         "rel": term_to_json(u, rel),
@@ -321,7 +323,9 @@ fn goal_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
 }
 
 fn rule_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
-    let [head, body] = u.args::<2>(id, "rule").ok_or(Transport::Shape("bad_rule"))?;
+    let [head, body] = u
+        .args::<2>(id, "rule")
+        .ok_or(Transport::Shape("bad_rule"))?;
     let body = u.as_list(body).ok_or(Transport::Shape("bad_rule"))?;
     Ok(json!({
         "head": call_to_json(u, head)?,

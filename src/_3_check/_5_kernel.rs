@@ -46,9 +46,17 @@ const TYPED_OPS: [(&str, &str, &[(&str, &str)]); 10] = [
     ("int", "ne", &[("left", "int"), ("right", "int")]),
     ("int", "ge", &[("left", "int"), ("right", "int")]),
     ("int", "gt", &[("left", "int"), ("right", "int")]),
-    ("int", "add", &[("left", "int"), ("right", "int"), ("return", "int")]),
+    (
+        "int",
+        "add",
+        &[("left", "int"), ("right", "int"), ("return", "int")],
+    ),
     ("any", "lt", &[("left", "any"), ("right", "any")]),
-    ("str", "cons", &[("head", "str"), ("tail", "str"), ("return", "str")]),
+    (
+        "str",
+        "cons",
+        &[("head", "str"), ("tail", "str"), ("return", "str")],
+    ),
     ("str", "nil", &[("return", "str")]),
 ];
 
@@ -137,7 +145,13 @@ fn edge(u: &mut Universe, owner: &str, label: &str, target: TermId, index: i64) 
     labelled_edge(u, owner, label, target, index)
 }
 
-fn labelled_edge(u: &mut Universe, owner: TermId, label: &str, target: TermId, index: i64) -> TermId {
+fn labelled_edge(
+    u: &mut Universe,
+    owner: TermId,
+    label: &str,
+    target: TermId,
+    index: i64,
+) -> TermId {
     let label = u.atom(label);
     let index = u.int(index);
     u.compound(":", vec![owner, label, target, index])

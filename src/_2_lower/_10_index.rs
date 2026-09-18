@@ -223,7 +223,10 @@ impl EdgeIndex {
                 .entry((owner, name))
                 .or_default()
                 .push(position);
-            let slot = index.by_owner_index.entry((owner, parts.index)).or_default();
+            let slot = index
+                .by_owner_index
+                .entry((owner, parts.index))
+                .or_default();
             let first_at_slot = slot.is_empty();
             slot.push(position);
             if first_at_slot {

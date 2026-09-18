@@ -410,7 +410,11 @@ pub fn fs_json_reads_an_object_into_edges_under_one_root() {
     assert_eq!(
         rows(&out, names, "Member"),
         sorted(vec![
-            vec![atom("title"), value_node("str", json!({ "s": "x" })), json!(0)],
+            vec![
+                atom("title"),
+                value_node("str", json!({ "s": "x" })),
+                json!(0)
+            ],
             vec![atom("n"), value_node("int", json!(3)), json!(1)],
             vec![
                 atom("tags"),
@@ -427,7 +431,12 @@ pub fn fs_json_reads_an_object_into_edges_under_one_root() {
     let edges = rows(&out, names, "Edge");
     assert_eq!(edges.len(), 6, "one edge per member, nested included");
     assert!(
-        edges.contains(&vec![meta, atom("v"), value_node("int", json!(1)), json!(0)]),
+        edges.contains(&vec![
+            meta,
+            atom("v"),
+            value_node("int", json!(1)),
+            json!(0)
+        ]),
         "the nested object owns its own edge: {edges:?}"
     );
     assert!(rows(&out, names, "Failed").is_empty());
@@ -454,7 +463,10 @@ pub fn fs_json_reads_a_top_level_array_and_a_top_level_scalar() {
         rows(&out, &names, "Root"),
         vec![vec![text(&path), value_node("int", json!(3))]]
     );
-    assert!(rows(&out, &names, "Edge").is_empty(), "a scalar owns no edge");
+    assert!(
+        rows(&out, &names, "Edge").is_empty(),
+        "a scalar owns no edge"
+    );
 }
 
 /// RFC 7396 sections 1 and 2, the case `plans/v8/probes/2026-09-17-json-null-vs-absent.dl7`
@@ -462,8 +474,16 @@ pub fn fs_json_reads_a_top_level_array_and_a_top_level_scalar() {
 #[test]
 pub fn fs_json_tells_present_null_from_an_absent_key() {
     let directory = scratch("fs-json-null");
-    let (out, names, _) = json_run(&directory, "present.json", "{\"title\": \"x\", \"owner\": null}");
-    let title = vec![atom("title"), value_node("str", json!({ "s": "x" })), json!(0)];
+    let (out, names, _) = json_run(
+        &directory,
+        "present.json",
+        "{\"title\": \"x\", \"owner\": null}",
+    );
+    let title = vec![
+        atom("title"),
+        value_node("str", json!({ "s": "x" })),
+        json!(0),
+    ];
     assert_eq!(
         rows(&out, &names, "Member"),
         sorted(vec![

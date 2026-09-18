@@ -78,12 +78,20 @@ fn run(program: &Path, args: &[&str]) -> (Value, i32) {
         }
         if started.elapsed() > RUN_CAP {
             let _ = child.kill();
-            panic!("dl8 run {} {args:?} exceeded {RUN_CAP:?}", program.display());
+            panic!(
+                "dl8 run {} {args:?} exceeded {RUN_CAP:?}",
+                program.display()
+            );
         }
         std::thread::sleep(Duration::from_millis(5));
     };
     let mut stdout = Vec::new();
-    child.stdout.take().unwrap().read_to_end(&mut stdout).unwrap();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_end(&mut stdout)
+        .unwrap();
     let mut stderr = String::new();
     child
         .stderr

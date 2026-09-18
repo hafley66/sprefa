@@ -25,13 +25,12 @@ pub fn valid_identifier(token: &str) -> bool {
     }
 }
 
-/// A leading `^` marks the subterm its form evaluates to; the caret stays in
-/// the atom's text and `macrotime/` reads it back off `syntax_atom`.
+/// A lone `^` is the head atom of the `(^ x)` form the reader makes of `^x`;
+/// no other atom carries a caret.
 pub fn valid_atom(token: &str) -> bool {
-    if matches!(token, ":" | "*" | "+" | "->" | "<-" | "<+") {
+    if matches!(token, ":" | "*" | "+" | "->" | "<-" | "<+" | "^") {
         return true;
     }
-    let token = token.strip_prefix('^').unwrap_or(token);
     if let Some(name) = token.strip_suffix(':') {
         if valid_identifier(name) {
             return true;
@@ -55,6 +54,15 @@ pub fn dotted_segments(token: &str) -> Option<Vec<&str>> {
         return None;
     }
     Some(token.split('.').collect())
+}
+
+/// `^x` is a prefix only when something follows the caret; `^` before layout,
+/// a closing bracket or the end of input is the bare atom.
+pub fn caret_prefix(next: Option<char>) -> bool {
+    match next {
+        None => false,
+        Some(c) => !(c.is_whitespace() || matches!(c, ')' | '}' | ';')),
+    }
 }
 
 pub fn integer_token(token: &str) -> bool {
