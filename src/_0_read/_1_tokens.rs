@@ -2,7 +2,7 @@
 //! Every predicate is a literal port of the same-named one in v7 `0_parser.pl`.
 
 pub fn term_delimiter(c: char) -> bool {
-    c.is_whitespace() || matches!(c, '(' | ')' | '{' | '}' | ';' | '"')
+    c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | ';' | '"')
 }
 
 pub fn ascii_alpha(c: char) -> bool {
@@ -61,7 +61,7 @@ pub fn dotted_segments(token: &str) -> Option<Vec<&str>> {
 pub fn caret_prefix(next: Option<char>) -> bool {
     match next {
         None => false,
-        Some(c) => !(c.is_whitespace() || matches!(c, ')' | '}' | ';')),
+        Some(c) => !(c.is_whitespace() || matches!(c, ')' | ']' | '}' | ';')),
     }
 }
 

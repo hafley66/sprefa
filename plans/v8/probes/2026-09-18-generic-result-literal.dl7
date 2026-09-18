@@ -1,0 +1,29 @@
+; Probe: same as 2026-09-18-generic-result.dl7, arguments built with the
+; `[?Ok ?Err]` list literal instead of hand-spelled `nil`/`cons`. Same rows:
+;   :(application(Result, [Body str]), ok, Body, 0)
+;   :(application(Result, [Body str]), error, str, 1)
+;   sum(application(Result, [Body str]))
+;   :(Fetched, outcome, application(Result, [Body str]), 1)
+(: Result
+   (* (: ok type)
+      (: error type)
+      (: return type)))
+
+(<- (Result ?Ok ?Err ?Node)
+    (intern Result [?Ok ?Err] ?Node))
+
+(<- (sum ?Node)
+    (intern_snapshot Result ?Arguments ?Node))
+
+(<- (: ?Node ok ?Ok 0)
+    (intern_snapshot Result ?Arguments ?Node)
+    (cons ?Ok ?Tail ?Arguments))
+
+(<- (: ?Node error ?Err 1)
+    (intern_snapshot Result ?Arguments ?Node)
+    (cons ?Ok ?Tail ?Arguments)
+    (cons ?Err ?Empty ?Tail))
+
+(: Body (* (: text str)))
+
+(: Fetched (* (: url str) (: outcome (Result Body str))))

@@ -59,13 +59,13 @@ Do not use it when:
 
 ```console
 $ $DL8 compile oracle/compile/sources/test/fixtures/15_standard_plus.dl7 --trace 2>&1 >/dev/null | grep Wave | sed 's/^.*event=//'
-Wave(Evaluated { wave: 0, seeds: 108, closure: 124 })
+Wave(Evaluated { wave: 0, seeds: 110, closure: 126 })
 Wave(Rewritten { wave: 0, claimed: 1, edges: 1, rows: 104 })
-Wave(Evaluated { wave: 1, seeds: 108, closure: 109 })
+Wave(Evaluated { wave: 1, seeds: 110, closure: 111 })
 Wave(Settled { wave: 1, rows: 104 })
 ```
 
-Step trace: wave 0 evaluates the macro program over 108 seeds (104 syntax rows, 4 `caret_template_path` facts), claims the one `<+` form and rewrites it; wave 1 claims nothing: steady state.
+Step trace: wave 0 evaluates the macro program over 110 seeds (104 syntax rows, 4 `caret_template_path` facts, 2 `list_template_path` facts), claims the one `<+` form and rewrites it; wave 1 claims nothing: steady state.
 
 The rule that claims, and the rule that swaps the operator:
 

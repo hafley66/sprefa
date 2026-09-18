@@ -1,0 +1,130 @@
+; The list-literal macro. `[a b]` reads as one nested node per item, each
+; headed by the atom `[` (or `[]` at the end) rather than the word `list`, so
+; a user relation actually named `list` is never claimed by mistake.
+;
+; TypeScript-shaped row signatures (NodeId and Relation as in 0_standard.dl7):
+;
+; type ListConsForm = Relation<readonly [form: NodeId]>
+; type ListNilForm = Relation<readonly [form: NodeId]>
+; type ListMint = Relation<readonly [
+;   form: NodeId,
+;   templatePath: number,
+;   output: NodeId,
+; ]>
+
+(: list_cons_form
+   (* (: form type)))
+
+(: list_nil_form
+   (* (: form type)))
+
+(: list_cons_mint
+   (* (: form type)
+      (: template_path int)
+      (: output type)))
+
+(: list_nil_mint
+   (* (: form type)
+      (: template_path int)
+      (: output type)))
+
+; The two minted nodes per claim: 0 the call, 1 its own head atom.
+(: list_template_path
+   (* (: template_path int)))
+
+(list_template_path 0)
+(list_template_path 1)
+
+; function listConsForm(form: FormNode<[AtomNode<"[">, Item, Tail]>): NodeId
+(<- (list_cons_form ?Form)
+    (syntax_form ?Form)
+    (: ?Form item ?Head 0)
+    (syntax_atom ?Head "["))
+
+; function listNilForm(form: FormNode<[AtomNode<"]">]>): NodeId
+(<- (list_nil_form ?Form)
+    (syntax_form ?Form)
+    (: ?Form item ?Head 0)
+    (syntax_atom ?Head "]"))
+
+(<- (syntax_claim ?Form "[")
+    (list_cons_form ?Form))
+
+(<- (syntax_claim ?Form "]")
+    (list_nil_form ?Form))
+
+; GeneratedSyntax(form, output ordinal, template path): 0 is the single
+; expansion output, template path 0 the call node, 1 its head atom.
+(<- (list_cons_mint ?Form ?TemplatePath ?Output)
+    (list_cons_form ?Form)
+    (list_template_path ?TemplatePath)
+    (nil ?Empty)
+    (cons ?TemplatePath ?Empty ?TemplateArguments)
+    (cons 0 ?TemplateArguments ?OutputArguments)
+    (cons ?Form ?OutputArguments ?Arguments)
+    (intern GeneratedSyntax ?Arguments ?Output))
+
+(<- (list_nil_mint ?Form ?TemplatePath ?Output)
+    (list_nil_form ?Form)
+    (list_template_path ?TemplatePath)
+    (nil ?Empty)
+    (cons ?TemplatePath ?Empty ?TemplateArguments)
+    (cons 0 ?TemplateArguments ?OutputArguments)
+    (cons ?Form ?OutputArguments ?Arguments)
+    (intern GeneratedSyntax ?Arguments ?Output))
+
+(<- (node ?Output)
+    (list_cons_mint ?Form ?TemplatePath ?Output))
+
+(<- (node ?Output)
+    (list_nil_mint ?Form ?TemplatePath ?Output))
+
+(<- (syntax_form ?Output)
+    (list_cons_mint ?Form 0 ?Output))
+
+(<- (syntax_form ?Output)
+    (list_nil_mint ?Form 0 ?Output))
+
+(<- (syntax_atom ?Output "cons")
+    (list_cons_mint ?Form 1 ?Output))
+
+(<- (syntax_atom ?Output "nil")
+    (list_nil_mint ?Form 1 ?Output))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (list_cons_mint ?Form ?TemplatePath ?Output)
+    (syntax_source ?Form ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (syntax_source ?Output ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (list_nil_mint ?Form ?TemplatePath ?Output)
+    (syntax_source ?Form ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (: ?Form expansion ?Output 0)
+    (list_cons_mint ?Form 0 ?Output))
+
+(<- (: ?Form expansion ?Output 0)
+    (list_nil_mint ?Form 0 ?Output))
+
+; A `cons` call node carries its own head atom, the original item, and the
+; original tail node verbatim; a claimed tail resolves through its own
+; expansion, the general macro protocol, not this rule.
+(<- (: ?Output item ?Atom 0)
+    (list_cons_mint ?Form 0 ?Output)
+    (list_cons_mint ?Form 1 ?Atom))
+
+(<- (: ?Output item ?Item 1)
+    (list_cons_mint ?Form 0 ?Output)
+    (: ?Form item ?Item 1))
+
+(<- (: ?Output item ?Tail 2)
+    (list_cons_mint ?Form 0 ?Output)
+    (: ?Form item ?Tail 2))
+
+; A `nil` call node carries only its own head atom.
+(<- (: ?Output item ?Atom 0)
+    (list_nil_mint ?Form 0 ?Output)
+    (list_nil_mint ?Form 1 ?Atom))
