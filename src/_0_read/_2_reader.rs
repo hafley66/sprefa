@@ -290,8 +290,8 @@ impl Reader<'_> {
         Ok(self.node(node_id, payload))
     }
 
-    /// `[a b]` reads as `(list a (list b (list_nil)))`: one item per level,
-    /// the two head spellings telling macrotime cons from nil directly.
+    /// `[a b]` nests one item per level, headed by the atom `[` (`[]` at the
+    /// end) rather than a word, so a relation named `list` is never claimed.
     pub fn read_list(&mut self, top: u32, node_id: TermId, start: Pos) -> Result<TermId, TermId> {
         self.bump();
         self.read_list_level(top, node_id, start)
@@ -308,14 +308,14 @@ impl Reader<'_> {
                 self.bump();
                 let end = self.pos;
                 self.rows[slot] = self.source_row(node_id, start, end);
-                let atom = self.u.atom("list_nil");
+                let atom = self.u.atom("]");
                 let head = self.path_item(atom, level_start, end);
                 let list = self.u.list(&[head]);
                 let payload = self.u.compound("form", vec![list]);
                 Ok(self.node(node_id, payload))
             }
             _ => {
-                let atom = self.u.atom("list");
+                let atom = self.u.atom("[");
                 let head = self.path_item(atom, level_start, level_start);
                 let item = self.read_term(top)?;
                 let colon_item = self.colon.take().map(|(from, to)| {

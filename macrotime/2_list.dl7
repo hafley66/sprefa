@@ -1,6 +1,6 @@
-; The list-literal macro. The reader turns `[a b]` into
-; `(list a (list b (list_nil)))`: one item per level, right-nested, the two
-; head spellings telling cons from nil so no macro rule ever counts items.
+; The list-literal macro. `[a b]` reads as one nested node per item, each
+; headed by the atom `[` (or `[]` at the end) rather than the word `list`, so
+; a user relation actually named `list` is never claimed by mistake.
 ;
 ; TypeScript-shaped row signatures (NodeId and Relation as in 0_standard.dl7):
 ;
@@ -35,22 +35,22 @@
 (list_template_path 0)
 (list_template_path 1)
 
-; function listConsForm(form: FormNode<[AtomNode<"list">, Item, Tail]>): NodeId
+; function listConsForm(form: FormNode<[AtomNode<"[">, Item, Tail]>): NodeId
 (<- (list_cons_form ?Form)
     (syntax_form ?Form)
     (: ?Form item ?Head 0)
-    (syntax_atom ?Head "list"))
+    (syntax_atom ?Head "["))
 
-; function listNilForm(form: FormNode<[AtomNode<"list_nil">]>): NodeId
+; function listNilForm(form: FormNode<[AtomNode<"]">]>): NodeId
 (<- (list_nil_form ?Form)
     (syntax_form ?Form)
     (: ?Form item ?Head 0)
-    (syntax_atom ?Head "list_nil"))
+    (syntax_atom ?Head "]"))
 
-(<- (syntax_claim ?Form "list")
+(<- (syntax_claim ?Form "[")
     (list_cons_form ?Form))
 
-(<- (syntax_claim ?Form "list_nil")
+(<- (syntax_claim ?Form "]")
     (list_nil_form ?Form))
 
 ; GeneratedSyntax(form, output ordinal, template path): 0 is the single

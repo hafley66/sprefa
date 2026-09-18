@@ -156,10 +156,38 @@ $ bash book/show.sh compile oracle/compile/sources/test/fixtures/2_partial.dl7
 exit 0
 ```
 
+## List literal
+
+`[a b]` is sugar the reader emits and macrotime rewrites; the kernel still
+sees only `cons`/`nil`. Reading `[a b]` gives the nested form
+`(list a (list b (list_nil)))`, one item per level
+(`src/_0_read/_2_reader.rs:294-329`, `read_list_level`); macrotime claims each
+`list`/`list_nil` head and rewrites it to a `cons`/`nil` call
+(`macrotime/2_list.dl7`), the same `intern`-backed mint `1_caret.dl7`'s
+`caret_mint` uses.
+
+```console
+$ bash book/show.sh expand oracle/macrotime/list_literal_cons_0.json
+(<- (foo ?X) (bar (cons a (cons b (nil)))))
+exit 0
+```
+
+The rewrite runs in `macro_phase` (`src/lib.rs:159-163`), which sees the
+program and its imports, never the prelude or macrotime units themselves
+(`prelude_unit`/`macrotime_unit` both call `text_unit`,
+`src/_8_driver/_1_unit.rs:55-63`, with no macro-library pass). `[..]` compiles
+in an ordinary source file; written inside `prelude/*.dl7` or
+`macrotime/*.dl7` it lowers as a literal call to an undeclared relation
+`list` (`undeclared_relation(list)`, `src/_2_lower/*` reports the site the
+same way for any unclaimed head).
+
 ## What proves it
 
 | claim | path | command |
 |---|---|---|
+| `[a b]` reads as `(list a (list b (list_nil)))`, `[]` as `(list_nil)` | `oracle/macrotime/list_literal_cons_0.json`, `list_literal_nil_0.json` | `cargo test --test _1_read_oracle` |
+| `[a b]`, `[]`, `[a [b c]]`, `[a.b ^c]` macrotime-expand to the `cons`/`nil` chain | `oracle/macrotime/list_literal_*.json` | `cargo test --test _2_macrotime_oracle` |
+| `[?Ok ?Err]` in `intern` builds the same rows as hand-spelled `nil`/`cons` | `plans/v8/probes/2026-09-18-generic-result-literal.dl7` | `bash book/show.sh compile plans/v8/probes/2026-09-18-generic-result-literal.dl7` |
 | `cons` splits and builds, never splits `[]` | `oracle/eval/4_cons_lists.json` | `cargo test --test _0_eval_oracle` |
 | `edge_ref` and `intern` terms | `oracle/eval/9_edge_ref.json` | `bash book/show.sh eval oracle/eval/9_edge_ref.json` |
 | an `intern` row from a lower stratum matches with the constructor unbound | `oracle/eval/16_intern_row_reuse.pl:1-2` | `bash book/show.sh eval oracle/eval/16_intern_row_reuse.json` |
