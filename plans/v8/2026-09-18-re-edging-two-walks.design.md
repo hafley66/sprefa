@@ -165,3 +165,9 @@ emitter annotation. Own lane after caret 3.
 - `@std/doc` is the codegen layer, from the 2026-09-16 doc plan: Wadler's four forms (`text`, `concat`, `nest`, `group`, plus `line`) as a dl7 sum; `doc.layout` an effect over the `pretty` crate; ordered concat as the one aggregate; refkey = a node plus a `name_of(target, node)` rule; `needs_import` a closure rule; a component is a rule returning a Doc row. Alloy's mapping from chat_log/20260802.2: component tree = term tree, refkey = atom, binder = decl/ref join, invariants = goals before render.
 - CLI target library is immaterial; `cmd-ts` by default. The demo proves codegen, not a library.
 - Lane order to the demo: list literal, effect type, oai-rules, `@std/doc`, `@std/cli`, d.ts round trip + vitest. Comptime-on-sqlite_ivm, `@std/gh`, caret 3, `dl6.key` sit off the path.
+
+## Addendum, macrotime is the inner comptime (user 2026-09-18)
+
+- Macrotime is a comptime over syntax rows; comptime is the same loop over `:` rows. Every unit passes through the inner loop, the prelude and the macro library included; a file is expanded by the macros loaded before it (`0_standard`, then `1_caret`, then `2_list`, then `prelude/*`, then std and program). The skip at `src/_8_driver/_1_unit.rs:55-63` (`text_unit` only for prelude and macrotime units) retires.
+- Then the prelude constructor clause pairs shrink with `[..]` (PR #794's stopped steps 5-7).
+- `[a b]` reads one item per level with heads `[` and `]`; a flat form needs a "last item" negation over `:` that every macro writes (`_6_eval/_2_stratify.rs:102-135`). Settled by PR #794.
