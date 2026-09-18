@@ -1,0 +1,4 @@
+; Probe of the caret arc: `^a.b` reads as `(^ (. a b))` (AGENTS.md:115). The
+; dot arm runs first; the caret wraps the path form.
+
+(: Pick (* (: a type) (: ^a.b type)))
