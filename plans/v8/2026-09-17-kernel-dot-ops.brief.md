@@ -6,7 +6,7 @@ failure = stop and report. Preset opus.
 
 Decision rows, read first (`AGENTS.md` decisions table, grep each): "No
 underscore namespacing in kernel op names", "`str.cons` is text concatenation,
-two-way", "The type is the namespace for scalar ops", "`^` read-back is fork A".
+two-way", "The type is the namespace for scalar ops". `str.cons` is an emitter op; the caret macro does not read it (fork C row).
 
 ## Goal
 
