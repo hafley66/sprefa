@@ -1,0 +1,20 @@
+; An answered document feeds a rule that mints a `:` row; the round after
+; the answer sees an edge the round before it did not.
+(fs: (import "@std/fs"))
+
+(: Doc (* (: path str)))
+
+(Doc "fixtures/comptime_effect/0.json")
+
+(<- (: ?Root heading ?Title 9)
+    (Doc ?Path)
+    (fs.json ?Path ?Root)
+    (: ?Root title ?Title ?Index))
+
+(: Heading
+   (* (: title any)))
+
+(<- (Heading ?Title)
+    (Doc ?Path)
+    (fs.json ?Path ?Root)
+    (: ?Root heading ?Title ?Index))

@@ -2,8 +2,8 @@
 //! `2_compiler.pl:1173-1206`, `:1384-1467` and `:1505-1517`.
 
 use super::api::{
-    colon_call_parts, colon_rows, diagnostic, intern_rows, is_kernel_ref, strip_intern_rows, strip_snapshot_rows,
-    Generated,
+    colon_call_parts, colon_rows, diagnostic, intern_rows, is_kernel_ref, strip_intern_rows,
+    strip_snapshot_rows, Generated,
 };
 use super::assemble::{assemble_generated_program, Assembled};
 use super::finish::{derived_bind_diagnostics, validate_functional_rows};
@@ -367,7 +367,9 @@ fn module_names(u: &mut Universe, base_seeds: &[TermId]) -> HashMap<String, Term
             }
         }
     }
-    out.into_iter().map(|(name, (_, rel))| (name, rel)).collect()
+    out.into_iter()
+        .map(|(name, (_, rel))| (name, rel))
+        .collect()
 }
 
 /// Hands this round's new `effect` rows to the Once executors and freezes the

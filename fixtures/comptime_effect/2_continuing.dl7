@@ -1,0 +1,9 @@
+; A Continuing executor never runs at comptime; its effect row waits for the runtime.
+(: timer
+   (* (: period int)
+      (: tick int)))
+
+(: Seen (* (: tick int)))
+
+(<- (Seen ?Tick)
+    (timer 1 ?Tick))
