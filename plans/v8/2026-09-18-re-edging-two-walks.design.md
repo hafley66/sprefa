@@ -40,7 +40,7 @@ Caret 3 design page. Rows, trees, traces. No mermaid. Sites cite today's code.
 | user_product | age | int | 0 | column, arity counts it |
 | user_product | 1 | user_body | 1 | anonymous, product-valued: namespace |
 | user_body | greet | greet_sig | 0 | own label of the namespace |
-| user_body | 1 | greet_rule | 1 | the rule, anonymous member of P1 |
+| user_body | 1 | greet_rule | 1 | the rule, anonymous member of user_body |
 | greet_sig | user | user_product | 0 | column |
 | greet_sig | out | str | 1 | column |
 | user_product | 2 | Mixin | 2 | second namespace edge |
@@ -89,7 +89,7 @@ step 2  owner=user_body     probe (user_body, greet)      hit greet_sig   value 
 diag    (Mixin, greet) also on the walk                   shadowed_member(user_product, greet), prelude rule
 ```
 
-`(User ?Who ?Name)` inside rule R's body, free atom `A`:
+`(User ?Who ?Name)` inside greet_rule's body, free atom `User`:
 
 ```
 step 0  owner=greet_rule    probe (greet_rule, User)      miss   proto(greet_rule) = []
@@ -98,8 +98,8 @@ step 2  owner=user_product  probe (user_product, User)    miss   proto(user_prod
 step 3  owner=module        probe (module, User)          hit user_product   steady state: the module binding
 ```
 
-`(greet ?Who ?Out)` as R's head: step 0 R miss, step 1 P1 hit G. The rule
-releases rows into G. `AGENTS.md:92` holds: R has no name, `1` is an index.
+`(greet ?Who ?Out)` as greet_rule's head: step 0 greet_rule miss, step 1 user_body hit greet_sig. The rule
+releases rows into greet_sig. `AGENTS.md:92` holds: greet_rule has no name, `1` is an index.
 
 ## Re-edging: nothing overwrites
 
@@ -108,7 +108,7 @@ releases rows into G. `AGENTS.md:92` holds: R has no name, `1` is an index.
 | `(: User email str)` | user_product email str 3 | fresh | new column; arity 2 |
 | `(: User age str)` | user_product age str 3 | collides with row `user_product age int 0` | key-1 collision; diagnostic name unverified (no `duplicate_*` in `src/_2_lower`, `src/_3_check`, `prelude/`) |
 | `(: User () Extra)` | user_product 3 Extra 3 | fresh (name = index) | walk order extended; no row replaced |
-| `(: User greet own_greet)` | user_product greet own_greet 3 | fresh on P0 | own label wins over user_body.greet at step 0; `shadowed_member(user_product, greet)` |
+| `(: User greet own_greet)` | user_product greet own_greet 3 | fresh on user_product | own label wins over user_body.greet at step 0; `shadowed_member(user_product, greet)` |
 
 Arity of user_product = edges whose target is a type or value node = 1 (`age`).
 Anonymous product-valued edges are skipped (`_3_check/_1_graph.rs:60`).
