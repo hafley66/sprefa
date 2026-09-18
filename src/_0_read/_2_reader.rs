@@ -2,8 +2,8 @@
 //! flow. The first error wins: forms and source rows are dropped.
 
 use super::tokens::{
-    bool_token, decoded_escape, dotted_segments, float_token, integer_token, term_delimiter,
-    valid_atom, valid_identifier,
+    bool_token, caret_prefix, decoded_escape, dotted_segments, float_token, integer_token,
+    term_delimiter, valid_atom, valid_identifier,
 };
 use crate::_6_eval::{TermId, Universe};
 
@@ -31,6 +31,8 @@ pub struct Reader<'a> {
     pub index: u32,
     pub rows: Vec<TermId>,
     pub vars: Vec<(String, TermId)>,
+    /// The `:` a `^name:` token split off, read as the next item.
+    pub colon: Option<(Pos, Pos)>,
 }
 
 pub fn read(u: &mut Universe, path: &str, text: &str) -> Read {
@@ -48,6 +50,7 @@ pub fn read(u: &mut Universe, path: &str, text: &str) -> Read {
         index: 0,
         rows: Vec::new(),
         vars: Vec::new(),
+        colon: None,
     };
     match reader.top_forms() {
         Ok(forms) => Read {
@@ -180,9 +183,53 @@ impl Reader<'_> {
             }
             self.vars.clear();
             let top = self.index;
-            let form = self.read_term(top)?;
+            let start = self.pos;
+            let mut form = self.read_term(top)?;
+            while let Some((from, to)) = self.top_colon() {
+                form = self.read_top_colon(top, start, form, from, to)?;
+            }
             forms.push(form);
         }
+    }
+
+    /// The pending split colon, or a bare `:` token after layout.
+    fn top_colon(&mut self) -> Option<(Pos, Pos)> {
+        if let Some(span) = self.colon.take() {
+            return Some(span);
+        }
+        self.skip_layout();
+        let next = self.chars.get(self.at + 1).copied();
+        if self.peek() != Some(':') || next.is_some_and(|c| !term_delimiter(c)) {
+            return None;
+        }
+        let from = self.pos;
+        self.bump();
+        Some((from, self.pos))
+    }
+
+    /// `(edge): (body)` at top level groups into the one form `(edge : body)`,
+    /// the shape the infix colon rewrites inside a form. The group's node comes
+    /// after its items'.
+    fn read_top_colon(
+        &mut self,
+        top: u32,
+        start: Pos,
+        left: TermId,
+        from: Pos,
+        to: Pos,
+    ) -> Result<TermId, TermId> {
+        let colon = self.u.atom(":");
+        let colon = self.path_item(colon, from, to);
+        self.skip_layout();
+        let right = self.read_term(top)?;
+        let index = self.index;
+        self.index += 1;
+        let node_id = self.node_id(index);
+        let end = self.pos;
+        self.push_row(node_id, start, end);
+        let list = self.u.list(&[left, colon, right]);
+        let payload = self.u.compound("form", vec![list]);
+        Ok(self.node(node_id, payload))
     }
 
     pub fn read_term(&mut self, top: u32) -> Result<TermId, TermId> {
@@ -198,6 +245,9 @@ impl Reader<'_> {
             Some('"') => self.read_string_term(node_id, start),
             Some('\'') => self.read_symbol(node_id, start),
             Some('?') => self.read_variable(top, node_id, start),
+            Some('^') if caret_prefix(self.chars.get(self.at + 1).copied()) => {
+                self.read_caret(top, node_id, start)
+            }
             None => Err(self.plain_error(node_id, "expected_term", start)),
             Some(_) => self.read_bare(node_id, start),
         }
@@ -224,6 +274,10 @@ impl Reader<'_> {
                 _ => {
                     let item = self.read_term(top)?;
                     items.push(item);
+                    if let Some((from, to)) = self.colon.take() {
+                        let colon = self.u.atom(":");
+                        items.push(self.path_item(colon, from, to));
+                    }
                 }
             }
         }
@@ -382,6 +436,73 @@ impl Reader<'_> {
         let list = self.u.list(&items);
         let payload = self.u.compound("form", vec![list]);
         self.node(node_id, payload)
+    }
+
+    /// `^x` reads as the form `(^ x)`: the caret's own atom, then the next
+    /// term. `^name:` leaves its colon pending as the next item, so the infix
+    /// colon reads `(^name: T)` as `(: (^ name) T)`.
+    pub fn read_caret(&mut self, top: u32, node_id: TermId, start: Pos) -> Result<TermId, TermId> {
+        let slot = self.rows.len();
+        self.rows.push(node_id);
+        self.bump();
+        let caret = self.u.atom("^");
+        let head_end = self.pos;
+        let head = self.path_item(caret, start, head_end);
+        let target = self.read_term(top)?;
+        let target = self.split_colon(target);
+        let end = self.colon.map_or(self.pos, |(from, _)| from);
+        self.rows[slot] = self.source_row(node_id, start, end);
+        let list = self.u.list(&[head, target]);
+        let payload = self.u.compound("form", vec![list]);
+        Ok(self.node(node_id, payload))
+    }
+
+    /// An atom `name:` just read loses its colon to `self.colon`; its source
+    /// row, the last one pushed, ends before the colon.
+    fn split_colon(&mut self, target: TermId) -> TermId {
+        let Some([target_id, payload]) = self.u.args::<2>(target, "node") else {
+            return target;
+        };
+        let text = match self
+            .u
+            .unary(payload, "atom")
+            .and_then(|a| self.u.functor_or_atom(a))
+        {
+            Some((text, [])) => text.to_string(),
+            _ => return target,
+        };
+        let Some(stem) = text.strip_suffix(':').filter(|stem| !stem.is_empty()) else {
+            return target;
+        };
+        let end = self.pos;
+        let from = Pos {
+            offset: end.offset - 1,
+            line: end.line,
+            col: end.col - 1,
+        };
+        self.colon = Some((from, end));
+        let stem = self.u.atom(stem);
+        let payload = self.u.compound("atom", vec![stem]);
+        if let Some(row) = self.rows.pop() {
+            let start = self.row_start(row);
+            let row = self.source_row(target_id, start, from);
+            self.rows.push(row);
+        }
+        self.node(target_id, payload)
+    }
+
+    fn row_start(&self, row: TermId) -> Pos {
+        let int = |i: usize| {
+            self.u
+                .functor(row)
+                .and_then(|(_, args)| self.u.as_int(args[i]))
+                .unwrap_or(0) as usize
+        };
+        Pos {
+            offset: int(2),
+            line: int(4),
+            col: int(5),
+        }
     }
 
     fn path_item(&mut self, name: TermId, start: Pos, end: Pos) -> TermId {

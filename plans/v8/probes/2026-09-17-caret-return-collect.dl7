@@ -1,14 +1,8 @@
 ; Probe 2 of the caret arc: `(: ^b str)` inside a product collects into one
 ; `(: return b)` member edge (AGENTS.md:107).
 ;
-; Reads rc=0 once `valid_atom` carries the `^` arm.
-; Compiles rc=0 TODAY AND IS WRONG: with no macro consuming the caret, the
-; column is minted under the name `^result`. The macro cannot be written:
-; recognising the `^` prefix off `(syntax_atom ?Node ?Text)` needs a text
-; primitive, and the kernel op table at src/_6_eval/_4_kernel.rs:71-85 has
-; none. `str.cons` is a decision (AGENTS.md:84), not a built op.
-;
-; Target shape, which compiles rc=0 on its own:
+; `dl8 expand` gives
 ;   (: Pick (* (: source type) (: names any) (: result type) (: return result)))
+; and `dl8 compile` is rc=0.
 
 (: Pick (* (: source type) (: names any) (: ^result type)))

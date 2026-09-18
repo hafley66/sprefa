@@ -1,0 +1,7 @@
+; Probe of the caret arc: `(User: ^(* ...))` marks the product as the subterm
+; the form evaluates to (AGENTS.md:104). Today that is the same rows as the
+; unmarked form; the caret macro drops the mark.
+;
+; Target shape: (: User (* (: name str)))
+
+(User: ^(* (: name str)))

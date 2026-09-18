@@ -88,6 +88,16 @@ pub fn rewrite_active_graph(
     }
 }
 
+/// A macro's own `syntax_diagnostic(Node, Payload)` rows: each is a
+/// `macrotime_diagnostic(Node, Payload)`, and a wave that reports rewrites
+/// nothing.
+pub fn reported_diagnostics(u: &mut Universe, reported: &[(TermId, TermId)]) -> Vec<TermId> {
+    reported
+        .iter()
+        .map(|(node, payload)| macrotime_diagnostic(u, *node, *payload))
+        .collect()
+}
+
 impl Pass<'_> {
     /// The nodes this node becomes. A claimed node never has its children
     /// walked; it is replaced whole.

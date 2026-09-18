@@ -8,6 +8,7 @@ flowchart LR
   syntax --> unit[_8_driver/_2_macro.rs: one unit at a time]
   unit --> wave[_1_macrotime/_4_expand.rs: one wave]
   standard[macrotime/0_standard.dl7] -->|evaluate| wave
+  caret[macrotime/1_caret.dl7] -->|evaluate| wave
   wave -->|syntax_claim| rewrite["(<+ Head Body) becomes (<- Head Body)"]
   rewrite -->|next wave| wave
   wave -->|repeats a row set| cycle[expansion_cycle]
@@ -16,11 +17,12 @@ flowchart LR
   prelude[prelude/*.dl7: Partial, Option, Key] -->|include_str| colon
 ```
 
-Macrotime runs between reading and lowering. The macro program is `macrotime/0_standard.dl7`, compiled into the binary with the prelude and trimmed to its claim and output rule cone (`src/_8_driver/_0_read.rs:17-18`, `src/_8_driver/_2_macro.rs:15-34`).
+Macrotime runs between reading and lowering. The macro program is `macrotime/0_standard.dl7` then `macrotime/1_caret.dl7`, compiled into the binary with the prelude and trimmed to its claim and output rule cone (`src/_8_driver/_0_read.rs:17-22`, `src/_8_driver/_2_macro.rs:15-34`).
 Each wave evaluates the macro program over the unit's syntax rows, then rewrites every claimed node. It ends when a wave claims nothing, repeats a row set (`expansion_cycle`), or reaches 64 waves (`expansion_round_limit`) (`src/_1_macrotime/_4_expand.rs:1-4`, `:16`, `:117-178`).
-A macro sees the `syntax_frontier`, `syntax_form`, `syntax_atom`, `syntax_literal`, `syntax_variable` and `syntax_source` rows of one unit, the `(: Node item Child Index)` edges, and the kernel (`macrotime/0_standard.dl7:19-51`, `:73`). It claims a node with `syntax_claim` and names its output with `(: Form expansion Output Index)`; a claim with no expansion edge deletes the node (`oracle/compile/sources/test/fixtures/14_syntax_macros.dl7:70-71`).
+A macro sees the `syntax_frontier`, `syntax_form`, `syntax_atom`, `syntax_literal`, `syntax_variable` and `syntax_source` rows of one unit, the `(: Node item Child Index)` edges, and the kernel (`macrotime/0_standard.dl7:20-54`, `:80`). It claims a node with `syntax_claim` and names its output with `(: Form expansion Output Index)`; a claim with no expansion edge deletes the node (`oracle/compile/sources/test/fixtures/14_syntax_macros.dl7:70-71`).
 Units expand one at a time (`_2_macro.rs:36-55`), so a macro sees no other file.
-The standard program defines one macro, `<+`: any form whose item 0 is the atom `<+` becomes the same form with item 0 `<-` (`0_standard.dl7:68-126`). `(<+ Head Body ...)` means `(<- Head Body ...)` today.
+A `syntax_diagnostic` row stops expansion and surfaces as `macrotime_diagnostic(node, payload)` (`0_standard.dl7:56-58`, `src/_1_macrotime/_3_rewrite.rs:91-99`).
+The standard program defines `<+`: any form whose item 0 is the atom `<+` becomes the same form with item 0 `<-` (`0_standard.dl7:75-133`). `(<+ Head Body ...)` means `(<- Head Body ...)` today.
 The prelude is the six `prelude/*.dl7` files, compiled into the binary (`_0_read.rs:8-15`); it declares `Partial`, `Option`, `Key`, `Pick`, `Exclude`, `Conforms` and the TSI primitives.
 
 ## Why
@@ -57,18 +59,18 @@ Do not use it when:
 
 ```console
 $ $DL8 compile oracle/compile/sources/test/fixtures/15_standard_plus.dl7 --trace 2>&1 >/dev/null | grep Wave | sed 's/^.*event=//'
-Wave(Evaluated { wave: 0, seeds: 104, closure: 120 })
+Wave(Evaluated { wave: 0, seeds: 108, closure: 124 })
 Wave(Rewritten { wave: 0, claimed: 1, edges: 1, rows: 104 })
-Wave(Evaluated { wave: 1, seeds: 104, closure: 105 })
+Wave(Evaluated { wave: 1, seeds: 108, closure: 109 })
 Wave(Settled { wave: 1, rows: 104 })
 ```
 
-Step trace: wave 0 evaluates the macro program over 104 syntax seeds, claims the one `<+` form and rewrites it; wave 1 claims nothing: steady state.
+Step trace: wave 0 evaluates the macro program over 108 seeds (104 syntax rows, 4 `caret_template_path` facts), claims the one `<+` form and rewrites it; wave 1 claims nothing: steady state.
 
 The rule that claims, and the rule that swaps the operator:
 
 ```dl7
-; fixture: macrotime/0_standard.dl7:68-102
+; fixture: macrotime/0_standard.dl7:75-109
 ; function plus(invocation: FormNode): readonly [
 ;   FormNode<[AtomNode<"<-">, ...Tail<typeof invocation.items>]>,
 ; ]
@@ -136,7 +138,66 @@ The rule that claims, and the rule that swaps the operator:
 
 ```console
 $ bash book/show.sh compile oracle/macrotime/expansion_cases.dl7
-diagnostic diagnostic(lower, application(owner(macrotime, reader_node(macrotime, 118)), [reader_node(oracle/macrotime/expansion_cases.dl7, 48) 0 0]), undeclared_relation(<-))
+diagnostic diagnostic(lower, application(owner(macrotime, reader_node(macrotime, 131)), [reader_node(oracle/macrotime/expansion_cases.dl7, 48) 0 0]), undeclared_relation(<-))
+exit 1
+```
+
+## `^`
+
+### Reparent
+
+```dl7
+; fixture: plans/v8/probes/2026-09-17-caret-reparent.dl7:10-12
+; diagnostic: undeclared_relation
+(^User: (* (: name str))): (
+  (: greet (<- (greet ?User ?Out) (User ?User ?Name) (str.cons "hi " ?Name ?Out)))
+)
+```
+
+```console
+$ bash book/show.sh expand plans/v8/probes/2026-09-17-caret-reparent.dl7
+(: User (* (: name str)))
+(: User greet (<- (greet ?User ?Out) (User ?User ?Name) ((. str cons) "hi " ?Name ?Out)))
+exit 0
+```
+
+### Return collect
+
+```dl7
+; fixture: plans/v8/probes/2026-09-17-caret-return-collect.dl7:8-8
+(: Pick (* (: source type) (: names any) (: ^result type)))
+```
+
+```console
+$ bash book/show.sh expand plans/v8/probes/2026-09-17-caret-return-collect.dl7
+(: Pick (* (: source type) (: names any) (: result type) (: return result)))
+exit 0
+```
+
+### Marked product
+
+```dl7
+; fixture: plans/v8/probes/2026-09-18-caret-marked-product.dl7:7-7
+(User: ^(* (: name str)))
+```
+
+```console
+$ bash book/show.sh expand plans/v8/probes/2026-09-18-caret-marked-product.dl7
+(: User (* (: name str)))
+exit 0
+```
+
+### Two carets at one level
+
+```dl7
+; fixture: plans/v8/probes/2026-09-17-caret-ambiguous-return.dl7:8-8
+; diagnostic: ambiguous_return
+(: Bad (* (: ^a int) (: ^b int)))
+```
+
+```console
+$ bash book/show.sh expand plans/v8/probes/2026-09-17-caret-ambiguous-return.dl7
+diagnostic diagnostic(macrotime, reader_node(plans/v8/probes/2026-09-17-caret-ambiguous-return.dl7, 3), ambiguous_return)
 exit 1
 ```
 
@@ -144,9 +205,9 @@ exit 1
 
 | claim | path | command |
 |---|---|---|
-| wave expansion equals v7 over every macrotime case | `oracle/macrotime/*.json` | `cargo test --test _2_macrotime_oracle` |
-| the standard `<+` rewrite | `macrotime/0_standard.dl7:68-126` | `$DL8 compile oracle/compile/sources/test/fixtures/15_standard_plus.dl7 --trace` |
+| wave expansion equals v7 over every macrotime case; the four `caret_*` cases expand through `macrotime/1_caret.dl7` | `oracle/macrotime/*.json` | `cargo test --test _2_macrotime_oracle` |
+| the standard `<+` rewrite | `macrotime/0_standard.dl7:75-133` | `$DL8 compile oracle/compile/sources/test/fixtures/15_standard_plus.dl7 --trace` |
 | the protocol program with `drop`, `splice2` and `emit_atom` claims compiles as an ordinary program, equal to v7 | `oracle/compile/sources/test/fixtures/14_syntax_macros.dl7`, `oracle/compile/cases/test-fixtures-14_syntax_macros.json` | `cargo test --test _8_compile_oracle` |
 | the compile door expands with the standard program only | `src/lib.rs:303-317` | `sed -n 303,317p src/lib.rs` |
 | wave limit 64, cycle and limit diagnostics | `src/_1_macrotime/_4_expand.rs:16`, `:161-177` | `grep -n WAVE_LIMIT src/_1_macrotime/_4_expand.rs` |
-| prelude and macrotime compiled in | `src/_8_driver/_0_read.rs:8-18` | `grep -n include_str src/_8_driver/_0_read.rs` |
+| prelude and macrotime compiled in | `src/_8_driver/_0_read.rs:8-22` | `grep -n include_str src/_8_driver/_0_read.rs` |

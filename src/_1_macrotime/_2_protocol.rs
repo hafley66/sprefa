@@ -25,6 +25,9 @@ pub struct Protocol {
     pub variable: TermId,
     pub source: TermId,
     pub claim: TermId,
+    /// `syntax_diagnostic(Node, Payload)`; `None` when the macro library
+    /// declares no such relation.
+    pub diagnostic: Option<TermId>,
     pub node: TermId,
     pub colon: TermId,
     pub item: TermId,
@@ -46,15 +49,17 @@ impl Protocol {
         ]
     }
 
-    pub fn roots(&self) -> [TermId; 6] {
-        [
+    pub fn roots(&self) -> Vec<TermId> {
+        let mut roots = vec![
             self.form,
             self.atom,
             self.literal,
             self.variable,
             self.source,
             self.claim,
-        ]
+        ];
+        roots.extend(self.diagnostic);
+        roots
     }
 }
 
@@ -137,10 +142,17 @@ pub fn macro_protocol(u: &mut Universe, mp: &MacroProgram) -> (Option<Protocol>,
         found.push(relation);
         diagnostics.append(&mut d);
     }
+    // The one optional protocol relation: a library that never reports keeps
+    // resolving.
+    let (diagnostic, mut d) = resolve(u, mp, "syntax_diagnostic", 2);
+    if diagnostic.is_some() || !is_missing(u, &d) {
+        diagnostics.append(&mut d);
+    }
     if !diagnostics.is_empty() {
         return (None, diagnostics);
     }
     let rel = |u: &mut Universe, inner: TermId| wrap_ref(u, inner);
+    let diagnostic = diagnostic.map(|inner| rel(u, inner));
     let frontier = rel(u, found[0].unwrap());
     let form = rel(u, found[1].unwrap());
     let atom = rel(u, found[2].unwrap());
@@ -163,6 +175,7 @@ pub fn macro_protocol(u: &mut Universe, mp: &MacroProgram) -> (Option<Protocol>,
             variable,
             source,
             claim,
+            diagnostic,
             node,
             colon,
             item: u.atom("item"),
@@ -171,6 +184,14 @@ pub fn macro_protocol(u: &mut Universe, mp: &MacroProgram) -> (Option<Protocol>,
         }),
         Vec::new(),
     )
+}
+
+fn is_missing(u: &Universe, diagnostics: &[TermId]) -> bool {
+    diagnostics.iter().all(|d| {
+        args_of(u, *d, "diagnostic", 3)
+            .and_then(|args| u.functor(args[2]))
+            .is_some_and(|(name, _)| name == "missing_protocol_relation")
+    })
 }
 
 fn ground_const(u: &Universe, arg: &Arg, name: &str) -> bool {
@@ -279,21 +300,41 @@ fn claim_rule_name(u: &mut Universe, p: &Protocol, rule: &Rule) -> Option<TermId
     Some(atom_of_text(u, text))
 }
 
-/// `macro_dispatch/4`: when every claim writer names its macro with a literal
-/// item-zero atom, the absence of those names in the graph proves an empty
-/// claim set without running the evaluator.
+/// A writer no item-zero atom names can still name an atom it needs anywhere
+/// in the graph: any positive `syntax_atom` goal with a literal name.
+fn atom_anywhere_name(u: &mut Universe, p: &Protocol, rule: &Rule) -> Option<TermId> {
+    let text = rule.body.iter().find_map(|goal| {
+        if goal.polarity != Polarity::Positive || goal.rel != p.atom || goal.args.len() != 2 {
+            return None;
+        }
+        const_text(u, &goal.args[1])
+    })?;
+    Some(atom_of_text(u, text))
+}
+
+/// `macro_dispatch/4`: when every claim and diagnostic writer names an atom it
+/// needs, the absence of those names in the graph proves an empty claim and
+/// diagnostic set without running the evaluator. A name taken from an
+/// item-zero edge must sit at item zero; any other name anywhere.
 pub fn macro_dispatch(u: &mut Universe, p: &Protocol, rules: &[Rule], g: &Graph) -> Dispatch {
-    let claim_rules: Vec<&Rule> = rules.iter().filter(|r| r.rel == p.claim).collect();
-    let mut names: Vec<TermId> = claim_rules
+    let writers: Vec<&Rule> = rules
         .iter()
-        .filter_map(|r| claim_rule_name(u, p, r))
+        .filter(|r| r.rel == p.claim || Some(r.rel) == p.diagnostic)
         .collect();
-    let claim_count = claim_rules.len();
-    sort_terms(u, &mut names);
-    if claim_count != names.len() {
-        return Dispatch::Unknown;
+    let mut heads: HashSet<TermId> = HashSet::new();
+    let mut anywhere: HashSet<TermId> = HashSet::new();
+    for rule in &writers {
+        if let Some(name) = claim_rule_name(u, p, rule) {
+            heads.insert(name);
+        } else if let Some(name) = atom_anywhere_name(u, p, rule) {
+            anywhere.insert(name);
+        } else {
+            return Dispatch::Unknown;
+        }
     }
-    let named: HashSet<TermId> = names.into_iter().collect();
+    if g.names.values().any(|name| anywhere.contains(name)) {
+        return Dispatch::Present;
+    }
     for row in &g.rows {
         let head = match args_of(u, *row, ":", 4) {
             Some(args) if is_atom_named(u, args[1], "item") && u.as_int(args[3]) == Some(0) => {
@@ -305,7 +346,7 @@ pub fn macro_dispatch(u: &mut Universe, p: &Protocol, rules: &[Rule], g: &Graph)
             _ => continue,
         };
         if let Some(name) = g.names.get(&head) {
-            if named.contains(name) {
+            if heads.contains(name) {
                 return Dispatch::Present;
             }
         }
@@ -409,7 +450,7 @@ pub fn macro_results(
     p: &Protocol,
     closure: &[Row],
     active: &HashSet<TermId>,
-) -> (Vec<TermId>, Vec<Claim>, Vec<Output>) {
+) -> MacroResults {
     let mut by_rel: Rows = HashMap::new();
     for row in closure {
         by_rel.entry(row.rel).or_default().push(row);
@@ -417,7 +458,48 @@ pub fn macro_results(
     let available = available_rows(u, p, &by_rel);
     let (claims, invocations) = active_claims(u, p, &by_rel, active);
     let outputs = expansion_outputs(u, p, &by_rel, &invocations);
-    (available, claims, outputs)
+    let reported = reported_rows(u, p, &by_rel, active);
+    MacroResults {
+        available,
+        claims,
+        outputs,
+        reported,
+    }
+}
+
+pub struct MacroResults {
+    pub available: Vec<TermId>,
+    pub claims: Vec<Claim>,
+    pub outputs: Vec<Output>,
+    /// `syntax_diagnostic(Node, Payload)` on active nodes, sorted, payload
+    /// text turned into an atom.
+    pub reported: Vec<(TermId, TermId)>,
+}
+
+fn reported_rows(
+    u: &mut Universe,
+    p: &Protocol,
+    by_rel: &Rows,
+    active: &HashSet<TermId>,
+) -> Vec<(TermId, TermId)> {
+    let Some(rel) = p.diagnostic else {
+        return Vec::new();
+    };
+    let mut terms: Vec<TermId> = Vec::new();
+    for cells in untagged_rows(u, rows_of(by_rel, rel), &["ref", "const"]) {
+        if active.contains(&cells[0]) {
+            let payload = atom_of_text(u, cells[1]);
+            terms.push(u.compound("reported", vec![cells[0], payload]));
+        }
+    }
+    sort_terms(u, &mut terms);
+    terms
+        .iter()
+        .map(|t| {
+            let args = u.functor(*t).unwrap().1;
+            (args[0], args[1])
+        })
+        .collect()
 }
 
 /// The nodes any syntax relation gives a shape to; a `node` or `item` row about

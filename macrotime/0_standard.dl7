@@ -15,6 +15,7 @@
 ;   authoredName: string,
 ; ]>
 ; type SyntaxClaim = Relation<readonly [invocation: NodeId, macro: string]>
+; type SyntaxDiagnostic = Relation<readonly [node: NodeId, payload: string]>
 
 (: syntax_frontier
    (* (: ordinal int)
@@ -49,6 +50,12 @@
 (: syntax_claim
    (* (: invocation type)
       (: macro str)))
+
+; A row stops expansion: the rewriter reports it as
+; `macrotime_diagnostic(node, payload)` and rewrites nothing.
+(: syntax_diagnostic
+   (* (: node type)
+      (: payload str)))
 
 ; GeneratedSyntax(invocation, output ordinal, template path) is the stable
 ; identity constructor shared by standard syntax templates.

@@ -14,8 +14,12 @@ pub const PRELUDE: [&str; 6] = [
     include_str!("../../prelude/6_modules.dl7"),
 ];
 
-/// `v7/macrotime/*.dl7` at `f5018ad23`.
-pub const MACROTIME: [&str; 1] = [include_str!("../../macrotime/0_standard.dl7")];
+/// `macrotime/*.dl7`: the v7 standard library at `f5018ad23`, then the caret
+/// macro.
+pub const MACROTIME: [&str; 2] = [
+    include_str!("../../macrotime/0_standard.dl7"),
+    include_str!("../../macrotime/1_caret.dl7"),
+];
 
 /// `std/*.dl7`, bundled in the binary like the prelude. The first field is the
 /// tail of `@std/<name>`.

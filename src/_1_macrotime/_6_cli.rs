@@ -9,6 +9,8 @@ use super::_4_expand::{expand_terms, Wave};
 use super::_5_materialize::materialize_terms;
 use crate::_6_eval::json::{program_from_json, term_from_json, term_to_json};
 use crate::_6_eval::{Row, TermId, Universe};
+use crate::_8_driver::_1_unit::text_unit;
+use crate::_8_driver::_2_macro::standard_macro_program;
 use serde_json::{json, Map, Value};
 use std::path::Path;
 use std::process::ExitCode;
@@ -120,6 +122,55 @@ pub fn expansion_json(u: &mut Universe, e: &Expansion) -> Value {
     Value::Object(m)
 }
 
+/// A case's forms and source rows: frozen JSON terms, or `source` text read
+/// and reader-expanded under `path`, the way `dl8 compile` reads a unit.
+fn case_syntax(
+    u: &mut Universe,
+    case: &Map<String, Value>,
+) -> Result<(Vec<TermId>, Vec<TermId>), String> {
+    let Some(text) = case.get("source").and_then(|s| s.as_str()) else {
+        let forms = terms_from_json(u, case.get("forms"))?;
+        let source_rows = terms_from_json(u, case.get("source_rows"))?;
+        return Ok((forms, source_rows));
+    };
+    let path = case
+        .get("path")
+        .and_then(|p| p.as_str())
+        .unwrap_or("source");
+    let origin = u.atom(path);
+    let unit = text_unit(u, origin, path, text).map_err(|e| format!("{e:?}"))?;
+    if !unit.diagnostics.is_empty() {
+        let d: Vec<Value> = unit
+            .diagnostics
+            .iter()
+            .map(|d| term_to_json(u, *d))
+            .collect();
+        return Err(format!("reader diagnostics {}", Value::Array(d)));
+    }
+    let args = u.args::<5>(unit.unit, "dl7_unit").ok_or("no dl7_unit")?;
+    let forms = u.as_list(args[2]).unwrap_or_default();
+    let source_rows = u.as_list(args[3]).unwrap_or_default();
+    Ok((forms, source_rows))
+}
+
+/// The case's frozen macro program, or the bundled `macrotime/*.dl7` library
+/// when the case names none.
+fn case_macro_program(u: &mut Universe, case: &Map<String, Value>) -> Result<MacroProgram, String> {
+    if let Some(frozen) = case.get("macro_program") {
+        return macro_program_from_json(u, frozen);
+    }
+    match standard_macro_program(u, &mut |_| {}) {
+        Ok((Some(program), diagnostics)) if diagnostics.is_empty() => Ok(program),
+        Ok((_, diagnostics)) => {
+            let d: Vec<Value> = diagnostics.iter().map(|d| term_to_json(u, *d)).collect();
+            Err(format!("macro library diagnostics {}", Value::Array(d)))
+        }
+        Err(e) => Err(format!("{e:?}")),
+    }
+}
+
+/// `input` is a JSON case, or a `.dl7` file expanded through the bundled
+/// library under its own path.
 pub fn cli(input: &Path, trace: bool) -> ExitCode {
     let text = match std::fs::read_to_string(input) {
         Ok(t) => t,
@@ -128,44 +179,42 @@ pub fn cli(input: &Path, trace: bool) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let value: Value = match serde_json::from_str(&text) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(phase = "macrotime", error = %e, path = %input.display());
-            return ExitCode::from(2);
-        }
-    };
-    let case = match value.get("input").unwrap_or(&value).as_object() {
-        Some(m) => m.clone(),
-        None => {
-            tracing::error!(phase = "macrotime", error = "no input object", path = %input.display());
-            return ExitCode::from(2);
+    let case = if input.extension().is_some_and(|x| x == "dl7") {
+        let mut m = Map::new();
+        m.insert("path".into(), Value::String(input.display().to_string()));
+        m.insert("source".into(), Value::String(text));
+        m
+    } else {
+        let value: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(phase = "macrotime", error = %e, path = %input.display());
+                return ExitCode::from(2);
+            }
+        };
+        match value.get("input").unwrap_or(&value).as_object() {
+            Some(m) => m.clone(),
+            None => {
+                tracing::error!(phase = "macrotime", error = "no input object", path = %input.display());
+                return ExitCode::from(2);
+            }
         }
     };
     let mut u = Universe::new();
-    let forms = match terms_from_json(&mut u, case.get("forms")) {
-        Ok(f) => f,
+    let (forms, source_rows) = match case_syntax(&mut u, &case) {
+        Ok(syntax) => syntax,
         Err(e) => {
             tracing::error!(phase = "macrotime", error = %e, field = "forms");
             return ExitCode::from(2);
         }
     };
-    let source_rows = match terms_from_json(&mut u, case.get("source_rows")) {
-        Ok(s) => s,
+    let macro_program = match case_macro_program(&mut u, &case) {
+        Ok(p) => p,
         Err(e) => {
-            tracing::error!(phase = "macrotime", error = %e, field = "source_rows");
+            tracing::error!(phase = "macrotime", error = %e, field = "macro_program");
             return ExitCode::from(2);
         }
     };
-    let empty = json!({});
-    let macro_program =
-        match macro_program_from_json(&mut u, case.get("macro_program").unwrap_or(&empty)) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!(phase = "macrotime", error = %e, field = "macro_program");
-                return ExitCode::from(2);
-            }
-        };
     let mut sink = |w: Wave| {
         if trace {
             tracing::debug!(target: "dl8::trace", wave = ?w);

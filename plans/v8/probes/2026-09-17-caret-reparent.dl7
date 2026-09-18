@@ -1,24 +1,12 @@
 ; Probe 1 of the caret arc: `(^Name: T): (body)` reparents every body edge
-; under Name's own node id (AGENTS.md:107).
+; under Name (AGENTS.md:107). The reader groups the top-level `(edge): (body)`.
 ;
-; Reads rc=0 once `valid_atom` carries the `^` arm, as THREE top-level terms:
-; a form, the atom `:`, a form. `(edge): (body)` is not one form; the infix
-; colon at `src/_0_read/_4_expand.rs:169-174` only fires inside a form, so the
-; AGENTS.md:105 spelling `((Name: T): (body))` is the one that groups.
-;
-; Compiles rc=1, `expected_call` on the bare top-level `:` at reader_node 8.
-; Even once it groups it does not compile. Three throw sites, all outside this
-; lane's ownership:
-;   src/_2_lower/_1_forms.rs:70   `bind_form` takes exactly 3 items, so the
-;                                 after-form `(: User greet (<- ...))` is not
-;                                 a bind and lowers to nothing.
-;   src/_2_lower/_2_declare.rs:339 `lower_edge_bind` answers `expected_bind`
-;                                 for a bare rule nested in `(* ...)`.
-;   src/_2_lower/_2_declare.rs:288 every edge owned by the product counts
-;                                 toward arity, so a namespace edge beside the
-;                                 closed tuple has no shape.
-; A labelled rule is `undeclared_relation(<-)` besides, per AGENTS.md:92.
+; `dl8 expand` gives (: User (* (: name str))) and the 4-item
+; (: User greet (<- ...)). `dl8 compile` is rc=1, undeclared_relation(<-):
+;   src/_2_lower/_1_forms.rs:70     `bind_form` takes exactly 3 items.
+;   src/_3_check/_1_graph.rs:60     arity counts every edge an owner holds.
+;   AGENTS.md:92                    a labelled rule is not a form.
 
-(^User: (* (: a text))): (
-  (: greet (<- (greet ?User ?Salutation) (User ?User ?Name) (str.cons "hi " ?Name ?Salutation)))
+(^User: (* (: name str))): (
+  (: greet (<- (greet ?User ?Out) (User ?User ?Name) (str.cons "hi " ?Name ?Out)))
 )

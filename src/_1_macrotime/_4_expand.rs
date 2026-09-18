@@ -6,9 +6,9 @@
 use super::_0_rows::{macrotime_diagnostic, rows_of_terms, sort_terms, terms_of_rows, Graph};
 use super::_2_protocol::{
     macro_dispatch, macro_protocol, macro_results, macro_rules, syntax_seeds, Dispatch,
-    MacroProgram,
+    MacroProgram, MacroResults,
 };
-use super::_3_rewrite::rewrite_active_graph;
+use super::_3_rewrite::{reported_diagnostics, rewrite_active_graph};
 use crate::_6_eval::{evaluate, Program, Row, TermId, Trace, Universe};
 use crate::_7_effect::{reduce_then_apply, Slice};
 use std::marker::PhantomData;
@@ -142,7 +142,15 @@ fn expand_rows(
             closure: closure.rows.len(),
         });
         let active = graph.active_nodes();
-        let (available, claims, outputs) = macro_results(u, &protocol, &closure.rows, &active);
+        let MacroResults {
+            available,
+            claims,
+            outputs,
+            reported,
+        } = macro_results(u, &protocol, &closure.rows, &active);
+        if !reported.is_empty() {
+            return (Vec::new(), Vec::new(), reported_diagnostics(u, &reported));
+        }
         if claims.is_empty() {
             sort_terms(u, &mut origin);
             fx(Wave::Settled {

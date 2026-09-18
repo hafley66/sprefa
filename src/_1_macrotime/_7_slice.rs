@@ -38,6 +38,7 @@ pub fn slice_macro_program(
         protocol.claim,
     ]
     .iter()
+    .chain(&protocol.diagnostic)
     .filter_map(|r| u.unary(*r, "ref"))
     .collect();
 
