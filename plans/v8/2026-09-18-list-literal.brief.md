@@ -1,7 +1,7 @@
 # List literal brief
 
 Lane branch `feat/list-literal`. Base `origin/main` 4fd74cebc1ce9456fee182e0fe2c5681d3cbccd8 (PR #793 merged).
-First action `git merge --ff-only 4fd74cebc1ce9456fee182e0fe2c5681d3cbccd8`; failure = stop and report. Preset opus.
+First action `git merge --ff-only 4fd74cebc1ce9456fee182e0fe2c5681d3cbccd8`; failure = stop and report. Preset sonnet.
 
 Decision row, read first (`AGENTS.md`, grep "list literal"): `[a b]` is a
 bracket form the reader emits, rewritten at macrotime to
