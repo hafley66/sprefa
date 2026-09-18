@@ -141,7 +141,7 @@ impl<'de> serde::Deserialize<'de> for Json {
 }
 
 /// `ref(application(primitive(Name), [Value]))`: the `intern` of one primitive,
-/// the node `(text "x")` names, `kernel::intern_row` incarnate.
+/// the node `(str "x")` names, `kernel::intern_row` incarnate.
 fn value_node(u: &mut Universe, primitive: &str, value: TermId) -> TermId {
     let name = u.atom(primitive);
     let constructor = u.compound("primitive", vec![name]);
@@ -176,7 +176,7 @@ fn walk(
         }
         Json::Text(value) => {
             let value = u.string(value);
-            value_node(u, "text", value)
+            value_node(u, "str", value)
         }
         Json::Array(items) => {
             let mut cells = Vec::with_capacity(items.len());

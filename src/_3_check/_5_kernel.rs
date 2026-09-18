@@ -38,7 +38,7 @@ pub const KERNEL_RELATIONS: [(&str, i64); 20] = [
 
 /// `:617`.
 pub fn primitive_name(name: &str) -> bool {
-    matches!(name, "int" | "float" | "bool" | "text" | "any" | "type")
+    matches!(name, "int" | "float" | "bool" | "str" | "any" | "type")
 }
 
 pub fn is_comparison(name: &str) -> bool {
@@ -118,7 +118,7 @@ fn edge(u: &mut Universe, owner: &str, label: &str, target: TermId, index: i64) 
 /// `msort/2` runs at `:425`.
 pub fn kernel_graph(u: &mut Universe) -> (Vec<TermId>, Vec<TermId>) {
     let mut nodes = Vec::new();
-    for name in ["int", "text", "any", "type"] {
+    for name in ["int", "str", "any", "type"] {
         let atom = u.atom(name);
         let primitive = u.compound("primitive", vec![atom]);
         nodes.push(u.compound("node", vec![primitive]));
@@ -146,7 +146,7 @@ pub fn kernel_graph(u: &mut Universe) -> (Vec<TermId>, Vec<TermId>) {
     }
 
     let int = primitive_ref(u, "int");
-    let text = primitive_ref(u, "text");
+    let text = primitive_ref(u, "str");
     let any = primitive_ref(u, "any");
     let kind = primitive_ref(u, "type");
     let mut edges = Vec::new();

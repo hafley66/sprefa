@@ -241,7 +241,7 @@ fn compiler_literal_type(cx: &mut Cx, value: TermId) -> TermId {
         Term::Int(_) => "int",
         Term::Float(_) => "float",
         Term::Bool(_) => "bool",
-        Term::Str(_) => "text",
+        Term::Str(_) => "str",
         _ => "any",
     };
     let atom = cx.atom(name);
