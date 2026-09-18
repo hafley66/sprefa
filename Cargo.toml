@@ -26,3 +26,8 @@ cc = "1"
 
 [dev-dependencies]
 rusqlite = { version = "0.40", features = ["load_extension"] }
+
+# opt-level 0 made `dl8 compile fixtures/openapi/todo.dl7` 13x slower than release
+# (1.81 s vs 0.13 s, 2026-09-18) and every lane times against the debug binary.
+[profile.dev]
+opt-level = 1
