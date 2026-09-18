@@ -6,7 +6,7 @@ use crate::_6_eval::evaluate::{Closure, Evaluate, Store};
 use crate::_6_eval::kernel::{kernel_ref, semantic};
 use crate::_6_eval::{Diagnostic, Program, Row, Term, TermId, Trace, Universe};
 use crate::_7_effect::Slice;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -39,22 +39,24 @@ pub struct Reconciled {
     pub closure: Closure,
 }
 
-pub struct Reconciler {
+/// The one answer step both loops take: new `effect` rows in, executor rows
+/// out. The tick loop and the comptime round loop each hold one.
+pub struct Answerer {
     executors: Vec<(TermId, Box<dyn IExecutor>)>,
     effect: TermId,
-    /// Effect rows below this index were already handed out. The effect table
-    /// is append-only and deduplicated, so each application passes once.
-    effects_seen: usize,
+    /// `(Relation, Application)` pairs already handed out. The comptime store is
+    /// rebuilt every round, so an index into the effect table cannot be kept.
+    seen: HashSet<(TermId, TermId)>,
 }
 
-impl Reconciler {
+impl Answerer {
     /// One executor per served name. A served name with no executor, or one
     /// the program does not declare, is a diagnostic.
     pub fn new(
         u: &mut Universe,
         names: &HashMap<String, TermId>,
         executors: Vec<Box<dyn IExecutor>>,
-    ) -> Result<Reconciler, Vec<Diagnostic>> {
+    ) -> Result<Answerer, Vec<Diagnostic>> {
         let mut bound = Vec::with_capacity(executors.len());
         let mut diagnostics = Vec::new();
         for executor in executors {
@@ -77,10 +79,63 @@ impl Reconciler {
         if !diagnostics.is_empty() {
             return Err(diagnostics);
         }
-        Ok(Reconciler {
+        Ok(Answerer {
             executors: bound,
             effect: kernel_ref(u, "effect"),
-            effects_seen: 0,
+            seen: HashSet::new(),
+        })
+    }
+
+    /// Hands each new effect row to its relation's executor. A Once application
+    /// whose data row already exists (a reloaded db) is answered. Returns the
+    /// rows to insert and the number of applications handed out.
+    pub fn answer(&mut self, u: &mut Universe, rows: &Store) -> (Vec<Row>, usize) {
+        let mut pending: Vec<Vec<TermId>> = vec![Vec::new(); self.executors.len()];
+        if let Some(table) = rows.table(self.effect) {
+            for index in 0..table.len() {
+                let row = table.row(index as u32);
+                let [rel, application] = [row[0], row[1]];
+                let Some(slot) = self.executors.iter().position(|(r, _)| *r == rel) else {
+                    continue;
+                };
+                if !self.seen.insert((rel, application)) {
+                    continue;
+                }
+                let once = self.executors[slot].1.cadence() == Cadence::Once;
+                if once && data_row_exists(u, rows, rel, application) {
+                    continue;
+                }
+                pending[slot].push(application);
+            }
+        }
+        let asked = pending.iter().map(Vec::len).sum();
+        let mut answers = Vec::new();
+        for ((_, executor), applications) in self.executors.iter_mut().zip(pending) {
+            if !applications.is_empty() {
+                answers.extend(executor.answer(u, rows, &applications));
+            }
+        }
+        (answers, asked)
+    }
+
+    /// The served relations, for `Program.served`.
+    pub fn relations(&self) -> impl Iterator<Item = TermId> + '_ {
+        self.executors.iter().map(|(rel, _)| *rel)
+    }
+}
+
+pub struct Reconciler {
+    answerer: Answerer,
+}
+
+impl Reconciler {
+    pub fn new(
+        u: &mut Universe,
+        names: &HashMap<String, TermId>,
+        executors: Vec<Box<dyn IExecutor>>,
+    ) -> Result<Reconciler, Vec<Diagnostic>> {
+        Ok(Reconciler {
+            answerer: Answerer::new(u, names, executors)?,
         })
     }
 
@@ -98,7 +153,7 @@ impl Reconciler {
         let mut closure = evaluate_tick(u, program, rows, &mut store, fx)?;
         let mut ticks = 0;
         while closure.diagnostics.is_empty() && ticks < max_ticks {
-            let mut answers = self.answer(u, rows);
+            let (mut answers, _) = self.answerer.answer(u, rows);
             answers.extend(self.poll(u, Duration::ZERO));
             if answers.is_empty() && self.armed() {
                 answers = self.poll(u, IDLE_SLICE);
@@ -123,42 +178,15 @@ impl Reconciler {
     }
 
     fn armed(&self) -> bool {
-        self.executors.iter().any(|(_, e)| e.armed())
-    }
-
-    /// Hands each new effect row to its relation's executor. A Once application
-    /// whose data row already exists (a reloaded db) is answered.
-    fn answer(&mut self, u: &mut Universe, rows: &Store) -> Vec<Row> {
-        let mut pending: Vec<Vec<TermId>> = vec![Vec::new(); self.executors.len()];
-        if let Some(table) = rows.table(self.effect) {
-            for index in self.effects_seen..table.len() {
-                let row = table.row(index as u32);
-                let [rel, application] = [row[0], row[1]];
-                let Some(slot) = self.executors.iter().position(|(r, _)| *r == rel) else {
-                    continue;
-                };
-                let once = self.executors[slot].1.cadence() == Cadence::Once;
-                if once && data_row_exists(u, rows, rel, application) {
-                    continue;
-                }
-                pending[slot].push(application);
-            }
-            self.effects_seen = table.len();
-        }
-        let mut answers = Vec::new();
-        for ((_, executor), applications) in self.executors.iter_mut().zip(pending) {
-            if !applications.is_empty() {
-                answers.extend(executor.answer(u, rows, &applications));
-            }
-        }
-        answers
+        self.answerer.executors.iter().any(|(_, e)| e.armed())
     }
 
     fn poll(&mut self, u: &mut Universe, timeout: Duration) -> Vec<Row> {
-        let armed = self.executors.iter().filter(|(_, e)| e.armed()).count();
+        let executors = &mut self.answerer.executors;
+        let armed = executors.iter().filter(|(_, e)| e.armed()).count();
         let slice = timeout / armed.max(1) as u32;
         let mut rows = Vec::new();
-        for (_, executor) in self.executors.iter_mut() {
+        for (_, executor) in executors.iter_mut() {
             if executor.cadence() == Cadence::Continuing {
                 rows.extend(executor.poll(u, slice));
             }
