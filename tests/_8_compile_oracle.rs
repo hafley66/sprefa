@@ -33,6 +33,11 @@ fn sources_dir() -> String {
     oracle_dir().join("sources").display().to_string()
 }
 
+/// `<repo>` stands for the crate root, for a case over a fixture outside `sources`.
+fn repo_dir() -> String {
+    env!("CARGO_MANIFEST_DIR").to_string()
+}
+
 fn status() -> serde_json::Value {
     let text = std::fs::read_to_string(oracle_dir().join("status.json")).unwrap();
     serde_json::from_str(&text).unwrap()
@@ -44,7 +49,12 @@ fn arguments(case: &serde_json::Value) -> Vec<String> {
         .as_array()
         .expect("case without arguments")
         .iter()
-        .map(|a| a.as_str().unwrap().replace("<root>", &sources))
+        .map(|a| {
+            a.as_str()
+                .unwrap()
+                .replace("<root>", &sources)
+                .replace("<repo>", &repo_dir())
+        })
         .collect()
 }
 
@@ -69,7 +79,10 @@ fn every_committed_case_matches_v7() {
             .unwrap();
         let ms = started.elapsed().as_millis();
         let got = String::from_utf8(run.stdout).unwrap();
-        let got = got.trim_end_matches('\n').replace(&sources, "<root>");
+        let got = got
+            .trim_end_matches('\n')
+            .replace(&sources, "<root>")
+            .replace(&repo_dir(), "<repo>");
         let got: serde_json::Value = serde_json::from_str(&got).unwrap();
         for (key, want) in case["expected"].as_object().unwrap() {
             assert_eq!(
@@ -89,11 +102,12 @@ fn every_committed_case_matches_v7() {
             Some(expected_code),
             "{stem}: exit code differs from v7"
         );
-        rows.push((stem.to_string(), ms, entry["v7_ms"].as_u64().unwrap()));
+        rows.push((stem.to_string(), ms, entry["v7_ms"].as_u64()));
         checked += 1;
     }
     assert!(checked > 0, "no committed cases");
     for (stem, ms, v7) in &rows {
+        let v7 = v7.map_or("-".to_string(), |v7| v7.to_string());
         println!("{stem:58} dl8 {ms:>5} ms   v7 {v7:>5} ms");
     }
 }
@@ -102,7 +116,7 @@ fn every_committed_case_matches_v7() {
 fn every_committed_case_file_exists_and_every_case_is_indexed() {
     let cases = status();
     let cases = cases["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 44, "status.json case count");
+    assert_eq!(cases.len(), 45, "status.json case count");
     let mut committed = 0;
     for entry in cases {
         let stem = entry["stem"].as_str().unwrap();

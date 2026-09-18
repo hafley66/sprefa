@@ -123,12 +123,18 @@ def refreeze_compile(binary, directory):
     test asserts.
     """
     sources = os.path.join(directory, "sources")
+    repo = os.path.dirname(os.path.dirname(directory))
     count = 0
     for path in cases(os.path.join(directory, "cases")):
         case = read_json(path)
-        arguments = [a.replace("<root>", sources) for a in case["input"]["arguments"]]
+        arguments = [
+            a.replace("<root>", sources).replace("<repo>", repo)
+            for a in case["input"]["arguments"]
+        ]
         got = json.loads(
-            json.dumps(door(binary, ["compile"] + arguments)).replace(sources, "<root>")
+            json.dumps(door(binary, ["compile"] + arguments))
+            .replace(sources, "<root>")
+            .replace(repo, "<repo>")
         )
         if replace(case, got):
             write_json(path, case)

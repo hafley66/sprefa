@@ -14,6 +14,16 @@
   },
   {
    "arguments": [
+    "<repo>/fixtures/declare/0_primitive_defaults.dl7"
+   ],
+   "bytes": 817591,
+   "committed": true,
+   "compiler_rows": 1262,
+   "diagnostics": 0,
+   "stem": "declare-0_primitive_defaults"
+  },
+  {
+   "arguments": [
     "--project",
     "<root>/.",
     "<root>/emitters/2_interned_storage.dl7",
@@ -499,7 +509,7 @@
    "v7_ms": 977
   }
  ],
- "committed_bytes": 7300095,
+ "committed_bytes": 8117686,
  "rev": "f5018ad23",
  "root_token": "<root>"
 }

@@ -1,0 +1,5 @@
+; A typed default on each kernel primitive: every column target is a value
+; node, and no `@std/tsi` class shadows `str` or `bool`.
+(Defaults: (* (: title (str "x"))
+              (: flag (bool true))
+              (: count (int 3))))
