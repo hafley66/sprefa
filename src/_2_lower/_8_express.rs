@@ -157,9 +157,34 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
                 parsed.id,
                 &items[1..],
                 owner,
+                owner,
             ),
             Ok(Applied::Construction(constructor)) => {
                 lower_construction(cx, constructor, parsed.id, &items[1..], owner)
+            }
+            Err(reason) => {
+                let diagnostic = cx.diagnostic(parsed.id, reason);
+                none(cx, vec![diagnostic])
+            }
+        };
+    }
+    if let Some((call_owner, label)) = primitive_path_head(cx, items[0], owner) {
+        return match expression_callable(cx, label, call_owner) {
+            Ok(Applied::Relation(callable, arity, key_sets)) => lower_expression_call(
+                cx,
+                callable,
+                arity,
+                key_sets,
+                label,
+                parsed.id,
+                &items[1..],
+                call_owner,
+                owner,
+            ),
+            Ok(Applied::Construction(_)) => {
+                let reason = not_a_relation(cx, label, call_owner);
+                let diagnostic = cx.diagnostic(parsed.id, reason);
+                none(cx, vec![diagnostic])
             }
             Err(reason) => {
                 let diagnostic = cx.diagnostic(parsed.id, reason);
@@ -274,19 +299,59 @@ pub fn expression_callable(cx: &mut Cx, name: TermId, owner: TermId) -> Result<A
         cx.u.functor_or_atom(name)
             .map(|(n, _)| n.to_string())
             .unwrap_or_default();
-    if let Some(arity) = kernel::kernel_relation(&text) {
-        let key_sets = key_sets_term(cx, &kernel::kernel_keys(&text));
+    let typed = primitive_owner(cx.u, owner);
+    if let Some(arity) = kernel::kernel_relation(typed.as_deref(), &text) {
+        let key_sets = key_sets_term(cx, &kernel::kernel_keys(typed.as_deref(), &text));
         return Ok(Applied::Relation(
-            Callable::Kernel(text),
+            Callable::Kernel {
+                owner: typed,
+                label: text,
+            },
             arity as i64,
             key_sets,
         ));
+    }
+    if typed.is_some() {
+        return Err(cx.compound("undeclared_relation", vec![name]));
     }
     if primitive_type(&text) {
         let constructor = cx.compound("name", vec![owner, name]);
         return Ok(Applied::Construction(constructor));
     }
     Err(cx.compound("undeclared_relation", vec![name]))
+}
+
+/// The primitive a typed kernel op hangs off: `name(_, int)`, which a dotted
+/// head `int.add` lowers its owner to, or the node `primitive(int)`.
+fn primitive_owner(u: &Universe, owner: TermId) -> Option<String> {
+    let primitive = u
+        .args::<2>(owner, "name")
+        .map(|[_, primitive]| primitive)
+        .or_else(|| u.unary(owner, "primitive"))?;
+    let (text, args) = u.functor_or_atom(primitive)?;
+    (args.is_empty() && primitive_type(text)).then(|| text.to_string())
+}
+
+/// `(. int add)` as an operator: the call owner `name(Owner, int)` and the
+/// label `add`. `None` unless the pair is a typed kernel op and the primitive
+/// name is not rebound in scope.
+pub fn primitive_path_head(cx: &mut Cx, head: TermId, owner: TermId) -> Option<(TermId, TermId)> {
+    let segments = path_segments(cx.u, head)?;
+    let [primitive, label] = segments[..] else {
+        return None;
+    };
+    let primitive = path_segment_atom(cx.u, primitive)?;
+    let label = path_segment_atom(cx.u, label)?;
+    if cx.reservations.scoped(owner, primitive).is_some() {
+        return None;
+    }
+    let primitive_text = cx.u.functor_or_atom(primitive).map(|(n, _)| n.to_string())?;
+    let label_text = cx.u.functor_or_atom(label).map(|(n, _)| n.to_string())?;
+    if !primitive_type(&primitive_text) {
+        return None;
+    }
+    kernel::kernel_relation(Some(&primitive_text), &label_text)?;
+    Some((cx.compound("name", vec![owner, primitive]), label))
 }
 
 /// The primitive class a literal belongs to. `_6_partial.rs:239` maps the same
@@ -311,9 +376,22 @@ pub fn not_a_relation(cx: &mut Cx, name: TermId, owner: TermId) -> TermId {
     cx.compound(reason, vec![name])
 }
 
-/// One kernel goal `pending_goal(positive, call(name(Owner, Relation), Args))`.
-fn kernel_goal(cx: &mut Cx, owner: TermId, relation: &str, arguments: &[TermId]) -> TermId {
-    let atom = cx.atom(relation);
+/// One kernel goal `pending_goal(positive, call(name(Owner, Label), Args))`;
+/// a typed op calls `name(name(Owner, Primitive), Label)`.
+fn kernel_goal(
+    cx: &mut Cx,
+    owner: TermId,
+    (primitive, label): (Option<&str>, &str),
+    arguments: &[TermId],
+) -> TermId {
+    let owner = match primitive {
+        Some(primitive) => {
+            let primitive = cx.atom(primitive);
+            cx.compound("name", vec![owner, primitive])
+        }
+        None => owner,
+    };
+    let atom = cx.atom(label);
     let name = cx.compound("name", vec![owner, atom]);
     let list = cx.u.list(arguments);
     let call = cx.compound("call", vec![name, list]);
@@ -357,18 +435,18 @@ pub fn lower_construction(
     }
     let mut ordinal: i64 = 0;
     let mut tail = construction_var(cx, node_id, ordinal);
-    goals.push(kernel_goal(cx, owner, "nil", &[tail]));
+    goals.push(kernel_goal(cx, owner, (None, "nil"), &[tail]));
     origins.push(node_id);
     for value in values.iter().rev() {
         ordinal += 1;
         let next = construction_var(cx, node_id, ordinal);
-        goals.push(kernel_goal(cx, owner, "cons", &[*value, tail, next]));
+        goals.push(kernel_goal(cx, owner, (None, "cons"), &[*value, tail, next]));
         origins.push(node_id);
         tail = next;
     }
     ordinal += 1;
     let value = construction_var(cx, node_id, ordinal);
-    goals.push(kernel_goal(cx, owner, "intern", &[constructor, tail, value]));
+    goals.push(kernel_goal(cx, owner, (None, "intern"), &[constructor, tail, value]));
     origins.push(node_id);
     Lowering {
         value,
@@ -413,7 +491,7 @@ pub fn expression_return_position(
             let return_atom = cx.atom("return");
             cx.edges.return_indices(*owner, return_atom)
         }
-        Callable::Kernel(name) => kernel::kernel_return_positions(name)
+        Callable::Kernel { owner, label } => kernel::kernel_return_positions(owner.as_deref(), label)
             .into_iter()
             .map(|i| i as i64)
             .collect(),
@@ -444,6 +522,7 @@ fn lower_expression_call(
     name: TermId,
     node_id: TermId,
     argument_nodes: &[TermId],
+    call_owner: TermId,
     owner: TermId,
 ) -> Lowering {
     let return_index = match expression_return_position(cx, &callable, node_id) {
@@ -464,7 +543,7 @@ fn lower_expression_call(
         node_id,
         &input,
         normalized,
-        owner,
+        call_owner,
     )
 }
 
@@ -762,11 +841,21 @@ pub fn decode_callable(cx: &Cx, term: TermId) -> Callable {
     if let Some(owner) = cx.u.unary(term, "target") {
         return Callable::Target(owner);
     }
-    let name =
-        cx.u.unary(term, "kernel")
-            .and_then(|n| cx.u.functor_or_atom(n).map(|(n, _)| n.to_string()))
-            .unwrap_or_default();
-    Callable::Kernel(name)
+    let text = |id: TermId| {
+        cx.u.functor_or_atom(id)
+            .map(|(n, _)| n.to_string())
+            .unwrap_or_default()
+    };
+    if let Some([owner, label]) = cx.u.args::<2>(term, "kernel") {
+        return Callable::Kernel {
+            owner: Some(text(owner)),
+            label: text(label),
+        };
+    }
+    Callable::Kernel {
+        owner: None,
+        label: cx.u.unary(term, "kernel").map(text).unwrap_or_default(),
+    }
 }
 
 pub fn decode_bound(cx: &Cx, list: TermId) -> Vec<(i64, TermId)> {

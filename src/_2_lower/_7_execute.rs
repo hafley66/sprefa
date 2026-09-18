@@ -195,6 +195,9 @@ pub fn lower_call(
     };
     let head = forms::form_head_atom(cx.u, &items);
     if head.is_none() {
+        if let Some((call_owner, label)) = express::primitive_path_head(cx, items[0], owner) {
+            return lower_named_call(cx, parsed.id, label, &items, call_owner, owner, head_mode);
+        }
         if let Some(call) = lower_path_call(cx, parsed.id, &items, owner, head_mode)? {
             return Ok(call);
         }
@@ -210,20 +213,34 @@ pub fn lower_call(
         let arguments = lower_colon_arguments(cx, &items[1..], owner, head_mode)?;
         return finish_call_arguments(cx, head, parsed.id, owner, arguments, head_mode);
     }
-    let (callable, arity) = match expression_callable(cx, head, owner) {
+    lower_named_call(cx, parsed.id, head, &items, owner, owner, head_mode)
+}
+
+/// A call whose head names a relation under `call_owner`; its arguments lower
+/// in the scope `owner`.
+fn lower_named_call(
+    cx: &mut Cx,
+    node_id: TermId,
+    head: TermId,
+    items: &[TermId],
+    call_owner: TermId,
+    owner: TermId,
+    head_mode: bool,
+) -> Result<Call, TermId> {
+    let (callable, arity) = match expression_callable(cx, head, call_owner) {
         Ok(express::Applied::Relation(callable, arity, _)) => (callable, arity),
         // A goal position takes a relation only; construction is spelled with
         // `intern` here, so the head names no relation.
         Ok(express::Applied::Construction(_)) => {
-            let reason = express::not_a_relation(cx, head, owner);
-            return Err(cx.diagnostic(parsed.id, reason));
+            let reason = express::not_a_relation(cx, head, call_owner);
+            return Err(cx.diagnostic(node_id, reason));
         }
-        Err(reason) => return Err(cx.diagnostic(parsed.id, reason)),
+        Err(reason) => return Err(cx.diagnostic(node_id, reason)),
     };
     let all = slots::callable_slots(cx, &callable, arity);
     let arguments =
-        normalize_call_arguments(cx, head, parsed.id, &all, &items[1..], owner, head_mode)?;
-    finish_call_arguments(cx, head, parsed.id, owner, arguments, head_mode)
+        normalize_call_arguments(cx, head, node_id, &all, &items[1..], owner, head_mode)?;
+    finish_call_arguments(cx, head, node_id, call_owner, arguments, head_mode)
 }
 
 struct Arguments {
