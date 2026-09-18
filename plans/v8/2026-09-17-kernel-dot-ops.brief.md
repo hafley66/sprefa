@@ -1,7 +1,7 @@
 # Kernel dot ops brief
 
-Lane branch `feat/kernel-dot-ops`. Base `origin/main` AFTER `feat/str-primitive`
-merges (coordinator states the sha). First action `git merge --ff-only <sha>`;
+Lane branch `feat/kernel-dot-ops`. Base `origin/main` ef3147565f5150fe6407b05844ac866a0898c6fb (PRs #789, #790 merged; the str primitive and @std/tsi are in)
+First action `git merge --ff-only <sha>`;
 failure = stop and report. Preset opus.
 
 Decision rows, read first (`AGENTS.md` decisions table, grep each): "No
