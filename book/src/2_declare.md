@@ -13,22 +13,22 @@ flowchart LR
   product --> colon[: rows, the type graph]
   sum --> colon
   key --> colon
-  prim[_3_check/_5_kernel.rs: int float bool text any type] -->|primitive_name| colon
+  prim[_3_check/_5_kernel.rs: int float bool str any type] -->|primitive_name| colon
   prelude[prelude/5_tsi_primitives.dl7: string] --> colon
   colon -->|dl8 check| unresolved[unresolved_name naming the field]
 ```
 
 `(: Name (* (: field type) ...))` declares a product: a node, a `product` row, one edge per field, and one relation whose arity is the field count (`src/_2_lower/_2_declare.rs:189-194`, `:268-306`).
 `(: Name (+ (: variant type) ...))` declares a sum: the node, a `sum` row and the edges, and no relation (`_2_declare.rs:268` "A sum declares no relation").
-A field type is a primitive, a declared name, a literal, or an application such as `(Option text)`.
-The primitive names are `int float bool text any type` (`src/_3_check/_5_kernel.rs:40-42`); `string` is a prelude product `(: string (* ))` (`prelude/5_tsi_primitives.dl7:6`).
+A field type is a primitive, a declared name, a literal, or an application such as `(Option str)`.
+The primitive names are `int float bool str any type` (`src/_3_check/_5_kernel.rs:40-42`); `string` is a prelude product `(: string (* ))` (`prelude/5_tsi_primitives.dl7:6`).
 Literals: 64-bit integers, decimal floats, `true`, `false`, and double-quoted text (`src/_0_read/_2_reader.rs:376-397`). A wider integer is `integer_out_of_range` (`_2_reader.rs:383`).
 A product field whose name is `return` makes every other position the key (`_2_declare.rs:292-303`).
 
 A field target is a type node or a value node.
 A type node is a primitive or a declared name, and the field has that type and no default.
 A value node is an application of a type to literals, and the field has that type and that literal as its default.
-`(text "untitled")` is the value node `intern text ["untitled"]` (`src/_2_lower/_8_express.rs`, `lower_construction`).
+`(int 5)` is the value node `intern int [5]` (`src/_2_lower/_8_express.rs`, `lower_construction`).
 `(: count 3)` names no type, so the literal's own primitive is the constructor (`src/_2_lower/_5_derived.rs`, `literal_construction`).
 Applying a node that declares a relation is a goal; applying a node that declares none is construction (`_8_express.rs`, `expression_callable`).
 
@@ -61,13 +61,13 @@ Every scalar kind in one product:
 
 ```dl7
 ; fixture: fixtures/store/0_round_trip.dl7
-(: Reading (* (: name text) (: value float) (: ok bool) (: count int)))
+(: Reading (* (: name str) (: value float) (: ok bool) (: count int)))
 
 (Reading "a" 1.5 true 3)
 
 (Reading "b" -0.25 false 4)
 
-(: Copied (* (: name text) (: value float)))
+(: Copied (* (: name str) (: value float)))
 
 (<- (Copied ?Name ?Value)
     (Reading ?Name ?Value ?Ok ?Count))
@@ -106,8 +106,8 @@ A typed default, and one inferred from its literal:
 ```dl7
 ; fixture: plans/v8/probes/2026-09-17-defaults.dl7
 ; A typed default: the column target is a value node, not a type node.
-(User: (* (: name text)
-          (: title (text "untitled"))
+(User: (* (: name str)
+          (: title (int 5))
           (: n 3)
           (: return type)))
 ```
@@ -117,8 +117,8 @@ Its rx lowering. `nil`, `cons` and `intern` are the kernel goals
 
 ```ts
 const title$ = nil().pipe(
-  mergeMap((tail) => cons("untitled", tail)),
-  mergeMap((argumentList) => intern(text, argumentList)),
+  mergeMap((tail) => cons(5, tail)),
+  mergeMap((argumentList) => intern(int, argumentList)),
   map((value) => colon(User, "title", value, 1)),
 );
 
@@ -138,8 +138,8 @@ $ $DL8 compile plans/v8/probes/2026-09-17-defaults.dl7 | jq -r '.diagnostics | l
 
 | field | target | `column_type` | `default` |
 |---|---|---|---|
-| `name` | `text` | `text` | none |
-| `title` | `(text "untitled")` | `text` | `"untitled"` |
+| `name` | `str` | `str` | none |
+| `title` | `(int 5)` | `int` | `5` |
 | `n` | `3` | `int` | `3` |
 | `return` | `type` | `type` | none |
 
@@ -162,7 +162,7 @@ exit 1
 
 | claim | path | command |
 |---|---|---|
-| a float, a bool and text round-trip through a product | `fixtures/store/0_round_trip.expected.json` | `cargo test --test _13_store reopening_the_db_leaves_the_closure_identical` |
+| a float, a bool and str round-trip through a product | `fixtures/store/0_round_trip.expected.json` | `cargo test --test _13_store reopening_the_db_leaves_the_closure_identical` |
 | float and bool literals | `fixtures/literals/0_float.expected.json`, `1_bool.expected.json` | `cargo test --test _10_literals` |
 | a sum declares no relation | `src/_2_lower/_2_declare.rs:268-277` | `sed -n 268,277p src/_2_lower/_2_declare.rs` |
 | six primitive names | `src/_3_check/_5_kernel.rs:40-42` | `grep -n primitive_name src/_3_check/_5_kernel.rs` |

@@ -19,7 +19,7 @@ A relation is declared with `:`. A fact is the relation applied to values. A rul
 
 ```dl7
 ; fixture: fixtures/sqlite_emit/1_transitive.dl7
-(: Edge (* (: from text) (: to text)))
+(: Edge (* (: from str) (: to str)))
 
 (Edge "a" "b")
 
@@ -31,7 +31,7 @@ A relation is declared with `:`. A fact is the relation applied to values. A rul
 
 (Edge "x" "y")
 
-(: Reach (* (: from text) (: to text)))
+(: Reach (* (: from str) (: to str)))
 
 (<- (Reach ?From ?To)
     (Edge ?From ?To))
@@ -71,7 +71,7 @@ The cycle `b c d b` terminates because a relation is a set: a row that already e
 
 ```dl7
 ; fixture: fixtures/aggregates/2_grouped.dl7
-(: Score (* (: player text) (: points int)))
+(: Score (* (: player str) (: points int)))
 
 (Score "ann" 3)
 
@@ -79,7 +79,7 @@ The cycle `b c d b` terminates because a relation is a set: a row that already e
 
 (Score "bob" 10)
 
-(: PlayerTotal (* (: player text) (: sum int)))
+(: PlayerTotal (* (: player str) (: sum int)))
 
 (<- (PlayerTotal ?Player (sum ?Points))
     (Score ?Player ?Points))
@@ -105,24 +105,24 @@ $ bash book/show.sh eval fixtures/aggregates/2_grouped.dl7
 ; Loading is an ordinary rule over effect; the pattern opens with
 ; intern_snapshot then cons, the way Partial reads back in the prelude.
 (: fetch_json
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
-(: Watch (* (: url text)))
+(: Watch (* (: url str)))
 
 (Watch "https://a")
 
 (Watch "https://b")
 
 (: Body
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
 (<- (Body ?Url ?Body)
     (Watch ?Url)
     (fetch_json ?Url ?Body))
 
-(: Loading (* (: url text)))
+(: Loading (* (: url str)))
 
 (<- (Loading ?Url)
     (effect fetch_json ?App)

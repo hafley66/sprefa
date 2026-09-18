@@ -53,7 +53,7 @@ Do not use it when:
 
 ```dl7
 ; fixture: fixtures/aggregates/2_grouped.dl7
-(: Score (* (: player text) (: points int)))
+(: Score (* (: player str) (: points int)))
 
 (Score "ann" 3)
 
@@ -61,7 +61,7 @@ Do not use it when:
 
 (Score "bob" 10)
 
-(: PlayerTotal (* (: player text) (: sum int)))
+(: PlayerTotal (* (: player str) (: sum int)))
 
 (<- (PlayerTotal ?Player (sum ?Points))
     (Score ?Player ?Points))

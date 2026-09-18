@@ -45,7 +45,7 @@ Do not use it when:
 
 ```dl7
 ; fixture: fixtures/term_lt/1_top.dl7
-(: Score (* (: player text) (: points int)))
+(: Score (* (: player str) (: points int)))
 
 (Score "ann" 4)
 
@@ -53,14 +53,14 @@ Do not use it when:
 
 (Score "cy" 7)
 
-(: Beaten (* (: player text)))
+(: Beaten (* (: player str)))
 
 (<- (Beaten ?Player)
     (Score ?Player ?Points)
     (Score ?Other ?More)
     (term_lt ?Points ?More))
 
-(: Top (* (: player text)))
+(: Top (* (: player str)))
 
 (<- (Top ?Player)
     (Score ?Player ?Points)

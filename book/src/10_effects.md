@@ -56,10 +56,10 @@ Do not use it when:
 ; fixture: fixtures/host_effect/1_settled.dl7
 ; A settled row feeds the reader like any fact; the miss stays for the other url.
 (: fetch_json
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
-(: Watch (* (: url text)))
+(: Watch (* (: url str)))
 
 (Watch "https://a")
 
@@ -68,8 +68,8 @@ Do not use it when:
 (fetch_json "https://a" "hello")
 
 (: Body
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
 (<- (Body ?Url ?Body)
     (Watch ?Url)
@@ -93,7 +93,7 @@ Loading as a rule:
 
 ```dl7
 ; fixture: fixtures/host_effect/3_loading.dl7:21-26
-(: Loading (* (: url text)))
+(: Loading (* (: url str)))
 
 (<- (Loading ?Url)
     (effect fetch_json ?App)

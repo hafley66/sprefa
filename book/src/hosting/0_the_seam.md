@@ -99,7 +99,7 @@ pub trait IExecutor {
 - `Cadence::Once` answers each application once per process; `Cadence::Continuing` arms on an application and later rows come from `poll` (`_2_reconcile.rs:12-18`, `:157-167`).
 - `answer` may return rows for a second relation; every error relation is declared by the program and looked up by name (`src/_9_runtime/_3_executors/mod.rs:44-45`).
 - The binding from served name to executor is one `match` on the name string in `executors_for` (`mod.rs:61-100`). An unknown name is `served_relation_no_executor` (`mod.rs:100`); a missing declaration is `served_relation_unknown`; a missing error relation is `executor_relation_unknown` (`mod.rs:75-76`).
-- Nothing compares the declared columns with the executor's columns: a user `timer` with one text column is served and never answered ([Namespacing](../modules/4_namespacing.md), `probes/9_user_timer_rule.dl7`).
+- Nothing compares the declared columns with the executor's columns: a user `timer` with one str column is served and never answered ([Namespacing](../modules/4_namespacing.md), `probes/9_user_timer_rule.dl7`).
 - The run ends when a tick inserts nothing and no executor is armed, or at `--max-ticks` (`_2_reconcile.rs:87-123`).
 
 ## Receipts

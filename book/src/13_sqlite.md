@@ -65,7 +65,7 @@ Every view of a program with negation, count and max over recursion:
 
 ```dl7
 ; fixture: fixtures/sqlite_emit/3_consumers.dl7
-(: Node (* (: name text)))
+(: Node (* (: name str)))
 
 (Node "a")
 
@@ -75,7 +75,7 @@ Every view of a program with negation, count and max over recursion:
 
 (Node "d")
 
-(: Edge (* (: from text) (: to text)))
+(: Edge (* (: from str) (: to str)))
 
 (Edge "a" "b")
 
@@ -83,7 +83,7 @@ Every view of a program with negation, count and max over recursion:
 
 (Edge "d" "a")
 
-(: Reach (* (: from text) (: to text)))
+(: Reach (* (: from str) (: to str)))
 
 (<- (Reach ?From ?To)
     (Edge ?From ?To))
@@ -92,18 +92,18 @@ Every view of a program with negation, count and max over recursion:
     (Reach ?From ?Middle)
     (Edge ?Middle ?To))
 
-(: Unreached (* (: name text)))
+(: Unreached (* (: name str)))
 
 (<- (Unreached ?Name)
     (Node ?Name)
     (not (Reach "a" ?Name)))
 
-(: OutDegree (* (: from text) (: count int)))
+(: OutDegree (* (: from str) (: count int)))
 
 (<- (OutDegree ?From (count ?To))
     (Reach ?From ?To))
 
-(: Farthest (* (: from text) (: to text)))
+(: Farthest (* (: from str) (: to str)))
 
 (<- (Farthest ?From (max ?To))
     (Reach ?From ?To))
@@ -130,13 +130,13 @@ Four rules outside the set:
 
 ```dl7
 ; fixture: fixtures/sqlite_emit/4_outside.dl7
-(: Edge (* (: from text) (: to text)))
+(: Edge (* (: from str) (: to str)))
 
 (Edge "a" "b")
 
 (Edge "b" "c")
 
-(: Path (* (: from text) (: to text)))
+(: Path (* (: from str) (: to str)))
 
 (<- (Path ?From ?To)
     (Edge ?From ?To))

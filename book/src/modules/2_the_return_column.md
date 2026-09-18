@@ -4,17 +4,17 @@
 
 ## Example
 
-`Wrap` is an ordinary product whose last column is named `return`. A rule interns the argument list, so `(Wrap text)` names one node.
+`Wrap` is an ordinary product whose last column is named `return`. A rule interns the argument list, so `(Wrap int)` would name one node built from the primitive `int`.
 
 ```dl7
 {{#include ../probes/0_return_column.dl7}}
 ```
 
-The label of `Holder`'s edge is the node `(Wrap text)`:
+The probe writes `(Wrap str)`, and `str` is not that clean case: `prelude/5_tsi_primitives.dl7:59` already declares a product `str`, so the bare name resolves to that prelude product, not to a construction of the primitive ([Shadowing](1_names.md#shadowing)). The label of `Holder`'s edge is `intern(Wrap, [str])` all the same, str here naming the prelude product:
 
 ```console
 $ $DL8 compile book/src/probes/0_return_column.dl7 | jq -r --arg owner Holder '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"'
-(: Holder (Wrap primitive(text)) primitive(int))
+(: Holder (Wrap str) primitive(int))
 ```
 
 The same shape with the column named `target`:
@@ -30,11 +30,11 @@ exit 1
 ```
 
 ```
-step 0  (Wrap text) in label position    callable=target(Wrap)  arity=2
+step 0  (Wrap str) in label position     callable=target(Wrap)  arity=2
 step 1  return indices of Wrap           [1]                    one: the expression's value is column 1
-step 2  input slots                      [0]                    text fills column 0
-step 3  goal (Wrap text ?Label)          the intern rule binds ?Label to one node
-step 1' (Pair text)                      []                     none: expression_without_return
+step 2  input slots                      [0]                    str (the prelude product) fills column 0
+step 3  goal (Wrap str ?Label)           the intern rule binds ?Label to one node
+step 1' (Pair str)                       []                     none: expression_without_return
 ```
 
 ## Option, Key and Partial
@@ -71,7 +71,7 @@ A full application on the right of a declaration is its return column's node:
 
 ```console
 $ $DL8 compile book/src/probes/20_full_application_bind.dl7 | jq -r --arg owner 'module(file(book/src/probes/20_full_application_bind.dl7))' '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"' | grep WrappedText
-(: module(file(book/src/probes/20_full_application_bind.dl7)) WrappedText (Wrap primitive(text)))
+(: module(file(book/src/probes/20_full_application_bind.dl7)) WrappedText (Wrap str))
 ```
 
 A top-level named bind with fewer arguments curries: `(: PairUser (Pair User))` then `(PairUser Order PairResult)` (`oracle/compile/sources/test/fixtures/5_curry.dl7:12-15`), and a relation may return a callable (`5_curry.dl7:31-41`). The curried name here resolves through the prelude alias, a second module:
