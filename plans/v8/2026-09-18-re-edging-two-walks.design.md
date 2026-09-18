@@ -156,10 +156,10 @@ emitter annotation. Own lane after caret 3.
 - A userland effect is a view over hosted effects: declared with the same `(effect Input Output)` form, its request rows forwarded down by rules and its answer rows derived up by rules, no executor. `@std/gh` is the first one: `gh.repos`, `gh.prs`, `gh.issues` over `http.json` against `api.github.com`; pure dl7.
 - `str.cons` stays arity 3. Variadic `str.cons` and `"{?x}"` interpolation are macrotime, unbuilt until the pain is earned.
 
-## Addendum, one store (user 2026-09-18)
+## Addendum, comptime output (user 2026-09-18)
 
-- Comptime rounds run on sqlite_ivm. The db is the compile artifact: edges, interns, effect answers, rules, names are tables. `dl8 eval app.db` resumes it; no re-lower, no refetch of answered requests. Compiler and runtime are one loop over one store at different times.
-- Retires: the `Compile` JSON `program` object and `program_from_json`; the in-memory comptime `Store`; `RoundState`'s `Vec` freezes. Reload stays retract-relower-rederive, now on the shipped db.
-- The `@std/dl6` emitter writes into this store; `fs.write` is for text targets (`@std/cli`) only.
-- Executor verb: the boundary crossing is named by Chris from `handle` / `cross` / `admit`; `poll` stays.
-- Lane order: list literal, effect type, comptime on sqlite_ivm, oai-rules, `@std/gh`, `@std/cli`.
+- Comptime outputs things and its sqlite_ivm db. The db is the IR carrier every emitter reads. Nothing about runtime is decided now.
+- First pass is code generation: OpenAPI in, tsi graph, `@std/cli` text out, `.d.ts` round trip, vitest cases. No runtime work on the path. TypeSpec is the cousin: a compiler whose output is emitters.
+- A Rust emitter (rules as Rust + sqlite_ivm + axum + sqlx or rusqlite) is the first runtime target when runtime work starts; it is meant to surpass `sprefa-engine-rs`. HMR is wanted and unsolved for a compiled target; `dl8 eval` stays the dev interpreter.
+- Executor verb: Chris picks from `handle` / `cross` / `admit`; `poll` stays.
+- Lane order to the demo: list literal, effect type, oai-rules, `@std/cli`, d.ts round trip + vitest. Comptime-on-sqlite_ivm, `@std/gh`, caret 3, `dl6.key` sit off the path.
