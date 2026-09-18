@@ -1,17 +1,17 @@
 ; Ordinary products serve as structural contracts.
 (: Named
-   (* (: name text)))
+   (* (: name str)))
 
 (: Identified
    (* (: id int)))
 
 (: UserContract
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (: User
    (* (: id int)
-      (: name text)
+      (: name str)
       (: active int)))
 
 (User 7 "Ada" 1)
@@ -85,10 +85,10 @@
 ; Intersection keeps left order, deduplicates name, then appends updated.
 (: IdentifiedNamed
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (: NamedTimestamped
-   (* (: name text)
+   (* (: name str)
       (: updated int)))
 
 (: UserView (Intersect IdentifiedNamed NamedTimestamped))

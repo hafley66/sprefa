@@ -3,7 +3,7 @@
 (: KeyOptions (*))
 
 (: Left
-   (* (: field (Option text))))
+   (* (: field (Option str))))
 
 (: Right
-   (* (: (Key "field" KeyOptions) (Option text))))
+   (* (: (Key "field" KeyOptions) (Option str))))

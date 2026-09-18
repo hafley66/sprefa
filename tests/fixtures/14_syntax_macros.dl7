@@ -29,7 +29,7 @@
 ; type SyntaxAtom = Relation<readonly [node: NodeId, name: Text]>
 (: syntax_atom
    (* (: node type)
-      (: name text)))
+      (: name str)))
 
 ; type SyntaxLiteral = Relation<readonly [node: NodeId, value: Value]>
 (: syntax_literal
@@ -45,7 +45,7 @@
 (: syntax_variable
    (* (: node type)
       (: variable type)
-      (: name text)))
+      (: name str)))
 
 ; type SyntaxSource = Relation<readonly [
 ;   node: NodeId, path: Value,
@@ -71,7 +71,7 @@
 ; means deletion, one means replacement, and several mean an ordered splice.
 (: syntax_claim
    (* (: invocation type)
-      (: macro text)))
+      (: macro str)))
 
 ; type GeneratedSyntax = (
 ;   invocation: NodeId,

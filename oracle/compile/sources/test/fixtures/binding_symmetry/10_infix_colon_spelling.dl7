@@ -3,8 +3,8 @@
 (: KeyOptions (*))
 
 (: Separate
-   (* (atom_label : (Option text))
-      ((Key "compound_label" KeyOptions) : (Option text))))
+   (* (atom_label : (Option str))
+      ((Key "compound_label" KeyOptions) : (Option str))))
 
 (: Trailing
-   (* (atom_label: (Option text))))
+   (* (atom_label: (Option str))))

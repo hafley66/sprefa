@@ -21,7 +21,7 @@
 
 (: Mixed
    (* (: reference type)
-      (: literal text)
+      (: literal str)
       (: remaining type)
       (: return type)))
 

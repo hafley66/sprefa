@@ -4,11 +4,11 @@
 
 (: User
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (: UserContract
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (: HistoryOptions
    (* (: mode "copy")
