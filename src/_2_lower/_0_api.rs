@@ -8,7 +8,6 @@ use super::execute::lower_executables;
 use super::index::{edge_parts, reservation_parts, EdgeIndex, ReservationIndex};
 use super::promote::{promote_deferred_aliases, promoted_alias_rules, Promoted};
 use crate::_6_eval::term::{TermId, Universe};
-use std::collections::HashMap;
 
 pub struct Unit {
     pub origin: TermId,
@@ -30,11 +29,11 @@ pub fn unit_parts(u: &Universe, term: TermId) -> Option<Unit> {
 #[derive(Default)]
 pub struct Environment {
     pub reservations: Vec<TermId>,
-    pub relations: Vec<TermId>,
     pub edges: Vec<TermId>,
 }
 
-/// `expression_environment(Reservations, Relations, Edges)` at `:77`.
+/// `expression_environment(Reservations, Relations, Edges)` at `:77`. The
+/// middle slot is the loaders' and the comptime's channel; lowering ignores it.
 pub fn environment_parts(u: &Universe, term: TermId) -> Option<Environment> {
     let (name, args) = u.functor(term)?;
     if name != "expression_environment" || args.len() != 3 {
@@ -42,7 +41,6 @@ pub fn environment_parts(u: &Universe, term: TermId) -> Option<Environment> {
     }
     Some(Environment {
         reservations: u.as_list(args[0])?,
-        relations: u.as_list(args[1])?,
         edges: u.as_list(args[2])?,
     })
 }
@@ -54,38 +52,17 @@ pub struct Lowered {
     pub diagnostics: Vec<TermId>,
 }
 
-/// `memberchk(relation(Callable, Arity, KeySets), Relations)`: the first row
-/// for a callable wins, so later duplicates never overwrite.
-fn relation_dictionary(u: &Universe, rows: &[TermId]) -> HashMap<TermId, (i64, TermId)> {
-    let mut out = HashMap::new();
-    for row in rows {
-        let Some((name, args)) = u.functor(*row) else {
-            continue;
-        };
-        if name != "relation" || args.len() != 3 {
-            continue;
-        }
-        let Some(arity) = u.as_int(args[1]) else {
-            continue;
-        };
-        out.entry(args[0]).or_insert((arity, args[2]));
-    }
-    out
-}
-
 /// The visible rows of one unit and the indexes over them.
 pub struct Scope {
     pub promoted: Promoted,
     pub reservations: ReservationIndex,
     pub edges: EdgeIndex,
-    pub relations: HashMap<TermId, (i64, TermId)>,
 }
 
 /// `:78`. Local rows come first in every visible list, and the deferred aliases
 /// are promoted before the two indexes close over them.
 pub fn build_scope(u: &mut Universe, declared: &Declared, imported: &Environment) -> Scope {
     let visible_reservations = concat(&declared.reservations, &imported.reservations);
-    let visible_relations = concat(&declared.relations, &imported.relations);
     let visible_edges = concat(&declared.edges, &imported.edges);
     let mut reservations = ReservationIndex::build(u, &visible_reservations);
     let promoted = promote_deferred_aliases(
@@ -99,12 +76,10 @@ pub fn build_scope(u: &mut Universe, declared: &Declared, imported: &Environment
     reservations.install_promoted(u, &promoted.reservations);
     let promoted_edges = concat(&promoted.edges, &imported.edges);
     let edges = EdgeIndex::build(u, &promoted_edges);
-    let relations = relation_dictionary(u, &visible_relations);
     Scope {
         promoted,
         reservations,
         edges,
-        relations,
     }
 }
 
@@ -193,7 +168,6 @@ pub fn lower_datalog(
         u,
         reservations: &scope.reservations,
         edges: &scope.edges,
-        relations: &scope.relations,
         policy,
     };
 
@@ -246,7 +220,9 @@ fn build_program(
     let node_list = u.list(&nodes);
     let edge_list = u.list(edges);
     let graph = u.compound("root_graph", vec![node_list, edge_list]);
-    let relation_list = u.list(&declared.relations);
+    // A product declares itself through `origin(relation(Owner), _)` and its
+    // own edges, so lowering contributes no `relation/3` row.
+    let relation_list = u.empty_list();
     let seed_list = u.list(seeds);
     let rule_list = u.list(rules);
     let datalog = u.compound("datalog_program", vec![relation_list, seed_list, rule_list]);
