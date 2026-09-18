@@ -52,7 +52,7 @@ Two files, one project:
 ; fixture: oracle/compile/sources/test/fixtures/modules/0_accounts.dl7
 (: User
    (* (: id int)
-      (: name text)))
+      (: name str)))
 ```
 
 ```dl7
@@ -83,13 +83,13 @@ A bind to a call, written by field name and positionally:
 ; fixture: oracle/compile/sources/test/fixtures/4_generated_call.dl7
 (: User
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (User 7 "Ada")
 
 (: UserContract
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (: HistoryOptions
    (* (: mode "copy")
@@ -101,14 +101,14 @@ A bind to a call, written by field name and positionally:
 
 (: copied
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (<- (copied ?id ?name)
     (UserHistory ?id ?name))
 
 (: SourceCopy
    (* (: id int)
-      (: name text)))
+      (: name str)))
 
 (SourceCopy 8 "Grace")
 
@@ -116,7 +116,7 @@ A bind to a call, written by field name and positionally:
     (SourceCopy ?id ?name))
 
 (: names
-   (* (: name text)))
+   (* (: name str)))
 
 (<- (names ?name)
     (UserHistory ?name))
