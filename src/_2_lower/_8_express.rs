@@ -349,9 +349,7 @@ pub fn primitive_path_head(cx: &mut Cx, head: TermId, owner: TermId) -> Option<(
     if cx.reservations.scoped(owner, primitive).is_some() {
         return None;
     }
-    let primitive_text =
-        cx.u.functor_or_atom(primitive)
-            .map(|(n, _)| n.to_string())?;
+    let primitive_text = cx.u.functor_or_atom(primitive).map(|(n, _)| n.to_string())?;
     let label_text = cx.u.functor_or_atom(label).map(|(n, _)| n.to_string())?;
     if !primitive_type(&primitive_text) {
         return None;
@@ -446,23 +444,13 @@ pub fn lower_construction(
     for value in values.iter().rev() {
         ordinal += 1;
         let next = construction_var(cx, node_id, ordinal);
-        goals.push(kernel_goal(
-            cx,
-            owner,
-            (None, "cons"),
-            &[*value, tail, next],
-        ));
+        goals.push(kernel_goal(cx, owner, (None, "cons"), &[*value, tail, next]));
         origins.push(node_id);
         tail = next;
     }
     ordinal += 1;
     let value = construction_var(cx, node_id, ordinal);
-    goals.push(kernel_goal(
-        cx,
-        owner,
-        (None, "intern"),
-        &[constructor, tail, value],
-    ));
+    goals.push(kernel_goal(cx, owner, (None, "intern"), &[constructor, tail, value]));
     origins.push(node_id);
     Lowering {
         value,
@@ -507,12 +495,10 @@ pub fn expression_return_position(
             let return_atom = cx.atom("return");
             cx.edges.return_indices(*owner, return_atom)
         }
-        Callable::Kernel { owner, label } => {
-            kernel::kernel_return_positions(owner.as_deref(), label)
-                .into_iter()
-                .map(|i| i as i64)
-                .collect()
-        }
+        Callable::Kernel { owner, label } => kernel::kernel_return_positions(owner.as_deref(), label)
+            .into_iter()
+            .map(|i| i as i64)
+            .collect(),
     };
     let term = callable.term(cx);
     match indices.len() {

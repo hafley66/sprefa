@@ -672,7 +672,9 @@ fn oai_member(name: &str) -> Option<&'static str> {
 
 fn route_fact(u: &Universe, row: TermId) -> bool {
     parts(u, row, "extract_fact", 3)
-        .and_then(|args| super::api::atom_text(u, args[1]).map(|name| oai_member(name).is_some()))
+        .and_then(|args| {
+            super::api::atom_text(u, args[1]).map(|name| oai_member(name).is_some())
+        })
         .unwrap_or(false)
 }
 

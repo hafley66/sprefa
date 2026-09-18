@@ -106,11 +106,7 @@ pub fn return_key_sets(u: &mut Universe, arity: i64, return_indices: &[i64]) -> 
 
 /// Arity is the product's own `:` edge count, keys its one `return` edge.
 /// `origin(relation(Id), _)` declares; `product(Id)` only classifies a type.
-fn product_relation_rows(
-    u: &mut Universe,
-    graph: &CheckerGraph,
-    origins: &[TermId],
-) -> Vec<TermId> {
+fn product_relation_rows(u: &mut Universe, graph: &CheckerGraph, origins: &[TermId]) -> Vec<TermId> {
     let mut owners: Vec<TermId> = origins
         .iter()
         .filter_map(|row| match u.functor(*row) {

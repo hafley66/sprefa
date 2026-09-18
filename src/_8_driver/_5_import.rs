@@ -40,8 +40,7 @@ pub fn origin_of(u: &mut Universe, source: &Source) -> Result<(TermId, String), 
             Ok((origin, text.to_string()))
         }
         Source::File(path) => {
-            let (canonical, text) =
-                program_text(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let (canonical, text) = program_text(path).map_err(|e| format!("{}: {e}", path.display()))?;
             let atom = u.atom(&canonical);
             Ok((u.compound("file", vec![atom]), text))
         }
@@ -112,7 +111,11 @@ fn import_row(u: &mut Universe, importer: TermId, name: TermId, imported: TermId
 
 /// Every unit the roots reach. A path already read is bound again and never
 /// read twice, so a cycle terminates here and stays the prelude's question.
-pub fn load_import_chain(u: &mut Universe, cwd: &Path, roots: &[TermId]) -> Result<Imported, Stop> {
+pub fn load_import_chain(
+    u: &mut Universe,
+    cwd: &Path,
+    roots: &[TermId],
+) -> Result<Imported, Stop> {
     let mut seen: HashSet<TermId> = HashSet::new();
     for unit in roots {
         if let Some(parts) = u.args::<5>(*unit, "dl7_unit") {
@@ -159,7 +162,12 @@ fn read_stop(e: ReadStop) -> Stop {
 
 /// `import(Origin, Local, std(Module))` read backwards: the unit that bound
 /// `@std/<module>` under `Local`.
-fn std_importer(u: &Universe, rows: &[TermId], local: TermId, module: &str) -> Option<TermId> {
+fn std_importer(
+    u: &Universe,
+    rows: &[TermId],
+    local: TermId,
+    module: &str,
+) -> Option<TermId> {
     rows.iter().find_map(|row| {
         let [importer, name, imported] = u.args::<3>(*row, "import")?;
         let atom = u.unary(imported, "std")?;
@@ -202,7 +210,11 @@ fn member_seed(u: &Universe, seed: TermId, member: &str) -> Option<(TermId, Term
 
 /// Every document an `@std/oai` member seed names, against the importing
 /// unit's directory. Before the fixpoint only a `const` argument is a value.
-pub fn oai_document_paths(u: &Universe, basements: &[TermId], imports: &[TermId]) -> Vec<PathBuf> {
+pub fn oai_document_paths(
+    u: &Universe,
+    basements: &[TermId],
+    imports: &[TermId],
+) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for seed in basement_seeds(u, basements) {
         let Some((origin, local, argument)) = member_seed(u, seed, "document") else {

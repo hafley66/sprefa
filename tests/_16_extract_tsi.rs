@@ -218,7 +218,8 @@ fn tsi_envelope_carries_the_corpus_type_graph() {
     let (_, run) = tsi_stream();
     let rows = records(&run.stdout);
     assert!(
-        rows.first().is_some_and(|row| record_kind(row, "protocol")),
+        rows.first()
+            .is_some_and(|row| record_kind(row, "protocol")),
         "the stream opens with no protocol record"
     );
     assert!(
@@ -282,7 +283,9 @@ fn diet_scip_resolves_across_corpus_files() {
 #[test]
 fn scip_indexes_the_typescript_corpus() {
     if which("scip-typescript").is_none() {
-        println!("ignored: scip-typescript is not on PATH, so --family scip has no indexer to run");
+        println!(
+            "ignored: scip-typescript is not on PATH, so --family scip has no indexer to run"
+        );
         return;
     }
     // The index is a build artifact; the fixture tree stays committable.
@@ -350,11 +353,7 @@ fn dl8_compile_consumes_the_extracted_stream() {
     let rows = compiled["compiler_rows"]
         .as_array()
         .expect("compiler_rows is an array");
-    let named: Vec<Value> = rows
-        .iter()
-        .filter(|row| names_corpus(row))
-        .cloned()
-        .collect();
+    let named: Vec<Value> = rows.iter().filter(|row| names_corpus(row)).cloned().collect();
     assert!(
         !named.is_empty(),
         "no compiler row names a corpus type; the TSI stream did not reach the compiler"
@@ -370,11 +369,7 @@ fn dl8_compile_consumes_the_extracted_stream() {
         "the rows naming the corpus differ from {}",
         expected_path.display()
     );
-    println!(
-        "dl8: {} compiler rows, {} name the corpus",
-        rows.len(),
-        named.len()
-    );
+    println!("dl8: {} compiler rows, {} name the corpus", rows.len(), named.len());
 }
 
 /// `Command::new` on a missing program fails at spawn, so the scip case asks

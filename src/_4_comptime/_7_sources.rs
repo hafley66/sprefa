@@ -46,9 +46,8 @@ impl Sources for Live {
             .map(|(_, args)| args[0])
             .and_then(|list| u.as_list(list))
             .unwrap_or_default();
-        let lowered =
-            lower_compiler_units(u, policy, &self.units, Some(environment), &self.imports)
-                .map_err(|_| Stop::Fail("lowering reached an unported construct"))?;
+        let lowered = lower_compiler_units(u, policy, &self.units, Some(environment), &self.imports)
+            .map_err(|_| Stop::Fail("lowering reached an unported construct"))?;
         if !lowered.diagnostics.is_empty() {
             return Ok((None, lowered.diagnostics));
         }

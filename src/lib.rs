@@ -304,13 +304,8 @@ fn lower_units(
         let owners = source_unit_module_owners(u, units);
         project_expression_environment(u, project, &owners)
     });
-    let lowered = lower_compiler_units(
-        u,
-        CallPolicy::DeferUnknownCalls,
-        units,
-        environment,
-        imports,
-    )?;
+    let lowered =
+        lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, environment, imports)?;
     let Some(project) = project else {
         return Ok(lowered);
     };

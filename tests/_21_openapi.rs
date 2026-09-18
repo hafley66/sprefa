@@ -92,7 +92,8 @@ fn frozen(name: &str) -> Value {
 /// The callable `@std/oai` declares for one member, read off its own `:` edge
 /// so the frozen rows never pin a reader node id.
 fn oai_member(rows: &[Value], member: &str) -> String {
-    let prefix = format!("call(ref(kernel(':')),[ref(module(std('oai'))),const('{member}'),ref(");
+    let prefix =
+        format!("call(ref(kernel(':')),[ref(module(std('oai'))),const('{member}'),ref(");
     let row = rows
         .iter()
         .map(render)
