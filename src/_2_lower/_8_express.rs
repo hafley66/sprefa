@@ -247,12 +247,18 @@ pub fn expression_callable(cx: &mut Cx, name: TermId, owner: TermId) -> Result<A
         // :1499. Only a product or a generated callable is callable.
         if kind_name == "product" || kind_name == "derived_callable" {
             if let Some(callable) = cx.u.unary(target, "target") {
-                return match cx.relations.get(&callable) {
-                    Some((arity, key_sets)) => {
-                        Ok(Applied::Relation(Callable::Target(callable), *arity, *key_sets))
-                    }
-                    None => Err(cx.compound("undeclared_relation", vec![callable])),
-                };
+                let arity = cx.edges.arity(callable);
+                if arity == 0 {
+                    return Err(cx.compound("undeclared_relation", vec![callable]));
+                }
+                let return_atom = cx.atom("return");
+                let indices = cx.edges.return_indices(callable, return_atom);
+                let key_sets = crate::_3_check::api::return_key_sets(cx.u, arity, &indices);
+                return Ok(Applied::Relation(
+                    Callable::Target(callable),
+                    arity,
+                    key_sets,
+                ));
             }
         }
         // A sum declares no relation, so applying it constructs.

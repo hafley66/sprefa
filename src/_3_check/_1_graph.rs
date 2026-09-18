@@ -26,6 +26,9 @@ pub struct CheckerGraph {
     pub owner_edge_count: HashMap<TermId, i64>,
     /// Sorted, deduplicated ordinals of each owner's `return` edges.
     pub owner_return_indices: HashMap<TermId, Vec<i64>>,
+    /// Distinct ordinals per owner: its arity. `owner_edge_count` counts rows,
+    /// and a merged basement can carry one edge twice.
+    pub owner_slots: HashMap<TermId, HashSet<i64>>,
 }
 
 impl CheckerGraph {
@@ -40,6 +43,7 @@ impl CheckerGraph {
             modules: HashSet::new(),
             owner_edge_count: HashMap::new(),
             owner_return_indices: HashMap::new(),
+            owner_slots: HashMap::new(),
         };
         for row in edge_rows {
             let parts = edge_parts(u, *row)?;
@@ -52,6 +56,11 @@ impl CheckerGraph {
                 graph.parent.entry(target).or_insert(parts.owner);
             }
             *graph.owner_edge_count.entry(parts.owner).or_insert(0) += 1;
+            graph
+                .owner_slots
+                .entry(parts.owner)
+                .or_default()
+                .insert(parts.index);
             if named_return(u, parts.name) {
                 graph
                     .owner_return_indices

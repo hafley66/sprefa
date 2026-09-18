@@ -201,6 +201,9 @@ pub struct EdgeIndex {
     pub by_owner_name: HashMap<(u32, u32), Vec<usize>>,
     pub by_owner_index: HashMap<(u32, i64), Vec<usize>>,
     pub by_target_owner: HashMap<u32, Vec<usize>>,
+    /// Distinct ordinals per owner: its arity. The visible list concatenates
+    /// the promoted and the imported rows, so an edge can appear twice.
+    pub owner_count: HashMap<u32, i64>,
 }
 
 impl EdgeIndex {
@@ -220,11 +223,12 @@ impl EdgeIndex {
                 .entry((owner, name))
                 .or_default()
                 .push(position);
-            index
-                .by_owner_index
-                .entry((owner, parts.index))
-                .or_default()
-                .push(position);
+            let slot = index.by_owner_index.entry((owner, parts.index)).or_default();
+            let first_at_slot = slot.is_empty();
+            slot.push(position);
+            if first_at_slot {
+                *index.owner_count.entry(owner).or_insert(0) += 1;
+            }
             if let Some(target) = u.unary(parts.target, "target") {
                 let target_owner = index.owners.intern(target);
                 index
@@ -261,6 +265,14 @@ impl EdgeIndex {
             crate::_6_eval::term::Term::Atom(_) => Some(first.name),
             _ => None,
         }
+    }
+
+    /// A callable's arity: the number of `:` edges it owns.
+    pub fn arity(&self, callable: TermId) -> i64 {
+        self.owners
+            .lookup(callable)
+            .and_then(|owner| self.owner_count.get(&owner).copied())
+            .unwrap_or(0)
     }
 
     /// `:1882`. Sorted, deduplicated ordinals of the callable's `return` edges.

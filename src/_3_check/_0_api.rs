@@ -118,7 +118,7 @@ fn product_relation_rows(u: &mut Universe, graph: &CheckerGraph, origins: &[Term
     owners.dedup();
     let mut out = Vec::with_capacity(owners.len());
     for owner in owners {
-        let arity = graph.owner_edge_count.get(&owner).copied().unwrap_or(0);
+        let arity = graph.owner_slots.get(&owner).map_or(0, |s| s.len() as i64);
         let indices = graph
             .owner_return_indices
             .get(&owner)
