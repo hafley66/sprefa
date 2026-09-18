@@ -1,0 +1,15 @@
+; A Once executor answers its effect row inside the compiler fixpoint.
+(fs: (import "@std/fs"))
+
+(: Doc (* (: path str)))
+
+(Doc "fixtures/comptime_effect/0.json")
+
+(: Member
+   (* (: name any)
+      (: target any)))
+
+(<- (Member ?Name ?Target)
+    (Doc ?Path)
+    (fs.json ?Path ?Root)
+    (: ?Root ?Name ?Target ?Index))
