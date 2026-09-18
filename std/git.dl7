@@ -2,19 +2,19 @@
 ; by an executor; a program that never serves one gets no rows.
 
 (: refs
-   (* (: root text)
-      (: name text)
-      (: sha text)))
+   (* (: root str)
+      (: name str)
+      (: sha str)))
 
 (: refs_error
-   (* (: root text)
-      (: message text)))
+   (* (: root str)
+      (: message str)))
 
 (: history
-   (* (: root text)
-      (: sha text)
-      (: parent text)))
+   (* (: root str)
+      (: sha str)
+      (: parent str)))
 
 (: history_error
-   (* (: root text)
-      (: message text)))
+   (* (: root str)
+      (: message str)))

@@ -1,24 +1,24 @@
 ; Loading is an ordinary rule over effect; the pattern opens with
 ; intern_snapshot then cons, the way Partial reads back in the prelude.
 (: fetch_json
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
-(: Watch (* (: url text)))
+(: Watch (* (: url str)))
 
 (Watch "https://a")
 
 (Watch "https://b")
 
 (: Body
-   (* (: url text)
-      (: body text)))
+   (* (: url str)
+      (: body str)))
 
 (<- (Body ?Url ?Body)
     (Watch ?Url)
     (fetch_json ?Url ?Body))
 
-(: Loading (* (: url text)))
+(: Loading (* (: url str)))
 
 (<- (Loading ?Url)
     (effect fetch_json ?App)

@@ -2,21 +2,21 @@
 ; otherwise. `at` is the tracked tree of one root at one revision.
 
 (: at
-   (* (: root text)
-      (: sha text)
-      (: path text)
-      (: blob text)))
+   (* (: root str)
+      (: sha str)
+      (: path str)
+      (: blob str)))
 
 (: at_error
-   (* (: root text)
-      (: sha text)
-      (: message text)))
+   (* (: root str)
+      (: sha str)
+      (: message str)))
 
 ; `json` reads one document into `:` rows under the node it returns.
 (: json
-   (* (: path text)
+   (* (: path str)
       (: return type)))
 
 (: json_error
-   (* (: path text)
-      (: message text)))
+   (* (: path str)
+      (: message str)))

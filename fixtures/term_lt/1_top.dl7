@@ -1,4 +1,4 @@
-(: Score (* (: player text) (: points int)))
+(: Score (* (: player str) (: points int)))
 
 (Score "ann" 4)
 
@@ -6,14 +6,14 @@
 
 (Score "cy" 7)
 
-(: Beaten (* (: player text)))
+(: Beaten (* (: player str)))
 
 (<- (Beaten ?Player)
     (Score ?Player ?Points)
     (Score ?Other ?More)
     (term_lt ?Points ?More))
 
-(: Top (* (: player text)))
+(: Top (* (: player str)))
 
 (<- (Top ?Player)
     (Score ?Player ?Points)

@@ -10,7 +10,7 @@
       (: title string)))
 
 (: route_returns_todo
-   (* (: path text)
+   (* (: path str)
       (: method any)))
 
 (<- (route_returns_todo ?Path ?Method)

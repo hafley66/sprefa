@@ -1,4 +1,4 @@
-(: Edge (* (: from text) (: to text)))
+(: Edge (* (: from str) (: to str)))
 
 (Edge "a" "b")
 
@@ -10,7 +10,7 @@
 
 (Edge "x" "y")
 
-(: Reach (* (: from text) (: to text)))
+(: Reach (* (: from str) (: to str)))
 
 (<- (Reach ?From ?To)
     (Edge ?From ?To))

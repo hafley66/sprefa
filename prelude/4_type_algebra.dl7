@@ -85,7 +85,7 @@
 (: intersection_edge_candidate
    (* (: left type)
       (: right type)
-      (: side text)
+      (: side str)
       (: name any)
       (: target any)
       (: source_index int)))
@@ -93,21 +93,21 @@
 (: intersection_predecessor
    (* (: left type)
       (: right type)
-      (: side text)
+      (: side str)
       (: source_index int)
-      (: prior_side text)
+      (: prior_side str)
       (: prior_index int)))
 
 (: intersection_has_predecessor
    (* (: left type)
       (: right type)
-      (: side text)
+      (: side str)
       (: source_index int)))
 
 (: intersection_rank
    (* (: left type)
       (: right type)
-      (: side text)
+      (: side str)
       (: source_index int)
       (: result_index int)))
 

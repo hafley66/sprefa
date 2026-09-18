@@ -1,10 +1,10 @@
-(: Reading (* (: name text) (: value float) (: ok bool) (: count int)))
+(: Reading (* (: name str) (: value float) (: ok bool) (: count int)))
 
 (Reading "a" 1.5 true 3)
 
 (Reading "b" -0.25 false 4)
 
-(: Copied (* (: name text) (: value float)))
+(: Copied (* (: name str) (: value float)))
 
 (<- (Copied ?Name ?Value)
     (Reading ?Name ?Value ?Ok ?Count))

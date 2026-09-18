@@ -3,18 +3,18 @@
 ; the `request` and `response` columns point at.
 
 (: document
-   (* (: path text)))
+   (* (: path str)))
 
 (: route
-   (* (: path text)
+   (* (: path str)
       (: method any)
-      (: operation_id text)
+      (: operation_id str)
       (: request type)
       (: response type)))
 
 (: param
-   (* (: operation_id text)
-      (: name text)
+   (* (: operation_id str)
+      (: name str)
       (: location any)
       (: schema type)
       (: required any)))
