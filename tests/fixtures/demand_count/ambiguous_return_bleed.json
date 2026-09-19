@@ -1,0 +1,3224 @@
+{
+ "rules": [
+  {
+   "head": {
+    "rel": {
+     "f": "ref",
+     "args": [
+      {
+       "a": "caret_item"
+      }
+     ]
+    },
+    "args": [
+     {
+      "v": {
+       "a": "F"
+      }
+     }
+    ]
+   },
+   "body": [
+    {
+     "polarity": "positive",
+     "rel": {
+      "f": "ref",
+      "args": [
+       {
+        "a": "syntax_source"
+       }
+      ]
+     },
+     "args": [
+      {
+       "v": {
+        "a": "F"
+       }
+      },
+      {
+       "v": {
+        "a": "S"
+       }
+      },
+      {
+       "v": {
+        "a": "E"
+       }
+      }
+     ]
+    },
+    {
+     "polarity": "positive",
+     "rel": {
+      "f": "ref",
+      "args": [
+       {
+        "f": "kernel",
+        "args": [
+         {
+          "a": "int"
+         },
+         {
+          "a": "lt"
+         }
+        ]
+       }
+      ]
+     },
+     "args": [
+      {
+       "v": {
+        "a": "S"
+       }
+      },
+      {
+       "v": {
+        "a": "E"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "head": {
+    "rel": {
+     "f": "ref",
+     "args": [
+      {
+       "a": "bound_check"
+      }
+     ]
+    },
+    "args": [
+     {
+      "v": {
+       "a": "X"
+      }
+     }
+    ]
+   },
+   "body": [
+    {
+     "polarity": "positive",
+     "rel": {
+      "f": "ref",
+      "args": [
+       {
+        "f": "kernel",
+        "args": [
+         {
+          "a": "int"
+         },
+         {
+          "a": "lt"
+         }
+        ]
+       }
+      ]
+     },
+     "args": [
+      {
+       "v": {
+        "a": "X"
+       }
+      },
+      {
+       "f": "const",
+       "args": [
+        50
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "head": {
+    "rel": {
+     "f": "ref",
+     "args": [
+      {
+       "a": "flagged"
+      }
+     ]
+    },
+    "args": [
+     {
+      "v": {
+       "a": "F"
+      }
+     }
+    ]
+   },
+   "body": [
+    {
+     "polarity": "positive",
+     "rel": {
+      "f": "ref",
+      "args": [
+       {
+        "a": "syntax_source"
+       }
+      ]
+     },
+     "args": [
+      {
+       "v": {
+        "a": "F"
+       }
+      },
+      {
+       "v": {
+        "a": "S"
+       }
+      },
+      {
+       "v": {
+        "a": "E"
+       }
+      }
+     ]
+    },
+    {
+     "polarity": "positive",
+     "rel": {
+      "f": "ref",
+      "args": [
+       {
+        "a": "caret_item"
+       }
+      ]
+     },
+     "args": [
+      {
+       "v": {
+        "a": "F"
+       }
+      }
+     ]
+    },
+    {
+     "polarity": "positive",
+     "rel": {
+      "f": "ref",
+      "args": [
+       {
+        "a": "bound_check"
+       }
+      ]
+     },
+     "args": [
+      {
+       "v": {
+        "a": "F"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "seeds": [
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      0
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      0
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      1
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      2
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      3
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      2
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      4
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      5
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      3
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      6
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      7
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      4
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      8
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      9
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      5
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      10
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      11
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      6
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      12
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      13
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      7
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      14
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      15
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      8
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      16
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      17
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      9
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      18
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      10
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      20
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      21
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      11
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      22
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      23
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      12
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      24
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      25
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      13
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      26
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      27
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      14
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      28
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      29
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      15
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      30
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      31
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      16
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      32
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      33
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      17
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      34
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      35
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      18
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      36
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      37
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      19
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      38
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      39
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      20
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      40
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      41
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      21
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      42
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      43
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      22
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      44
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      45
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      23
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      46
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      47
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      24
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      48
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      49
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      25
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      50
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      51
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      26
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      52
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      53
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      27
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      54
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      55
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      28
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      56
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      57
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      29
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      58
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      59
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      30
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      60
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      61
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      31
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      62
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      63
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      32
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      64
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      65
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      33
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      66
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      67
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      34
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      68
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      69
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      35
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      70
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      71
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      36
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      72
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      73
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      37
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      74
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      75
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      38
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      76
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      77
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      39
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      78
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      79
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      40
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      80
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      81
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      41
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      82
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      83
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      42
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      84
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      85
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      43
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      86
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      87
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      44
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      88
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      89
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      45
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      90
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      91
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      46
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      92
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      93
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      47
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      94
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      95
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      48
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      96
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      97
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      49
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      98
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      99
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      50
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      100
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      101
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      51
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      102
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      103
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      52
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      104
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      105
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      53
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      106
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      107
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      54
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      108
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      109
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      55
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      110
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      111
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      56
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      112
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      113
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      57
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      114
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      115
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      58
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      116
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      117
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      59
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      118
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      119
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      60
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      120
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      121
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      61
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      122
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      123
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      62
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      124
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      125
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      63
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      126
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      127
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      64
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      128
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      129
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      65
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      130
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      131
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      66
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      132
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      133
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      67
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      134
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      135
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      68
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      136
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      137
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      69
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      138
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      139
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      70
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      140
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      141
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      71
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      142
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      143
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      72
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      144
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      145
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      73
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      146
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      147
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      74
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      148
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      149
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      75
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      150
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      151
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      76
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      152
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      153
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      77
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      154
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      155
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      78
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      156
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      157
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      79
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      158
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      159
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      80
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      160
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      161
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      81
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      162
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      163
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      82
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      164
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      165
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      83
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      166
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      167
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      84
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      168
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      169
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      85
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      170
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      171
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      86
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      172
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      173
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      87
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      174
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      175
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      88
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      176
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      177
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      89
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      178
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      179
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      90
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      180
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      181
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      91
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      182
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      183
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      92
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      184
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      185
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      93
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      186
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      187
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      94
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      188
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      189
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      95
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      190
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      191
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      96
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      192
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      193
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      97
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      194
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      195
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      98
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      196
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      197
+     ]
+    }
+   ]
+  },
+  {
+   "rel": {
+    "f": "ref",
+    "args": [
+     {
+      "a": "syntax_source"
+     }
+    ]
+   },
+   "args": [
+    {
+     "f": "const",
+     "args": [
+      99
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      198
+     ]
+    },
+    {
+     "f": "const",
+     "args": [
+      199
+     ]
+    }
+   ]
+  }
+ ]
+}

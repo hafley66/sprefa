@@ -33,6 +33,9 @@ pub enum Trace {
         round: u32,
         new: usize,
     },
+    Demand {
+        calls: usize,
+    },
     Closure {
         rows: usize,
     },
@@ -126,6 +129,15 @@ type Plan = Vec<Range>;
 type Sink = Vec<(TermId, Box<[TermId]>)>;
 
 type Pattern = Vec<Option<TermId>>;
+type DemandKey = (TermId, Pattern);
+
+/// One round's demand memo: rows proved per `(relation, pattern)` and the
+/// entry count the trace reports.
+#[derive(Default)]
+struct Memo {
+    proved: HashMap<DemandKey, Vec<Vec<TermId>>>,
+    calls: usize,
+}
 
 /// The relations the effect branch writes into, minted once per evaluation.
 #[derive(Copy, Clone)]
@@ -141,6 +153,7 @@ struct Context<'a> {
     store: &'a Store,
     rules_by_rel: &'a HashMap<TermId, Vec<&'a Rule>>,
     served: &'a HashSet<TermId>,
+    demanded: &'a HashSet<TermId>,
     effects: Effects,
 }
 
@@ -154,7 +167,9 @@ struct Eval<'a> {
     intern_requests: Vec<Box<[TermId]>>,
     effect_rows: Vec<Box<[TermId]>>,
     snapshot_rows: Vec<Box<[TermId]>>,
-    memo: HashMap<(TermId, Pattern), Vec<Vec<TermId>>>,
+    memo: &'a mut Memo,
+    in_progress: HashSet<DemandKey>,
+    cycle_hits: Vec<DemandKey>,
 }
 
 impl<'a> Eval<'a> {
@@ -250,7 +265,7 @@ impl<'a> Eval<'a> {
         let demand = !self.tables_only
             && kernel.is_none()
             && pattern.iter().any(|t| t.is_some())
-            && self.cx.rules_by_rel.contains_key(&goal.rel);
+            && self.cx.demanded.contains(&goal.rel);
         if demand {
             let extra = self.demand(goal.rel, &pattern);
             solutions.extend(extra);
@@ -280,14 +295,27 @@ impl<'a> Eval<'a> {
     /// body needs its head arguments bound (kernel constructors, negation).
     /// Rows found here are used, never stored, matching v7's closure. A
     /// re-entrant call with the same key sees the rows found so far.
+    ///
+    /// The memo is shared across the round's firings, so an entry must be
+    /// reproducible on its own. A proof cut short by a re-entrant key read
+    /// that key's partial rows and is not: such an entry is dropped and the
+    /// next firing re-proves it. The cycle target's own entry is complete
+    /// because its final pass sees the same partial rows any fresh pass
+    /// would, so it stays.
     fn demand(&mut self, rel: TermId, pattern: &Pattern) -> Vec<Vec<TermId>> {
         let key = (rel, pattern.clone());
-        if let Some(rows) = self.memo.get(&key) {
+        self.memo.calls += 1;
+        if let Some(rows) = self.memo.proved.get(&key) {
+            if self.in_progress.contains(&key) {
+                self.cycle_hits.push(key);
+            }
             return rows.clone();
         }
-        self.memo.insert(key.clone(), Vec::new());
+        self.in_progress.insert(key.clone());
+        self.memo.proved.insert(key.clone(), Vec::new());
         let rules: Vec<&Rule> = self.cx.rules_by_rel[&rel].clone();
         let mut found: Vec<Vec<TermId>> = Vec::new();
+        let base = self.cycle_hits.len();
         for rule in rules {
             if rule.is_aggregate() || rule.head.len() != pattern.len() {
                 continue;
@@ -317,7 +345,15 @@ impl<'a> Eval<'a> {
         }
         found.sort_by(|a, b| self.u.cmp_rows(a, b));
         found.dedup();
-        self.memo.insert(key, found.clone());
+        let mut hits: Vec<DemandKey> = self.cycle_hits.drain(base..).collect();
+        hits.retain(|hit| *hit != key);
+        self.in_progress.remove(&key);
+        if hits.is_empty() {
+            self.memo.proved.insert(key, found.clone());
+        } else {
+            self.cycle_hits.extend(hits);
+            self.memo.proved.remove(&key);
+        }
         found
     }
 
@@ -336,6 +372,70 @@ impl<'a> Eval<'a> {
 
 fn head_row(env: &Env, rule: &Rule) -> Option<Vec<TermId>> {
     rule.head.iter().map(|a| env.value(a)).collect()
+}
+
+fn arg_vars(arg: &Arg) -> Vec<VarId> {
+    match arg {
+        Arg::Var(v) => vec![*v],
+        Arg::Ground(_) => Vec::new(),
+        Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => arg_vars(subject),
+    }
+}
+
+/// The rule proves a row only under a caller's binding: some kernel or
+/// negative goal reads a head variable no earlier goal binds, so bottom-up
+/// derivation cannot reach its rows. A positive kernel goal never blocks
+/// when the op computes its row from the arguments bound at that point,
+/// matching each op's row function: comparisons need both sides, `cons`
+/// and `str.cons` take head and tail or the whole list, `nil` and
+/// `str.nil` need nothing, every other op takes its first two arguments.
+/// That readiness argument only holds while every table the rule reads is
+/// present when its stratum starts. A rule reading `intern_snapshot` fires
+/// against the rows known at round zero and never revisits them, so such a
+/// rule keeps the plain blocking walk and demand answers it in place.
+fn needs_bound_head(u: &Universe, rule: &Rule, snapshots: TermId) -> bool {
+    if rule.is_aggregate() {
+        return false;
+    }
+    let anchored = rule
+        .body
+        .iter()
+        .all(|g| g.polarity != Polarity::Positive || g.rel != snapshots);
+    let head: HashSet<VarId> = rule.head.iter().flat_map(arg_vars).collect();
+    let mut bound: HashSet<VarId> = HashSet::new();
+    for goal in &rule.body {
+        let op = Kernel::of(u, goal.rel);
+        let vars: HashSet<VarId> = goal.args.iter().flat_map(arg_vars).collect();
+        if let (Some(op), Polarity::Positive) = (op, goal.polarity) {
+            if anchored {
+                let at = |i: usize| {
+                    goal.args
+                        .get(i)
+                        .map(|a| arg_vars(a).into_iter().all(|v| bound.contains(&v)))
+                        .unwrap_or(false)
+                };
+                let ready = match op {
+                    Kernel::Nil | Kernel::StrNil => true,
+                    Kernel::Cons | Kernel::StrCons => at(2) || (at(0) && at(1)),
+                    _ => at(0) && at(1),
+                };
+                if !ready {
+                    return true;
+                }
+            } else if vars.iter().any(|v| head.contains(v) && !bound.contains(v)) {
+                return true;
+            }
+            bound.extend(vars);
+        } else if op.is_none() && goal.polarity == Polarity::Positive {
+            bound.extend(vars);
+        } else {
+            let blocking = op.is_some() || goal.polarity == Polarity::Negative;
+            if blocking && vars.iter().any(|v| head.contains(v) && !bound.contains(v)) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Neither relation the branch writes heads a rule, so `Strata` never levels
@@ -367,7 +467,14 @@ struct Pending {
     snapshots: Vec<Box<[TermId]>>,
 }
 
-fn fire(u: &mut Universe, cx: Context, rule: &Rule, plan: &Plan, out: &mut Pending) {
+fn fire(
+    u: &mut Universe,
+    cx: Context,
+    rule: &Rule,
+    plan: &Plan,
+    out: &mut Pending,
+    memo: &mut Memo,
+) {
     let mut env = Env::new(rule.vars.len());
     let mut eval = Eval {
         u,
@@ -376,7 +483,9 @@ fn fire(u: &mut Universe, cx: Context, rule: &Rule, plan: &Plan, out: &mut Pendi
         intern_requests: Vec::new(),
         effect_rows: Vec::new(),
         snapshot_rows: Vec::new(),
-        memo: HashMap::new(),
+        memo,
+        in_progress: HashSet::new(),
+        cycle_hits: Vec::new(),
     };
     let rel = rule.rel;
     let mut derived = |_u: &mut Universe, env: &Env| {
@@ -402,6 +511,7 @@ fn aggregate_proofs(
     let mut non_ground = false;
     {
         let mut env = Env::new(rule.vars.len());
+        let mut demand_memo = Memo::default();
         let mut eval = Eval {
             u: &mut *u,
             cx,
@@ -409,7 +519,9 @@ fn aggregate_proofs(
             intern_requests: Vec::new(),
             effect_rows: Vec::new(),
             snapshot_rows: Vec::new(),
-            memo: HashMap::new(),
+            memo: &mut demand_memo,
+            in_progress: HashSet::new(),
+            cycle_hits: Vec::new(),
         };
         let mut out = |_u: &mut Universe, env: &Env| match head_row(env, rule) {
             Some(row) => proofs.push(row),
@@ -556,6 +668,7 @@ fn fold_step(
     let mut nexts: Vec<TermId> = Vec::new();
     let interned;
     {
+        let mut demand_memo = Memo::default();
         let mut env = Env::new(1);
         let mut eval = Eval {
             u: &mut *u,
@@ -564,7 +677,9 @@ fn fold_step(
             intern_requests: Vec::new(),
             effect_rows: Vec::new(),
             snapshot_rows: Vec::new(),
-            memo: HashMap::new(),
+            memo: &mut demand_memo,
+            in_progress: HashSet::new(),
+            cycle_hits: Vec::new(),
         };
         let mut out = |_u: &mut Universe, env: &Env| {
             if let Some(next) = env.vars[0] {
@@ -723,6 +838,15 @@ fn evaluate_into(
             .push(rule);
         rules_by_rel.entry(rule.rel).or_default().push(rule);
     }
+    let demanded: HashSet<TermId> = rules_by_rel
+        .iter()
+        .filter(|(_, rules)| {
+            rules
+                .iter()
+                .any(|rule| needs_bound_head(u, rule, effects.intern_snapshot))
+        })
+        .map(|(relation, _)| *relation)
+        .collect();
 
     for level in 0..=strata.max_level {
         let rules = rules_by_level.get(&level).cloned().unwrap_or_default();
@@ -742,6 +866,7 @@ fn evaluate_into(
                 store,
                 rules_by_rel: &rules_by_rel,
                 served: &program.served,
+                demanded: &demanded,
                 effects,
             };
             match aggregate_rows(u, cx, rule) {
@@ -771,6 +896,7 @@ fn evaluate_into(
         }
 
         let mut round: u32 = 0;
+        let mut memo = Memo::default();
         loop {
             let mut pending = Pending::default();
             for rule in &plain {
@@ -778,11 +904,12 @@ fn evaluate_into(
                     store,
                     rules_by_rel: &rules_by_rel,
                     served: &program.served,
+                    demanded: &demanded,
                     effects,
                 };
                 if round == 0 {
                     let plan: Plan = rule.body.iter().map(|_| Range::All).collect();
-                    fire(u, cx, rule, &plan, &mut pending);
+                    fire(u, cx, rule, &plan, &mut pending, &mut memo);
                 } else {
                     let positions = current_goal_positions(rule, &strata, level, effects, u);
                     for &delta_at in &positions {
@@ -802,7 +929,7 @@ fn evaluate_into(
                                 }
                             })
                             .collect();
-                        fire(u, cx, rule, &plan, &mut pending);
+                        fire(u, cx, rule, &plan, &mut pending, &mut memo);
                     }
                 }
             }
@@ -828,8 +955,12 @@ fn evaluate_into(
                     new += 1;
                 }
             }
+            if memo.calls > 0 {
+                fx(Trace::Demand { calls: memo.calls });
+            }
             fx(Trace::Round { level, round, new });
             tracing::trace!(target: "dl8::eval", level, round, new);
+            memo = Memo::default();
             round += 1;
             if new == 0 {
                 break;
