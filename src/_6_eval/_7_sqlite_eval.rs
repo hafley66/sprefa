@@ -2,16 +2,17 @@
 //! per program (F3b), every statement inside `sql()`. Rust moves rows in and
 //! out; joins, filters and the fixpoint are SQL.
 
-use super::program::{Diagnostic, Program, Row};
+use super::program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule};
 use super::term::{Term, TermId, Universe};
 use crate::_5_reify::sqlite::{program_plan_with, KernelReach};
 use super::kernel::Kernel;
 use crate::_5_reify::Stop;
 use crate::_6_eval::stratify::stratify;
+use super::evaluate::needs_bound_head;
 use crate::_9_runtime::sqlite::{open, sql};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::Connection;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -28,6 +29,9 @@ const KIND_STR: i64 = 4;
 const KIND_COMPOUND: i64 = 5;
 
 const VIEW: &str = "\"program\"";
+
+/// Product name of the synthesized `intern` twin rules.
+const INTERN_ROWS: &str = "intern_rows";
 
 /// Source tables plus one sqlite_ivm view for the program.
 pub trait IEvaluate {
@@ -66,6 +70,8 @@ pub struct SqliteEvaluate {
     /// the view's marker rows carry, plus the marker product tag itself.
     cap_marker: Option<TermId>,
     cap_names: Vec<String>,
+    /// Demand and adorned products: joined by the view, never read out.
+    hidden: HashSet<TermId>,
 }
 
 impl SqliteEvaluate {
@@ -85,6 +91,7 @@ impl SqliteEvaluate {
             halted: false,
             cap_marker: None,
             cap_names: Vec::new(),
+            hidden: HashSet::new(),
         })
     }
 
@@ -109,6 +116,9 @@ impl IEvaluate for SqliteEvaluate {
                     view: "program".to_string(),
                 });
             }
+            let (program, hidden) = with_demand(&mut guard, program);
+            let program = &with_intern_rows(&mut guard, &program);
+            self.hidden = hidden;
             let mut rels: Vec<TermId> = program
                 .rules
                 .iter()
@@ -176,6 +186,10 @@ impl IEvaluate for SqliteEvaluate {
             };
             self.derived = derived;
             self.seeded = seeded;
+            // Rust stops on a malformed aggregate head and returns no rows.
+            if eval_failures.iter().any(|(shape, _)| shape == "malformed_aggregate") {
+                self.halted = true;
+            }
             let mut diagnostics: Vec<Diagnostic> = eval_failures
                 .iter()
                 .map(|(shape, count)| {
@@ -217,6 +231,7 @@ impl IEvaluate for SqliteEvaluate {
         flush_commit(&self.connection, flush).map_err(|_| Stop::Fail("eval flush"))?;
         self.write_delta(&program.seeds, &[])?;
         if !view.is_empty() {
+            tracing::debug!(target: "dl8::eval", view = %view, "declare_view sql");
             sql(&self.connection, "declare_view", |connection| {
                 connection.execute_batch(&view).map(|()| ((), 0))
             })
@@ -258,6 +273,10 @@ impl IEvaluate for SqliteEvaluate {
                     let mut args: Vec<TermId> = Vec::with_capacity(width);
                     for at in 1..=width {
                         args.push(TermId(row.get::<_, i64>(at)? as u32));
+                    }
+                    // Only view rows are padded to the widest arity.
+                    if self.cap_marker != Some(rel) {
+                        args.truncate(arity_of(&self.derived, &[], rel));
                     }
                     rows.push(Row { rel, args });
                 }
@@ -314,10 +333,21 @@ impl IEvaluate for SqliteEvaluate {
                 kept.push(row);
             }
         }
+        let intern_alias = {
+            let name = guard.atom(INTERN_ROWS);
+            guard.compound("ref", vec![name])
+        };
+        let intern_rel = {
+            let name = guard.atom("intern");
+            let kernel = guard.compound("kernel", vec![name]);
+            guard.compound("ref", vec![kernel])
+        };
         for row in &mut kept {
-            let arity = arity_of(&self.derived, &self.seeded, row.rel);
-            row.args.truncate(arity);
+            if row.rel == intern_alias {
+                row.rel = intern_rel;
+            }
         }
+        kept.retain(|row| !self.hidden.contains(&row.rel));
         kept.retain(|row| products.is_empty() || products.contains(&row.rel));
         kept.sort_by(|a, b| {
             guard
@@ -484,6 +514,171 @@ struct Flush {
 }
 
 /// The whole arena mirrors into the dictionary; an id equals its index.
+/// Magic sets (F5a): a product some rule of which needs bound head arguments
+/// is also proved under each caller's binding. A call site with bound
+/// positions B feeds a demand product; an adorned copy of every rule joins
+/// it; the caller reads the adorned copy. The originals still fire bottom-up.
+fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
+    let snapshots = {
+        let name = u.atom("intern_snapshot");
+        let kernel = u.compound("kernel", vec![name]);
+        u.compound("ref", vec![kernel])
+    };
+    let mut by_rel: HashMap<TermId, Vec<Rule>> = HashMap::new();
+    for rule in &program.rules {
+        by_rel.entry(rule.rel).or_default().push(rule.clone());
+    }
+    let demanded: HashSet<TermId> = by_rel
+        .iter()
+        .filter(|(_, rules)| rules.iter().any(|rule| needs_bound_head(u, rule, snapshots)))
+        .map(|(rel, _)| *rel)
+        .collect();
+    let seeded: HashSet<TermId> = program.seeds.iter().map(|row| row.rel).collect();
+    let mut out = program.clone();
+    if demanded.is_empty() {
+        return (out, HashSet::new());
+    }
+    let mut hidden: HashSet<TermId> = HashSet::new();
+    let mut adorned: HashMap<(TermId, Vec<usize>), (TermId, TermId)> = HashMap::new();
+    let mut queue: Vec<Rule> = std::mem::take(&mut out.rules);
+    let mut done: Vec<Rule> = Vec::new();
+    // Every adorned copy re-enters the queue, so the walk is bounded by the
+    // number of (product, bound positions) pairs times the rule count.
+    let budget = program.rules.len() * (1 + program.rules.len() * 8);
+    for _ in 0..budget {
+        let Some(mut rule) = queue.pop() else {
+            break;
+        };
+        let mut bound: HashSet<u32> = HashSet::new();
+        for at in 0..rule.body.len() {
+            let goal = rule.body[at].clone();
+            let positive = goal.polarity == Polarity::Positive;
+            if positive && demanded.contains(&goal.rel) {
+                let positions: Vec<usize> = goal
+                    .args
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, arg)| match arg {
+                        Arg::Var(v) => bound.contains(&v.0),
+                        Arg::Ground(_) => true,
+                        _ => false,
+                    })
+                    .map(|(position, _)| position)
+                    .collect();
+                let key = (goal.rel, positions.clone());
+                let (demand_rel, adorned_rel) = match adorned.get(&key) {
+                    Some(pair) => *pair,
+                    None => {
+                        let base = u
+                            .unary(goal.rel, "ref")
+                            .and_then(|inner| u.functor_or_atom(inner).map(|(name, _)| name.to_string()))
+                            .unwrap_or_else(|| format!("n{}", goal.rel.0));
+                        let mask: String = positions.iter().map(|p| p.to_string()).collect();
+                        let id = goal.rel.0;
+                        let demand_name = u.atom(&format!("dmd__{base}{id}__{mask}"));
+                        let demand_rel = u.compound("ref", vec![demand_name]);
+                        let adorned_name = u.atom(&format!("adn__{base}{id}__{mask}"));
+                        let adorned_rel = u.compound("ref", vec![adorned_name]);
+                        adorned.insert(key, (demand_rel, adorned_rel));
+                        hidden.insert(demand_rel);
+                        hidden.insert(adorned_rel);
+                        for original in by_rel.get(&goal.rel).into_iter().flatten() {
+                            let mut body = vec![Goal {
+                                polarity: Polarity::Positive,
+                                rel: demand_rel,
+                                args: positions.iter().map(|p| original.head[*p].clone()).collect(),
+                            }];
+                            body.extend(original.body.iter().cloned());
+                            queue.push(Rule {
+                                rel: adorned_rel,
+                                head: original.head.clone(),
+                                body,
+                                vars: original.vars.clone(),
+                            });
+                        }
+                        if seeded.contains(&goal.rel) {
+                            let arity = goal.args.len();
+                            let vars: Vec<TermId> = (0..arity).map(|i| u.atom(&format!("s{i}"))).collect();
+                            let args: Vec<Arg> = (0..arity).map(|i| Arg::Var(super::program::VarId(i as u32))).collect();
+                            queue.push(Rule {
+                                rel: adorned_rel,
+                                head: args.clone(),
+                                body: vec![Goal { polarity: Polarity::Positive, rel: goal.rel, args }],
+                                vars,
+                            });
+                        }
+                        (demand_rel, adorned_rel)
+                    }
+                };
+                done.push(Rule {
+                    rel: demand_rel,
+                    head: positions.iter().map(|p| goal.args[*p].clone()).collect(),
+                    body: rule.body[..at].to_vec(),
+                    vars: rule.vars.clone(),
+                });
+                rule.body[at].rel = adorned_rel;
+            }
+            if positive {
+                for arg in &goal.args {
+                    if let Arg::Var(v) = arg {
+                        bound.insert(v.0);
+                    }
+                }
+            }
+        }
+        done.push(rule);
+    }
+    if !queue.is_empty() {
+        tracing::error!(target: "dl8::eval", left = queue.len(), "demand rewrite budget exhausted");
+    }
+    out.rules = done;
+    (out, hidden)
+}
+
+/// One twin rule per `intern` call: head is the call, body is the prefix that
+/// binds it, so the view holds the `kernel(intern)/3` rows Rust records.
+fn with_intern_rows(u: &mut Universe, program: &Program) -> Program {
+    // The twin heads a non-kernel name; `read` maps it back to `kernel(intern)`.
+    let intern_rel = {
+        let name = u.atom(INTERN_ROWS);
+        u.compound("ref", vec![name])
+    };
+    let mut out = program.clone();
+    for (index, rule) in program.rules.iter().enumerate() {
+        let mut bound: HashSet<u32> = HashSet::new();
+        for (at, goal) in rule.body.iter().enumerate() {
+            let is_intern = goal.polarity == Polarity::Positive
+                && Kernel::of(u, goal.rel) == Some(Kernel::Intern)
+                && goal.args.len() == 3;
+            let known = |arg: &Arg| match arg {
+                Arg::Var(v) => bound.contains(&v.0),
+                Arg::Ground(_) => true,
+                _ => false,
+            };
+            if is_intern && known(&goal.args[0]) && known(&goal.args[1]) {
+                out.rules.push(Rule {
+                    rel: intern_rel,
+                    head: goal.args.clone(),
+                    body: rule.body[..=at].to_vec(),
+                    vars: rule.vars.clone(),
+                });
+            } else if is_intern && known(&goal.args[2]) {
+                // Rust matches a deconstructing `intern` against the stored
+                // `kernel(intern)` rows; the twin product is that table.
+                out.rules[index].body[at].rel = intern_rel;
+            }
+            if goal.polarity == Polarity::Positive {
+                for arg in &goal.args {
+                    if let Arg::Var(v) = arg {
+                        bound.insert(v.0);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn flush_rows(u: &Universe) -> Flush {
     let syms = u
         .syms

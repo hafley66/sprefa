@@ -394,7 +394,7 @@ fn arg_vars(arg: &Arg) -> Vec<VarId> {
 /// present when its stratum starts. A rule reading `intern_snapshot` fires
 /// against the rows known at round zero and never revisits them, so such a
 /// rule keeps the plain blocking walk and demand answers it in place.
-fn needs_bound_head(u: &Universe, rule: &Rule, snapshots: TermId) -> bool {
+pub(crate) fn needs_bound_head(u: &Universe, rule: &Rule, snapshots: TermId) -> bool {
     if rule.is_aggregate() {
         return false;
     }

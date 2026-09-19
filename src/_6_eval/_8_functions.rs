@@ -49,8 +49,17 @@ fn row(
     solve: Solve,
     arena: &Arc<Mutex<Universe>>,
 ) -> Option<SqlValue> {
-    let mut shaped: Vec<Option<TermId>> = args.iter().map(cell).collect();
-    shaped.resize(3, None);
+    // A one-argument call deconstructs: the whole value sits in the kernel
+    // row's last position. Two arguments construct into that position.
+    let mut shaped: Vec<Option<TermId>> = vec![None; 3];
+    match args {
+        [whole] => shaped[2] = cell(whole),
+        [first, second] => {
+            shaped[0] = cell(first);
+            shaped[1] = cell(second);
+        }
+        _ => return None,
+    }
     let mut taken = arena.lock().ok()?;
     let solved = solve(&mut taken, &shaped)?;
     let term = solved.get(out)?;
@@ -96,6 +105,16 @@ pub fn register(connection: &Connection, arena: Arc<Mutex<Universe>>) -> rusqlit
         let n = taken.as_int(payload)?;
         Some(SqlValue::Integer(n))
     })?;
+    let encoding = arena.clone();
+    scalar(connection, "dl_int_term", 1, move |args| {
+        let [SqlValue::Integer(n)] = args else {
+            return None;
+        };
+        let mut taken = encoding.lock().ok()?;
+        let payload = taken.int(*n);
+        let term = taken.compound("const", vec![payload]);
+        Some(SqlValue::Integer(term.0 as i64))
+    })?;
     let ordering = arena.clone();
     scalar(connection, "dl_term_lt", 2, move |args| {
         if args.len() != 2 {
@@ -119,5 +138,32 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         let arena = Arc::new(Mutex::new(Universe::new()));
         register(&connection, arena).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod probe {
+    use super::*;
+
+    #[test]
+    fn head_and_tail_of_a_seed_list() {
+        let connection = Connection::open_in_memory().unwrap();
+        let mut u = Universe::new();
+        let a = u.atom("a");
+        let a = u.compound("const", vec![a]);
+        let b = u.atom("b");
+        let b = u.compound("const", vec![b]);
+        let items = u.list(&[a, b]);
+        let list = u.compound("const", vec![items]);
+        let arena = Arc::new(Mutex::new(u));
+        register(&connection, arena.clone()).unwrap();
+        let head: Option<i64> = connection
+            .query_row(&format!("SELECT dl_head({})", list.0), [], |r| r.get(0))
+            .unwrap();
+        let tail: Option<i64> = connection
+            .query_row(&format!("SELECT dl_tail({})", list.0), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(head, Some(a.0 as i64), "head");
+        assert!(tail.is_some(), "tail");
     }
 }

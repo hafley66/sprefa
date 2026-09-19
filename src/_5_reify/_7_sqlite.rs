@@ -477,7 +477,7 @@ fn lower_component(
                 };
                 for (position, value) in head.iter().enumerate() {
                     let slot = &mut next.get_mut(key).unwrap()[position];
-                    *slot = slot.merge(value.kind());
+                    *slot = slot.merge(value.kind_under(catalog.reach));
                 }
             }
         }
@@ -521,12 +521,24 @@ fn lower_component(
             match rendered {
                 Ok(select) if own == 0 => anchors.push(select),
                 Ok(select) => steps.push(select),
+                // Bottom-up, Rust fires such a rule and finds no row; the
+                // demand rewrite already gave every caller an adorned copy.
+                Err(Unsupported::Unbound(_)) if catalog.reach == KernelReach::Eval => {}
                 Err(reason) => errors.push((*key, ordinal, reason)),
             }
         }
     }
     if !errors.is_empty() {
         return Err(errors);
+    }
+    if anchors.is_empty() && steps.is_empty() && catalog.reach == KernelReach::Eval {
+        let key = component[0];
+        let nulls = vec!["NULL"; key.1.max(1)];
+        anchors.push(format!(
+            "SELECT {} FROM {} WHERE 0",
+            nulls.join(", "),
+            catalog.store_object("unit")
+        ));
     }
 
     for key in component {
@@ -549,6 +561,19 @@ fn lower_component(
             anchors.join(" UNION ")
         )]);
     };
+    if anchors.is_empty() && catalog.reach == KernelReach::Eval {
+        // Every anchor rule was unbound: the component derives nothing.
+        let mut cells = vec!["0".to_string()];
+        cells.extend(std::iter::repeat("NULL".to_string()).take(width));
+        if capped {
+            cells.push("0".to_string());
+        }
+        anchors.push(format!(
+            "SELECT {} FROM {} WHERE 0",
+            cells.join(", "),
+            catalog.store_object("unit")
+        ));
+    }
     if anchors.is_empty() {
         let key = component[0];
         return Err((0..catalog.derived[&key].len())
@@ -662,6 +687,14 @@ impl Head {
             Head::Fold(_, _) => Some(CellKind::Int),
         }
     }
+
+    /// Eval cells are arena ids: a minted integer lands as `const(N)`.
+    fn kind_under(&self, reach: KernelReach) -> Option<CellKind> {
+        match (reach, self.kind()) {
+            (KernelReach::Eval, Some(_)) => Some(CellKind::Term),
+            (_, kind) => kind,
+        }
+    }
 }
 
 struct Lowering<'a> {
@@ -699,6 +732,8 @@ enum Source {
     Table(String),
     Member(String, usize),
     Kernel(Kernel),
+    /// A product with no rows at all: never seeded, never derived.
+    Empty,
 }
 
 impl<'a> Lowering<'a> {
@@ -771,6 +806,9 @@ impl<'a> Lowering<'a> {
         if self.catalog.derived.contains_key(&key) {
             return Ok(Source::Table(self.catalog.cte_name(key)));
         }
+        if !self.catalog.seeded.contains(&key) && self.catalog.reach == KernelReach::Eval {
+            return Ok(Source::Empty);
+        }
         if !self.catalog.names.contains_key(&goal.rel) {
             return Err(Unsupported::UnnamedRelation);
         }
@@ -778,6 +816,38 @@ impl<'a> Lowering<'a> {
             return Err(Unsupported::UnstoredRelation(self.catalog.name(goal.rel)));
         }
         Ok(Source::Table(self.catalog.table_name(key)))
+    }
+
+    /// sqlite_ivm lowers a recursive step's WHERE as scalar expressions, so a
+    /// NOT EXISTS there is rejected. When the anti-join correlates with one
+    /// non-recursive source only, it moves inside that source as a subquery.
+    fn hoist_into_source(&self, scope: &mut Scope, anti: &str) -> bool {
+        if self.catalog.reach != KernelReach::Eval {
+            return false;
+        }
+        let Some(shared) = self.shared else {
+            return false;
+        };
+        let is_member = |item: &From| item.table.starts_with(shared);
+        if !scope.from.iter().any(is_member) {
+            return false;
+        }
+        let mentioned: Vec<usize> = scope
+            .from
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| anti.contains(&format!("{}.", item.alias)))
+            .map(|(at, _)| at)
+            .collect();
+        let [at] = mentioned[..] else {
+            return false;
+        };
+        if is_member(&scope.from[at]) || scope.from[at].table.starts_with('(') {
+            return false;
+        }
+        let item = &mut scope.from[at];
+        item.table = format!("(SELECT * FROM {} WHERE {anti}) AS {}", item.table, item.alias);
+        true
     }
 
     /// The column of `position` in a goal's source, as the source stores it.
@@ -801,12 +871,18 @@ impl<'a> Lowering<'a> {
     fn body(&self, rule: &Rule) -> Result<(Scope, Vec<Head>), Unsupported> {
         let mut scope = Scope::new();
         let mut vars: HashMap<usize, Value> = HashMap::new();
+        // An aggregate body matches stored rows only (`nil` is stored); a
+        // positive kernel goal there has no row, as in `Eval::tables_only`.
+        let tables_only = self.catalog.reach == KernelReach::Eval && rule.is_aggregate();
         for goal in &rule.body {
             let source = self.source(goal)?;
             match (goal.polarity, &source) {
                 (Polarity::Positive, Source::Kernel(kernel)) => {
                     let condition =
                         self.kernel(&mut scope, rule, &mut vars, goal, *kernel, true)?;
+                    if tables_only && !matches!(kernel, Kernel::Nil) {
+                        scope.conditions.push("0".to_string());
+                    }
                     scope.conditions.push(condition);
                 }
                 (Polarity::Negative, Source::Kernel(kernel)) => {
@@ -814,6 +890,18 @@ impl<'a> Lowering<'a> {
                         self.kernel(&mut scope, rule, &mut vars, goal, *kernel, false)?;
                     scope.conditions.push(format!("NOT ({condition})"));
                 }
+                (Polarity::Positive, Source::Empty) => {
+                    for arg in &goal.args {
+                        if let Arg::Var(v) = arg {
+                            vars.entry(v.0 as usize).or_insert(Value {
+                                sql: "NULL".to_string(),
+                                kind: CellKind::Term,
+                            });
+                        }
+                    }
+                    scope.conditions.push("0".to_string());
+                }
+                (Polarity::Negative, Source::Empty) => {}
                 (Polarity::Positive, _) => {
                     let alias = self.alias();
                     self.relation(&mut scope, rule, &mut vars, goal, &source, &alias, true)?;
@@ -825,9 +913,10 @@ impl<'a> Lowering<'a> {
                     let inner_positive = self.catalog.reach == KernelReach::Eval;
                     self.relation(&mut inner, rule, &mut inner_vars, goal, &source, &alias, inner_positive)?;
                     let (from, where_sql) = inner.joined_from();
-                    scope.conditions.push(format!(
-                        "NOT EXISTS (SELECT 1 FROM {from} WHERE {where_sql})"
-                    ));
+                    let anti = format!("NOT EXISTS (SELECT 1 FROM {from} WHERE {where_sql})");
+                    if !self.hoist_into_source(&mut scope, &anti) {
+                        scope.conditions.push(anti);
+                    }
                 }
             }
         }
@@ -941,7 +1030,7 @@ impl<'a> Lowering<'a> {
                     .push(format!("{alias}.{} = {member}", quote_identifier("member")));
             }
             Source::Table(table) => scope.join(format!("{table} AS {alias}"), alias.to_string()),
-            Source::Kernel(_) => unreachable!("kernel goals lower in `kernel`"),
+            Source::Kernel(_) | Source::Empty => unreachable!("lowered in `body`"),
         }
         for (position, argument) in goal.args.iter().enumerate() {
             let column = self.column(goal, source, alias, position);
@@ -1264,6 +1353,11 @@ impl<'a> Lowering<'a> {
     fn int_of(&self, scope: &mut Scope, value: &Value, guards: &mut Vec<String>) -> String {
         match value.kind {
             CellKind::Int => value.sql.clone(),
+            _ if self.catalog.reach == KernelReach::Eval => {
+                let call = format!("dl_int({})", value.sql);
+                guards.push(format!("{call} IS NOT NULL"));
+                call
+            }
             _ => {
                 let payload = self.payload(scope, &value.sql);
                 guards.push(self.is_const(scope, &payload));
@@ -1358,6 +1452,9 @@ impl<'a> Lowering<'a> {
         term: TermId,
     ) -> Result<String, Unsupported> {
         let u = self.catalog.u;
+        if self.catalog.reach == KernelReach::Eval && column.kind != CellKind::Int {
+            return Ok(format!("{} = {}", column.sql, term.0 as i64));
+        }
         let Some(payload) = u.unary(term, "const") else {
             return Err(Unsupported::Constant(term));
         };
@@ -1465,6 +1562,10 @@ impl<'a> Lowering<'a> {
     /// The arena id of a constant cell. A constant the store never committed
     /// has no `term` row, and the rule derives nothing.
     fn constant_cell(&self, scope: &mut Scope, term: TermId) -> Result<String, Unsupported> {
+        // Eval cells are arena ids (F2a), so a ground term is its own literal.
+        if self.catalog.reach == KernelReach::Eval {
+            return Ok((term.0 as i64).to_string());
+        }
         let alias = self.alias();
         scope.join(
             format!("{} AS {alias}", self.catalog.store_object("term")),
@@ -1506,7 +1607,7 @@ impl<'a> Lowering<'a> {
                 }
                 Head::Ground(term) => self.constant_cell(&mut scope, *term)?,
                 Head::Fold(kind, subject) => {
-                    if head[position].kind() != Some(kinds[position]) {
+                    if head[position].kind_under(self.catalog.reach) != Some(kinds[position]) {
                         return Err(Unsupported::MixedColumn(position));
                     }
                     reduce = Some((position, *kind, subject.clone()));
@@ -1573,7 +1674,12 @@ impl<'a> Lowering<'a> {
             }
         };
         scope.conditions.extend(guards);
-        columns[position] = aggregate;
+        // Eval cells are arena ids, so an integer aggregate becomes `const(N)`.
+        columns[position] = if self.catalog.reach == KernelReach::Eval {
+            format!("dl_int_term({aggregate})")
+        } else {
+            aggregate
+        };
         let tail = if groups.is_empty() {
             "HAVING COUNT(*) > 0".to_string()
         } else {
@@ -1892,6 +1998,16 @@ impl<'a> ProgramPlan<'a> {
     /// `(shape, aggregate count)` per refused rule, deduped, for the eval
     /// engine's diagnostics.
     pub(crate) fn eval_failures(&self) -> Vec<(String, usize)> {
+        for (key, ordinal, reason) in &self.failures {
+            tracing::info!(
+                target: "dl8::eval",
+                relation = %self.catalog.name(key.0),
+                arity = key.1,
+                ordinal,
+                reason = ?reason,
+                "eval lowering failure"
+            );
+        }
         let mut named: Vec<(String, usize)> = self
             .failures
             .iter()
