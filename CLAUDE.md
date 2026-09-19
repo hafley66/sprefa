@@ -49,6 +49,13 @@ lane load.
   (incident, RCA, fail-pre-fix test, rail).
 - `eprintln!` never in `src/**`; `tracing` only. Rare CLI-UX lines carry
   `@eprintln-ok`.
+- **Every loop and every recursion is bounded** (user 2026-09-18, after the
+  demand blow-up). A `loop {}`, `while`, or recursive fn in `src/**` carries an
+  explicit budget (`for _ in 0..LIMIT`, a depth counter, a row-set repeat
+  check) and stops with a named diagnostic when the budget is hit. The bound
+  is a constant with a comment saying what it protects. A fixpoint with no
+  budget is a blocking defect; a scanner test lists every `loop {` in
+  `src/**` against its budget line.
 - Lang design happens with Chris in the room. Findings come back as cited forks
   with throw sites; implementation of a decided design is dispatchable.
 - Kernel changes need explicit user approval with concrete dl7 examples first
