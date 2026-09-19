@@ -289,7 +289,7 @@ impl<'a> Catalog<'a> {
                 names.entry(*rel).or_insert_with(|| name.clone());
             }
         }
-        let seeded: HashSet<Key> = program
+        let mut seeded: HashSet<Key> = program
             .seeds
             .iter()
             .map(|seed| (seed.rel, seed.args.len()))
@@ -301,6 +301,18 @@ impl<'a> Catalog<'a> {
                     .entry((rule.rel, rule.head.len()))
                     .or_default()
                     .push(rule);
+            }
+        }
+        if reach == KernelReach::Eval {
+            // Every product a body reads that nothing derives gets a table,
+            // empty or not, so a later seed delta for it has a home.
+            for rule in &program.rules {
+                for goal in &rule.body {
+                    let key = (goal.rel, goal.args.len());
+                    if !owns(u, goal.rel) && !derived.contains_key(&key) {
+                        seeded.insert(key);
+                    }
+                }
             }
         }
         if reach == KernelReach::Eval {
@@ -2148,6 +2160,13 @@ impl<'a> ProgramPlan<'a> {
             .filter(|piece| piece.starts_with(ROUND_MARK))
             .map(|piece| piece.replace(ROUND_MARK, ""))
             .collect()
+    }
+
+    /// Every product with a store table: `(relation, arity)`.
+    pub(crate) fn seeded_keys(&self) -> Vec<(TermId, usize)> {
+        let mut keys: Vec<(TermId, usize)> = self.catalog.seeded.iter().copied().collect();
+        keys.sort_by_key(|key| (key.0 .0, key.1));
+        keys
     }
 
     /// `(table, columns)` per materialized product, for its DDL.
