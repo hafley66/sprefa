@@ -2,12 +2,13 @@
 //! per program (F3b), every statement inside `sql()`. Rust moves rows in and
 //! out; joins, filters and the fixpoint are SQL.
 
-use super::program::{Arg, Diagnostic, Polarity, Program, Row, Rule};
+use super::program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule};
 use super::term::{Term, TermId, Universe};
 use crate::_5_reify::sqlite::{program_plan_with, KernelReach};
 use super::kernel::Kernel;
 use crate::_5_reify::Stop;
 use crate::_6_eval::stratify::stratify;
+use super::evaluate::needs_bound_head;
 use crate::_9_runtime::sqlite::{open, sql};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::Connection;
@@ -69,6 +70,8 @@ pub struct SqliteEvaluate {
     /// the view's marker rows carry, plus the marker product tag itself.
     cap_marker: Option<TermId>,
     cap_names: Vec<String>,
+    /// Demand and adorned products: joined by the view, never read out.
+    hidden: HashSet<TermId>,
 }
 
 impl SqliteEvaluate {
@@ -88,6 +91,7 @@ impl SqliteEvaluate {
             halted: false,
             cap_marker: None,
             cap_names: Vec::new(),
+            hidden: HashSet::new(),
         })
     }
 
@@ -112,7 +116,9 @@ impl IEvaluate for SqliteEvaluate {
                     view: "program".to_string(),
                 });
             }
-            let program = &with_intern_rows(&mut guard, program);
+            let (program, hidden) = with_demand(&mut guard, program);
+            let program = &with_intern_rows(&mut guard, &program);
+            self.hidden = hidden;
             let mut rels: Vec<TermId> = program
                 .rules
                 .iter()
@@ -341,6 +347,7 @@ impl IEvaluate for SqliteEvaluate {
                 row.rel = intern_rel;
             }
         }
+        kept.retain(|row| !self.hidden.contains(&row.rel));
         kept.retain(|row| products.is_empty() || products.contains(&row.rel));
         kept.sort_by(|a, b| {
             guard
@@ -507,6 +514,127 @@ struct Flush {
 }
 
 /// The whole arena mirrors into the dictionary; an id equals its index.
+/// Magic sets (F5a): a product some rule of which needs bound head arguments
+/// is also proved under each caller's binding. A call site with bound
+/// positions B feeds a demand product; an adorned copy of every rule joins
+/// it; the caller reads the adorned copy. The originals still fire bottom-up.
+fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
+    let snapshots = {
+        let name = u.atom("intern_snapshot");
+        let kernel = u.compound("kernel", vec![name]);
+        u.compound("ref", vec![kernel])
+    };
+    let mut by_rel: HashMap<TermId, Vec<Rule>> = HashMap::new();
+    for rule in &program.rules {
+        by_rel.entry(rule.rel).or_default().push(rule.clone());
+    }
+    let demanded: HashSet<TermId> = by_rel
+        .iter()
+        .filter(|(_, rules)| rules.iter().any(|rule| needs_bound_head(u, rule, snapshots)))
+        .map(|(rel, _)| *rel)
+        .collect();
+    let seeded: HashSet<TermId> = program.seeds.iter().map(|row| row.rel).collect();
+    let mut out = program.clone();
+    if demanded.is_empty() {
+        return (out, HashSet::new());
+    }
+    let mut hidden: HashSet<TermId> = HashSet::new();
+    let mut adorned: HashMap<(TermId, Vec<usize>), (TermId, TermId)> = HashMap::new();
+    let mut queue: Vec<Rule> = std::mem::take(&mut out.rules);
+    let mut done: Vec<Rule> = Vec::new();
+    // Every adorned copy re-enters the queue, so the walk is bounded by the
+    // number of (product, bound positions) pairs times the rule count.
+    let budget = program.rules.len() * (1 + program.rules.len() * 8);
+    for _ in 0..budget {
+        let Some(mut rule) = queue.pop() else {
+            break;
+        };
+        let mut bound: HashSet<u32> = HashSet::new();
+        for at in 0..rule.body.len() {
+            let goal = rule.body[at].clone();
+            let positive = goal.polarity == Polarity::Positive;
+            if positive && demanded.contains(&goal.rel) {
+                let positions: Vec<usize> = goal
+                    .args
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, arg)| match arg {
+                        Arg::Var(v) => bound.contains(&v.0),
+                        Arg::Ground(_) => true,
+                        _ => false,
+                    })
+                    .map(|(position, _)| position)
+                    .collect();
+                let key = (goal.rel, positions.clone());
+                let (demand_rel, adorned_rel) = match adorned.get(&key) {
+                    Some(pair) => *pair,
+                    None => {
+                        let base = u
+                            .unary(goal.rel, "ref")
+                            .and_then(|inner| u.functor_or_atom(inner).map(|(name, _)| name.to_string()))
+                            .unwrap_or_else(|| format!("n{}", goal.rel.0));
+                        let mask: String = positions.iter().map(|p| p.to_string()).collect();
+                        let id = goal.rel.0;
+                        let demand_name = u.atom(&format!("dmd__{base}{id}__{mask}"));
+                        let demand_rel = u.compound("ref", vec![demand_name]);
+                        let adorned_name = u.atom(&format!("adn__{base}{id}__{mask}"));
+                        let adorned_rel = u.compound("ref", vec![adorned_name]);
+                        adorned.insert(key, (demand_rel, adorned_rel));
+                        hidden.insert(demand_rel);
+                        hidden.insert(adorned_rel);
+                        for original in by_rel.get(&goal.rel).into_iter().flatten() {
+                            let mut body = vec![Goal {
+                                polarity: Polarity::Positive,
+                                rel: demand_rel,
+                                args: positions.iter().map(|p| original.head[*p].clone()).collect(),
+                            }];
+                            body.extend(original.body.iter().cloned());
+                            queue.push(Rule {
+                                rel: adorned_rel,
+                                head: original.head.clone(),
+                                body,
+                                vars: original.vars.clone(),
+                            });
+                        }
+                        if seeded.contains(&goal.rel) {
+                            let arity = goal.args.len();
+                            let vars: Vec<TermId> = (0..arity).map(|i| u.atom(&format!("s{i}"))).collect();
+                            let args: Vec<Arg> = (0..arity).map(|i| Arg::Var(super::program::VarId(i as u32))).collect();
+                            queue.push(Rule {
+                                rel: adorned_rel,
+                                head: args.clone(),
+                                body: vec![Goal { polarity: Polarity::Positive, rel: goal.rel, args }],
+                                vars,
+                            });
+                        }
+                        (demand_rel, adorned_rel)
+                    }
+                };
+                done.push(Rule {
+                    rel: demand_rel,
+                    head: positions.iter().map(|p| goal.args[*p].clone()).collect(),
+                    body: rule.body[..at].to_vec(),
+                    vars: rule.vars.clone(),
+                });
+                rule.body[at].rel = adorned_rel;
+            }
+            if positive {
+                for arg in &goal.args {
+                    if let Arg::Var(v) = arg {
+                        bound.insert(v.0);
+                    }
+                }
+            }
+        }
+        done.push(rule);
+    }
+    if !queue.is_empty() {
+        tracing::error!(target: "dl8::eval", left = queue.len(), "demand rewrite budget exhausted");
+    }
+    out.rules = done;
+    (out, hidden)
+}
+
 /// One twin rule per `intern` call: head is the call, body is the prefix that
 /// binds it, so the view holds the `kernel(intern)/3` rows Rust records.
 fn with_intern_rows(u: &mut Universe, program: &Program) -> Program {

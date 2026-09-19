@@ -521,12 +521,24 @@ fn lower_component(
             match rendered {
                 Ok(select) if own == 0 => anchors.push(select),
                 Ok(select) => steps.push(select),
+                // Bottom-up, Rust fires such a rule and finds no row; the
+                // demand rewrite already gave every caller an adorned copy.
+                Err(Unsupported::Unbound(_)) if catalog.reach == KernelReach::Eval => {}
                 Err(reason) => errors.push((*key, ordinal, reason)),
             }
         }
     }
     if !errors.is_empty() {
         return Err(errors);
+    }
+    if anchors.is_empty() && steps.is_empty() && catalog.reach == KernelReach::Eval {
+        let key = component[0];
+        let nulls = vec!["NULL"; key.1.max(1)];
+        anchors.push(format!(
+            "SELECT {} FROM {} WHERE 0",
+            nulls.join(", "),
+            catalog.store_object("unit")
+        ));
     }
 
     for key in component {
