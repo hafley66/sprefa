@@ -81,10 +81,10 @@ fn crate_manifest() -> PathBuf {
 fn built_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(shared) = std::env::var_os("CARGO_TARGET_DIR") {
-        out.push(PathBuf::from(shared).join("debug/extract"));
+        out.push(PathBuf::from(shared).join("debug/ryi"));
     }
-    out.push(sprefa_root().join("hafley-rs/target/debug/extract"));
-    out.push(sprefa_root().join("hafley-rs/crates/sprefa-extract/target/debug/extract"));
+    out.push(sprefa_root().join("hafley-rs/target/debug/ryi"));
+    out.push(sprefa_root().join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
     out
 }
 
@@ -116,7 +116,7 @@ fn extract_bin() -> PathBuf {
             "--features",
             "cli",
             "--bin",
-            "extract",
+            "ryi",
             "--manifest-path",
         ])
         .arg(&manifest)

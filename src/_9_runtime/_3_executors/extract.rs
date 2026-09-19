@@ -50,14 +50,14 @@ pub fn extract_bin() -> Result<PathBuf, String> {
     let sprefa = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut candidates = Vec::new();
     if let Some(shared) = std::env::var_os("CARGO_TARGET_DIR") {
-        candidates.push(PathBuf::from(shared).join("debug/extract"));
+        candidates.push(PathBuf::from(shared).join("debug/ryi"));
     }
-    candidates.push(sprefa.join("hafley-rs/target/debug/extract"));
-    candidates.push(sprefa.join("hafley-rs/crates/sprefa-extract/target/debug/extract"));
+    candidates.push(sprefa.join("hafley-rs/target/debug/ryi"));
+    candidates.push(sprefa.join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
     candidates
         .into_iter()
         .find(|path| path.exists())
-        .ok_or_else(|| "no extract binary; set SPREFA_EXTRACT_BIN".to_string())
+        .ok_or_else(|| "no ryi binary; set SPREFA_EXTRACT_BIN".to_string())
 }
 
 /// Files under `root`, relative to it: git's tracked set when `root` sits in a
