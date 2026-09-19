@@ -105,6 +105,16 @@ pub fn register(connection: &Connection, arena: Arc<Mutex<Universe>>) -> rusqlit
         let n = taken.as_int(payload)?;
         Some(SqlValue::Integer(n))
     })?;
+    let encoding = arena.clone();
+    scalar(connection, "dl_int_term", 1, move |args| {
+        let [SqlValue::Integer(n)] = args else {
+            return None;
+        };
+        let mut taken = encoding.lock().ok()?;
+        let payload = taken.int(*n);
+        let term = taken.compound("const", vec![payload]);
+        Some(SqlValue::Integer(term.0 as i64))
+    })?;
     let ordering = arena.clone();
     scalar(connection, "dl_term_lt", 2, move |args| {
         if args.len() != 2 {

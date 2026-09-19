@@ -477,7 +477,7 @@ fn lower_component(
                 };
                 for (position, value) in head.iter().enumerate() {
                     let slot = &mut next.get_mut(key).unwrap()[position];
-                    *slot = slot.merge(value.kind());
+                    *slot = slot.merge(value.kind_under(catalog.reach));
                 }
             }
         }
@@ -660,6 +660,14 @@ impl Head {
             Head::Ground(_) => None,
             Head::Fold(Reduce::Min | Reduce::Max, subject) => Some(subject.kind),
             Head::Fold(_, _) => Some(CellKind::Int),
+        }
+    }
+
+    /// Eval cells are arena ids: a minted integer lands as `const(N)`.
+    fn kind_under(&self, reach: KernelReach) -> Option<CellKind> {
+        match (reach, self.kind()) {
+            (KernelReach::Eval, Some(_)) => Some(CellKind::Term),
+            (_, kind) => kind,
         }
     }
 }
@@ -1264,6 +1272,11 @@ impl<'a> Lowering<'a> {
     fn int_of(&self, scope: &mut Scope, value: &Value, guards: &mut Vec<String>) -> String {
         match value.kind {
             CellKind::Int => value.sql.clone(),
+            _ if self.catalog.reach == KernelReach::Eval => {
+                let call = format!("dl_int({})", value.sql);
+                guards.push(format!("{call} IS NOT NULL"));
+                call
+            }
             _ => {
                 let payload = self.payload(scope, &value.sql);
                 guards.push(self.is_const(scope, &payload));
@@ -1513,7 +1526,7 @@ impl<'a> Lowering<'a> {
                 }
                 Head::Ground(term) => self.constant_cell(&mut scope, *term)?,
                 Head::Fold(kind, subject) => {
-                    if head[position].kind() != Some(kinds[position]) {
+                    if head[position].kind_under(self.catalog.reach) != Some(kinds[position]) {
                         return Err(Unsupported::MixedColumn(position));
                     }
                     reduce = Some((position, *kind, subject.clone()));
@@ -1580,7 +1593,12 @@ impl<'a> Lowering<'a> {
             }
         };
         scope.conditions.extend(guards);
-        columns[position] = aggregate;
+        // Eval cells are arena ids, so an integer aggregate becomes `const(N)`.
+        columns[position] = if self.catalog.reach == KernelReach::Eval {
+            format!("dl_int_term({aggregate})")
+        } else {
+            aggregate
+        };
         let tail = if groups.is_empty() {
             "HAVING COUNT(*) > 0".to_string()
         } else {
