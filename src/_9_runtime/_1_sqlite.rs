@@ -19,10 +19,13 @@ const KIND_BOOL: i64 = 2;
 const KIND_ATOM: i64 = 3;
 const KIND_STR: i64 = 4;
 const KIND_COMPOUND: i64 = 5;
+/// Caps chunk rounds in `append` so a broken row count or a stalled offset
+/// can never spin the store; far above any real seed set.
+const APPEND_ROUND_BUDGET: usize = 1_000_000;
 
 /// The one connection contract, `open()` only. `page_size` first: it sticks
 /// only before a file's first table. `recursive_triggers` and
-/// `trusted_schema` are what sqlite_ivm requires.
+/// `trusted_schema` are ON because sqlite_ivm requires them.
 const CONTRACT_PRAGMAS: &str = "\
 PRAGMA page_size = 65536;
 PRAGMA journal_mode = WAL;
@@ -194,7 +197,17 @@ impl SqliteRowStore {
         let batch = (self.variable_limit / per_row).max(1);
         let mut written = 0;
         let mut offset = 0;
+        let mut rounds = 0usize;
         while offset < rows {
+            rounds += 1;
+            if rounds > APPEND_ROUND_BUDGET {
+                tracing::error!(
+                    target: "dl8::store",
+                    diagnostic = "append_round_budget_exceeded",
+                    table, rows, rounds,
+                );
+                break;
+            }
             let count = batch.min(rows - offset);
             let tuple = format!("({})", vec!["?"; per_row].join(","));
             let tuples = vec![tuple; count].join(",");
