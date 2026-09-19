@@ -1358,6 +1358,9 @@ impl<'a> Lowering<'a> {
         term: TermId,
     ) -> Result<String, Unsupported> {
         let u = self.catalog.u;
+        if self.catalog.reach == KernelReach::Eval && column.kind != CellKind::Int {
+            return Ok(format!("{} = {}", column.sql, term.0 as i64));
+        }
         let Some(payload) = u.unary(term, "const") else {
             return Err(Unsupported::Constant(term));
         };
@@ -1465,6 +1468,10 @@ impl<'a> Lowering<'a> {
     /// The arena id of a constant cell. A constant the store never committed
     /// has no `term` row, and the rule derives nothing.
     fn constant_cell(&self, scope: &mut Scope, term: TermId) -> Result<String, Unsupported> {
+        // Eval cells are arena ids (F2a), so a ground term is its own literal.
+        if self.catalog.reach == KernelReach::Eval {
+            return Ok((term.0 as i64).to_string());
+        }
         let alias = self.alias();
         scope.join(
             format!("{} AS {alias}", self.catalog.store_object("term")),
@@ -1892,6 +1899,16 @@ impl<'a> ProgramPlan<'a> {
     /// `(shape, aggregate count)` per refused rule, deduped, for the eval
     /// engine's diagnostics.
     pub(crate) fn eval_failures(&self) -> Vec<(String, usize)> {
+        for (key, ordinal, reason) in &self.failures {
+            tracing::info!(
+                target: "dl8::eval",
+                relation = %self.catalog.name(key.0),
+                arity = key.1,
+                ordinal,
+                reason = ?reason,
+                "eval lowering failure"
+            );
+        }
         let mut named: Vec<(String, usize)> = self
             .failures
             .iter()

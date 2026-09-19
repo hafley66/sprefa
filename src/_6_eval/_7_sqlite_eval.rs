@@ -217,6 +217,7 @@ impl IEvaluate for SqliteEvaluate {
         flush_commit(&self.connection, flush).map_err(|_| Stop::Fail("eval flush"))?;
         self.write_delta(&program.seeds, &[])?;
         if !view.is_empty() {
+            tracing::debug!(target: "dl8::eval", view = %view, "declare_view sql");
             sql(&self.connection, "declare_view", |connection| {
                 connection.execute_batch(&view).map(|()| ((), 0))
             })
