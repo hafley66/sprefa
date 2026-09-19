@@ -172,3 +172,26 @@ Step 3's design page carries this as its first section: the `std/store.dl7`
 text, the emitted DDL, the emitted Rust, side by side. It is a design fork
 for Chris (Rust emitter surface: structs only, or structs + insert/select
 functions), decided before step 4.
+
+## Addendum 3 (user 2026-09-18 night): lane caps and the log is the debugger
+
+Steps 1 and 2 each ran 62 minutes on glm53f-omp (196 and 319 turns). The
+brief capped every command and nothing capped the lane. From step 3 on:
+
+- Wall clock 30 minutes per implementation lane. The driver spawns with
+  `--wait --wait-timeout 1800`; exit 124 means kill the tmux session and
+  grade whatever is pushed. Nothing pushed by then is the result.
+- The lane commits and pushes at 25 minutes whatever state it has, with the
+  PR body listing what is missing. A partial PR graded green merges; the
+  remainder is the next lane's brief.
+- Turn cap 150. The lane counts its own tool calls and pushes at 140.
+- Every `dl8` run: `RUST_LOG=dl8=info timeout 10 dl8 ... 2> <log>`. The
+  stderr layer prints one line per phase and one `dl8::sql` line per
+  statement the moment it returns (`src/_9_runtime/_1_sqlite.rs`, `sql()`),
+  no flush wait. On a timeout or a wrong answer the lane reads the last 20
+  lines of the log to find how far the run got, and cites them. No debugger,
+  no bisect, no second run "to see if it repeats".
+- Every `cargo test` leg: `timeout 600`, output to a log, the lane reads the
+  log. Never a foreground wait past 10 seconds on the lane's own turn.
+- `expect.json` is never empty: `--expect-path` for every owned file,
+  `--expect-commit-subject` for the commit, `--expect-commits-at-least 1`.
