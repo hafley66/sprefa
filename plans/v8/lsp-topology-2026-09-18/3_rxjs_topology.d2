@@ -1,0 +1,341 @@
+direction: down
+
+title: |||md
+  # DL8 LSP as one RxJS program
+  **Read downward.** Each panel owns one kind of state. The six arrows carry envelopes between ownership scopes.
+||| {
+  shape: rectangle
+  style.fill: "#101923"
+  style.stroke: "#53c7ed"
+  style.font-color: "#eefbff"
+  style.border-radius: 14
+}
+
+classes: {
+  client: {style.fill: "#102d3b"; style.stroke: "#4dc5eb"; style.font-color: "#effcff"; style.border-radius: 12}
+  broker: {style.fill: "#17341f"; style.stroke: "#5bca78"; style.font-color: "#f0fff3"; style.border-radius: 12}
+  store: {style.fill: "#202e42"; style.stroke: "#81aee4"; style.font-color: "#f2f7ff"; style.border-radius: 12}
+  child: {style.fill: "#403418"; style.stroke: "#e9bd4d"; style.font-color: "#fff9df"; style.border-radius: 12}
+  fence: {style.fill: "#402126"; style.stroke: "#ef7882"; style.font-color: "#fff1f2"; style.border-radius: 12}
+  table: {style.fill: "#202731"; style.stroke: "#718797"; style.font-color: "#e2edf2"; style.border-radius: 8}
+  flow: {style.stroke: "#61d4f4"; style.font-color: "#bfefff"; style.stroke-width: 4}
+}
+
+types: {
+  label: "0 · THE ENVELOPE"
+  direction: right
+  style.fill: "#111c26"
+  style.stroke: "#477083"
+  style.font-color: "#b8dce9"
+  style.border-radius: 14
+
+  code: |||md
+    ```ts
+    type WorkspaceKey = `${Root}@${Repo}:${Revision}`
+
+    type Envelope<T> = {
+      session: SessionId
+      workspace: WorkspaceKey
+      uri: URI
+      generation: number
+      payload: T
+    }
+
+    type Answer<T> = Envelope<T> & {
+      processGeneration?: number
+    }
+    ```
+  ||| {shape: document; class: client; tooltip: "Every asynchronous boundary preserves identity and generation."}
+
+  rules: |||md
+    ### Identity rules
+    | state | key | may share? |
+    |---|---|---|
+    | unsaved bytes | session + URI + version | no |
+    | parsed unit | repo + rev + path + digest | yes |
+    | semantic snapshot | workspace + generation | yes |
+    | child process | adapter + repo + rev + proc gen | leased |
+  ||| {shape: rectangle; class: table; tooltip: "Sharing follows structural identity rather than URI alone."}
+}
+
+title -> types: {style.opacity: 0}
+
+ingress: {
+  label: "1 · MANY CLIENTS ENTER ONE BOUNDED DOOR"
+  direction: right
+  style.fill: "#102733"
+  style.stroke: "#3fa5c4"
+  style.font-color: "#b9eafa"
+  style.border-radius: 14
+
+  code: |||md
+    ```ts
+    const ingress$ = merge(
+      editorA$.pipe(tagSession("A")),
+      editorB$.pipe(tagSession("B")),
+      harness$.pipe(tagSession("H")),
+      cli$.pipe(map(asCommittedQuery)),
+    ).pipe(
+      observeOn(queueScheduler),
+      boundedQueue({ capacity: 128, overflow: "reject" }),
+      share(),
+    )
+    ```
+  ||| {shape: document; class: client; tooltip: "Only envelopes cross the transport boundary. Writers and request ids remain session-owned."}
+
+  marble: |||md
+    ### Marble
+    ```text
+    A  ──o────h7────c8──────────────│
+    B  ─────o──────────h3───────────│
+    H  ───────q────────────x────────│
+              merge + capacity 128
+    out──A:o──A:h7──B:o──H:q──A:c8─│
+    ```
+    `o` open · `h` hover · `c` change · `q` query · `x` close
+  ||| {shape: rectangle; class: table; tooltip: "One ingress sequence preserves per-source identity."}
+}
+
+partition: {
+  label: "2 · PARTITION BY WORKSPACE · OVERLAYS STAY INSIDE SESSIONS"
+  direction: right
+  style.fill: "#142f1c"
+  style.stroke: "#50ad67"
+  style.font-color: "#c5f1cf"
+  style.border-radius: 14
+
+  code: |||md
+    ```ts
+    const workspaces$ = ingress$.pipe(
+      groupBy(e => e.workspace),
+      mergeMap(workspace$ => workspace$.pipe(
+        groupBy(e => e.session),
+        mergeMap(session$ => session$.pipe(
+          scan(reduceOverlay, emptySession()),
+          distinctUntilChanged(sameVersion),
+        )),
+        scan(reduceWorkspace, emptyWorkspace()),
+        shareReplay({ bufferSize: 1, refCount: true }),
+      )),
+    )
+    ```
+  ||| {shape: document; class: broker; tooltip: "One shared workspace snapshot is fed by separate per-session overlay reducers."}
+
+  state: |||md
+    ### State after two clients edit the same URI
+    | owner | value |
+    |---|---|
+    | durable file | `digest = D1` |
+    | overlay A | `version 42 · digest DA` |
+    | overlay B | `version 19 · digest DB` |
+    | shared imports | keyed by `D1` until an overlay query selects DA or DB |
+
+    `shareReplay(1)` retains one current workspace snapshot while leases exist.
+  ||| {shape: rectangle; class: table; tooltip: "Unsaved bytes never overwrite another session or the saved-file identity."}
+}
+
+analysis: {
+  label: "3 · SWITCH TO THE NEWEST SNAPSHOT · OLD WORK CANCELS"
+  direction: right
+  style.fill: "#163722"
+  style.stroke: "#61c77b"
+  style.font-color: "#cdf7d6"
+  style.border-radius: 14
+
+  code: |||md
+    ```ts
+    const answers$ = requests$.pipe(
+      withLatestFrom(workspaceSnapshot$),
+      groupBy(([req]) => `${req.session}:${req.uri}`),
+      mergeMap(uri$ => uri$.pipe(
+        switchMap(([req, snapshot]) =>
+          defer(() => analyze(snapshot, req)).pipe(
+            map(payload => ({ ...req, payload })),
+            takeUntil(cancel$(req.id)),
+            finalize(() => ledger.finish(req.id)),
+          ),
+        ),
+      )),
+    )
+    ```
+  ||| {shape: document; class: broker; tooltip: "switchMap cancels the prior computation for one session and URI. Other URIs continue."}
+
+  marble: |||md
+    ### Edit during hover
+    ```text
+    request   ──h11────────h12────────────│
+    change    ───────c12──────────────────│
+    work 11   ──[ analyze ]×              │
+    work 12   ─────────────[ analyze ]────│
+    answer    ─────────────────────a12────│
+    ```
+    `×` is cancellation. A late physical completion still meets the generation fence in stage 6.
+  ||| {shape: rectangle; class: table; tooltip: "Cancellation reduces work. Generation fencing supplies correctness even when cancellation is advisory."}
+}
+
+durable: {
+  label: "4 · TRANSACT OWNED FACTS · sqlite_ivm MOVES THE VIEWS"
+  direction: right
+  style.fill: "#1d2b3e"
+  style.stroke: "#739fd5"
+  style.font-color: "#dceaff"
+  style.border-radius: 14
+
+  code: |||md
+    ```ts
+    const commits$ = unitChanges$.pipe(
+      concatMap(change => storage.transaction(tx => {
+        tx.deleteSource(change.oldUnitKey)
+        tx.insertSource(change.newUnitKey, change.rows)
+        // sqlite_ivm triggers retract + rederive here
+        return tx.commitGeneration()
+      })),
+      share(),
+    )
+    ```
+  ||| {shape: document; class: store; tooltip: "concatMap gives the storage writer a single ordered transaction lane."}
+
+  table: |||md
+    ### Storage boundary
+    | SQLite owns | broker still owns |
+    |---|---|
+    | source rows | cancellation |
+    | import edges | bounded queues |
+    | derived views | watcher handles |
+    | atomic commits | child processes |
+    | negative and positive deltas | cache eviction |
+
+    Retraction removes relational state. It does not release process-local owners.
+  ||| {shape: rectangle; class: table; tooltip: "sqlite_ivm supplies incremental durable views rather than an LSP lifecycle."}
+}
+
+adapter: {
+  label: "5 · FOREIGN LANGUAGE SERVERS ARE LEASED RESOURCES"
+  direction: right
+  style.fill: "#3b3018"
+  style.stroke: "#dcb34b"
+  style.font-color: "#fff2c7"
+  style.border-radius: 14
+
+  code: |||md
+    ```ts
+    const adapter$ = defer(() => pool.acquire(adapterKey)).pipe(
+      switchMap(lease => using(
+        () => lease,
+        () => requests$.pipe(
+          boundedQueue({ capacity: 64, overflow: "reject" }),
+          mergeMap(req => lease.request(req), 8),
+          map(answer => ({
+            ...answer,
+            processGeneration: lease.generation,
+          })),
+        ),
+      )),
+      retry({ delay: restartWithNextGeneration }),
+      finalize(() => pool.assertNoOrphanHandles(adapterKey)),
+    )
+    ```
+  ||| {shape: document; class: child; tooltip: "using ties the RxJS subscription lifetime to the child-process lease."}
+
+  lifecycle: |||md
+    ### Lease state machine
+    ```text
+    ABSENT ─first lease→ STARTING ─ready→ LIVE
+       ↑                                  │
+       └─joined← STOPPING ←final release──┘
+                     │ deadline
+                     ▼
+                   KILLED ─waitpid→ ABSENT
+    ```
+    The final lease closes stdin. A deadline escalates to kill. `waitpid` precedes ledger removal.
+  ||| {shape: rectangle; class: table; tooltip: "Process generation changes on every restart, fencing late pipe reads."}
+}
+
+publication: {
+  label: "6 · ONE BOOLEAN DECIDES WHETHER AN ANSWER MAY ESCAPE"
+  direction: right
+  style.fill: "#3a2025"
+  style.stroke: "#df6e79"
+  style.font-color: "#ffe4e6"
+  style.border-radius: 14
+
+  code: |||md
+    ```ts
+    const published$ = answers$.pipe(
+      withLatestFrom(currentOverlay$, currentProcessGeneration$),
+      filter(([a, overlay, procGen]) =>
+        a.generation === overlay.generation &&
+        (a.processGeneration == null ||
+         a.processGeneration === procGen) &&
+        !overlay.closed
+      ),
+      map(([answer]) => answer),
+      groupBy(a => a.session),
+      mergeMap(session$ => session$.pipe(
+        observeOn(writerFor(session$.key)),
+      )),
+    )
+    ```
+  ||| {shape: document; class: fence; tooltip: "Publication checks session generation, optional child generation and closed state."}
+
+  truth: |||md
+    ### Publication truth table
+    | overlay gen | answer gen | child gen | session | result |
+    |---:|---:|---:|---|---|
+    | 12 | 11 | 4 | open | discard |
+    | 12 | 12 | 3 | open | discard |
+    | 12 | 12 | 4 | closed | discard |
+    | 12 | 12 | 4 | open | publish |
+  ||| {shape: rectangle; class: table; tooltip: "Cancellation is an optimization. This table is the correctness boundary."}
+}
+
+shutdown: {
+  label: "7 · FINALIZE IN OWNERSHIP ORDER"
+  direction: right
+  style.fill: "#2d1d22"
+  style.stroke: "#c65b68"
+  style.font-color: "#ffd9dc"
+  style.border-radius: 14
+
+  code: |||md
+    ```ts
+    const close$ = sessionClosed$.pipe(
+      concatMap(session => sequence(
+        () => generations.close(session),
+        () => requests.cancelSession(session),
+        () => overlays.delete(session),
+        () => subscribers.delete(session),
+        () => facts.retractSession(session),
+        () => watchers.unregister(session),
+        () => adapters.releaseSession(session),
+        () => writers.drain(session),
+        () => workers.join(session),
+        () => ledger.assertFloor(session),
+      )),
+    )
+    ```
+  ||| {shape: document; class: fence; tooltip: "The sequence drops sender clones before draining and joining the writer."}
+
+  receipt: |||md
+    ### Endurance receipt after warmup
+    | counter | expected after close |
+    |---|---:|
+    | overlays | 0 for session |
+    | pending requests | 0 |
+    | subscriber senders | 0 |
+    | watcher handles | lease floor |
+    | adapter leases | lease floor |
+    | orphan child processes | 0 |
+    | worker tasks | lease floor |
+
+    The v5 exit hang belongs at `subscribers.delete` and `writers.drain`: retained sender clones kept the writer alive.
+  ||| {shape: rectangle; class: table; tooltip: "Measured counters distinguish retained handles, resident growth and ordinary shared caches."}
+}
+
+types -> ingress: "Envelope<T>" {class: flow}
+ingress -> partition: "bounded events" {class: flow}
+partition -> analysis: "workspace snapshot" {class: flow}
+analysis -> durable: "owned fact delta" {class: flow}
+durable -> adapter: "optional foreign query" {class: flow}
+adapter -> publication: "generation-tagged answer" {class: flow}
+publication -> shutdown: "close eventually" {class: flow}
