@@ -175,6 +175,19 @@ fn mark_component(
 /// Marks a CTE that recurses; the view's `WITH` takes `RECURSIVE` when any does.
 const RECURSIVE_MARK: &str = "\u{0}recursive\u{0}";
 
+/// The step count one `WITH RECURSIVE` may reach before the eval lowering
+/// cuts it: a recursive step that constructs a new term every round never
+/// reaches a fixpoint, and this cap turns that divergence into the
+/// `recursion_depth_exceeded` diagnostic instead of a hang. Gated to
+/// `KernelReach::Eval`; the emit goldens freeze the uncapped text.
+const RECURSION_DEPTH_LIMIT: i64 = 64;
+
+/// The recursive component's one CTE: `<relation>_r<arity>`.
+fn shared_cte_name(catalog: &Catalog, component: &[Key]) -> String {
+    let first = component[0];
+    format!("{}_r{}", catalog.name(first.0), first.1)
+}
+
 /// `ref(kernel(cons))` as `cons`, `ref(kernel(str, cons))` as `str.cons`.
 fn kernel_label(u: &Universe, rel: TermId) -> Option<String> {
     let inner = u.unary(rel, "ref")?;
@@ -432,15 +445,15 @@ fn lower_component(
 ) -> Result<Vec<String>, Vec<(Key, usize, Unsupported)>> {
     let recursive = catalog.recursive(component);
     let width = component.iter().map(|key| key.1).max().unwrap_or(0);
-    let shared = recursive.then(|| {
-        let first = component[0];
-        quote_identifier(&format!("{}_r{}", catalog.name(first.0), first.1))
-    });
-    let layout = |key: &Key| {
+    let capped = recursive && catalog.reach == KernelReach::Eval;
+    let shared = recursive.then(|| quote_identifier(&shared_cte_name(catalog, component)));
+    let member_of = |key: &Key, step: bool| {
         shared.as_ref().map(|name| Member {
             cte: name.clone(),
             member: component.iter().position(|k| k == key).unwrap(),
             width,
+            step,
+            capped,
         })
     };
 
@@ -503,7 +516,7 @@ fn lower_component(
                 continue;
             }
             let rendered = lowering.body(rule).and_then(|(scope, head)| {
-                lowering.render(scope, &head, &kinds[key], layout(key), !recursive)
+                lowering.render(scope, &head, &kinds[key], member_of(key, own > 0), !recursive)
             });
             match rendered {
                 Ok(select) if own == 0 => anchors.push(select),
@@ -544,6 +557,9 @@ fn lower_component(
     }
     let mut columns = vec![quote_identifier("member")];
     columns.extend((0..width).map(|position| quote_identifier(&format!("c{position}"))));
+    if capped {
+        columns.push(quote_identifier("depth"));
+    }
     let mut pieces = vec![format!(
         "{RECURSIVE_MARK}{shared}({}) AS ({})",
         columns.join(", "),
@@ -564,9 +580,10 @@ fn lower_component(
                 .collect()
         };
         pieces.push(format!(
-            "{}({}) AS (SELECT {} FROM {shared} WHERE {} = {member})",
+            "{}({}) AS (SELECT {}{} FROM {shared} WHERE {} = {member})",
             catalog.cte_name(*key),
             names.join(", "),
+            if capped { "DISTINCT " } else { "" },
             values.join(", "),
             quote_identifier("member"),
         ));
@@ -605,6 +622,12 @@ struct Member {
     cte: String,
     member: usize,
     width: usize,
+    /// This rule reads the shared CTE: its rows are a recursive step, so the
+    /// rendered select adds one depth under the cap. Anchor rows start at 0.
+    step: bool,
+    /// The eval lowering caps this component: every piece carries the depth
+    /// column.
+    capped: bool,
 }
 
 #[derive(Clone)]
@@ -1505,6 +1528,19 @@ impl<'a> Lowering<'a> {
         if let Some(member) = &member {
             columns.insert(0, member.member.to_string());
             columns.resize(member.width.max(head.len()) + 1, "0".to_string());
+            if member.capped {
+                columns.push(if member.step {
+                    format!("{} + 1", quote_identifier("depth"))
+                } else {
+                    "0".to_string()
+                });
+                if member.step {
+                    scope.conditions.push(format!(
+                        "{} < {RECURSION_DEPTH_LIMIT}",
+                        quote_identifier("depth")
+                    ));
+                }
+            }
             debug_assert!(!member.cte.is_empty());
         }
 
@@ -1881,12 +1917,28 @@ impl<'a> ProgramPlan<'a> {
             .collect()
     }
 
+    /// The recursive components the eval lowering caps, as the shared CTE
+    /// names: the view emits one `recursion_depth_exceeded` row per name,
+    /// carrying the name's ordinal in its first column.
+    pub(crate) fn cap_specs(&self) -> Vec<String> {
+        self.components
+            .iter()
+            .enumerate()
+            .filter(|(index, component)| {
+                self.sql.contains_key(index)
+                    && self.catalog.recursive(component)
+                    && self.catalog.reach == KernelReach::Eval
+            })
+            .map(|(_, component)| shared_cte_name(&self.catalog, component))
+            .collect()
+    }
+
     /// The one F3b `CREATE VIRTUAL TABLE` statement: every lowered component's
     /// CTEs, then a tagged union over the derived products, padded to the
     /// widest arity. `pad` fills columns past a member's own arity; `read`
     /// never decodes them.
-    pub(crate) fn view(&self, pad: TermId) -> Option<(String, usize)> {
-        let (query, width) = self.view_query(pad)?;
+    pub(crate) fn view(&self, pad: TermId, caps: &[(i64, i64, String)]) -> Option<(String, usize)> {
+        let (query, width) = self.view_query(pad, caps)?;
         Some((
             format!(
                 "CREATE VIRTUAL TABLE \"program\" USING sqlite_ivm({})",
@@ -1896,7 +1948,7 @@ impl<'a> ProgramPlan<'a> {
         ))
     }
 
-    fn view_query(&self, pad: TermId) -> Option<(String, usize)> {
+    fn view_query(&self, pad: TermId, caps: &[(i64, i64, String)]) -> Option<(String, usize)> {
         let mut ctes = Vec::new();
         let mut lowered: Vec<Key> = Vec::new();
         for (index, component) in self.components.iter().enumerate() {
@@ -1937,6 +1989,25 @@ impl<'a> ProgramPlan<'a> {
                 "SELECT {} FROM {}",
                 columns.join(", "),
                 self.catalog.cte_name(*key)
+            ));
+        }
+        for (marker, ordinal, cte) in caps {
+            let mut columns = vec![format!("{marker} AS {}", quote_identifier("product"))];
+            if width > 0 {
+                columns.push(format!("{ordinal} AS {}", quote_identifier("c0")));
+            }
+            for position in 1..width {
+                columns.push(format!(
+                    "{} AS {}",
+                    pad.0,
+                    quote_identifier(&format!("c{position}"))
+                ));
+            }
+            selects.push(format!(
+                "SELECT DISTINCT {} FROM {} WHERE {} = {RECURSION_DEPTH_LIMIT}",
+                columns.join(", "),
+                quote_identifier(cte),
+                quote_identifier("depth"),
             ));
         }
         let mut outer = vec![quote_identifier("product")];
