@@ -176,7 +176,9 @@ impl SqliteEvaluate {
                 connection.execute_batch(&ddl).map(|()| ((), 0))
             })
             .map_err(|_| Stop::Fail("eval declare_tables"))?;
-            tracing::debug!(target: "dl8::eval", rel = rel.0, arity, "seed-only product table added");
+            if let Ok(guard) = self.arena.lock() {
+                tracing::debug!(target: "dl8::eval", rel = %guard.display(rel), arity, "seed-only product table added");
+            }
             self.seeded.push((table, rel, arity));
         }
         Ok(())
@@ -380,10 +382,7 @@ impl IEvaluate for SqliteEvaluate {
             if !products.is_empty() && !products.contains(rel) {
                 continue;
             }
-            let columns: Vec<String> = (0..*arity)
-                .map(|position| format!("\"c{position}_term\""))
-                .collect();
-            let select = format!("SELECT {} FROM {table}", columns.join(", "));
+            let select = format!("SELECT {} FROM {table}", product_columns(*arity).join(", "));
             sql(&self.connection, "read_seeds", |connection| {
                 let mut statement = connection.prepare(&select)?;
                 let mut cursor = statement.query([])?;
@@ -501,12 +500,21 @@ fn dictionary_ddl() -> String {
 }
 
 /// One `UNIQUE` over every column, so a product row is a set element.
-fn product_ddl(table: &str, arity: usize) -> String {
-    let columns: Vec<String> = (0..arity)
-        .map(|position| format!("\"c{position}_term\" INTEGER NOT NULL"))
-        .collect();
-    let unique: Vec<String> = (0..arity)
+/// An arity-0 product is one `__id` column, as `column_names` spells it.
+fn product_columns(arity: usize) -> Vec<String> {
+    if arity == 0 {
+        return vec!["\"__id\"".to_string()];
+    }
+    (0..arity)
         .map(|position| format!("\"c{position}_term\""))
+        .collect()
+}
+
+fn product_ddl(table: &str, arity: usize) -> String {
+    let unique = product_columns(arity);
+    let columns: Vec<String> = unique
+        .iter()
+        .map(|column| format!("{column} INTEGER NOT NULL"))
         .collect();
     format!(
         "CREATE TABLE IF NOT EXISTS {table} ({}, UNIQUE ({}));",
@@ -531,12 +539,16 @@ impl SqliteEvaluate {
             let Some(table) = self.table_of(*rel, *arity) else {
                 continue;
             };
-            let columns: Vec<String> = (0..*arity)
-                .map(|position| format!("\"c{position}_term\""))
-                .collect();
-            let chunk_rows = (BIND_BUDGET / (*arity).max(1)).max(1);
+            let columns = product_columns(*arity);
+            let width = columns.len();
+            let values: Vec<Vec<i64>> = if *arity == 0 {
+                vec![vec![1]]
+            } else {
+                values.clone()
+            };
+            let chunk_rows = (BIND_BUDGET / width).max(1);
             for chunk in values.chunks(chunk_rows) {
-                let placeholders = values_placeholder(*arity, chunk.len());
+                let placeholders = values_placeholder(width, chunk.len());
                 let statement = format!(
                     "INSERT OR IGNORE INTO {table} ({}) VALUES {placeholders}",
                     columns.join(", ")
