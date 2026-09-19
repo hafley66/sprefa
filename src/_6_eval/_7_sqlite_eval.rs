@@ -210,8 +210,10 @@ impl IEvaluate for SqliteEvaluate {
             tracing::error!(target: "dl8::eval", phase = "declare_tables", error = %e);
             Stop::Fail("eval declare_tables")
         })?;
-        let guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
-        let flush = flush_rows(&guard);
+        let flush = {
+            let guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+            flush_rows(&guard)
+        };
         flush_commit(&self.connection, flush).map_err(|_| Stop::Fail("eval flush"))?;
         self.write_delta(&program.seeds, &[])?;
         if !view.is_empty() {

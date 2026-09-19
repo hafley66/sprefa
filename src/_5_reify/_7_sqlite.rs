@@ -2003,11 +2003,27 @@ impl<'a> ProgramPlan<'a> {
                     quote_identifier(&format!("c{position}"))
                 ));
             }
+            // A row at the cap that a lower depth already holds is a cycle
+            // the set semantics would have closed, not a runaway derivation.
+            let shared_width = self
+                .components
+                .iter()
+                .filter(|component| shared_cte_name(&self.catalog, component) == *cte)
+                .flat_map(|component| component.iter().map(|key| key.1))
+                .max()
+                .unwrap_or(0);
+            let same_row: Vec<String> = std::iter::once(quote_identifier("member"))
+                .chain((0..shared_width).map(|position| quote_identifier(&format!("c{position}"))))
+                .map(|column| format!("b.{column} = a.{column}"))
+                .collect();
             selects.push(format!(
-                "SELECT DISTINCT {} FROM {} WHERE {} = {RECURSION_DEPTH_LIMIT}",
+                "SELECT DISTINCT {} FROM {} AS a WHERE a.{depth} = {RECURSION_DEPTH_LIMIT} \
+                 AND NOT EXISTS (SELECT 1 FROM {} AS b WHERE b.{depth} < {RECURSION_DEPTH_LIMIT} AND {})",
                 columns.join(", "),
                 quote_identifier(cte),
-                quote_identifier("depth"),
+                quote_identifier(cte),
+                same_row.join(" AND "),
+                depth = quote_identifier("depth"),
             ));
         }
         let mut outer = vec![quote_identifier("product")];

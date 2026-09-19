@@ -6,7 +6,7 @@ use std::process::Command;
 
 /// Fixtures the sqlite engine must keep passing. Measured at slice S1;
 /// a count below this is a regression, above it raises the floor.
-const FLOOR: usize = 4;
+const FLOOR: usize = 7;
 
 fn fixtures() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/eval");
