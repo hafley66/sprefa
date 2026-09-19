@@ -264,6 +264,10 @@ impl IEvaluate for SqliteEvaluate {
                     for at in 1..=width {
                         args.push(TermId(row.get::<_, i64>(at)? as u32));
                     }
+                    // Only view rows are padded to the widest arity.
+                    if self.cap_marker != Some(rel) {
+                        args.truncate(arity_of(&self.derived, &[], rel));
+                    }
                     rows.push(Row { rel, args });
                 }
                 Ok(((), rows.len()))
@@ -329,8 +333,6 @@ impl IEvaluate for SqliteEvaluate {
             guard.compound("ref", vec![kernel])
         };
         for row in &mut kept {
-            let arity = arity_of(&self.derived, &self.seeded, row.rel);
-            row.args.truncate(arity);
             if row.rel == intern_alias {
                 row.rel = intern_rel;
             }
