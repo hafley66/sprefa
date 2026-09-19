@@ -595,7 +595,15 @@ fn lower_component(
 
     for key in component {
         if catalog.seeded.contains(key) {
-            let names = column_names(&kinds[key]);
+            let mut names = column_names(&kinds[key]);
+            if shared.is_some() {
+                let member = component.iter().position(|k| k == key).unwrap();
+                names.insert(0, member.to_string());
+                names.resize(width.max(key.1) + 1, "0".to_string());
+                if capped {
+                    names.push("0".to_string());
+                }
+            }
             anchors.push(format!(
                 "SELECT {} FROM {}",
                 names.join(", "),
