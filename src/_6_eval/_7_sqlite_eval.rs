@@ -84,6 +84,8 @@ pub struct SqliteEvaluate {
     hidden: HashSet<TermId>,
     /// INSERT OR IGNORE statements of the nonlinear components (F4b).
     rounds: Vec<String>,
+    /// The plain tables those statements fill, emptied before a re-run.
+    material_tables: Vec<String>,
 }
 
 impl SqliteEvaluate {
@@ -105,7 +107,22 @@ impl SqliteEvaluate {
             cap_names: Vec::new(),
             hidden: HashSet::new(),
             rounds: Vec::new(),
+            material_tables: Vec::new(),
         })
+    }
+
+    /// A retracted seed cannot be undone by INSERT OR IGNORE rounds: the
+    /// plain tables empty and the rounds run again over the new sources.
+    fn reset_rounds(&mut self) -> Result<(), Stop> {
+        for table in &self.material_tables {
+            let statement = format!("DELETE FROM {table}");
+            sql(&self.connection, "reset_material", |connection| {
+                let n = connection.execute(&statement, [])?;
+                Ok((n, n))
+            })
+            .map_err(|_| Stop::Fail("eval reset_material"))?;
+        }
+        self.run_rounds()
     }
 
     /// F4b: every round statement of every nonlinear component, repeated
@@ -141,6 +158,30 @@ impl SqliteEvaluate {
         Ok(())
     }
 
+    /// A table for every product a delta names that has none yet. Every
+    /// product a rule reads has a table from `declare`, so such a product
+    /// is seed-only: it never touches the view.
+    fn cover(&mut self, rows: &[Row]) -> Result<(), Stop> {
+        let mut keys: Vec<(TermId, usize)> = rows
+            .iter()
+            .filter(|row| self.table_of(row.rel, row.args.len()).is_none())
+            .map(|row| (row.rel, row.args.len()))
+            .collect();
+        keys.sort_by_key(|key| (key.0 .0, key.1));
+        keys.dedup();
+        for (rel, arity) in keys {
+            let table = format!("\"main.n{}_a{arity}\"", rel.0);
+            let ddl = product_ddl(&table, arity);
+            sql(&self.connection, "declare_tables", |connection| {
+                connection.execute_batch(&ddl).map(|()| ((), 0))
+            })
+            .map_err(|_| Stop::Fail("eval declare_tables"))?;
+            tracing::debug!(target: "dl8::eval", rel = rel.0, arity, "seed-only product table added");
+            self.seeded.push((table, rel, arity));
+        }
+        Ok(())
+    }
+
     /// The store table one seeded product loads into.
     fn table_of(&self, rel: TermId, arity: usize) -> Option<&str> {
         self.seeded
@@ -152,7 +193,7 @@ impl SqliteEvaluate {
 
 impl IEvaluate for SqliteEvaluate {
     fn declare(&mut self, program: &Program) -> Result<Declared, Stop> {
-        let (diagnostics, ddl, view, width, cap_names, marker, rounds) = {
+        let (diagnostics, ddl, view, width, cap_names, marker, rounds, material_tables) = {
             let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
             let (_, stratify_diagnostics) = stratify(&mut guard, program);
             if !stratify_diagnostics.is_empty() {
@@ -191,7 +232,7 @@ impl IEvaluate for SqliteEvaluate {
             let none = guard.atom("none");
             let pad = guard.compound("const", vec![none]);
             let marker = guard.atom("recursion_depth_exceeded");
-            let (eval_failures, view, width, derived, seeded, cap_names, ddl, rounds) = {
+            let (eval_failures, view, width, derived, seeded, cap_names, ddl, rounds, material_tables) = {
                 let plan = program_plan_with(
                     &mut guard,
                     program,
@@ -213,28 +254,24 @@ impl IEvaluate for SqliteEvaluate {
                     None => (String::new(), 0),
                 };
                 let derived = plan.derived_tags();
-                let mut seed_keys: Vec<(u32, usize)> = program
-                    .seeds
-                    .iter()
-                    .map(|row| (row.rel.0, row.args.len()))
-                    .collect();
-                seed_keys.sort();
-                seed_keys.dedup();
-                let seeded: Vec<(String, TermId, usize)> = seed_keys
-                    .iter()
-                    .map(|&(rel, arity)| (plan.table_name((TermId(rel), arity)), TermId(rel), arity))
+                let seeded: Vec<(String, TermId, usize)> = plan
+                    .seeded_keys()
+                    .into_iter()
+                    .map(|(rel, arity)| (plan.table_name((rel, arity)), rel, arity))
                     .collect();
                 let mut ddl = dictionary_ddl();
                 for (table, _, arity) in &seeded {
                     ddl.push('\n');
                     ddl.push_str(&product_ddl(table, *arity));
                 }
+                let mut material_tables = Vec::new();
                 for (table, columns) in plan.material_tables() {
                     ddl.push('\n');
                     ddl.push_str(&product_ddl(&table, columns.len()));
+                    material_tables.push(table);
                 }
                 let rounds = plan.round_statements();
-                (eval_failures, view, width, derived, seeded, cap_names, ddl, rounds)
+                (eval_failures, view, width, derived, seeded, cap_names, ddl, rounds, material_tables)
             };
             self.derived = derived;
             self.seeded = seeded;
@@ -262,7 +299,7 @@ impl IEvaluate for SqliteEvaluate {
                 .collect();
             diagnostics.sort_by(|a, b| (a.phase, a.payload.0).cmp(&(b.phase, b.payload.0)));
             diagnostics.dedup();
-            (diagnostics, ddl, view, width, cap_names, marker, rounds)
+            (diagnostics, ddl, view, width, cap_names, marker, rounds, material_tables)
         };
         // Below this point no arena guard is held: every statement runs the
         // `dl_*` functions, and each function locks the same mutex.
@@ -294,6 +331,7 @@ impl IEvaluate for SqliteEvaluate {
         }
         self.view_width = width;
         self.rounds = rounds;
+        self.material_tables = material_tables;
         self.run_rounds()?;
         Ok(Declared {
             view: "program".to_string(),
@@ -622,7 +660,7 @@ fn with_effects(u: &mut Universe, program: &Program) -> Program {
             }
         }
     }
-    if program.seeds.iter().any(|row| row.rel == snapshot_rel) {
+    {
         let args: Vec<Arg> = (0..3).map(|i| Arg::Var(super::program::VarId(i))).collect();
         out.rules.push(Rule {
             rel: snapshot_alias,
@@ -986,6 +1024,40 @@ fn nil_seed(u: &mut Universe) -> Row {
     }
 }
 
+/// The engine of the last call, kept while the rule set stays the same: a
+/// macrotime wave or a comptime round then pays a seed delta, not a view.
+struct Cached {
+    rules: u64,
+    arena: Arc<Mutex<Universe>>,
+    engine: SqliteEvaluate,
+    seeds: Vec<Row>,
+}
+
+thread_local! {
+    static CACHE: std::cell::RefCell<Option<Cached>> = const { std::cell::RefCell::new(None) };
+}
+
+fn rules_fingerprint(program: &Program) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    format!("{:?}", program.rules).hash(&mut hasher);
+    let mut served: Vec<u32> = program.served.iter().map(|rel| rel.0).collect();
+    served.sort_unstable();
+    served.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn seed_key(row: &Row) -> (u32, Vec<u32>) {
+    (row.rel.0, row.args.iter().map(|term| term.0).collect())
+}
+
+fn sorted_seeds(seeds: &[Row]) -> Vec<Row> {
+    let mut out: Vec<Row> = seeds.to_vec();
+    out.sort_by_key(seed_key);
+    out.dedup();
+    out
+}
+
 pub fn evaluate_sqlite(
     u: &mut Universe,
     program: &Program,
@@ -994,16 +1066,97 @@ pub fn evaluate_sqlite(
     let mut program = program.clone();
     let nil = nil_seed(u);
     program.seeds.push(nil);
-    let arena = Arc::new(Mutex::new(std::mem::take(u)));
-    let run = SqliteEvaluate::connect(arena.clone()).and_then(|mut engine| {
-        engine.declare(&program)?;
-        engine.apply(SeedDelta {
-            insert: program.seeds.clone(),
-            delete: Vec::new(),
-        })?;
-        engine.read(&[])
-    });
+    let rules = rules_fingerprint(&program);
+    tracing::debug!(target: "dl8::eval", rules, rule_count = program.rules.len(), seeds = program.seeds.len(), "evaluate_sqlite");
+    let seeds = sorted_seeds(&program.seeds);
+    let taken = CACHE.with(|cache| cache.borrow_mut().take());
+    let (arena, run) = match taken {
+        Some(mut cached) if cached.rules == rules => {
+            {
+                let mut guard = cached.arena.lock().expect("eval arena poisoned");
+                *guard = std::mem::take(u);
+            }
+            let insert: Vec<Row> = seeds
+                .iter()
+                .filter(|row| cached.seeds.binary_search_by_key(&seed_key(row), seed_key).is_err())
+                .cloned()
+                .collect();
+            let delete: Vec<Row> = cached
+                .seeds
+                .iter()
+                .filter(|row| seeds.binary_search_by_key(&seed_key(row), seed_key).is_err())
+                .cloned()
+                .collect();
+            tracing::info!(
+                target: "dl8::eval",
+                inserted = insert.len(),
+                deleted = delete.len(),
+                "seed delta on the cached view"
+            );
+            let retracted = !delete.is_empty();
+            let arena = cached.arena.clone();
+            let run = cached
+                .engine
+                .cover(&insert)
+                .and_then(|()| cached.engine.apply(SeedDelta { insert, delete }))
+                .and_then(|_| {
+                    if retracted {
+                        cached.engine.reset_rounds()
+                    } else {
+                        cached.engine.run_rounds()
+                    }
+                })
+                .map(|()| (cached.engine, seeds.clone()));
+            (arena, run)
+        }
+        cached => {
+            let arena = match cached {
+                Some(cached) => {
+                    {
+                        let mut guard = cached.arena.lock().expect("eval arena poisoned");
+                        *guard = std::mem::take(u);
+                    }
+                    cached.arena
+                }
+                None => Arc::new(Mutex::new(std::mem::take(u))),
+            };
+            let run = fresh_engine(arena.clone(), &program).map(|engine| (engine, seeds.clone()));
+            (arena, run)
+        }
+    };
     let closure = match run {
+        Ok((engine, seeds)) => {
+            let read = engine.read(&[]);
+            if std::env::var_os("DL8_EVAL_CHECK").is_some() {
+                if let (Ok(cached), Ok(fresh)) = (
+                    read.as_ref(),
+                    fresh_engine(arena.clone(), &program).and_then(|fresh| fresh.read(&[])),
+                ) {
+                    let key = |row: &Row| (row.rel.0, row.args.iter().map(|t| t.0).collect::<Vec<_>>());
+                    let a: HashSet<_> = cached.rows.iter().map(key).collect();
+                    let b: HashSet<_> = fresh.rows.iter().map(key).collect();
+                    let guard = arena.lock().expect("eval arena poisoned");
+                    for row in b.difference(&a) {
+                        tracing::warn!(target: "dl8::eval", rel = %guard.display(TermId(row.0)), "fresh-only row");
+                    }
+                    for row in a.difference(&b) {
+                        tracing::warn!(target: "dl8::eval", rel = %guard.display(TermId(row.0)), "cached-only row");
+                    }
+                }
+            }
+            CACHE.with(|cache| {
+                *cache.borrow_mut() = Some(Cached {
+                    rules,
+                    arena: arena.clone(),
+                    engine,
+                    seeds,
+                });
+            });
+            read
+        }
+        Err(stop) => Err(stop),
+    };
+    let closure = match closure {
         Ok(closure) => closure,
         Err(Stop::Fail(message)) => {
             let mut guard = arena.lock().expect("eval arena poisoned");
@@ -1026,6 +1179,16 @@ pub fn evaluate_sqlite(
         rows: closure.rows.len(),
     });
     closure
+}
+
+fn fresh_engine(arena: Arc<Mutex<Universe>>, program: &Program) -> Result<SqliteEvaluate, Stop> {
+    let mut engine = SqliteEvaluate::connect(arena)?;
+    engine.declare(program)?;
+    engine.apply(SeedDelta {
+        insert: program.seeds.clone(),
+        delete: Vec::new(),
+    })?;
+    Ok(engine)
 }
 
 #[cfg(test)]
@@ -1068,5 +1231,72 @@ mod probes {
         let (ddl, w) = view.unwrap();
         println!("WIDTH={w}");
         println!("DDL={ddl}");
+    }
+}
+
+#[cfg(test)]
+mod incremental {
+    use super::*;
+    use crate::_6_eval::json::program_from_json;
+    use std::path::PathBuf;
+
+    /// Every oracle program: the view declared over all seeds but the last,
+    /// then the last applied, reads the same rows a fresh view over all
+    /// seeds reads. Prints each fixture where sqlite_ivm's maintenance and
+    /// a full recompute disagree.
+    #[test]
+    fn a_seed_delta_reads_like_a_fresh_view() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/eval");
+        let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
+        paths.sort();
+        let mut bad = Vec::new();
+        for path in paths {
+            let text = std::fs::read_to_string(&path).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let mut u = Universe::new();
+            let mut program = program_from_json(&mut u, value.get("program").unwrap_or(&value)).unwrap();
+            let nil = nil_seed(&mut u);
+            program.seeds.push(nil);
+            if program.seeds.len() < 2 {
+                continue;
+            }
+            let arena = Arc::new(Mutex::new(std::mem::take(&mut u)));
+            let fresh = fresh_engine(arena.clone(), &program).and_then(|engine| engine.read(&[]));
+            let last = program.seeds.remove(0);
+            if !program.seeds.iter().any(|row| row.rel == last.rel && row.args.len() == last.args.len()) {
+                continue;
+            }
+            let staged = fresh_engine(arena.clone(), &program).and_then(|mut engine| {
+                engine.apply(SeedDelta { insert: vec![last], delete: Vec::new() })?;
+                engine.run_rounds()?;
+                engine.read(&[])
+            });
+            let key = |row: &Row| (row.rel.0, row.args.iter().map(|t| t.0).collect::<Vec<_>>());
+            match (fresh, staged) {
+                (Ok(fresh), Ok(staged)) => {
+                    let a: HashSet<_> = fresh.rows.iter().map(key).collect();
+                    let b: HashSet<_> = staged.rows.iter().map(key).collect();
+                    if a != b {
+                        let name = path.file_stem().unwrap().to_string_lossy().to_string();
+                        println!(
+                            "{name}: fresh {} staged {} fresh-only {} staged-only {}",
+                            a.len(),
+                            b.len(),
+                            a.difference(&b).count(),
+                            b.difference(&a).count()
+                        );
+                        bad.push(name);
+                    }
+                }
+                (fresh, staged) => {
+                    bad.push(format!("{}: {:?} / {:?}", path.display(), fresh.is_ok(), staged.is_ok()));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "incremental maintenance differs on {bad:?}");
     }
 }
