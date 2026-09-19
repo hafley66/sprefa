@@ -809,12 +809,18 @@ impl<'a> Lowering<'a> {
     fn body(&self, rule: &Rule) -> Result<(Scope, Vec<Head>), Unsupported> {
         let mut scope = Scope::new();
         let mut vars: HashMap<usize, Value> = HashMap::new();
+        // An aggregate body matches stored rows only (`nil` is stored); a
+        // positive kernel goal there has no row, as in `Eval::tables_only`.
+        let tables_only = self.catalog.reach == KernelReach::Eval && rule.is_aggregate();
         for goal in &rule.body {
             let source = self.source(goal)?;
             match (goal.polarity, &source) {
                 (Polarity::Positive, Source::Kernel(kernel)) => {
                     let condition =
                         self.kernel(&mut scope, rule, &mut vars, goal, *kernel, true)?;
+                    if tables_only && !matches!(kernel, Kernel::Nil) {
+                        scope.conditions.push("0".to_string());
+                    }
                     scope.conditions.push(condition);
                 }
                 (Polarity::Negative, Source::Kernel(kernel)) => {
