@@ -14,6 +14,7 @@ use super::term::{TermId, Universe};
 use crate::_7_effect::Slice;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -761,9 +762,25 @@ fn fold_group(
     }
 }
 
-/// The semi-naive fixpoint as a reducer over its own row store.
-pub struct Evaluate<'a>(PhantomData<&'a ()>);
+/// The eval engine, read once from the environment. `sqlite` runs every
+/// product through `_7_sqlite_eval`; `rust` (the default) keeps this module.
+static ENGINE: OnceLock<Engine> = OnceLock::new();
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Engine {
+    Rust,
+    Sqlite,
+}
+
+fn engine() -> Engine {
+    *ENGINE.get_or_init(|| match std::env::var("DL8_ENGINE").as_deref() {
+        Ok("sqlite") => Engine::Sqlite,
+        _ => Engine::Rust,
+    })
+}
+
+ /// The semi-naive fixpoint as a reducer over its own row store.
+ pub struct Evaluate<'a>(PhantomData<&'a ()>);
 impl<'a> Slice for Evaluate<'a> {
     type State = Store;
     type Event = (&'a mut Universe, &'a Program);
@@ -771,6 +788,9 @@ impl<'a> Slice for Evaluate<'a> {
     type Effect = Trace;
 
     fn reduce(store: &mut Store, (u, program): Self::Event, fx: &mut dyn FnMut(Trace)) -> Closure {
+        if engine() == Engine::Sqlite {
+            return super::sqlite_eval::evaluate_sqlite(u, program, fx);
+        }
         evaluate_into(store, u, program, fx)
     }
 }
