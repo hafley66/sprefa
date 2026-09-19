@@ -65,6 +65,22 @@ has it. Moving the feature to `:16` is inside the owned deps block.
    fixtures/openapi/todo.dl7 && just trace-down && just trace-query`, output
    pasted. `trace-down` is mandatory even on failure; nothing left running.
 
+7. `tests/_26_bounded_loops.rs`, the scanner for the bounded-loop law
+   (`CLAUDE.md:53-58` on `origin/main`, quoted in "Laws"). It walks
+   `src/**/*.rs`, finds every `loop {`, `while `, and every fn that calls
+   itself by name, and for each hit looks for a budget line within the
+   enclosing block: a `for _ in 0..` bound, a depth counter compared to a
+   named constant, or a repeat check, plus a named diagnostic on the cap.
+   Today `grep -rn 'loop {' src` finds 15 sites, most in forbidden paths
+   (`_0_read`, `_2_lower`, `_1_macrotime`, `_4_comptime`, `_5_reify`,
+   `_6_eval`). Do NOT edit them. The test carries an explicit list
+   `UNBUDGETED: &[(&str, &str)]` of `(path, trimmed line text)` for every
+   site that lacks a budget today (line text, not line number, so edits
+   elsewhere do not break it). It fails on: a site with no budget that is
+   not in the list, and a listed site that no longer exists or now has a
+   budget (the list only shrinks). Any loop you add in owned files carries
+   its budget from the start. PR body pastes the list with its length.
+
 ## Receipts in the PR body
 
 1. The eight Addendum 1 rows with the numbers from one run.
@@ -82,7 +98,7 @@ has it. Moving the feature to `:16` is inside the owned deps block.
 
 Owned: `src/_9_runtime/_1_sqlite.rs`, `src/_9_runtime/mod.rs` (re-export
 only), `tests/_13_store.rs`, `tests/_18_sqlite_emit.rs`,
-`tests/_25_sqlite_contract.rs`, `Cargo.toml` deps and dev-deps blocks,
+`tests/_25_sqlite_contract.rs`, `tests/_26_bounded_loops.rs`, `Cargo.toml` deps and dev-deps blocks,
 `justfile` `trace-query` recipe only, `docs/failure-modes.md`.
 Forbidden: every other path, including `src/_6_eval/` (step 4 owns it),
 `src/_5_reify/`, `oracle/`, `book/`, `sqlite_ivm/`. A needed sqlite_ivm
@@ -97,6 +113,12 @@ cannot show. Descriptive names. No em dashes. Banned: provenance, substrate,
 load-bearing, regime, "ground truth", "rel" in prose. `timeout 10` on every
 `dl8` run; a timeout is the result. One cargo at a time, never override jobs.
 No subagents. No background processes left running.
+
+Bounded loops (user law, `CLAUDE.md:53-58`): a `loop {}`, `while`, or
+recursive fn in `src/**` carries an explicit budget (`for _ in 0..LIMIT`, a
+depth counter, a row-set repeat check) and stops with a named diagnostic when
+the budget is hit. The bound is a constant with a comment saying what it
+protects. A fixpoint with no budget is a blocking defect.
 
 ```bash
 boop beep --no-wait --as chore-sqlite-open-contract plan-eval-on-sqlite-ivm "step 2: PR #<n>, contract 8/8, battery <pass>/<total>, sql spans <count> in todo.dl7 trace, rust_ms <ms>, red: <list or none>"
