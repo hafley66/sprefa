@@ -16,39 +16,14 @@
 
 use dl8::_6_eval::json::{term_from_json, term_to_json};
 use dl8::_6_eval::{TermId, Universe};
-use dl8::_9_runtime::{IRowStore, SqliteRowStore};
+use dl8::_9_runtime::{open, IRowStore, SqliteRowStore};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn extension() -> PathBuf {
-    let file = if cfg!(target_os = "macos") {
-        "libsqlite_ivm.dylib"
-    } else {
-        "libsqlite_ivm.so"
-    };
-    let mut candidates = Vec::new();
-    if let Ok(path) = std::env::var("SQLITE_IVM_LIB") {
-        candidates.push(PathBuf::from(path));
-    }
-    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
-        candidates.push(Path::new(&dir).join("release").join(file));
-    }
-    candidates.push(manifest().join("sqlite_ivm/target/release").join(file));
-    candidates
-        .iter()
-        .find(|path| path.exists())
-        .cloned()
-        .unwrap_or_else(|| {
-            panic!(
-                "no sqlite_ivm extension at {candidates:?}; run `cargo build --release --features extension --manifest-path sqlite_ivm/Cargo.toml`"
-            )
-        })
 }
 
 fn normalize(value: &Value, path: &str) -> Value {
@@ -222,12 +197,7 @@ struct Receipt {
     diagnostics: usize,
 }
 
-fn check(
-    directory: &str,
-    source: &Path,
-    expected: &Value,
-    ivm: &Path,
-) -> Result<Receipt, Vec<String>> {
+fn check(directory: &str, source: &Path, expected: &Value) -> Result<Receipt, Vec<String>> {
     let stem = source.file_stem().unwrap().to_string_lossy().to_string();
     let fixture = format!("{directory}/{stem}");
     let fail = |e: String| vec![format!("{fixture}: {e}")];
@@ -307,12 +277,7 @@ fn check(
         eval_closure(&program_path, names, &relations).map_err(fail)?
     };
 
-    let db = rusqlite::Connection::open(&db_path).unwrap();
-    // SAFETY: the library is this repo's own sqlite_ivm build, loaded once into a test connection.
-    unsafe { db.load_extension(ivm, None::<&str>) }
-        .map_err(|e| fail(format!("load {}: {e}", ivm.display())))?;
-    db.execute_batch("PRAGMA recursive_triggers=ON; PRAGMA trusted_schema=ON;")
-        .unwrap();
+    let db = open(&db_path).unwrap();
     for view in &views {
         let ddl = view["ddl"].as_str().unwrap();
         db.execute_batch(ddl)
@@ -429,7 +394,6 @@ macro_rules! fixture_test {
     ($test:ident, $directory:literal, $stem:literal) => {
         #[test]
         fn $test() {
-            let ivm = extension();
             let expected_path = manifest().join("fixtures/sqlite_emit/expected_diagnostics.json");
             let expected: Value =
                 serde_json::from_str(&std::fs::read_to_string(&expected_path).unwrap()).unwrap();
@@ -437,7 +401,7 @@ macro_rules! fixture_test {
                 .join("fixtures")
                 .join($directory)
                 .join(format!("{}.dl7", $stem));
-            match check($directory, &source, &expected, &ivm) {
+            match check($directory, &source, &expected) {
                 Ok(receipt) => println!(
                     "{}: views {} recursive {} diagnostics {} insert {} delete {}",
                     receipt.fixture,

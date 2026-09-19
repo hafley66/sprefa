@@ -10,7 +10,8 @@ use ordered_float::OrderedFloat;
 use rusqlite::types::Value;
 use rusqlite::{params_from_iter, Connection};
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 const KIND_INT: i64 = 0;
 const KIND_FLOAT: i64 = 1;
@@ -18,6 +19,103 @@ const KIND_BOOL: i64 = 2;
 const KIND_ATOM: i64 = 3;
 const KIND_STR: i64 = 4;
 const KIND_COMPOUND: i64 = 5;
+
+/// The one connection contract, `open()` only. `page_size` first: it sticks
+/// only before a file's first table. `recursive_triggers` and
+/// `trusted_schema` are what sqlite_ivm requires.
+const CONTRACT_PRAGMAS: &str = "\
+PRAGMA page_size = 65536;
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA mmap_size = 1073741824;
+PRAGMA cache_size = -262144;
+PRAGMA temp_store = MEMORY;
+PRAGMA recursive_triggers = ON;
+PRAGMA trusted_schema = ON;";
+
+/// Every connection in the crate: contract pragmas, then the sqlite_ivm
+/// extension. `:memory:` is accepted; on it `journal_mode` reads back
+/// `memory`, so pragma assertions run on a file db.
+pub fn open(path: &Path) -> rusqlite::Result<Connection> {
+    let connection = Connection::open(path)?;
+    sql(&connection, "contract_pragmas", |connection| {
+        connection.execute_batch(CONTRACT_PRAGMAS).map(|()| ((), 0))
+    })?;
+    let Some(extension) = sqlite_ivm_extension() else {
+        return Err(rusqlite::Error::InvalidPath(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("sqlite_ivm/target/release")
+                .join(if cfg!(target_os = "macos") {
+                    "libsqlite_ivm.dylib"
+                } else {
+                    "libsqlite_ivm.so"
+                }),
+        ));
+    };
+    sql(&connection, "load_extension", |connection| {
+        // SAFETY: the library is this repo's own sqlite_ivm build, loaded once
+        // into this connection.
+        unsafe { connection.load_extension(&extension, None::<&str>) }.map(|()| ((), 0))
+    })?;
+    Ok(connection)
+}
+
+/// `SQLITE_IVM_LIB`, else `libsqlite_ivm` in the release dir of
+/// `CARGO_TARGET_DIR` or the sibling checkout symlink `sqlite_ivm/target`.
+fn sqlite_ivm_extension() -> Option<PathBuf> {
+    let file = if cfg!(target_os = "macos") {
+        "libsqlite_ivm.dylib"
+    } else {
+        "libsqlite_ivm.so"
+    };
+    let mut candidates = Vec::new();
+    if let Ok(path) = std::env::var("SQLITE_IVM_LIB") {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        candidates.push(Path::new(&dir).join("release").join(file));
+    }
+    candidates.push(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sqlite_ivm/target/release")
+            .join(file),
+    );
+    candidates.into_iter().find(|path| path.exists())
+}
+
+/// Every statement the crate runs: one `sql` span carrying the statement's
+/// name, the rows it read or wrote, and its wall time in ms. A multi-row
+/// INSERT of a seed set is one call with its row count.
+pub fn sql<T>(
+    connection: &Connection,
+    name: &'static str,
+    rows: impl FnOnce(&Connection) -> rusqlite::Result<(T, usize)>,
+) -> rusqlite::Result<T> {
+    let span = tracing::info_span!(
+        "sql",
+        name,
+        rows = tracing::field::Empty,
+        ms = tracing::field::Empty
+    );
+    let started = Instant::now();
+    let outcome = {
+        let _entered = span.enter();
+        rows(connection)
+    };
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    match outcome {
+        Ok((value, count)) => {
+            span.record("rows", count as i64);
+            span.record("ms", elapsed_ms);
+            Ok(value)
+        }
+        Err(error) => {
+            span.record("rows", 0i64);
+            span.record("ms", elapsed_ms);
+            Err(error)
+        }
+    }
+}
 
 pub struct SqliteRowStore {
     connection: Connection,
@@ -36,7 +134,7 @@ pub struct SqliteRowStore {
 
 impl SqliteRowStore {
     pub fn at(path: &Path) -> Result<SqliteRowStore, StoreError> {
-        let connection = Connection::open(path)?;
+        let connection = open(path)?;
         let variable_limit =
             connection.limit(rusqlite::limits::Limit::SQLITE_LIMIT_VARIABLE_NUMBER)? as usize;
         Ok(SqliteRowStore {
@@ -95,11 +193,13 @@ impl SqliteRowStore {
             let count = batch.min(rows - offset);
             let tuple = format!("({})", vec!["?"; per_row].join(","));
             let tuples = vec![tuple; count].join(",");
-            let sql = format!("INSERT OR IGNORE INTO \"{table}\" ({names}) VALUES {tuples}");
+            let insert_sql = format!("INSERT OR IGNORE INTO \"{table}\" ({names}) VALUES {tuples}");
             let slice = &values[offset * per_row..(offset + count) * per_row];
-            written += self
-                .connection
-                .execute(&sql, params_from_iter(slice.iter()))?;
+            written += sql(&self.connection, "insert", |connection| {
+                connection
+                    .execute(&insert_sql, params_from_iter(slice.iter()))
+                    .map(|inserted| (inserted, inserted))
+            })?;
             self.insert_statements.set(self.insert_statements.get() + 1);
             tracing::info!(target: "dl8::store", statement = "insert", table, rows = count);
             offset += count;
@@ -127,10 +227,14 @@ impl SqliteRowStore {
                 .join(",");
             declarations.push(format!("UNIQUE ({unique})"));
         }
-        self.connection.execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS \"{table}\" ({});",
-            declarations.join(", ")
-        ))?;
+        sql(&self.connection, "create_product", |connection| {
+            connection
+                .execute_batch(&format!(
+                    "CREATE TABLE IF NOT EXISTS \"{table}\" ({});",
+                    declarations.join(", ")
+                ))
+                .map(|()| ((), 0))
+        })?;
         Ok(())
     }
 
@@ -156,17 +260,21 @@ impl SqliteRowStore {
         }
         self.create_product(&table, kinds)?;
         self.insert_statements.set(self.insert_statements.get() + 1);
-        self.connection.execute(
-            &format!(
-                "INSERT OR IGNORE INTO \"{}\" (\"rel\",\"arity\",\"name\") VALUES (?,?,?)",
-                self.table("relation")
-            ),
-            (
-                rel.0 as i64,
-                arity as i64,
-                self.names.get(&rel).map(String::as_str),
-            ),
-        )?;
+        sql(&self.connection, "declare_relation", |connection| {
+            connection
+                .execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO \"{}\" (\"rel\",\"arity\",\"name\") VALUES (?,?,?)",
+                        self.table("relation")
+                    ),
+                    (
+                        rel.0 as i64,
+                        arity as i64,
+                        self.names.get(&rel).map(String::as_str),
+                    ),
+                )
+                .map(|inserted| (inserted, inserted))
+        })?;
         self.columns.insert((rel.0, arity), kinds.to_vec());
         Ok(table)
     }
@@ -181,11 +289,14 @@ impl SqliteRowStore {
         let kinds: Vec<CellKind> = rows[0].iter().map(|c| CellKind::of(u.get(*c))).collect();
         let table = self.register_product(rel, arity, &kinds)?;
         if arity == 0 {
-            self.insert_statements.set(self.insert_statements.get() + 1);
-            self.connection.execute(
-                &format!("INSERT OR IGNORE INTO \"{table}\" (\"__id\") VALUES (1)"),
-                (),
-            )?;
+            sql(&self.connection, "insert", |connection| {
+                connection
+                    .execute(
+                        &format!("INSERT OR IGNORE INTO \"{table}\" (\"__id\") VALUES (1)"),
+                        (),
+                    )
+                    .map(|inserted| ((), inserted))
+            })?;
             tracing::info!(target: "dl8::store", statement = "insert", table, rows = 1);
             return Ok(1);
         }
@@ -236,8 +347,8 @@ impl SqliteRowStore {
 
     fn load_syms(&self, u: &mut Universe) -> Result<usize, StoreError> {
         let mut syms = Vec::new();
-        {
-            let mut statement = self.connection.prepare(&format!(
+        sql(&self.connection, "load_syms", |connection| {
+            let mut statement = connection.prepare(&format!(
                 "SELECT \"id\",\"text\" FROM \"{}\" ORDER BY \"id\"",
                 self.table("sym")
             ))?;
@@ -245,7 +356,8 @@ impl SqliteRowStore {
             while let Some(row) = cursor.next()? {
                 syms.push((row.get::<_, i64>(0)? as usize, row.get::<_, String>(1)?));
             }
-        }
+            Ok(((), syms.len()))
+        })?;
         let durable = syms.len();
         for (id, text) in syms {
             let got = u.sym(&text);
@@ -262,16 +374,21 @@ impl SqliteRowStore {
 
     fn term_args(&self) -> Result<HashMap<i64, Vec<TermId>>, StoreError> {
         let mut args: HashMap<i64, Vec<TermId>> = HashMap::new();
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT \"term\",\"child\" FROM \"{}\" ORDER BY \"term\",\"position\"",
-            self.table("term_arg")
-        ))?;
-        let mut cursor = statement.query(())?;
-        while let Some(row) = cursor.next()? {
-            args.entry(row.get::<_, i64>(0)?)
-                .or_default()
-                .push(TermId(row.get::<_, i64>(1)? as u32));
-        }
+        sql(&self.connection, "load_term_args", |connection| {
+            let mut statement = connection.prepare(&format!(
+                "SELECT \"term\",\"child\" FROM \"{}\" ORDER BY \"term\",\"position\"",
+                self.table("term_arg")
+            ))?;
+            let mut cursor = statement.query(())?;
+            let mut count = 0;
+            while let Some(row) = cursor.next()? {
+                count += 1;
+                args.entry(row.get::<_, i64>(0)?)
+                    .or_default()
+                    .push(TermId(row.get::<_, i64>(1)? as u32));
+            }
+            Ok(((), count))
+        })?;
         Ok(args)
     }
 
@@ -280,8 +397,8 @@ impl SqliteRowStore {
     fn load_terms(&self, u: &mut Universe) -> Result<usize, StoreError> {
         let mut args = self.term_args()?;
         let mut terms = Vec::new();
-        {
-            let mut statement = self.connection.prepare(&format!(
+        sql(&self.connection, "load_terms", |connection| {
+            let mut statement = connection.prepare(&format!(
                 "SELECT \"id\",\"kind\",\"ival\",\"rval\",\"sym\" FROM \"{}\" ORDER BY \"id\"",
                 self.table("term")
             ))?;
@@ -295,7 +412,8 @@ impl SqliteRowStore {
                     row.get::<_, i64>(4)? as u32,
                 ));
             }
-        }
+            Ok(((), terms.len()))
+        })?;
         let durable = terms.len();
         for (id, kind, ival, rval, sym) in terms {
             let term = match kind {
@@ -324,41 +442,47 @@ impl SqliteRowStore {
             .map(|n| format!("\"{n}\""))
             .collect::<Vec<_>>()
             .join(",");
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {names} FROM \"{}\" ORDER BY \"__id\"",
-            self.table("kernel")
-        ))?;
-        let mut cursor = statement.query(())?;
-        let mut loaded = 0;
-        while let Some(row) = cursor.next()? {
-            let rel = TermId(row.get::<_, i64>(0)? as u32);
-            let arity = row.get::<_, i64>(1)? as usize;
-            let mut cells = Vec::with_capacity(arity);
-            for position in 0..arity {
-                cells.push(TermId(row.get::<_, i64>(2 + position)? as u32));
+        sql(&self.connection, "load_kernel", |connection| {
+            let mut statement = connection.prepare(&format!(
+                "SELECT {names} FROM \"{}\" ORDER BY \"__id\"",
+                self.table("kernel")
+            ))?;
+            let mut cursor = statement.query(())?;
+            let mut loaded = 0;
+            while let Some(row) = cursor.next()? {
+                let rel = TermId(row.get::<_, i64>(0)? as u32);
+                let arity = row.get::<_, i64>(1)? as usize;
+                let mut cells = Vec::with_capacity(arity);
+                for position in 0..arity {
+                    cells.push(TermId(row.get::<_, i64>(2 + position)? as u32));
+                }
+                store.insert(rel, cells.into_boxed_slice());
+                loaded += 1;
             }
-            store.insert(rel, cells.into_boxed_slice());
-            loaded += 1;
-        }
-        Ok(loaded)
+            Ok((loaded, loaded))
+        })
+        .map_err(StoreError::from)
     }
 
     fn product_kinds(&self, table: &str) -> Result<Vec<CellKind>, StoreError> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT \"name\" FROM pragma_table_info(?) ORDER BY \"cid\"")?;
-        let mut cursor = statement.query((table,))?;
-        let mut kinds = Vec::new();
-        while let Some(row) = cursor.next()? {
-            let name: String = row.get(0)?;
-            if let Some(kind) = name
-                .split_once('_')
-                .and_then(|(_, s)| CellKind::of_suffix(s))
-            {
-                kinds.push(kind);
+        sql(&self.connection, "product_kinds", |connection| {
+            let mut statement =
+                connection.prepare("SELECT \"name\" FROM pragma_table_info(?) ORDER BY \"cid\"")?;
+            let mut cursor = statement.query((table,))?;
+            let mut kinds = Vec::new();
+            while let Some(row) = cursor.next()? {
+                let name: String = row.get(0)?;
+                if let Some(kind) = name
+                    .split_once('_')
+                    .and_then(|(_, s)| CellKind::of_suffix(s))
+                {
+                    kinds.push(kind);
+                }
             }
-        }
-        Ok(kinds)
+            let count = kinds.len();
+            Ok((kinds, count))
+        })
+        .map_err(StoreError::from)
     }
 
     fn load_product(
@@ -371,11 +495,15 @@ impl SqliteRowStore {
     ) -> Result<usize, StoreError> {
         let table = self.table_for(rel, arity);
         if arity == 0 {
-            let rows: i64 = self.connection.query_row(
-                &format!("SELECT count(*) FROM \"{table}\""),
-                (),
-                |row| row.get(0),
-            )?;
+            let rows = sql(&self.connection, "count_product", |connection| {
+                let rows: i64 = connection.query_row(
+                    &format!("SELECT count(*) FROM \"{table}\""),
+                    (),
+                    |row| row.get(0),
+                )?;
+                Ok((rows, 1))
+            })
+            .map_err(StoreError::from)?;
             if rows > 0 {
                 store.insert(rel, Vec::new().into_boxed_slice());
             }
@@ -386,20 +514,23 @@ impl SqliteRowStore {
             .map(|n| format!("\"{n}\""))
             .collect::<Vec<_>>()
             .join(",");
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {names} FROM \"{table}\" ORDER BY \"__id\""
-        ))?;
-        let mut cursor = statement.query(())?;
-        let mut loaded = 0;
-        while let Some(row) = cursor.next()? {
-            let mut cells = Vec::with_capacity(arity);
-            for (position, kind) in kinds.iter().enumerate() {
-                cells.push(decode(u, *kind, row, position)?);
+        sql(&self.connection, "load_product", |connection| {
+            let mut statement = connection.prepare(&format!(
+                "SELECT {names} FROM \"{table}\" ORDER BY \"__id\""
+            ))?;
+            let mut cursor = statement.query(())?;
+            let mut loaded = 0;
+            while let Some(row) = cursor.next()? {
+                let mut cells = Vec::with_capacity(arity);
+                for (position, kind) in kinds.iter().enumerate() {
+                    cells.push(decode(u, *kind, row, position)?);
+                }
+                store.insert(rel, cells.into_boxed_slice());
+                loaded += 1;
             }
-            store.insert(rel, cells.into_boxed_slice());
-            loaded += 1;
-        }
-        Ok(loaded)
+            Ok((loaded, loaded))
+        })
+        .map_err(StoreError::from)
     }
 }
 
@@ -425,7 +556,7 @@ fn decode(
     kind: CellKind,
     row: &rusqlite::Row<'_>,
     position: usize,
-) -> Result<TermId, StoreError> {
+) -> rusqlite::Result<TermId> {
     Ok(match kind {
         CellKind::Int => u.int(row.get::<_, i64>(position)?),
         CellKind::Float => u.float(row.get::<_, f64>(position)?),
@@ -458,38 +589,42 @@ impl IRowStore for SqliteRowStore {
             .map(|n| format!("\"{n}\""))
             .collect::<Vec<_>>()
             .join(",");
-        self.connection.execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS \"{sym}\" (
-               \"id\" INTEGER PRIMARY KEY,
-               \"text\" TEXT NOT NULL UNIQUE);
-             CREATE TABLE IF NOT EXISTS \"{term}\" (
-               \"id\" INTEGER PRIMARY KEY,
-               \"kind\" INTEGER NOT NULL,
-               \"ival\" INTEGER NOT NULL,
-               \"rval\" REAL NOT NULL,
-               \"sym\" INTEGER NOT NULL REFERENCES \"{sym}\"(\"id\"));
-             CREATE TABLE IF NOT EXISTS \"{arg}\" (
-               \"term\" INTEGER NOT NULL REFERENCES \"{term}\"(\"id\"),
-               \"position\" INTEGER NOT NULL,
-               \"child\" INTEGER NOT NULL REFERENCES \"{term}\"(\"id\"),
-               PRIMARY KEY (\"term\", \"position\"),
-               CHECK (\"child\" < \"term\")) WITHOUT ROWID;
-             CREATE TABLE IF NOT EXISTS \"{relation}\" (
-               \"__id\" INTEGER PRIMARY KEY,
-               \"rel\" INTEGER NOT NULL REFERENCES \"{term}\"(\"id\"),
-               \"arity\" INTEGER NOT NULL,
-               \"name\" TEXT,
-               UNIQUE (\"rel\", \"arity\"),
-               UNIQUE (\"name\", \"arity\"));
-             CREATE TABLE IF NOT EXISTS \"{kernel_table}\" (
-               \"__id\" INTEGER PRIMARY KEY, {kernel},
-               UNIQUE ({unique}));",
-            sym = self.table("sym"),
-            term = self.table("term"),
-            arg = self.table("term_arg"),
-            relation = self.table("relation"),
-            kernel_table = self.table("kernel"),
-        ))?;
+        sql(&self.connection, "declare_tables", |connection| {
+            connection
+                .execute_batch(&format!(
+                    "CREATE TABLE IF NOT EXISTS \"{sym}\" (
+                       \"id\" INTEGER PRIMARY KEY,
+                       \"text\" TEXT NOT NULL UNIQUE);
+                     CREATE TABLE IF NOT EXISTS \"{term}\" (
+                       \"id\" INTEGER PRIMARY KEY,
+                       \"kind\" INTEGER NOT NULL,
+                       \"ival\" INTEGER NOT NULL,
+                       \"rval\" REAL NOT NULL,
+                       \"sym\" INTEGER NOT NULL REFERENCES \"{sym}\"(\"id\"));
+                     CREATE TABLE IF NOT EXISTS \"{arg}\" (
+                       \"term\" INTEGER NOT NULL REFERENCES \"{term}\"(\"id\"),
+                       \"position\" INTEGER NOT NULL,
+                       \"child\" INTEGER NOT NULL REFERENCES \"{term}\"(\"id\"),
+                       PRIMARY KEY (\"term\", \"position\"),
+                       CHECK (\"child\" < \"term\")) WITHOUT ROWID;
+                     CREATE TABLE IF NOT EXISTS \"{relation}\" (
+                       \"__id\" INTEGER PRIMARY KEY,
+                       \"rel\" INTEGER NOT NULL REFERENCES \"{term}\"(\"id\"),
+                       \"arity\" INTEGER NOT NULL,
+                       \"name\" TEXT,
+                       UNIQUE (\"rel\", \"arity\"),
+                       UNIQUE (\"name\", \"arity\"));
+                     CREATE TABLE IF NOT EXISTS \"{kernel_table}\" (
+                       \"__id\" INTEGER PRIMARY KEY, {kernel},
+                       UNIQUE ({unique}));",
+                    sym = self.table("sym"),
+                    term = self.table("term"),
+                    arg = self.table("term_arg"),
+                    relation = self.table("relation"),
+                    kernel_table = self.table("kernel"),
+                ))
+                .map(|()| ((), 0))
+        })?;
         Ok(())
     }
 
@@ -514,8 +649,8 @@ impl IRowStore for SqliteRowStore {
     fn load_rows(&mut self, u: &mut Universe, store: &mut Store) -> Result<usize, StoreError> {
         let mut loaded = self.load_kernel(store)?;
         let mut products = Vec::new();
-        {
-            let mut statement = self.connection.prepare(&format!(
+        sql(&self.connection, "load_relations", |connection| {
+            let mut statement = connection.prepare(&format!(
                 "SELECT \"rel\",\"arity\",\"name\" FROM \"{}\" ORDER BY \"__id\"",
                 self.table("relation")
             ))?;
@@ -527,7 +662,8 @@ impl IRowStore for SqliteRowStore {
                     row.get::<_, Option<String>>(2)?,
                 ));
             }
-        }
+            Ok(((), products.len()))
+        })?;
         for (rel, _, name) in &products {
             if let Some(name) = name {
                 self.names.insert(*rel, name.clone());
@@ -552,7 +688,11 @@ impl IRowStore for SqliteRowStore {
         if self.in_tick {
             return Err(StoreError::NestedBegin);
         }
-        self.connection.execute_batch("BEGIN IMMEDIATE")?;
+        sql(&self.connection, "begin", |connection| {
+            connection
+                .execute_batch("BEGIN IMMEDIATE")
+                .map(|()| ((), 0))
+        })?;
         self.in_tick = true;
         Ok(())
     }
@@ -634,13 +774,17 @@ impl IRowStore for SqliteRowStore {
     }
 
     fn commit_tick(&mut self) -> Result<(), StoreError> {
-        self.connection.execute_batch("COMMIT")?;
+        sql(&self.connection, "commit", |connection| {
+            connection.execute_batch("COMMIT").map(|()| ((), 0))
+        })?;
         self.in_tick = false;
         Ok(())
     }
 
     fn rollback_tick(&mut self) -> Result<(), StoreError> {
-        self.connection.execute_batch("ROLLBACK")?;
+        sql(&self.connection, "rollback", |connection| {
+            connection.execute_batch("ROLLBACK").map(|()| ((), 0))
+        })?;
         self.in_tick = false;
         Ok(())
     }

@@ -8,7 +8,7 @@
 //! `program` key, and the store names each table after the declared relation.
 
 use dl8::_6_eval::{TermId, Universe};
-use dl8::_9_runtime::{IRowStore, SqliteRowStore, Watermark};
+use dl8::_9_runtime::{open, IRowStore, SqliteRowStore, Watermark};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -109,7 +109,7 @@ fn inserts(run: &Run) -> Vec<(String, u64)> {
 /// Every product table of one program, as `(table, arity)`. An unnamed
 /// relation's table carries its arena id, which no fixture may spell out.
 fn dictionary(db: &Path, program: &str) -> Vec<(String, i64)> {
-    let connection = rusqlite::Connection::open(db).unwrap();
+    let connection = open(db).unwrap();
     let mut statement = connection
         .prepare(&format!(
             "SELECT \"rel\",\"arity\",\"name\" FROM \"{program}.relation\" ORDER BY \"__id\""
@@ -133,7 +133,7 @@ fn dictionary(db: &Path, program: &str) -> Vec<(String, i64)> {
 
 /// Product tables as `(arity, rows)`.
 fn products(db: &Path, program: &str) -> Vec<(i64, i64)> {
-    let connection = rusqlite::Connection::open(db).unwrap();
+    let connection = open(db).unwrap();
     let mut out: Vec<(i64, i64)> = dictionary(db, program)
         .iter()
         .map(|(table, arity)| {
@@ -152,7 +152,7 @@ fn products(db: &Path, program: &str) -> Vec<(i64, i64)> {
 /// Table names SQLite itself reports, so a named table that was never created
 /// cannot pass by sitting in the dictionary alone.
 fn sqlite_master(db: &Path) -> Vec<String> {
-    let connection = rusqlite::Connection::open(db).unwrap();
+    let connection = open(db).unwrap();
     let mut statement = connection
         .prepare("SELECT \"name\" FROM sqlite_master WHERE \"type\" = 'table' ORDER BY \"name\"")
         .unwrap();

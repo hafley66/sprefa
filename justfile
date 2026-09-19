@@ -26,7 +26,7 @@ trace *args:
 
 # root phases and child spans of the newest trace, ms
 trace-query:
-    duckdb -readonly {{TRACE_DB}} "WITH t AS (SELECT s.span_id, s.parent_span_id, coalesce(a.value, s.name) AS name, s.start_time, s.end_time FROM spans s LEFT JOIN attributes a ON list_contains(s.attribute_ids, a.id) AND a.key='name'), t0 AS (SELECT min(start_time) AS v FROM t) SELECT round((t.start_time - (SELECT v FROM t0))/1000000.0,1) AS start_ms, round((t.end_time - t.start_time)/1000000.0,1) AS dur_ms, t.name, p.name AS parent FROM t LEFT JOIN t p ON p.span_id = t.parent_span_id ORDER BY t.start_time"
+    duckdb -readonly {{TRACE_DB}} "WITH t AS (SELECT s.span_id, s.parent_span_id, coalesce(a.value, s.name) AS name, s.start_time, s.end_time FROM spans s LEFT JOIN attributes a ON list_contains(s.attribute_ids, a.id) AND a.key='name'), t0 AS (SELECT min(start_time) AS v FROM t), q AS (SELECT c.parent_span_id AS span_id, sum(try_cast(qa.value AS DOUBLE)) AS sql_ms FROM spans c JOIN attributes qa ON list_contains(c.attribute_ids, qa.id) AND qa.key='ms' GROUP BY c.parent_span_id) SELECT round((t.start_time - (SELECT v FROM t0))/1000000.0,1) AS start_ms, round((t.end_time - t.start_time)/1000000.0,1) AS dur_ms, round(coalesce(q.sql_ms, 0.0),1) AS sql_ms, round((t.end_time - t.start_time)/1000000.0 - coalesce(q.sql_ms, 0.0),1) AS rust_ms, t.name, p.name AS parent FROM t LEFT JOIN t p ON p.span_id = t.parent_span_id LEFT JOIN q ON q.span_id = t.span_id ORDER BY t.start_time"
 
 # Build the sqlite_ivm loadable extension the `_18_sqlite_emit` tests load.
 ivm-ext:
