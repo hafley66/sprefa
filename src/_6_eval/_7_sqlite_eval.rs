@@ -765,6 +765,10 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
         .map(|(rel, _)| *rel)
         .collect();
     let seeded: HashSet<TermId> = program.seeds.iter().map(|row| row.rel).collect();
+    // Pass-through variable names exist from the first run on, so a reload
+    // with more seeded products mints nothing new.
+    let widest = program.rules.iter().map(|rule| rule.head.len()).max().unwrap_or(0);
+    let pass_vars: Vec<TermId> = (0..widest).map(|i| u.atom(&format!("__s{i}"))).collect();
     let mut out = program.clone();
     if demanded.is_empty() {
         return (out, HashSet::new());
@@ -805,10 +809,12 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
                             .and_then(|inner| u.functor_or_atom(inner).map(|(name, _)| name.to_string()))
                             .unwrap_or_else(|| format!("n{}", goal.rel.0));
                         let mask: String = positions.iter().map(|p| p.to_string()).collect();
-                        let id = goal.rel.0;
-                        let demand_name = u.atom(&format!("dmd__{base}{id}__{mask}"));
+                        // The suffix is the rel term itself, so the name survives a
+                        // db reload that renumbers the arena.
+                        let spelled = u.display(goal.rel).to_string();
+                        let demand_name = u.atom(&format!("dmd__{base}__{mask}__{spelled}"));
                         let demand_rel = u.compound("ref", vec![demand_name]);
-                        let adorned_name = u.atom(&format!("adn__{base}{id}__{mask}"));
+                        let adorned_name = u.atom(&format!("adn__{base}__{mask}__{spelled}"));
                         let adorned_rel = u.compound("ref", vec![adorned_name]);
                         adorned.insert(key, (demand_rel, adorned_rel));
                         hidden.insert(demand_rel);
@@ -828,10 +834,12 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
                             });
                         }
                         if seeded.contains(&goal.rel) {
+                            // The pass-through reads the product's own table
+                            // and is never itself a demanded call site.
                             let arity = goal.args.len();
-                            let vars: Vec<TermId> = (0..arity).map(|i| u.atom(&format!("s{i}"))).collect();
+                            let vars: Vec<TermId> = pass_vars[..arity.min(pass_vars.len())].to_vec();
                             let args: Vec<Arg> = (0..arity).map(|i| Arg::Var(super::program::VarId(i as u32))).collect();
-                            queue.push(Rule {
+                            done.push(Rule {
                                 rel: adorned_rel,
                                 head: args.clone(),
                                 body: vec![Goal { polarity: Polarity::Positive, rel: goal.rel, args }],
@@ -1066,12 +1074,18 @@ pub fn evaluate_sqlite(
     let mut program = program.clone();
     let nil = nil_seed(u);
     program.seeds.push(nil);
+    let before = u.terms.len();
     let rules = rules_fingerprint(&program);
     tracing::debug!(target: "dl8::eval", rules, rule_count = program.rules.len(), seeds = program.seeds.len(), "evaluate_sqlite");
     let seeds = sorted_seeds(&program.seeds);
     let taken = CACHE.with(|cache| cache.borrow_mut().take());
     let (arena, run) = match taken {
-        Some(mut cached) if cached.rules == rules => {
+        // A retraction rebuilds: sqlite_ivm's delete path and the plain-table
+        // rounds do not yet agree with a fresh view (`DL8_EVAL_CHECK=1`).
+        Some(mut cached)
+            if cached.rules == rules
+                && cached.seeds.iter().all(|row| seeds.binary_search_by_key(&seed_key(row), seed_key).is_ok()) =>
+        {
             {
                 let mut guard = cached.arena.lock().expect("eval arena poisoned");
                 *guard = std::mem::take(u);
@@ -1174,6 +1188,11 @@ pub fn evaluate_sqlite(
     {
         let mut guard = arena.lock().expect("eval arena poisoned");
         *u = std::mem::replace(&mut *guard, Universe::default());
+    }
+    if tracing::enabled!(target: "dl8::eval", tracing::Level::DEBUG) {
+        for id in before..u.terms.len() {
+            tracing::debug!(target: "dl8::eval", term = %u.display(TermId(id as u32)), "minted");
+        }
     }
     fx(super::Trace::Closure {
         rows: closure.rows.len(),
