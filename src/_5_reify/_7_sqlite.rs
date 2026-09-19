@@ -793,6 +793,38 @@ impl<'a> Lowering<'a> {
         Ok(Source::Table(self.catalog.table_name(key)))
     }
 
+    /// sqlite_ivm lowers a recursive step's WHERE as scalar expressions, so a
+    /// NOT EXISTS there is rejected. When the anti-join correlates with one
+    /// non-recursive source only, it moves inside that source as a subquery.
+    fn hoist_into_source(&self, scope: &mut Scope, anti: &str) -> bool {
+        if self.catalog.reach != KernelReach::Eval {
+            return false;
+        }
+        let Some(shared) = self.shared else {
+            return false;
+        };
+        let is_member = |item: &From| item.table.starts_with(shared);
+        if !scope.from.iter().any(is_member) {
+            return false;
+        }
+        let mentioned: Vec<usize> = scope
+            .from
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| anti.contains(&format!("{}.", item.alias)))
+            .map(|(at, _)| at)
+            .collect();
+        let [at] = mentioned[..] else {
+            return false;
+        };
+        if is_member(&scope.from[at]) || scope.from[at].table.starts_with('(') {
+            return false;
+        }
+        let item = &mut scope.from[at];
+        item.table = format!("(SELECT * FROM {} WHERE {anti}) AS {}", item.table, item.alias);
+        true
+    }
+
     /// The column of `position` in a goal's source, as the source stores it.
     fn column(&self, goal: &Goal, source: &Source, alias: &str, position: usize) -> Value {
         let key = (goal.rel, goal.args.len());
@@ -856,9 +888,10 @@ impl<'a> Lowering<'a> {
                     let inner_positive = self.catalog.reach == KernelReach::Eval;
                     self.relation(&mut inner, rule, &mut inner_vars, goal, &source, &alias, inner_positive)?;
                     let (from, where_sql) = inner.joined_from();
-                    scope.conditions.push(format!(
-                        "NOT EXISTS (SELECT 1 FROM {from} WHERE {where_sql})"
-                    ));
+                    let anti = format!("NOT EXISTS (SELECT 1 FROM {from} WHERE {where_sql})");
+                    if !self.hoist_into_source(&mut scope, &anti) {
+                        scope.conditions.push(anti);
+                    }
                 }
             }
         }
