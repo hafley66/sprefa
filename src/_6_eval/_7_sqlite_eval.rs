@@ -4,9 +4,10 @@
 
 use super::program::{Diagnostic, Program, Row};
 use super::term::{Term, TermId, Universe};
-use crate::_5_reify::sqlite::{not_built_yet, program_plan_with};
+use crate::_5_reify::sqlite::{program_plan_with, KernelReach};
 use super::kernel::Kernel;
 use crate::_5_reify::Stop;
+use crate::_6_eval::stratify::stratify;
 use crate::_9_runtime::sqlite::{open, sql};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::Connection;
@@ -59,6 +60,8 @@ pub struct SqliteEvaluate {
     derived: Vec<(TermId, usize)>,
     /// `(table, relation, arity)` per seeded product.
     seeded: Vec<(String, TermId, usize)>,
+    /// A stratify diagnostic stopped the run; reads return no rows.
+    halted: bool,
 }
 
 impl SqliteEvaluate {
@@ -75,6 +78,7 @@ impl SqliteEvaluate {
             view_width: 0,
             derived: Vec::new(),
             seeded: Vec::new(),
+            halted: false,
         })
     }
 
@@ -90,6 +94,14 @@ impl SqliteEvaluate {
 impl IEvaluate for SqliteEvaluate {
     fn declare(&mut self, program: &Program) -> Result<Declared, Stop> {
         let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+        let (_, stratify_diagnostics) = stratify(&mut guard, program);
+        if !stratify_diagnostics.is_empty() {
+            self.diagnostics = stratify_diagnostics;
+            self.halted = true;
+            return Ok(Declared {
+                view: "program".to_string(),
+            });
+        }
         let mut rels: Vec<TermId> = program
             .rules
             .iter()
@@ -114,10 +126,10 @@ impl IEvaluate for SqliteEvaluate {
         }
         let none = guard.atom("none");
         let pad = guard.compound("const", vec![none]);
-        let (failures, view, width, derived, seeded) = {
-            let plan = program_plan_with(&mut guard, program, &names, "main", |u, rel| Kernel::of(u, rel).is_some());
+        let (eval_failures, view, width, derived, seeded) = {
+            let plan = program_plan_with(&mut guard, program, &names, "main", |u, rel| Kernel::of(u, rel).is_some(), KernelReach::Eval);
             tracing::info!(target: "dl8::eval", nonlinear_sites = plan.nonlinear_sites());
-            let failures = plan.failures();
+            let eval_failures = plan.eval_failures();
             let (view, width) = match plan.view(pad) {
                 Some(pair) => pair,
                 None => (String::new(), 0),
@@ -134,11 +146,31 @@ impl IEvaluate for SqliteEvaluate {
                 .iter()
                 .map(|&(rel, arity)| (plan.table_name((TermId(rel), arity)), TermId(rel), arity))
                 .collect();
-            (failures, view, width, derived, seeded)
+            (eval_failures, view, width, derived, seeded)
         };
         self.derived = derived;
         self.seeded = seeded;
-        self.diagnostics = not_built_yet(&mut guard, &failures);
+        let mut diagnostics: Vec<Diagnostic> = eval_failures
+            .iter()
+            .map(|(shape, count)| {
+                if shape == "malformed_aggregate" {
+                    let n = guard.int(*count as i64);
+                    Diagnostic {
+                        phase: "evaluate",
+                        payload: guard.compound("malformed_aggregate_head", vec![n]),
+                    }
+                } else {
+                    let shape = guard.atom(shape);
+                    Diagnostic {
+                        phase: "emit",
+                        payload: guard.compound("not_built_yet", vec![shape]),
+                    }
+                }
+            })
+            .collect();
+        diagnostics.sort_by(|a, b| (a.phase, a.payload.0).cmp(&(b.phase, b.payload.0)));
+        diagnostics.dedup();
+        self.diagnostics = diagnostics;
 
         let mut ddl = dictionary_ddl();
         for (table, _, arity) in &self.seeded {
@@ -175,6 +207,12 @@ impl IEvaluate for SqliteEvaluate {
     }
 
     fn read(&self, products: &[TermId]) -> Result<super::evaluate::Closure, Stop> {
+        if self.halted {
+            return Ok(super::evaluate::Closure {
+                rows: Vec::new(),
+                diagnostics: self.diagnostics.clone(),
+            });
+        }
         let guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
         let mut rows: Vec<Row> = Vec::new();
         let width = self.view_width;
@@ -248,7 +286,8 @@ fn arity_of(derived: &[(TermId, usize)], seeded: &[(String, TermId, usize)], rel
         .unwrap_or(0)
 }
 
-/// The dictionary: `sym`, `term`, `term_arg`, every cell a `TermId`.
+/// The dictionary: `sym`, `term`, `term_arg`, every cell a `TermId`; plus the
+/// one-row `unit` table a bodyless rule reads instead of a FROM-less query.
 fn dictionary_ddl() -> String {
     "\
      CREATE TABLE \"main.sym\" (\
@@ -265,7 +304,9 @@ fn dictionary_ddl() -> String {
        \"position\" INTEGER NOT NULL,\
        \"child\" INTEGER NOT NULL REFERENCES \"main.term\"(\"id\"),\
        PRIMARY KEY (\"term\", \"position\"),\
-       CHECK (\"child\" < \"term\")) WITHOUT ROWID;"
+       CHECK (\"child\" < \"term\")) WITHOUT ROWID;\
+     CREATE TABLE \"main.unit\" (\"one\" INTEGER NOT NULL);\
+     INSERT OR IGNORE INTO \"main.unit\" VALUES (1);"
         .to_string()
 }
 
@@ -548,7 +589,7 @@ mod probes {
         }
         println!("names={names:?}");
         let pad = { let n = u.atom("none"); u.compound("const", vec![n]) };
-        let plan = crate::_5_reify::sqlite::program_plan_with(&mut u, &program, &names, "main", |u, rel| crate::_6_eval::kernel::Kernel::of(u, rel).is_some());
+        let plan = crate::_5_reify::sqlite::program_plan_with(&mut u, &program, &names, "main", |u, rel| crate::_6_eval::kernel::Kernel::of(u, rel).is_some(), crate::_5_reify::sqlite::KernelReach::Eval);
         println!("failures={:?}", plan.failures());
         println!("derived_tags={:?} view_failures_above", plan.derived_tags());
         let view = plan.view(pad);
