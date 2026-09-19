@@ -32,6 +32,10 @@ const VIEW: &str = "\"program\"";
 
 /// Product name of the synthesized `intern` twin rules.
 const INTERN_ROWS: &str = "intern_rows";
+/// Product names of the served-goal twin rules: `effect/2` and
+/// `intern_snapshot/3` rows, one per evaluation of a served goal.
+const EFFECT_ROWS: &str = "effect_rows";
+const SNAPSHOT_ROWS: &str = "snapshot_rows";
 
 /// Rounds a nonlinear component may take before its rows stop changing. It
 /// protects against a step that mints a new term every round (the same
@@ -158,7 +162,8 @@ impl IEvaluate for SqliteEvaluate {
                     view: "program".to_string(),
                 });
             }
-            let (program, hidden) = with_demand(&mut guard, program);
+            let program = with_effects(&mut guard, program);
+            let (program, hidden) = with_demand(&mut guard, &program);
             let program = &with_intern_rows(&mut guard, &program);
             self.hidden = hidden;
             let mut rels: Vec<TermId> = program
@@ -386,14 +391,24 @@ impl IEvaluate for SqliteEvaluate {
             let name = guard.atom(INTERN_ROWS);
             guard.compound("ref", vec![name])
         };
-        let intern_rel = {
-            let name = guard.atom("intern");
+        let kernel = |guard: &mut Universe, name: &str| {
+            let name = guard.atom(name);
             let kernel = guard.compound("kernel", vec![name]);
             guard.compound("ref", vec![kernel])
         };
+        let alias = |guard: &mut Universe, name: &str| {
+            let name = guard.atom(name);
+            guard.compound("ref", vec![name])
+        };
+        let intern_rel = kernel(&mut guard, "intern");
+        let aliases = [
+            (intern_alias, intern_rel),
+            (alias(&mut guard, EFFECT_ROWS), kernel(&mut guard, "effect")),
+            (alias(&mut guard, SNAPSHOT_ROWS), kernel(&mut guard, "intern_snapshot")),
+        ];
         for row in &mut kept {
-            if row.rel == intern_alias {
-                row.rel = intern_rel;
+            if let Some((_, real)) = aliases.iter().find(|(twin, _)| *twin == row.rel) {
+                row.rel = *real;
             }
         }
         kept.retain(|row| !self.hidden.contains(&row.rel));
@@ -563,6 +578,135 @@ struct Flush {
 }
 
 /// The whole arena mirrors into the dictionary; an id equals its index.
+/// A served goal (a relation the outside answers, with no rule of its own)
+/// writes `effect(Relation, Application)` and an `intern_snapshot` row on
+/// every evaluation, hit or miss (`Eval::write_effect`). The twin rule's
+/// body is the goal's prefix plus the `cons` chain and `intern` call that
+/// build the application; an unbound argument is `const(none)`.
+fn with_effects(u: &mut Universe, program: &Program) -> Program {
+    let ruled: HashSet<TermId> = program.rules.iter().map(|rule| rule.rel).collect();
+    let served: Vec<TermId> = program
+        .served
+        .iter()
+        .copied()
+        .filter(|rel| !ruled.contains(rel))
+        .collect();
+    let snapshot_rel = {
+        let name = u.atom("intern_snapshot");
+        let kernel = u.compound("kernel", vec![name]);
+        u.compound("ref", vec![kernel])
+    };
+    let snapshot_alias = {
+        let name = u.atom(SNAPSHOT_ROWS);
+        u.compound("ref", vec![name])
+    };
+    let mut out = program.clone();
+    if served.is_empty() {
+        return out;
+    }
+    let effect_rel = {
+        let name = u.atom("effect");
+        let kernel = u.compound("kernel", vec![name]);
+        u.compound("ref", vec![kernel])
+    };
+    let effect_alias = {
+        let name = u.atom(EFFECT_ROWS);
+        u.compound("ref", vec![name])
+    };
+    for rule in &mut out.rules {
+        for goal in &mut rule.body {
+            if goal.rel == snapshot_rel {
+                goal.rel = snapshot_alias;
+            } else if goal.rel == effect_rel {
+                goal.rel = effect_alias;
+            }
+        }
+    }
+    if program.seeds.iter().any(|row| row.rel == snapshot_rel) {
+        let args: Vec<Arg> = (0..3).map(|i| Arg::Var(super::program::VarId(i))).collect();
+        out.rules.push(Rule {
+            rel: snapshot_alias,
+            head: args.clone(),
+            body: vec![Goal { polarity: Polarity::Positive, rel: snapshot_rel, args }],
+            vars: (0..3).map(|i| u.atom(&format!("__s{i}"))).collect(),
+        });
+    }
+    let none = {
+        let name = u.atom("none");
+        u.compound("const", vec![name])
+    };
+    let kernel = |u: &mut Universe, name: &str| {
+        let name = u.atom(name);
+        let kernel = u.compound("kernel", vec![name]);
+        u.compound("ref", vec![kernel])
+    };
+    let nil_rel = kernel(u, "nil");
+    let cons_rel = kernel(u, "cons");
+    let intern_rel = kernel(u, "intern");
+    let var = |index: usize| Arg::Var(super::program::VarId(index as u32));
+    for rule in &program.rules {
+        let mut bound: HashSet<u32> = HashSet::new();
+        for (at, goal) in rule.body.iter().enumerate() {
+            let positive = goal.polarity == Polarity::Positive;
+            if positive && served.contains(&goal.rel) {
+                let mut vars = rule.vars.clone();
+                let mut fresh = |u: &mut Universe, vars: &mut Vec<TermId>, label: &str| {
+                    let index = vars.len();
+                    vars.push(u.atom(&format!("__{label}{index}")));
+                    var(index)
+                };
+                let mut body: Vec<Goal> = rule.body[..at].to_vec();
+                let cells: Vec<Arg> = goal
+                    .args
+                    .iter()
+                    .map(|arg| match arg {
+                        Arg::Var(v) if bound.contains(&v.0) => arg.clone(),
+                        Arg::Ground(_) => arg.clone(),
+                        _ => Arg::Ground(none),
+                    })
+                    .collect();
+                let mut list = fresh(u, &mut vars, "nil");
+                body.push(Goal { polarity: Polarity::Positive, rel: nil_rel, args: vec![list.clone()] });
+                for cell in cells.iter().rev() {
+                    let next = fresh(u, &mut vars, "cons");
+                    body.push(Goal {
+                        polarity: Polarity::Positive,
+                        rel: cons_rel,
+                        args: vec![cell.clone(), list.clone(), next.clone()],
+                    });
+                    list = next;
+                }
+                let application = fresh(u, &mut vars, "app");
+                body.push(Goal {
+                    polarity: Polarity::Positive,
+                    rel: intern_rel,
+                    args: vec![Arg::Ground(goal.rel), list.clone(), application.clone()],
+                });
+                out.rules.push(Rule {
+                    rel: effect_alias,
+                    head: vec![Arg::Ground(goal.rel), application.clone()],
+                    body: body.clone(),
+                    vars: vars.clone(),
+                });
+                out.rules.push(Rule {
+                    rel: snapshot_alias,
+                    head: vec![Arg::Ground(goal.rel), list, application],
+                    body,
+                    vars,
+                });
+            }
+            if positive {
+                for arg in &goal.args {
+                    if let Arg::Var(v) = arg {
+                        bound.insert(v.0);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Magic sets (F5a): a product some rule of which needs bound head arguments
 /// is also proved under each caller's binding. A call site with bound
 /// positions B feeds a demand product; an adorned copy of every rule joins
