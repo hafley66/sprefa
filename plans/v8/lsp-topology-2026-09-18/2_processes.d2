@@ -1,78 +1,303 @@
-direction: right
+direction: down
 
-inputs: {
-  label: "Inputs"
-  style.fill: "#263238"
-  style.font-color: "#e0f7fa"
-  editor: "Editor or harness\nLSP client"
-  edit: "didChange\nversion=42"
-  request: "hover id=9\ngeneration=7"
-  disk: "Saved files\nrepo + revision"
+title: "DL8 programmable LSP topology" {
+  shape: text
+  near: top-center
+  style.font-size: 30
+  style.bold: true
+  style.font-color: "#d8f3ff"
+}
+subtitle: "Top-down request flow · shared dependency tree · leased processes · retractable facts · fenced publication" {
+  shape: text
+  near: top-center
+  style.font-color: "#8fd8ef"
 }
 
-per_session: {
-  label: "A  Per-session child"
-  style.fill: "#37474f"
-  client: "Session transport\nstdio JSON-RPC"
-  overlay: "Overlay\n(uri, version)"
-  child: "Language adapter\nprocess_generation=3"
-  client -> overlay: "writes"
-  overlay -> child: "snapshot"
+classes: {
+  process: {style.fill: "#112532"; style.stroke: "#3aaed8"; style.font-color: "#e6f8ff"; style.border-radius: 12; style.stroke-width: 2}
+  session: {style.fill: "#163a4a"; style.stroke: "#52c7ea"; style.font-color: "#e9fbff"; style.border-radius: 10}
+  shared: {style.fill: "#17351f"; style.stroke: "#64c77b"; style.font-color: "#edfff1"; style.border-radius: 10}
+  durable: {style.fill: "#202d3e"; style.stroke: "#7ea6d8"; style.font-color: "#eef5ff"; style.border-radius: 10}
+  external: {style.fill: "#3c3218"; style.stroke: "#e1b84b"; style.font-color: "#fff8db"; style.border-radius: 10}
+  gate: {style.fill: "#392124"; style.stroke: "#ef777f"; style.font-color: "#fff0f1"; style.border-radius: 10}
+  event: {shape: circle; width: 92; height: 92; style.fill: "#23495c"; style.stroke: "#78d7f5"; style.font-color: "#f3fcff"; style.stroke-width: 2}
+  state: {shape: circle; width: 105; height: 105; style.fill: "#26384b"; style.stroke: "#9bbcdf"; style.font-color: "#f1f7ff"; style.stroke-width: 2}
+  good: {style.fill: "#173b24"; style.stroke: "#62d584"; style.font-color: "#effff3"}
+  warn: {style.fill: "#443715"; style.stroke: "#f0c958"; style.font-color: "#fff8dc"}
+  fail: {style.fill: "#491f27"; style.stroke: "#f0707b"; style.font-color: "#fff0f1"}
+  primary_edge: {style.stroke: "#59d4f5"; style.font-color: "#bdefff"; style.stroke-width: 3}
+  shared_edge: {style.stroke: "#66cf82"; style.font-color: "#bdf2c9"; style.stroke-width: 2}
+  durable_edge: {style.stroke: "#86aee0"; style.font-color: "#c8dcf4"; style.stroke-width: 2}
+  lease_edge: {style.stroke: "#e8bf50"; style.font-color: "#f9df91"; style.stroke-width: 2; style.stroke-dash: 5}
+  cancel_edge: {style.stroke: "#ef767f"; style.font-color: "#ffc2c7"; style.stroke-width: 2; style.stroke-dash: 4}
+}
+
+entry: {
+  label: "TIER 0 · CLIENTS"
+  direction: right
+  style.fill: "#0d1b24"
+  style.stroke: "#2a718c"
+  style.font-color: "#8fd8ef"
+  style.border-radius: 14
+  editor: "Editor window\nVS Code / Neovim" {class: process; tooltip: "Owns one LSP stream and one unsaved-buffer identity. It does not own the shared compiler graph."}
+  harness: "Harness session\nCodex / Claude / other" {class: process; tooltip: "May launch or connect to LSP. ACP and MCP remain separate harness protocols."}
+  cli: "CLI query\ncold or attached" {class: process; tooltip: "Reads committed facts without inheriting editor overlay state."}
+}
+
+transport: {
+  label: "TIER 1 · THIN PER-CLIENT TRANSPORTS"
+  direction: right
+  style.fill: "#102530"
+  style.stroke: "#3798b7"
+  style.font-color: "#a9e8fa"
+  style.border-radius: 14
+  lsp_a: "LSP stream A\nJSON-RPC · request ids" {class: session; tooltip: "Owns framing, response writer, request ids and shutdown handshake."}
+  lsp_b: "LSP stream B\nJSON-RPC · request ids" {class: session; tooltip: "Same wire shape with an independent harness lifetime."}
+  cli_rpc: "Broker RPC\nbounded query page" {class: session; tooltip: "A non-LSP surface reaches the broker without posing as an editor protocol."}
+}
+
+session_plane: {
+  label: "TIER 2 · SESSION PLANE · PRIVATE BY DEFAULT"
+  direction: right
+  style.fill: "#122c39"
+  style.stroke: "#47b5d5"
+  style.font-color: "#b9edfa"
+  style.border-radius: 14
+  overlay_a: "Overlay A\n(uri, v42, gen7)" {class: session; tooltip: "Unsaved bytes for one client. didChange replaces the value and advances generation."}
+  overlay_b: "Overlay B\n(uri, v19, gen3)" {class: session; tooltip: "The same URI in another client may contain different bytes."}
+  pending: "Pending requests\nQ_session ≤ 32" {class: session; tooltip: "Superseded document requests are cancelled or coalesced."}
+  writer: "Response writer\nowned by stream" {class: session; tooltip: "Drain or reject before join. No background sender may retain it after close."}
 }
 
 broker: {
-  label: "B  Shared workspace broker"
-  style.fill: "#455a64"
-  lease: "Workspace lease\n(repo, revision)"
-  queue: "Bounded queue\nQ=128"
-  snapshot: "Immutable snapshot\ngeneration=7"
-  ivm: "SQLite + sqlite_ivm\ncommitted facts"
-  adapter: "Adapter pool\nmax P=2"
-  lease -> queue: "routes"
-  queue -> snapshot: "cancellable work"
-  snapshot -> ivm: "source facts"
-  queue -> adapter: "leased requests"
+  label: "PROCESS BOUNDARY · ONE WORKSPACE BROKER"
+  direction: down
+  class: process
+  tooltip: "Shared hot analysis owner keyed by canonical workspace, repository and revision family."
+  ingress: "1 · Bounded ingress\nQ_workspace ≤ 128" {class: shared; tooltip: "Accept, reject, coalesce or cancel. No unbounded channel."}
+  route: "2 · Identity router\nworkspace → repo → revision" {class: shared; tooltip: "Prevents checkout, revision and overlay contamination."}
+  host: "3 · Analysis owner\none mutable host" {class: shared; tooltip: "Applies changes serially. Readers receive immutable snapshots."}
+  snapshot: "4 · Immutable snapshot\n(repo R, rev V, gen 7)" {class: shared; tooltip: "Old generations remain only while readers retain them."}
+  query: "5 · Semantic surface\nhover · refs · diagnostics" {class: shared; tooltip: "Produces protocol-neutral answers. LSP serialization lives above."}
+  fence: "6 · Publication fence\nanswer.gen == overlay.gen" {class: gate; tooltip: "Drops results from stale snapshots, dead sessions and restarted children."}
+  ingress -> route: "admit" {class: primary_edge}
+  route -> host: "apply or read" {class: primary_edge}
+  host -> snapshot: "freeze generation" {class: primary_edge}
+  snapshot -> query: "query" {class: primary_edge}
+  query -> fence: "tag answer" {class: primary_edge}
 }
 
-compiler: {
-  label: "C  Adapter inside compiler"
-  style.fill: "#546e7a"
-  host: "Compiler runtime\nAnalysisHost"
-  lower: "parse -> lower ->\nSurface facts"
-  store: "Durable fact store\nrepo/revision/path"
-  host -> lower: "snapshot"
-  lower -> store: "transaction"
+deps: {
+  label: "TIER 3 · REUSED DEPENDENCY TREE"
+  direction: right
+  style.fill: "#13291a"
+  style.stroke: "#4eaa65"
+  style.font-color: "#b8edc4"
+  style.border-radius: 14
+  identity: "Canonical identity\nroot · repo · revision" {class: shared; tooltip: "Revision switches create a new family rather than mutating the old identity."}
+  imports: "Import graph\nsource → resolved target" {class: shared; tooltip: "Reusable while source UnitKey and target identity remain equal."}
+  cst: "Parsed units\n(path, content_hash)" {class: shared; tooltip: "Shared when content identity matches."}
+  virtual: "Injected DSL map\nvirtual ↔ source offsets" {class: shared; tooltip: "Volar-style mapping returns embedded-language positions to the host source."}
+  lowered: "Lowered units\nsemantic rows" {class: shared; tooltip: "Compiler semantics derived from immutable source identity."}
+  identity -> imports: "resolve" {class: shared_edge}
+  imports -> cst: "load unchanged" {class: shared_edge}
+  cst -> virtual: "map regions" {class: shared_edge}
+  cst -> lowered: "lower" {class: shared_edge}
+  virtual -> lowered: "mapped semantics" {class: shared_edge}
 }
 
-fence: {
-  label: "Shared correctness gates"
-  style.fill: "#5d4037"
-  cancel: "cancel token\nclose/crash/restart"
-  generation: "stale-result fence\n(uri, generation)"
-  cleanup: "teardown ledger\nqueues, watchers, children"
+store: {
+  label: "PROCESS / STORAGE BOUNDARY · SQLITE + sqlite_ivm"
+  direction: right
+  class: durable
+  tooltip: "Durable cold facts. Broker owns transaction order and commit-to-generation mapping."
+  source: "source_fact" {
+    shape: sql_table
+    class: durable
+    repo: text {constraint: primary_key}
+    revision: text {constraint: primary_key}
+    path: text {constraint: primary_key}
+    digest: blob {constraint: primary_key}
+    payload: blob
+    tooltip: "Ordinary main-table rows. Ownership metadata makes a unit or revision retractable."
+  }
+  imports: "import_edge" {
+    shape: sql_table
+    class: durable
+    source_unit: blob {constraint: primary_key}
+    target_unit: blob {constraint: primary_key}
+    label: text
+    tooltip: "Resolved dependency inputs for reachability and invalidation views."
+  }
+  view: "derived_view" {
+    shape: sql_table
+    class: durable
+    relation: text {constraint: primary_key}
+    tuple: blob {constraint: primary_key}
+    support: integer
+    tooltip: "Illustrative result shape. Source changes maintain it; result CRUD is rejected."
+  }
+  tx: "SQLite transaction\nDELETE D1 + INSERT D2" {class: durable; tooltip: "Readers see the old commit or the new commit."}
+  ivm: "sqlite_ivm\nretract · rederive · net delta" {class: durable; tooltip: "Maintains accepted recursive SQL. It does not cancel tasks or free process memory."}
+  tx -> source: "source write" {class: durable_edge}
+  source -> imports: "maintain" {class: durable_edge}
+  imports -> ivm: "negative + positive delta" {class: durable_edge}
+  ivm -> view: "commit result" {class: durable_edge}
 }
 
-edit -> per_session.client: "notification"
-request -> per_session.client: "request"
-disk -> broker.lease: "identity"
-disk -> compiler.host: "identity"
-
-per_session.child -> fence.cancel: "owned by session"
-broker.queue -> fence.cancel: "bounded + cancel"
-compiler.host -> fence.generation: "snapshot tag"
-broker.ivm -> fence.generation: "commit generation"
-fence.cancel -> fence.cleanup: "ordered close"
-fence.generation -> per_session.client: "publish or discard"
-fence.generation -> broker.queue: "discard stale"
-
-note1: "sqlite_ivm maintains rows and recursive views inside SQLite transactions.\nIt does not own LSP queues, child processes, watcher handles, cancellation,\nor cache bounds." {
-  shape: rectangle
-  style.fill: "#fff8e1"
+adapter: {
+  label: "OPTIONAL CHILD PROCESS BOUNDARY · EXTERNAL LANGUAGE ADAPTER"
+  direction: right
+  class: external
+  tooltip: "Crossed only when a query needs foreign compiler semantics."
+  lease: "Adapter lease\n(adapter, repo, rev, proc_gen)" {class: external; tooltip: "Every borrower is counted. Final release owns shutdown."}
+  queue: "Child queue\nQ_adapter ≤ 64" {class: external; tooltip: "Bounds traffic and provides a cancellation registry."}
+  child: "Language server child\nprocess generation 4" {class: external; tooltip: "Broker owns PID, pipes, memory budget and restart generation."}
+  shard: "Optional cold index\nchild-owned shards" {class: external; tooltip: "Tool-native durable data stays namespaced by adapter and revision."}
+  lease -> queue: "borrow" {class: lease_edge}
+  queue -> child: "request / cancel" {class: lease_edge}
+  child -> shard: "native persistence" {class: lease_edge}
 }
-broker.ivm -> note1: "boundary"
 
-note2: "Volar-style virtual code needs an offset map before injected DSL\nfeatures can become semantic LSP responses." {
-  shape: rectangle
-  style.fill: "#e0f7fa"
+entry.editor -> transport.lsp_a: "initialize · open · change · request" {class: primary_edge}
+entry.harness -> transport.lsp_b: "session LSP" {class: primary_edge}
+entry.cli -> transport.cli_rpc: "query page" {class: primary_edge}
+transport.lsp_a -> session_plane.overlay_a: "unsaved bytes" {class: primary_edge}
+transport.lsp_b -> session_plane.overlay_b: "unsaved bytes" {class: primary_edge}
+transport.lsp_a -> session_plane.pending: "request 9" {class: primary_edge}
+session_plane.pending -> broker.ingress: "generation 7" {class: primary_edge}
+transport.cli_rpc -> broker.ingress: "committed query" {class: primary_edge}
+broker.host -> deps.identity: "select family" {class: shared_edge}
+deps.lowered -> broker.snapshot: "reuse state" {class: shared_edge}
+deps.imports -> store.tx: "owned delta" {class: durable_edge}
+store.view -> broker.query: "bounded SELECT" {class: durable_edge}
+broker.query -> adapter.lease: "foreign semantics only" {class: lease_edge}
+adapter.child -> broker.fence: "answer · proc_gen 4" {class: lease_edge}
+broker.fence -> session_plane.writer: "publish current" {class: primary_edge}
+session_plane.writer -> transport.lsp_a: "response / diagnostic" {class: primary_edge}
+
+edit_sequence: {
+  label: "SEQUENCE · EDIT DURING HOVER"
+  direction: right
+  style.fill: "#18222c"
+  style.stroke: "#667d8e"
+  style.font-color: "#dce9ef"
+  style.border-radius: 14
+  s0: "t0\nopen v7\ngen 11" {class: event; tooltip: "Overlay receives initial bytes."}
+  s1: "t1\nhover 9\nstarts" {class: event; tooltip: "Request captures snapshot 11."}
+  s2: "t2\nchange v8\ngen 12" {class: event; tooltip: "Change cancels prior document work."}
+  s3: "t3\nanswer 9\ngen 11" {class: event; tooltip: "Old work may finish after cancellation."}
+  s4: "t4\nfence\n11 ≠ 12" {class: event; tooltip: "Compare answer and current overlay generations."}
+  s5: "t5\ndiscard\nzero publish" {class: event; style.fill: "#491f27"; style.stroke: "#f0707b"; tooltip: "Stale answer stops before the writer."}
+  s6: "t6\nhover 10\ngen 12" {class: event; tooltip: "New request captures current state."}
+  s7: "t7\npublish\ngen 12" {class: event; style.fill: "#173b24"; style.stroke: "#62d584"; tooltip: "Generation match permits publication."}
+  s0 -> s1: "request" {class: primary_edge}
+  s1 -> s2: "concurrent edit" {class: primary_edge}
+  s2 -> s3: "late completion" {class: cancel_edge}
+  s3 -> s4: "compare" {class: cancel_edge}
+  s4 -> s5: "stale" {class: cancel_edge}
+  s5 -> s6: "next request" {class: primary_edge}
+  s6 -> s7: "current" {class: shared_edge}
 }
-compiler.lower -> note2: "semantic injection"
+
+lifecycle: {
+  label: "STATE MACHINE · WORKSPACE LEASE + CHILD PROCESS"
+  direction: right
+  style.fill: "#20242a"
+  style.stroke: "#8a7b51"
+  style.font-color: "#f0e4bd"
+  style.border-radius: 14
+  absent: "ABSENT\n0 leases" {class: state; tooltip: "No broker or child state is live."}
+  starting: "STARTING\nallocate owner" {class: state; tooltip: "Create queues, watchers and optional children."}
+  live: "LIVE\nN leases" {class: state; style.fill: "#173b24"; style.stroke: "#62d584"; tooltip: "Requests enter while identities and generations remain valid."}
+  draining: "DRAINING\nreject new work" {class: state; style.fill: "#443715"; style.stroke: "#f0c958"; tooltip: "Final lease released."}
+  stopping: "STOPPING\nclose + join" {class: state; style.fill: "#443715"; style.stroke: "#f0c958"; tooltip: "Cancel, unregister, close pipes, drain and join."}
+  killed: "KILLED\ndeadline hit" {class: state; style.fill: "#491f27"; style.stroke: "#f0707b"; tooltip: "Escalation after graceful child shutdown expires."}
+  absent -> starting: "first lease" {class: lease_edge}
+  starting -> live: "ready · proc_gen +1" {class: lease_edge}
+  live -> live: "N remains > 0" {class: lease_edge}
+  live -> draining: "final release" {class: cancel_edge}
+  draining -> stopping: "queues settled" {class: cancel_edge}
+  stopping -> absent: "joined · zero handles" {class: shared_edge}
+  stopping -> killed: "deadline" {class: cancel_edge}
+  killed -> absent: "waitpid · clear ledger" {class: cancel_edge}
+}
+
+teardown: {
+  label: "ORDERED TEARDOWN · LEAK-PREVENTION PATH"
+  direction: right
+  style.fill: "#2a1c20"
+  style.stroke: "#b64d5a"
+  style.font-color: "#ffd3d7"
+  style.border-radius: 14
+  c1: "1 · close\nadvance gen" {class: gate; tooltip: "Makes every older answer stale."}
+  c2: "2 · cancel\nrequests" {class: gate; tooltip: "Signals broker workers and adapters."}
+  c3: "3 · remove\noverlay + senders" {class: gate; tooltip: "Drops URI maps and every session sender clone."}
+  c4: "4 · retract\nsession facts" {class: gate; tooltip: "Deletes owned sources transactionally."}
+  c5: "5 · unregister\nwatchers" {class: gate; tooltip: "Await callbacks so none arrive after teardown."}
+  c6: "6 · release\nchild lease" {class: gate; tooltip: "Final release closes stdin and starts deadline."}
+  c7: "7 · drain writer\njoin tasks" {class: gate; tooltip: "v5 hung here because Sender clones kept the writer alive."}
+  c8: "8 · assert ledger\ncounts = 0" {class: good; tooltip: "Queues, overlays, senders, watchers, children and workers return to floor."}
+  c1 -> c2: "then" {class: cancel_edge}
+  c2 -> c3: "then" {class: cancel_edge}
+  c3 -> c4: "then" {class: cancel_edge}
+  c4 -> c5: "then" {class: cancel_edge}
+  c5 -> c6: "then" {class: cancel_edge}
+  c6 -> c7: "then" {class: cancel_edge}
+  c7 -> c8: "proof" {class: shared_edge}
+}
+
+failures: {
+  label: "FAILURE CLASSES · KEEP SEPARATE"
+  direction: right
+  style.fill: "#251c20"
+  style.stroke: "#9d5661"
+  style.font-color: "#f3cbd0"
+  style.border-radius: 14
+  exit: "v5 exit retention\nKNOWN PATH\nSender clones → writer waits" {class: fail; tooltip: "v5/src/lsp.rs:362-377 documents the retaining path."}
+  rss: "v5 36 GB resident/swap\nMEASURED SYMPTOM\npath unresolved here" {class: warn; tooltip: "Separate graph/store memory record."}
+  duplicate: "Duplicate engines\nTOPOLOGY COST\nclient compiler + daemon" {class: warn; tooltip: "Duplicates work and caches even without a conventional leak."}
+  ivm_limit: "sqlite_ivm boundary\nROWS ONLY\nno task cleanup" {class: durable; tooltip: "Relational retraction does not release process-local owners."}
+}
+
+ledger: "live_ownership_ledger" {
+  label: "LIVE OWNERSHIP LEDGER · ACCEPTANCE COUNTERS"
+  shape: sql_table
+  class: durable
+  workspace_family: text {constraint: primary_key}
+  sessions: integer
+  overlays: integer
+  pending_requests: integer
+  subscriber_senders: integer
+  watcher_handles: integer
+  adapter_leases: integer
+  child_processes: integer
+  worker_tasks: integer
+  generation: integer
+  rss_bytes: integer
+  tooltip: "Endurance probes sample these after warmup. Close returns owned counts to their expected floor."
+}
+
+teardown.c8 -> ledger: "zero-floor proof" {class: shared_edge}
+
+# Invisible reading-order anchors keep the architecture first and walkthroughs after it.
+adapter.shard -> edit_sequence.s0: {style.opacity: 0}
+edit_sequence.s7 -> lifecycle.absent: {style.opacity: 0}
+lifecycle.killed -> teardown.c1: {style.opacity: 0}
+teardown.c8 -> failures.exit: {style.opacity: 0}
+failures.ivm_limit -> ledger: {style.opacity: 0}
+ledger -> legend.cyan: {style.opacity: 0}
+
+legend: {
+  label: "READING KEY"
+  direction: right
+  style.fill: "#111820"
+  style.stroke: "#536775"
+  style.font-color: "#d4e3ea"
+  style.border-radius: 12
+  cyan: "cyan · live request" {class: session; tooltip: "Follow top to publication fence and back to writer."}
+  green: "green · shared analysis" {class: shared; tooltip: "Reusable under stable structural identity."}
+  blue: "blue · durable facts" {class: durable; tooltip: "Transactional SQLite and sqlite_ivm state."}
+  yellow: "yellow · process lease" {class: external; tooltip: "Bounded external server ownership."}
+  red: "red · cancellation gate" {class: gate; tooltip: "Stale-result and teardown controls."}
+}
