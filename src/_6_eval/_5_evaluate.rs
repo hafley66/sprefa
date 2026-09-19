@@ -789,7 +789,22 @@ impl<'a> Slice for Evaluate<'a> {
 
     fn reduce(store: &mut Store, (u, program): Self::Event, fx: &mut dyn FnMut(Trace)) -> Closure {
         if engine() == Engine::Sqlite {
-            return super::sqlite_eval::evaluate_sqlite(u, program, fx);
+            // Rows already in the store (a continuing run) are seeds to the
+            // sqlite engine; every closure row lands back in the store.
+            let mut seeded = program.clone();
+            for (rel, table) in &store.tables {
+                for id in 0..table.len() as u32 {
+                    seeded.seeds.push(Row {
+                        rel: *rel,
+                        args: table.row(id).to_vec(),
+                    });
+                }
+            }
+            let closure = super::sqlite_eval::evaluate_sqlite(u, &seeded, fx);
+            for row in &closure.rows {
+                store.insert(row.rel, row.args.clone().into_boxed_slice());
+            }
+            return closure;
         }
         evaluate_into(store, u, program, fx)
     }
