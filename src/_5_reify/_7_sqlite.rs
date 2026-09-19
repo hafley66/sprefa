@@ -47,7 +47,7 @@ enum Unsupported {
     Fold(String),
     Unbound(String),
     Constant(TermId),
-    MalformedAggregate,
+    MalformedAggregate(usize),
     NonlinearRecursion,
     RecursionWithoutAnchor,
     MixedColumn(usize),
@@ -56,6 +56,20 @@ enum Unsupported {
     UnstoredRelation(String),
     DependsOn(String),
     NoSource,
+}
+
+/// How much of the kernel mode table lowers to SQL. `Emit` keeps the store
+/// contract the goldens froze; `Eval` lowers every mode but the folds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KernelReach {
+    Emit,
+    Eval,
+}
+
+/// One kernel argument: a cell expression, or a variable the goal binds.
+enum Hold {
+    Cell(String),
+    Free(usize),
 }
 
 /// One view per derived relation, in dependency order. `prefix` is the table
@@ -161,6 +175,19 @@ fn mark_component(
 /// Marks a CTE that recurses; the view's `WITH` takes `RECURSIVE` when any does.
 const RECURSIVE_MARK: &str = "\u{0}recursive\u{0}";
 
+/// The step count one `WITH RECURSIVE` may reach before the eval lowering
+/// cuts it: a recursive step that constructs a new term every round never
+/// reaches a fixpoint, and this cap turns that divergence into the
+/// `recursion_depth_exceeded` diagnostic instead of a hang. Gated to
+/// `KernelReach::Eval`; the emit goldens freeze the uncapped text.
+const RECURSION_DEPTH_LIMIT: i64 = 64;
+
+/// The recursive component's one CTE: `<relation>_r<arity>`.
+fn shared_cte_name(catalog: &Catalog, component: &[Key]) -> String {
+    let first = component[0];
+    format!("{}_r{}", catalog.name(first.0), first.1)
+}
+
 /// `ref(kernel(cons))` as `cons`, `ref(kernel(str, cons))` as `str.cons`.
 fn kernel_label(u: &Universe, rel: TermId) -> Option<String> {
     let inner = u.unary(rel, "ref")?;
@@ -197,7 +224,7 @@ fn unsupported_payload(
             u.compound("unbound", vec![variable])
         }
         Unsupported::Constant(term) => u.compound("constant", vec![*term]),
-        Unsupported::MalformedAggregate => u.atom("malformed_aggregate"),
+        Unsupported::MalformedAggregate(_) => u.atom("malformed_aggregate"),
         Unsupported::NonlinearRecursion => u.atom("nonlinear_recursion"),
         Unsupported::RecursionWithoutAnchor => u.atom("recursion_without_anchor"),
         Unsupported::MixedColumn(position) => {
@@ -221,6 +248,9 @@ fn unsupported_payload(
 
 pub(crate) struct Catalog<'a> {
     owns: Owns,
+    reach: KernelReach,
+    empty_list_cell: TermId,
+    empty_string_cell: TermId,
     u: &'a Universe,
     prefix: String,
     /// The name `SqliteRowStore::name_relations` picks: the first sorted
@@ -238,6 +268,9 @@ impl<'a> Catalog<'a> {
         declared: &HashMap<String, TermId>,
         prefix: &str,
         owns: Owns,
+        reach: KernelReach,
+        empty_list_cell: TermId,
+        empty_string_cell: TermId,
     ) -> Catalog<'a> {
         let sorted: BTreeMap<&String, &TermId> = declared.iter().collect();
         let mut names = HashMap::new();
@@ -246,7 +279,7 @@ impl<'a> Catalog<'a> {
                 names.entry(*rel).or_insert_with(|| name.clone());
             }
         }
-        let seeded = program
+        let seeded: HashSet<Key> = program
             .seeds
             .iter()
             .map(|seed| (seed.rel, seed.args.len()))
@@ -260,6 +293,18 @@ impl<'a> Catalog<'a> {
                     .push(rule);
             }
         }
+        if reach == KernelReach::Eval {
+            let mut extras: Vec<TermId> = derived
+                .keys()
+                .map(|key| key.0)
+                .chain(seeded.iter().map(|(rel, _)| *rel))
+                .collect();
+            extras.sort_by_key(|term| term.0);
+            extras.dedup();
+            for rel in extras {
+                names.entry(rel).or_insert_with(|| format!("n{}", rel.0));
+            }
+        }
         let mut order: Vec<Key> = derived.keys().copied().collect();
         order.sort_by(|a, b| {
             let name = |key: &Key| names.get(&key.0).cloned().unwrap_or_default();
@@ -267,6 +312,9 @@ impl<'a> Catalog<'a> {
         });
         Catalog {
             owns,
+            reach,
+            empty_list_cell,
+            empty_string_cell,
             u,
             prefix: prefix.to_string(),
             names,
@@ -397,15 +445,15 @@ fn lower_component(
 ) -> Result<Vec<String>, Vec<(Key, usize, Unsupported)>> {
     let recursive = catalog.recursive(component);
     let width = component.iter().map(|key| key.1).max().unwrap_or(0);
-    let shared = recursive.then(|| {
-        let first = component[0];
-        quote_identifier(&format!("{}_r{}", catalog.name(first.0), first.1))
-    });
-    let layout = |key: &Key| {
+    let capped = recursive && catalog.reach == KernelReach::Eval;
+    let shared = recursive.then(|| quote_identifier(&shared_cte_name(catalog, component)));
+    let member_of = |key: &Key, step: bool| {
         shared.as_ref().map(|name| Member {
             cte: name.clone(),
             member: component.iter().position(|k| k == key).unwrap(),
             width,
+            step,
+            capped,
         })
     };
 
@@ -468,7 +516,7 @@ fn lower_component(
                 continue;
             }
             let rendered = lowering.body(rule).and_then(|(scope, head)| {
-                lowering.render(scope, &head, &kinds[key], layout(key), !recursive)
+                lowering.render(scope, &head, &kinds[key], member_of(key, own > 0), !recursive)
             });
             match rendered {
                 Ok(select) if own == 0 => anchors.push(select),
@@ -481,6 +529,16 @@ fn lower_component(
         return Err(errors);
     }
 
+    for key in component {
+        if catalog.seeded.contains(key) {
+            let names = column_names(&kinds[key]);
+            anchors.push(format!(
+                "SELECT {} FROM {}",
+                names.join(", "),
+                catalog.table_name(*key)
+            ));
+        }
+    }
     let Some(shared) = shared else {
         let key = component[0];
         let columns = column_names(&kinds[&key]);
@@ -499,6 +557,9 @@ fn lower_component(
     }
     let mut columns = vec![quote_identifier("member")];
     columns.extend((0..width).map(|position| quote_identifier(&format!("c{position}"))));
+    if capped {
+        columns.push(quote_identifier("depth"));
+    }
     let mut pieces = vec![format!(
         "{RECURSIVE_MARK}{shared}({}) AS ({})",
         columns.join(", "),
@@ -519,9 +580,10 @@ fn lower_component(
                 .collect()
         };
         pieces.push(format!(
-            "{}({}) AS (SELECT {} FROM {shared} WHERE {} = {member})",
+            "{}({}) AS (SELECT {}{} FROM {shared} WHERE {} = {member})",
             catalog.cte_name(*key),
             names.join(", "),
+            if capped { "DISTINCT " } else { "" },
             values.join(", "),
             quote_identifier("member"),
         ));
@@ -560,6 +622,12 @@ struct Member {
     cte: String,
     member: usize,
     width: usize,
+    /// This rule reads the shared CTE: its rows are a recursive step, so the
+    /// rendered select adds one depth under the cap. Anchor rows start at 0.
+    step: bool,
+    /// The eval lowering caps this component: every piece carries the depth
+    /// column.
+    capped: bool,
 }
 
 #[derive(Clone)]
@@ -674,10 +742,21 @@ impl<'a> Lowering<'a> {
         let u = self.catalog.u;
         let key = (goal.rel, goal.args.len());
         if (self.catalog.owns)(u, goal.rel) {
-            if let Some(kernel @ (Kernel::Int(_) | Kernel::IntAdd | Kernel::TermLt)) =
-                Kernel::of(u, goal.rel)
-            {
-                return Ok(Source::Kernel(kernel));
+            let kernel = Kernel::of(u, goal.rel);
+            let admitted = match kernel {
+                Some(Kernel::Int(_) | Kernel::IntAdd | Kernel::TermLt) => true,
+                Some(
+                    Kernel::Nil
+                    | Kernel::StrNil
+                    | Kernel::Cons
+                    | Kernel::StrCons
+                    | Kernel::EdgeRef
+                    | Kernel::Intern,
+                ) => self.catalog.reach == KernelReach::Eval,
+                _ => false,
+            };
+            if admitted {
+                return Ok(Source::Kernel(kernel.expect("admitted kernels carry one")));
             }
             return Err(match kernel_label(u, goal.rel) {
                 Some(name) => Unsupported::Kernel(name),
@@ -742,7 +821,9 @@ impl<'a> Lowering<'a> {
                 (Polarity::Negative, _) => {
                     let alias = self.alias();
                     let mut inner = Scope::new();
-                    self.relation(&mut inner, rule, &mut vars, goal, &source, &alias, false)?;
+                    let mut inner_vars = vars.clone();
+                    let inner_positive = self.catalog.reach == KernelReach::Eval;
+                    self.relation(&mut inner, rule, &mut inner_vars, goal, &source, &alias, inner_positive)?;
                     let (from, where_sql) = inner.joined_from();
                     scope.conditions.push(format!(
                         "NOT EXISTS (SELECT 1 FROM {from} WHERE {where_sql})"
@@ -765,13 +846,13 @@ impl<'a> Lowering<'a> {
                     None => Head::Ground(*term),
                 },
                 Arg::Aggregate(..) | Arg::Fold(..) if aggregates != 1 => {
-                    return Err(Unsupported::MalformedAggregate)
+                    return Err(Unsupported::MalformedAggregate(aggregates));
                 }
                 Arg::Aggregate(..) | Arg::Fold(..) => {
                     let (_, folding, subject) = rule.folding_head().unwrap();
                     let fold = self.fold(folding)?;
                     let Arg::Var(v) = subject else {
-                        return Err(Unsupported::MalformedAggregate);
+                        return Err(Unsupported::MalformedAggregate(aggregates));
                     };
                     let Some(value) = vars.get(&(v.0 as usize)) else {
                         return Err(Unsupported::Unbound(self.variable_name(rule, v.0 as usize)));
@@ -881,7 +962,7 @@ impl<'a> Lowering<'a> {
                     let condition = self.matches(scope, &column, *term)?;
                     scope.conditions.push(condition);
                 }
-                Arg::Aggregate(..) | Arg::Fold(..) => return Err(Unsupported::MalformedAggregate),
+                Arg::Aggregate(..) | Arg::Fold(..) => return Err(Unsupported::MalformedAggregate(0)),
             }
         }
         Ok(())
@@ -899,6 +980,130 @@ impl<'a> Lowering<'a> {
     ) -> Result<String, Unsupported> {
         let mut guards = Vec::new();
         let condition = match kernel {
+            Kernel::Nil | Kernel::StrNil if self.catalog.reach == KernelReach::Eval => {
+                self.arity(goal, 1)?;
+                let literal = match kernel {
+                    Kernel::Nil => self.catalog.empty_list_cell,
+                    _ => self.catalog.empty_string_cell,
+                };
+                match self.argument_cell(scope, rule, vars, &goal.args[0])? {
+                    Hold::Cell(cell) => guards.push(format!("{cell} = {}", literal.0)),
+                    Hold::Free(at) if positive => {
+                        vars.insert(at, Value { sql: literal.0.to_string(), kind: CellKind::Term });
+                    }
+                    Hold::Free(_) => guards.push("1".to_string()),
+                }
+                "1".to_string()
+            }
+            Kernel::Cons | Kernel::StrCons if self.catalog.reach == KernelReach::Eval => {
+                self.arity(goal, 3)?;
+                let (make, first, rest) = match kernel {
+                    Kernel::Cons => ("dl_cons", "dl_head", "dl_tail"),
+                    _ => ("dl_str_cat", "dl_str_first", "dl_str_rest"),
+                };
+                match self.argument_cell(scope, rule, vars, &goal.args[2])? {
+                    Hold::Free(at) => {
+                        let Some(head) =
+                            self.input_cell(scope, rule, vars, &goal.args[0], &mut guards)?
+                        else {
+                            return Ok(guards.join(" AND "));
+                        };
+                        let Some(tail) =
+                            self.input_cell(scope, rule, vars, &goal.args[1], &mut guards)?
+                        else {
+                            return Ok(guards.join(" AND "));
+                        };
+                        let call = format!("{make}({head}, {tail})");
+                        guards.push(format!("{call} IS NOT NULL"));
+                        if positive {
+                            vars.insert(at, Value { sql: call, kind: CellKind::Term });
+                        }
+                    }
+                    Hold::Cell(list) => {
+                        let head = format!("{first}({list})");
+                        let tail = format!("{rest}({list})");
+                        guards.push(format!("{head} IS NOT NULL"));
+                        guards.push(format!("{tail} IS NOT NULL"));
+                        for (position, call) in [(0usize, head), (1usize, tail)] {
+                            match self.argument_cell(scope, rule, vars, &goal.args[position])? {
+                                Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
+                                Hold::Free(free) if positive => {
+                                    vars.insert(free, Value { sql: call, kind: CellKind::Term });
+                                }
+                                Hold::Free(_) => {}
+                            }
+                        }
+                    }
+                }
+                "1".to_string()
+            }
+            Kernel::EdgeRef | Kernel::Intern if self.catalog.reach == KernelReach::Eval => {
+                self.arity(goal, 3)?;
+                let make = match kernel {
+                    Kernel::EdgeRef => "dl_edge_ref",
+                    _ => "dl_application",
+                };
+                let Some(owner) =
+                    self.input_cell(scope, rule, vars, &goal.args[0], &mut guards)?
+                else {
+                    return Ok(guards.join(" AND "));
+                };
+                let Some(label) =
+                    self.input_cell(scope, rule, vars, &goal.args[1], &mut guards)?
+                else {
+                    return Ok(guards.join(" AND "));
+                };
+                let call = format!("{make}({owner}, {label})");
+                guards.push(format!("{call} IS NOT NULL"));
+                match self.argument_cell(scope, rule, vars, &goal.args[2])? {
+                    Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
+                    Hold::Free(free) if positive => {
+                        vars.insert(free, Value { sql: call, kind: CellKind::Term });
+                    }
+                    Hold::Free(_) => {}
+                }
+                "1".to_string()
+            }
+            Kernel::IntAdd if self.catalog.reach == KernelReach::Eval => {
+                self.arity(goal, 3)?;
+                let Some(left) =
+                    self.input_cell(scope, rule, vars, &goal.args[0], &mut guards)?
+                else {
+                    return Ok(guards.join(" AND "));
+                };
+                let Some(right) =
+                    self.input_cell(scope, rule, vars, &goal.args[1], &mut guards)?
+                else {
+                    return Ok(guards.join(" AND "));
+                };
+                let call = format!("dl_int_add({left}, {right})");
+                guards.push(format!("{call} IS NOT NULL"));
+                match self.argument_cell(scope, rule, vars, &goal.args[2])? {
+                    Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
+                    Hold::Free(free) if positive => {
+                        vars.insert(free, Value { sql: call, kind: CellKind::Term });
+                    }
+                    Hold::Free(_) => {}
+                }
+                "1".to_string()
+            }
+            Kernel::TermLt if self.catalog.reach == KernelReach::Eval => {
+                self.arity(goal, 2)?;
+                let Some(left) =
+                    self.input_cell(scope, rule, vars, &goal.args[0], &mut guards)?
+                else {
+                    return Ok(guards.join(" AND "));
+                };
+                let Some(right) =
+                    self.input_cell(scope, rule, vars, &goal.args[1], &mut guards)?
+                else {
+                    return Ok(guards.join(" AND "));
+                };
+                let call = format!("dl_term_lt({left}, {right})");
+                guards.push(format!("{call} IS NOT NULL"));
+                guards.push(format!("{call} = 1"));
+                "1".to_string()
+            }
             Kernel::Int(comparison) => {
                 let left = self.int_argument(scope, rule, vars, &goal.args[0], &mut guards)?;
                 let right = self.int_argument(scope, rule, vars, &goal.args[1], &mut guards)?;
@@ -951,6 +1156,66 @@ impl<'a> Lowering<'a> {
         Ok(guards.join(" AND "))
     }
 
+    /// One kernel argument: a cell expression, or a variable the goal binds.
+    fn argument_cell(
+        &self,
+        scope: &mut Scope,
+        rule: &Rule,
+        vars: &HashMap<usize, Value>,
+        argument: &Arg,
+    ) -> Result<Hold, Unsupported> {
+        match argument {
+            Arg::Var(v) => match vars.get(&(v.0 as usize)) {
+                Some(value) => Ok(Hold::Cell(value.sql.clone())),
+                None => Ok(Hold::Free(v.0 as usize)),
+            },
+            Arg::Ground(term) => Ok(Hold::Cell(self.constant_cell(scope, *term)?)),
+            Arg::Aggregate(..) | Arg::Fold(..) => Err(Unsupported::MalformedAggregate(0)),
+        }
+    }
+
+    /// A cell the goal reads. A free position makes the goal unsolvable, as
+    /// the kernel's missing row does.
+    fn input_cell(
+        &self,
+        scope: &mut Scope,
+        rule: &Rule,
+        vars: &HashMap<usize, Value>,
+        argument: &Arg,
+        guards: &mut Vec<String>,
+    ) -> Result<Option<String>, Unsupported> {
+        match self.argument_cell(scope, rule, vars, argument)? {
+            Hold::Cell(cell) => Ok(Some(cell)),
+            Hold::Free(_) => {
+                guards.push("0".to_string());
+                Ok(None)
+            }
+        }
+    }
+
+    /// A cell the goal reads, with no free position.
+    fn bound_cell(
+        &self,
+        scope: &mut Scope,
+        rule: &Rule,
+        vars: &HashMap<usize, Value>,
+        argument: &Arg,
+    ) -> Result<String, Unsupported> {
+        match self.argument_cell(scope, rule, vars, argument)? {
+            Hold::Cell(cell) => Ok(cell),
+            Hold::Free(at) => Err(Unsupported::Unbound(self.variable_name(rule, at))),
+        }
+    }
+
+    /// The goal's argument count, or the kernel shape diagnostic.
+    fn arity(&self, goal: &Goal, want: usize) -> Result<(), Unsupported> {
+        if goal.args.len() == want {
+            return Ok(());
+        }
+        let label = kernel_label(self.catalog.u, goal.rel).unwrap_or_default();
+        Err(Unsupported::Kernel(label))
+    }
+
     fn bound(
         &self,
         rule: &Rule,
@@ -963,7 +1228,7 @@ impl<'a> Lowering<'a> {
                 None => Err(Unsupported::Unbound(self.variable_name(rule, v.0 as usize))),
             },
             Arg::Ground(_) => Ok(None),
-            Arg::Aggregate(..) | Arg::Fold(..) => Err(Unsupported::MalformedAggregate),
+            Arg::Aggregate(..) | Arg::Fold(..) => Err(Unsupported::MalformedAggregate(0)),
         }
     }
 
@@ -1250,7 +1515,12 @@ impl<'a> Lowering<'a> {
             });
         }
         if scope.from.is_empty() {
-            return Err(Unsupported::NoSource);
+            if self.catalog.reach == KernelReach::Eval {
+                let alias = self.alias();
+                scope.join(format!("{} AS {alias}", self.catalog.store_object("unit")), alias);
+            } else {
+                return Err(Unsupported::NoSource);
+            }
         }
         if head.is_empty() {
             columns.push("1".to_string());
@@ -1258,6 +1528,19 @@ impl<'a> Lowering<'a> {
         if let Some(member) = &member {
             columns.insert(0, member.member.to_string());
             columns.resize(member.width.max(head.len()) + 1, "0".to_string());
+            if member.capped {
+                columns.push(if member.step {
+                    format!("{} + 1", quote_identifier("depth"))
+                } else {
+                    "0".to_string()
+                });
+                if member.step {
+                    scope.conditions.push(format!(
+                        "{} < {RECURSION_DEPTH_LIMIT}",
+                        quote_identifier("depth")
+                    ));
+                }
+            }
             debug_assert!(!member.cte.is_empty());
         }
 
@@ -1373,6 +1656,11 @@ impl Scope {
         let mut on: Vec<Vec<String>> = vec![Vec::new(); self.from.len()];
         let mut remaining = Vec::new();
         for condition in &self.conditions {
+            let trimmed = condition.trim_start();
+            if trimmed.starts_with("NOT EXISTS") || trimmed.starts_with("EXISTS") {
+                remaining.push(condition.clone());
+                continue;
+            }
             match self.latest_mention(condition) {
                 Some(0) | None => remaining.push(condition.clone()),
                 Some(at) => on[at].push(condition.clone()),
@@ -1475,7 +1763,7 @@ pub(crate) fn program_plan<'a>(
     names: &HashMap<String, TermId>,
     prefix: &str,
 ) -> ProgramPlan<'a> {
-    program_plan_with(u, program, names, prefix, kernel_owned)
+    program_plan_with(u, program, names, prefix, kernel_owned, KernelReach::Emit)
 }
 
 /// The plan under a caller's kernel-ownership rule.
@@ -1485,17 +1773,35 @@ pub(crate) fn program_plan_with<'a>(
     names: &HashMap<String, TermId>,
     prefix: &str,
     owns: Owns,
+    reach: KernelReach,
 ) -> ProgramPlan<'a> {
-    let catalog = Catalog::new(u, program, names, prefix, owns);
+    let nil = u.empty_list();
+    let empty_list_cell = u.compound("const", vec![nil]);
+    let empty = u.string("");
+    let empty_string_cell = u.compound("const", vec![empty]);
+    let catalog = Catalog::new(
+        u,
+        program,
+        names,
+        prefix,
+        owns,
+        reach,
+        empty_list_cell,
+        empty_string_cell,
+    );
     let mut failures: Vec<(Key, usize, Unsupported)> = Vec::new();
     let mut failed: HashSet<Key> = HashSet::new();
 
     for key in &catalog.order {
         let rules = &catalog.derived[key];
-        let reason = match catalog.names.get(&key.0) {
-            None => Some(Unsupported::UnnamedRelation),
-            Some(_) if catalog.seeded.contains(key) => Some(Unsupported::SeededRuleHead),
-            Some(_) => None,
+        let reason = if reach == KernelReach::Emit {
+            match catalog.names.get(&key.0) {
+                None => Some(Unsupported::UnnamedRelation),
+                Some(_) if catalog.seeded.contains(key) => Some(Unsupported::SeededRuleHead),
+                Some(_) => None,
+            }
+        } else {
+            None
         };
         if let Some(reason) = reason {
             for ordinal in 0..rules.len() {
@@ -1583,6 +1889,24 @@ impl<'a> ProgramPlan<'a> {
             .count()
     }
 
+    /// `(shape, aggregate count)` per refused rule, deduped, for the eval
+    /// engine's diagnostics.
+    pub(crate) fn eval_failures(&self) -> Vec<(String, usize)> {
+        let mut named: Vec<(String, usize)> = self
+            .failures
+            .iter()
+            .map(|(_, _, reason)| match reason {
+                Unsupported::MalformedAggregate(count) => {
+                    ("malformed_aggregate".to_string(), *count)
+                }
+                other => (unsupported_shape(other).to_string(), 0),
+            })
+            .collect();
+        named.sort();
+        named.dedup();
+        named
+    }
+
     /// The derived products a view covers, as `(relation, arity)`.
     pub(crate) fn derived_tags(&self) -> Vec<(TermId, usize)> {
         self.components
@@ -1593,12 +1917,28 @@ impl<'a> ProgramPlan<'a> {
             .collect()
     }
 
+    /// The recursive components the eval lowering caps, as the shared CTE
+    /// names: the view emits one `recursion_depth_exceeded` row per name,
+    /// carrying the name's ordinal in its first column.
+    pub(crate) fn cap_specs(&self) -> Vec<String> {
+        self.components
+            .iter()
+            .enumerate()
+            .filter(|(index, component)| {
+                self.sql.contains_key(index)
+                    && self.catalog.recursive(component)
+                    && self.catalog.reach == KernelReach::Eval
+            })
+            .map(|(_, component)| shared_cte_name(&self.catalog, component))
+            .collect()
+    }
+
     /// The one F3b `CREATE VIRTUAL TABLE` statement: every lowered component's
     /// CTEs, then a tagged union over the derived products, padded to the
     /// widest arity. `pad` fills columns past a member's own arity; `read`
     /// never decodes them.
-    pub(crate) fn view(&self, pad: TermId) -> Option<(String, usize)> {
-        let (query, width) = self.view_query(pad)?;
+    pub(crate) fn view(&self, pad: TermId, caps: &[(i64, i64, String)]) -> Option<(String, usize)> {
+        let (query, width) = self.view_query(pad, caps)?;
         Some((
             format!(
                 "CREATE VIRTUAL TABLE \"program\" USING sqlite_ivm({})",
@@ -1608,7 +1948,7 @@ impl<'a> ProgramPlan<'a> {
         ))
     }
 
-    fn view_query(&self, pad: TermId) -> Option<(String, usize)> {
+    fn view_query(&self, pad: TermId, caps: &[(i64, i64, String)]) -> Option<(String, usize)> {
         let mut ctes = Vec::new();
         let mut lowered: Vec<Key> = Vec::new();
         for (index, component) in self.components.iter().enumerate() {
@@ -1651,6 +1991,41 @@ impl<'a> ProgramPlan<'a> {
                 self.catalog.cte_name(*key)
             ));
         }
+        for (marker, ordinal, cte) in caps {
+            let mut columns = vec![format!("{marker} AS {}", quote_identifier("product"))];
+            if width > 0 {
+                columns.push(format!("{ordinal} AS {}", quote_identifier("c0")));
+            }
+            for position in 1..width {
+                columns.push(format!(
+                    "{} AS {}",
+                    pad.0,
+                    quote_identifier(&format!("c{position}"))
+                ));
+            }
+            // A row at the cap that a lower depth already holds is a cycle
+            // the set semantics would have closed, not a runaway derivation.
+            let shared_width = self
+                .components
+                .iter()
+                .filter(|component| shared_cte_name(&self.catalog, component) == *cte)
+                .flat_map(|component| component.iter().map(|key| key.1))
+                .max()
+                .unwrap_or(0);
+            let same_row: Vec<String> = std::iter::once(quote_identifier("member"))
+                .chain((0..shared_width).map(|position| quote_identifier(&format!("c{position}"))))
+                .map(|column| format!("b.{column} = a.{column}"))
+                .collect();
+            selects.push(format!(
+                "SELECT DISTINCT {} FROM {} AS a WHERE a.{depth} = {RECURSION_DEPTH_LIMIT} \
+                 AND NOT EXISTS (SELECT 1 FROM {} AS b WHERE b.{depth} < {RECURSION_DEPTH_LIMIT} AND {})",
+                columns.join(", "),
+                quote_identifier(cte),
+                quote_identifier(cte),
+                same_row.join(" AND "),
+                depth = quote_identifier("depth"),
+            ));
+        }
         let mut outer = vec![quote_identifier("product")];
         for position in 0..width {
             outer.push(quote_identifier(&format!("c{position}")));
@@ -1674,7 +2049,7 @@ fn unsupported_shape(reason: &Unsupported) -> &'static str {
         Unsupported::Fold(_) => "fold",
         Unsupported::Unbound(_) => "unbound",
         Unsupported::Constant(_) => "constant",
-        Unsupported::MalformedAggregate => "malformed_aggregate",
+        Unsupported::MalformedAggregate(_) => "malformed_aggregate",
         Unsupported::NonlinearRecursion => "nonlinear_recursion",
         Unsupported::RecursionWithoutAnchor => "recursion_without_anchor",
         Unsupported::MixedColumn(_) => "mixed_column",

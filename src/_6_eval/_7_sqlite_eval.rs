@@ -4,9 +4,10 @@
 
 use super::program::{Diagnostic, Program, Row};
 use super::term::{Term, TermId, Universe};
-use crate::_5_reify::sqlite::{not_built_yet, program_plan_with};
+use crate::_5_reify::sqlite::{program_plan_with, KernelReach};
 use super::kernel::Kernel;
 use crate::_5_reify::Stop;
+use crate::_6_eval::stratify::stratify;
 use crate::_9_runtime::sqlite::{open, sql};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::Connection;
@@ -59,6 +60,12 @@ pub struct SqliteEvaluate {
     derived: Vec<(TermId, usize)>,
     /// `(table, relation, arity)` per seeded product.
     seeded: Vec<(String, TermId, usize)>,
+    /// A stratify diagnostic stopped the run; reads return no rows.
+    halted: bool,
+    /// The recursive CTE names the eval lowering caps, in the ordinal order
+    /// the view's marker rows carry, plus the marker product tag itself.
+    cap_marker: Option<TermId>,
+    cap_names: Vec<String>,
 }
 
 impl SqliteEvaluate {
@@ -75,6 +82,9 @@ impl SqliteEvaluate {
             view_width: 0,
             derived: Vec::new(),
             seeded: Vec::new(),
+            halted: false,
+            cap_marker: None,
+            cap_names: Vec::new(),
         })
     }
 
@@ -89,62 +99,110 @@ impl SqliteEvaluate {
 
 impl IEvaluate for SqliteEvaluate {
     fn declare(&mut self, program: &Program) -> Result<Declared, Stop> {
-        let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
-        let mut rels: Vec<TermId> = program
-            .rules
-            .iter()
-            .map(|rule| rule.rel)
-            .chain(program.rules.iter().flat_map(|rule| rule.body.iter().map(|goal| goal.rel)))
-            .chain(program.seeds.iter().map(|row| row.rel))
-            .collect();
-        rels.sort_by_key(|term| term.0);
-        rels.dedup();
-        let mut pairs: Vec<(String, TermId)> = rels
-            .iter()
-            .filter_map(|rel| {
-                let inner = guard.unary(*rel, "ref")?;
-                let name = guard.functor_or_atom(inner).map(|(name, _)| name)?;
-                Some((name.to_string(), *rel))
-            })
-            .collect();
-        pairs.sort_by(|a, b| a.0.cmp(&b.0).then(a.1 .0.cmp(&b.1 .0)));
-        let mut names: HashMap<String, TermId> = HashMap::new();
-        for (name, rel) in pairs {
-            names.entry(name).or_insert(rel);
-        }
-        let none = guard.atom("none");
-        let pad = guard.compound("const", vec![none]);
-        let (failures, view, width, derived, seeded) = {
-            let plan = program_plan_with(&mut guard, program, &names, "main", |u, rel| Kernel::of(u, rel).is_some());
-            tracing::info!(target: "dl8::eval", nonlinear_sites = plan.nonlinear_sites());
-            let failures = plan.failures();
-            let (view, width) = match plan.view(pad) {
-                Some(pair) => pair,
-                None => (String::new(), 0),
+        let (diagnostics, ddl, view, width, cap_names, marker) = {
+            let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+            let (_, stratify_diagnostics) = stratify(&mut guard, program);
+            if !stratify_diagnostics.is_empty() {
+                self.diagnostics = stratify_diagnostics;
+                self.halted = true;
+                return Ok(Declared {
+                    view: "program".to_string(),
+                });
+            }
+            let mut rels: Vec<TermId> = program
+                .rules
+                .iter()
+                .map(|rule| rule.rel)
+                .chain(program.rules.iter().flat_map(|rule| rule.body.iter().map(|goal| goal.rel)))
+                .chain(program.seeds.iter().map(|row| row.rel))
+                .collect();
+            rels.sort_by_key(|term| term.0);
+            rels.dedup();
+            let mut pairs: Vec<(String, TermId)> = rels
+                .iter()
+                .filter_map(|rel| {
+                    let inner = guard.unary(*rel, "ref")?;
+                    let name = guard.functor_or_atom(inner).map(|(name, _)| name)?;
+                    Some((name.to_string(), *rel))
+                })
+                .collect();
+            pairs.sort_by(|a, b| a.0.cmp(&b.0).then(a.1 .0.cmp(&b.1 .0)));
+            let mut names: HashMap<String, TermId> = HashMap::new();
+            for (name, rel) in pairs {
+                names.entry(name).or_insert(rel);
+            }
+            let none = guard.atom("none");
+            let pad = guard.compound("const", vec![none]);
+            let marker = guard.atom("recursion_depth_exceeded");
+            let (eval_failures, view, width, derived, seeded, cap_names, ddl) = {
+                let plan = program_plan_with(
+                    &mut guard,
+                    program,
+                    &names,
+                    "main",
+                    |u, rel| Kernel::of(u, rel).is_some(),
+                    KernelReach::Eval,
+                );
+                tracing::info!(target: "dl8::eval", nonlinear_sites = plan.nonlinear_sites());
+                let eval_failures = plan.eval_failures();
+                let cap_names = plan.cap_specs();
+                let caps: Vec<(i64, i64, String)> = cap_names
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, name)| (marker.0 as i64, ordinal as i64, name.clone()))
+                    .collect();
+                let (view, width) = match plan.view(pad, &caps) {
+                    Some(pair) => pair,
+                    None => (String::new(), 0),
+                };
+                let derived = plan.derived_tags();
+                let mut seed_keys: Vec<(u32, usize)> = program
+                    .seeds
+                    .iter()
+                    .map(|row| (row.rel.0, row.args.len()))
+                    .collect();
+                seed_keys.sort();
+                seed_keys.dedup();
+                let seeded: Vec<(String, TermId, usize)> = seed_keys
+                    .iter()
+                    .map(|&(rel, arity)| (plan.table_name((TermId(rel), arity)), TermId(rel), arity))
+                    .collect();
+                let mut ddl = dictionary_ddl();
+                for (table, _, arity) in &seeded {
+                    ddl.push('\n');
+                    ddl.push_str(&product_ddl(table, *arity));
+                }
+                (eval_failures, view, width, derived, seeded, cap_names, ddl)
             };
-            let derived = plan.derived_tags();
-            let mut seed_keys: Vec<(u32, usize)> = program
-                .seeds
+            self.derived = derived;
+            self.seeded = seeded;
+            let mut diagnostics: Vec<Diagnostic> = eval_failures
                 .iter()
-                .map(|row| (row.rel.0, row.args.len()))
+                .map(|(shape, count)| {
+                    if shape == "malformed_aggregate" {
+                        let n = guard.int(*count as i64);
+                        Diagnostic {
+                            phase: "evaluate",
+                            payload: guard.compound("malformed_aggregate_head", vec![n]),
+                        }
+                    } else {
+                        let shape = guard.atom(shape);
+                        Diagnostic {
+                            phase: "emit",
+                            payload: guard.compound("not_built_yet", vec![shape]),
+                        }
+                    }
+                })
                 .collect();
-            seed_keys.sort();
-            seed_keys.dedup();
-            let seeded: Vec<(String, TermId, usize)> = seed_keys
-                .iter()
-                .map(|&(rel, arity)| (plan.table_name((TermId(rel), arity)), TermId(rel), arity))
-                .collect();
-            (failures, view, width, derived, seeded)
+            diagnostics.sort_by(|a, b| (a.phase, a.payload.0).cmp(&(b.phase, b.payload.0)));
+            diagnostics.dedup();
+            (diagnostics, ddl, view, width, cap_names, marker)
         };
-        self.derived = derived;
-        self.seeded = seeded;
-        self.diagnostics = not_built_yet(&mut guard, &failures);
-
-        let mut ddl = dictionary_ddl();
-        for (table, _, arity) in &self.seeded {
-            ddl.push('\n');
-            ddl.push_str(&product_ddl(table, *arity));
-        }
+        // Below this point no arena guard is held: every statement runs the
+        // `dl_*` functions, and each function locks the same mutex.
+        self.diagnostics = diagnostics;
+        self.cap_marker = Some(marker);
+        self.cap_names = cap_names;
         sql(&self.connection, "declare_tables", |connection| {
             connection.execute_batch(&ddl).map(|()| ((), 0))
         })
@@ -152,7 +210,11 @@ impl IEvaluate for SqliteEvaluate {
             tracing::error!(target: "dl8::eval", phase = "declare_tables", error = %e);
             Stop::Fail("eval declare_tables")
         })?;
-        flush(&self.connection, &guard).map_err(|_| Stop::Fail("eval flush"))?;
+        let flush = {
+            let guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+            flush_rows(&guard)
+        };
+        flush_commit(&self.connection, flush).map_err(|_| Stop::Fail("eval flush"))?;
         self.write_delta(&program.seeds, &[])?;
         if !view.is_empty() {
             sql(&self.connection, "declare_view", |connection| {
@@ -175,7 +237,12 @@ impl IEvaluate for SqliteEvaluate {
     }
 
     fn read(&self, products: &[TermId]) -> Result<super::evaluate::Closure, Stop> {
-        let guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+        if self.halted {
+            return Ok(super::evaluate::Closure {
+                rows: Vec::new(),
+                diagnostics: self.diagnostics.clone(),
+            });
+        }
         let mut rows: Vec<Row> = Vec::new();
         let width = self.view_width;
         if width > 0 {
@@ -220,20 +287,49 @@ impl IEvaluate for SqliteEvaluate {
             })
             .map_err(|_| Stop::Fail("eval read seeds"))?;
         }
-        for row in &mut rows {
+        // The guard comes down after the reads: the view select runs the
+        // `dl_*` functions, and each one locks the same arena.
+        let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+        let mut diagnostics = self.diagnostics.clone();
+        let mut kept: Vec<Row> = Vec::with_capacity(rows.len());
+        for row in rows {
+            if self.cap_marker == Some(row.rel) {
+                let ordinal = row
+                    .args
+                    .first()
+                    .map(|term| term.0 as usize)
+                    .unwrap_or(usize::MAX);
+                let payload = match self.cap_names.get(ordinal) {
+                    Some(name) => {
+                        let name = guard.atom(name);
+                        guard.compound("recursion_depth_exceeded", vec![name])
+                    }
+                    None => guard.atom("recursion_depth_exceeded"),
+                };
+                diagnostics.push(Diagnostic {
+                    phase: "evaluate",
+                    payload,
+                });
+            } else {
+                kept.push(row);
+            }
+        }
+        for row in &mut kept {
             let arity = arity_of(&self.derived, &self.seeded, row.rel);
             row.args.truncate(arity);
         }
-        rows.retain(|row| products.is_empty() || products.contains(&row.rel));
-        rows.sort_by(|a, b| {
+        kept.retain(|row| products.is_empty() || products.contains(&row.rel));
+        kept.sort_by(|a, b| {
             guard
                 .cmp(a.rel, b.rel)
                 .then_with(|| guard.cmp_rows(&a.args, &b.args))
         });
-        rows.dedup();
+        kept.dedup();
+        diagnostics.sort_by(|a, b| (a.phase, a.payload.0).cmp(&(b.phase, b.payload.0)));
+        diagnostics.dedup();
         Ok(super::evaluate::Closure {
-            rows,
-            diagnostics: self.diagnostics.clone(),
+            rows: kept,
+            diagnostics,
         })
     }
 }
@@ -248,7 +344,8 @@ fn arity_of(derived: &[(TermId, usize)], seeded: &[(String, TermId, usize)], rel
         .unwrap_or(0)
 }
 
-/// The dictionary: `sym`, `term`, `term_arg`, every cell a `TermId`.
+/// The dictionary: `sym`, `term`, `term_arg`, every cell a `TermId`; plus the
+/// one-row `unit` table a bodyless rule reads instead of a FROM-less query.
 fn dictionary_ddl() -> String {
     "\
      CREATE TABLE \"main.sym\" (\
@@ -265,7 +362,9 @@ fn dictionary_ddl() -> String {
        \"position\" INTEGER NOT NULL,\
        \"child\" INTEGER NOT NULL REFERENCES \"main.term\"(\"id\"),\
        PRIMARY KEY (\"term\", \"position\"),\
-       CHECK (\"child\" < \"term\")) WITHOUT ROWID;"
+       CHECK (\"child\" < \"term\")) WITHOUT ROWID;\
+     CREATE TABLE \"main.unit\" (\"one\" INTEGER NOT NULL);\
+     INSERT OR IGNORE INTO \"main.unit\" VALUES (1);"
         .to_string()
 }
 
@@ -375,25 +474,23 @@ fn values_placeholder(arity: usize, rows: usize) -> String {
         .join(", ")
 }
 
+/// The arena rows the dictionary commit writes. Collected under the arena
+/// lock, committed without it: no guard crosses a `sql()` call, and the
+/// connection carries the `dl_*` functions that re-lock the same arena.
+struct Flush {
+    syms: Vec<(i64, String)>,
+    terms: Vec<(i64, i64, i64, f64, i64)>,
+    arguments: Vec<(i64, i64, i64)>,
+}
+
 /// The whole arena mirrors into the dictionary; an id equals its index.
-fn flush(connection: &Connection, u: &Universe) -> rusqlite::Result<()> {
-    sql(connection, "flush_syms", |connection| {
-        let chunk_rows = (BIND_BUDGET / 2).max(1);
-        let ids: Vec<SqlValue> = u
-            .syms
-            .iter()
-            .enumerate()
-            .flat_map(|(id, text)| [SqlValue::Integer(id as i64), SqlValue::Text(text.into())])
-            .collect();
-        for chunk in ids.chunks(2 * chunk_rows) {
-            let placeholders = values_placeholder(2, chunk.len() / 2);
-            let insert = format!(
-                "INSERT OR IGNORE INTO \"main.sym\" (\"id\", \"text\") VALUES {placeholders}"
-            );
-            connection.execute(&insert, rusqlite::params_from_iter(chunk))?;
-        }
-        Ok(((), u.syms.len()))
-    })?;
+fn flush_rows(u: &Universe) -> Flush {
+    let syms = u
+        .syms
+        .iter()
+        .enumerate()
+        .map(|(id, text)| (id as i64, text.clone()))
+        .collect();
     let mut terms: Vec<(i64, i64, i64, f64, i64)> = Vec::new();
     let mut arguments: Vec<(i64, i64, i64)> = Vec::new();
     for (id, term) in u.terms.iter().enumerate() {
@@ -412,6 +509,34 @@ fn flush(connection: &Connection, u: &Universe) -> rusqlite::Result<()> {
             }
         }
     }
+    Flush {
+        syms,
+        terms,
+        arguments,
+    }
+}
+
+fn flush_commit(connection: &Connection, data: Flush) -> rusqlite::Result<()> {
+    let Flush {
+        syms,
+        terms,
+        arguments,
+    } = data;
+    sql(connection, "flush_syms", |connection| {
+        let chunk_rows = (BIND_BUDGET / 2).max(1);
+        let ids: Vec<SqlValue> = syms
+            .iter()
+            .flat_map(|(id, text)| [SqlValue::Integer(*id), SqlValue::Text(text.into())])
+            .collect();
+        for chunk in ids.chunks(2 * chunk_rows) {
+            let placeholders = values_placeholder(2, chunk.len() / 2);
+            let insert = format!(
+                "INSERT OR IGNORE INTO \"main.sym\" (\"id\", \"text\") VALUES {placeholders}"
+            );
+            connection.execute(&insert, rusqlite::params_from_iter(chunk))?;
+        }
+        Ok(((), syms.len()))
+    })?;
     sql(connection, "flush_terms", |connection| {
         let chunk_rows = (BIND_BUDGET / 5).max(1);
         for chunk in terms.chunks(chunk_rows) {
@@ -548,10 +673,10 @@ mod probes {
         }
         println!("names={names:?}");
         let pad = { let n = u.atom("none"); u.compound("const", vec![n]) };
-        let plan = crate::_5_reify::sqlite::program_plan_with(&mut u, &program, &names, "main", |u, rel| crate::_6_eval::kernel::Kernel::of(u, rel).is_some());
+        let plan = crate::_5_reify::sqlite::program_plan_with(&mut u, &program, &names, "main", |u, rel| crate::_6_eval::kernel::Kernel::of(u, rel).is_some(), crate::_5_reify::sqlite::KernelReach::Eval);
         println!("failures={:?}", plan.failures());
         println!("derived_tags={:?} view_failures_above", plan.derived_tags());
-        let view = plan.view(pad);
+        let view = plan.view(pad, &[]);
         let (ddl, w) = view.unwrap();
         println!("WIDTH={w}");
         println!("DDL={ddl}");
