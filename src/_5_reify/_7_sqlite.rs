@@ -33,7 +33,11 @@ const KIND_STR: i64 = 4;
 const KIND_COMPOUND: i64 = 5;
 
 /// A derived relation as the store keys it: one table per relation and arity.
-type Key = (TermId, usize);
+pub(crate) type Key = (TermId, usize);
+
+/// Which relations the lowering refuses to treat as derived: the compiler's
+/// kernel-owned set for `dl8 emit sqlite`, the kernel label set for eval.
+pub(crate) type Owns = fn(&Universe, TermId) -> bool;
 
 /// Why one rule has no SQL.
 #[derive(Clone, Debug)]
@@ -69,63 +73,13 @@ pub fn emit_sqlite(
             diagnostics: stratify_diagnostics,
         });
     }
-    let catalog = Catalog::new(u, program, names, prefix);
-    let mut failures: Vec<(Key, usize, Unsupported)> = Vec::new();
-    let mut failed: HashSet<Key> = HashSet::new();
-
-    for key in &catalog.order {
-        let rules = &catalog.derived[key];
-        let reason = match catalog.names.get(&key.0) {
-            None => Some(Unsupported::UnnamedRelation),
-            Some(_) if catalog.seeded.contains(key) => Some(Unsupported::SeededRuleHead),
-            Some(_) => None,
-        };
-        if let Some(reason) = reason {
-            for ordinal in 0..rules.len() {
-                failures.push((*key, ordinal, reason.clone()));
-            }
-            failed.insert(*key);
-        }
-    }
-
-    let components = catalog.components();
-    let mut kinds: HashMap<Key, Vec<CellKind>> = HashMap::new();
-    let mut sql: HashMap<usize, Vec<String>> = HashMap::new();
-    for (index, component) in components.iter().enumerate() {
-        let members: Vec<Key> = component
-            .iter()
-            .copied()
-            .filter(|key| !failed.contains(key))
-            .collect();
-        if members.len() != component.len() {
-            mark_component(&catalog, component, &mut failed, &mut failures);
-            continue;
-        }
-        let mut errors = Vec::new();
-        for key in component {
-            for (ordinal, rule) in catalog.derived[key].iter().enumerate() {
-                if let Some(upstream) = catalog
-                    .reads(rule)
-                    .into_iter()
-                    .find(|read| failed.contains(read) && !component.contains(read))
-                {
-                    let name = catalog.name(upstream.0);
-                    errors.push((*key, ordinal, Unsupported::DependsOn(name)));
-                }
-            }
-        }
-        if errors.is_empty() {
-            match lower_component(&catalog, component, &mut kinds) {
-                Ok(pieces) => {
-                    sql.insert(index, pieces);
-                    continue;
-                }
-                Err(found) => errors = found,
-            }
-        }
-        failures.extend(errors);
-        mark_component(&catalog, component, &mut failed, &mut failures);
-    }
+    let ProgramPlan {
+        catalog,
+        components,
+        sql,
+        kinds,
+        failures,
+    } = program_plan(u, program, names, prefix);
 
     let mut views = Vec::new();
     for (index, component) in components.iter().enumerate() {
@@ -265,7 +219,8 @@ fn unsupported_payload(
     u.compound("emit_sqlite_unsupported", vec![rule, reason])
 }
 
-struct Catalog<'a> {
+pub(crate) struct Catalog<'a> {
+    owns: Owns,
     u: &'a Universe,
     prefix: String,
     /// The name `SqliteRowStore::name_relations` picks: the first sorted
@@ -282,6 +237,7 @@ impl<'a> Catalog<'a> {
         program: &'a Program,
         declared: &HashMap<String, TermId>,
         prefix: &str,
+        owns: Owns,
     ) -> Catalog<'a> {
         let sorted: BTreeMap<&String, &TermId> = declared.iter().collect();
         let mut names = HashMap::new();
@@ -297,7 +253,7 @@ impl<'a> Catalog<'a> {
             .collect();
         let mut derived: HashMap<Key, Vec<&Rule>> = HashMap::new();
         for rule in &program.rules {
-            if !kernel_owned(u, rule.rel) {
+            if !owns(u, rule.rel) {
                 derived
                     .entry((rule.rel, rule.head.len()))
                     .or_default()
@@ -310,6 +266,7 @@ impl<'a> Catalog<'a> {
             (name(a), a.1, a.0 .0).cmp(&(name(b), b.1, b.0 .0))
         });
         Catalog {
+            owns,
             u,
             prefix: prefix.to_string(),
             names,
@@ -716,7 +673,7 @@ impl<'a> Lowering<'a> {
     fn source(&self, goal: &Goal) -> Result<Source, Unsupported> {
         let u = self.catalog.u;
         let key = (goal.rel, goal.args.len());
-        if kernel_owned(u, goal.rel) {
+        if (self.catalog.owns)(u, goal.rel) {
             if let Some(kernel @ (Kernel::Int(_) | Kernel::IntAdd | Kernel::TermLt)) =
                 Kernel::of(u, goal.rel)
             {
@@ -1500,4 +1457,245 @@ fn quote_identifier(name: &str) -> String {
 
 fn quote_text(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
+}
+
+/// Everything one program lowers to, shared by `dl8 emit sqlite` and the
+/// eval engine. `catalog` borrows the arena the plan was planned against.
+pub(crate) struct ProgramPlan<'a> {
+    catalog: Catalog<'a>,
+    components: Vec<Vec<Key>>,
+    sql: HashMap<usize, Vec<String>>,
+    kinds: HashMap<Key, Vec<CellKind>>,
+    failures: Vec<(Key, usize, Unsupported)>,
+}
+
+pub(crate) fn program_plan<'a>(
+    u: &'a mut Universe,
+    program: &'a Program,
+    names: &HashMap<String, TermId>,
+    prefix: &str,
+) -> ProgramPlan<'a> {
+    program_plan_with(u, program, names, prefix, kernel_owned)
+}
+
+/// The plan under a caller's kernel-ownership rule.
+pub(crate) fn program_plan_with<'a>(
+    u: &'a mut Universe,
+    program: &'a Program,
+    names: &HashMap<String, TermId>,
+    prefix: &str,
+    owns: Owns,
+) -> ProgramPlan<'a> {
+    let catalog = Catalog::new(u, program, names, prefix, owns);
+    let mut failures: Vec<(Key, usize, Unsupported)> = Vec::new();
+    let mut failed: HashSet<Key> = HashSet::new();
+
+    for key in &catalog.order {
+        let rules = &catalog.derived[key];
+        let reason = match catalog.names.get(&key.0) {
+            None => Some(Unsupported::UnnamedRelation),
+            Some(_) if catalog.seeded.contains(key) => Some(Unsupported::SeededRuleHead),
+            Some(_) => None,
+        };
+        if let Some(reason) = reason {
+            for ordinal in 0..rules.len() {
+                failures.push((*key, ordinal, reason.clone()));
+            }
+            failed.insert(*key);
+        }
+    }
+
+    let components = catalog.components();
+    let mut kinds: HashMap<Key, Vec<CellKind>> = HashMap::new();
+    let mut sql: HashMap<usize, Vec<String>> = HashMap::new();
+    for (index, component) in components.iter().enumerate() {
+        let members: Vec<Key> = component
+            .iter()
+            .copied()
+            .filter(|key| !failed.contains(key))
+            .collect();
+        if members.len() != component.len() {
+            mark_component(&catalog, component, &mut failed, &mut failures);
+            continue;
+        }
+        let mut errors = Vec::new();
+        for key in component {
+            for (ordinal, rule) in catalog.derived[key].iter().enumerate() {
+                if let Some(upstream) = catalog
+                    .reads(rule)
+                    .into_iter()
+                    .find(|read| failed.contains(read) && !component.contains(read))
+                {
+                    let name = catalog.name(upstream.0);
+                    errors.push((*key, ordinal, Unsupported::DependsOn(name)));
+                }
+            }
+        }
+        if errors.is_empty() {
+            match lower_component(&catalog, component, &mut kinds) {
+                Ok(pieces) => {
+                    sql.insert(index, pieces);
+                    continue;
+                }
+                Err(found) => errors = found,
+            }
+        }
+        failures.extend(errors);
+        mark_component(&catalog, component, &mut failed, &mut failures);
+    }
+    ProgramPlan {
+        catalog,
+        components,
+        sql,
+        kinds,
+        failures,
+    }
+}
+
+impl<'a> ProgramPlan<'a> {
+    /// The store table one seeded product loads into.
+    pub(crate) fn table_name(&self, key: Key) -> String {
+        self.catalog.table_name(key)
+    }
+
+    /// Every refused rule, as `(relation, shape)`, deduped.
+    pub(crate) fn failures(&self) -> Vec<(String, String)> {
+        let mut named: Vec<(String, String)> = self
+            .failures
+            .iter()
+            .map(|(key, _, reason)| {
+                (
+                    self.catalog.name(key.0),
+                    unsupported_shape(reason).to_string(),
+                )
+            })
+            .collect();
+        named.sort();
+        named.dedup();
+        named
+    }
+
+    /// Rules refused for a second reference to their own recursive product.
+    pub(crate) fn nonlinear_sites(&self) -> usize {
+        self.failures
+            .iter()
+            .filter(|(_, _, reason)| matches!(reason, Unsupported::NonlinearRecursion))
+            .count()
+    }
+
+    /// The derived products a view covers, as `(relation, arity)`.
+    pub(crate) fn derived_tags(&self) -> Vec<(TermId, usize)> {
+        self.components
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.sql.contains_key(index))
+            .flat_map(|(_, component)| component.iter().copied())
+            .collect()
+    }
+
+    /// The one F3b `CREATE VIRTUAL TABLE` statement: every lowered component's
+    /// CTEs, then a tagged union over the derived products, padded to the
+    /// widest arity. `pad` fills columns past a member's own arity; `read`
+    /// never decodes them.
+    pub(crate) fn view(&self, pad: TermId) -> Option<(String, usize)> {
+        let (query, width) = self.view_query(pad)?;
+        Some((
+            format!(
+                "CREATE VIRTUAL TABLE \"program\" USING sqlite_ivm({})",
+                quote_text(&query)
+            ),
+            width,
+        ))
+    }
+
+    fn view_query(&self, pad: TermId) -> Option<(String, usize)> {
+        let mut ctes = Vec::new();
+        let mut lowered: Vec<Key> = Vec::new();
+        for (index, component) in self.components.iter().enumerate() {
+            let Some(pieces) = self.sql.get(&index) else {
+                continue;
+            };
+            ctes.extend(pieces.iter().cloned());
+            lowered.extend(component.iter().copied());
+        }
+        if lowered.is_empty() {
+            return None;
+        }
+        let recursive = ctes.iter().any(|cte| cte.contains(RECURSIVE_MARK));
+        let ctes: Vec<String> = ctes
+            .into_iter()
+            .map(|cte| cte.replace(RECURSIVE_MARK, ""))
+            .collect();
+        let width = lowered.iter().map(|key| key.1).max().unwrap_or(0);
+        let mut selects = Vec::new();
+        for key in &lowered {
+            let names = column_names(&self.kinds[key]);
+            let mut columns = vec![format!(
+                "{} AS {}",
+                key.0 .0 as i64,
+                quote_identifier("product")
+            )];
+            for position in 0..width {
+                let column = names
+                    .get(position)
+                    .cloned()
+                    .unwrap_or_else(|| pad.0.to_string());
+                columns.push(format!(
+                    "{column} AS {}",
+                    quote_identifier(&format!("c{position}"))
+                ));
+            }
+            selects.push(format!(
+                "SELECT {} FROM {}",
+                columns.join(", "),
+                self.catalog.cte_name(*key)
+            ));
+        }
+        let mut outer = vec![quote_identifier("product")];
+        for position in 0..width {
+            outer.push(quote_identifier(&format!("c{position}")));
+        }
+        let query = format!(
+            "WITH {}{} SELECT {} FROM ({})",
+            if recursive { "RECURSIVE " } else { "" },
+            ctes.join(", "),
+            outer.join(", "),
+            selects.join(" UNION "),
+        );
+        Some((query, width))
+    }
+}
+
+/// The shape name a `not_built_yet` payload carries.
+fn unsupported_shape(reason: &Unsupported) -> &'static str {
+    match reason {
+        Unsupported::Kernel(_) => "kernel",
+        Unsupported::Relation(_) => "relation",
+        Unsupported::Fold(_) => "fold",
+        Unsupported::Unbound(_) => "unbound",
+        Unsupported::Constant(_) => "constant",
+        Unsupported::MalformedAggregate => "malformed_aggregate",
+        Unsupported::NonlinearRecursion => "nonlinear_recursion",
+        Unsupported::RecursionWithoutAnchor => "recursion_without_anchor",
+        Unsupported::MixedColumn(_) => "mixed_column",
+        Unsupported::SeededRuleHead => "seeded_rule_head",
+        Unsupported::UnnamedRelation => "unnamed_relation",
+        Unsupported::UnstoredRelation(_) => "unstored_relation",
+        Unsupported::DependsOn(_) => "depends_on",
+        Unsupported::NoSource => "no_source",
+    }
+}
+
+/// `not_built_yet(<shape>)`, one diagnostic per refused rule shape.
+pub(crate) fn not_built_yet(u: &mut Universe, failures: &[(String, String)]) -> Vec<Diagnostic> {
+    failures
+        .iter()
+        .map(|(_, shape)| {
+            let shape = u.atom(shape);
+            Diagnostic {
+                phase: "emit",
+                payload: u.compound("not_built_yet", vec![shape]),
+            }
+        })
+        .collect()
 }
