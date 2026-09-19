@@ -2,7 +2,7 @@
 //! per program (F3b), every statement inside `sql()`. Rust moves rows in and
 //! out; joins, filters and the fixpoint are SQL.
 
-use super::program::{Diagnostic, Polarity, Program, Row, Rule};
+use super::program::{Arg, Diagnostic, Polarity, Program, Row, Rule};
 use super::term::{Term, TermId, Universe};
 use crate::_5_reify::sqlite::{program_plan_with, KernelReach};
 use super::kernel::Kernel;
@@ -11,7 +11,7 @@ use crate::_6_eval::stratify::stratify;
 use crate::_9_runtime::sqlite::{open, sql};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::Connection;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -180,6 +180,10 @@ impl IEvaluate for SqliteEvaluate {
             };
             self.derived = derived;
             self.seeded = seeded;
+            // Rust stops on a malformed aggregate head and returns no rows.
+            if eval_failures.iter().any(|(shape, _)| shape == "malformed_aggregate") {
+                self.halted = true;
+            }
             let mut diagnostics: Vec<Diagnostic> = eval_failures
                 .iter()
                 .map(|(shape, count)| {
@@ -512,17 +516,36 @@ fn with_intern_rows(u: &mut Universe, program: &Program) -> Program {
         u.compound("ref", vec![name])
     };
     let mut out = program.clone();
-    for rule in &program.rules {
+    for (index, rule) in program.rules.iter().enumerate() {
+        let mut bound: HashSet<u32> = HashSet::new();
         for (at, goal) in rule.body.iter().enumerate() {
-            if goal.polarity != Polarity::Positive || Kernel::of(u, goal.rel) != Some(Kernel::Intern) {
-                continue;
+            let is_intern = goal.polarity == Polarity::Positive
+                && Kernel::of(u, goal.rel) == Some(Kernel::Intern)
+                && goal.args.len() == 3;
+            let known = |arg: &Arg| match arg {
+                Arg::Var(v) => bound.contains(&v.0),
+                Arg::Ground(_) => true,
+                _ => false,
+            };
+            if is_intern && known(&goal.args[0]) && known(&goal.args[1]) {
+                out.rules.push(Rule {
+                    rel: intern_rel,
+                    head: goal.args.clone(),
+                    body: rule.body[..=at].to_vec(),
+                    vars: rule.vars.clone(),
+                });
+            } else if is_intern && known(&goal.args[2]) {
+                // Rust matches a deconstructing `intern` against the stored
+                // `kernel(intern)` rows; the twin product is that table.
+                out.rules[index].body[at].rel = intern_rel;
             }
-            out.rules.push(Rule {
-                rel: intern_rel,
-                head: goal.args.clone(),
-                body: rule.body[..=at].to_vec(),
-                vars: rule.vars.clone(),
-            });
+            if goal.polarity == Polarity::Positive {
+                for arg in &goal.args {
+                    if let Arg::Var(v) = arg {
+                        bound.insert(v.0);
+                    }
+                }
+            }
         }
     }
     out

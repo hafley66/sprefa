@@ -707,6 +707,8 @@ enum Source {
     Table(String),
     Member(String, usize),
     Kernel(Kernel),
+    /// A product with no rows at all: never seeded, never derived.
+    Empty,
 }
 
 impl<'a> Lowering<'a> {
@@ -783,6 +785,9 @@ impl<'a> Lowering<'a> {
             return Err(Unsupported::UnnamedRelation);
         }
         if !self.catalog.seeded.contains(&key) {
+            if self.catalog.reach == KernelReach::Eval {
+                return Ok(Source::Empty);
+            }
             return Err(Unsupported::UnstoredRelation(self.catalog.name(goal.rel)));
         }
         Ok(Source::Table(self.catalog.table_name(key)))
@@ -828,6 +833,18 @@ impl<'a> Lowering<'a> {
                         self.kernel(&mut scope, rule, &mut vars, goal, *kernel, false)?;
                     scope.conditions.push(format!("NOT ({condition})"));
                 }
+                (Polarity::Positive, Source::Empty) => {
+                    for arg in &goal.args {
+                        if let Arg::Var(v) = arg {
+                            vars.entry(v.0 as usize).or_insert(Value {
+                                sql: "NULL".to_string(),
+                                kind: CellKind::Term,
+                            });
+                        }
+                    }
+                    scope.conditions.push("0".to_string());
+                }
+                (Polarity::Negative, Source::Empty) => {}
                 (Polarity::Positive, _) => {
                     let alias = self.alias();
                     self.relation(&mut scope, rule, &mut vars, goal, &source, &alias, true)?;
@@ -955,7 +972,7 @@ impl<'a> Lowering<'a> {
                     .push(format!("{alias}.{} = {member}", quote_identifier("member")));
             }
             Source::Table(table) => scope.join(format!("{table} AS {alias}"), alias.to_string()),
-            Source::Kernel(_) => unreachable!("kernel goals lower in `kernel`"),
+            Source::Kernel(_) | Source::Empty => unreachable!("lowered in `body`"),
         }
         for (position, argument) in goal.args.iter().enumerate() {
             let column = self.column(goal, source, alias, position);
