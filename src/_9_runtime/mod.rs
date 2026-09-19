@@ -11,5 +11,5 @@ pub mod sqlite;
 pub mod store;
 
 pub use reconcile::{Answerer, Cadence, IExecutor, Reconciled, Reconciler};
-pub use sqlite::SqliteRowStore;
+pub use sqlite::{open, sql, SqliteRowStore};
 pub use store::{CellKind, IRowStore, StoreError, Watermark};
