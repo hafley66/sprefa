@@ -130,3 +130,45 @@ Formerly-quadratic paths get COUNT tests. Async stays out; rusqlite is sync.
 ```bash
 boop beep --no-wait --as <lane> sprefa-coordinator "eval-on-sqlite-ivm step <n>: PR #<n>, oracles <pass>/<total>, battery <pass>/<total>, todo.dl7 compile <ms> release, sql spans <count>, red: <list or none>"
 ```
+
+## Addendum 1 (user 2026-09-18 evening): step 2 stress-tests its own helpers
+
+`tests/_25_sqlite_contract.rs`, integration through `open()` and `sql()`, a
+file db under the test's temp dir, every case one function, every number a
+COUNT or a ratio against a formula, never a wall-clock threshold. Reference
+constants: `.claude/skills/sqlite-costs` (measured on this machine).
+
+| case | shape | expected, as a formula | why it exists |
+|---|---|---|---|
+| N+1 insert vs one multi-row INSERT in one transaction | 10k rows | per-statement path >= 20x the batched path in `sql` span ms; batched under 50 ms | the beginner scaling defect, the N+1 law |
+| autocommit vs explicit transaction | 10k single-row inserts | autocommit >= 50x; the span count equals the statement count both ways | fsync per statement |
+| lookup on indexed vs unindexed column | 100k rows, 1k probes | unindexed ms / indexed ms grows with n (measure at 10k and 100k, ratio at 100k >= 5x the ratio at 10k) | SEARCH vs SCAN, `EXPLAIN QUERY PLAN` asserted, not timed |
+| join with and without the index on the join key | 10k x 10k | `EXPLAIN QUERY PLAN` has no `SCAN` on the inner side when indexed | the evaluator's own joins |
+| `PRAGMA journal_mode`, `page_size`, `mmap_size`, `cache_size` | read back after `open()` | exact values from the contract table | connected correctly |
+| cache pressure | insert 64 MiB of rows with `cache_size` at 8 MiB then at 256 MiB | RSS delta (getrusage `ru_maxrss` before and after) under `cache_size` + 32 MiB both times; second run's span ms <= first | memory ceiling is the pragma, not the data |
+| WAL checkpoint | 50k inserts, then `PRAGMA wal_checkpoint(TRUNCATE)` | wal file size 0 after; span present | WAL growth is bounded by us |
+| Rust cost vs SQLite cost at time T | one `phase` span holding three `sql` spans | phase ms - sum(sql ms) = Rust ms, asserted >= 0 and reported in the trace query as its own column | the differentiation you asked for |
+
+Receipt for the step: the eight rows pasted with their numbers from one run,
+plus `just trace-query` output showing `phase`, `sql`, `rust_ms` columns.
+
+## Addendum 2 (user 2026-09-18 evening): the store schema is declared once, in dl7
+
+The evaluator's own tables (syntax rows, `:` edges, intern dictionary, effect
+pending, snapshot, per-relation products) are declared as dl7 products in
+`std/store.dl7`. dl8 lowers them, as it lowers any product today
+(`src/_5_reify/_7_sqlite.rs` for DDL), to two emitted files: the SQLite DDL
+and the Rust row structs plus `IRowStore` bindings. TypeSpec shape: one
+declaration, two emitters, no hand-written duplicate of a column name or a
+type anywhere in `src/_9_runtime/`.
+
+Bootstrap: the emitter runs at build time (`build.rs` invokes the lowering on
+`std/store.dl7` into `OUT_DIR`) and the two outputs are ALSO frozen under
+`oracle/store/` as goldens, diffed by a test; a change to `std/store.dl7`
+refreezes in its own commit with the delta pasted. The compiler never needs a
+running store to emit the store.
+
+Step 3's design page carries this as its first section: the `std/store.dl7`
+text, the emitted DDL, the emitted Rust, side by side. It is a design fork
+for Chris (Rust emitter surface: structs only, or structs + insert/select
+functions), decided before step 4.
