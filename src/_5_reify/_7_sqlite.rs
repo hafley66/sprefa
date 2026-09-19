@@ -561,6 +561,19 @@ fn lower_component(
             anchors.join(" UNION ")
         )]);
     };
+    if anchors.is_empty() && catalog.reach == KernelReach::Eval {
+        // Every anchor rule was unbound: the component derives nothing.
+        let mut cells = vec!["0".to_string()];
+        cells.extend(std::iter::repeat("NULL".to_string()).take(width));
+        if capped {
+            cells.push("0".to_string());
+        }
+        anchors.push(format!(
+            "SELECT {} FROM {} WHERE 0",
+            cells.join(", "),
+            catalog.store_object("unit")
+        ));
+    }
     if anchors.is_empty() {
         let key = component[0];
         return Err((0..catalog.derived[&key].len())
@@ -793,13 +806,13 @@ impl<'a> Lowering<'a> {
         if self.catalog.derived.contains_key(&key) {
             return Ok(Source::Table(self.catalog.cte_name(key)));
         }
+        if !self.catalog.seeded.contains(&key) && self.catalog.reach == KernelReach::Eval {
+            return Ok(Source::Empty);
+        }
         if !self.catalog.names.contains_key(&goal.rel) {
             return Err(Unsupported::UnnamedRelation);
         }
         if !self.catalog.seeded.contains(&key) {
-            if self.catalog.reach == KernelReach::Eval {
-                return Ok(Source::Empty);
-            }
             return Err(Unsupported::UnstoredRelation(self.catalog.name(goal.rel)));
         }
         Ok(Source::Table(self.catalog.table_name(key)))
