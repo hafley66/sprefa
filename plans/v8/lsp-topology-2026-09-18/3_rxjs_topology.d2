@@ -30,6 +30,7 @@ types: {
   style.border-radius: 14
 
   code: |||md
+    ### TypeScript · RxJS
     ```ts
     type WorkspaceKey = `${Root}@${Repo}:${Revision}`
 
@@ -69,6 +70,7 @@ ingress: {
   style.border-radius: 14
 
   code: |||md
+    ### TypeScript · RxJS
     ```ts
     const ingress$ = merge(
       editorA$.pipe(tagSession("A")),
@@ -105,6 +107,7 @@ partition: {
   style.border-radius: 14
 
   code: |||md
+    ### TypeScript · RxJS
     ```ts
     const workspaces$ = ingress$.pipe(
       groupBy(e => e.workspace),
@@ -143,6 +146,7 @@ analysis: {
   style.border-radius: 14
 
   code: |||md
+    ### TypeScript · RxJS
     ```ts
     const answers$ = requests$.pipe(
       withLatestFrom(workspaceSnapshot$),
@@ -182,6 +186,7 @@ durable: {
   style.border-radius: 14
 
   code: |||md
+    ### TypeScript · RxJS
     ```ts
     const commits$ = unitChanges$.pipe(
       concatMap(change => storage.transaction(tx => {
@@ -218,6 +223,7 @@ adapter: {
   style.border-radius: 14
 
   code: |||md
+    ### TypeScript · RxJS
     ```ts
     const adapter$ = defer(() => pool.acquire(adapterKey)).pipe(
       switchMap(lease => using(
@@ -260,6 +266,7 @@ publication: {
   style.border-radius: 14
 
   code: |||md
+    ### TypeScript · RxJS
     ```ts
     const published$ = answers$.pipe(
       withLatestFrom(currentOverlay$, currentProcessGeneration$),
@@ -298,6 +305,7 @@ shutdown: {
   style.border-radius: 14
 
   code: |||md
+    ### TypeScript · RxJS
     ```ts
     const close$ = sessionClosed$.pipe(
       concatMap(session => sequence(
