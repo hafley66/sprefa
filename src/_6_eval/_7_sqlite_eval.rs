@@ -33,6 +33,12 @@ const VIEW: &str = "\"program\"";
 /// Product name of the synthesized `intern` twin rules.
 const INTERN_ROWS: &str = "intern_rows";
 
+/// Rounds a nonlinear component may take before its rows stop changing. It
+/// protects against a step that mints a new term every round (the same
+/// runaway the recursive CTE's depth cap catches); one round is one pass of
+/// every INSERT OR IGNORE statement of every materialized component.
+const NONLINEAR_ROUND_LIMIT: usize = 64;
+
 /// Source tables plus one sqlite_ivm view for the program.
 pub trait IEvaluate {
     fn declare(&mut self, program: &Program) -> Result<Declared, Stop>;
@@ -72,6 +78,8 @@ pub struct SqliteEvaluate {
     cap_names: Vec<String>,
     /// Demand and adorned products: joined by the view, never read out.
     hidden: HashSet<TermId>,
+    /// INSERT OR IGNORE statements of the nonlinear components (F4b).
+    rounds: Vec<String>,
 }
 
 impl SqliteEvaluate {
@@ -92,7 +100,41 @@ impl SqliteEvaluate {
             cap_marker: None,
             cap_names: Vec::new(),
             hidden: HashSet::new(),
+            rounds: Vec::new(),
         })
+    }
+
+    /// F4b: every round statement of every nonlinear component, repeated
+    /// until a round changes no row or `NONLINEAR_ROUND_LIMIT` stops it.
+    fn run_rounds(&mut self) -> Result<(), Stop> {
+        if self.rounds.is_empty() {
+            return Ok(());
+        }
+        for round in 0..NONLINEAR_ROUND_LIMIT {
+            let mut changed = 0usize;
+            for statement in &self.rounds {
+                let rows = sql(&self.connection, "nonlinear_round", |connection| {
+                    let n = connection.execute(statement, [])?;
+                    Ok((n, n))
+                })
+                .map_err(|e| {
+                    tracing::error!(target: "dl8::eval", phase = "nonlinear_round", error = %e);
+                    Stop::Fail("eval nonlinear_round")
+                })?;
+                changed += rows;
+            }
+            tracing::info!(target: "dl8::eval", round, changed, "nonlinear round");
+            if changed == 0 {
+                return Ok(());
+            }
+        }
+        let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+        let limit = guard.int(NONLINEAR_ROUND_LIMIT as i64);
+        self.diagnostics.push(Diagnostic {
+            phase: "evaluate",
+            payload: guard.compound("nonlinear_round_limit_exceeded", vec![limit]),
+        });
+        Ok(())
     }
 
     /// The store table one seeded product loads into.
@@ -106,7 +148,7 @@ impl SqliteEvaluate {
 
 impl IEvaluate for SqliteEvaluate {
     fn declare(&mut self, program: &Program) -> Result<Declared, Stop> {
-        let (diagnostics, ddl, view, width, cap_names, marker) = {
+        let (diagnostics, ddl, view, width, cap_names, marker, rounds) = {
             let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
             let (_, stratify_diagnostics) = stratify(&mut guard, program);
             if !stratify_diagnostics.is_empty() {
@@ -144,7 +186,7 @@ impl IEvaluate for SqliteEvaluate {
             let none = guard.atom("none");
             let pad = guard.compound("const", vec![none]);
             let marker = guard.atom("recursion_depth_exceeded");
-            let (eval_failures, view, width, derived, seeded, cap_names, ddl) = {
+            let (eval_failures, view, width, derived, seeded, cap_names, ddl, rounds) = {
                 let plan = program_plan_with(
                     &mut guard,
                     program,
@@ -182,7 +224,12 @@ impl IEvaluate for SqliteEvaluate {
                     ddl.push('\n');
                     ddl.push_str(&product_ddl(table, *arity));
                 }
-                (eval_failures, view, width, derived, seeded, cap_names, ddl)
+                for (table, columns) in plan.material_tables() {
+                    ddl.push('\n');
+                    ddl.push_str(&product_ddl(&table, columns.len()));
+                }
+                let rounds = plan.round_statements();
+                (eval_failures, view, width, derived, seeded, cap_names, ddl, rounds)
             };
             self.derived = derived;
             self.seeded = seeded;
@@ -210,7 +257,7 @@ impl IEvaluate for SqliteEvaluate {
                 .collect();
             diagnostics.sort_by(|a, b| (a.phase, a.payload.0).cmp(&(b.phase, b.payload.0)));
             diagnostics.dedup();
-            (diagnostics, ddl, view, width, cap_names, marker)
+            (diagnostics, ddl, view, width, cap_names, marker, rounds)
         };
         // Below this point no arena guard is held: every statement runs the
         // `dl_*` functions, and each function locks the same mutex.
@@ -241,6 +288,8 @@ impl IEvaluate for SqliteEvaluate {
             })?;
         }
         self.view_width = width;
+        self.rounds = rounds;
+        self.run_rounds()?;
         Ok(Declared {
             view: "program".to_string(),
         })

@@ -175,6 +175,13 @@ fn mark_component(
 /// Marks a CTE that recurses; the view's `WITH` takes `RECURSIVE` when any does.
 const RECURSIVE_MARK: &str = "\u{0}recursive\u{0}";
 
+/// Marks a round statement of a materialized component; it runs outside the
+/// view, once per round, until no row changes.
+const ROUND_MARK: &str = "\u{0}round\u{0}";
+
+/// The eval view's name, as `_6_eval/_7_sqlite_eval.rs` declares it.
+const VIEW_NAME: &str = "\"program\"";
+
 /// The step count one `WITH RECURSIVE` may reach before the eval lowering
 /// cuts it: a recursive step that constructs a new term every round never
 /// reaches a fixpoint, and this cap turns that divergence into the
@@ -259,6 +266,9 @@ pub(crate) struct Catalog<'a> {
     seeded: HashSet<Key>,
     derived: HashMap<Key, Vec<&'a Rule>>,
     order: Vec<Key>,
+    /// Products of a nonlinear recursive component: plain tables filled by
+    /// Rust-sequenced rounds instead of a recursive CTE (F4b, Eval only).
+    materialized: HashSet<Key>,
 }
 
 impl<'a> Catalog<'a> {
@@ -321,7 +331,14 @@ impl<'a> Catalog<'a> {
             seeded,
             derived,
             order,
+            materialized: HashSet::new(),
         }
+    }
+
+    /// `main.<name>_m<arity>`: the plain table a nonlinear component fills
+    /// round by round (F4b).
+    fn material_name(&self, key: Key) -> String {
+        quote_identifier(&format!("{}.{}_m{}", self.prefix, self.name(key.0), key.1))
     }
 
     fn name(&self, rel: TermId) -> String {
@@ -443,7 +460,8 @@ fn lower_component(
     component: &[Key],
     kinds: &mut HashMap<Key, Vec<CellKind>>,
 ) -> Result<Vec<String>, Vec<(Key, usize, Unsupported)>> {
-    let recursive = catalog.recursive(component);
+    let materialized = catalog.materialized.contains(&component[0]);
+    let recursive = catalog.recursive(component) && !materialized;
     let width = component.iter().map(|key| key.1).max().unwrap_or(0);
     let capped = recursive && catalog.reach == KernelReach::Eval;
     let shared = recursive.then(|| quote_identifier(&shared_cte_name(catalog, component)));
@@ -496,6 +514,40 @@ fn lower_component(
     }
     if !errors.is_empty() {
         return Err(errors);
+    }
+
+    if materialized {
+        let mut inserts = Vec::new();
+        for key in component {
+            let table = catalog.material_name(*key);
+            let columns = column_names(&kinds[key]);
+            if catalog.seeded.contains(key) {
+                inserts.push(format!(
+                    "{ROUND_MARK}INSERT OR IGNORE INTO {table}({}) SELECT {} FROM {}",
+                    columns.join(", "),
+                    columns.join(", "),
+                    catalog.table_name(*key)
+                ));
+            }
+            for (ordinal, rule) in catalog.derived[key].iter().enumerate() {
+                let lowering = Lowering::new(catalog, kinds, component, None);
+                let rendered = lowering
+                    .body(rule)
+                    .and_then(|(scope, head)| lowering.render(scope, &head, &kinds[key], None, true));
+                match rendered {
+                    Ok(select) => inserts.push(format!(
+                        "{ROUND_MARK}INSERT OR IGNORE INTO {table}({}) {select}",
+                        columns.join(", ")
+                    )),
+                    Err(Unsupported::Unbound(_)) => {}
+                    Err(reason) => errors.push((*key, ordinal, reason)),
+                }
+            }
+        }
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        return Ok(inserts);
     }
 
     let mut anchors = Vec::new();
@@ -798,12 +850,31 @@ impl<'a> Lowering<'a> {
                 None => Unsupported::Relation(self.catalog.name(goal.rel)),
             });
         }
+        if self.catalog.materialized.contains(&key) {
+            return Ok(Source::Table(self.catalog.material_name(key)));
+        }
         if let (Some(shared), Some(member)) =
             (self.shared, self.component.iter().position(|k| *k == key))
         {
             return Ok(Source::Member(shared.to_string(), member));
         }
         if self.catalog.derived.contains_key(&key) {
+            if self.catalog.materialized.contains(&self.component[0]) {
+                // A round statement runs outside the view's WITH, so an
+                // upstream product is read back through the view itself.
+                let names = column_names(&self.kinds[&key]);
+                let picked: Vec<String> = names
+                    .iter()
+                    .enumerate()
+                    .map(|(position, name)| format!("{} AS {name}", quote_identifier(&format!("c{position}"))))
+                    .collect();
+                return Ok(Source::Table(format!(
+                    "(SELECT {} FROM {VIEW_NAME} WHERE {} = {})",
+                    picked.join(", "),
+                    quote_identifier("product"),
+                    key.0 .0 as i64
+                )));
+            }
             return Ok(Source::Table(self.catalog.cte_name(key)));
         }
         if !self.catalog.seeded.contains(&key) && self.catalog.reach == KernelReach::Eval {
@@ -1885,7 +1956,7 @@ pub(crate) fn program_plan_with<'a>(
     let empty_list_cell = u.compound("const", vec![nil]);
     let empty = u.string("");
     let empty_string_cell = u.compound("const", vec![empty]);
-    let catalog = Catalog::new(
+    let mut catalog = Catalog::new(
         u,
         program,
         names,
@@ -1918,6 +1989,28 @@ pub(crate) fn program_plan_with<'a>(
     }
 
     let components = catalog.components();
+    if catalog.reach == KernelReach::Eval {
+        for component in &components {
+            if !catalog.recursive(component) {
+                continue;
+            }
+            let nonlinear = component.iter().any(|key| {
+                catalog.derived[key].iter().any(|rule| {
+                    rule.body
+                        .iter()
+                        .filter(|goal| {
+                            goal.polarity == Polarity::Positive
+                                && component.contains(&(goal.rel, goal.args.len()))
+                        })
+                        .count()
+                        > 1
+                })
+            });
+            if nonlinear {
+                catalog.materialized.extend(component.iter().copied());
+            }
+        }
+    }
     let mut kinds: HashMap<Key, Vec<CellKind>> = HashMap::new();
     let mut sql: HashMap<usize, Vec<String>> = HashMap::new();
     for (index, component) in components.iter().enumerate() {
@@ -2036,6 +2129,31 @@ impl<'a> ProgramPlan<'a> {
     /// The recursive components the eval lowering caps, as the shared CTE
     /// names: the view emits one `recursion_depth_exceeded` row per name,
     /// carrying the name's ordinal in its first column.
+    /// The round statements of every materialized component, in component
+    /// order, marks stripped.
+    pub(crate) fn round_statements(&self) -> Vec<String> {
+        self.components
+            .iter()
+            .enumerate()
+            .filter_map(|(index, _)| self.sql.get(&index))
+            .flatten()
+            .filter(|piece| piece.starts_with(ROUND_MARK))
+            .map(|piece| piece.replace(ROUND_MARK, ""))
+            .collect()
+    }
+
+    /// `(table, columns)` per materialized product, for its DDL.
+    pub(crate) fn material_tables(&self) -> Vec<(String, Vec<String>)> {
+        self.components
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.sql.contains_key(index))
+            .flat_map(|(_, component)| component.iter().copied())
+            .filter(|key| self.catalog.materialized.contains(key))
+            .map(|key| (self.catalog.material_name(key), column_names(&self.kinds[&key])))
+            .collect()
+    }
+
     pub(crate) fn cap_specs(&self) -> Vec<String> {
         self.components
             .iter()
@@ -2043,6 +2161,7 @@ impl<'a> ProgramPlan<'a> {
             .filter(|(index, component)| {
                 self.sql.contains_key(index)
                     && self.catalog.recursive(component)
+                    && !self.catalog.materialized.contains(&component[0])
                     && self.catalog.reach == KernelReach::Eval
             })
             .map(|(_, component)| shared_cte_name(&self.catalog, component))
@@ -2080,6 +2199,7 @@ impl<'a> ProgramPlan<'a> {
         let recursive = ctes.iter().any(|cte| cte.contains(RECURSIVE_MARK));
         let ctes: Vec<String> = ctes
             .into_iter()
+            .filter(|cte| !cte.starts_with(ROUND_MARK))
             .map(|cte| cte.replace(RECURSIVE_MARK, ""))
             .collect();
         let width = lowered.iter().map(|key| key.1).max().unwrap_or(0);
@@ -2101,11 +2221,12 @@ impl<'a> ProgramPlan<'a> {
                     quote_identifier(&format!("c{position}"))
                 ));
             }
-            selects.push(format!(
-                "SELECT {} FROM {}",
-                columns.join(", "),
+            let from = if self.catalog.materialized.contains(key) {
+                self.catalog.material_name(*key)
+            } else {
                 self.catalog.cte_name(*key)
-            ));
+            };
+            selects.push(format!("SELECT {} FROM {from}", columns.join(", ")));
         }
         for (marker, ordinal, cte) in caps {
             let mut columns = vec![format!("{marker} AS {}", quote_identifier("product"))];
@@ -2146,10 +2267,17 @@ impl<'a> ProgramPlan<'a> {
         for position in 0..width {
             outer.push(quote_identifier(&format!("c{position}")));
         }
+        let with = if ctes.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "WITH {}{} ",
+                if recursive { "RECURSIVE " } else { "" },
+                ctes.join(", ")
+            )
+        };
         let query = format!(
-            "WITH {}{} SELECT {} FROM ({})",
-            if recursive { "RECURSIVE " } else { "" },
-            ctes.join(", "),
+            "{with}SELECT {} FROM ({})",
             outer.join(", "),
             selects.join(" UNION "),
         );
