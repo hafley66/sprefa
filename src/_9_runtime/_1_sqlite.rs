@@ -103,18 +103,23 @@ pub fn sql<T>(
         rows(connection)
     };
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    match outcome {
-        Ok((value, count)) => {
-            span.record("rows", count as i64);
-            span.record("ms", elapsed_ms);
-            Ok(value)
-        }
-        Err(error) => {
-            span.record("rows", 0i64);
-            span.record("ms", elapsed_ms);
-            Err(error)
-        }
-    }
+    let (count, error) = match &outcome {
+        Ok((_, count)) => (*count as i64, None),
+        Err(error) => (0i64, Some(error.to_string())),
+    };
+    span.record("rows", count);
+    span.record("ms", elapsed_ms);
+    // The stderr layer prints events only (`FmtSpan::NONE`); the span above
+    // reaches OTLP in batches. This line is what a reader sees the moment the
+    // statement returns, error included, without waiting for a flush.
+    tracing::info!(
+        target: "dl8::sql",
+        name,
+        rows = count,
+        ms = format_args!("{elapsed_ms:.1}"),
+        error = error.as_deref().unwrap_or("")
+    );
+    outcome.map(|(value, _)| value)
 }
 
 pub struct SqliteRowStore {
