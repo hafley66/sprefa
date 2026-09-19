@@ -304,16 +304,17 @@ impl<'a> Catalog<'a> {
             }
         }
         if reach == KernelReach::Eval {
-            // Every product a body reads that nothing derives gets a table,
-            // empty or not, so a later seed delta for it has a home.
+            // Every product a body reads and every derived product gets a
+            // seed table, empty or not, so a later seed delta for it has a
+            // home the view reads (a derived product's table is one anchor).
             for rule in &program.rules {
                 for goal in &rule.body {
-                    let key = (goal.rel, goal.args.len());
-                    if !owns(u, goal.rel) && !derived.contains_key(&key) {
-                        seeded.insert(key);
+                    if !owns(u, goal.rel) {
+                        seeded.insert((goal.rel, goal.args.len()));
                     }
                 }
             }
+            seeded.extend(derived.keys().copied());
         }
         if reach == KernelReach::Eval {
             let mut extras: Vec<TermId> = derived
