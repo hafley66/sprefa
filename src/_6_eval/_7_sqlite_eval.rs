@@ -64,7 +64,7 @@ pub struct SqliteEvaluate {
 impl SqliteEvaluate {
     /// One `:memory:` connection: contract pragmas, the sqlite_ivm extension,
     /// every `dl_*` function bound to the arena.
-    pub fn open(arena: Arc<Mutex<Universe>>) -> Result<Self, Stop> {
+    pub fn connect(arena: Arc<Mutex<Universe>>) -> Result<Self, Stop> {
         let connection = open(Path::new(":memory:")).map_err(|_| Stop::Fail("eval open"))?;
         super::functions::register(&connection, arena.clone())
             .map_err(|_| Stop::Fail("eval functions"))?;
@@ -482,7 +482,7 @@ pub fn evaluate_sqlite(
     let nil = nil_seed(u);
     program.seeds.push(nil);
     let arena = Arc::new(Mutex::new(std::mem::take(u)));
-    let run = SqliteEvaluate::open(arena.clone()).and_then(|mut engine| {
+    let run = SqliteEvaluate::connect(arena.clone()).and_then(|mut engine| {
         engine.declare(&program)?;
         engine.apply(SeedDelta {
             insert: program.seeds.clone(),
