@@ -2,7 +2,7 @@
 //! per program (F3b), every statement inside `sql()`. Rust moves rows in and
 //! out; joins, filters and the fixpoint are SQL.
 
-use super::program::{Diagnostic, Program, Row};
+use super::program::{Diagnostic, Polarity, Program, Row, Rule};
 use super::term::{Term, TermId, Universe};
 use crate::_5_reify::sqlite::{program_plan_with, KernelReach};
 use super::kernel::Kernel;
@@ -28,6 +28,9 @@ const KIND_STR: i64 = 4;
 const KIND_COMPOUND: i64 = 5;
 
 const VIEW: &str = "\"program\"";
+
+/// Product name of the synthesized `intern` twin rules.
+const INTERN_ROWS: &str = "intern_rows";
 
 /// Source tables plus one sqlite_ivm view for the program.
 pub trait IEvaluate {
@@ -109,6 +112,7 @@ impl IEvaluate for SqliteEvaluate {
                     view: "program".to_string(),
                 });
             }
+            let program = &with_intern_rows(&mut guard, program);
             let mut rels: Vec<TermId> = program
                 .rules
                 .iter()
@@ -315,9 +319,21 @@ impl IEvaluate for SqliteEvaluate {
                 kept.push(row);
             }
         }
+        let intern_alias = {
+            let name = guard.atom(INTERN_ROWS);
+            guard.compound("ref", vec![name])
+        };
+        let intern_rel = {
+            let name = guard.atom("intern");
+            let kernel = guard.compound("kernel", vec![name]);
+            guard.compound("ref", vec![kernel])
+        };
         for row in &mut kept {
             let arity = arity_of(&self.derived, &self.seeded, row.rel);
             row.args.truncate(arity);
+            if row.rel == intern_alias {
+                row.rel = intern_rel;
+            }
         }
         kept.retain(|row| products.is_empty() || products.contains(&row.rel));
         kept.sort_by(|a, b| {
@@ -485,6 +501,31 @@ struct Flush {
 }
 
 /// The whole arena mirrors into the dictionary; an id equals its index.
+/// One twin rule per `intern` call: head is the call, body is the prefix that
+/// binds it, so the view holds the `kernel(intern)/3` rows Rust records.
+fn with_intern_rows(u: &mut Universe, program: &Program) -> Program {
+    // The twin heads a non-kernel name; `read` maps it back to `kernel(intern)`.
+    let intern_rel = {
+        let name = u.atom(INTERN_ROWS);
+        u.compound("ref", vec![name])
+    };
+    let mut out = program.clone();
+    for rule in &program.rules {
+        for (at, goal) in rule.body.iter().enumerate() {
+            if goal.polarity != Polarity::Positive || Kernel::of(u, goal.rel) != Some(Kernel::Intern) {
+                continue;
+            }
+            out.rules.push(Rule {
+                rel: intern_rel,
+                head: goal.args.clone(),
+                body: rule.body[..=at].to_vec(),
+                vars: rule.vars.clone(),
+            });
+        }
+    }
+    out
+}
+
 fn flush_rows(u: &Universe) -> Flush {
     let syms = u
         .syms
