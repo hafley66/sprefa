@@ -39,6 +39,7 @@ CONFIG = {
     "global": {
         "poll_interval_seconds": 60,
         "org_repo_discovery_interval_seconds": 3600,
+        "branches_poll_interval_seconds": 60,
         "rate_warn_threshold": 200,
         "rate_stop_threshold": 100,
         "warn_stretch_multiplier": 2,
