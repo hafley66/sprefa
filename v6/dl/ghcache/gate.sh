@@ -127,9 +127,13 @@ ghost_404=$(jq -c 'select(.rel == "call_log")' "$scratch/acct" | tail -n 1 \
 ghost_due=$(due_for "repos/hafley66/ghost/events")
 org_repos_due=$(due_for "orgs/hafley66/repos?per_page=100")
 user_repos_due=$(due_for "users/hafley66/repos?per_page=100")
-printf 'account: %s ticks, org_events=%s user_events=%s ghost_calls=%s ghost_404=%s ghost_due=%s org_repos_due=%s user_repos_due=%s\n' \
+# The firehose WatchEvent names hafley66/sprefa and carries the fixed gh_id
+# `firehose-watch-1`; no repo poll on this leg stores that id (ghost 404s and
+# sprefa polls no events of its own), so a row carrying it IS a firehose route.
+firehose_events=$(jq -sr '[.[] | select(.rel == "repo_event_seen") | .rows[] | select(.[1] == "firehose-watch-1")] | length' "$scratch/acct")
+printf 'account: %s ticks, org_events=%s user_events=%s ghost_calls=%s ghost_404=%s ghost_due=%s org_repos_due=%s user_repos_due=%s firehose_events=%s\n' \
   "$acct_ticks" "$org_events_calls" "$user_events_calls" "$ghost_calls" \
-  "$ghost_404" "$ghost_due" "$org_repos_due" "$user_repos_due"
+  "$ghost_404" "$ghost_due" "$org_repos_due" "$user_repos_due" "$firehose_events"
 
 # A user account never spells the org events endpoint: 1422 a day becomes zero.
 [ "$org_events_calls" = 0 ] || { echo "FAIL the org events endpoint is org-only, got $org_events_calls calls"; fail=1; }
@@ -141,6 +145,7 @@ printf 'account: %s ticks, org_events=%s user_events=%s ghost_calls=%s ghost_404
 # not_an_org is sourced off endpoint_miss now, so the fallback actually fires.
 [ "$org_repos_due" = 0 ] || { echo "FAIL a user account stops asking /orgs, got $org_repos_due due rows"; fail=1; }
 [ "$user_repos_due" = 1 ] || { echo "FAIL the /users repos fallback must appear once, got $user_repos_due"; fail=1; }
+[ "$firehose_events" -ge 1 ] || { echo "FAIL the user-events firehose must route an event into repo_event_seen, got $firehose_events"; fail=1; }
 [ "$fail" = 0 ] || exit 1
 
 echo "GHCACHE_RUST_DOOR_HOLDS ticks=$ticks account_ticks=$acct_ticks"
