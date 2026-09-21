@@ -35,6 +35,10 @@ rel global_setting(poll_period: int, org_discovery_period: int,
                    warn_stretch: int, heartbeat_ttl: int,
                    sync_notifications: int, staging_folder: text) key(1).
 
+# Optional key: absent from the config yields no row, so the branches arm
+# falls back to the global PollPeriod (the `not(...)` arm).
+rel branches_period_setting(period_seconds: int) key(1).
+
 rel org_config(owner: text, fs_alias: text, sync_prs: int, sync_events: int,
                sync_notifications: int, checkout_on_sync: int,
                checkout_pr_branches: int) key(1).
@@ -122,6 +126,10 @@ global_setting(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
                         heartbeat_ttl_seconds: HeartbeatTtl: int,
                         sync_notifications: SyncNotifications: int,
                         staging_folder: StagingFolder: text}}).
+
+branches_period_setting(BranchesPeriod) <+
+  chosen_config(Doc),
+  decode(Doc, {global: {branches_poll_interval_seconds: BranchesPeriod: int}}).
 
 org_config(Owner, FsAlias, SyncPrs, SyncEvents, SyncNotifications,
            CheckoutOnSync, CheckoutPrBranches) <+
@@ -317,6 +325,7 @@ period_candidate(EndpointPath, PeriodTicks) <-
   poll_endpoint(EndpointPath, EndpointKind),
   EndpointKind != 'org_repos',
   EndpointKind != 'user_repos',
+  EndpointKind != 'branches',
   global_setting(PollPeriod),
   clock_granularity(Granularity),
   Rounded := PollPeriod + Granularity - 1,
@@ -333,6 +342,22 @@ period_candidate(EndpointPath, PeriodTicks) <-
   global_setting(OrgDiscoveryPeriod),
   clock_granularity(Granularity),
   Rounded := OrgDiscoveryPeriod + Granularity - 1,
+  PeriodTicks := Rounded / Granularity.
+
+# Optional config key: absent from the config yields no row, so the branches
+# arm falls back to the global PollPeriod, byte-identical to base.
+period_candidate(EndpointPath, PeriodTicks) <-
+  poll_endpoint(endpoint_path: EndpointPath, endpoint_kind: 'branches'),
+  branches_period_setting(BranchesPeriod),
+  clock_granularity(Granularity),
+  Rounded := BranchesPeriod + Granularity - 1,
+  PeriodTicks := Rounded / Granularity.
+period_candidate(EndpointPath, PeriodTicks) <-
+  poll_endpoint(endpoint_path: EndpointPath, endpoint_kind: 'branches'),
+  not(branches_period_setting(_)),
+  global_setting(PollPeriod),
+  clock_granularity(Granularity),
+  Rounded := PollPeriod + Granularity - 1,
   PeriodTicks := Rounded / Granularity.
 
 period_candidate(EndpointPath, PeriodTicks) <-
