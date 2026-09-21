@@ -38,8 +38,8 @@ whatever got slower inside the library shows up as comptime getting slower.
 
 | engine | old file | new file | verdict |
 |---|---|---|---|
-| rust (the default) | 66.19 65.51 61.53 | 121.21 119.18 119.93 | slower, 1.9x |
-| sqlite | 421.68 444.52 401.70 | 733.12 730.04 735.56 | slower, 1.7x |
+| rust (the default) | 66.19 65.51 61.53 | 121.21 119.18 119.93 | slower, 1.83x |
+| sqlite | 421.68 444.52 401.70 | 733.12 730.04 735.56 | slower, 1.74x |
 
 not one after-run lands inside the before spread on either row. the rust row
 moves because two test files inside it run the sqlite engine.
@@ -122,9 +122,21 @@ all 32 oracle programs passes with both files too.
 
 ## so
 
-comptime got slower. on the sqlite engine the battery is 1.7x slower and the
-comptime cells are 1.4x to 2.7x slower. the default engine's battery is 1.9x
-slower for the same reason. the rust engine by itself does not move.
+comptime got slower. on the sqlite engine the whole battery is 1.74x slower and
+the biggest comptime case is 2.78x slower. the default engine's battery is 1.83x
+slower for the same reason. the rust engine by itself, on the same programs,
+does not move.
+
+and the sqlite engine stays the expensive one either way: compiling
+`fixtures/openapi/todo.dl7` costs 25x the rust engine with the old file and 34x
+with the new one. the biggest comptime case costs 18x with the old file and 57x
+with the new one.
+
+| ratio against the rust engine, same cell | old file | new file |
+|---|---|---|
+| whole battery | 6.4x | 6.1x |
+| compile `fixtures/openapi/todo.dl7` | 25x | 34x |
+| biggest comptime case | 18x | 57x |
 
 keep the default on rust. the new library is the right one to ship for
 correctness, but it is not faster for the way dl8 uses it.
