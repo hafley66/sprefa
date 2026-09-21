@@ -1,0 +1,5 @@
+=== RUN wide_64.run2 ===
+13:47:40
+uptime: 13:47  up 12 days, 23:35, 3 users, load averages: 5.16 6.18 5.95
+pgrep -c cargo: 0
+exit=0 ticks=3
