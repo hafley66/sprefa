@@ -1,0 +1,16 @@
+{
+  "file": "v6/prolog/compile.pl",
+  "predmap": "compile.predmap.json",
+  "folder": "v6/prolog/compile_pl",
+  "module": "compile",
+  "parts": [
+    {"file": "0_fixtures.pl", "anchor": "read_fixture_term/4", "owns": "reading one fixture term out of a fixture file, and finding a fixture by name"},
+    {"file": "1_program_plan.pl", "anchor": "prepare_program_for_compiler/2", "owns": "program_plan/3, the one term lower.pl and emit_ts.pl both read, plus the compiler-type-rule partition, reference-target materialization and the plan debug dumps"},
+    {"file": "2_reserved_namespace.pl", "anchor": "compiler_owned_contract/1", "owns": "the compiler-owned __ namespace: which names are reserved and what a violation reads as"},
+    {"file": "3_fixture_entry.pl", "anchor": "compile_fixture/3", "owns": "the compile_fixture entry points, world shape checks and the single-arity-per-name check"},
+    {"file": "4_storage_names.pl", "anchor": "relation_storage_names/6", "owns": "shape identity and storage naming: shape digests, declaring-module stems, ascii folding and unique suffix allocation"},
+    {"file": "5_dl6_door.pl", "anchor": "compile_dl6/2", "owns": "the .dl6 text door: emitter and schedule options, arrival terms, seeded forms and the fact partition"},
+    {"file": "6_program_phases.pl", "anchor": "throw_text_door_error/2", "owns": "compile_program and the phase pipeline that runs parse, lower, boot and emit, and writes the compiled output"},
+    {"file": "7_phase_trace.pl", "anchor": "with_emit_context/3", "owns": "phase measurement, the per-phase debug hooks and the compile trace file"}
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "file": "v6/prolog/0_dot_expand.pl",
+  "predmap": "0_dot_expand.predmap.json",
+  "folder": "v6/prolog/0_dot_expand",
+  "module": "dot_expand",
+  "parts": [
+    {"file": "0_qualified_types.pl", "anchor": "expand_dot_in_context/3", "owns": "the entry point, qualified type path resolution, minted type decls and enum arm refs"},
+    {"file": "1_rel_paths.pl", "anchor": "resolve_rel_path_rule/3", "owns": "rel path rewriting, the decl scope tree and the path collision check"},
+    {"file": "2_nested_captures.pl", "anchor": "expand_nested_parent_refs/4", "owns": "nested parent refs, capture shapes, parent column insertion and the capture rule, arrow and head forms"},
+    {"file": "3_capture_body.pl", "anchor": "body_parent_term/5", "owns": "parent atoms inside a body and the captured body rewrite"},
+    {"file": "4_dot_rules.pl", "anchor": "expand_dot_rule/3", "owns": "desugaring a dot rule, rewriting head and goals, replacing dot gets and checking the receiver"},
+    {"file": "5_body_vars.pl", "anchor": "bound_body_vars/2", "owns": "bound body variables, binding positions and conjunction/goal-list conversion"}
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "file": "v6/prolog/0_program_check.pl",
+  "predmap": "0_program_check.predmap.json",
+  "folder": "v6/prolog/0_program_check",
+  "module": "program_check",
+  "parts": [
+    {
+      "file": "0_lookups.pl",
+      "anchor": "first_violation/3",
+      "owns": "first_violation/3 and the small decl readers the violation clauses all call"
+    },
+    {
+      "file": "1_violations.pl",
+      "anchor": "program_violation/3",
+      "owns": "every program_violation/3 clause, all 38 of them, contiguous once the four helper groups move out"
+    },
+    {
+      "file": "2_violation_helpers.pl",
+      "anchor": null,
+      "after": "1_violations.pl",
+      "owns": "the cst regexp, ast capture, anonymous column type and declared_ref helpers that the violation clauses call and that used to sit between them"
+    },
+    {
+      "file": "3_aggregates_and_types.pl",
+      "anchor": "numeric_aggregate_operand/3",
+      "owns": "numeric aggregate operands, the implemented aggregate roster, declared column type uses and the rule atom readers"
+    },
+    {
+      "file": "4_column_variables.pl",
+      "anchor": "declared_column_table/4",
+      "owns": "the declared column table, head and body column variables, storage assignability and relation argument violations"
+    }
+  ],
+  "relocations": [
+    {
+      "predicate": "cst_regexp_pattern/2",
+      "lines": [
+        230,
+        234
+      ],
+      "to": "2_violation_helpers.pl",
+      "after": "first in the helpers part"
+    },
+    {
+      "predicate": "ast_capture_names/2 .. regexp_pattern_pcre_error/2",
+      "lines": [
+        275,
+        334
+      ],
+      "to": "2_violation_helpers.pl",
+      "after": "cst_regexp_pattern/2, in file order"
+    },
+    {
+      "predicate": "anonymous_column_type/1 + declared_template_application/2",
+      "lines": [
+        365,
+        375
+      ],
+      "to": "2_violation_helpers.pl",
+      "after": "the ast and regexp group, in file order"
+    },
+    {
+      "predicate": "declared_ref/2",
+      "lines": [
+        413,
+        421
+      ],
+      "to": "2_violation_helpers.pl",
+      "after": "anonymous_column_type/1, in file order"
+    }
+  ]
+}

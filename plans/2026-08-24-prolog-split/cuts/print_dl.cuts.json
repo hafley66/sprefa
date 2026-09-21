@@ -1,0 +1,16 @@
+{
+  "file": "v6/prolog/print_dl.pl",
+  "predmap": "print_dl.predmap.json",
+  "folder": "v6/prolog/print_dl",
+  "module": "print_dl",
+  "parts": [
+    {"file": "0_entry.pl", "anchor": "print_dl_to_file/3", "owns": "the entry points and the block join that assembles a printed program"},
+    {"file": "1_decl_order.pl", "anchor": "augmented_decls/6", "owns": "EDB decl synthesis for the text door and the declaration ordering it feeds"},
+    {"file": "2_decl_line.pl", "anchor": "decl_line/5", "owns": "the rel decl line: arrow columns, modifiers, type applications and template columns"},
+    {"file": "3_column_types.pl", "anchor": "print_column_type/2", "owns": "printing a column type, annotations, decl columns and enum, product and sum fields"},
+    {"file": "4_rule_and_query.pl", "anchor": "rule_line/3", "owns": "rule lines, query lines with their order tails, and match arms"},
+    {"file": "5_body.pl", "anchor": "print_body/3", "owns": "the body, one goal per indented line, surface wrappers and host input interleaving"},
+    {"file": "6_term.pl", "anchor": "print_term/5", "owns": "the general term printer: vars, ints, atoms, dot chains, lists and json"},
+    {"file": "7_braces_and_quoting.pl", "anchor": "print_brace_pair/3", "owns": "brace pairs and the always-explicit quoting"}
+  ]
+}

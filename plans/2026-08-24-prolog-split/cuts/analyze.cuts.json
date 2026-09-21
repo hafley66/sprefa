@@ -1,0 +1,22 @@
+{
+  "file": "v6/prolog/analyze.pl",
+  "predmap": "analyze.predmap.json",
+  "folder": "v6/prolog/analyze",
+  "module": "analyze",
+  "parts": [
+    {"file": "0_rel_and_rule_shape.pl", "anchor": "rel_kind/3", "owns": "rel kind, key and keep readers, edge-vs-level rule shape, and the headed/derived ref lists"},
+    {"file": "1_body_walk.pl", "anchor": "reset_body_use_cache/0", "owns": "walking a rule body for the refs it uses, the coalesce output resolution and the event use rows"},
+    {"file": "2_guard_goals.pl", "anchor": "guard_goal/1", "owns": "guard and bind goal classification, tick goals, and whether a program mentions tick or the catalog"},
+    {"file": "3_ref_inventory.pl", "anchor": "seeded_refs/2", "owns": "the program-wide ref inventory: seeded, declared, arrival-target and all program refs"},
+    {"file": "4_column_names.pl", "anchor": "rel_columns/4", "owns": "column naming from surface variable identity, ref occurrence args and snake-case folding"},
+    {"file": "5_literal_types.pl", "anchor": "column_type_at_decl/9", "owns": "column type read off a declaration, and the type a concrete literal witnesses"},
+    {"file": "6_program_types.pl", "anchor": "program_column_types/8", "owns": "the driver for program-wide column typing and the seed-row contributions it starts from"},
+    {"file": "7_type_fixpoint.pl", "anchor": "column_type_fixpoint/5", "owns": "the contribution fixpoint over rule heads, and the body type environment a rule's goals bind"},
+    {"file": "8_expression_types.pl", "anchor": "expression_type/3", "owns": "typing an expression, arithmetic result types, and merging two contributions into one column type"},
+    {"file": "9_edge_shape.pl", "anchor": "edge_trigger_shape/2", "owns": "edge trigger shape: sampled goals, departure goals and the goals an edge body cannot carry"},
+    {"file": "10_edge_head_types.pl", "anchor": "check_edge_head_column_types/2", "owns": "edge head column-type consistency across the rules writing one rel"},
+    {"file": "11_subset_gate.pl", "anchor": "check_supported_subset/1", "owns": "the subset gate: every construct the compiler has not built yet, with the reason term each throws"},
+    {"file": "12_rule_observers.pl", "anchor": "level_body_latest_ref/2", "owns": "which rules read which rel, self-read one-pass closure, and the edge rule shape check"},
+    {"file": "13_shape_checks.pl", "anchor": "reserved_construct_in_body/2", "owns": "reserved constructs in a body, head conflict risk, compound patterns on arrival rels, and the level and aggregate rule shape checks"}
+  ]
+}

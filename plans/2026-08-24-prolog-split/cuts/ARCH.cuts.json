@@ -1,0 +1,14 @@
+{
+  "file": "v6/prolog/ARCH.pl",
+  "predmap": "ARCH.predmap.json",
+  "folder": "v6/prolog/ARCH",
+  "module": "user",
+  "parts": [
+    {"file": "0_species.pl", "anchor": "graph/4", "owns": "the graph, refines, species, algorithm, prior_art, capability, tech and technique rows"},
+    {"file": "1_constructs.pl", "anchor": "construct/3", "owns": "the construct roster with its status and tier vocabularies"},
+    {"file": "2_covers.pl", "anchor": "covers/2", "owns": "which construct each endpoint covers, and the endpoint existence check"},
+    {"file": "3_forks.pl", "anchor": "fork/5", "owns": "the open design fork rows"},
+    {"file": "4_tasks.pl", "anchor": "task/3", "owns": "the task rows"},
+    {"file": "5_gate.pl", "anchor": "roadmap/0", "owns": "roadmap, topsort, the check rows and go/0"}
+  ]
+}
