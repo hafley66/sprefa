@@ -1,0 +1,310 @@
+{
+  "closure": [
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "box"
+                },
+                [
+                  1
+                ]
+              ],
+              "f": "application"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "made"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "box"
+                },
+                [
+                  {
+                    "a": "thing"
+                  }
+                ]
+              ],
+              "f": "application"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "made"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            1
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "seed"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "thing"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "seed"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "box"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "box"
+                },
+                [
+                  1
+                ]
+              ],
+              "f": "application"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "who_made"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "box"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "box"
+                },
+                [
+                  {
+                    "a": "thing"
+                  }
+                ]
+              ],
+              "f": "application"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "who_made"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "box"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  1
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "box"
+                },
+                [
+                  1
+                ]
+              ],
+              "f": "application"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "intern"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "box"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "thing"
+                  }
+                ],
+                "f": "ref"
+              }
+            ]
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "box"
+                },
+                [
+                  {
+                    "a": "thing"
+                  }
+                ]
+              ],
+              "f": "application"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "intern"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            []
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "nil"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      }
+    }
+  ],
+  "diagnostics": []
+}

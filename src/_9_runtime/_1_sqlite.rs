@@ -47,7 +47,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let Some(extension) = sqlite_ivm_extension() else {
         return Err(rusqlite::Error::InvalidPath(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("sqlite_ivm/target/release")
+                .join("sqlite_ivm/target/extension/release")
                 .join(if cfg!(target_os = "macos") {
                     "libsqlite_ivm.dylib"
                 } else {
@@ -63,27 +63,20 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     Ok(connection)
 }
 
-/// `SQLITE_IVM_LIB`, else `libsqlite_ivm` in the release dir of
-/// `CARGO_TARGET_DIR` or the sibling checkout symlink `sqlite_ivm/target`.
+/// `SQLITE_IVM_LIB`, else the isolated extension built by `just ivm-ext`.
 fn sqlite_ivm_extension() -> Option<PathBuf> {
     let file = if cfg!(target_os = "macos") {
         "libsqlite_ivm.dylib"
     } else {
         "libsqlite_ivm.so"
     };
-    let mut candidates = Vec::new();
     if let Ok(path) = std::env::var("SQLITE_IVM_LIB") {
-        candidates.push(PathBuf::from(path));
+        return Some(PathBuf::from(path));
     }
-    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
-        candidates.push(Path::new(&dir).join("release").join(file));
-    }
-    candidates.push(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("sqlite_ivm/target/release")
-            .join(file),
-    );
-    candidates.into_iter().find(|path| path.exists())
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("sqlite_ivm/target/extension/release")
+        .join(file);
+    path.exists().then_some(path)
 }
 
 /// Every statement the crate runs: one `sql` span carrying the statement's

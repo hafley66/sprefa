@@ -41,6 +41,10 @@ fn sqlite_engine_matches_v7_oracles() {
             serde_json::to_string(&fixture["program"]).unwrap(),
         )
         .unwrap();
+        println!(
+            "sqlite oracle: {}",
+            path.file_name().unwrap().to_string_lossy()
+        );
         let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
             .arg("eval")
             .arg(&program_path)
@@ -63,11 +67,13 @@ fn sqlite_engine_matches_v7_oracles() {
         let same = got["closure"] == want["closure"]
             && got["diagnostics"] == want["diagnostics"]
             && output.status.code()
-                == Some(if want["diagnostics"].as_array().is_none_or(|d| d.is_empty()) {
-                    0
-                } else {
-                    1
-                });
+                == Some(
+                    if want["diagnostics"].as_array().is_none_or(|d| d.is_empty()) {
+                        0
+                    } else {
+                        1
+                    },
+                );
         if same {
             pass += 1;
         } else {
@@ -88,6 +94,12 @@ fn sqlite_engine_matches_v7_oracles() {
     for failure in &failures {
         println!("failed: {failure}");
     }
+    assert_eq!(
+        pass,
+        total,
+        "SQLite oracle failures: {}",
+        failures.join(", ")
+    );
     assert!(
         pass >= FLOOR,
         "sqlite oracles {pass}/{total} fell below the floor {FLOOR}: {}",

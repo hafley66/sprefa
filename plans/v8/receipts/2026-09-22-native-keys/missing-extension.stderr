@@ -1,0 +1,5 @@
+2026-09-22T05:47:57.052911Z DEBUG dl8::eval: evaluate_sqlite rules=299356804016611626 rule_count=2 seeds=5
+2026-09-22T05:47:57.053233Z  INFO dl8::sql: name="contract_pragmas" rows=0 ms=0.1 error=""
+2026-09-22T05:47:57.054005Z  INFO dl8::sql: name="load_extension" rows=0 ms=0.7 error="dlopen(/private/tmp/sqlite-ivm-intentionally-missing.dylib.dylib, 0x000A): tried: '/private/tmp/sqlite-ivm-intentionally-missing.dylib.dylib' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/private/tmp/sqlite-ivm-intentionally-missing.dylib.dylib' (no such file), '/private/tmp/sqlite-ivm-intentionally-missing.dylib.dylib' (no such file)"
+2026-09-22T05:47:57.054080Z DEBUG dl8::eval: minted term='eval open'
+2026-09-22T05:47:57.054159Z DEBUG dl8::eval: minted term=not_built_yet('eval open')

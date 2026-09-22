@@ -1,0 +1,56 @@
+{
+  "compiler_base": "3239a7c7cf79a72d766a3e60d375a36699b2f357",
+  "plugin_commit": "ded249db7b978b67d52f53edbafef30750db3015",
+  "hafley_rs_commit": "2e3ef55c5c5b4b3d0e869762e70f801bcf41fd38",
+  "extension_sha256": "66832ab905ef04fe4cbbdef711f8cb4e48f43681014ab82139d1f751f783365a",
+  "default_compiler": {
+    "passed": 29,
+    "failed": 0,
+    "command": "just ivm-cases",
+    "log": "just-ivm-cases.log"
+  },
+  "plugin": {
+    "passed": 76,
+    "skipped_refresh_helpers": 2,
+    "native_loading_tests": 3,
+    "verification_exit": 0,
+    "log": "plugin-verify.log"
+  },
+  "emitted_sql": {
+    "fixture_tests": 17,
+    "mutation_cases": 13,
+    "diagnostic_or_empty_cases": 4
+  },
+  "sqlite_evaluator": {
+    "equal_under_5_seconds": 17,
+    "timeout_at_5_seconds": 15,
+    "whole_oracle_test_timeout_seconds": 60,
+    "details": "eval-oracles.json",
+    "note": "Timeout is not proof of a semantic mismatch."
+  },
+  "prelude_profile": {
+    "trace": "prelude-cte.trace.json",
+    "declare_view_ms": 4894.531,
+    "largest_nonlinear_round_ms": 9627.551,
+    "diagnostics": [],
+    "note": "Diagnostic run, not a paired benchmark."
+  },
+  "sql_size_regression": {
+    "before_bytes": 30048,
+    "after_bytes": 11246,
+    "limit_bytes": 20000,
+    "previous_code_failed": true
+  },
+  "explicit_missing_extension": {
+    "exit_code": 1,
+    "fallback_loaded": false
+  },
+  "limitations": [
+    "SQLite-backed compiler execution is not green.",
+    "Selected compiler gates are not the whole repository test suite.",
+    "Historical join/group benchmark timings predate the shared-CTE change."
+  ],
+  "diagnostic_run_notes": [
+    "compiler-cte-rust.log used RUST_LOG=off; its three trace-count failures are invalid measurements. compiler-default-final.log and just-ivm-cases.log repeat with dl8 tracing enabled and pass all 29 tests."
+  ]
+}

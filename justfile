@@ -31,7 +31,15 @@ trace-query:
 # Build the sqlite_ivm loadable extension the `_18_sqlite_emit` tests load.
 # --no-default-features: the host supplies SQLite, so the bundled default cannot link.
 ivm-ext:
-    cargo build --release --no-default-features --features extension --manifest-path sqlite_ivm/Cargo.toml
+    bash sqlite_ivm/scripts/0_build.sh release
+
+# Default compiler plus native emitted-view insert/delete checks.
+ivm-cases: ivm-ext
+    RUST_LOG=dl8=debug DL8_ENGINE=rust cargo nextest run --offline --locked --no-fail-fast --test _18_sqlite_emit --test _6_comptime_oracle --test _8_compile_oracle --test _15_fold --test _23_comptime_effect
+
+# SQLite also evaluates the compiler's own rules. Retains the 60-second test bound.
+ivm-evaluator-cases: ivm-ext
+    RUST_LOG=dl8=debug DL8_ENGINE=sqlite cargo nextest run --offline --locked --no-fail-fast --test _27_eval_sqlite --test _18_sqlite_emit --test _6_comptime_oracle --test _8_compile_oracle --test _15_fold --test _23_comptime_effect
 
 book:
     mdbook build book

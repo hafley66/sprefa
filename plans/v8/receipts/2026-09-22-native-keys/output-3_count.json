@@ -1,0 +1,184 @@
+{
+  "closure": [
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "east"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "big_region"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "east"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            2
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "region_count"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "west"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            1
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "region_count"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "east"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "one"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "sale"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "east"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "two"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "sale"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "west"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "three"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "sale"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            []
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "nil"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      }
+    }
+  ],
+  "diagnostics": []
+}

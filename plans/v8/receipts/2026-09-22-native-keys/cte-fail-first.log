@@ -1,0 +1,30 @@
+   Compiling sqlite-ivm v0.3.0 (/Users/chrishafley/projects/sqlite_ivm)
+    Finished `test` profile [unoptimized] target(s) in 0.79s
+────────────
+ Nextest run ID 249eed42-9e9d-4d8f-b49d-22779142d700 with nextest profile: default
+    Starting 1 test across 1 binary (2 tests skipped)
+        FAIL [   0.046s] (1/1) sqlite-ivm::19_source_reads shared_subqueries_keep_statement_text_bounded
+  stdout ───
+
+    running 1 test
+    largest SQL statement: 30048 bytes
+    test shared_subqueries_keep_statement_text_bounded ... FAILED
+
+    failures:
+
+    failures:
+        shared_subqueries_keep_statement_text_bounded
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.04s
+
+  stderr ───
+
+    thread 'shared_subqueries_keep_statement_text_bounded' (10884447) panicked at tests/19_source_reads.rs:135:5:
+    largest SQL statement: 30048 bytes
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+  Cancelling due to test failure:
+────────────
+     Summary [   0.046s] 1 test run: 0 passed, 1 failed, 2 skipped
+        FAIL [   0.046s] (1/1) sqlite-ivm::19_source_reads shared_subqueries_keep_statement_text_bounded
+error: test run failed

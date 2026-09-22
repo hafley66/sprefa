@@ -1,0 +1,206 @@
+{
+  "closure": [
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "int"
+                }
+              ],
+              "f": "primitive"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "blocked"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "int"
+                }
+              ],
+              "f": "primitive"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "source"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "text"
+                }
+              ],
+              "f": "primitive"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "source"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "option"
+                },
+                [
+                  {
+                    "args": [
+                      {
+                        "a": "text"
+                      }
+                    ],
+                    "f": "primitive"
+                  }
+                ]
+              ],
+              "f": "application"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "upper"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "option"
+            }
+          ],
+          "f": "ref"
+        },
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "args": [
+                      {
+                        "a": "text"
+                      }
+                    ],
+                    "f": "primitive"
+                  }
+                ],
+                "f": "ref"
+              }
+            ]
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "option"
+                },
+                [
+                  {
+                    "args": [
+                      {
+                        "a": "text"
+                      }
+                    ],
+                    "f": "primitive"
+                  }
+                ]
+              ],
+              "f": "application"
+            }
+          ],
+          "f": "ref"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "intern"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            []
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "nil"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      }
+    }
+  ],
+  "diagnostics": []
+}

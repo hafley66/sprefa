@@ -136,6 +136,7 @@ fn main() -> ExitCode {
     let _ = hafley_observe::init(config);
     let exit = run(cli.command);
     hafley_observe::shutdown();
+    hafley_observe::finish_trace();
     exit
 }
 

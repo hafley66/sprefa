@@ -1,0 +1,518 @@
+{
+  "closure": [
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "loop"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "loop"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "chain"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "loop"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "two"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "chain"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "mid"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "end"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "chain"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "one"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "end"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "chain"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "one"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "mid"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "chain"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "two"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "loop"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "chain"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "two"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "two"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "chain"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "one"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "reaches_end"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "loop"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "two"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "step"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "mid"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "end"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "step"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "one"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "mid"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "step"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "two"
+            }
+          ],
+          "f": "const"
+        },
+        {
+          "args": [
+            {
+              "a": "loop"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "step"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "one"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "thing"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "two"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "thing"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  [
+                    {
+                      "args": [
+                        {
+                          "a": "one"
+                        }
+                      ],
+                      "f": "const"
+                    }
+                  ]
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "wrap_twice"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  [
+                    {
+                      "args": [
+                        {
+                          "a": "two"
+                        }
+                      ],
+                      "f": "const"
+                    }
+                  ]
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "wrap_twice"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "one"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "wrapped"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "wrapped"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            []
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "nil"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      }
+    }
+  ],
+  "diagnostics": []
+}

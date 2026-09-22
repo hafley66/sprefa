@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-hafley-observe = { version = "0.1.1", registry = "hafley" }
+hafley-observe = { path = "hafley-rs/crates/hafley-observe" }
 indexmap = "2"
 ordered-float = "3"
 rusqlite = { version = "0.40", features = ["bundled", "limits", "load_extension", "functions"] }

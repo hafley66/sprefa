@@ -1,0 +1,650 @@
+{
+  "closure": [
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "one"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "item"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "three"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "item"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            {
+              "a": "two"
+            }
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "item"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "one"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "one"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "pair"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "one"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "pair"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "one"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "pair"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "one"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "pair"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "pair"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "pair"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "one"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "pair"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "pair"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "pair"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "one"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "singleton"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "singleton"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "singleton"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "one"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "source"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            []
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "suffix"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "one"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "suffix"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "suffix"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            [
+              {
+                "args": [
+                  {
+                    "a": "two"
+                  }
+                ],
+                "f": "const"
+              },
+              {
+                "args": [
+                  {
+                    "a": "three"
+                  }
+                ],
+                "f": "const"
+              }
+            ]
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "a": "suffix"
+          }
+        ],
+        "f": "ref"
+      }
+    },
+    {
+      "args": [
+        {
+          "args": [
+            []
+          ],
+          "f": "const"
+        }
+      ],
+      "rel": {
+        "args": [
+          {
+            "args": [
+              {
+                "a": "nil"
+              }
+            ],
+            "f": "kernel"
+          }
+        ],
+        "f": "ref"
+      }
+    }
+  ],
+  "diagnostics": []
+}

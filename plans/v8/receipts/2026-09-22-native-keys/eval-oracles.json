@@ -1,0 +1,410 @@
+{
+  "compiler_head": "3239a7c7cf79a72d766a3e60d375a36699b2f357",
+  "extension_sha256": "255bf228c52707776a50205e6a599ff7fdc447c71d54bae6a0ebf4c1cb02e9b5",
+  "note": "Working-tree CTE fix; diagnostic runs, not paired performance benchmarks.",
+  "cases": [
+    {
+      "case": "0_transitive.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-0_transitive.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-0_transitive.json",
+      "output_sha256": "92bc7f24647359b38d02f35e05668d7ea8fe16370cd665fa16910844e3ca2e53",
+      "seconds": 0.070522
+    },
+    {
+      "case": "10_empty.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-10_empty.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-10_empty.json",
+      "output_sha256": "13cd58416f5788596c83c6ba405c6dd45015cc18673cddc8733ab4fbc56e3d7f",
+      "seconds": 0.00544
+    },
+    {
+      "case": "11_nonground_negation.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-11_nonground_negation.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-11_nonground_negation.json",
+      "output_sha256": "e13132c3c1784e7eacd94234dc3ee908d88b7596b149a5d65bdf9a79a9580939",
+      "seconds": 0.017616
+    },
+    {
+      "case": "12_repeated_vars_and_arity.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-12_repeated_vars_and_arity.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-12_repeated_vars_and_arity.json",
+      "output_sha256": "62334cb1e8aebb5ca6ca5ae7ee9850957bf9b414b8633adce7a6502fa90f768f",
+      "seconds": 0.064876
+    },
+    {
+      "case": "13_deep_terms_order.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-13_deep_terms_order.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-13_deep_terms_order.json",
+      "output_sha256": "09ccd28e4801615582d34b7a89ab88a937a1071f8e19aee2922b7c230bb35277",
+      "seconds": 0.010001
+    },
+    {
+      "case": "14_demand_recursion.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-14_demand_recursion.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-14_demand_recursion.json",
+      "output_sha256": "6dc912056c775ac0972d6547afe8b00b5fd6a39e0cd1b469e36be20099e032c8",
+      "seconds": 1.435671
+    },
+    {
+      "case": "15_aggregate_tables_only.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-15_aggregate_tables_only.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-15_aggregate_tables_only.json",
+      "output_sha256": "17f5b2970a69490d49e55c2138dc31dc1a6bb9e03eeea16fc266ddff18ee08c4",
+      "seconds": 0.050005
+    },
+    {
+      "case": "16_intern_row_reuse.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-16_intern_row_reuse.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-16_intern_row_reuse.json",
+      "output_sha256": "8579cb6efd5f1bce0cfda34f0acda46aa9488bf17ba1c8b16df7084ad7309368",
+      "seconds": 0.07239
+    },
+    {
+      "case": "1_negation_cons_intern.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-1_negation_cons_intern.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-1_negation_cons_intern.json",
+      "output_sha256": "15f6635cc2285b59a9468fabe3c3286639ed74944a2f548d92f60ff3677a4583",
+      "seconds": 0.207432
+    },
+    {
+      "case": "2_strict_cycle.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-2_strict_cycle.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 1,
+      "output": "output-2_strict_cycle.json",
+      "output_sha256": "bb4afbda3273b4278977cbd221f5c2b06ef1fa74b50288999bb3e5885d42f3da",
+      "seconds": 0.005823
+    },
+    {
+      "case": "3_count.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-3_count.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-3_count.json",
+      "output_sha256": "d2a10927f2ed42b0c2cfacf96925d82fc8597ad19d8f1fc6249f0eeaa5d291c1",
+      "seconds": 0.019421
+    },
+    {
+      "case": "4_cons_lists.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-4_cons_lists.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-4_cons_lists.json",
+      "output_sha256": "3c1bf12c44166cb60ae75f4ad9912ac13fdeaed22cff20c793e317d643ff413c",
+      "seconds": 0.444742
+    },
+    {
+      "case": "5_int_compare.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-5_int_compare.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-5_int_compare.json",
+      "output_sha256": "4286b7c17144d7c5e2623f035e2204f149025b35c33becd7b1537953cb6cd295",
+      "seconds": 0.513592
+    },
+    {
+      "case": "6_malformed_aggregate.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-6_malformed_aggregate.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 1,
+      "output": "output-6_malformed_aggregate.json",
+      "output_sha256": "a2b8369ba51b83b664c630424d9389a9a61b793bf1bd50aaf806b2f5c12ec95f",
+      "seconds": 0.006396
+    },
+    {
+      "case": "7_aggregate_cycle.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-7_aggregate_cycle.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 1,
+      "output": "output-7_aggregate_cycle.json",
+      "output_sha256": "35fa63d5b7f7f40b4c66f7216109b4f832525b791d62e5c3fc1745b7060d1386",
+      "seconds": 0.006107
+    },
+    {
+      "case": "8_mixed_lower_recursion.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-8_mixed_lower_recursion.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-8_mixed_lower_recursion.json",
+      "output_sha256": "664ba630a452a95a7025b544c876088dc294d60c5d010e67a01999ba1ba53edc",
+      "seconds": 0.053776
+    },
+    {
+      "case": "9_edge_ref.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-9_edge_ref.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "equal",
+      "exit_code": 0,
+      "output": "output-9_edge_ref.json",
+      "output_sha256": "bccee2c597a9b126574be5114867f94e0cb28141d3ff35ca7887d2ad59672e79",
+      "seconds": 0.138827
+    },
+    {
+      "case": "c0_minimal_0.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c0_minimal_0.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.020087
+    },
+    {
+      "case": "c14_syntax_macros_0.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c14_syntax_macros_0.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.020138
+    },
+    {
+      "case": "c14_syntax_macros_1.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c14_syntax_macros_1.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.01147
+    },
+    {
+      "case": "c15_standard_plus_0.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c15_standard_plus_0.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.021586
+    },
+    {
+      "case": "c15_standard_plus_1.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c15_standard_plus_1.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.018529
+    },
+    {
+      "case": "c15_standard_plus_2.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c15_standard_plus_2.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.018981
+    },
+    {
+      "case": "c15_standard_plus_3.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c15_standard_plus_3.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.010826
+    },
+    {
+      "case": "c2_partial_0.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c2_partial_0.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.01702
+    },
+    {
+      "case": "c2_partial_1.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c2_partial_1.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.011901
+    },
+    {
+      "case": "c2_partial_2.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c2_partial_2.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.013077
+    },
+    {
+      "case": "c2_partial_3.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c2_partial_3.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.013038
+    },
+    {
+      "case": "c2_partial_4.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c2_partial_4.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.012936
+    },
+    {
+      "case": "c2_partial_5.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c2_partial_5.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.012952
+    },
+    {
+      "case": "c2_partial_6.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c2_partial_6.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.011946
+    },
+    {
+      "case": "c2_partial_7.json",
+      "command": [
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/target/debug/dl8",
+        "eval",
+        "/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/plans/v8/receipts/2026-09-22-native-keys/input-c2_partial_7.json"
+      ],
+      "timeout_seconds": 5,
+      "status": "timeout",
+      "seconds": 5.012437
+    }
+  ]
+}

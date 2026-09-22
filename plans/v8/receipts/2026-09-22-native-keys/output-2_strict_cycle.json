@@ -1,0 +1,31 @@
+{
+  "closure": [],
+  "diagnostics": [
+    {
+      "payload": {
+        "args": [
+          [
+            {
+              "args": [
+                {
+                  "a": "left"
+                }
+              ],
+              "f": "ref"
+            },
+            {
+              "args": [
+                {
+                  "a": "right"
+                }
+              ],
+              "f": "ref"
+            }
+          ]
+        ],
+        "f": "strict_dependency_cycle"
+      },
+      "phase": "stratify"
+    }
+  ]
+}

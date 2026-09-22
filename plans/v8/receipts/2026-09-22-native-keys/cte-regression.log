@@ -1,0 +1,36 @@
+   Compiling sqlite-ivm v0.3.0 (/Users/chrishafley/projects/sqlite_ivm)
+    Finished `test` profile [unoptimized] target(s) in 1.33s
+────────────
+ Nextest run ID cb07682d-778b-4df3-9f8d-01919b1e875b with nextest profile: default
+    Starting 3 tests across 1 binary
+        PASS [   0.014s] (1/3) sqlite-ivm::19_source_reads join_deltas_probe_sources_and_never_write_input_copies
+        PASS [   0.014s] (2/3) sqlite-ivm::19_source_reads composite_keys_use_native_cells_and_group_rowids_survive_updates
+        PASS [   0.051s] (3/3) sqlite-ivm::19_source_reads shared_subqueries_keep_statement_text_bounded
+────────────
+     Summary [   0.051s] 3 tests run: 3 passed, 0 skipped
+        PASS [   0.014s] (1/3) sqlite-ivm::19_source_reads join_deltas_probe_sources_and_never_write_input_copies
+  stdout ───
+
+    running 1 test
+    test join_deltas_probe_sources_and_never_write_input_copies ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.01s
+
+
+        PASS [   0.014s] (2/3) sqlite-ivm::19_source_reads composite_keys_use_native_cells_and_group_rowids_survive_updates
+  stdout ───
+
+    running 1 test
+    test composite_keys_use_native_cells_and_group_rowids_survive_updates ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.01s
+
+
+        PASS [   0.051s] (3/3) sqlite-ivm::19_source_reads shared_subqueries_keep_statement_text_bounded
+  stdout ───
+
+    running 1 test
+    largest SQL statement: 11246 bytes
+    test shared_subqueries_keep_statement_text_bounded ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.04s

@@ -1,0 +1,372 @@
+warning: unused variable: `rule`
+    --> src/_5_reify/_7_sqlite.rs:1344:9
+     |
+1344 |         rule: &Rule,
+     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_rule`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/_6_eval/_7_sqlite_eval.rs:703:21
+    |
+703 |                 let mut fresh = |u: &mut Universe, vars: &mut Vec<TermId>, label: &str| {
+    |                     ----^^^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `bound_cell` is never used
+    --> src/_5_reify/_7_sqlite.rs:1378:8
+     |
+ 812 | impl<'a> Lowering<'a> {
+     | --------------------- method in this implementation
+...
+1378 |     fn bound_cell(
+     |        ^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `failures` is never used
+    --> src/_5_reify/_7_sqlite.rs:2088:19
+     |
+2081 | impl<'a> ProgramPlan<'a> {
+     | ------------------------ method in this implementation
+...
+2088 |     pub(crate) fn failures(&self) -> Vec<(String, String)> {
+     |                   ^^^^^^^^
+
+warning: function `not_built_yet` is never used
+    --> src/_5_reify/_7_sqlite.rs:2337:15
+     |
+2337 | pub(crate) fn not_built_yet(u: &mut Universe, failures: &[(String, String)]) -> Vec<Diagnostic> {
+     |               ^^^^^^^^^^^^^
+
+warning: `dl8` (lib) generated 5 warnings (run `cargo fix --lib -p dl8` to apply 2 suggestions)
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.17s
+────────────
+ Nextest run ID 74813b4f-8b50-4825-960c-6bcf665a43d3 with nextest profile: default
+    Starting 29 tests across 5 binaries
+        PASS [   0.811s] ( 1/29) dl8::_15_fold every_fold_fixture_carries_its_written_answer
+        PASS [   0.813s] ( 2/29) dl8::_15_fold every_fold_fixture_matches_expected
+        PASS [   0.317s] ( 3/29) dl8::_18_sqlite_emit aggregates_0_sum
+        PASS [   0.362s] ( 4/29) dl8::_18_sqlite_emit aggregates_1_min_max
+        PASS [   0.299s] ( 5/29) dl8::_18_sqlite_emit aggregates_2_grouped
+        PASS [   0.175s] ( 6/29) dl8::_18_sqlite_emit fold_1_program_step
+        PASS [   0.435s] ( 7/29) dl8::_18_sqlite_emit fold_0_kernel_step
+        PASS [   0.052s] ( 8/29) dl8::_18_sqlite_emit fold_3_step_no_row
+        PASS [   0.175s] ( 9/29) dl8::_18_sqlite_emit fold_2_order_matters
+        PASS [   0.290s] (10/29) dl8::_18_sqlite_emit literals_0_float
+        PASS [   0.282s] (11/29) dl8::_18_sqlite_emit literals_1_bool
+        PASS [   0.295s] (12/29) dl8::_18_sqlite_emit literals_2_int_add
+        PASS [   0.284s] (13/29) dl8::_18_sqlite_emit sqlite_emit_1_transitive
+        PASS [   0.291s] (14/29) dl8::_18_sqlite_emit sqlite_emit_2_mutual
+        PASS [   0.339s] (15/29) dl8::_18_sqlite_emit sqlite_emit_3_consumers
+        PASS [   0.174s] (16/29) dl8::_18_sqlite_emit sqlite_emit_4_outside
+        PASS [   0.336s] (17/29) dl8::_18_sqlite_emit term_lt_0_mixed_kinds
+        PASS [   2.009s] (18/29) dl8::_18_sqlite_emit sqlite_emit_0_union_filter
+        PASS [   0.172s] (19/29) dl8::_23_comptime_effect a_continuing_executor_waits_for_the_runtime
+        PASS [   0.165s] (20/29) dl8::_23_comptime_effect a_once_executor_answers_its_effect_row_at_comptime
+        PASS [   0.149s] (21/29) dl8::_23_comptime_effect a_relation_with_no_executor_is_never_asked
+        PASS [   0.189s] (22/29) dl8::_23_comptime_effect answered_rows_feed_a_rule_that_mints_an_edge
+        PASS [   0.265s] (23/29) dl8::_6_comptime_oracle dl8_round_counts_match_v7
+        PASS [   0.255s] (24/29) dl8::_6_comptime_oracle every_comptime_case_matches_v7
+        PASS [   0.005s] (25/29) dl8::_6_comptime_oracle every_status_number_is_present
+        PASS [   0.006s] (26/29) dl8::_8_compile_oracle every_committed_case_file_exists_and_every_case_is_indexed
+        PASS [   2.311s] (27/29) dl8::_8_compile_oracle every_committed_case_matches_v7
+        PASS [   0.005s] (28/29) dl8::_8_compile_oracle the_curry_limit_is_a_case_not_a_skip
+        PASS [   4.144s] (29/29) dl8::_18_sqlite_emit term_lt_1_top
+────────────
+     Summary [   7.817s] 29 tests run: 29 passed, 0 skipped
+        PASS [   0.811s] ( 1/29) dl8::_15_fold every_fold_fixture_carries_its_written_answer
+  stdout ───
+
+    running 1 test
+    test every_fold_fixture_carries_its_written_answer ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.81s
+
+
+        PASS [   0.813s] ( 2/29) dl8::_15_fold every_fold_fixture_matches_expected
+  stdout ───
+
+    running 1 test
+    test every_fold_fixture_matches_expected ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.81s
+
+
+        PASS [   0.317s] ( 3/29) dl8::_18_sqlite_emit aggregates_0_sum
+  stdout ───
+
+    running 1 test
+    aggregates/0_sum: views 1 recursive no diagnostics 0 insert equal delete equal
+    test aggregates_0_sum ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.31s
+
+
+        PASS [   0.362s] ( 4/29) dl8::_18_sqlite_emit aggregates_1_min_max
+  stdout ───
+
+    running 1 test
+    aggregates/1_min_max: views 2 recursive no diagnostics 0 insert equal delete equal
+    test aggregates_1_min_max ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.36s
+
+
+        PASS [   0.299s] ( 5/29) dl8::_18_sqlite_emit aggregates_2_grouped
+  stdout ───
+
+    running 1 test
+    aggregates/2_grouped: views 1 recursive no diagnostics 0 insert equal delete equal
+    test aggregates_2_grouped ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.29s
+
+
+        PASS [   0.175s] ( 6/29) dl8::_18_sqlite_emit fold_1_program_step
+  stdout ───
+
+    running 1 test
+    fold/1_program_step: views 0 recursive no diagnostics 2 insert - delete -
+    test fold_1_program_step ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.17s
+
+
+        PASS [   0.435s] ( 7/29) dl8::_18_sqlite_emit fold_0_kernel_step
+  stdout ───
+
+    running 1 test
+    fold/0_kernel_step: views 1 recursive no diagnostics 0 insert equal delete equal
+    test fold_0_kernel_step ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.43s
+
+
+        PASS [   0.052s] ( 8/29) dl8::_18_sqlite_emit fold_3_step_no_row
+  stdout ───
+
+    running 1 test
+    fold/3_step_no_row: views 0 recursive no diagnostics 0 insert - delete -
+    test fold_3_step_no_row ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.05s
+
+
+        PASS [   0.175s] ( 9/29) dl8::_18_sqlite_emit fold_2_order_matters
+  stdout ───
+
+    running 1 test
+    fold/2_order_matters: views 0 recursive no diagnostics 2 insert - delete -
+    test fold_2_order_matters ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.17s
+
+
+        PASS [   0.290s] (10/29) dl8::_18_sqlite_emit literals_0_float
+  stdout ───
+
+    running 1 test
+    literals/0_float: views 1 recursive no diagnostics 0 insert equal delete equal
+    test literals_0_float ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.28s
+
+
+        PASS [   0.282s] (11/29) dl8::_18_sqlite_emit literals_1_bool
+  stdout ───
+
+    running 1 test
+    literals/1_bool: views 1 recursive no diagnostics 0 insert equal delete equal
+    test literals_1_bool ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.28s
+
+
+        PASS [   0.295s] (12/29) dl8::_18_sqlite_emit literals_2_int_add
+  stdout ───
+
+    running 1 test
+    literals/2_int_add: views 1 recursive no diagnostics 0 insert equal delete equal
+    test literals_2_int_add ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.29s
+
+
+        PASS [   0.284s] (13/29) dl8::_18_sqlite_emit sqlite_emit_1_transitive
+  stdout ───
+
+    running 1 test
+    sqlite_emit/1_transitive: views 1 recursive yes diagnostics 0 insert equal delete equal
+    test sqlite_emit_1_transitive ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.28s
+
+
+        PASS [   0.291s] (14/29) dl8::_18_sqlite_emit sqlite_emit_2_mutual
+  stdout ───
+
+    running 1 test
+    sqlite_emit/2_mutual: views 2 recursive yes diagnostics 0 insert equal delete equal
+    test sqlite_emit_2_mutual ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.28s
+
+
+        PASS [   0.339s] (15/29) dl8::_18_sqlite_emit sqlite_emit_3_consumers
+  stdout ───
+
+    running 1 test
+    sqlite_emit/3_consumers: views 4 recursive yes diagnostics 0 insert equal delete equal
+    test sqlite_emit_3_consumers ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.33s
+
+
+        PASS [   0.174s] (16/29) dl8::_18_sqlite_emit sqlite_emit_4_outside
+  stdout ───
+
+    running 1 test
+    sqlite_emit/4_outside: views 0 recursive no diagnostics 4 insert - delete -
+    test sqlite_emit_4_outside ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.17s
+
+
+        PASS [   0.336s] (17/29) dl8::_18_sqlite_emit term_lt_0_mixed_kinds
+  stdout ───
+
+    running 1 test
+    term_lt/0_mixed_kinds: views 1 recursive no diagnostics 0 insert equal delete equal
+    test term_lt_0_mixed_kinds ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.33s
+
+
+        PASS [   2.009s] (18/29) dl8::_18_sqlite_emit sqlite_emit_0_union_filter
+  stdout ───
+
+    running 1 test
+    sqlite_emit/0_union_filter: views 5 recursive no diagnostics 0 insert equal delete equal
+    test sqlite_emit_0_union_filter ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 2.00s
+
+
+        PASS [   0.172s] (19/29) dl8::_23_comptime_effect a_continuing_executor_waits_for_the_runtime
+  stdout ───
+
+    running 1 test
+    test a_continuing_executor_waits_for_the_runtime ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.17s
+
+
+        PASS [   0.165s] (20/29) dl8::_23_comptime_effect a_once_executor_answers_its_effect_row_at_comptime
+  stdout ───
+
+    running 1 test
+    test a_once_executor_answers_its_effect_row_at_comptime ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.16s
+
+
+        PASS [   0.149s] (21/29) dl8::_23_comptime_effect a_relation_with_no_executor_is_never_asked
+  stdout ───
+
+    running 1 test
+    test a_relation_with_no_executor_is_never_asked ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.14s
+
+
+        PASS [   0.189s] (22/29) dl8::_23_comptime_effect answered_rows_feed_a_rule_that_mints_an_edge
+  stdout ───
+
+    running 1 test
+    test answered_rows_feed_a_rule_that_mints_an_edge ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.18s
+
+
+        PASS [   0.265s] (23/29) dl8::_6_comptime_oracle dl8_round_counts_match_v7
+  stdout ───
+
+    running 1 test
+    test dl8_round_counts_match_v7 ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.26s
+
+
+        PASS [   0.255s] (24/29) dl8::_6_comptime_oracle every_comptime_case_matches_v7
+  stdout ───
+
+    running 1 test
+    test every_comptime_case_matches_v7 ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.25s
+
+
+        PASS [   0.005s] (25/29) dl8::_6_comptime_oracle every_status_number_is_present
+  stdout ───
+
+    running 1 test
+    test every_status_number_is_present ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+        PASS [   0.006s] (26/29) dl8::_8_compile_oracle every_committed_case_file_exists_and_every_case_is_indexed
+  stdout ───
+
+    running 1 test
+    test every_committed_case_file_exists_and_every_case_is_indexed ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+        PASS [   2.311s] (27/29) dl8::_8_compile_oracle every_committed_case_matches_v7
+  stdout ───
+
+    running 1 test
+    applications-dl6-0_catalog                                 dl8   132 ms   v7   457 ms
+    declare-0_primitive_defaults                               dl8   129 ms   v7     - ms
+    project-modules-consumer                                   dl8   131 ms   v7   416 ms
+    project-modules-plus                                       dl8   130 ms   v7   427 ms
+    project-tsi-contract                                       dl8   183 ms   v7   996 ms
+    test-fixtures-0_minimal                                    dl8    41 ms   v7   181 ms
+    test-fixtures-14_syntax_macros                             dl8   143 ms   v7   432 ms
+    test-fixtures-2_partial                                    dl8   161 ms   v7   663 ms
+    test-fixtures-3_type_algebra                               dl8   158 ms   v7   531 ms
+    test-fixtures-5_curry                                      dl8   442 ms   v7  3943 ms
+    test-fixtures-binding_symmetry-11_mixed_deferrable_and_real_error dl8    41 ms   v7   180 ms
+    test-fixtures-lexical_binding-2_missing_name               dl8    38 ms   v7   193 ms
+    test-fixtures-lexical_binding-3_self_cycle                 dl8    41 ms   v7   193 ms
+    test-fixtures-lexical_binding-4_two_cycle                  dl8    41 ms   v7   196 ms
+    test-fixtures-modules-1_consumer                           dl8    39 ms   v7   193 ms
+    test-fixtures-modules-2_plus_consumer                      dl8    40 ms   v7   204 ms
+    test every_committed_case_matches_v7 ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 2.31s
+
+
+        PASS [   0.005s] (28/29) dl8::_8_compile_oracle the_curry_limit_is_a_case_not_a_skip
+  stdout ───
+
+    running 1 test
+    test the_curry_limit_is_a_case_not_a_skip ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+        PASS [   4.144s] (29/29) dl8::_18_sqlite_emit term_lt_1_top
+  stdout ───
+
+    running 1 test
+    term_lt/1_top: views 2 recursive no diagnostics 0 insert equal delete equal
+    test term_lt_1_top ... ok
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 4.14s

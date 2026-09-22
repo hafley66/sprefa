@@ -1,0 +1,87 @@
+bash sqlite_ivm/scripts/0_build.sh release
+bash: warning: setlocale: LC_ALL: cannot change locale (C.UTF-8): No such file or directory
+   Compiling sqlite-ivm v0.3.0 (/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/sqlite_ivm)
+    Finished `release` profile [optimized] target(s) in 5.30s
+/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main/sqlite_ivm/target/extension/release/libsqlite_ivm.dylib
+RUST_LOG=dl8=debug DL8_ENGINE=rust cargo nextest run --offline --locked --no-fail-fast --test _18_sqlite_emit --test _6_comptime_oracle --test _8_compile_oracle --test _15_fold --test _23_comptime_effect
+   Compiling dl8 v0.1.0 (/Users/chrishafley/projects/sprefa-wt/sqlite-perf-main)
+warning: unused variable: `rule`
+    --> src/_5_reify/_7_sqlite.rs:1389:9
+     |
+1389 |         rule: &Rule,
+     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_rule`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/_6_eval/_7_sqlite_eval.rs:749:21
+    |
+749 |                 let mut fresh = |u: &mut Universe, vars: &mut Vec<TermId>, label: &str| {
+    |                     ----^^^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `bound_cell` is never used
+    --> src/_5_reify/_7_sqlite.rs:1423:8
+     |
+ 818 | impl<'a> Lowering<'a> {
+     | --------------------- method in this implementation
+...
+1423 |     fn bound_cell(
+     |        ^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `failures` is never used
+    --> src/_5_reify/_7_sqlite.rs:2136:19
+     |
+2129 | impl<'a> ProgramPlan<'a> {
+     | ------------------------ method in this implementation
+...
+2136 |     pub(crate) fn failures(&self) -> Vec<(String, String)> {
+     |                   ^^^^^^^^
+
+warning: function `not_built_yet` is never used
+    --> src/_5_reify/_7_sqlite.rs:2390:15
+     |
+2390 | pub(crate) fn not_built_yet(u: &mut Universe, failures: &[(String, String)]) -> Vec<Diagnostic> {
+     |               ^^^^^^^^^^^^^
+
+warning: `dl8` (lib) generated 5 warnings (run `cargo fix --lib -p dl8` to apply 2 suggestions)
+    Finished `test` profile [optimized + debuginfo] target(s) in 13.10s
+────────────
+ Nextest run ID 9294db3e-0ffa-462f-915b-034578000584 with nextest profile: default
+    Starting 29 tests across 5 binaries
+        PASS [   0.798s] ( 1/29) dl8::_15_fold every_fold_fixture_matches_expected
+        PASS [   0.799s] ( 2/29) dl8::_15_fold every_fold_fixture_carries_its_written_answer
+        PASS [   0.488s] ( 3/29) dl8::_18_sqlite_emit aggregates_0_sum
+        PASS [   0.533s] ( 4/29) dl8::_18_sqlite_emit aggregates_1_min_max
+        PASS [   0.299s] ( 5/29) dl8::_18_sqlite_emit aggregates_2_grouped
+        PASS [   0.184s] ( 6/29) dl8::_18_sqlite_emit fold_1_program_step
+        PASS [   0.444s] ( 7/29) dl8::_18_sqlite_emit fold_0_kernel_step
+        PASS [   0.053s] ( 8/29) dl8::_18_sqlite_emit fold_3_step_no_row
+        PASS [   0.180s] ( 9/29) dl8::_18_sqlite_emit fold_2_order_matters
+        PASS [   0.284s] (10/29) dl8::_18_sqlite_emit literals_0_float
+        PASS [   0.285s] (11/29) dl8::_18_sqlite_emit literals_1_bool
+        PASS [   0.300s] (12/29) dl8::_18_sqlite_emit literals_2_int_add
+        PASS [   0.292s] (13/29) dl8::_18_sqlite_emit sqlite_emit_1_transitive
+        PASS [   0.306s] (14/29) dl8::_18_sqlite_emit sqlite_emit_2_mutual
+        PASS [   0.351s] (15/29) dl8::_18_sqlite_emit sqlite_emit_3_consumers
+        PASS [   0.182s] (16/29) dl8::_18_sqlite_emit sqlite_emit_4_outside
+        PASS [   0.335s] (17/29) dl8::_18_sqlite_emit term_lt_0_mixed_kinds
+        PASS [   2.017s] (18/29) dl8::_18_sqlite_emit sqlite_emit_0_union_filter
+        PASS [   0.175s] (19/29) dl8::_23_comptime_effect a_continuing_executor_waits_for_the_runtime
+        PASS [   0.169s] (20/29) dl8::_23_comptime_effect a_once_executor_answers_its_effect_row_at_comptime
+        PASS [   0.143s] (21/29) dl8::_23_comptime_effect a_relation_with_no_executor_is_never_asked
+        PASS [   0.170s] (22/29) dl8::_23_comptime_effect answered_rows_feed_a_rule_that_mints_an_edge
+        PASS [   0.234s] (23/29) dl8::_6_comptime_oracle dl8_round_counts_match_v7
+        PASS [   0.245s] (24/29) dl8::_6_comptime_oracle every_comptime_case_matches_v7
+        PASS [   0.005s] (25/29) dl8::_6_comptime_oracle every_status_number_is_present
+        PASS [   0.005s] (26/29) dl8::_8_compile_oracle every_committed_case_file_exists_and_every_case_is_indexed
+        PASS [   2.349s] (27/29) dl8::_8_compile_oracle every_committed_case_matches_v7
+        PASS [   0.005s] (28/29) dl8::_8_compile_oracle the_curry_limit_is_a_case_not_a_skip
+        PASS [   4.103s] (29/29) dl8::_18_sqlite_emit term_lt_1_top
+────────────
+     Summary [   7.984s] 29 tests run: 29 passed, 0 skipped

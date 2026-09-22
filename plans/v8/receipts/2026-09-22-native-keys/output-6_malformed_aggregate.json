@@ -1,0 +1,14 @@
+{
+  "closure": [],
+  "diagnostics": [
+    {
+      "payload": {
+        "args": [
+          2
+        ],
+        "f": "malformed_aggregate_head"
+      },
+      "phase": "evaluate"
+    }
+  ]
+}

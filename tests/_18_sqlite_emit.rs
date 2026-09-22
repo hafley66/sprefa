@@ -10,8 +10,8 @@
 //! is the one `dl8 compile` evaluates, and its reduced program is the source
 //! without the deleted seed's line.
 //!
-//! The extension is `SQLITE_IVM_LIB`, else `libsqlite_ivm` in the release dir
-//! of `CARGO_TARGET_DIR` or `sqlite_ivm/target` (the sibling-checkout symlink), built with
+//! The extension is `SQLITE_IVM_LIB`, else the isolated release build in
+//! `sqlite_ivm/target/extension/release` (the sibling-checkout symlink), built with
 //! `cargo build --release --features extension --manifest-path sqlite_ivm/Cargo.toml`.
 
 use dl8::_6_eval::json::{term_from_json, term_to_json};
