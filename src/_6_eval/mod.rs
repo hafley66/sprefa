@@ -4,8 +4,6 @@
 
 #[path = "_5_evaluate.rs"]
 pub mod evaluate;
-#[path = "_7_sqlite_eval.rs"]
-pub mod sqlite_eval;
 #[path = "_8_functions.rs"]
 pub mod functions;
 #[path = "_6_json.rs"]
@@ -14,6 +12,8 @@ pub mod json;
 pub mod kernel;
 #[path = "_1_program.rs"]
 pub mod program;
+#[path = "_7_sqlite_eval.rs"]
+pub mod sqlite_eval;
 #[path = "_2_stratify.rs"]
 pub mod stratify;
 #[path = "_3_table.rs"]
@@ -22,6 +22,6 @@ pub mod table;
 pub mod term;
 
 pub use evaluate::{evaluate, Closure, Trace};
-pub use sqlite_eval::{evaluate_sqlite, IEvaluate, SeedDelta, SqliteEvaluate};
 pub use program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule};
+pub use sqlite_eval::{evaluate_sqlite, IEvaluate, SeedDelta, SqliteEvaluate};
 pub use term::{Sym, Term, TermId, Universe};

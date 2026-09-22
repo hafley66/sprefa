@@ -2,13 +2,13 @@
 //! per program (F3b), every statement inside `sql()`. Rust moves rows in and
 //! out; joins, filters and the fixpoint are SQL.
 
+use super::evaluate::needs_bound_head;
+use super::kernel::Kernel;
 use super::program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule};
 use super::term::{Term, TermId, Universe};
 use crate::_5_reify::sqlite::{program_plan_with, KernelReach};
-use super::kernel::Kernel;
 use crate::_5_reify::Stop;
 use crate::_6_eval::stratify::stratify;
-use super::evaluate::needs_bound_head;
 use crate::_9_runtime::sqlite::{open, sql};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::Connection;
@@ -213,7 +213,12 @@ impl IEvaluate for SqliteEvaluate {
                 .rules
                 .iter()
                 .map(|rule| rule.rel)
-                .chain(program.rules.iter().flat_map(|rule| rule.body.iter().map(|goal| goal.rel)))
+                .chain(
+                    program
+                        .rules
+                        .iter()
+                        .flat_map(|rule| rule.body.iter().map(|goal| goal.rel)),
+                )
                 .chain(program.seeds.iter().map(|row| row.rel))
                 .collect();
             rels.sort_by_key(|term| term.0);
@@ -234,7 +239,17 @@ impl IEvaluate for SqliteEvaluate {
             let none = guard.atom("none");
             let pad = guard.compound("const", vec![none]);
             let marker = guard.atom("recursion_depth_exceeded");
-            let (eval_failures, view, width, derived, seeded, cap_names, ddl, rounds, material_tables) = {
+            let (
+                eval_failures,
+                view,
+                width,
+                derived,
+                seeded,
+                cap_names,
+                ddl,
+                rounds,
+                material_tables,
+            ) = {
                 let plan = program_plan_with(
                     &mut guard,
                     program,
@@ -273,12 +288,25 @@ impl IEvaluate for SqliteEvaluate {
                     material_tables.push(table);
                 }
                 let rounds = plan.round_statements();
-                (eval_failures, view, width, derived, seeded, cap_names, ddl, rounds, material_tables)
+                (
+                    eval_failures,
+                    view,
+                    width,
+                    derived,
+                    seeded,
+                    cap_names,
+                    ddl,
+                    rounds,
+                    material_tables,
+                )
             };
             self.derived = derived;
             self.seeded = seeded;
             // Rust stops on a malformed aggregate head and returns no rows.
-            if eval_failures.iter().any(|(shape, _)| shape == "malformed_aggregate") {
+            if eval_failures
+                .iter()
+                .any(|(shape, _)| shape == "malformed_aggregate")
+            {
                 self.halted = true;
             }
             let mut diagnostics: Vec<Diagnostic> = eval_failures
@@ -301,7 +329,16 @@ impl IEvaluate for SqliteEvaluate {
                 .collect();
             diagnostics.sort_by(|a, b| (a.phase, a.payload.0).cmp(&(b.phase, b.payload.0)));
             diagnostics.dedup();
-            (diagnostics, ddl, view, width, cap_names, marker, rounds, material_tables)
+            (
+                diagnostics,
+                ddl,
+                view,
+                width,
+                cap_names,
+                marker,
+                rounds,
+                material_tables,
+            )
         };
         // Below this point no arena guard is held: every statement runs the
         // `dl_*` functions, and each function locks the same mutex.
@@ -441,7 +478,10 @@ impl IEvaluate for SqliteEvaluate {
         let aliases = [
             (intern_alias, intern_rel),
             (alias(&mut guard, EFFECT_ROWS), kernel(&mut guard, "effect")),
-            (alias(&mut guard, SNAPSHOT_ROWS), kernel(&mut guard, "intern_snapshot")),
+            (
+                alias(&mut guard, SNAPSHOT_ROWS),
+                kernel(&mut guard, "intern_snapshot"),
+            ),
         ];
         for row in &mut kept {
             if let Some((_, real)) = aliases.iter().find(|(twin, _)| *twin == row.rel) {
@@ -560,7 +600,8 @@ impl SqliteEvaluate {
                     .collect();
                 let count = chunk.len();
                 sql(&self.connection, "insert_seeds", |connection| {
-                    let changes = connection.execute(&statement, rusqlite::params_from_iter(bound))?;
+                    let changes =
+                        connection.execute(&statement, rusqlite::params_from_iter(bound))?;
                     Ok(((), changes))
                 })
                 .map_err(|_| Stop::Fail("eval insert_seeds"))?;
@@ -594,7 +635,8 @@ impl SqliteEvaluate {
                     .map(|value| SqlValue::Integer(*value))
                     .collect();
                 sql(&self.connection, "delete_seeds", |connection| {
-                    let changes = connection.execute(&statement, rusqlite::params_from_iter(bound))?;
+                    let changes =
+                        connection.execute(&statement, rusqlite::params_from_iter(bound))?;
                     Ok(((), changes))
                 })
                 .map_err(|_| Stop::Fail("eval delete_seeds"))?;
@@ -677,7 +719,11 @@ fn with_effects(u: &mut Universe, program: &Program) -> Program {
         out.rules.push(Rule {
             rel: snapshot_alias,
             head: args.clone(),
-            body: vec![Goal { polarity: Polarity::Positive, rel: snapshot_rel, args }],
+            body: vec![Goal {
+                polarity: Polarity::Positive,
+                rel: snapshot_rel,
+                args,
+            }],
             vars: (0..3).map(|i| u.atom(&format!("__s{i}"))).collect(),
         });
     }
@@ -716,7 +762,11 @@ fn with_effects(u: &mut Universe, program: &Program) -> Program {
                     })
                     .collect();
                 let mut list = fresh(u, &mut vars, "nil");
-                body.push(Goal { polarity: Polarity::Positive, rel: nil_rel, args: vec![list.clone()] });
+                body.push(Goal {
+                    polarity: Polarity::Positive,
+                    rel: nil_rel,
+                    args: vec![list.clone()],
+                });
                 for cell in cells.iter().rev() {
                     let next = fresh(u, &mut vars, "cons");
                     body.push(Goal {
@@ -773,13 +823,22 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
     }
     let demanded: HashSet<TermId> = by_rel
         .iter()
-        .filter(|(_, rules)| rules.iter().any(|rule| needs_bound_head(u, rule, snapshots)))
+        .filter(|(_, rules)| {
+            rules
+                .iter()
+                .any(|rule| needs_bound_head(u, rule, snapshots))
+        })
         .map(|(rel, _)| *rel)
         .collect();
     let seeded: HashSet<TermId> = program.seeds.iter().map(|row| row.rel).collect();
     // Pass-through variable names exist from the first run on, so a reload
     // with more seeded products mints nothing new.
-    let widest = program.rules.iter().map(|rule| rule.head.len()).max().unwrap_or(0);
+    let widest = program
+        .rules
+        .iter()
+        .map(|rule| rule.head.len())
+        .max()
+        .unwrap_or(0);
     let pass_vars: Vec<TermId> = (0..widest).map(|i| u.atom(&format!("__s{i}"))).collect();
     let mut out = program.clone();
     if demanded.is_empty() {
@@ -818,7 +877,9 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
                     None => {
                         let base = u
                             .unary(goal.rel, "ref")
-                            .and_then(|inner| u.functor_or_atom(inner).map(|(name, _)| name.to_string()))
+                            .and_then(|inner| {
+                                u.functor_or_atom(inner).map(|(name, _)| name.to_string())
+                            })
                             .unwrap_or_else(|| format!("n{}", goal.rel.0));
                         let mask: String = positions.iter().map(|p| p.to_string()).collect();
                         // The suffix is the rel term itself, so the name survives a
@@ -835,7 +896,10 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
                             let mut body = vec![Goal {
                                 polarity: Polarity::Positive,
                                 rel: demand_rel,
-                                args: positions.iter().map(|p| original.head[*p].clone()).collect(),
+                                args: positions
+                                    .iter()
+                                    .map(|p| original.head[*p].clone())
+                                    .collect(),
                             }];
                             body.extend(original.body.iter().cloned());
                             queue.push(Rule {
@@ -849,12 +913,19 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
                             // The pass-through reads the product's own table
                             // and is never itself a demanded call site.
                             let arity = goal.args.len();
-                            let vars: Vec<TermId> = pass_vars[..arity.min(pass_vars.len())].to_vec();
-                            let args: Vec<Arg> = (0..arity).map(|i| Arg::Var(super::program::VarId(i as u32))).collect();
+                            let vars: Vec<TermId> =
+                                pass_vars[..arity.min(pass_vars.len())].to_vec();
+                            let args: Vec<Arg> = (0..arity)
+                                .map(|i| Arg::Var(super::program::VarId(i as u32)))
+                                .collect();
                             done.push(Rule {
                                 rel: adorned_rel,
                                 head: args.clone(),
-                                body: vec![Goal { polarity: Polarity::Positive, rel: goal.rel, args }],
+                                body: vec![Goal {
+                                    polarity: Polarity::Positive,
+                                    rel: goal.rel,
+                                    args,
+                                }],
                                 vars,
                             });
                         }
@@ -1096,7 +1167,10 @@ pub fn evaluate_sqlite(
         // rounds do not yet agree with a fresh view (`DL8_EVAL_CHECK=1`).
         Some(mut cached)
             if cached.rules == rules
-                && cached.seeds.iter().all(|row| seeds.binary_search_by_key(&seed_key(row), seed_key).is_ok()) =>
+                && cached
+                    .seeds
+                    .iter()
+                    .all(|row| seeds.binary_search_by_key(&seed_key(row), seed_key).is_ok()) =>
         {
             {
                 let mut guard = cached.arena.lock().expect("eval arena poisoned");
@@ -1104,13 +1178,22 @@ pub fn evaluate_sqlite(
             }
             let insert: Vec<Row> = seeds
                 .iter()
-                .filter(|row| cached.seeds.binary_search_by_key(&seed_key(row), seed_key).is_err())
+                .filter(|row| {
+                    cached
+                        .seeds
+                        .binary_search_by_key(&seed_key(row), seed_key)
+                        .is_err()
+                })
                 .cloned()
                 .collect();
             let delete: Vec<Row> = cached
                 .seeds
                 .iter()
-                .filter(|row| seeds.binary_search_by_key(&seed_key(row), seed_key).is_err())
+                .filter(|row| {
+                    seeds
+                        .binary_search_by_key(&seed_key(row), seed_key)
+                        .is_err()
+                })
                 .cloned()
                 .collect();
             tracing::info!(
@@ -1158,7 +1241,8 @@ pub fn evaluate_sqlite(
                     read.as_ref(),
                     fresh_engine(arena.clone(), &program).and_then(|fresh| fresh.read(&[])),
                 ) {
-                    let key = |row: &Row| (row.rel.0, row.args.iter().map(|t| t.0).collect::<Vec<_>>());
+                    let key =
+                        |row: &Row| (row.rel.0, row.args.iter().map(|t| t.0).collect::<Vec<_>>());
                     let a: HashSet<_> = cached.rows.iter().map(key).collect();
                     let b: HashSet<_> = fresh.rows.iter().map(key).collect();
                     let guard = arena.lock().expect("eval arena poisoned");
@@ -1229,11 +1313,19 @@ mod probes {
 
     #[test]
     fn plan_sees_transitive_rules() {
-        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/oracle/eval/0_transitive.json")).unwrap();
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/oracle/eval/0_transitive.json"
+        ))
+        .unwrap();
         let value: serde_json::Value = serde_json::from_str(&text).unwrap();
         let mut u = Universe::new();
         let program = program_from_json(&mut u, value.get("program").unwrap_or(&value)).unwrap();
-        println!("rules={} seeds={}", program.rules.len(), program.seeds.len());
+        println!(
+            "rules={} seeds={}",
+            program.rules.len(),
+            program.seeds.len()
+        );
         for rule in &program.rules {
             println!("rule rel={} arity={}", u.display(rule.rel), rule.head.len());
         }
@@ -1241,7 +1333,12 @@ mod probes {
             .rules
             .iter()
             .map(|rule| rule.rel)
-            .chain(program.rules.iter().flat_map(|rule| rule.body.iter().map(|goal| goal.rel)))
+            .chain(
+                program
+                    .rules
+                    .iter()
+                    .flat_map(|rule| rule.body.iter().map(|goal| goal.rel)),
+            )
             .collect();
         rels.sort_by_key(|term| term.0);
         rels.dedup();
@@ -1254,8 +1351,18 @@ mod probes {
             }
         }
         println!("names={names:?}");
-        let pad = { let n = u.atom("none"); u.compound("const", vec![n]) };
-        let plan = crate::_5_reify::sqlite::program_plan_with(&mut u, &program, &names, "main", |u, rel| crate::_6_eval::kernel::Kernel::of(u, rel).is_some(), crate::_5_reify::sqlite::KernelReach::Eval);
+        let pad = {
+            let n = u.atom("none");
+            u.compound("const", vec![n])
+        };
+        let plan = crate::_5_reify::sqlite::program_plan_with(
+            &mut u,
+            &program,
+            &names,
+            "main",
+            |u, rel| crate::_6_eval::kernel::Kernel::of(u, rel).is_some(),
+            crate::_5_reify::sqlite::KernelReach::Eval,
+        );
         println!("failures={:?}", plan.failures());
         println!("derived_tags={:?} view_failures_above", plan.derived_tags());
         let view = plan.view(pad, &[]);
@@ -1289,7 +1396,8 @@ mod incremental {
             let text = std::fs::read_to_string(&path).unwrap();
             let value: serde_json::Value = serde_json::from_str(&text).unwrap();
             let mut u = Universe::new();
-            let mut program = program_from_json(&mut u, value.get("program").unwrap_or(&value)).unwrap();
+            let mut program =
+                program_from_json(&mut u, value.get("program").unwrap_or(&value)).unwrap();
             let nil = nil_seed(&mut u);
             program.seeds.push(nil);
             if program.seeds.len() < 2 {
@@ -1298,11 +1406,18 @@ mod incremental {
             let arena = Arc::new(Mutex::new(std::mem::take(&mut u)));
             let fresh = fresh_engine(arena.clone(), &program).and_then(|engine| engine.read(&[]));
             let last = program.seeds.remove(0);
-            if !program.seeds.iter().any(|row| row.rel == last.rel && row.args.len() == last.args.len()) {
+            if !program
+                .seeds
+                .iter()
+                .any(|row| row.rel == last.rel && row.args.len() == last.args.len())
+            {
                 continue;
             }
             let staged = fresh_engine(arena.clone(), &program).and_then(|mut engine| {
-                engine.apply(SeedDelta { insert: vec![last], delete: Vec::new() })?;
+                engine.apply(SeedDelta {
+                    insert: vec![last],
+                    delete: Vec::new(),
+                })?;
                 engine.run_rounds()?;
                 engine.read(&[])
             });
@@ -1324,7 +1439,12 @@ mod incremental {
                     }
                 }
                 (fresh, staged) => {
-                    bad.push(format!("{}: {:?} / {:?}", path.display(), fresh.is_ok(), staged.is_ok()));
+                    bad.push(format!(
+                        "{}: {:?} / {:?}",
+                        path.display(),
+                        fresh.is_ok(),
+                        staged.is_ok()
+                    ));
                 }
             }
         }

@@ -14,8 +14,8 @@ use super::term::{TermId, Universe};
 use crate::_7_effect::Slice;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
 use std::marker::PhantomData;
+use std::sync::OnceLock;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Trace {
@@ -779,8 +779,8 @@ fn engine() -> Engine {
     })
 }
 
- /// The semi-naive fixpoint as a reducer over its own row store.
- pub struct Evaluate<'a>(PhantomData<&'a ()>);
+/// The semi-naive fixpoint as a reducer over its own row store.
+pub struct Evaluate<'a>(PhantomData<&'a ()>);
 impl<'a> Slice for Evaluate<'a> {
     type State = Store;
     type Event = (&'a mut Universe, &'a Program);

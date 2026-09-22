@@ -34,8 +34,13 @@ pub fn compile_project_units(
 ) -> Result<(Option<Compiled>, Vec<TermId>), Stop> {
     let owners = source_unit_module_owners(u, units);
     let environment = project_expression_environment(u, &project, &owners);
-    let lowered =
-        lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, Some(environment), &[])?;
+    let lowered = lower_compiler_units(
+        u,
+        CallPolicy::DeferUnknownCalls,
+        units,
+        Some(environment),
+        &[],
+    )?;
     if !lowered.diagnostics.is_empty() {
         return Ok((None, lowered.diagnostics));
     }

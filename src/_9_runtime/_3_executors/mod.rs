@@ -96,10 +96,7 @@ pub fn executors_for(
                     (_, _, None) => missing(u, "executor_relation_unknown", fs_json::NONE),
                 }
             }
-            git_refs::RELATION
-            | git_history::RELATION
-            | fs_at::RELATION
-            | extract::RELATION => {
+            git_refs::RELATION | git_history::RELATION | fs_at::RELATION | extract::RELATION => {
                 let error = match name.as_str() {
                     git_refs::RELATION => git_refs::ERROR,
                     git_history::RELATION => git_history::ERROR,

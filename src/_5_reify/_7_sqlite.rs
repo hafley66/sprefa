@@ -544,9 +544,9 @@ fn lower_component(
             }
             for (ordinal, rule) in catalog.derived[key].iter().enumerate() {
                 let lowering = Lowering::new(catalog, kinds, component, None);
-                let rendered = lowering
-                    .body(rule)
-                    .and_then(|(scope, head)| lowering.render(scope, &head, &kinds[key], None, true));
+                let rendered = lowering.body(rule).and_then(|(scope, head)| {
+                    lowering.render(scope, &head, &kinds[key], None, true)
+                });
                 match rendered {
                     Ok(select) => inserts.push(format!(
                         "{ROUND_MARK}INSERT OR IGNORE INTO {table}({}) {select}",
@@ -581,7 +581,13 @@ fn lower_component(
                 continue;
             }
             let rendered = lowering.body(rule).and_then(|(scope, head)| {
-                lowering.render(scope, &head, &kinds[key], member_of(key, own > 0), !recursive)
+                lowering.render(
+                    scope,
+                    &head,
+                    &kinds[key],
+                    member_of(key, own > 0),
+                    !recursive,
+                )
             });
             match rendered {
                 Ok(select) if own == 0 => anchors.push(select),
@@ -887,7 +893,9 @@ impl<'a> Lowering<'a> {
                 let picked: Vec<String> = names
                     .iter()
                     .enumerate()
-                    .map(|(position, name)| format!("{} AS {name}", quote_identifier(&format!("c{position}"))))
+                    .map(|(position, name)| {
+                        format!("{} AS {name}", quote_identifier(&format!("c{position}")))
+                    })
                     .collect();
                 return Ok(Source::Table(format!(
                     "(SELECT {} FROM {VIEW_NAME} WHERE {} = {})",
@@ -938,7 +946,10 @@ impl<'a> Lowering<'a> {
             return false;
         }
         let item = &mut scope.from[at];
-        item.table = format!("(SELECT * FROM {} WHERE {anti}) AS {}", item.table, item.alias);
+        item.table = format!(
+            "(SELECT * FROM {} WHERE {anti}) AS {}",
+            item.table, item.alias
+        );
         true
     }
 
@@ -1003,7 +1014,15 @@ impl<'a> Lowering<'a> {
                     let mut inner = Scope::new();
                     let mut inner_vars = vars.clone();
                     let inner_positive = self.catalog.reach == KernelReach::Eval;
-                    self.relation(&mut inner, rule, &mut inner_vars, goal, &source, &alias, inner_positive)?;
+                    self.relation(
+                        &mut inner,
+                        rule,
+                        &mut inner_vars,
+                        goal,
+                        &source,
+                        &alias,
+                        inner_positive,
+                    )?;
                     let (from, where_sql) = inner.joined_from();
                     let anti = format!("NOT EXISTS (SELECT 1 FROM {from} WHERE {where_sql})");
                     if !self.hoist_into_source(&mut scope, &anti) {
@@ -1143,7 +1162,9 @@ impl<'a> Lowering<'a> {
                     let condition = self.matches(scope, &column, *term)?;
                     scope.conditions.push(condition);
                 }
-                Arg::Aggregate(..) | Arg::Fold(..) => return Err(Unsupported::MalformedAggregate(0)),
+                Arg::Aggregate(..) | Arg::Fold(..) => {
+                    return Err(Unsupported::MalformedAggregate(0))
+                }
             }
         }
         Ok(())
@@ -1170,7 +1191,13 @@ impl<'a> Lowering<'a> {
                 match self.argument_cell(scope, rule, vars, &goal.args[0])? {
                     Hold::Cell(cell) => guards.push(format!("{cell} = {}", literal.0)),
                     Hold::Free(at) if positive => {
-                        vars.insert(at, Value { sql: literal.0.to_string(), kind: CellKind::Term });
+                        vars.insert(
+                            at,
+                            Value {
+                                sql: literal.0.to_string(),
+                                kind: CellKind::Term,
+                            },
+                        );
                     }
                     Hold::Free(_) => guards.push("1".to_string()),
                 }
@@ -1197,7 +1224,13 @@ impl<'a> Lowering<'a> {
                         let call = format!("{make}({head}, {tail})");
                         guards.push(format!("{call} IS NOT NULL"));
                         if positive {
-                            vars.insert(at, Value { sql: call, kind: CellKind::Term });
+                            vars.insert(
+                                at,
+                                Value {
+                                    sql: call,
+                                    kind: CellKind::Term,
+                                },
+                            );
                         }
                     }
                     Hold::Cell(list) => {
@@ -1209,7 +1242,13 @@ impl<'a> Lowering<'a> {
                             match self.argument_cell(scope, rule, vars, &goal.args[position])? {
                                 Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
                                 Hold::Free(free) if positive => {
-                                    vars.insert(free, Value { sql: call, kind: CellKind::Term });
+                                    vars.insert(
+                                        free,
+                                        Value {
+                                            sql: call,
+                                            kind: CellKind::Term,
+                                        },
+                                    );
                                 }
                                 Hold::Free(_) => {}
                             }
@@ -1224,13 +1263,11 @@ impl<'a> Lowering<'a> {
                     Kernel::EdgeRef => "dl_edge_ref",
                     _ => "dl_application",
                 };
-                let Some(owner) =
-                    self.input_cell(scope, rule, vars, &goal.args[0], &mut guards)?
+                let Some(owner) = self.input_cell(scope, rule, vars, &goal.args[0], &mut guards)?
                 else {
                     return Ok(guards.join(" AND "));
                 };
-                let Some(label) =
-                    self.input_cell(scope, rule, vars, &goal.args[1], &mut guards)?
+                let Some(label) = self.input_cell(scope, rule, vars, &goal.args[1], &mut guards)?
                 else {
                     return Ok(guards.join(" AND "));
                 };
@@ -1239,7 +1276,13 @@ impl<'a> Lowering<'a> {
                 match self.argument_cell(scope, rule, vars, &goal.args[2])? {
                     Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
                     Hold::Free(free) if positive => {
-                        vars.insert(free, Value { sql: call, kind: CellKind::Term });
+                        vars.insert(
+                            free,
+                            Value {
+                                sql: call,
+                                kind: CellKind::Term,
+                            },
+                        );
                     }
                     Hold::Free(_) => {}
                 }
@@ -1247,13 +1290,11 @@ impl<'a> Lowering<'a> {
             }
             Kernel::IntAdd if self.catalog.reach == KernelReach::Eval => {
                 self.arity(goal, 3)?;
-                let Some(left) =
-                    self.input_cell(scope, rule, vars, &goal.args[0], &mut guards)?
+                let Some(left) = self.input_cell(scope, rule, vars, &goal.args[0], &mut guards)?
                 else {
                     return Ok(guards.join(" AND "));
                 };
-                let Some(right) =
-                    self.input_cell(scope, rule, vars, &goal.args[1], &mut guards)?
+                let Some(right) = self.input_cell(scope, rule, vars, &goal.args[1], &mut guards)?
                 else {
                     return Ok(guards.join(" AND "));
                 };
@@ -1262,7 +1303,13 @@ impl<'a> Lowering<'a> {
                 match self.argument_cell(scope, rule, vars, &goal.args[2])? {
                     Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
                     Hold::Free(free) if positive => {
-                        vars.insert(free, Value { sql: call, kind: CellKind::Term });
+                        vars.insert(
+                            free,
+                            Value {
+                                sql: call,
+                                kind: CellKind::Term,
+                            },
+                        );
                     }
                     Hold::Free(_) => {}
                 }
@@ -1270,13 +1317,11 @@ impl<'a> Lowering<'a> {
             }
             Kernel::TermLt if self.catalog.reach == KernelReach::Eval => {
                 self.arity(goal, 2)?;
-                let Some(left) =
-                    self.input_cell(scope, rule, vars, &goal.args[0], &mut guards)?
+                let Some(left) = self.input_cell(scope, rule, vars, &goal.args[0], &mut guards)?
                 else {
                     return Ok(guards.join(" AND "));
                 };
-                let Some(right) =
-                    self.input_cell(scope, rule, vars, &goal.args[1], &mut guards)?
+                let Some(right) = self.input_cell(scope, rule, vars, &goal.args[1], &mut guards)?
                 else {
                     return Ok(guards.join(" AND "));
                 };
@@ -1710,7 +1755,10 @@ impl<'a> Lowering<'a> {
         if scope.from.is_empty() {
             if self.catalog.reach == KernelReach::Eval {
                 let alias = self.alias();
-                scope.join(format!("{} AS {alias}", self.catalog.store_object("unit")), alias);
+                scope.join(
+                    format!("{} AS {alias}", self.catalog.store_object("unit")),
+                    alias,
+                );
             } else {
                 return Err(Unsupported::NoSource);
             }
@@ -2178,7 +2226,12 @@ impl<'a> ProgramPlan<'a> {
             .filter(|(index, _)| self.sql.contains_key(index))
             .flat_map(|(_, component)| component.iter().copied())
             .filter(|key| self.catalog.materialized.contains(key))
-            .map(|key| (self.catalog.material_name(key), column_names(&self.kinds[&key])))
+            .map(|key| {
+                (
+                    self.catalog.material_name(key),
+                    column_names(&self.kinds[&key]),
+                )
+            })
             .collect()
     }
 
