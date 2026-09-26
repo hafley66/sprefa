@@ -662,6 +662,7 @@ fn fold_generic(
 }
 
 /// Runs a declared fold against a completed DD row snapshot.
+/// Rebuilds one store per group for a later performance pass to remove.
 pub(super) fn fold_generic_rows(
     u: &mut Universe,
     program: &Program,
