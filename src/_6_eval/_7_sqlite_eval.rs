@@ -4,7 +4,7 @@
 
 use super::evaluate::needs_bound_head;
 use super::kernel::Kernel;
-use super::program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule};
+use super::program::{Arg, Diagnostic, Fold, Folding, Goal, Polarity, Program, Row, Rule};
 use super::term::{Term, TermId, Universe};
 use crate::_5_reify::sqlite::{program_plan_with, KernelReach};
 use crate::_5_reify::Stop;
@@ -86,6 +86,11 @@ pub struct SqliteEvaluate {
     rounds: Vec<String>,
     /// The plain tables those statements fill, emptied before a re-run.
     material_tables: Vec<String>,
+    fold_program: Option<Program>,
+    folds: Vec<(TermId, TermId, usize, Fold)>,
+    folded_rows: Vec<Row>,
+    fold_diagnostics: Vec<Diagnostic>,
+    fold_failed: bool,
 }
 
 impl SqliteEvaluate {
@@ -108,6 +113,11 @@ impl SqliteEvaluate {
             hidden: HashSet::new(),
             rounds: Vec::new(),
             material_tables: Vec::new(),
+            fold_program: None,
+            folds: Vec::new(),
+            folded_rows: Vec::new(),
+            fold_diagnostics: Vec::new(),
+            fold_failed: false,
         })
     }
 
@@ -191,6 +201,67 @@ impl SqliteEvaluate {
             .find(|(_, found, found_arity)| *found == rel && *found_arity == arity)
             .map(|(table, _, _)| table.as_str())
     }
+
+    /// Materialize declared aggregate heads after SQL has produced their body
+    /// proofs. The Rust fold helper owns ordering and step evaluation.
+    fn refresh_folds(&mut self) -> Result<(), Stop> {
+        if self.folds.is_empty() {
+            return Ok(());
+        }
+        let prior = std::mem::take(&mut self.folded_rows);
+        self.write_delta(&[], &prior)?;
+        self.fold_diagnostics.clear();
+        self.fold_failed = false;
+        for (proof, _, _, _) in &self.folds {
+            self.hidden.remove(proof);
+        }
+        let closure = self.read(&[]);
+        for (proof, _, _, _) in &self.folds {
+            self.hidden.insert(*proof);
+        }
+        let closure = closure?;
+        let proof_rels: HashSet<TermId> = self.folds.iter().map(|fold| fold.0).collect();
+        let stored: Vec<Row> = closure
+            .rows
+            .iter()
+            .filter(|row| !proof_rels.contains(&row.rel))
+            .cloned()
+            .collect();
+        let program = self.fold_program.as_ref().unwrap();
+        let mut folded = Vec::new();
+        for (proof, rel, position, fold) in &self.folds {
+            let mut groups: HashMap<Vec<TermId>, Vec<TermId>> = HashMap::new();
+            for row in closure.rows.iter().filter(|row| row.rel == *proof) {
+                let mut key = row.args.clone();
+                let subject = key.remove(*position);
+                groups.entry(key).or_default().push(subject);
+            }
+            for (mut key, values) in groups {
+                let mut arena = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+                let result =
+                    super::evaluate::fold_generic_rows(&mut arena, program, &stored, fold, &values);
+                match result {
+                    Ok(value) => {
+                        key.insert(*position, value);
+                        folded.push(Row {
+                            rel: *rel,
+                            args: key,
+                        });
+                    }
+                    Err(diagnostic) => {
+                        self.fold_diagnostics.push(diagnostic);
+                        self.fold_failed = true;
+                    }
+                }
+            }
+        }
+        self.fold_diagnostics
+            .sort_by_key(|diagnostic| (diagnostic.phase, diagnostic.payload.0));
+        self.fold_diagnostics.dedup();
+        self.write_delta(&folded, &[])?;
+        self.folded_rows = folded;
+        Ok(())
+    }
 }
 
 impl IEvaluate for SqliteEvaluate {
@@ -215,7 +286,35 @@ impl IEvaluate for SqliteEvaluate {
                     view: "program".to_string(),
                 });
             }
-            let program = with_effects(&mut guard, program);
+            let mut lowered = program
+                .rules
+                .iter()
+                .any(|rule| matches!(rule.folding_head(), Some((_, Folding::Declared(_), _))))
+                .then(|| program.clone());
+            if let Some(lowered) = &mut lowered {
+                self.fold_program = Some(program.clone());
+                let placeholder = guard.atom("sqlite_fold_placeholder");
+                for (ordinal, rule) in lowered.rules.iter_mut().enumerate() {
+                    let Some((position, Folding::Declared(fold), subject)) = rule.folding_head()
+                    else {
+                        continue;
+                    };
+                    let subject = subject.clone();
+                    let target = rule.rel;
+                    let proof = {
+                        let name = guard.atom(&format!("sqlite_fold_proof_{ordinal}"));
+                        guard.compound("ref", vec![name])
+                    };
+                    self.folds.push((proof, target, position, fold));
+                    rule.rel = proof;
+                    rule.head[position] = subject;
+                    lowered.seeds.push(Row {
+                        rel: target,
+                        args: vec![placeholder; rule.head.len()],
+                    });
+                }
+            }
+            let program = with_effects(&mut guard, lowered.as_ref().unwrap_or(program));
             let (program, hidden) = with_demand(&mut guard, &program);
             let program = &with_intern_rows(&mut guard, &program);
             self.hidden = hidden;
@@ -407,10 +506,12 @@ impl IEvaluate for SqliteEvaluate {
     }
 
     fn read(&self, products: &[TermId]) -> Result<super::evaluate::Closure, Stop> {
-        if self.halted {
+        if self.halted || self.fold_failed {
+            let mut diagnostics = self.diagnostics.clone();
+            diagnostics.extend(self.fold_diagnostics.iter().cloned());
             return Ok(super::evaluate::Closure {
                 rows: Vec::new(),
-                diagnostics: self.diagnostics.clone(),
+                diagnostics,
             });
         }
         let mut rows: Vec<Row> = Vec::new();
@@ -462,6 +563,7 @@ impl IEvaluate for SqliteEvaluate {
         // `dl_*` functions, and each one locks the same arena.
         let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
         let mut diagnostics = self.diagnostics.clone();
+        diagnostics.extend(self.fold_diagnostics.iter().cloned());
         let mut kept: Vec<Row> = Vec::with_capacity(rows.len());
         for row in rows {
             if self.cap_marker == Some(row.rel) {
@@ -1259,6 +1361,7 @@ pub fn evaluate_sqlite(
                         selected.engine.run_rounds()
                     }
                 })
+                .and_then(|_| selected.engine.refresh_folds())
                 .map(|()| (selected.engine, seeds.clone()))
         }
         // A retraction without an exact cached state rebuilds: sqlite_ivm's
@@ -1339,6 +1442,7 @@ fn fresh_engine(arena: Arc<Mutex<Universe>>, program: &Program) -> Result<Sqlite
         insert: program.seeds.clone(),
         delete: Vec::new(),
     })?;
+    engine.refresh_folds()?;
     Ok(engine)
 }
 
