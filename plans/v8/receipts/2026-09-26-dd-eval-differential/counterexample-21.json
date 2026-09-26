@@ -1,0 +1,119 @@
+{
+  "dd": {
+    "closure": [
+      {
+        "args": [
+          {
+            "args": [
+              []
+            ],
+            "f": "const"
+          }
+        ],
+        "rel": {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "nil"
+                }
+              ],
+              "f": "kernel"
+            }
+          ],
+          "f": "ref"
+        }
+      }
+    ],
+    "diagnostics": []
+  },
+  "program": {
+    "rules": [
+      {
+        "body": [
+          {
+            "args": [],
+            "polarity": "positive",
+            "rel": {
+              "args": [
+                {
+                  "a": "d0"
+                }
+              ],
+              "f": "ref"
+            }
+          },
+          {
+            "args": [],
+            "polarity": "positive",
+            "rel": {
+              "args": [
+                {
+                  "a": "d0"
+                }
+              ],
+              "f": "ref"
+            }
+          }
+        ],
+        "head": {
+          "args": [],
+          "rel": {
+            "args": [
+              {
+                "a": "d0"
+              }
+            ],
+            "f": "ref"
+          }
+        }
+      }
+    ],
+    "seeds": []
+  },
+  "rust": {
+    "closure": [
+      {
+        "args": [
+          {
+            "args": [
+              []
+            ],
+            "f": "const"
+          }
+        ],
+        "rel": {
+          "args": [
+            {
+              "args": [
+                {
+                  "a": "nil"
+                }
+              ],
+              "f": "kernel"
+            }
+          ],
+          "f": "ref"
+        }
+      }
+    ],
+    "diagnostics": []
+  },
+  "seed": 21,
+  "sqlite": {
+    "closure": [],
+    "diagnostics": [
+      {
+        "payload": {
+          "args": [
+            {
+              "a": "eval nonlinear_round"
+            }
+          ],
+          "f": "not_built_yet"
+        },
+        "phase": "emit"
+      }
+    ]
+  }
+}

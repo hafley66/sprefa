@@ -1,0 +1,8 @@
+crate       Cargo.toml  Cargo.lock before  offline cache  shrink API
+proptest    absent      absent             1.11.0         Strategy value trees
+quickcheck  absent      absent             1.1.0          Arbitrary::shrink
+arbitrary   absent      absent             1.4.2          none in crate API
+
+Chosen: proptest 1.11.0 resolved with cargo --offline. Vec strategies shrink rules, goals, seeds, and argument choices. A JSON deletion pass shrinks the resulting program.
+Default run: seeds 0..21 reached, 22 programs, 0.19 seconds test time. Category counts: positive 3, recursion 3, negation 3, repeated variable 3, aggregate 3, list kernel 3, int.add 2, intern 2. Aggregate kinds reached: count, sum, min. Stopped at first mismatch, so 500+ seed receipt run was not performed.
+Seed 21: SQLite emits not_built_yet(eval nonlinear_round). Rust and DD return only nil/1. Minimal program and all closures: counterexample-21.json.

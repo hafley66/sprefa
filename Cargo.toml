@@ -28,6 +28,7 @@ cc = "1"
 
 [dev-dependencies]
 libc = "0.2"
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
 tracing-subscriber = "0.3"
 
 # opt-level 0 made `dl8 compile fixtures/openapi/todo.dl7` 13x slower than release
