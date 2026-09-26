@@ -1,7 +1,7 @@
 //! Oracle parity through the real binary with `DL8_ENGINE=dd`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 /// Fixtures the DD engine must keep passing.
 const FLOOR: usize = 32;
@@ -18,6 +18,17 @@ fn fixtures() -> Vec<PathBuf> {
         .collect();
     out.sort();
     out
+}
+
+fn assert_not_built(output: Output, construct: &str) {
+    assert_eq!(output.status.code(), Some(1), "{construct} exit status");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("not_built_yet"), "{construct}: {stdout}");
+    assert!(stdout.contains(construct), "{construct}: {stdout}");
+    assert!(
+        stdout.contains("src/_6_eval/_9_dd_eval.rs:"),
+        "{construct}: {stdout}"
+    );
 }
 
 #[test]
@@ -99,4 +110,37 @@ fn dd_engine_matches_v7_oracles() {
         "dd oracles {pass}/{total} fell below the floor {FLOOR}: {}",
         failures.join(", ")
     );
+}
+
+#[test]
+fn unsupported_dd_constructs_fail_loudly() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join("fixtures/fold/0_kernel_step.dl7");
+    let fold = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .arg("compile")
+        .arg(source)
+        .env("DL8_ENGINE", "dd")
+        .output()
+        .unwrap();
+    assert_not_built(fold, "declared fold");
+
+    let fixture_path = root.join("oracle/eval/0_transitive.json");
+    let mut fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture_path).unwrap()).unwrap();
+    let relation = fixture["program"]["seeds"][0]["rel"].clone();
+    fixture["program"]["names"] = serde_json::json!({ "edge": relation });
+    let program_path = std::env::temp_dir().join(format!(
+        "dl8-dd-unsupported-served-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&program_path, serde_json::to_vec(&fixture).unwrap()).unwrap();
+    let served = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .arg("eval")
+        .arg(&program_path)
+        .args(["--serve", "edge"])
+        .env("DL8_ENGINE", "dd")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(program_path);
+    assert_not_built(served, "served goal");
 }

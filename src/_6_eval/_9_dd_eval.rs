@@ -1,7 +1,7 @@
 //! Differential-dataflow evaluation over one worker and one dataflow.
 
 use super::evaluate::{Closure, Trace};
-use super::program::{Arg, Diagnostic, Folding, Goal, Polarity, Program, Row, Rule, VarId};
+use super::program::{Arg, Diagnostic, Folding, Polarity, Program, Row, Rule};
 use super::stratify::{stratify, Strata};
 use super::term::{TermId, Universe};
 use differential_dataflow::input::Input;
@@ -27,7 +27,26 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             diagnostics,
         };
     }
-    let (program, hidden, synthetic_levels) = with_demand(u, program, &strata);
+    let mut unsupported = Vec::new();
+    if !program.served.is_empty() {
+        unsupported.push(not_built_yet(u, "served goal"));
+    }
+    if program
+        .rules
+        .iter()
+        .any(|rule| matches!(rule.folding_head(), Some((_, Folding::Declared(_), _))))
+    {
+        unsupported.push(not_built_yet(u, "declared fold"));
+    }
+    if !unsupported.is_empty() {
+        unsupported.sort_by(|left, right| u.cmp(left.payload, right.payload));
+        unsupported.dedup();
+        return Closure {
+            rows: Vec::new(),
+            diagnostics: unsupported,
+        };
+    }
+    let (program, hidden) = super::sqlite_eval::with_demand(u, program);
     let program = &program;
 
     let mut aggregate_diagnostics = Vec::new();
@@ -54,14 +73,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     let empty = u.empty_list();
     let nil_arg = u.compound("const", vec![empty]);
     let nil = tagged(nil_rel, &[nil_arg]);
-    let mut rules_by_level: HashMap<u32, Vec<Rule>> = HashMap::new();
-    for rule in &program.rules {
-        let level = synthetic_levels
-            .get(&rule.rel)
-            .copied()
-            .unwrap_or_else(|| strata.level(rule.rel));
-        rules_by_level.entry(level).or_default().push(rule.clone());
-    }
+    let mut rules_by_level = schedule_rules(program, &strata, &hidden);
     for level in 0..=strata.max_level {
         let rules = rules_by_level.get(&level).map_or(0, Vec::len);
         let seeds = program
@@ -195,6 +207,7 @@ where
 {
     let vars = rule.vars.len();
     let mut bound = vec![false; vars];
+    // The nil bootstrap makes this one empty environment without a separate DD input.
     let mut envs = all.clone().map(move |_| vec![UNBOUND; vars]).distinct();
     for goal in &rule.body {
         let kernel = super::kernel::Kernel::of(&arena.lock().unwrap(), goal.rel);
@@ -260,16 +273,7 @@ where
                     kind,
                     &values,
                 ),
-                Folding::Declared(fold) => {
-                    let payload = arena_for_reduce
-                        .lock()
-                        .unwrap()
-                        .compound("fold_step_no_row", vec![fold.step, values[0], values[0]]);
-                    Err(Diagnostic {
-                        phase: "evaluate",
-                        payload,
-                    })
-                }
+                Folding::Declared(_) => unreachable!("declared folds fail DD preflight"),
             };
             match result {
                 Ok(term) => output.push((term.0, 1)),
@@ -293,6 +297,7 @@ where
 {
     let vars = rule.vars.len();
     let mut bound = vec![false; vars];
+    // The nil bootstrap makes this one empty environment without a separate DD input.
     let mut envs = all.clone().map(move |_| vec![UNBOUND; vars]).distinct();
     let mut kernel_rows = all.clone().filter(|_| false);
     for goal in &rule.body {
@@ -421,6 +426,7 @@ fn relation<'scope, T>(
 where
     T: Timestamp + Lattice + Ord,
 {
+    // Each goal scans the tagged known collection; a later arrangement pass can share this work.
     all.clone().flat_map(move |row| {
         (row.first() == Some(&rel.0) && row.len() == arity + 1).then(|| row[1..].to_vec())
     })
@@ -508,160 +514,46 @@ fn unify(args: &[Arg], row: &[u32], env: &mut [u32]) -> bool {
     true
 }
 
-/// Rewrites head-bound products into demand and adorned products.
-fn with_demand(
-    u: &mut Universe,
+/// Runs synthetic demand rules from their first safe stratum onward.
+fn schedule_rules(
     program: &Program,
     strata: &Strata,
-) -> (Program, HashSet<TermId>, HashMap<TermId, u32>) {
-    let snapshots = kernel_ref(u, "intern_snapshot");
-    let mut by_rel: HashMap<TermId, Vec<Rule>> = HashMap::new();
+    hidden: &HashSet<TermId>,
+) -> HashMap<u32, Vec<Rule>> {
+    let mut by_level: HashMap<u32, Vec<Rule>> = HashMap::new();
     for rule in &program.rules {
-        by_rel.entry(rule.rel).or_default().push(rule.clone());
-    }
-    let demanded: HashSet<TermId> = by_rel
-        .iter()
-        .filter(|(_, rules)| {
-            rules
-                .iter()
-                .any(|rule| super::evaluate::needs_bound_head(u, rule, snapshots))
-        })
-        .map(|(rel, _)| *rel)
-        .collect();
-    let seeded: HashSet<TermId> = program.seeds.iter().map(|row| row.rel).collect();
-    let widest = program
-        .rules
-        .iter()
-        .map(|rule| rule.head.len())
-        .max()
-        .unwrap_or(0);
-    let pass_vars: Vec<TermId> = (0..widest)
-        .map(|index| u.atom(&format!("__s{index}")))
-        .collect();
-    let mut out = program.clone();
-    if demanded.is_empty() {
-        return (out, HashSet::new(), HashMap::new());
-    }
-    let mut hidden: HashSet<TermId> = HashSet::new();
-    let mut synthetic_levels: HashMap<TermId, u32> = HashMap::new();
-    let mut adorned: HashMap<(TermId, Vec<usize>, u32), (TermId, TermId)> = HashMap::new();
-    let mut queue: Vec<Rule> = std::mem::take(&mut out.rules);
-    let mut done: Vec<Rule> = Vec::new();
-    let budget = program.rules.len() * (1 + program.rules.len() * 8);
-    for _ in 0..budget {
-        let Some(mut rule) = queue.pop() else {
-            break;
-        };
-        let rule_level = synthetic_levels
-            .get(&rule.rel)
-            .copied()
-            .unwrap_or_else(|| strata.level(rule.rel));
-        let mut bound: HashSet<u32> = HashSet::new();
-        for at in 0..rule.body.len() {
-            let goal = rule.body[at].clone();
-            let positive = goal.polarity == Polarity::Positive;
-            if positive && demanded.contains(&goal.rel) {
-                let positions: Vec<usize> = goal
-                    .args
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, arg)| match arg {
-                        Arg::Var(var) => bound.contains(&var.0),
-                        Arg::Ground(_) => true,
-                        _ => false,
-                    })
-                    .map(|(position, _)| position)
-                    .collect();
-                let key = (goal.rel, positions.clone(), rule_level);
-                let (demand_rel, adorned_rel) = match adorned.get(&key) {
-                    Some(pair) => *pair,
-                    None => {
-                        let base = u
-                            .unary(goal.rel, "ref")
-                            .and_then(|inner| {
-                                u.functor_or_atom(inner).map(|(name, _)| name.to_string())
-                            })
-                            .unwrap_or_else(|| format!("n{}", goal.rel.0));
-                        let mask: String = positions
-                            .iter()
-                            .map(|position| position.to_string())
-                            .collect();
-                        let spelled = u.display(goal.rel).to_string();
-                        let demand_name =
-                            u.atom(&format!("dmd__{base}__{mask}__s{rule_level}__{spelled}"));
-                        let demand_rel = u.compound("ref", vec![demand_name]);
-                        let adorned_name =
-                            u.atom(&format!("adn__{base}__{mask}__s{rule_level}__{spelled}"));
-                        let adorned_rel = u.compound("ref", vec![adorned_name]);
-                        adorned.insert(key, (demand_rel, adorned_rel));
-                        hidden.insert(demand_rel);
-                        hidden.insert(adorned_rel);
-                        synthetic_levels.insert(demand_rel, rule_level);
-                        synthetic_levels.insert(adorned_rel, rule_level);
-                        for original in by_rel.get(&goal.rel).into_iter().flatten() {
-                            let mut body = vec![Goal {
-                                polarity: Polarity::Positive,
-                                rel: demand_rel,
-                                args: positions
-                                    .iter()
-                                    .map(|position| original.head[*position].clone())
-                                    .collect(),
-                            }];
-                            body.extend(original.body.iter().cloned());
-                            queue.push(Rule {
-                                rel: adorned_rel,
-                                head: original.head.clone(),
-                                body,
-                                vars: original.vars.clone(),
-                            });
-                        }
-                        if seeded.contains(&goal.rel) {
-                            let arity = goal.args.len();
-                            let vars: Vec<TermId> =
-                                pass_vars[..arity.min(pass_vars.len())].to_vec();
-                            let args: Vec<Arg> = (0..arity)
-                                .map(|index| Arg::Var(VarId(index as u32)))
-                                .collect();
-                            done.push(Rule {
-                                rel: adorned_rel,
-                                head: args.clone(),
-                                body: vec![Goal {
-                                    polarity: Polarity::Positive,
-                                    rel: goal.rel,
-                                    args,
-                                }],
-                                vars,
-                            });
-                        }
-                        (demand_rel, adorned_rel)
-                    }
-                };
-                done.push(Rule {
-                    rel: demand_rel,
-                    head: positions
-                        .iter()
-                        .map(|position| goal.args[*position].clone())
-                        .collect(),
-                    body: rule.body[..at].to_vec(),
-                    vars: rule.vars.clone(),
-                });
-                rule.body[at].rel = adorned_rel;
-            }
-            if positive {
-                for arg in &goal.args {
-                    if let Arg::Var(var) = arg {
-                        bound.insert(var.0);
-                    }
-                }
-            }
+        if !hidden.contains(&rule.rel) {
+            by_level
+                .entry(strata.level(rule.rel))
+                .or_default()
+                .push(rule.clone());
+            continue;
         }
-        done.push(rule);
+        let first = rule
+            .body
+            .iter()
+            .filter(|goal| !hidden.contains(&goal.rel))
+            .map(|goal| strata.level(goal.rel) + u32::from(goal.polarity == Polarity::Negative))
+            .max()
+            .unwrap_or(0)
+            .min(strata.max_level);
+        for level in first..=strata.max_level {
+            by_level.entry(level).or_default().push(rule.clone());
+        }
     }
-    if !queue.is_empty() {
-        tracing::error!(target: "dl8::eval", left = queue.len(), "demand rewrite budget exhausted");
+    by_level
+}
+
+/// Produces one explicit diagnostic for a DD path that has no lowering.
+fn not_built_yet(u: &mut Universe, construct: &str) -> Diagnostic {
+    let site = u.string(&format!(
+        "src/_6_eval/_9_dd_eval.rs:{}: {construct}",
+        line!()
+    ));
+    Diagnostic {
+        phase: "evaluate",
+        payload: u.compound("not_built_yet", vec![site]),
     }
-    out.rules = done;
-    (out, hidden, synthetic_levels)
 }
 
 fn tagged(rel: TermId, args: &[TermId]) -> DdRow {
