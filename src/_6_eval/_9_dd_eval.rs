@@ -697,13 +697,14 @@ fn unify(args: &[Arg], row: &[u32], env: &mut [u32]) -> bool {
     true
 }
 
-/// Runs synthetic demand rules from their first safe stratum onward.
+/// Runs synthetic demand rules only where a rule at that level reads them.
 fn schedule_rules(
     program: &Program,
     strata: &Strata,
     hidden: &HashSet<TermId>,
 ) -> HashMap<u32, Vec<Rule>> {
     let mut by_level: HashMap<u32, Vec<Rule>> = HashMap::new();
+    let mut hidden_rules: HashMap<TermId, Vec<(&Rule, u32)>> = HashMap::new();
     for rule in &program.rules {
         if !hidden.contains(&rule.rel) {
             by_level
@@ -720,8 +721,34 @@ fn schedule_rules(
             .max()
             .unwrap_or(0)
             .min(strata.max_level);
-        for level in first..=strata.max_level {
-            by_level.entry(level).or_default().push(rule.clone());
+        hidden_rules.entry(rule.rel).or_default().push((rule, first));
+    }
+    for level in 0..=strata.max_level {
+        let mut seen = HashSet::new();
+        let mut queue = Vec::new();
+        for rule in by_level.get(&level).into_iter().flatten() {
+            for goal in &rule.body {
+                if hidden.contains(&goal.rel) && seen.insert(goal.rel) {
+                    queue.push(goal.rel);
+                }
+            }
+        }
+        // Each hidden relation enters the queue once, so this bound covers its transitive reads.
+        for at in 0..hidden.len() {
+            let Some(rel) = queue.get(at) else {
+                break;
+            };
+            for (rule, first) in hidden_rules.get(rel).into_iter().flatten() {
+                if *first > level {
+                    continue;
+                }
+                for goal in &rule.body {
+                    if hidden.contains(&goal.rel) && seen.insert(goal.rel) {
+                        queue.push(goal.rel);
+                    }
+                }
+                by_level.entry(level).or_default().push((*rule).clone());
+            }
         }
     }
     by_level
