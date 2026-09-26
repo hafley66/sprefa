@@ -1,10 +1,4 @@
-"""Rewrite every oracle case's `expected` from dl8's own stdout.
-
-The frozen JSON files are v8 goldens; this script runs the dl8
-binary instead, so the committed bytes are dl8's goldens. Only the fields a
-case already carries are replaced, which keeps each test comparing what it
-compared before.
-"""
+"""Rewrite every oracle case's existing `expected` fields from the v8 Rust engine."""
 
 import json
 import os
@@ -27,11 +21,14 @@ def door(binary, args, env=None):
     run = subprocess.run(
         [binary] + args,
         capture_output=True,
-        env={**os.environ, **(env or {})},
+        env={**os.environ, **(env or {}), "DL8_ENGINE": "rust"},
     )
     if not run.stdout:
-        raise RuntimeError(run.stderr.decode()[-400:])
-    return json.loads(run.stdout)
+        raise RuntimeError(f"{args}: no stdout; exit {run.returncode}: {run.stderr.decode()[-400:]}")
+    try:
+        return json.loads(run.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{args}: invalid JSON; exit {run.returncode}: {run.stderr.decode()[-400:]}") from error
 
 
 def read_json(path):
@@ -67,7 +64,9 @@ def replace(case, got):
     expected = case["expected"]
     changed = False
     for key in expected:
-        if key in got and expected[key] != got[key]:
+        if key not in got:
+            raise RuntimeError(f"dl8 omitted expected field {key}")
+        if expected[key] != got[key]:
             expected[key] = got[key]
             changed = True
     return changed
@@ -92,8 +91,10 @@ def refreeze_read(binary, directory):
         source = tempfile.NamedTemporaryFile("w", suffix=".dl7", delete=False)
         source.write(case["input"])
         source.close()
-        got = door(binary, ["read", source.name], {"DL8_READ_PATH": case["path"]})
-        os.unlink(source.name)
+        try:
+            got = door(binary, ["read", source.name], {"DL8_READ_PATH": case["path"]})
+        finally:
+            os.unlink(source.name)
         if replace(case, got):
             write_json(path, case)
             count += 1
@@ -107,8 +108,10 @@ def refreeze_eval(binary, directory):
         program = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
         json.dump(case["program"], program)
         program.close()
-        got = door(binary, ["eval", program.name])
-        os.unlink(program.name)
+        try:
+            got = door(binary, ["eval", program.name])
+        finally:
+            os.unlink(program.name)
         if replace(case, got):
             write_json(path, case)
             count += 1
@@ -149,6 +152,8 @@ def main():
     for name, phase in PLAIN:
         keep = numbered if name == "macrotime" else (lambda name: True)
         print(name, "rewritten", refreeze_plain(binary, os.path.join(here, name), phase, keep))
+        if skipped(os.path.join(here, name)):
+            print(name, "skipped", sorted(skipped(os.path.join(here, name))))
     print("read", "rewritten", refreeze_read(binary, os.path.join(here, "read")))
     print("eval", "rewritten", refreeze_eval(binary, os.path.join(here, "eval")))
     print("compile", "rewritten", refreeze_compile(binary, os.path.join(here, "compile")))
