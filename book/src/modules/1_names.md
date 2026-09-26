@@ -107,8 +107,8 @@ A field typed `bool` and a field typed `int` both reach the primitive. `@std/tsi
 
 ```console
 $ $DL8 compile book/src/probes/17_bool_field.dl7 | jq -r --arg owner Holder '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"'
-(: Holder count primitive(int))
-(: Holder flag primitive(bool))
+(: Holder count int)
+(: Holder flag bool)
 ```
 
 A bare `str` reaches the primitive the same way; [Application in a declaration](2_the_return_column.md#application-in-a-declaration) shows the compiled shape.

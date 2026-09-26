@@ -14,7 +14,7 @@ The probe writes `(Wrap str)`, and `str` is the primitive. The label of `Holder`
 
 ```console
 $ $DL8 compile book/src/probes/0_return_column.dl7 | jq -r --arg owner Holder '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"'
-(: Holder (Wrap primitive(str)) primitive(int))
+(: Holder (Wrap str) int)
 ```
 
 The same shape with the column named `target`:
@@ -71,7 +71,7 @@ A full application on the right of a declaration is its return column's node:
 
 ```console
 $ $DL8 compile book/src/probes/20_full_application_bind.dl7 | jq -r --arg owner 'module(file(book/src/probes/20_full_application_bind.dl7))' '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"' | grep WrappedText
-(: module(file(book/src/probes/20_full_application_bind.dl7)) WrappedText (Wrap primitive(str)))
+(: module(file(book/src/probes/20_full_application_bind.dl7)) WrappedText (Wrap str))
 ```
 
 A top-level named bind with fewer arguments curries: `(: PairUser (Pair User))` then `(PairUser Order PairResult)` (`oracle/compile/sources/test/fixtures/5_curry.dl7:12-15`), and a relation may return a callable (`5_curry.dl7:31-41`). The curried name here resolves through the prelude alias, a second module:
@@ -82,8 +82,8 @@ A top-level named bind with fewer arguments curries: `(: PairUser (Pair User))` 
 
 ```console
 $ $DL8 compile book/src/probes/22_curry_prelude_name.dl7 | jq -r --arg owner KeyName '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"'
-(: KeyName options primitive(type))
-(: KeyName return primitive(type))
+(: KeyName options type)
+(: KeyName return type)
 ```
 
 `KeyName` keeps the `options` and `return` columns of `Key`; `name` is captured. Currying exists as a named bind, not as a field type. No `v6/prolog/conformance/rulings.pl` row names partial application in a field; the nearest, `rulings.pl:700-708`, quarantines currying for initial use. A partial application as a field type stops:
