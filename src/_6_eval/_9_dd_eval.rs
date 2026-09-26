@@ -573,11 +573,11 @@ fn lower_rule<'scope, T>(
 where
     T: Timestamp + Lattice + Ord + Hash,
 {
-    let (all, unit, tagged_rows) = sources;
+    let (_all, unit, tagged_rows) = sources;
     let vars = rule.vars.len();
     let mut bound = vec![false; vars];
     let mut envs = unit.clone().map(move |_| vec![UNBOUND; vars]);
-    let mut side_rows = all.clone().filter(|_| false);
+    let mut side_rows: Option<VecCollection<'scope, T, DdRow, Weight>> = None;
     for goal in &rule.body {
         let kernel = super::kernel::Kernel::of(&arena.lock().unwrap(), goal.rel);
         if goal.polarity == Polarity::Negative {
@@ -594,7 +594,7 @@ where
             let args = goal.args.clone();
             let rel = goal.rel;
             let arena_for_effect = Arc::clone(&arena);
-            side_rows = side_rows.concat(envs.clone().flat_map(move |env| {
+            let effects = envs.clone().flat_map(move |env| {
                 let pattern: Vec<Option<TermId>> = args
                     .iter()
                     .map(|arg| value(arg, &env).map(TermId))
@@ -612,7 +612,11 @@ where
                     tagged(served_rows.effect, &rows.effect),
                     tagged(served_rows.snapshot, &rows.snapshot),
                 ]
-            }));
+            });
+            side_rows = Some(match side_rows {
+                Some(rows) => rows.concat(effects),
+                None => effects,
+            });
         }
         envs = match kernel {
             Some(kernel) => {
@@ -627,10 +631,14 @@ where
                 let solved = positive_kernel(envs, &goal.args, kernel, Arc::clone(&arena));
                 if kernel == super::kernel::Kernel::Intern {
                     let rel = goal.rel.0;
-                    side_rows = side_rows.concat(solved.clone().map(move |(_, mut row)| {
+                    let interned = solved.clone().map(move |(_, mut row)| {
                         row.insert(0, rel);
                         row
-                    }));
+                    });
+                    side_rows = Some(match side_rows {
+                        Some(rows) => rows.concat(interned),
+                        None => interned,
+                    });
                 }
                 solved.map(|(env, _)| env).concat(stored).distinct()
             }
@@ -660,7 +668,10 @@ where
         }
         Some(row)
     });
-    heads.concat(side_rows)
+    match side_rows {
+        Some(rows) => heads.concat(rows),
+        None => heads,
+    }
 }
 
 fn positive_kernel<'scope, T>(
