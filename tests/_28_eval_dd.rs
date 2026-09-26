@@ -1,7 +1,7 @@
 //! Oracle parity through the real binary with `DL8_ENGINE=dd`.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 
 /// Fixtures the DD engine must keep passing.
 const FLOOR: usize = 32;
@@ -18,17 +18,6 @@ fn fixtures() -> Vec<PathBuf> {
         .collect();
     out.sort();
     out
-}
-
-fn assert_not_built(output: Output, construct: &str) {
-    assert_eq!(output.status.code(), Some(1), "{construct} exit status");
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("not_built_yet"), "{construct}: {stdout}");
-    assert!(stdout.contains(construct), "{construct}: {stdout}");
-    assert!(
-        stdout.contains("src/_6_eval/_9_dd_eval.rs:"),
-        "{construct}: {stdout}"
-    );
 }
 
 #[test]
@@ -113,25 +102,34 @@ fn dd_engine_matches_v7_oracles() {
 }
 
 #[test]
-fn unsupported_served_goal_fails_loudly() {
+fn served_goal_matches_rust_on_the_same_program() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let fixture_path = root.join("oracle/eval/0_transitive.json");
-    let mut fixture: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(fixture_path).unwrap()).unwrap();
-    let relation = fixture["program"]["seeds"][0]["rel"].clone();
-    fixture["program"]["names"] = serde_json::json!({ "edge": relation });
-    let program_path = std::env::temp_dir().join(format!(
-        "dl8-dd-unsupported-served-{}.json",
-        std::process::id()
-    ));
-    std::fs::write(&program_path, serde_json::to_vec(&fixture).unwrap()).unwrap();
-    let served = Command::new(env!("CARGO_BIN_EXE_dl8"))
-        .arg("eval")
-        .arg(&program_path)
-        .args(["--serve", "edge"])
-        .env("DL8_ENGINE", "dd")
+    let source = root.join("fixtures/host_effect/0_pending.dl7");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .arg("compile")
+        .arg(source)
+        .env("DL8_ENGINE", "rust")
         .output()
         .unwrap();
+    assert_eq!(compiled.status.code(), Some(0), "compile status");
+    let program_path =
+        std::env::temp_dir().join(format!("dl8-dd-served-parity-{}.json", std::process::id()));
+    std::fs::write(&program_path, compiled.stdout).unwrap();
+    let evaluate = |engine: &str| {
+        Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .arg("eval")
+            .arg(&program_path)
+            .args(["--serve", "fetch_json"])
+            .env("DL8_ENGINE", engine)
+            .output()
+            .unwrap()
+    };
+    let rust = evaluate("rust");
+    let dd = evaluate("dd");
     let _ = std::fs::remove_file(program_path);
-    assert_not_built(served, "served goal");
+    assert_eq!(dd.status.code(), rust.status.code(), "exit status");
+    let rust: serde_json::Value = serde_json::from_slice(&rust.stdout).unwrap();
+    let dd: serde_json::Value = serde_json::from_slice(&dd.stdout).unwrap();
+    assert_eq!(dd["closure"], rust["closure"], "closure");
+    assert_eq!(dd["diagnostics"], rust["diagnostics"], "diagnostics");
 }

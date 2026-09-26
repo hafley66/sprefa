@@ -277,18 +277,12 @@ impl<'a> Eval<'a> {
     /// `effect(Relation, Application)` on every evaluation of a served goal,
     /// hit or miss: the row is live interest, not a miss report.
     fn write_effect(&mut self, rel: TermId, pattern: &Pattern) {
-        let none = self.cx.effects.none;
-        let values: Vec<TermId> = pattern.iter().map(|t| t.unwrap_or(none)).collect();
-        let list = self.u.list(&values);
-        let arguments = self.u.compound("const", vec![list]);
-        let Some(row) = kernel::intern_row(self.u, &[Some(rel), Some(arguments), None]) else {
+        let Some(rows) = effect_rows(self.u, self.cx.effects.none, rel, pattern) else {
             return;
         };
-        let application = row[2];
-        self.intern_requests.push(row.clone().into_boxed_slice());
-        self.snapshot_rows.push(row.into_boxed_slice());
-        self.effect_rows
-            .push(vec![rel, application].into_boxed_slice());
+        self.intern_requests.push(rows.intern.into_boxed_slice());
+        self.snapshot_rows.push(rows.snapshot.into_boxed_slice());
+        self.effect_rows.push(rows.effect.into_boxed_slice());
     }
 
     /// Top-down proof of a derived relation under bindings, the part of v7's
@@ -369,6 +363,32 @@ impl<'a> Eval<'a> {
         }
         true
     }
+}
+
+/// The three rows one served-goal evaluation writes.
+pub(super) struct EffectRows {
+    pub intern: Vec<TermId>,
+    pub effect: Vec<TermId>,
+    pub snapshot: Vec<TermId>,
+}
+
+/// Builds the intern request, effect row, and intern snapshot for one pattern.
+pub(super) fn effect_rows(
+    u: &mut Universe,
+    none: TermId,
+    rel: TermId,
+    pattern: &[Option<TermId>],
+) -> Option<EffectRows> {
+    let values: Vec<TermId> = pattern.iter().map(|term| term.unwrap_or(none)).collect();
+    let list = u.list(&values);
+    let arguments = u.compound("const", vec![list]);
+    let intern = kernel::intern_row(u, &[Some(rel), Some(arguments), None])?;
+    let application = intern[2];
+    Some(EffectRows {
+        snapshot: intern.clone(),
+        intern,
+        effect: vec![rel, application],
+    })
 }
 
 fn head_row(env: &Env, rule: &Rule) -> Option<Vec<TermId>> {

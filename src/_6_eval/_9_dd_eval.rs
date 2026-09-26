@@ -24,6 +24,14 @@ enum DeclaredFoldInput {
     Stored(DdRow),
 }
 
+#[derive(Clone, Copy)]
+struct ServedRows {
+    intern: TermId,
+    effect: TermId,
+    snapshot: TermId,
+    none: TermId,
+}
+
 /// Evaluates positive products and recursive strata as DD collections.
 pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
     let (strata, diagnostics) = stratify(u, program);
@@ -33,18 +41,15 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             diagnostics,
         };
     }
-    let mut unsupported = Vec::new();
-    if !program.served.is_empty() {
-        unsupported.push(not_built_yet(u, "served goal"));
-    }
-    if !unsupported.is_empty() {
-        unsupported.sort_by(|left, right| u.cmp(left.payload, right.payload));
-        unsupported.dedup();
-        return Closure {
-            rows: Vec::new(),
-            diagnostics: unsupported,
-        };
-    }
+    let ruled: HashSet<TermId> = program.rules.iter().map(|rule| rule.rel).collect();
+    let served: Arc<HashSet<TermId>> = Arc::new(
+        program
+            .served
+            .iter()
+            .filter(|rel| !ruled.contains(rel))
+            .copied()
+            .collect(),
+    );
     let fold_program = Arc::new(program.clone());
     let (program, hidden) = super::sqlite_eval::with_demand(u, program);
     let program = &program;
@@ -70,6 +75,13 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     }
 
     let nil_rel = kernel_ref(u, "nil");
+    let intern_rel = kernel_ref(u, "intern");
+    let effect_rel = kernel_ref(u, "effect");
+    let snapshot_rel = kernel_ref(u, "intern_snapshot");
+    let none = {
+        let none = u.atom("none");
+        u.compound("const", vec![none])
+    };
     let empty = u.empty_list();
     let nil_arg = u.compound("const", vec![empty]);
     let nil = tagged(nil_rel, &[nil_arg]);
@@ -133,10 +145,22 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                     continue;
                 }
                 let arena = Arc::clone(&arena_worker);
+                let served = Arc::clone(&served);
                 known = base.iterate(move |_scope, current| {
                     let mut derived = current.clone().filter(|_| false);
                     for rule in &plain {
-                        let rows = lower_rule(&current, rule, Arc::clone(&arena));
+                        let rows = lower_rule(
+                            &current,
+                            rule,
+                            Arc::clone(&arena),
+                            Arc::clone(&served),
+                            ServedRows {
+                                intern: intern_rel,
+                                effect: effect_rel,
+                                snapshot: snapshot_rel,
+                                none,
+                            },
+                        );
                         derived = derived.concat(rows);
                     }
                     current.concat(derived).distinct()
@@ -336,6 +360,8 @@ fn lower_rule<'scope, T>(
     all: &VecCollection<'scope, T, DdRow, Weight>,
     rule: &Rule,
     arena: Arc<Mutex<Universe>>,
+    served: Arc<HashSet<TermId>>,
+    served_rows: ServedRows,
 ) -> VecCollection<'scope, T, DdRow, Weight>
 where
     T: Timestamp + Lattice + Ord + Hash,
@@ -344,7 +370,7 @@ where
     let mut bound = vec![false; vars];
     // The nil bootstrap makes this one empty environment without a separate DD input.
     let mut envs = all.clone().map(move |_| vec![UNBOUND; vars]).distinct();
-    let mut kernel_rows = all.clone().filter(|_| false);
+    let mut side_rows = all.clone().filter(|_| false);
     for goal in &rule.body {
         let kernel = super::kernel::Kernel::of(&arena.lock().unwrap(), goal.rel);
         if goal.polarity == Polarity::Negative {
@@ -357,6 +383,30 @@ where
             };
             continue;
         }
+        if served.contains(&goal.rel) {
+            let args = goal.args.clone();
+            let rel = goal.rel;
+            let arena_for_effect = Arc::clone(&arena);
+            side_rows = side_rows.concat(envs.clone().flat_map(move |env| {
+                let pattern: Vec<Option<TermId>> = args
+                    .iter()
+                    .map(|arg| value(arg, &env).map(TermId))
+                    .collect();
+                let Some(rows) = super::evaluate::effect_rows(
+                    &mut arena_for_effect.lock().unwrap(),
+                    served_rows.none,
+                    rel,
+                    &pattern,
+                ) else {
+                    return Vec::new();
+                };
+                vec![
+                    tagged(served_rows.intern, &rows.intern),
+                    tagged(served_rows.effect, &rows.effect),
+                    tagged(served_rows.snapshot, &rows.snapshot),
+                ]
+            }));
+        }
         envs = match kernel {
             Some(kernel) => {
                 let stored = join_goal(
@@ -368,7 +418,7 @@ where
                 let solved = positive_kernel(envs, &goal.args, kernel, Arc::clone(&arena));
                 if kernel == super::kernel::Kernel::Intern {
                     let rel = goal.rel.0;
-                    kernel_rows = kernel_rows.concat(solved.clone().map(move |(_, mut row)| {
+                    side_rows = side_rows.concat(solved.clone().map(move |(_, mut row)| {
                         row.insert(0, rel);
                         row
                     }));
@@ -397,7 +447,7 @@ where
         }
         Some(row)
     });
-    heads.concat(kernel_rows)
+    heads.concat(side_rows)
 }
 
 fn positive_kernel<'scope, T>(
@@ -587,18 +637,6 @@ fn schedule_rules(
         }
     }
     by_level
-}
-
-/// Produces one explicit diagnostic for a DD path that has no lowering.
-fn not_built_yet(u: &mut Universe, construct: &str) -> Diagnostic {
-    let site = u.string(&format!(
-        "src/_6_eval/_9_dd_eval.rs:{}: {construct}",
-        line!()
-    ));
-    Diagnostic {
-        phase: "evaluate",
-        payload: u.compound("not_built_yet", vec![site]),
-    }
 }
 
 fn tagged(rel: TermId, args: &[TermId]) -> DdRow {
