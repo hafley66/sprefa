@@ -4,7 +4,7 @@ use super::evaluate::{Closure, Trace};
 use super::program::{Arg, Diagnostic, Folding, Polarity, Program, Row, Rule};
 use super::stratify::{stratify, Strata};
 use super::term::{TermId, Universe};
-use differential_dataflow::input::Input;
+use differential_dataflow::input::{Input, InputSession};
 use differential_dataflow::lattice::Lattice;
 use differential_dataflow::operators::arrange::{Arranged, TraceAgent};
 use differential_dataflow::operators::Iterate;
@@ -18,6 +18,7 @@ use std::time::Instant;
 use timely::dataflow::operators::probe::Handle as ProbeHandle;
 use timely::logging::{TimelyEvent, TimelyEventBuilder};
 use timely::progress::Timestamp;
+use timely::worker::Worker;
 
 type DdRow = Vec<u32>;
 type Weight = isize;
@@ -58,6 +59,31 @@ struct StratumProfile {
     round_inspect: Option<usize>,
 }
 
+struct CachedDd {
+    key: String,
+    syms: Vec<String>,
+    terms: Vec<super::term::Term>,
+    input: InputSession<u64, DdRow, Weight>,
+    worker: Worker,
+    level_probes: Vec<(u32, ProbeHandle<u64>)>,
+    probe: ProbeHandle<u64>,
+    arena: Arc<Mutex<Universe>>,
+    fold_program: Arc<Mutex<Program>>,
+    captured: Arc<Mutex<Vec<(DdRow, Weight)>>>,
+    diagnostics: Arc<Mutex<Vec<Diagnostic>>>,
+    seeds: HashSet<DdRow>,
+    rows: HashMap<DdRow, Weight>,
+    profiles: Vec<StratumProfile>,
+    operator_ids: Arc<Mutex<Vec<usize>>>,
+}
+
+// Macrotime and comptime alternate rule sets, so retain one graph for each.
+const CACHE_LIMIT: usize = 2;
+
+thread_local! {
+    static CACHE: std::cell::RefCell<Vec<CachedDd>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Evaluates positive products and recursive strata as DD collections.
 pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
     let evaluation_started = Instant::now();
@@ -77,7 +103,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             .copied()
             .collect(),
     );
-    let fold_program = Arc::new(program.clone());
+    let fold_program = Arc::new(Mutex::new(program.clone()));
     let (program, hidden) = super::sqlite_eval::with_demand(u, program);
     let program = &program;
 
@@ -136,14 +162,53 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         });
     }
 
-    let arena = Arc::new(Mutex::new(std::mem::take(u)));
-    let captured: Arc<Mutex<Vec<(DdRow, Weight)>>> = Arc::default();
-    let aggregate_diagnostics: Arc<Mutex<Vec<Diagnostic>>> = Arc::default();
-    let program = program.clone();
-    let arena_worker = Arc::clone(&arena);
-    let captured_worker = Arc::clone(&captured);
-    let diagnostics_worker = Arc::clone(&aggregate_diagnostics);
-    timely::execute_directly(move |worker| {
+    let mut served_key: Vec<u32> = served.iter().map(|rel| rel.0).collect();
+    served_key.sort_unstable();
+    let mut seeded_rels: Vec<u32> = program.seeds.iter().map(|row| row.rel.0).collect();
+    seeded_rels.sort_unstable();
+    seeded_rels.dedup();
+    let key = format!("{:?}|{served_key:?}|{seeded_rels:?}", program.rules);
+    let seeds: HashSet<DdRow> = program
+        .seeds
+        .iter()
+        .map(|row| tagged(row.rel, &row.args))
+        .chain([nil.clone()])
+        .collect();
+    let mut cache = CACHE.with(|cache| std::mem::take(&mut *cache.borrow_mut()));
+    // Reuse only an equal graph with insertion-only seed changes. The arena
+    // prefix also guards captured TermIds when a different program is evaluated.
+    let reusable = cache.iter().position(|entry| {
+        entry.key == key
+            && entry.seeds.is_subset(&seeds)
+            && entry.syms.len() <= u.syms.len()
+            && entry.terms.len() <= u.terms.len()
+            && entry.syms.iter().zip(&u.syms).all(|(old, new)| old == new)
+            && entry
+                .terms
+                .iter()
+                .zip(&u.terms)
+                .all(|(old, new)| old == new)
+    });
+    let reused = reusable.is_some();
+    let mut entry = if let Some(index) = reusable {
+        let selected = cache.remove(index);
+        *selected.arena.lock().unwrap() = std::mem::take(u);
+        *selected.fold_program.lock().unwrap() = fold_program.lock().unwrap().clone();
+        selected
+    } else {
+        let syms = u.syms.iter().cloned().collect();
+        let terms = u.terms.iter().cloned().collect();
+        let arena = Arc::new(Mutex::new(std::mem::take(u)));
+        let captured: Arc<Mutex<Vec<(DdRow, Weight)>>> = Arc::default();
+        let aggregate_diagnostics: Arc<Mutex<Vec<Diagnostic>>> = Arc::default();
+        let program = program.clone();
+        let arena_worker = Arc::clone(&arena);
+        let captured_worker = Arc::clone(&captured);
+        let diagnostics_worker = Arc::clone(&aggregate_diagnostics);
+        let alloc = timely::communication::Allocator::Thread(
+            timely::communication::allocator::thread::Thread::default(),
+        );
+        let mut worker = Worker::new(timely::WorkerConfig::default(), alloc, Some(Instant::now()));
         let profile = std::env::var_os("DL8_DD_PROFILE").is_some();
         let operator_ids = Arc::new(Mutex::new(Vec::new()));
         if profile {
@@ -163,7 +228,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         }
         let probe = ProbeHandle::new();
         let build_started = Instant::now();
-        let (mut input, level_probes, profiles) = worker.dataflow::<u64, _, _>(|scope| {
+        let (input, level_probes, profiles) = worker.dataflow::<u64, _, _>(|scope| {
             let (input, seeds) = scope.new_collection::<DdRow, Weight>();
             let mut known = seeds.clone().filter(move |row| row[0] == nil_rel.0);
             let mut level_probes = Vec::new();
@@ -324,15 +389,39 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             build_ms = build_started.elapsed().as_millis(),
             "dd dataflow build"
         );
-        input.insert(nil);
-        for row in &program.seeds {
-            input.insert(tagged(row.rel, &row.args));
+        CachedDd {
+            key,
+            syms,
+            terms,
+            worker,
+            input,
+            level_probes,
+            probe,
+            arena,
+            fold_program,
+            captured,
+            diagnostics: aggregate_diagnostics,
+            seeds: HashSet::new(),
+            rows: HashMap::new(),
+            profiles,
+            operator_ids,
         }
-        input.advance_to(1);
-        input.flush();
-        for (level, level_probe) in level_probes {
+    };
+    tracing::info!(
+        reused,
+        inserted = seeds.len() - entry.seeds.len(),
+        "dd dataflow reuse"
+    );
+    if seeds != entry.seeds {
+        for row in seeds.difference(&entry.seeds) {
+            entry.input.insert(row.clone());
+        }
+        let next = *entry.input.time() + 1;
+        entry.input.advance_to(next);
+        entry.input.flush();
+        for (level, level_probe) in &entry.level_probes {
             let step_started = Instant::now();
-            worker.step_while(|| level_probe.less_than(&1));
+            entry.worker.step_while(|| level_probe.less_than(&next));
             tracing::info!(
                 level,
                 step_ms = step_started.elapsed().as_millis(),
@@ -340,86 +429,98 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             );
         }
         let step_started = Instant::now();
-        worker.step_while(|| probe.less_than(&1));
+        entry.worker.step_while(|| entry.probe.less_than(&next));
         tracing::info!(step_ms = step_started.elapsed().as_millis(), "dd sink step");
-        if profile {
-            worker.logging().unwrap().flush();
-            let ids = operator_ids.lock().unwrap();
-            let mut previous_rows = 0;
-            for stratum in profiles {
-                let operators = ids
-                    .iter()
+        entry.seeds = seeds;
+    }
+    if std::env::var_os("DL8_DD_PROFILE").is_some() && !entry.profiles.is_empty() {
+        entry.worker.logging().unwrap().flush();
+        let ids = entry.operator_ids.lock().unwrap();
+        let mut previous_rows = 0;
+        for stratum in &entry.profiles {
+            let operators = if reused {
+                0
+            } else {
+                ids.iter()
                     .filter(|&&id| {
                         id >= stratum.operator_start
                             && id < stratum.operator_end
                             && Some(id) != stratum.round_inspect
                     })
-                    .count();
-                let rows = stratum
-                    .rows
-                    .lock()
-                    .unwrap()
-                    .values()
-                    .filter(|&&diff| diff > 0)
-                    .count();
-                tracing::info!(
-                    level = stratum.level,
-                    rounds = stratum.rounds.load(Ordering::Relaxed),
-                    operators,
-                    new_rows = rows.saturating_sub(previous_rows),
-                    cumulative_rows = rows,
-                    "dd stratum profile"
-                );
-                previous_rows = rows;
-            }
+                    .count()
+            };
+            let rows = stratum
+                .rows
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|&&diff| diff > 0)
+                .count();
+            tracing::info!(
+                level = stratum.level,
+                rounds = stratum.rounds.load(Ordering::Relaxed),
+                operators,
+                new_rows = rows.saturating_sub(previous_rows),
+                cumulative_rows = rows,
+                "dd stratum profile"
+            );
+            previous_rows = rows;
         }
-    });
+    }
 
     let extraction_started = Instant::now();
-    let mut rows: Vec<Row> = captured
-        .lock()
-        .unwrap()
-        .drain(..)
-        .filter(|(_, diff)| *diff > 0)
+    for (row, diff) in entry.captured.lock().unwrap().drain(..) {
+        *entry.rows.entry(row).or_default() += diff;
+    }
+    entry.rows.retain(|_, weight| *weight != 0);
+    let mut rows: Vec<Row> = entry
+        .rows
+        .iter()
+        .filter(|(_, weight)| **weight > 0)
         .map(|(row, _)| Row {
             rel: TermId(row[0]),
             args: row[1..].iter().copied().map(TermId).collect(),
         })
         .collect();
     rows.retain(|row| !hidden.contains(&row.rel));
-    let mut diagnostics = aggregate_diagnostics.lock().unwrap().clone();
-    let mutex = match Arc::try_unwrap(arena) {
-        Ok(mutex) => mutex,
-        Err(_) => panic!("DD arena still has an operator owner"),
-    };
-    let mut arena = mutex.into_inner().unwrap();
+    let mut diagnostics = entry.diagnostics.lock().unwrap().clone();
+    let mut arena = entry.arena.lock().unwrap();
+    entry.syms = arena.syms.iter().cloned().collect();
+    entry.terms = arena.terms.iter().cloned().collect();
     if !diagnostics.is_empty() {
         diagnostics.sort_by(|left, right| arena.cmp(left.payload, right.payload));
         diagnostics.dedup();
-        *u = std::mem::take(&mut arena);
-        return Closure {
+    } else {
+        rows.sort_by(|left, right| {
+            arena
+                .cmp(left.rel, right.rel)
+                .then_with(|| arena.cmp_rows(&left.args, &right.args))
+        });
+        rows.dedup();
+    }
+    let result = if diagnostics.is_empty() {
+        fx(Trace::Closure { rows: rows.len() });
+        tracing::info!(
+            extract_ms = extraction_started.elapsed().as_millis(),
+            total_ms = evaluation_started.elapsed().as_millis(),
+            rows = rows.len(),
+            "dd row extraction"
+        );
+        Closure { rows, diagnostics }
+    } else {
+        Closure {
             rows: Vec::new(),
             diagnostics,
-        };
+        }
+    };
+    *u = std::mem::take(&mut *arena);
+    drop(arena);
+    cache.push(entry);
+    if cache.len() > CACHE_LIMIT {
+        cache.remove(0);
     }
-    rows.sort_by(|left, right| {
-        arena
-            .cmp(left.rel, right.rel)
-            .then_with(|| arena.cmp_rows(&left.args, &right.args))
-    });
-    rows.dedup();
-    fx(Trace::Closure { rows: rows.len() });
-    tracing::info!(
-        extract_ms = extraction_started.elapsed().as_millis(),
-        total_ms = evaluation_started.elapsed().as_millis(),
-        rows = rows.len(),
-        "dd row extraction"
-    );
-    *u = std::mem::take(&mut arena);
-    Closure {
-        rows,
-        diagnostics: Vec::new(),
-    }
+    CACHE.with(|stored| *stored.borrow_mut() = cache);
+    result
 }
 
 fn lower_aggregate_rule<'scope, T>(
@@ -429,7 +530,7 @@ fn lower_aggregate_rule<'scope, T>(
     rule: &Rule,
     arena: Arc<Mutex<Universe>>,
     diagnostics: Arc<Mutex<Vec<Diagnostic>>>,
-    program: Arc<Program>,
+    program: Arc<Mutex<Program>>,
 ) -> VecCollection<'scope, T, DdRow, Weight>
 where
     T: Timestamp + Lattice + Ord + Hash,
@@ -550,7 +651,7 @@ where
                     let values: Vec<&[TermId]> = groups.values().map(Vec::as_slice).collect();
                     let results = super::evaluate::fold_generic_row_groups(
                         &mut arena_for_reduce.lock().unwrap(),
-                        &program,
+                        &program.lock().unwrap(),
                         &rows,
                         &fold,
                         &values,
