@@ -36,8 +36,8 @@ A project installs a graph of module owners. The root directory is `module(direc
 
 ```console
 $ $DL8 compile book/src/probes/11_consumer.dl7 --project book/src/probes book/src/probes/10_accounts.dl7 | jq -r --arg owner 'module(directory(book/src/probes))' '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"'
-(: module(directory(book/src/probes)) accounts module(file(book/src/probes/10_accounts.dl7)))
-(: module(directory(book/src/probes)) consumer module(file(book/src/probes/11_consumer.dl7)))
+(: module(directory(book/src/probes)) accounts accounts)
+(: module(directory(book/src/probes)) consumer consumer)
 ```
 
 The goal's name `accounts` resolves by walking owners:

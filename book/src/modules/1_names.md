@@ -43,9 +43,10 @@ step 2  owner=module(file(...))   name=Shadow  forward edge -> the product Shado
 A module owner's forward edges hold its own declarations plus one alias per prelude name it does not bind ([A module is a file](0_a_module_is_a_file.md)). The prelude therefore sits between the file and the kernel:
 
 ```console
-$ $DL8 compile book/src/probes/11_consumer.dl7 --project book/src/probes book/src/probes/10_accounts.dl7 | jq -r --arg owner 'module(file(book/src/probes/10_accounts.dl7))' '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"' | grep -E ' (User|Option|bool) '
-(: module(file(book/src/probes/10_accounts.dl7)) Option Option)
-(: module(file(book/src/probes/10_accounts.dl7)) User User)
+$ $DL8 compile book/src/probes/11_consumer.dl7 --project book/src/probes book/src/probes/10_accounts.dl7 | jq -r --arg owner accounts '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"' | grep -E ' (User|Option|bool) '
+(: accounts Option Option)
+(: accounts User User)
+(: accounts bool bool)
 ```
 
 Order for a bare name, nearest first: the enclosing products, the file, the prelude alias, the kernel, the primitives.

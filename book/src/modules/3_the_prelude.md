@@ -70,7 +70,7 @@ $ sed -n 3,6p prelude/4_type_algebra.dl7 && sed -n 55p std/tsi.dl7
 Macrotime is a second built-in program, `macrotime/0_standard.dl7`, that runs over syntax rows before lowering. Its one macro claims a form whose item 0 is `<+` and emits the same form with `<-`:
 
 ```console
-$ sed -n 75,82p macrotime/0_standard.dl7 && sed -n 108,109p macrotime/0_standard.dl7
+$ sed -n 68,74p macrotime/0_standard.dl7 && sed -n 100,102p macrotime/0_standard.dl7
 ; function plus(invocation: FormNode): readonly [
 ;   FormNode<[AtomNode<"<-">, ...Tail<typeof invocation.items>]>,
 ; ]

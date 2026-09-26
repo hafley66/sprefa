@@ -81,12 +81,12 @@ A top-level named bind with fewer arguments curries: `(: PairUser (Pair User))` 
 ```
 
 ```console
-$ bash book/show.sh compile book/src/probes/22_curry_prelude_name.dl7
-diagnostic diagnostic(compile, reader_node(book/src/probes/22_curry_prelude_name.dl7, 16), missing_derived_edge_label(owner(file(book/src/probes/22_curry_prelude_name.dl7), reader_node(book/src/probes/22_curry_prelude_name.dl7, 14)), 0))
-exit 1
+$ $DL8 compile book/src/probes/22_curry_prelude_name.dl7 | jq -r --arg owner KeyName '(.program.names | to_entries | map({key: (.value | tojson), value: .key}) | from_entries) as $n | def cell: if type != "object" then tostring elif $n[tojson] then $n[tojson] elif $n[{args: [.], f: "ref"} | tojson] then $n[{args: [.], f: "ref"} | tojson] elif .f == "const" then (.args[0].a // (.args[0] | tostring)) elif .f == "ref" then (.args[0] | cell) elif .f == "application" then "(" + ([.args[0] | cell] + (.args[1] | map(cell)) | join(" ")) + ")" elif .f == "module" and .args[0].a then "module(\(.args[0].a))" elif .f == "module" then "module(\(.args[0].f)(\(.args[0].args[0].a | sub("^\($ENV.PWD)/"; ""))))" elif .f and (.args[0].a) then "\(.f)(\(.args[0].a))" else "?" end; .compiler_rows[] | select(.f == "call" and .args[0].args[0].args[0].a == ":") | .args[1] | select((.[0] | cell) == $owner) | "(: \(.[0] | cell) \(.[1] | cell) \(.[2] | cell))"'
+(: KeyName options primitive(type))
+(: KeyName return primitive(type))
 ```
 
-The partial call to `Key` currently stops with `missing_derived_edge_label` at its first slot. A partial application as a field type also stops:
+`KeyName` keeps the `options` and `return` columns of `Key`; `name` is captured. Currying exists as a named bind, not as a field type. No `v6/prolog/conformance/rulings.pl` row names partial application in a field; the nearest, `rulings.pl:700-708`, quarantines currying for initial use. A partial application as a field type stops:
 
 ```dl7
 {{#include ../probes/21_partial_in_field.dl7}}
