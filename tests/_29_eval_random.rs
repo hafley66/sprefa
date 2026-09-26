@@ -234,6 +234,46 @@ fn closures(program: &Value) -> [Value; 3] {
     [run(0), run(1), run(2)]
 }
 
+fn closure_for_seed_indices(program: &Value, seed_indices: &[usize], dd: bool) -> Value {
+    let mut universe = Universe::new();
+    let mut program = program_from_json(&mut universe, program).unwrap();
+    let all_seeds = program.seeds.clone();
+    program.seeds = seed_indices
+        .iter()
+        .map(|&index| all_seeds[index].clone())
+        .collect();
+    let closure = if dd {
+        evaluate_dd(&mut universe, &program, &mut |_| {})
+    } else {
+        evaluate(&mut universe, &program, &mut |_| {})
+    };
+    canonical(closure_to_json(
+        &universe,
+        &closure.rows,
+        &closure.diagnostics,
+    ))
+}
+
+fn seed_sequence(seed: u64, seed_count: usize) -> Vec<Vec<usize>> {
+    let step_count = 3 + (seed as usize % 4);
+    let mut present = vec![true; seed_count];
+    let mut sequence = Vec::with_capacity(step_count);
+    for step in 0..step_count {
+        if step > 0 {
+            let index = (seed as usize).wrapping_add((step - 1) / 2) % seed_count;
+            present[index] = step % 2 == 0;
+        }
+        sequence.push(
+            present
+                .iter()
+                .enumerate()
+                .filter_map(|(index, &included)| included.then_some(index))
+                .collect(),
+        );
+    }
+    sequence
+}
+
 fn diagnostic_kind(diagnostic: &Value) -> String {
     let payload = &diagnostic["payload"];
     let kind = payload["f"]
@@ -604,5 +644,68 @@ fn random_programs_match_all_evaluators() {
         unknown.is_empty() && vanished.is_empty(),
         "unknown gaps: {}; known gaps no longer reproducing: {vanished:?}",
         serde_json::to_string_pretty(&unknown).unwrap()
+    );
+}
+
+#[test]
+fn random_seed_retractions_match_fresh_dd_and_rust() {
+    assert!(
+        std::env::var_os("DL8_ENGINE").is_none(),
+        "Rust path requires DL8_ENGINE unset"
+    );
+    let replay = std::env::var("DL8_RANDOM_SEED")
+        .ok()
+        .map(|n| n.parse::<u64>().expect("DL8_RANDOM_SEED must be u64"));
+    let count = std::env::var("DL8_RANDOM_SEEDS")
+        .ok()
+        .map(|n| n.parse::<u64>().expect("DL8_RANDOM_SEEDS must be u64"))
+        .unwrap_or(200);
+    let seeds: Box<dyn Iterator<Item = u64>> = match replay {
+        Some(seed) => Box::new(std::iter::once(seed)),
+        None => Box::new(0..count),
+    };
+    let started = Instant::now();
+    let mut seed_sets = 0usize;
+    for seed in seeds {
+        let generated = strategy();
+        let spec = generated.new_tree(&mut runner(seed)).unwrap().current();
+        let program = program_json(seed, &spec);
+        let seed_count = program["seeds"].as_array().unwrap().len();
+        let sequence = seed_sequence(seed, seed_count);
+        seed_sets += sequence.len();
+
+        let cached_program = program.clone();
+        let cached_sequence = sequence.clone();
+        let cached = std::thread::spawn(move || {
+            cached_sequence
+                .iter()
+                .map(|indices| closure_for_seed_indices(&cached_program, indices, true))
+                .collect::<Vec<_>>()
+        })
+        .join()
+        .unwrap();
+
+        for (step, indices) in sequence.iter().enumerate() {
+            let fresh_program = program.clone();
+            let fresh_indices = indices.clone();
+            let fresh_dd = std::thread::spawn(move || {
+                closure_for_seed_indices(&fresh_program, &fresh_indices, true)
+            })
+            .join()
+            .unwrap();
+            let rust = closure_for_seed_indices(&program, indices, false);
+            assert_eq!(
+                cached[step], fresh_dd,
+                "seed {seed} step {step} indices={indices:?}: cached DD differs from fresh DD"
+            );
+            assert_eq!(
+                cached[step], rust,
+                "seed {seed} step {step} indices={indices:?}: DD differs from Rust"
+            );
+        }
+    }
+    println!(
+        "random incremental seed_sets={seed_sets} wall_ms={}",
+        started.elapsed().as_millis()
     );
 }

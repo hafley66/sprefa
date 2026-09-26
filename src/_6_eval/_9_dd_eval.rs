@@ -8,7 +8,8 @@ use differential_dataflow::input::{Input, InputSession};
 use differential_dataflow::lattice::Lattice;
 use differential_dataflow::operators::arrange::{Arranged, TraceAgent};
 use differential_dataflow::operators::Iterate;
-use differential_dataflow::trace::implementations::ValSpine;
+use differential_dataflow::trace::implementations::{KeySpine, ValSpine};
+use differential_dataflow::trace::TraceReader;
 use differential_dataflow::VecCollection;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::Hash;
@@ -17,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use timely::dataflow::operators::probe::Handle as ProbeHandle;
 use timely::logging::{TimelyEvent, TimelyEventBuilder};
+use timely::progress::frontier::AntichainRef;
 use timely::progress::Timestamp;
 use timely::worker::Worker;
 
@@ -28,6 +30,7 @@ type Arrangements<'scope, T> = HashMap<
     Arranged<'scope, TraceAgent<ValSpine<Vec<u32>, DdRow, T, Weight>>>,
 >;
 type TaggedArrangement<'scope, T> = Arranged<'scope, TraceAgent<ValSpine<u32, DdRow, T, Weight>>>;
+type ClosureTrace = TraceAgent<KeySpine<DdRow, u64, Weight>>;
 type RuleSources<'a, 'scope, T> = (
     &'a VecCollection<'scope, T, DdRow, Weight>,
     &'a VecCollection<'scope, T, (), Weight>,
@@ -42,12 +45,11 @@ enum DeclaredFoldInput {
 }
 
 #[derive(Clone, Copy)]
-struct ServedRows<'a> {
+struct ServedRows {
     intern: TermId,
     effect: TermId,
     snapshot: TermId,
     none: TermId,
-    stored: &'a HashSet<TermId>,
 }
 
 struct StratumProfile {
@@ -67,6 +69,7 @@ struct CachedDd {
     worker: Worker,
     level_probes: Vec<(u32, ProbeHandle<u64>)>,
     probe: ProbeHandle<u64>,
+    trace: ClosureTrace,
     arena: Arc<Mutex<Universe>>,
     fold_program: Arc<Mutex<Program>>,
     captured: Arc<Mutex<Vec<(DdRow, Weight)>>>,
@@ -104,7 +107,18 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             .collect(),
     );
     let fold_program = Arc::new(Mutex::new(program.clone()));
-    let (program, hidden) = super::sqlite_eval::with_demand(u, program);
+    // Demand pass-through rules are part of the graph shape. Build them for every
+    // derived relation so adding the first seed for one does not require a rebuild.
+    let actual_seeds = program.seeds.clone();
+    let mut demand_shape = program.clone();
+    demand_shape
+        .seeds
+        .extend(program.rules.iter().map(|rule| Row {
+            rel: rule.rel,
+            args: Vec::new(),
+        }));
+    let (mut program, hidden) = super::sqlite_eval::with_demand(u, &demand_shape);
+    program.seeds = actual_seeds;
     let program = &program;
 
     let mut aggregate_diagnostics = Vec::new();
@@ -131,15 +145,6 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     let intern_rel = kernel_ref(u, "intern");
     let effect_rel = kernel_ref(u, "effect");
     let snapshot_rel = kernel_ref(u, "intern_snapshot");
-    let stored_rels: Arc<HashSet<TermId>> = Arc::new(
-        program
-            .seeds
-            .iter()
-            .map(|row| row.rel)
-            .chain(program.rules.iter().map(|rule| rule.rel))
-            .chain([nil_rel, intern_rel, effect_rel, snapshot_rel])
-            .collect(),
-    );
     let none = {
         let none = u.atom("none");
         u.compound("const", vec![none])
@@ -164,10 +169,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
 
     let mut served_key: Vec<u32> = served.iter().map(|rel| rel.0).collect();
     served_key.sort_unstable();
-    let mut seeded_rels: Vec<u32> = program.seeds.iter().map(|row| row.rel.0).collect();
-    seeded_rels.sort_unstable();
-    seeded_rels.dedup();
-    let key = format!("{:?}|{served_key:?}|{seeded_rels:?}", program.rules);
+    let key = format!("{:?}|{served_key:?}", program.rules);
     let seeds: HashSet<DdRow> = program
         .seeds
         .iter()
@@ -175,11 +177,9 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         .chain([nil.clone()])
         .collect();
     let mut cache = CACHE.with(|cache| std::mem::take(&mut *cache.borrow_mut()));
-    // Reuse only an equal graph with insertion-only seed changes. The arena
-    // prefix also guards captured TermIds when a different program is evaluated.
+    // The arena prefix guards captured TermIds when a different program is evaluated.
     let reusable = cache.iter().position(|entry| {
         entry.key == key
-            && entry.seeds.is_subset(&seeds)
             && entry.syms.len() <= u.syms.len()
             && entry.terms.len() <= u.terms.len()
             && entry.syms.iter().zip(&u.syms).all(|(old, new)| old == new)
@@ -201,7 +201,6 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         let arena = Arc::new(Mutex::new(std::mem::take(u)));
         let captured: Arc<Mutex<Vec<(DdRow, Weight)>>> = Arc::default();
         let aggregate_diagnostics: Arc<Mutex<Vec<Diagnostic>>> = Arc::default();
-        let program = program.clone();
         let arena_worker = Arc::clone(&arena);
         let captured_worker = Arc::clone(&captured);
         let diagnostics_worker = Arc::clone(&aggregate_diagnostics);
@@ -228,20 +227,15 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         }
         let probe = ProbeHandle::new();
         let build_started = Instant::now();
-        let (input, level_probes, profiles) = worker.dataflow::<u64, _, _>(|scope| {
+        let (input, level_probes, profiles, trace) = worker.dataflow::<u64, _, _>(|scope| {
             let (input, seeds) = scope.new_collection::<DdRow, Weight>();
             let mut known = seeds.clone().filter(move |row| row[0] == nil_rel.0);
             let mut level_probes = Vec::new();
             let mut profiles = Vec::new();
-            let levels: Vec<(u32, Vec<u32>, Vec<Rule>)> = (0..=strata.max_level)
+            let levels: Vec<(u32, HashMap<TermId, u32>, Vec<Rule>)> = (0..=strata.max_level)
                 .map(|level| {
-                    let rels = program
-                        .seeds
-                        .iter()
-                        .filter(|row| strata.level(row.rel) == level)
-                        .map(|row| row.rel.0)
-                        .collect();
                     let rules = rules_by_level.remove(&level).unwrap_or_default();
+                    let rels = strata.levels.clone();
                     (level, rels, rules)
                 })
                 .collect();
@@ -250,7 +244,9 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 let operator_start = scope.worker().peek_identifier();
                 let rounds = Arc::new(AtomicU64::new(0));
                 let profile_rows: Arc<Mutex<HashMap<DdRow, Weight>>> = Arc::default();
-                let at_level = seeds.clone().filter(move |row| rels.contains(&row[0]));
+                let at_level = seeds
+                    .clone()
+                    .filter(move |row| rels.get(&TermId(row[0])).copied().unwrap_or(0) == level);
                 let (aggregate, plain): (Vec<Rule>, Vec<Rule>) =
                     rules.into_iter().partition(Rule::is_aggregate);
                 let mut aggregate_rows = known.clone().filter(|_| false);
@@ -307,7 +303,6 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 }
                 let arena = Arc::clone(&arena_worker);
                 let served = Arc::clone(&served);
-                let stored_rels = Arc::clone(&stored_rels);
                 let round_counter = Arc::clone(&rounds);
                 let round_inspect = Arc::new(Mutex::new(None));
                 let round_inspect_worker = Arc::clone(&round_inspect);
@@ -348,7 +343,6 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                                 effect: effect_rel,
                                 snapshot: snapshot_rel,
                                 none,
-                                stored: &stored_rels,
                             },
                         );
                         derived = derived.concat(rows);
@@ -380,10 +374,13 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 );
             }
             let sink = Arc::clone(&captured_worker);
-            known
+            let arranged = known.arrange_by_self();
+            arranged
+                .clone()
+                .as_collection(|row, _| row.clone())
                 .inspect(move |(row, _, diff)| sink.lock().unwrap().push((row.clone(), *diff)))
                 .probe_with(&probe);
-            (input, level_probes, profiles)
+            (input, level_probes, profiles, arranged.trace)
         });
         tracing::info!(
             build_ms = build_started.elapsed().as_millis(),
@@ -397,6 +394,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             input,
             level_probes,
             probe,
+            trace,
             arena,
             fold_program,
             captured,
@@ -407,14 +405,15 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             operator_ids,
         }
     };
-    tracing::info!(
-        reused,
-        inserted = seeds.len() - entry.seeds.len(),
-        "dd dataflow reuse"
-    );
+    let inserted = seeds.difference(&entry.seeds).count();
+    let removed = entry.seeds.difference(&seeds).count();
+    tracing::info!(reused, inserted, removed, "dd dataflow reuse");
     if seeds != entry.seeds {
         for row in seeds.difference(&entry.seeds) {
             entry.input.insert(row.clone());
+        }
+        for row in entry.seeds.difference(&seeds) {
+            entry.input.remove(row.clone());
         }
         let next = *entry.input.time() + 1;
         entry.input.advance_to(next);
@@ -430,6 +429,12 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         }
         let step_started = Instant::now();
         entry.worker.step_while(|| entry.probe.less_than(&next));
+        entry
+            .trace
+            .set_logical_compaction(AntichainRef::new(&[next]));
+        entry
+            .trace
+            .set_physical_compaction(AntichainRef::new(&[next]));
         tracing::info!(step_ms = step_started.elapsed().as_millis(), "dd sink step");
         entry.seeds = seeds;
     }
@@ -681,7 +686,7 @@ fn lower_rule<'scope, T>(
     rule: &Rule,
     arena: Arc<Mutex<Universe>>,
     served: Arc<HashSet<TermId>>,
-    served_rows: ServedRows<'_>,
+    served_rows: ServedRows,
 ) -> VecCollection<'scope, T, DdRow, Weight>
 where
     T: Timestamp + Lattice + Ord + Hash,
@@ -733,16 +738,14 @@ where
         }
         envs = match kernel {
             Some(kernel) => {
-                let stored = served_rows.stored.contains(&goal.rel).then(|| {
-                    join_goal(
-                        envs.clone(),
-                        (unit, tagged_rows),
-                        relations,
-                        arrangements,
-                        goal,
-                        &bound,
-                    )
-                });
+                let stored = join_goal(
+                    envs.clone(),
+                    (unit, tagged_rows),
+                    relations,
+                    arrangements,
+                    goal,
+                    &bound,
+                );
                 let solved = positive_kernel(envs, &goal.args, kernel, Arc::clone(&arena));
                 if kernel == super::kernel::Kernel::Intern {
                     let rel = goal.rel.0;
@@ -756,10 +759,7 @@ where
                     });
                 }
                 let solved = solved.map(|(env, _)| env);
-                match stored {
-                    Some(rows) => solved.concat(rows).distinct(),
-                    None => solved.distinct(),
-                }
+                solved.concat(stored).distinct()
             }
             None => join_goal(
                 envs,
