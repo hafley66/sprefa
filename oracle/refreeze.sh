@@ -3,10 +3,8 @@
 set -eu
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 DL8_ENGINE=rust
-if [ -z "${CARGO_TARGET_DIR:-}" ]; then
-  lane="$(git -C "$here/.." branch --show-current | tr / -)"
-  export CARGO_TARGET_DIR="$HOME/.cache/boop/lanes/$lane/target"
-fi
-binary="$CARGO_TARGET_DIR/debug/dl8"
+: "${CARGO_TARGET_DIR:?set CARGO_TARGET_DIR to the lane target directory}"
 cargo build -j 4 --manifest-path "$here/../Cargo.toml" --bin dl8
+binary="$(cargo metadata --manifest-path "$here/../Cargo.toml" --format-version 1 --no-deps \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/debug/dl8"
 python3 "$here/refreeze.py" "$binary"
