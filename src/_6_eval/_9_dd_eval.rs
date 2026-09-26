@@ -1,14 +1,14 @@
 //! Differential-dataflow evaluation over one worker and one dataflow.
 
 use super::evaluate::{Closure, Trace};
-use super::program::{Arg, Diagnostic, Folding, Polarity, Program, Row, Rule};
+use super::program::{Arg, Diagnostic, Folding, Goal, Polarity, Program, Row, Rule, VarId};
 use super::stratify::stratify;
 use super::term::{TermId, Universe};
 use differential_dataflow::input::Input;
 use differential_dataflow::lattice::Lattice;
 use differential_dataflow::operators::Iterate;
 use differential_dataflow::VecCollection;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 use timely::dataflow::operators::probe::Handle as ProbeHandle;
@@ -20,13 +20,22 @@ const UNBOUND: u32 = u32::MAX;
 
 /// Evaluates positive products and recursive strata as DD collections.
 pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
-    let (strata, diagnostics) = stratify(u, program);
+    let (_, diagnostics) = stratify(u, program);
     if !diagnostics.is_empty() {
         return Closure {
             rows: Vec::new(),
             diagnostics,
         };
     }
+    let (program, hidden) = with_demand(u, program);
+    let (strata, diagnostics) = stratify(u, &program);
+    if !diagnostics.is_empty() {
+        return Closure {
+            rows: Vec::new(),
+            diagnostics,
+        };
+    }
+    let program = &program;
 
     let mut aggregate_diagnostics = Vec::new();
     for rule in program.rules.iter().filter(|rule| rule.is_aggregate()) {
@@ -151,6 +160,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             args: row[1..].iter().copied().map(TermId).collect(),
         })
         .collect();
+    rows.retain(|row| !hidden.contains(&row.rel));
     let mut diagnostics = aggregate_diagnostics.lock().unwrap().clone();
     let mutex = match Arc::try_unwrap(arena) {
         Ok(mutex) => mutex,
@@ -502,6 +512,149 @@ fn unify(args: &[Arg], row: &[u32], env: &mut [u32]) -> bool {
         }
     }
     true
+}
+
+/// Rewrites head-bound products into demand and adorned products.
+fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
+    let snapshots = kernel_ref(u, "intern_snapshot");
+    let mut by_rel: HashMap<TermId, Vec<Rule>> = HashMap::new();
+    for rule in &program.rules {
+        by_rel.entry(rule.rel).or_default().push(rule.clone());
+    }
+    let demanded: HashSet<TermId> = by_rel
+        .iter()
+        .filter(|(_, rules)| {
+            rules
+                .iter()
+                .any(|rule| super::evaluate::needs_bound_head(u, rule, snapshots))
+        })
+        .map(|(rel, _)| *rel)
+        .collect();
+    let seeded: HashSet<TermId> = program.seeds.iter().map(|row| row.rel).collect();
+    let widest = program
+        .rules
+        .iter()
+        .map(|rule| rule.head.len())
+        .max()
+        .unwrap_or(0);
+    let pass_vars: Vec<TermId> = (0..widest)
+        .map(|index| u.atom(&format!("__s{index}")))
+        .collect();
+    let mut out = program.clone();
+    if demanded.is_empty() {
+        return (out, HashSet::new());
+    }
+    let mut hidden: HashSet<TermId> = HashSet::new();
+    let mut adorned: HashMap<(TermId, Vec<usize>), (TermId, TermId)> = HashMap::new();
+    let mut queue: Vec<Rule> = std::mem::take(&mut out.rules);
+    let mut done: Vec<Rule> = Vec::new();
+    let budget = program.rules.len() * (1 + program.rules.len() * 8);
+    for _ in 0..budget {
+        let Some(mut rule) = queue.pop() else {
+            break;
+        };
+        let mut bound: HashSet<u32> = HashSet::new();
+        for at in 0..rule.body.len() {
+            let goal = rule.body[at].clone();
+            let positive = goal.polarity == Polarity::Positive;
+            if positive && demanded.contains(&goal.rel) {
+                let positions: Vec<usize> = goal
+                    .args
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, arg)| match arg {
+                        Arg::Var(var) => bound.contains(&var.0),
+                        Arg::Ground(_) => true,
+                        _ => false,
+                    })
+                    .map(|(position, _)| position)
+                    .collect();
+                let key = (goal.rel, positions.clone());
+                let (demand_rel, adorned_rel) = match adorned.get(&key) {
+                    Some(pair) => *pair,
+                    None => {
+                        let base = u
+                            .unary(goal.rel, "ref")
+                            .and_then(|inner| {
+                                u.functor_or_atom(inner).map(|(name, _)| name.to_string())
+                            })
+                            .unwrap_or_else(|| format!("n{}", goal.rel.0));
+                        let mask: String = positions
+                            .iter()
+                            .map(|position| position.to_string())
+                            .collect();
+                        let spelled = u.display(goal.rel).to_string();
+                        let demand_name = u.atom(&format!("dmd__{base}__{mask}__{spelled}"));
+                        let demand_rel = u.compound("ref", vec![demand_name]);
+                        let adorned_name = u.atom(&format!("adn__{base}__{mask}__{spelled}"));
+                        let adorned_rel = u.compound("ref", vec![adorned_name]);
+                        adorned.insert(key, (demand_rel, adorned_rel));
+                        hidden.insert(demand_rel);
+                        hidden.insert(adorned_rel);
+                        for original in by_rel.get(&goal.rel).into_iter().flatten() {
+                            let mut body = vec![Goal {
+                                polarity: Polarity::Positive,
+                                rel: demand_rel,
+                                args: positions
+                                    .iter()
+                                    .map(|position| original.head[*position].clone())
+                                    .collect(),
+                            }];
+                            body.extend(original.body.iter().cloned());
+                            queue.push(Rule {
+                                rel: adorned_rel,
+                                head: original.head.clone(),
+                                body,
+                                vars: original.vars.clone(),
+                            });
+                        }
+                        if seeded.contains(&goal.rel) {
+                            let arity = goal.args.len();
+                            let vars: Vec<TermId> =
+                                pass_vars[..arity.min(pass_vars.len())].to_vec();
+                            let args: Vec<Arg> = (0..arity)
+                                .map(|index| Arg::Var(VarId(index as u32)))
+                                .collect();
+                            done.push(Rule {
+                                rel: adorned_rel,
+                                head: args.clone(),
+                                body: vec![Goal {
+                                    polarity: Polarity::Positive,
+                                    rel: goal.rel,
+                                    args,
+                                }],
+                                vars,
+                            });
+                        }
+                        (demand_rel, adorned_rel)
+                    }
+                };
+                done.push(Rule {
+                    rel: demand_rel,
+                    head: positions
+                        .iter()
+                        .map(|position| goal.args[*position].clone())
+                        .collect(),
+                    body: rule.body[..at].to_vec(),
+                    vars: rule.vars.clone(),
+                });
+                rule.body[at].rel = adorned_rel;
+            }
+            if positive {
+                for arg in &goal.args {
+                    if let Arg::Var(var) = arg {
+                        bound.insert(var.0);
+                    }
+                }
+            }
+        }
+        done.push(rule);
+    }
+    if !queue.is_empty() {
+        tracing::error!(target: "dl8::eval", left = queue.len(), "demand rewrite budget exhausted");
+    }
+    out.rules = done;
+    (out, hidden)
 }
 
 fn tagged(rel: TermId, args: &[TermId]) -> DdRow {
