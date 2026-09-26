@@ -10,7 +10,7 @@ use differential_dataflow::operators::arrange::{Arranged, TraceAgent};
 use differential_dataflow::operators::Iterate;
 use differential_dataflow::trace::implementations::ValSpine;
 use differential_dataflow::VecCollection;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -35,7 +35,7 @@ const UNBOUND: u32 = u32::MAX;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 enum DeclaredFoldInput {
-    Subject(u32),
+    Subject(DdRow, u32),
     Stored(DdRow),
 }
 
@@ -374,21 +374,23 @@ where
         }
         Folding::Declared(fold) => {
             let arena_for_reduce = Arc::clone(&arena);
-            let groups = proofs.clone().map(|(key, _)| ((), key)).distinct();
-            let stored = groups
-                .join(all.clone().distinct().map(|row| ((), row)))
-                .map(|(_, (key, row))| (key, DeclaredFoldInput::Stored(row)));
             let inputs = proofs
-                .map(|(key, value)| (key, DeclaredFoldInput::Subject(value)))
-                .concat(stored);
+                .map(|(key, value)| ((), DeclaredFoldInput::Subject(key, value)))
+                .concat(
+                    all.clone()
+                        .distinct()
+                        .map(|row| ((), DeclaredFoldInput::Stored(row))),
+                );
             let diagnostics = Arc::clone(&diagnostics);
             inputs.reduce(move |_key, input, output| {
-                let mut values = Vec::new();
+                let mut groups: BTreeMap<DdRow, Vec<TermId>> = BTreeMap::new();
                 let mut rows = Vec::new();
                 for (item, weight) in input {
                     for _ in 0..(*weight).max(0) as usize {
                         match item {
-                            DeclaredFoldInput::Subject(value) => values.push(TermId(*value)),
+                            DeclaredFoldInput::Subject(key, value) => {
+                                groups.entry(key.clone()).or_default().push(TermId(*value));
+                            }
                             DeclaredFoldInput::Stored(row) => rows.push(Row {
                                 rel: TermId(row[0]),
                                 args: row[1..].iter().copied().map(TermId).collect(),
@@ -396,20 +398,25 @@ where
                         }
                     }
                 }
-                if values.is_empty() {
+                if groups.is_empty() {
                     return;
                 }
-                match super::evaluate::fold_generic_rows(
+                let values: Vec<&[TermId]> = groups.values().map(Vec::as_slice).collect();
+                let results = super::evaluate::fold_generic_row_groups(
                     &mut arena_for_reduce.lock().unwrap(),
                     &program,
                     &rows,
                     &fold,
                     &values,
-                ) {
-                    Ok(term) => output.push((term.0, 1)),
-                    Err(diagnostic) => diagnostics.lock().unwrap().push(diagnostic),
+                );
+                for ((key, _), result) in groups.into_iter().zip(results) {
+                    match result {
+                        Ok(term) => output.push(((key, term.0), 1)),
+                        Err(diagnostic) => diagnostics.lock().unwrap().push(diagnostic),
+                    }
                 }
             })
+            .map(|(_, row)| row)
         }
     };
     let rel = rule.rel.0;

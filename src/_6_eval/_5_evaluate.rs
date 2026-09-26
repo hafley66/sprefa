@@ -661,8 +661,7 @@ fn fold_generic(
     Ok(accumulator)
 }
 
-/// Runs a declared fold against a completed DD row snapshot.
-/// Rebuilds one store per group for a later performance pass to remove.
+/// Runs a declared fold against a completed row snapshot.
 pub(super) fn fold_generic_rows(
     u: &mut Universe,
     program: &Program,
@@ -670,6 +669,19 @@ pub(super) fn fold_generic_rows(
     fold: &Fold,
     values: &[TermId],
 ) -> Result<TermId, Diagnostic> {
+    fold_generic_row_groups(u, program, rows, fold, &[values])
+        .pop()
+        .unwrap()
+}
+
+/// Shares the row snapshot and rule index across declared fold groups.
+pub(super) fn fold_generic_row_groups(
+    u: &mut Universe,
+    program: &Program,
+    rows: &[Row],
+    fold: &Fold,
+    groups: &[&[TermId]],
+) -> Vec<Result<TermId, Diagnostic>> {
     let mut store = Store::default();
     for row in rows {
         store.insert(row.rel, row.args.clone().into_boxed_slice());
@@ -707,7 +719,10 @@ pub(super) fn fold_generic_rows(
         demanded: &demanded,
         effects,
     };
-    fold_generic(u, cx, fold, values)
+    groups
+        .iter()
+        .map(|values| fold_generic(u, cx, fold, values))
+        .collect()
 }
 
 /// `(Step Acc Value ?Next)` as a one-goal rule; exactly one distinct `Next` is
