@@ -12,9 +12,11 @@ use differential_dataflow::trace::implementations::ValSpine;
 use differential_dataflow::VecCollection;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::Hash;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use timely::dataflow::operators::probe::Handle as ProbeHandle;
+use timely::logging::{TimelyEvent, TimelyEventBuilder};
 use timely::progress::Timestamp;
 
 type DdRow = Vec<u32>;
@@ -44,6 +46,15 @@ struct ServedRows {
     effect: TermId,
     snapshot: TermId,
     none: TermId,
+}
+
+struct StratumProfile {
+    level: u32,
+    operator_start: usize,
+    operator_end: usize,
+    rounds: Arc<AtomicU64>,
+    rows: Arc<Mutex<HashMap<DdRow, Weight>>>,
+    round_inspect: Option<usize>,
 }
 
 /// Evaluates positive products and recursive strata as DD collections.
@@ -123,12 +134,30 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     let captured_worker = Arc::clone(&captured);
     let diagnostics_worker = Arc::clone(&aggregate_diagnostics);
     timely::execute_directly(move |worker| {
+        let profile = std::env::var_os("DL8_DD_PROFILE").is_some();
+        let operator_ids = Arc::new(Mutex::new(Vec::new()));
+        if profile {
+            let operator_ids = Arc::clone(&operator_ids);
+            worker
+                .log_register()
+                .unwrap()
+                .insert::<TimelyEventBuilder, _>("timely", move |_, data| {
+                    if let Some(events) = data.as_ref() {
+                        let mut ids = operator_ids.lock().unwrap();
+                        ids.extend(events.iter().filter_map(|(_, event)| match event {
+                            TimelyEvent::Operates(operator) => Some(operator.id),
+                            _ => None,
+                        }));
+                    }
+                });
+        }
         let probe = ProbeHandle::new();
         let build_started = Instant::now();
-        let (mut input, level_probes) = worker.dataflow::<u64, _, _>(|scope| {
+        let (mut input, level_probes, profiles) = worker.dataflow::<u64, _, _>(|scope| {
             let (input, seeds) = scope.new_collection::<DdRow, Weight>();
             let mut known = seeds.clone().filter(move |row| row[0] == nil_rel.0);
             let mut level_probes = Vec::new();
+            let mut profiles = Vec::new();
             let levels: Vec<(u32, Vec<u32>, Vec<Rule>)> = (0..=strata.max_level)
                 .map(|level| {
                     let rels = program
@@ -143,6 +172,9 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 .collect();
             for (level, rels, rules) in levels {
                 let level_started = Instant::now();
+                let operator_start = scope.worker().peek_identifier();
+                let rounds = Arc::new(AtomicU64::new(0));
+                let profile_rows: Arc<Mutex<HashMap<DdRow, Weight>>> = Arc::default();
                 let at_level = seeds.clone().filter(move |row| rels.contains(&row[0]));
                 let (aggregate, plain): (Vec<Rule>, Vec<Rule>) =
                     rules.into_iter().partition(Rule::is_aggregate);
@@ -173,6 +205,21 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 let base = known.concat(at_level).concat(aggregate_rows).distinct();
                 if plain.is_empty() {
                     known = base;
+                    if profile {
+                        let operator_end = scope.worker().peek_identifier();
+                        let rows = Arc::clone(&profile_rows);
+                        known = known.inspect(move |(row, _, diff)| {
+                            *rows.lock().unwrap().entry(row.clone()).or_default() += diff;
+                        });
+                        profiles.push(StratumProfile {
+                            level,
+                            operator_start,
+                            operator_end,
+                            rounds,
+                            rows: profile_rows,
+                            round_inspect: None,
+                        });
+                    }
                     let level_probe = ProbeHandle::new();
                     known = known.probe_with(&level_probe);
                     level_probes.push((level, level_probe));
@@ -185,7 +232,21 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 }
                 let arena = Arc::clone(&arena_worker);
                 let served = Arc::clone(&served);
+                let round_counter = Arc::clone(&rounds);
+                let round_inspect = Arc::new(Mutex::new(None));
+                let round_inspect_worker = Arc::clone(&round_inspect);
                 known = base.iterate(move |_scope, current| {
+                    let current = if profile {
+                        let operator_id = _scope.worker().peek_identifier();
+                        let rounds = Arc::clone(&round_counter);
+                        let inspected = current.inspect(move |(_, time, _)| {
+                            rounds.fetch_max(time.inner + 1, Ordering::Relaxed);
+                        });
+                        *round_inspect_worker.lock().unwrap() = Some(operator_id);
+                        inspected
+                    } else {
+                        current
+                    };
                     let mut derived = current.clone().filter(|_| false);
                     let mut relations = Relations::new();
                     let mut arrangements = Arrangements::new();
@@ -217,6 +278,21 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                     }
                     current.concat(derived).distinct()
                 });
+                if profile {
+                    let operator_end = scope.worker().peek_identifier();
+                    let rows = Arc::clone(&profile_rows);
+                    known = known.inspect(move |(row, _, diff)| {
+                        *rows.lock().unwrap().entry(row.clone()).or_default() += diff;
+                    });
+                    profiles.push(StratumProfile {
+                        level,
+                        operator_start,
+                        operator_end,
+                        rounds,
+                        rows: profile_rows,
+                        round_inspect: *round_inspect.lock().unwrap(),
+                    });
+                }
                 let level_probe = ProbeHandle::new();
                 known = known.probe_with(&level_probe);
                 level_probes.push((level, level_probe));
@@ -230,7 +306,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             known
                 .inspect(move |(row, _, diff)| sink.lock().unwrap().push((row.clone(), *diff)))
                 .probe_with(&probe);
-            (input, level_probes)
+            (input, level_probes, profiles)
         });
         tracing::info!(
             build_ms = build_started.elapsed().as_millis(),
@@ -254,6 +330,37 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         let step_started = Instant::now();
         worker.step_while(|| probe.less_than(&1));
         tracing::info!(step_ms = step_started.elapsed().as_millis(), "dd sink step");
+        if profile {
+            worker.logging().unwrap().flush();
+            let ids = operator_ids.lock().unwrap();
+            let mut previous_rows = 0;
+            for stratum in profiles {
+                let operators = ids
+                    .iter()
+                    .filter(|&&id| {
+                        id >= stratum.operator_start
+                            && id < stratum.operator_end
+                            && Some(id) != stratum.round_inspect
+                    })
+                    .count();
+                let rows = stratum
+                    .rows
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .filter(|&&diff| diff > 0)
+                    .count();
+                tracing::info!(
+                    level = stratum.level,
+                    rounds = stratum.rounds.load(Ordering::Relaxed),
+                    operators,
+                    new_rows = rows.saturating_sub(previous_rows),
+                    cumulative_rows = rows,
+                    "dd stratum profile"
+                );
+                previous_rows = rows;
+            }
+        }
     });
 
     let extraction_started = Instant::now();
