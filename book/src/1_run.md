@@ -21,6 +21,18 @@ Build it with `cargo build --release` at the repository root; every command in t
 `book/check_outputs.sh` reruns every `console` block in this book and diffs its output against the page.
 Every path is from the repository root. `v5/`, `v6/` and `v7/` hold the earlier engines.
 
+## Evaluation engines
+
+`DL8_ENGINE` selects where compiled rules run. The default is `rust`.
+
+| value | rule evaluator | test recipe |
+|---|---|---|
+| `rust` | Rust's in-memory row store | `just ivm-cases` |
+| `sqlite` | SQLite | `just ivm-evaluator-cases` |
+| `dd` | differential dataflow | `just ivm-dd-cases` |
+
+Each recipe also checks emitted SQLite views. `SQLITE_IVM_LIB` selects the loadable SQLite IVM library for those checks. DD measurements are in the [report](../../REPORT-dd.md) and [receipts](../../plans/v8/receipts/2026-09-26-dd-eval-perf/).
+
 ## Why
 
 `README.md:3-5`: the filesystem is the pipe and each `src/_<n>_name/` folder is one operator; the verbs `read` to `reify` run one folder each (`src/bin/dl8.rs:138-144`).
