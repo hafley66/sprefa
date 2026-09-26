@@ -11,6 +11,7 @@ use differential_dataflow::VecCollection;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use timely::dataflow::operators::probe::Handle as ProbeHandle;
 use timely::progress::Timestamp;
 
@@ -34,6 +35,7 @@ struct ServedRows {
 
 /// Evaluates positive products and recursive strata as DD collections.
 pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
+    let evaluation_started = Instant::now();
     let (strata, diagnostics) = stratify(u, program);
     if !diagnostics.is_empty() {
         return Closure {
@@ -109,9 +111,11 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     let diagnostics_worker = Arc::clone(&aggregate_diagnostics);
     timely::execute_directly(move |worker| {
         let probe = ProbeHandle::new();
-        let (mut input, ()) = worker.dataflow::<u64, _, _>(|scope| {
+        let build_started = Instant::now();
+        let (mut input, level_probes) = worker.dataflow::<u64, _, _>(|scope| {
             let (input, seeds) = scope.new_collection::<DdRow, Weight>();
             let mut known = seeds.clone().filter(move |row| row[0] == nil_rel.0);
+            let mut level_probes = Vec::new();
             let levels: Vec<(u32, Vec<u32>, Vec<Rule>)> = (0..=strata.max_level)
                 .map(|level| {
                     let rels = program
@@ -124,7 +128,8 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                     (level, rels, rules)
                 })
                 .collect();
-            for (_, rels, rules) in levels {
+            for (level, rels, rules) in levels {
+                let level_started = Instant::now();
                 let at_level = seeds.clone().filter(move |row| rels.contains(&row[0]));
                 let (aggregate, plain): (Vec<Rule>, Vec<Rule>) =
                     rules.into_iter().partition(Rule::is_aggregate);
@@ -142,6 +147,10 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 let base = known.concat(at_level).concat(aggregate_rows).distinct();
                 if plain.is_empty() {
                     known = base;
+                    let level_probe = ProbeHandle::new();
+                    known = known.probe_with(&level_probe);
+                    level_probes.push((level, level_probe));
+                    tracing::info!(level, build_ms = level_started.elapsed().as_millis(), "dd stratum build");
                     continue;
                 }
                 let arena = Arc::clone(&arena_worker);
@@ -165,22 +174,35 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                     }
                     current.concat(derived).distinct()
                 });
+                let level_probe = ProbeHandle::new();
+                known = known.probe_with(&level_probe);
+                level_probes.push((level, level_probe));
+                tracing::info!(level, build_ms = level_started.elapsed().as_millis(), "dd stratum build");
             }
             let sink = Arc::clone(&captured_worker);
             known
                 .inspect(move |(row, _, diff)| sink.lock().unwrap().push((row.clone(), *diff)))
                 .probe_with(&probe);
-            (input, ())
+            (input, level_probes)
         });
+        tracing::info!(build_ms = build_started.elapsed().as_millis(), "dd dataflow build");
         input.insert(nil);
         for row in &program.seeds {
             input.insert(tagged(row.rel, &row.args));
         }
         input.advance_to(1);
         input.flush();
+        for (level, level_probe) in level_probes {
+            let step_started = Instant::now();
+            worker.step_while(|| level_probe.less_than(&1));
+            tracing::info!(level, step_ms = step_started.elapsed().as_millis(), "dd stratum step");
+        }
+        let step_started = Instant::now();
         worker.step_while(|| probe.less_than(&1));
+        tracing::info!(step_ms = step_started.elapsed().as_millis(), "dd sink step");
     });
 
+    let extraction_started = Instant::now();
     let mut rows: Vec<Row> = captured
         .lock()
         .unwrap()
@@ -214,6 +236,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     });
     rows.dedup();
     fx(Trace::Closure { rows: rows.len() });
+    tracing::info!(extract_ms = extraction_started.elapsed().as_millis(), total_ms = evaluation_started.elapsed().as_millis(), rows = rows.len(), "dd row extraction");
     *u = std::mem::take(&mut arena);
     Closure {
         rows,
