@@ -143,9 +143,14 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 let mut aggregate_rows = known.clone().filter(|_| false);
                 let mut relations = Relations::new();
                 let mut arrangements = Arrangements::new();
+                let unit = known
+                    .clone()
+                    .filter(move |row| row[0] == nil_rel.0)
+                    .map(|_| ())
+                    .distinct();
                 for rule in &aggregate {
                     let rows = lower_aggregate_rule(
-                        &known,
+                        (&known, &unit),
                         &mut relations,
                         &mut arrangements,
                         rule,
@@ -170,9 +175,14 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                     let mut derived = current.clone().filter(|_| false);
                     let mut relations = Relations::new();
                     let mut arrangements = Arrangements::new();
+                    let unit = current
+                        .clone()
+                        .filter(move |row| row[0] == nil_rel.0)
+                        .map(|_| ())
+                        .distinct();
                     for rule in &plain {
                         let rows = lower_rule(
-                            &current,
+                            (&current, &unit),
                             &mut relations,
                             &mut arrangements,
                             rule,
@@ -260,7 +270,10 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
 }
 
 fn lower_aggregate_rule<'scope, T>(
-    all: &VecCollection<'scope, T, DdRow, Weight>,
+    (all, unit): (
+        &VecCollection<'scope, T, DdRow, Weight>,
+        &VecCollection<'scope, T, (), Weight>,
+    ),
     relations: &mut Relations<'scope, T>,
     arrangements: &mut Arrangements<'scope, T>,
     rule: &Rule,
@@ -273,8 +286,7 @@ where
 {
     let vars = rule.vars.len();
     let mut bound = vec![false; vars];
-    // The nil bootstrap makes this one empty environment without a separate DD input.
-    let mut envs = all.clone().map(move |_| vec![UNBOUND; vars]).distinct();
+    let mut envs = unit.clone().map(move |_| vec![UNBOUND; vars]);
     for goal in &rule.body {
         let kernel = super::kernel::Kernel::of(&arena.lock().unwrap(), goal.rel);
         if goal.polarity == Polarity::Negative {
@@ -396,7 +408,10 @@ where
 }
 
 fn lower_rule<'scope, T>(
-    all: &VecCollection<'scope, T, DdRow, Weight>,
+    (all, unit): (
+        &VecCollection<'scope, T, DdRow, Weight>,
+        &VecCollection<'scope, T, (), Weight>,
+    ),
     relations: &mut Relations<'scope, T>,
     arrangements: &mut Arrangements<'scope, T>,
     rule: &Rule,
@@ -409,8 +424,7 @@ where
 {
     let vars = rule.vars.len();
     let mut bound = vec![false; vars];
-    // The nil bootstrap makes this one empty environment without a separate DD input.
-    let mut envs = all.clone().map(move |_| vec![UNBOUND; vars]).distinct();
+    let mut envs = unit.clone().map(move |_| vec![UNBOUND; vars]);
     let mut side_rows = all.clone().filter(|_| false);
     for goal in &rule.body {
         let kernel = super::kernel::Kernel::of(&arena.lock().unwrap(), goal.rel);
