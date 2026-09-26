@@ -41,11 +41,12 @@ enum DeclaredFoldInput {
 }
 
 #[derive(Clone, Copy)]
-struct ServedRows {
+struct ServedRows<'a> {
     intern: TermId,
     effect: TermId,
     snapshot: TermId,
     none: TermId,
+    stored: &'a HashSet<TermId>,
 }
 
 struct StratumProfile {
@@ -104,6 +105,15 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     let intern_rel = kernel_ref(u, "intern");
     let effect_rel = kernel_ref(u, "effect");
     let snapshot_rel = kernel_ref(u, "intern_snapshot");
+    let stored_rels: Arc<HashSet<TermId>> = Arc::new(
+        program
+            .seeds
+            .iter()
+            .map(|row| row.rel)
+            .chain(program.rules.iter().map(|rule| rule.rel))
+            .chain([nil_rel, intern_rel, effect_rel, snapshot_rel])
+            .collect(),
+    );
     let none = {
         let none = u.atom("none");
         u.compound("const", vec![none])
@@ -232,6 +242,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 }
                 let arena = Arc::clone(&arena_worker);
                 let served = Arc::clone(&served);
+                let stored_rels = Arc::clone(&stored_rels);
                 let round_counter = Arc::clone(&rounds);
                 let round_inspect = Arc::new(Mutex::new(None));
                 let round_inspect_worker = Arc::clone(&round_inspect);
@@ -272,6 +283,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                                 effect: effect_rel,
                                 snapshot: snapshot_rel,
                                 none,
+                                stored: &stored_rels,
                             },
                         );
                         derived = derived.concat(rows);
@@ -568,7 +580,7 @@ fn lower_rule<'scope, T>(
     rule: &Rule,
     arena: Arc<Mutex<Universe>>,
     served: Arc<HashSet<TermId>>,
-    served_rows: ServedRows,
+    served_rows: ServedRows<'_>,
 ) -> VecCollection<'scope, T, DdRow, Weight>
 where
     T: Timestamp + Lattice + Ord + Hash,
@@ -620,14 +632,16 @@ where
         }
         envs = match kernel {
             Some(kernel) => {
-                let stored = join_goal(
-                    envs.clone(),
-                    (unit, tagged_rows),
-                    relations,
-                    arrangements,
-                    goal,
-                    &bound,
-                );
+                let stored = served_rows.stored.contains(&goal.rel).then(|| {
+                    join_goal(
+                        envs.clone(),
+                        (unit, tagged_rows),
+                        relations,
+                        arrangements,
+                        goal,
+                        &bound,
+                    )
+                });
                 let solved = positive_kernel(envs, &goal.args, kernel, Arc::clone(&arena));
                 if kernel == super::kernel::Kernel::Intern {
                     let rel = goal.rel.0;
@@ -640,7 +654,11 @@ where
                         None => interned,
                     });
                 }
-                solved.map(|(env, _)| env).concat(stored).distinct()
+                let solved = solved.map(|(env, _)| env);
+                match stored {
+                    Some(rows) => solved.concat(rows).distinct(),
+                    None => solved.distinct(),
+                }
             }
             None => join_goal(
                 envs,
