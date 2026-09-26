@@ -113,17 +113,8 @@ fn dd_engine_matches_v7_oracles() {
 }
 
 #[test]
-fn unsupported_dd_constructs_fail_loudly() {
+fn unsupported_served_goal_fails_loudly() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = root.join("fixtures/fold/0_kernel_step.dl7");
-    let fold = Command::new(env!("CARGO_BIN_EXE_dl8"))
-        .arg("compile")
-        .arg(source)
-        .env("DL8_ENGINE", "dd")
-        .output()
-        .unwrap();
-    assert_not_built(fold, "declared fold");
-
     let fixture_path = root.join("oracle/eval/0_transitive.json");
     let mut fixture: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(fixture_path).unwrap()).unwrap();

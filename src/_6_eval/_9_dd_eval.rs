@@ -18,6 +18,12 @@ type DdRow = Vec<u32>;
 type Weight = isize;
 const UNBOUND: u32 = u32::MAX;
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+enum DeclaredFoldInput {
+    Subject(u32),
+    Stored(DdRow),
+}
+
 /// Evaluates positive products and recursive strata as DD collections.
 pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
     let (strata, diagnostics) = stratify(u, program);
@@ -31,13 +37,6 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     if !program.served.is_empty() {
         unsupported.push(not_built_yet(u, "served goal"));
     }
-    if program
-        .rules
-        .iter()
-        .any(|rule| matches!(rule.folding_head(), Some((_, Folding::Declared(_), _))))
-    {
-        unsupported.push(not_built_yet(u, "declared fold"));
-    }
     if !unsupported.is_empty() {
         unsupported.sort_by(|left, right| u.cmp(left.payload, right.payload));
         unsupported.dedup();
@@ -46,6 +45,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             diagnostics: unsupported,
         };
     }
+    let fold_program = Arc::new(program.clone());
     let (program, hidden) = super::sqlite_eval::with_demand(u, program);
     let program = &program;
 
@@ -123,6 +123,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                         rule,
                         Arc::clone(&arena_worker),
                         Arc::clone(&diagnostics_worker),
+                        Arc::clone(&fold_program),
                     );
                     aggregate_rows = aggregate_rows.concat(rows);
                 }
@@ -201,6 +202,7 @@ fn lower_aggregate_rule<'scope, T>(
     rule: &Rule,
     arena: Arc<Mutex<Universe>>,
     diagnostics: Arc<Mutex<Vec<Diagnostic>>>,
+    program: Arc<Program>,
 ) -> VecCollection<'scope, T, DdRow, Weight>
 where
     T: Timestamp + Lattice + Ord + Hash,
@@ -254,37 +256,80 @@ where
             }
         }
     });
-    let rel = rule.rel.0;
-    let arena_for_reduce = Arc::clone(&arena);
-    proofs
-        .reduce(move |_key, input, output| {
-            let mut values = Vec::new();
-            for (value, weight) in input {
-                for _ in 0..(*weight).max(0) as usize {
-                    values.push(TermId(**value));
+    let reduce = move |input: &[(&u32, Weight)]| {
+        let mut values = Vec::new();
+        for (value, weight) in input {
+            for _ in 0..(*weight).max(0) as usize {
+                values.push(TermId(**value));
+            }
+        }
+        values
+    };
+    let folded = match folding {
+        Folding::Builtin(kind) => {
+            let arena_for_reduce = Arc::clone(&arena);
+            let diagnostics = Arc::clone(&diagnostics);
+            proofs.reduce(move |_key, input, output| {
+                let values = reduce(input);
+                if values.is_empty() {
+                    return;
                 }
-            }
-            if values.is_empty() {
-                return;
-            }
-            let result = match folding {
-                Folding::Builtin(kind) => super::evaluate::fold_group(
+                match super::evaluate::fold_group(
                     &mut arena_for_reduce.lock().unwrap(),
                     kind,
                     &values,
-                ),
-                Folding::Declared(_) => unreachable!("declared folds fail DD preflight"),
-            };
-            match result {
-                Ok(term) => output.push((term.0, 1)),
-                Err(diagnostic) => diagnostics.lock().unwrap().push(diagnostic),
-            }
-        })
-        .map(move |(mut key, result)| {
-            key.insert(position, result);
-            key.insert(0, rel);
-            key
-        })
+                ) {
+                    Ok(term) => output.push((term.0, 1)),
+                    Err(diagnostic) => diagnostics.lock().unwrap().push(diagnostic),
+                }
+            })
+        }
+        Folding::Declared(fold) => {
+            let arena_for_reduce = Arc::clone(&arena);
+            let groups = proofs.clone().map(|(key, _)| ((), key)).distinct();
+            let stored = groups
+                .join(all.clone().distinct().map(|row| ((), row)))
+                .map(|(_, (key, row))| (key, DeclaredFoldInput::Stored(row)));
+            let inputs = proofs
+                .map(|(key, value)| (key, DeclaredFoldInput::Subject(value)))
+                .concat(stored);
+            let diagnostics = Arc::clone(&diagnostics);
+            inputs.reduce(move |_key, input, output| {
+                let mut values = Vec::new();
+                let mut rows = Vec::new();
+                for (item, weight) in input {
+                    for _ in 0..(*weight).max(0) as usize {
+                        match item {
+                            DeclaredFoldInput::Subject(value) => values.push(TermId(*value)),
+                            DeclaredFoldInput::Stored(row) => rows.push(Row {
+                                rel: TermId(row[0]),
+                                args: row[1..].iter().copied().map(TermId).collect(),
+                            }),
+                        }
+                    }
+                }
+                if values.is_empty() {
+                    return;
+                }
+                match super::evaluate::fold_generic_rows(
+                    &mut arena_for_reduce.lock().unwrap(),
+                    &program,
+                    &rows,
+                    &fold,
+                    &values,
+                ) {
+                    Ok(term) => output.push((term.0, 1)),
+                    Err(diagnostic) => diagnostics.lock().unwrap().push(diagnostic),
+                }
+            })
+        }
+    };
+    let rel = rule.rel.0;
+    folded.map(move |(mut key, result)| {
+        key.insert(position, result);
+        key.insert(0, rel);
+        key
+    })
 }
 
 fn lower_rule<'scope, T>(

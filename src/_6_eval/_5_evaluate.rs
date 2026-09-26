@@ -641,6 +641,54 @@ fn fold_generic(
     Ok(accumulator)
 }
 
+/// Runs a declared fold against a completed DD row snapshot.
+pub(super) fn fold_generic_rows(
+    u: &mut Universe,
+    program: &Program,
+    rows: &[Row],
+    fold: &Fold,
+    values: &[TermId],
+) -> Result<TermId, Diagnostic> {
+    let mut store = Store::default();
+    for row in rows {
+        store.insert(row.rel, row.args.clone().into_boxed_slice());
+    }
+    let mut rules_by_rel: HashMap<TermId, Vec<&Rule>> = HashMap::new();
+    for rule in &program.rules {
+        rules_by_rel.entry(rule.rel).or_default().push(rule);
+    }
+    let kernel_rel = |u: &mut Universe, name: &str| {
+        let name = u.atom(name);
+        let kernel = u.compound("kernel", vec![name]);
+        u.compound("ref", vec![kernel])
+    };
+    let effects = Effects {
+        effect: kernel_rel(u, "effect"),
+        intern_snapshot: kernel_rel(u, "intern_snapshot"),
+        none: {
+            let none = u.atom("none");
+            u.compound("const", vec![none])
+        },
+    };
+    let demanded: HashSet<TermId> = rules_by_rel
+        .iter()
+        .filter(|(_, rules)| {
+            rules
+                .iter()
+                .any(|rule| needs_bound_head(u, rule, effects.intern_snapshot))
+        })
+        .map(|(relation, _)| *relation)
+        .collect();
+    let cx = Context {
+        store: &store,
+        rules_by_rel: &rules_by_rel,
+        served: &program.served,
+        demanded: &demanded,
+        effects,
+    };
+    fold_generic(u, cx, fold, values)
+}
+
 /// `(Step Acc Value ?Next)` as a one-goal rule; exactly one distinct `Next` is
 /// the only outcome that folds.
 fn fold_step(
