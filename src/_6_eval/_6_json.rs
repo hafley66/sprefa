@@ -352,11 +352,8 @@ fn names_to_json(u: &Universe, graph: TermId) -> Result<Value, Transport> {
         let Some(module) = u.unary(owner, "module") else {
             continue;
         };
-        // An import binds a module node, never a relation `--serve` can settle.
-        match u.unary(relation, "ref") {
-            None => continue,
-            Some(target) if u.unary(target, "module").is_some() => continue,
-            Some(_) => {}
+        if u.unary(relation, "ref").is_none() {
+            continue;
         }
         let Term::Atom(s) = u.get(name) else {
             continue;
@@ -367,8 +364,17 @@ fn names_to_json(u: &Universe, graph: TermId) -> Result<Value, Transport> {
             _ => name,
         };
         let prelude = matches!(u.get(module), Term::Atom(m) if u.sym_str(*m) == "prelude");
+        let module_target = u
+            .unary(relation, "ref")
+            .and_then(|target| u.unary(target, "module"))
+            .is_some();
         match out.get(&name) {
             Some((_, first)) if *first == relation => {}
+            Some((_, first))
+                if module_target
+                    && u.unary(*first, "ref")
+                        .and_then(|target| u.unary(target, "module"))
+                        .is_some() => {}
             Some((true, _)) if !prelude => {
                 out.insert(name, (prelude, relation));
             }

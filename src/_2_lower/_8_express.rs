@@ -4,6 +4,7 @@ use super::cx::Cx;
 use super::forms;
 use super::kernel;
 use super::slots::{self as slots, Callable, Slot};
+use crate::_3_check::kernel::PRIMITIVES;
 use crate::_6_eval::program::AggregateKind;
 use crate::_6_eval::term::{Term, TermId, Universe};
 use std::cmp::Ordering;
@@ -259,12 +260,6 @@ pub enum Applied {
     Construction(TermId),
 }
 
-/// The primitive classes a type node can name. `_3_check/_5_kernel.rs:41`
-/// pins the same list on the check side.
-fn primitive_type(name: &str) -> bool {
-    matches!(name, "int" | "float" | "bool" | "str" | "any" | "type")
-}
-
 /// `:1488`. `Err` carries the bare reason term.
 pub fn expression_callable(cx: &mut Cx, name: TermId, owner: TermId) -> Result<Applied, TermId> {
     if let Some(found) = cx.reservations.scoped(owner, name) {
@@ -318,7 +313,7 @@ pub fn expression_callable(cx: &mut Cx, name: TermId, owner: TermId) -> Result<A
     if typed.is_some() {
         return Err(cx.compound("undeclared_relation", vec![name]));
     }
-    if primitive_type(&text) {
+    if PRIMITIVES.contains(&text.as_str()) {
         let constructor = cx.compound("name", vec![owner, name]);
         return Ok(Applied::Construction(constructor));
     }
@@ -333,7 +328,7 @@ fn primitive_owner(u: &Universe, owner: TermId) -> Option<String> {
         .map(|[_, primitive]| primitive)
         .or_else(|| u.unary(owner, "primitive"))?;
     let (text, args) = u.functor_or_atom(primitive)?;
-    (args.is_empty() && primitive_type(text)).then(|| text.to_string())
+    (args.is_empty() && PRIMITIVES.contains(&text)).then(|| text.to_string())
 }
 
 /// `(. int add)` as an operator: the call owner `name(Owner, int)` and the
@@ -353,7 +348,7 @@ pub fn primitive_path_head(cx: &mut Cx, head: TermId, owner: TermId) -> Option<(
         cx.u.functor_or_atom(primitive)
             .map(|(n, _)| n.to_string())?;
     let label_text = cx.u.functor_or_atom(label).map(|(n, _)| n.to_string())?;
-    if !primitive_type(&primitive_text) {
+    if !PRIMITIVES.contains(&primitive_text.as_str()) {
         return None;
     }
     kernel::kernel_relation(Some(&primitive_text), &label_text)?;

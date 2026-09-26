@@ -5,6 +5,7 @@ use super::api::{lower_datalog, Lowered};
 use super::cx::CallPolicy;
 use super::derived::Stop;
 use crate::_3_check::api::prolog_sort;
+use crate::_3_check::kernel::PRIMITIVES;
 use crate::_6_eval::term::{TermId, Universe};
 use std::collections::{HashMap, HashSet};
 
@@ -392,6 +393,21 @@ fn install_importer_aliases(
         alias_edges.push(u.compound("pending_edge", vec![importer, name, target, alias_index]));
         let edge_key = u.compound("edge", vec![importer, name, alias_index]);
         alias_origins.push(u.compound("origin", vec![edge_key, node]));
+        bound.insert(name);
+        next += 1;
+    }
+    for name in PRIMITIVES {
+        let name_id = u.atom(name);
+        if bound.contains(&name_id) {
+            continue;
+        }
+        let primitive = u.compound("primitive", vec![name_id]);
+        let target = u.compound("target", vec![primitive]);
+        let alias_index = u.int(next);
+        alias_edges.push(u.compound("pending_edge", vec![importer, name_id, target, alias_index]));
+        let edge_key = u.compound("edge", vec![importer, name_id, alias_index]);
+        alias_origins.push(u.compound("origin", vec![edge_key, none]));
+        bound.insert(name_id);
         next += 1;
     }
     if alias_edges.is_empty() {

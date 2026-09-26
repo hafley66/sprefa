@@ -11,6 +11,7 @@
 use crate::_6_eval::term::{TermId, Universe};
 
 pub const COMPARISONS: [&str; 6] = ["lt", "le", "eq", "ne", "ge", "gt"];
+pub const PRIMITIVES: [&str; 6] = ["int", "float", "bool", "str", "any", "type"];
 
 /// `0_lowerer.pl:1958-1973`, in declaration order: `(owner, label, arity)`.
 pub const KERNEL_RELATIONS: [(Option<&str>, &str, i64); 22] = [
@@ -62,7 +63,7 @@ const TYPED_OPS: [(&str, &str, &[(&str, &str)]); 10] = [
 
 /// `:617`.
 pub fn primitive_name(name: &str) -> bool {
-    matches!(name, "int" | "float" | "bool" | "str" | "any" | "type")
+    PRIMITIVES.contains(&name)
 }
 
 /// `int.lt` and its five siblings.
