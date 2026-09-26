@@ -1,7 +1,7 @@
 //! Differential-dataflow evaluation over one worker and one dataflow.
 
 use super::evaluate::{Closure, Trace};
-use super::program::{Arg, Polarity, Program, Row, Rule};
+use super::program::{Arg, Diagnostic, Folding, Polarity, Program, Row, Rule};
 use super::stratify::stratify;
 use super::term::{TermId, Universe};
 use differential_dataflow::input::Input;
@@ -25,6 +25,26 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         return Closure {
             rows: Vec::new(),
             diagnostics,
+        };
+    }
+
+    let mut aggregate_diagnostics = Vec::new();
+    for rule in program.rules.iter().filter(|rule| rule.is_aggregate()) {
+        let count = rule.aggregate_args();
+        if count != 1 {
+            let count = u.int(count as i64);
+            aggregate_diagnostics.push(Diagnostic {
+                phase: "evaluate",
+                payload: u.compound("malformed_aggregate_head", vec![count]),
+            });
+        }
+    }
+    if !aggregate_diagnostics.is_empty() {
+        aggregate_diagnostics.sort_by(|left, right| u.cmp(left.payload, right.payload));
+        aggregate_diagnostics.dedup();
+        return Closure {
+            rows: Vec::new(),
+            diagnostics: aggregate_diagnostics,
         };
     }
 
@@ -55,15 +75,17 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
 
     let arena = Arc::new(Mutex::new(std::mem::take(u)));
     let captured: Arc<Mutex<Vec<(DdRow, Weight)>>> = Arc::default();
+    let aggregate_diagnostics: Arc<Mutex<Vec<Diagnostic>>> = Arc::default();
     let program = program.clone();
     let arena_worker = Arc::clone(&arena);
     let captured_worker = Arc::clone(&captured);
+    let diagnostics_worker = Arc::clone(&aggregate_diagnostics);
     timely::execute_directly(move |worker| {
         let probe = ProbeHandle::new();
         let (mut input, ()) = worker.dataflow::<u64, _, _>(|scope| {
             let (input, seeds) = scope.new_collection::<DdRow, Weight>();
-            let mut known = seeds.clone().filter(|_| false);
-            let mut levels: Vec<(u32, Vec<u32>, Vec<Rule>)> = (0..=strata.max_level)
+            let mut known = seeds.clone().filter(move |row| row[0] == nil_rel.0);
+            let levels: Vec<(u32, Vec<u32>, Vec<Rule>)> = (0..=strata.max_level)
                 .map(|level| {
                     let rels = program
                         .seeds
@@ -75,16 +97,21 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                     (level, rels, rules)
                 })
                 .collect();
-            if let Some((_, rels, _)) = levels.first_mut() {
-                rels.push(nil_rel.0);
-            }
             for (_, rels, rules) in levels {
                 let at_level = seeds.clone().filter(move |row| rels.contains(&row[0]));
-                let base = known.concat(at_level).distinct();
-                let plain: Vec<Rule> = rules
-                    .into_iter()
-                    .filter(|rule| !rule.is_aggregate())
-                    .collect();
+                let (aggregate, plain): (Vec<Rule>, Vec<Rule>) =
+                    rules.into_iter().partition(Rule::is_aggregate);
+                let mut aggregate_rows = known.clone().filter(|_| false);
+                for rule in &aggregate {
+                    let rows = lower_aggregate_rule(
+                        &known,
+                        rule,
+                        Arc::clone(&arena_worker),
+                        Arc::clone(&diagnostics_worker),
+                    );
+                    aggregate_rows = aggregate_rows.concat(rows);
+                }
+                let base = known.concat(at_level).concat(aggregate_rows).distinct();
                 if plain.is_empty() {
                     known = base;
                     continue;
@@ -124,11 +151,21 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
             args: row[1..].iter().copied().map(TermId).collect(),
         })
         .collect();
+    let mut diagnostics = aggregate_diagnostics.lock().unwrap().clone();
     let mutex = match Arc::try_unwrap(arena) {
         Ok(mutex) => mutex,
         Err(_) => panic!("DD arena still has an operator owner"),
     };
     let mut arena = mutex.into_inner().unwrap();
+    if !diagnostics.is_empty() {
+        diagnostics.sort_by(|left, right| arena.cmp(left.payload, right.payload));
+        diagnostics.dedup();
+        *u = std::mem::take(&mut arena);
+        return Closure {
+            rows: Vec::new(),
+            diagnostics,
+        };
+    }
     rows.sort_by(|left, right| {
         arena
             .cmp(left.rel, right.rel)
@@ -143,10 +180,11 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     }
 }
 
-fn lower_rule<'scope, T>(
+fn lower_aggregate_rule<'scope, T>(
     all: &VecCollection<'scope, T, DdRow, Weight>,
     rule: &Rule,
     arena: Arc<Mutex<Universe>>,
+    diagnostics: Arc<Mutex<Vec<Diagnostic>>>,
 ) -> VecCollection<'scope, T, DdRow, Weight>
 where
     T: Timestamp + Lattice + Ord + Hash,
@@ -166,9 +204,6 @@ where
             };
             continue;
         }
-        if kernel.is_some() {
-            return envs.filter(|_| false);
-        }
         let right = relation(all, goal.rel, goal.args.len());
         envs = join_goal(envs, right, &goal.args, &bound);
         for arg in &goal.args {
@@ -177,9 +212,129 @@ where
             }
         }
     }
+
+    let (position, folding, _) = rule.folding_head().unwrap();
+    let head = rule.head.clone();
+    let arena_for_proofs = Arc::clone(&arena);
+    let diagnostics_for_proofs = Arc::clone(&diagnostics);
+    let proofs = envs.flat_map(move |env| {
+        let row: Option<Vec<u32>> = head.iter().map(|arg| value(arg, &env)).collect();
+        match row {
+            Some(mut row) => {
+                let subject = row.remove(position);
+                Some((row, subject))
+            }
+            None => {
+                let payload = arena_for_proofs
+                    .lock()
+                    .unwrap()
+                    .atom("non_ground_aggregate_proof");
+                diagnostics_for_proofs.lock().unwrap().push(Diagnostic {
+                    phase: "evaluate",
+                    payload,
+                });
+                None
+            }
+        }
+    });
+    let rel = rule.rel.0;
+    let arena_for_reduce = Arc::clone(&arena);
+    proofs
+        .reduce(move |_key, input, output| {
+            let mut values = Vec::new();
+            for (value, weight) in input {
+                for _ in 0..(*weight).max(0) as usize {
+                    values.push(TermId(**value));
+                }
+            }
+            if values.is_empty() {
+                return;
+            }
+            let result = match folding {
+                Folding::Builtin(kind) => super::evaluate::fold_group(
+                    &mut arena_for_reduce.lock().unwrap(),
+                    kind,
+                    &values,
+                ),
+                Folding::Declared(fold) => {
+                    let payload = arena_for_reduce
+                        .lock()
+                        .unwrap()
+                        .compound("fold_step_no_row", vec![fold.step, values[0], values[0]]);
+                    Err(Diagnostic {
+                        phase: "evaluate",
+                        payload,
+                    })
+                }
+            };
+            match result {
+                Ok(term) => output.push((term.0, 1)),
+                Err(diagnostic) => diagnostics.lock().unwrap().push(diagnostic),
+            }
+        })
+        .map(move |(mut key, result)| {
+            key.insert(position, result);
+            key.insert(0, rel);
+            key
+        })
+}
+
+fn lower_rule<'scope, T>(
+    all: &VecCollection<'scope, T, DdRow, Weight>,
+    rule: &Rule,
+    arena: Arc<Mutex<Universe>>,
+) -> VecCollection<'scope, T, DdRow, Weight>
+where
+    T: Timestamp + Lattice + Ord + Hash,
+{
+    let vars = rule.vars.len();
+    let mut bound = vec![false; vars];
+    let mut envs = all.clone().map(move |_| vec![UNBOUND; vars]).distinct();
+    let mut kernel_rows = all.clone().filter(|_| false);
+    for goal in &rule.body {
+        let kernel = super::kernel::Kernel::of(&arena.lock().unwrap(), goal.rel);
+        if goal.polarity == Polarity::Negative {
+            envs = match kernel {
+                Some(kernel) => negative_kernel(envs, &goal.args, kernel, Arc::clone(&arena)),
+                None => {
+                    let right = relation(all, goal.rel, goal.args.len());
+                    anti_goal(envs, right, &goal.args)
+                }
+            };
+            continue;
+        }
+        envs = match kernel {
+            Some(kernel) => {
+                let stored = join_goal(
+                    envs.clone(),
+                    relation(all, goal.rel, goal.args.len()),
+                    &goal.args,
+                    &bound,
+                );
+                let solved = positive_kernel(envs, &goal.args, kernel, Arc::clone(&arena));
+                if kernel == super::kernel::Kernel::Intern {
+                    let rel = goal.rel.0;
+                    kernel_rows = kernel_rows.concat(solved.clone().map(move |(_, mut row)| {
+                        row.insert(0, rel);
+                        row
+                    }));
+                }
+                solved.map(|(env, _)| env).concat(stored).distinct()
+            }
+            None => {
+                let right = relation(all, goal.rel, goal.args.len());
+                join_goal(envs, right, &goal.args, &bound)
+            }
+        };
+        for arg in &goal.args {
+            if let Arg::Var(var) = arg {
+                bound[var.0 as usize] = true;
+            }
+        }
+    }
     let rel = rule.rel.0;
     let head = rule.head.clone();
-    envs.flat_map(move |env| {
+    let heads = envs.flat_map(move |env| {
         let mut row = Vec::with_capacity(head.len() + 1);
         row.push(rel);
         for arg in &head {
@@ -187,6 +342,35 @@ where
             row.push(value);
         }
         Some(row)
+    });
+    heads.concat(kernel_rows)
+}
+
+fn positive_kernel<'scope, T>(
+    envs: VecCollection<'scope, T, DdRow, Weight>,
+    args: &[Arg],
+    kernel: super::kernel::Kernel,
+    arena: Arc<Mutex<Universe>>,
+) -> VecCollection<'scope, T, (DdRow, DdRow), Weight>
+where
+    T: Timestamp + Lattice + Ord,
+{
+    let args = args.to_vec();
+    envs.flat_map(move |env| {
+        let pattern: Vec<Option<TermId>> = args
+            .iter()
+            .map(|arg| value(arg, &env).map(TermId))
+            .collect();
+        let solutions = super::kernel::solve(&mut arena.lock().unwrap(), kernel, &pattern);
+        solutions.into_iter().filter_map({
+            let args = args.clone();
+            let env = env.clone();
+            move |row| {
+                let row_u32: Vec<u32> = row.iter().map(|term| term.0).collect();
+                let mut next = env.clone();
+                unify(&args, &row_u32, &mut next).then_some((next, row_u32))
+            }
+        })
     })
 }
 

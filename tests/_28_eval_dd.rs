@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Fixtures the DD engine must keep passing.
-const FLOOR: usize = 13;
+const FLOOR: usize = 23;
 
 fn fixtures() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/eval");

@@ -710,7 +710,7 @@ fn fold_step(
 
 /// One group's folded value. `count` and `sum` produce `const(Int)`; `min`
 /// and `max` return the winning subject term unchanged.
-fn fold_group(
+pub(super) fn fold_group(
     u: &mut Universe,
     aggregation: AggregateKind,
     values: &[TermId],
