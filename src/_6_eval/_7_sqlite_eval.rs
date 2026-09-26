@@ -195,7 +195,17 @@ impl SqliteEvaluate {
 
 impl IEvaluate for SqliteEvaluate {
     fn declare(&mut self, program: &Program) -> Result<Declared, Stop> {
-        let (diagnostics, ddl, view, width, cap_names, marker, rounds, material_tables) = {
+        let (
+            diagnostics,
+            ddl,
+            view,
+            width,
+            cap_names,
+            marker,
+            rounds,
+            material_tables,
+            uses_dictionary,
+        ) = {
             let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
             let (_, stratify_diagnostics) = stratify(&mut guard, program);
             if !stratify_diagnostics.is_empty() {
@@ -249,6 +259,7 @@ impl IEvaluate for SqliteEvaluate {
                 ddl,
                 rounds,
                 material_tables,
+                uses_dictionary,
             ) = {
                 let plan = program_plan_with(
                     &mut guard,
@@ -276,7 +287,17 @@ impl IEvaluate for SqliteEvaluate {
                     .into_iter()
                     .map(|(rel, arity)| (plan.table_name((rel, arity)), rel, arity))
                     .collect();
-                let mut ddl = dictionary_ddl();
+                let rounds = plan.round_statements();
+                let uses_dictionary = std::iter::once(view.as_str())
+                    .chain(rounds.iter().map(String::as_str))
+                    .any(|statement| {
+                        statement.contains("main.term") || statement.contains("main.sym")
+                    });
+                let mut ddl = if uses_dictionary {
+                    dictionary_ddl()
+                } else {
+                    unit_ddl()
+                };
                 for (table, _, arity) in &seeded {
                     ddl.push('\n');
                     ddl.push_str(&product_ddl(table, *arity));
@@ -287,7 +308,6 @@ impl IEvaluate for SqliteEvaluate {
                     ddl.push_str(&product_ddl(&table, columns.len()));
                     material_tables.push(table);
                 }
-                let rounds = plan.round_statements();
                 (
                     eval_failures,
                     view,
@@ -298,6 +318,7 @@ impl IEvaluate for SqliteEvaluate {
                     ddl,
                     rounds,
                     material_tables,
+                    uses_dictionary,
                 )
             };
             self.derived = derived;
@@ -338,6 +359,7 @@ impl IEvaluate for SqliteEvaluate {
                 marker,
                 rounds,
                 material_tables,
+                uses_dictionary,
             )
         };
         // Below this point no arena guard is held: every statement runs the
@@ -352,11 +374,13 @@ impl IEvaluate for SqliteEvaluate {
             tracing::error!(target: "dl8::eval", phase = "declare_tables", error = %e);
             Stop::Fail("eval declare_tables")
         })?;
-        let flush = {
-            let guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
-            flush_rows(&guard)
-        };
-        flush_commit(&self.connection, flush).map_err(|_| Stop::Fail("eval flush"))?;
+        if uses_dictionary {
+            let flush = {
+                let guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+                flush_rows(&guard)
+            };
+            flush_commit(&self.connection, flush).map_err(|_| Stop::Fail("eval flush"))?;
+        }
         self.write_delta(&program.seeds, &[])?;
         if !view.is_empty() {
             tracing::debug!(target: "dl8::eval", view = %view, "declare_view sql");
@@ -536,6 +560,11 @@ fn dictionary_ddl() -> String {
        CHECK (\"child\" < \"term\")) WITHOUT ROWID;\
      CREATE TABLE \"main.unit\" (\"one\" INTEGER NOT NULL);\
      INSERT OR IGNORE INTO \"main.unit\" VALUES (1);"
+        .to_string()
+}
+
+fn unit_ddl() -> String {
+    "CREATE TABLE \"main.unit\" (\"one\" INTEGER NOT NULL); INSERT INTO \"main.unit\" VALUES (1);"
         .to_string()
 }
 
