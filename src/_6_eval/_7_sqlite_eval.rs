@@ -811,7 +811,7 @@ fn with_effects(u: &mut Universe, program: &Program) -> Program {
 /// is also proved under each caller's binding. A call site with bound
 /// positions B feeds a demand product; an adorned copy of every rule joins
 /// it; the caller reads the adorned copy. The originals still fire bottom-up.
-fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
+pub(super) fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
     let snapshots = {
         let name = u.atom("intern_snapshot");
         let kernel = u.compound("kernel", vec![name]);

@@ -2,6 +2,8 @@
 //! `v7/src/1_libtime/0_evaluator.pl` `evaluate/4`; the oracle fixtures under
 //! `v8/oracle/eval/` are frozen v7 output.
 
+#[path = "_9_dd_eval.rs"]
+pub mod dd_eval;
 #[path = "_5_evaluate.rs"]
 pub mod evaluate;
 #[path = "_8_functions.rs"]
@@ -21,6 +23,7 @@ pub mod table;
 #[path = "_0_term.rs"]
 pub mod term;
 
+pub use dd_eval::evaluate_dd;
 pub use evaluate::{evaluate, Closure, Trace};
 pub use program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule};
 pub use sqlite_eval::{evaluate_sqlite, IEvaluate, SeedDelta, SqliteEvaluate};

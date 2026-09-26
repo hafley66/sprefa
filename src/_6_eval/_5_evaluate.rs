@@ -277,18 +277,12 @@ impl<'a> Eval<'a> {
     /// `effect(Relation, Application)` on every evaluation of a served goal,
     /// hit or miss: the row is live interest, not a miss report.
     fn write_effect(&mut self, rel: TermId, pattern: &Pattern) {
-        let none = self.cx.effects.none;
-        let values: Vec<TermId> = pattern.iter().map(|t| t.unwrap_or(none)).collect();
-        let list = self.u.list(&values);
-        let arguments = self.u.compound("const", vec![list]);
-        let Some(row) = kernel::intern_row(self.u, &[Some(rel), Some(arguments), None]) else {
+        let Some(rows) = effect_rows(self.u, self.cx.effects.none, rel, pattern) else {
             return;
         };
-        let application = row[2];
-        self.intern_requests.push(row.clone().into_boxed_slice());
-        self.snapshot_rows.push(row.into_boxed_slice());
-        self.effect_rows
-            .push(vec![rel, application].into_boxed_slice());
+        self.intern_requests.push(rows.intern.into_boxed_slice());
+        self.snapshot_rows.push(rows.snapshot.into_boxed_slice());
+        self.effect_rows.push(rows.effect.into_boxed_slice());
     }
 
     /// Top-down proof of a derived relation under bindings, the part of v7's
@@ -369,6 +363,32 @@ impl<'a> Eval<'a> {
         }
         true
     }
+}
+
+/// The three rows one served-goal evaluation writes.
+pub(super) struct EffectRows {
+    pub intern: Vec<TermId>,
+    pub effect: Vec<TermId>,
+    pub snapshot: Vec<TermId>,
+}
+
+/// Builds the intern request, effect row, and intern snapshot for one pattern.
+pub(super) fn effect_rows(
+    u: &mut Universe,
+    none: TermId,
+    rel: TermId,
+    pattern: &[Option<TermId>],
+) -> Option<EffectRows> {
+    let values: Vec<TermId> = pattern.iter().map(|term| term.unwrap_or(none)).collect();
+    let list = u.list(&values);
+    let arguments = u.compound("const", vec![list]);
+    let intern = kernel::intern_row(u, &[Some(rel), Some(arguments), None])?;
+    let application = intern[2];
+    Some(EffectRows {
+        snapshot: intern.clone(),
+        intern,
+        effect: vec![rel, application],
+    })
 }
 
 fn head_row(env: &Env, rule: &Rule) -> Option<Vec<TermId>> {
@@ -641,6 +661,55 @@ fn fold_generic(
     Ok(accumulator)
 }
 
+/// Runs a declared fold against a completed DD row snapshot.
+/// Rebuilds one store per group for a later performance pass to remove.
+pub(super) fn fold_generic_rows(
+    u: &mut Universe,
+    program: &Program,
+    rows: &[Row],
+    fold: &Fold,
+    values: &[TermId],
+) -> Result<TermId, Diagnostic> {
+    let mut store = Store::default();
+    for row in rows {
+        store.insert(row.rel, row.args.clone().into_boxed_slice());
+    }
+    let mut rules_by_rel: HashMap<TermId, Vec<&Rule>> = HashMap::new();
+    for rule in &program.rules {
+        rules_by_rel.entry(rule.rel).or_default().push(rule);
+    }
+    let kernel_rel = |u: &mut Universe, name: &str| {
+        let name = u.atom(name);
+        let kernel = u.compound("kernel", vec![name]);
+        u.compound("ref", vec![kernel])
+    };
+    let effects = Effects {
+        effect: kernel_rel(u, "effect"),
+        intern_snapshot: kernel_rel(u, "intern_snapshot"),
+        none: {
+            let none = u.atom("none");
+            u.compound("const", vec![none])
+        },
+    };
+    let demanded: HashSet<TermId> = rules_by_rel
+        .iter()
+        .filter(|(_, rules)| {
+            rules
+                .iter()
+                .any(|rule| needs_bound_head(u, rule, effects.intern_snapshot))
+        })
+        .map(|(relation, _)| *relation)
+        .collect();
+    let cx = Context {
+        store: &store,
+        rules_by_rel: &rules_by_rel,
+        served: &program.served,
+        demanded: &demanded,
+        effects,
+    };
+    fold_generic(u, cx, fold, values)
+}
+
 /// `(Step Acc Value ?Next)` as a one-goal rule; exactly one distinct `Next` is
 /// the only outcome that folds.
 fn fold_step(
@@ -710,7 +779,7 @@ fn fold_step(
 
 /// One group's folded value. `count` and `sum` produce `const(Int)`; `min`
 /// and `max` return the winning subject term unchanged.
-fn fold_group(
+pub(super) fn fold_group(
     u: &mut Universe,
     aggregation: AggregateKind,
     values: &[TermId],
@@ -762,19 +831,20 @@ fn fold_group(
     }
 }
 
-/// The eval engine, read once from the environment. `sqlite` runs every
-/// product through `_7_sqlite_eval`; `rust` (the default) keeps this module.
+/// The eval engine, read once from the environment.
 static ENGINE: OnceLock<Engine> = OnceLock::new();
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Engine {
     Rust,
     Sqlite,
+    Dd,
 }
 
 fn engine() -> Engine {
     *ENGINE.get_or_init(|| match std::env::var("DL8_ENGINE").as_deref() {
         Ok("sqlite") => Engine::Sqlite,
+        Ok("dd") => Engine::Dd,
         _ => Engine::Rust,
     })
 }
@@ -788,9 +858,9 @@ impl<'a> Slice for Evaluate<'a> {
     type Effect = Trace;
 
     fn reduce(store: &mut Store, (u, program): Self::Event, fx: &mut dyn FnMut(Trace)) -> Closure {
-        if engine() == Engine::Sqlite {
+        if matches!(engine(), Engine::Sqlite | Engine::Dd) {
             // Rows already in the store (a continuing run) are seeds to the
-            // sqlite engine; every closure row lands back in the store.
+            // selected engine; every closure row lands back in the store.
             let mut seeded = program.clone();
             for (rel, table) in &store.tables {
                 for id in 0..table.len() as u32 {
@@ -800,7 +870,11 @@ impl<'a> Slice for Evaluate<'a> {
                     });
                 }
             }
-            let closure = super::sqlite_eval::evaluate_sqlite(u, &seeded, fx);
+            let closure = match engine() {
+                Engine::Sqlite => super::sqlite_eval::evaluate_sqlite(u, &seeded, fx),
+                Engine::Dd => super::dd_eval::evaluate_dd(u, &seeded, fx),
+                Engine::Rust => unreachable!(),
+            };
             for row in &closure.rows {
                 store.insert(row.rel, row.args.clone().into_boxed_slice());
             }
