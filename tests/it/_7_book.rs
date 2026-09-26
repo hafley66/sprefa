@@ -1,17 +1,21 @@
-//! The book in `book/`, through the real binary. Every `dl7` block in
-//! `book/src/*.md` opens with `; fixture: <path>[:first-last]`, then
-//! optionally `; diagnostic: <name>` and `; compile: <flags>`. `dl8 compile`
-//! on the whole named file must exit 0, or exit nonzero with that diagnostic;
-//! a block under `oracle/check/cases` must name one. `book/check_blocks.sh`
-//! diffs every block against its file, `book/check_outputs.sh` reruns every
-//! `console` block with `DL8` set to this binary, and `mdbook build` renders
-//! the book. Every child is killed past 10 s.
-
 use serde_json::Value;
 use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
+use std::time::Duration;
+use std::time::Instant;
+
+// From tests/_22_book.rs
+// The book in `book/`, through the real binary. Every `dl7` block in
+// `book/src/*.md` opens with `; fixture: <path>[:first-last]`, then
+// optionally `; diagnostic: <name>` and `; compile: <flags>`. `dl8 compile`
+// on the whole named file must exit 0, or exit nonzero with that diagnostic;
+// a block under `oracle/check/cases` must name one. `book/check_blocks.sh`
+// diffs every block against its file, `book/check_outputs.sh` reruns every
+// `console` block with `DL8` set to this binary, and `mdbook build` renders
+// the book. Every child is killed past 10 s.
 
 const RUN_CAP: Duration = Duration::from_secs(10);
 

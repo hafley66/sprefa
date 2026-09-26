@@ -1,23 +1,91 @@
-//! The bounded-loop law, `CLAUDE.md` 2026-09-18: every `loop {}`, `while`,
-//! and self-recursive fn in `src/**` carries an explicit budget and stops
-//! with a named diagnostic when the budget is hit. This test walks
-//! `src/**/*.rs`, finds each site, and looks inside the enclosing fn body
-//! for the budget evidence: a `for _ in 0..` bound, a comparison against a
-//! named constant carrying budget vocabulary (`*BUDGET*`, `*LIMIT*`,
-//! `*CAP*`, `*MAX*`, `*BOUND*`, `*DEPTH*`), or a repeat check (`== previous`
-//! and friends), plus a named diagnostic: a string literal naming the cap
-//! (`"..._exceeded"`, `"..._budget"`, ...) or a `tracing::warn`/`error`
-//! call. A `while let Some(..)` line that drains its source (`next`, `pop`,
-//! `next_entry`, `next_element`) is bounded by construction and needs no
-//! further evidence.
-//!
-//! Sites without a budget today are listed in `UNBUDGETED` as
-//! (path, trimmed line text). The list only shrinks: a listed site that
-//! gains a budget or vanishes must leave the list in the same commit, and a
-//! new unbudgeted site must be listed or budgeted in its own commit.
-
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+
+// From tests/_9_tracing.rs
+// Tracing writes to stderr only. Enabling it leaves stdout and the exit code
+// byte-identical; the five phase events are one JSON line each, in phase
+// order. `--trace` with `RUST_LOG` unset still prints waves and rounds.
+
+fn fixture(name: &str) -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+        .display()
+        .to_string()
+}
+
+fn run(json: bool, trace: bool) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_dl8"));
+    command
+        .arg("compile")
+        .arg(fixture("2_partial.dl7"))
+        .env_remove("RUST_LOG")
+        .env_remove("HAFLEY_LOG_FORMAT");
+    if trace {
+        command.arg("--trace");
+    }
+    if json {
+        command
+            .env("RUST_LOG", "dl8=info")
+            .env("HAFLEY_LOG_FORMAT", "json");
+    }
+    command.output().unwrap()
+}
+
+#[test]
+fn json_phase_events_leave_stdout_byte_identical() {
+    let plain = run(false, false);
+    let logged = run(true, false);
+    assert_eq!(
+        logged.stdout, plain.stdout,
+        "stdout differs with tracing enabled"
+    );
+    assert_eq!(
+        logged.status.code(),
+        plain.status.code(),
+        "exit code differs with tracing enabled"
+    );
+    let names: Vec<String> = String::from_utf8(logged.stderr)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|value| value["target"] == "dl8::phase")
+        .map(|value| value["fields"]["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        ["read", "macrotime", "lower", "check", "comptime"].map(String::from)
+    );
+}
+
+#[test]
+fn trace_prints_waves_and_rounds_without_rust_log() {
+    let traced = run(false, true);
+    let stderr = String::from_utf8(traced.stderr).unwrap();
+    assert!(stderr.contains("Round"), "no Round line:\n{stderr}");
+    assert!(stderr.contains("Wave"), "no Wave line:\n{stderr}");
+}
+
+// From tests/_26_bounded_loops.rs
+// The bounded-loop law, `CLAUDE.md` 2026-09-18: every `loop {}`, `while`,
+// and self-recursive fn in `src/**` carries an explicit budget and stops
+// with a named diagnostic when the budget is hit. This test walks
+// `src/**/*.rs`, finds each site, and looks inside the enclosing fn body
+// for the budget evidence: a `for _ in 0..` bound, a comparison against a
+// named constant carrying budget vocabulary (`*BUDGET*`, `*LIMIT*`,
+// `*CAP*`, `*MAX*`, `*BOUND*`, `*DEPTH*`), or a repeat check (`== previous`
+// and friends), plus a named diagnostic: a string literal naming the cap
+// (`"..._exceeded"`, `"..._budget"`, ...) or a `tracing::warn`/`error`
+// call. A `while let Some(..)` line that drains its source (`next`, `pop`,
+// `next_entry`, `next_element`) is bounded by construction and needs no
+// further evidence.
+//
+// Sites without a budget today are listed in `UNBUDGETED` as
+// (path, trimmed line text). The list only shrinks: a listed site that
+// gains a budget or vanishes must leave the list in the same commit, and a
+// new unbudgeted site must be listed or budgeted in its own commit.
 
 const UNBUDGETED: &[(&str, &str)] = &[
     ("src/_0_read/_2_reader.rs", "loop {"),

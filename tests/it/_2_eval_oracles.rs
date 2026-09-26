@@ -1,16 +1,360 @@
-//! Seeded structural programs compared in one process across the three evaluators.
-//! `DL8_RANDOM_CATEGORY` selects one construct or aggregate kind for replay.
-
-use dl8::_6_eval::json::{closure_to_json, program_from_json};
-use dl8::_6_eval::{evaluate, evaluate_dd, evaluate_sqlite, Universe};
+use dl8::_6_eval::evaluate;
+use dl8::_6_eval::evaluate_dd;
+use dl8::_6_eval::evaluate_sqlite;
+use dl8::_6_eval::json::closure_to_json;
+use dl8::_6_eval::json::program_from_json;
+use dl8::_6_eval::Universe;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
-use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
-use serde_json::{json, Value};
+use proptest::test_runner::Config;
+use proptest::test_runner::RngAlgorithm;
+use proptest::test_runner::TestRng;
+use proptest::test_runner::TestRunner;
+use serde_json::json;
+use serde_json::Value;
 use std::collections::BTreeMap;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::catch_unwind;
+use std::panic::AssertUnwindSafe;
 use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
 use std::time::Instant;
+
+// From tests/_0_eval_oracle.rs
+// Oracle parity through the real binary. Every `oracle/eval/*.json` holds a
+// program and the closure v7 `evaluate/4` produced for it, frozen by
+// `oracle/eval/dump_eval.pl`. `dl8 eval` must print the same closure and the
+// same diagnostics.
+
+fn fixtures() -> Vec<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/eval");
+    let mut out: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn every_oracle_fixture_matches_v7() {
+    let fixtures = fixtures();
+    assert!(!fixtures.is_empty(), "no oracle fixtures found");
+    let mut failures = Vec::new();
+    for path in &fixtures {
+        let text = std::fs::read_to_string(path).unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let program_path = std::env::temp_dir().join(format!(
+            "dl8-oracle-{}-{}.json",
+            std::process::id(),
+            path.file_stem().unwrap().to_string_lossy()
+        ));
+        std::fs::write(
+            &program_path,
+            serde_json::to_string(&fixture["program"]).unwrap(),
+        )
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .arg("eval")
+            .arg(&program_path)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&program_path);
+        let got: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+            Ok(v) => v,
+            Err(e) => {
+                failures.push(format!(
+                    "{}: no JSON on stdout ({e}); stderr: {}",
+                    path.display(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+                continue;
+            }
+        };
+        let want = &fixture["expected"];
+        if got["closure"] != want["closure"] {
+            failures.push(format!(
+                "{}: closure differs\n  want: {}\n  got:  {}",
+                path.display(),
+                want["closure"],
+                got["closure"]
+            ));
+        }
+        if got["diagnostics"] != want["diagnostics"] {
+            failures.push(format!(
+                "{}: diagnostics differ\n  want: {}\n  got:  {}",
+                path.display(),
+                want["diagnostics"],
+                got["diagnostics"]
+            ));
+        }
+        let want_code = if want["diagnostics"].as_array().is_none_or(|d| d.is_empty()) {
+            0
+        } else {
+            1
+        };
+        if output.status.code() != Some(want_code) {
+            failures.push(format!(
+                "{}: exit {:?}, want {want_code}",
+                path.display(),
+                output.status.code()
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+// From tests/_27_eval_sqlite.rs
+// Oracle parity through the real binary with `DL8_ENGINE=sqlite`. Same
+// comparison as `_0_eval_oracle.rs`; the floor only rises.
+
+/// Fixtures the sqlite engine must keep passing. Measured at slice S1;
+/// a count below this is a regression, above it raises the floor.
+const FLOOR: usize = 32;
+
+fn s27evalsqlite_fixtures() -> Vec<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/eval");
+    let mut out: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn sqlite_engine_matches_v7_oracles() {
+    let s27evalsqlite_fixtures = s27evalsqlite_fixtures();
+    assert!(
+        !s27evalsqlite_fixtures.is_empty(),
+        "no eval oracle fixtures found"
+    );
+    let mut pass = 0usize;
+    let mut failures = Vec::new();
+    for path in &s27evalsqlite_fixtures {
+        let text = std::fs::read_to_string(path).unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(&text).unwrap();
+        if fixture.get("expected").is_none() {
+            continue;
+        }
+        let program_path = std::env::temp_dir().join(format!(
+            "dl8-sqlite-{}-{}.json",
+            std::process::id(),
+            path.file_stem().unwrap().to_string_lossy()
+        ));
+        std::fs::write(
+            &program_path,
+            serde_json::to_string(&fixture["program"]).unwrap(),
+        )
+        .unwrap();
+        println!(
+            "sqlite oracle: {}",
+            path.file_name().unwrap().to_string_lossy()
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .arg("eval")
+            .arg(&program_path)
+            .env("DL8_ENGINE", "sqlite")
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&program_path);
+        let got: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+            Ok(v) => v,
+            Err(e) => {
+                failures.push(format!(
+                    "{}: no JSON on stdout ({e}); stderr: {}",
+                    path.display(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+                continue;
+            }
+        };
+        let want = &fixture["expected"];
+        let same = got["closure"] == want["closure"]
+            && got["diagnostics"] == want["diagnostics"]
+            && output.status.code()
+                == Some(
+                    if want["diagnostics"].as_array().is_none_or(|d| d.is_empty()) {
+                        0
+                    } else {
+                        1
+                    },
+                );
+        if same {
+            pass += 1;
+        } else {
+            failures.push(format!("{}", path.display()));
+        }
+    }
+    let total = s27evalsqlite_fixtures
+        .iter()
+        .filter(|p| {
+            serde_json::from_str::<serde_json::Value>(
+                &std::fs::read_to_string(p).unwrap_or_default(),
+            )
+            .map(|v| v.get("expected").is_some())
+            .unwrap_or(false)
+        })
+        .count();
+    println!("sqlite oracles {pass}/{total}");
+    for failure in &failures {
+        println!("failed: {failure}");
+    }
+    assert_eq!(
+        pass,
+        total,
+        "SQLite oracle failures: {}",
+        failures.join(", ")
+    );
+    assert!(
+        pass >= FLOOR,
+        "sqlite oracles {pass}/{total} fell below the floor {FLOOR}: {}",
+        failures.join(", ")
+    );
+}
+
+// From tests/_28_eval_dd.rs
+// Oracle parity through the real binary with `DL8_ENGINE=dd`.
+
+/// Fixtures the DD engine must keep passing.
+const s28evaldd_FLOOR: usize = 32;
+
+fn s28evaldd_fixtures() -> Vec<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/eval");
+    let mut out: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn dd_engine_matches_v7_oracles() {
+    let s28evaldd_fixtures = s28evaldd_fixtures();
+    assert!(
+        !s28evaldd_fixtures.is_empty(),
+        "no eval oracle fixtures found"
+    );
+    let mut pass = 0usize;
+    let mut failures = Vec::new();
+    for path in &s28evaldd_fixtures {
+        let text = std::fs::read_to_string(path).unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(&text).unwrap();
+        if fixture.get("expected").is_none() {
+            continue;
+        }
+        let program_path = std::env::temp_dir().join(format!(
+            "dl8-dd-{}-{}.json",
+            std::process::id(),
+            path.file_stem().unwrap().to_string_lossy()
+        ));
+        std::fs::write(
+            &program_path,
+            serde_json::to_string(&fixture["program"]).unwrap(),
+        )
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .arg("eval")
+            .arg(&program_path)
+            .env("DL8_ENGINE", "dd")
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&program_path);
+        let got: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+            Ok(value) => value,
+            Err(error) => {
+                failures.push(format!(
+                    "{}: no JSON on stdout ({error}); stderr: {}",
+                    path.display(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+                continue;
+            }
+        };
+        let want = &fixture["expected"];
+        let same = got["closure"] == want["closure"]
+            && got["diagnostics"] == want["diagnostics"]
+            && output.status.code()
+                == Some(
+                    if want["diagnostics"]
+                        .as_array()
+                        .is_none_or(|diagnostics| diagnostics.is_empty())
+                    {
+                        0
+                    } else {
+                        1
+                    },
+                );
+        if same {
+            pass += 1;
+        } else {
+            failures.push(path.display().to_string());
+        }
+    }
+    let total = s28evaldd_fixtures
+        .iter()
+        .filter(|path| {
+            serde_json::from_str::<serde_json::Value>(
+                &std::fs::read_to_string(path).unwrap_or_default(),
+            )
+            .map(|value| value.get("expected").is_some())
+            .unwrap_or(false)
+        })
+        .count();
+    println!("dd oracles {pass}/{total}");
+    for failure in &failures {
+        println!("failed: {failure}");
+    }
+    assert!(
+        pass >= s28evaldd_FLOOR,
+        "dd oracles {pass}/{total} fell below the floor {s28evaldd_FLOOR}: {}",
+        failures.join(", ")
+    );
+}
+
+#[test]
+fn served_goal_matches_rust_on_the_same_program() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join("fixtures/host_effect/0_pending.dl7");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .arg("compile")
+        .arg(source)
+        .env("DL8_ENGINE", "rust")
+        .output()
+        .unwrap();
+    assert_eq!(compiled.status.code(), Some(0), "compile status");
+    let program_path =
+        std::env::temp_dir().join(format!("dl8-dd-served-parity-{}.json", std::process::id()));
+    std::fs::write(&program_path, compiled.stdout).unwrap();
+    let evaluate = |engine: &str| {
+        Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .arg("eval")
+            .arg(&program_path)
+            .args(["--serve", "fetch_json"])
+            .env("DL8_ENGINE", engine)
+            .output()
+            .unwrap()
+    };
+    let rust = evaluate("rust");
+    let dd = evaluate("dd");
+    let _ = std::fs::remove_file(program_path);
+    assert_eq!(dd.status.code(), rust.status.code(), "exit status");
+    let rust: serde_json::Value = serde_json::from_slice(&rust.stdout).unwrap();
+    let dd: serde_json::Value = serde_json::from_slice(&dd.stdout).unwrap();
+    assert_eq!(dd["closure"], rust["closure"], "closure");
+    assert_eq!(dd["diagnostics"], rust["diagnostics"], "diagnostics");
+}
+
+// From tests/_29_eval_random.rs
+// Seeded structural programs compared in one process across the three evaluators.
+// `DL8_RANDOM_CATEGORY` selects one construct or aggregate kind for replay.
 
 type SeedSpec = (u8, Vec<i8>);
 type GoalSpec = (u8, Vec<u8>);
