@@ -24,6 +24,13 @@ type Arrangements<'scope, T> = HashMap<
     (u32, usize, Vec<usize>),
     Arranged<'scope, TraceAgent<ValSpine<Vec<u32>, DdRow, T, Weight>>>,
 >;
+type TaggedArrangement<'scope, T> =
+    Arranged<'scope, TraceAgent<ValSpine<u32, DdRow, T, Weight>>>;
+type RuleSources<'a, 'scope, T> = (
+    &'a VecCollection<'scope, T, DdRow, Weight>,
+    &'a VecCollection<'scope, T, (), Weight>,
+    &'a TaggedArrangement<'scope, T>,
+);
 const UNBOUND: u32 = u32::MAX;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -148,9 +155,13 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                     .filter(move |row| row[0] == nil_rel.0)
                     .map(|_| ())
                     .distinct();
+                let tagged_rows = known
+                    .clone()
+                    .map(|row| (row[0], row[1..].to_vec()))
+                    .arrange_by_key();
                 for rule in &aggregate {
                     let rows = lower_aggregate_rule(
-                        (&known, &unit),
+                        (&known, &unit, &tagged_rows),
                         &mut relations,
                         &mut arrangements,
                         rule,
@@ -180,9 +191,13 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                         .filter(move |row| row[0] == nil_rel.0)
                         .map(|_| ())
                         .distinct();
+                    let tagged_rows = current
+                        .clone()
+                        .map(|row| (row[0], row[1..].to_vec()))
+                        .arrange_by_key();
                     for rule in &plain {
                         let rows = lower_rule(
-                            (&current, &unit),
+                            (&current, &unit, &tagged_rows),
                             &mut relations,
                             &mut arrangements,
                             rule,
@@ -270,10 +285,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
 }
 
 fn lower_aggregate_rule<'scope, T>(
-    (all, unit): (
-        &VecCollection<'scope, T, DdRow, Weight>,
-        &VecCollection<'scope, T, (), Weight>,
-    ),
+    sources: RuleSources<'_, 'scope, T>,
     relations: &mut Relations<'scope, T>,
     arrangements: &mut Arrangements<'scope, T>,
     rule: &Rule,
@@ -284,6 +296,7 @@ fn lower_aggregate_rule<'scope, T>(
 where
     T: Timestamp + Lattice + Ord + Hash,
 {
+    let (all, unit, tagged_rows) = sources;
     let vars = rule.vars.len();
     let mut bound = vec![false; vars];
     let mut envs = unit.clone().map(move |_| vec![UNBOUND; vars]);
@@ -293,13 +306,13 @@ where
             envs = match kernel {
                 Some(kernel) => negative_kernel(envs, &goal.args, kernel, Arc::clone(&arena)),
                 None => {
-                    let right = relation(all, relations, goal.rel, goal.args.len());
+                    let right = relation((unit, tagged_rows), relations, goal.rel, goal.args.len());
                     anti_goal(envs, right, &goal.args)
                 }
             };
             continue;
         }
-        envs = join_goal(envs, all, relations, arrangements, goal, &bound);
+        envs = join_goal(envs, (unit, tagged_rows), relations, arrangements, goal, &bound);
         for arg in &goal.args {
             if let Arg::Var(var) = arg {
                 bound[var.0 as usize] = true;
@@ -408,10 +421,7 @@ where
 }
 
 fn lower_rule<'scope, T>(
-    (all, unit): (
-        &VecCollection<'scope, T, DdRow, Weight>,
-        &VecCollection<'scope, T, (), Weight>,
-    ),
+    sources: RuleSources<'_, 'scope, T>,
     relations: &mut Relations<'scope, T>,
     arrangements: &mut Arrangements<'scope, T>,
     rule: &Rule,
@@ -422,6 +432,7 @@ fn lower_rule<'scope, T>(
 where
     T: Timestamp + Lattice + Ord + Hash,
 {
+    let (all, unit, tagged_rows) = sources;
     let vars = rule.vars.len();
     let mut bound = vec![false; vars];
     let mut envs = unit.clone().map(move |_| vec![UNBOUND; vars]);
@@ -432,7 +443,7 @@ where
             envs = match kernel {
                 Some(kernel) => negative_kernel(envs, &goal.args, kernel, Arc::clone(&arena)),
                 None => {
-                    let right = relation(all, relations, goal.rel, goal.args.len());
+                    let right = relation((unit, tagged_rows), relations, goal.rel, goal.args.len());
                     anti_goal(envs, right, &goal.args)
                 }
             };
@@ -466,7 +477,7 @@ where
             Some(kernel) => {
                 let stored = join_goal(
                     envs.clone(),
-                    all,
+                    (unit, tagged_rows),
                     relations,
                     arrangements,
                     goal,
@@ -483,7 +494,7 @@ where
                 solved.map(|(env, _)| env).concat(stored).distinct()
             }
             None => {
-                join_goal(envs, all, relations, arrangements, goal, &bound)
+                join_goal(envs, (unit, tagged_rows), relations, arrangements, goal, &bound)
             }
         };
         for arg in &goal.args {
@@ -570,7 +581,10 @@ where
 }
 
 fn relation<'scope, T>(
-    all: &VecCollection<'scope, T, DdRow, Weight>,
+    (unit, tagged): (
+        &VecCollection<'scope, T, (), Weight>,
+        &TaggedArrangement<'scope, T>,
+    ),
     relations: &mut Relations<'scope, T>,
     rel: TermId,
     arity: usize,
@@ -581,17 +595,21 @@ where
     relations
         .entry((rel.0, arity))
         .or_insert_with(|| {
-            all.clone().flat_map(move |row| {
-                (row.first() == Some(&rel.0) && row.len() == arity + 1)
-                    .then(|| row[1..].to_vec())
-            })
+            unit.clone()
+                .map(move |_| (rel.0, ()))
+                .join_core(tagged.clone(), move |_rel, _unit, row| {
+                    (row.len() == arity).then(|| row.clone())
+                })
         })
         .clone()
 }
 
 fn join_goal<'scope, T>(
     envs: VecCollection<'scope, T, DdRow, Weight>,
-    all: &VecCollection<'scope, T, DdRow, Weight>,
+    source: (
+        &VecCollection<'scope, T, (), Weight>,
+        &TaggedArrangement<'scope, T>,
+    ),
     relations: &mut Relations<'scope, T>,
     arrangements: &mut Arrangements<'scope, T>,
     goal: &super::program::Goal,
@@ -626,7 +644,7 @@ where
     let right = arrangements
         .entry((goal.rel.0, goal.args.len(), positions.clone()))
         .or_insert_with(|| {
-            relation(all, relations, goal.rel, goal.args.len())
+            relation(source, relations, goal.rel, goal.args.len())
                 .map(move |row| {
                     let key = positions.iter().map(|position| row[*position]).collect();
                     (key, row)
