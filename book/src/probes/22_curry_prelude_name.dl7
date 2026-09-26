@@ -1,4 +1,4 @@
-; expect: rc=0
+; expect: missing_derived_edge_label
 ; A named bind curries Key, a name the prelude module declares.
 (: KeyOptions (*))
 

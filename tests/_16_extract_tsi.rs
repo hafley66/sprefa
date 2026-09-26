@@ -1,6 +1,6 @@
 //! `sprefa-extract`, now living in `hafley-rs`, through its real binary into
 //! `dl8 compile --tsi`. Three runs over `fixtures/extract/corpus`: the TSI
-//! envelope, `--family diet_scip`, `--family scip`. The first run's JSONL is
+//! envelope, resolved edges, and `ryi scip`. The first run's JSONL is
 //! the stream `dl8` loads, and the compiler rows it produces are compared
 //! against `fixtures/extract/expected_tsi_rows.json` on the rows that name the
 //! corpus.
@@ -11,11 +11,8 @@
 //! with no protocol record" and `dl8_compile_consumes_the_extracted_stream`
 //! finds no compiler row naming the corpus.
 //!
-//! `--family tsi` does not exist: `tsi` is the envelope `--witness` wraps a
-//! run in (`crates/sprefa-extract/src/bin/extract/help.rs:193-212` lists the
-//! family names; `extract.rs:207-216` is the flag), and the relation rows the
-//! loader reads come from `--family type`. Several paths in one run need
-//! `--resolve` (`extract.rs:645-660`).
+//! `tsi` is the envelope `--witness` wraps around `--kinds type`.
+//! Several paths in one run need `--resolve` for cross-file edges.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -29,11 +26,13 @@ fn v8_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
-fn sprefa_root() -> PathBuf {
-    v8_root()
+fn extract_roots() -> [PathBuf; 2] {
+    let root = v8_root();
+    let parent = root
         .parent()
         .expect("v8 has a parent directory")
-        .to_path_buf()
+        .to_path_buf();
+    [root, parent]
 }
 
 fn fixture_root() -> PathBuf {
@@ -67,15 +66,19 @@ fn scratch(name: &str) -> PathBuf {
 /// `crates/sprefa-extract` resolves its own lockfile and is `exclude`d from the
 /// hafley-rs workspace, so its manifest is the one to build, and `-p` against
 /// the root manifest would not find the package.
-/// Canonical: `hafley-rs` is a sibling symlink, and cargo walks the path as
+/// Canonical: `hafley-rs` is a symlink, and cargo walks the path as
 /// given, so the uncanonicalized form lands in sprefa's workspace instead of
 /// hafley-rs's and fails with "believes it's in a workspace when it's not".
 fn crate_manifest() -> PathBuf {
-    let linked = sprefa_root().join("hafley-rs/crates/sprefa-extract/Cargo.toml");
+    let linked = extract_roots()
+        .into_iter()
+        .map(|root| root.join("hafley-rs/crates/sprefa-extract/Cargo.toml"))
+        .find(|path| path.exists())
+        .unwrap_or_else(|| v8_root().join("hafley-rs/crates/sprefa-extract/Cargo.toml"));
     std::fs::canonicalize(&linked).unwrap_or(linked)
 }
 
-/// Where a built `extract` can sit. `$CARGO_TARGET_DIR` comes first because a
+/// Where a built `ryi` can sit. `$CARGO_TARGET_DIR` comes first because a
 /// lane sets it, and then neither target directory ever fills. The workspace
 /// one is second: the crate was a member until hafley-rs excluded it.
 fn built_candidates() -> Vec<PathBuf> {
@@ -83,14 +86,19 @@ fn built_candidates() -> Vec<PathBuf> {
     if let Some(shared) = std::env::var_os("CARGO_TARGET_DIR") {
         out.push(PathBuf::from(shared).join("debug/ryi"));
     }
-    out.push(sprefa_root().join("hafley-rs/target/debug/ryi"));
-    out.push(sprefa_root().join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
+    for root in extract_roots() {
+        out.push(root.join("hafley-rs/target/debug/ryi"));
+        out.push(root.join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
+    }
     out
 }
 
-/// `$SPREFA_EXTRACT_BIN`, then a built binary, then one build. The sibling
-/// link is gitignored, so a tree without it names that.
+/// A built binary in the worktree or its parent, then
+/// `$SPREFA_EXTRACT_BIN`, then one build from the first available crate.
 fn extract_bin() -> PathBuf {
+    if let Some(built) = built_candidates().into_iter().find(|path| path.exists()) {
+        return built;
+    }
     if let Some(named) = std::env::var_os("SPREFA_EXTRACT_BIN") {
         let path = PathBuf::from(named);
         assert!(
@@ -99,9 +107,6 @@ fn extract_bin() -> PathBuf {
             path.display()
         );
         return path;
-    }
-    if let Some(built) = built_candidates().into_iter().find(|path| path.exists()) {
-        return built;
     }
     let manifest = crate_manifest();
     assert!(
@@ -205,7 +210,14 @@ fn names_corpus(row: &Value) -> bool {
 
 fn tsi_stream() -> (PathBuf, Run) {
     let run = extract_run(
-        &["--witness", "--resolve", "--family", "type"],
+        &[
+            "--witness",
+            "--resolve",
+            "--arms",
+            "type",
+            "--kinds",
+            "type",
+        ],
         &corpus_paths(),
     );
     let path = scratch("corpus.tsi.jsonl");
@@ -226,7 +238,7 @@ fn tsi_envelope_carries_the_corpus_type_graph() {
         "the stream carries no run record, so the loader has no owner"
     );
     let facts = rows.iter().filter_map(relation_of).count();
-    assert!(facts > 0, "--family type emitted no relation rows");
+    assert!(facts > 0, "--kinds type emitted no relation rows");
     for relation in ["tsi.type", "tsi.product", "tsi.edge", "tsi.name"] {
         assert!(
             rows.iter().any(|row| relation_of(row) == Some(relation)),
@@ -248,13 +260,13 @@ fn tsi_envelope_carries_the_corpus_type_graph() {
 
 #[test]
 fn diet_scip_resolves_across_corpus_files() {
-    let run = extract_run(&["--family", "diet_scip"], &corpus_paths());
+    let run = extract_run(&["--resolve", "--arms", "call,type"], &corpus_paths());
     let rows = records(&run.stdout);
-    assert!(!rows.is_empty(), "--family diet_scip emitted no rows");
+    assert!(!rows.is_empty(), "--resolve emitted no rows");
     for kind in ["resolved_edge", "resolved_type_edge", "resolved_import"] {
         assert!(
             rows.iter().any(|row| record_kind(row, kind)),
-            "--family diet_scip emitted no {kind} row over the corpus: {:?}",
+            "--resolve emitted no {kind} row over the corpus: {:?}",
             rows.iter()
                 .filter_map(|row| row.get("record"))
                 .collect::<Vec<_>>()
@@ -282,7 +294,7 @@ fn diet_scip_resolves_across_corpus_files() {
 #[test]
 fn scip_indexes_the_typescript_corpus() {
     if which("scip-typescript").is_none() {
-        println!("ignored: scip-typescript is not on PATH, so --family scip has no indexer to run");
+        println!("ignored: scip-typescript is not on PATH, so ryi scip has no indexer to run");
         return;
     }
     // The index is a build artifact; the fixture tree stays committable.
@@ -290,7 +302,6 @@ fn scip_indexes_the_typescript_corpus() {
     std::fs::create_dir_all(&cache).expect("scip cache directory");
     let run = extract_run(
         &[
-            "--family",
             "scip",
             "--scip-cache",
             cache.to_str().expect("utf8 cache path"),
@@ -304,7 +315,7 @@ fn scip_indexes_the_typescript_corpus() {
         .collect();
     assert!(
         skipped.is_empty(),
-        "--family scip skipped the corpus: {skipped:?}; stderr: {}",
+        "ryi scip skipped the corpus: {skipped:?}; stderr: {}",
         run.stderr
     );
     for kind in ["scip_def", "scip_ref", "scip_name"] {

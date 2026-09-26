@@ -157,10 +157,3 @@ allow: text-door
 allow: tsv2-test
 allow: typecheck
 allow: typegen-golden
-
-## dl8 cargo battery (root `cargo test`), not a CI leg
-
-| leg | failure text | site | why it stays red |
-|---|---|---|---|
-| `_16_extract_tsi`, `_20_hosts::extract_answers_rows_for_each_family_over_the_corpus` | `no sprefa-extract crate at <parent-of-repo>/hafley-rs/...` | `tests/_16_extract_tsi.rs:32` (`sprefa_root` = repo parent, stale since the v8 flatten) | environmental in nested worktrees; passes with `SPREFA_EXTRACT_BIN` set |
-| `_22_book::probes_compile_as_their_page_says` | `2_adding_boop.md: $ sed -n ... ../hafley-rs/...` diff | `book/src/hosting/2_adding_boop.md:30` | same parent-path assumption; passes on the main checkout |

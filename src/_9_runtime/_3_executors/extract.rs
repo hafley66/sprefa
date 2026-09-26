@@ -1,4 +1,4 @@
-//! `(extract ?Root ?Family ?Kind ?Payload)`: one `extract --family F --resolve` run
+//! `(extract ?Root ?Family ?Kind ?Payload)`: one `ryi --resolve` run
 //! over the root's files, one row per JSONL record; `?Kind` is its `record` field.
 
 use super::message;
@@ -35,7 +35,7 @@ impl Extract {
 }
 
 /// `$SPREFA_EXTRACT_BIN`, then `$CARGO_TARGET_DIR`, then the two build sites under
-/// the sibling `hafley-rs` link, the order `tests/_16_extract_tsi.rs` searches.
+/// the worktree's `hafley-rs` link, followed by the old parent path.
 pub fn extract_bin() -> Result<PathBuf, String> {
     if let Some(named) = std::env::var_os("SPREFA_EXTRACT_BIN") {
         let path = PathBuf::from(named);
@@ -47,13 +47,15 @@ pub fn extract_bin() -> Result<PathBuf, String> {
             )),
         };
     }
-    let sprefa = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut candidates = Vec::new();
     if let Some(shared) = std::env::var_os("CARGO_TARGET_DIR") {
         candidates.push(PathBuf::from(shared).join("debug/ryi"));
     }
-    candidates.push(sprefa.join("hafley-rs/target/debug/ryi"));
-    candidates.push(sprefa.join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
+    for path in [root.to_path_buf(), root.join("..")] {
+        candidates.push(path.join("hafley-rs/target/debug/ryi"));
+        candidates.push(path.join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
+    }
     candidates
         .into_iter()
         .find(|path| path.exists())
@@ -112,9 +114,15 @@ fn run(root: &str, family: &str) -> Result<Vec<Record>, String> {
     let binary = extract_bin()?;
     let files = files_under(Path::new(root))?;
     let started = Instant::now();
+    let arms = match family {
+        "type" => "type",
+        "call" => "call",
+        "diet_scip" => "call,type",
+        _ => return Err(format!("unknown extract family {family}")),
+    };
     let mut child = Command::new(&binary)
         .current_dir(root)
-        .args(["--family", family, "--resolve"])
+        .args(["--resolve", "--arms", arms])
         .args(&files)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

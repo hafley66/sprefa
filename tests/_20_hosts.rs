@@ -513,11 +513,10 @@ pub fn fs_json_on_a_file_that_is_no_document_is_an_error_row() {
     assert_eq!(rows(&out, &names, "Failed").len(), 1);
 }
 
-fn sprefa_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .to_path_buf()
+fn extract_roots() -> [PathBuf; 2] {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
+    let parent = root.parent().unwrap().to_path_buf();
+    [root, parent]
 }
 
 fn built_candidates() -> Vec<PathBuf> {
@@ -525,21 +524,29 @@ fn built_candidates() -> Vec<PathBuf> {
     if let Some(shared) = std::env::var_os("CARGO_TARGET_DIR") {
         out.push(PathBuf::from(shared).join("debug/ryi"));
     }
-    out.push(sprefa_root().join("hafley-rs/target/debug/ryi"));
-    out.push(sprefa_root().join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
+    for root in extract_roots() {
+        out.push(root.join("hafley-rs/target/debug/ryi"));
+        out.push(root.join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
+    }
     out
 }
 
 /// The `tests/_16_extract_tsi.rs` search, then one build; the found path is
 /// handed to `dl8 run` as `SPREFA_EXTRACT_BIN`.
 fn extract_bin() -> PathBuf {
-    if let Some(named) = std::env::var_os("SPREFA_EXTRACT_BIN") {
-        return PathBuf::from(named);
-    }
     if let Some(built) = built_candidates().into_iter().find(|path| path.exists()) {
         return built;
     }
-    let linked = sprefa_root().join("hafley-rs/crates/sprefa-extract/Cargo.toml");
+    if let Some(named) = std::env::var_os("SPREFA_EXTRACT_BIN") {
+        return PathBuf::from(named);
+    }
+    let linked = extract_roots()
+        .into_iter()
+        .map(|root| root.join("hafley-rs/crates/sprefa-extract/Cargo.toml"))
+        .find(|path| path.exists())
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("hafley-rs/crates/sprefa-extract/Cargo.toml")
+        });
     let manifest = std::fs::canonicalize(&linked).unwrap_or(linked);
     assert!(
         manifest.exists(),

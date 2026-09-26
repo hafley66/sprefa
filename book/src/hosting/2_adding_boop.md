@@ -27,7 +27,7 @@ exit 1
 The rows would come from boop's SQLite store at `~/.agent/boop.db` (`hafley-rs/crates/boop-store/src/lib.rs:1-3`, `:67-68`). One lane is one `agent_lane` row; its name is a `dict_session` value:
 
 ```console
-$ sed -n 4269,4282p ../hafley-rs/crates/boop-store/src/ident.rs && sed -n 290,291p ../hafley-rs/crates/boop-store/src/_0_session_graph.rs
+$ sed -n 4450,4463p hafley-rs/crates/boop-store/src/ident.rs && sed -n 341,342p hafley-rs/crates/boop-store/src/_0_session_graph.rs
 CREATE TABLE IF NOT EXISTS agent_lane (
   spawn_id INTEGER PRIMARY KEY,
   lane_id INTEGER NOT NULL,
