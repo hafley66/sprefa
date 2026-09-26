@@ -1,7 +1,7 @@
 //! Differential-dataflow evaluation over one worker and one dataflow.
 
 use super::evaluate::{Closure, Trace};
-use super::program::{Arg, Program, Row, Rule};
+use super::program::{Arg, Polarity, Program, Row, Rule};
 use super::stratify::stratify;
 use super::term::{TermId, Universe};
 use differential_dataflow::input::Input;
@@ -93,7 +93,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 known = base.iterate(move |_scope, current| {
                     let mut derived = current.clone().filter(|_| false);
                     for rule in &plain {
-                        let rows = lower_positive_rule(&current, rule, Arc::clone(&arena));
+                        let rows = lower_rule(&current, rule, Arc::clone(&arena));
                         derived = derived.concat(rows);
                     }
                     current.concat(derived).distinct()
@@ -143,7 +143,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     }
 }
 
-fn lower_positive_rule<'scope, T>(
+fn lower_rule<'scope, T>(
     all: &VecCollection<'scope, T, DdRow, Weight>,
     rule: &Rule,
     arena: Arc<Mutex<Universe>>,
@@ -155,10 +155,18 @@ where
     let mut bound = vec![false; vars];
     let mut envs = all.clone().map(move |_| vec![UNBOUND; vars]).distinct();
     for goal in &rule.body {
-        if goal.polarity != super::program::Polarity::Positive {
-            return envs.filter(|_| false);
+        let kernel = super::kernel::Kernel::of(&arena.lock().unwrap(), goal.rel);
+        if goal.polarity == Polarity::Negative {
+            envs = match kernel {
+                Some(kernel) => negative_kernel(envs, &goal.args, kernel, Arc::clone(&arena)),
+                None => {
+                    let right = relation(all, goal.rel, goal.args.len());
+                    anti_goal(envs, right, &goal.args)
+                }
+            };
+            continue;
         }
-        if super::kernel::Kernel::of(&arena.lock().unwrap(), goal.rel).is_some() {
+        if kernel.is_some() {
             return envs.filter(|_| false);
         }
         let right = relation(all, goal.rel, goal.args.len());
@@ -179,6 +187,41 @@ where
             row.push(value);
         }
         Some(row)
+    })
+}
+
+fn anti_goal<'scope, T>(
+    envs: VecCollection<'scope, T, DdRow, Weight>,
+    rows: VecCollection<'scope, T, DdRow, Weight>,
+    args: &[Arg],
+) -> VecCollection<'scope, T, DdRow, Weight>
+where
+    T: Timestamp + Lattice + Ord,
+{
+    let args = args.to_vec();
+    envs.flat_map(move |env| {
+        let key: Option<Vec<u32>> = args.iter().map(|arg| value(arg, &env)).collect();
+        key.map(|key| (key, env))
+    })
+    .antijoin(rows.distinct())
+    .map(|(_, env)| env)
+}
+
+fn negative_kernel<'scope, T>(
+    envs: VecCollection<'scope, T, DdRow, Weight>,
+    args: &[Arg],
+    kernel: super::kernel::Kernel,
+    arena: Arc<Mutex<Universe>>,
+) -> VecCollection<'scope, T, DdRow, Weight>
+where
+    T: Timestamp + Lattice + Ord,
+{
+    let args = args.to_vec();
+    envs.filter(move |env| {
+        let values: Vec<Option<TermId>> =
+            args.iter().map(|arg| value(arg, env).map(TermId)).collect();
+        values.iter().all(Option::is_some)
+            && super::kernel::negative_holds(&arena.lock().unwrap(), kernel, &values)
     })
 }
 
