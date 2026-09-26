@@ -162,6 +162,3 @@ allow: typegen-golden
 
 | leg | failure text | site | cause | why it stays red |
 |---|---|---|---|---|
-| `_22_book::probes_compile_as_their_page_says` | exit 0; expected `duplicate_relation_name` | `book/src/probes/12_relation_named_accounts.dl7` | `9bf3eec69` (parent passes) | module-name checker behavior pending approval |
-| `_22_book::probes_compile_as_their_page_says` | module targets print as `module(file(...))` instead of `accounts` and `consumer` | `book/src/modules/0_a_module_is_a_file.md` | `9bf3eec69` (parent passes) | module naming behavior pending approval |
-| `_22_book::probes_compile_as_their_page_says` | prelude alias query prints no rows for owner `accounts` | `book/src/modules/1_names.md` | `9bf3eec69` (parent passes) | module naming behavior pending approval |
