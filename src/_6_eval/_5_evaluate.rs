@@ -459,6 +459,39 @@ pub(crate) fn needs_bound_head(u: &Universe, rule: &Rule, snapshots: TermId) -> 
     false
 }
 
+pub(crate) fn demanded_relations(
+    u: &Universe,
+    rules_by_rel: &HashMap<TermId, Vec<&Rule>>,
+    snapshots: TermId,
+) -> HashSet<TermId> {
+    let mut demanded: HashSet<TermId> = rules_by_rel
+        .iter()
+        .filter(|(_, rules)| {
+            rules
+                .iter()
+                .any(|rule| needs_bound_head(u, rule, snapshots))
+        })
+        .map(|(relation, _)| *relation)
+        .collect();
+    loop {
+        let before = demanded.len();
+        for (relation, rules) in rules_by_rel {
+            if rules.iter().any(|rule| {
+                rule.body.iter().any(|goal| {
+                    goal.polarity == Polarity::Positive
+                        && Kernel::of(u, goal.rel).is_none()
+                        && demanded.contains(&goal.rel)
+                })
+            }) {
+                demanded.insert(*relation);
+            }
+        }
+        if demanded.len() == before {
+            return demanded;
+        }
+    }
+}
+
 /// Neither relation the branch writes heads a rule, so `Strata` never levels
 /// them, yet their rows arrive inside a round: a goal on one joins the delta.
 fn current_goal_positions(
@@ -703,15 +736,7 @@ pub(super) fn fold_generic_row_groups(
             u.compound("const", vec![none])
         },
     };
-    let demanded: HashSet<TermId> = rules_by_rel
-        .iter()
-        .filter(|(_, rules)| {
-            rules
-                .iter()
-                .any(|rule| needs_bound_head(u, rule, effects.intern_snapshot))
-        })
-        .map(|(relation, _)| *relation)
-        .collect();
+    let demanded = demanded_relations(u, &rules_by_rel, effects.intern_snapshot);
     let cx = Context {
         store: &store,
         rules_by_rel: &rules_by_rel,
@@ -962,15 +987,7 @@ fn evaluate_into(
             .push(rule);
         rules_by_rel.entry(rule.rel).or_default().push(rule);
     }
-    let demanded: HashSet<TermId> = rules_by_rel
-        .iter()
-        .filter(|(_, rules)| {
-            rules
-                .iter()
-                .any(|rule| needs_bound_head(u, rule, effects.intern_snapshot))
-        })
-        .map(|(relation, _)| *relation)
-        .collect();
+    let demanded = demanded_relations(u, &rules_by_rel, effects.intern_snapshot);
 
     for level in 0..=strata.max_level {
         let rules = rules_by_level.get(&level).cloned().unwrap_or_default();

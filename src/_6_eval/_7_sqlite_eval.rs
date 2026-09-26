@@ -2,7 +2,7 @@
 //! per program (F3b), every statement inside `sql()`. Rust moves rows in and
 //! out; joins, filters and the fixpoint are SQL.
 
-use super::evaluate::needs_bound_head;
+use super::evaluate::demanded_relations;
 use super::kernel::Kernel;
 use super::program::{Arg, Diagnostic, Fold, Folding, Goal, Polarity, Program, Row, Rule};
 use super::term::{Term, TermId, Universe};
@@ -952,15 +952,11 @@ pub(super) fn with_demand(u: &mut Universe, program: &Program) -> (Program, Hash
     for rule in &program.rules {
         by_rel.entry(rule.rel).or_default().push(rule.clone());
     }
-    let demanded: HashSet<TermId> = by_rel
-        .iter()
-        .filter(|(_, rules)| {
-            rules
-                .iter()
-                .any(|rule| needs_bound_head(u, rule, snapshots))
-        })
-        .map(|(rel, _)| *rel)
-        .collect();
+    let mut rule_refs: HashMap<TermId, Vec<&Rule>> = HashMap::new();
+    for rule in &program.rules {
+        rule_refs.entry(rule.rel).or_default().push(rule);
+    }
+    let demanded = demanded_relations(u, &rule_refs, snapshots);
     let seeded: HashSet<TermId> = program.seeds.iter().map(|row| row.rel).collect();
     // Pass-through variable names exist from the first run on, so a reload
     // with more seeded products mints nothing new.
