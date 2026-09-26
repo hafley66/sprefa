@@ -4,5 +4,5 @@ quickcheck  absent      absent             1.1.0          Arbitrary::shrink
 arbitrary   absent      absent             1.4.2          none in crate API
 
 Chosen: proptest 1.11.0 resolved with cargo --offline. Vec strategies shrink rules, goals, seeds, and argument choices. A JSON deletion pass shrinks the resulting program.
-Default run: seeds 0..21 reached, 22 programs, 0.19 seconds test time. Category counts: positive 3, recursion 3, negation 3, repeated variable 3, aggregate 3, list kernel 3, int.add 2, intern 2. Aggregate kinds reached: count, sum, min. Stopped at first mismatch, so 500+ seed receipt run was not performed.
-Seed 21: SQLite emits not_built_yet(eval nonlinear_round). Rust and DD return only nil/1. Minimal program and all closures: counterexample-21.json.
+Catalogue run: 501 seeds, 2.471 seconds test time. Category counts: positive 63, recursion 63, negation 63, repeated variable 63, aggregate 63, cons/nil 62, int.add 62, intern 62. Aggregate kinds: count 16, sum 16, min 16, max 15.
+SQLite: 1 distinct diagnostic kind, 15 occurrences, not_built_yet(eval nonlinear_round). Rust and DD return only nil/1 for its minimal program. known-gaps.json holds the counterexample and all closures; run-501.json holds the coverage and wall time.

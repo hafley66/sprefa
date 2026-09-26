@@ -1,10 +1,15 @@
 //! Seeded structural programs compared in one process across the three evaluators.
+//! `DL8_RANDOM_CATEGORY` selects one construct or aggregate kind for replay.
 
 use dl8::_6_eval::json::{closure_to_json, program_from_json};
 use dl8::_6_eval::{evaluate, evaluate_dd, evaluate_sqlite, Universe};
 use proptest::prelude::*;
-use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestError, TestRng, TestRunner};
+use proptest::strategy::ValueTree;
+use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::Path;
 use std::time::Instant;
 
 type SeedSpec = (u8, Vec<i8>);
@@ -190,35 +195,131 @@ fn canonical(mut closure: Value) -> Value {
 
 fn closures(program: &Value) -> [Value; 3] {
     let run = |engine: usize| {
-        let mut universe = Universe::new();
-        let program = program_from_json(&mut universe, program).unwrap();
-        let closure = match engine {
-            0 => evaluate(&mut universe, &program, &mut |_| {}),
-            1 => evaluate_sqlite(&mut universe, &program, &mut |_| {}),
-            _ => evaluate_dd(&mut universe, &program, &mut |_| {}),
-        };
-        canonical(closure_to_json(
-            &universe,
-            &closure.rows,
-            &closure.diagnostics,
-        ))
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let mut universe = Universe::new();
+            let program = program_from_json(&mut universe, program).unwrap();
+            let closure = match engine {
+                0 => evaluate(&mut universe, &program, &mut |_| {}),
+                1 => evaluate_sqlite(&mut universe, &program, &mut |_| {}),
+                _ => evaluate_dd(&mut universe, &program, &mut |_| {}),
+            };
+            canonical(closure_to_json(
+                &universe,
+                &closure.rows,
+                &closure.diagnostics,
+            ))
+        }));
+        std::panic::set_hook(hook);
+        match result {
+            Ok(closure) => closure,
+            Err(payload) => {
+                let message = payload
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                let kind = if message.starts_with("index out of bounds") {
+                    "index_out_of_bounds"
+                } else if message.contains("poisoned") {
+                    "poisoned_lock"
+                } else {
+                    "other"
+                };
+                json!({"closure":[],"diagnostics":[],"panic":{"kind":kind,"message":message}})
+            }
+        }
     };
     [run(0), run(1), run(2)]
 }
 
-fn differs(program: &Value) -> bool {
-    let [rust, sqlite, dd] = closures(program);
-    rust != sqlite || rust != dd
+fn diagnostic_kind(diagnostic: &Value) -> String {
+    let payload = &diagnostic["payload"];
+    let kind = payload["f"]
+        .as_str()
+        .or_else(|| payload["a"].as_str())
+        .unwrap_or("unknown");
+    format!(
+        "{}:{kind}",
+        diagnostic["phase"].as_str().unwrap_or("unknown")
+    )
 }
 
-fn minimize(mut program: Value) -> Value {
+fn first_row_difference(rust: &Value, other: &Value) -> String {
+    let rust_rows = rust["closure"].as_array().unwrap();
+    let other_rows = other["closure"].as_array().unwrap();
+    for row in rust_rows {
+        let rust_count = rust_rows
+            .iter()
+            .filter(|candidate| *candidate == row)
+            .count();
+        let other_count = other_rows
+            .iter()
+            .filter(|candidate| *candidate == row)
+            .count();
+        if rust_count > other_count {
+            return format!("missing_row:{row}");
+        }
+    }
+    for row in other_rows {
+        let rust_count = rust_rows
+            .iter()
+            .filter(|candidate| *candidate == row)
+            .count();
+        let other_count = other_rows
+            .iter()
+            .filter(|candidate| *candidate == row)
+            .count();
+        if other_count > rust_count {
+            return format!("extra_row:{row}");
+        }
+    }
+    "row:unknown".into()
+}
+
+fn signatures([rust, sqlite, dd]: &[Value; 3]) -> Vec<String> {
+    [("sqlite", sqlite), ("dd", dd)]
+        .into_iter()
+        .filter_map(|(engine, other)| {
+            if rust == other {
+                return None;
+            }
+            if let Some(kind) = other["panic"]["kind"].as_str() {
+                return Some(format!("{engine}|diagnostic:panic:{kind}"));
+            }
+            if let Some(kind) = rust["panic"]["kind"].as_str() {
+                return Some(format!("{engine}|diagnostic:rust_panic:{kind}"));
+            }
+            let rust_diags = rust["diagnostics"].as_array().unwrap();
+            let other_diags = other["diagnostics"].as_array().unwrap();
+            let first = other_diags
+                .iter()
+                .find(|diag| !rust_diags.contains(diag))
+                .or_else(|| rust_diags.iter().find(|diag| !other_diags.contains(diag)));
+            let difference = match first {
+                Some(diag) => format!("diagnostic:{}", diagnostic_kind(diag)),
+                None => first_row_difference(rust, other),
+            };
+            Some(format!("{engine}|{difference}"))
+        })
+        .collect()
+}
+
+fn has_gap(program: &Value, signature: &str) -> bool {
+    signatures(&closures(program))
+        .iter()
+        .any(|found| found == signature)
+}
+
+fn minimize(mut program: Value, signature: &str) -> Value {
     for _ in 0..256 {
         let mut next = None;
         for section in ["rules", "seeds"] {
             for i in 0..program[section].as_array().unwrap().len() {
                 let mut candidate = program.clone();
                 candidate[section].as_array_mut().unwrap().remove(i);
-                if differs(&candidate) {
+                if has_gap(&candidate, signature) {
                     next = Some(candidate);
                     break;
                 }
@@ -236,7 +337,7 @@ fn minimize(mut program: Value) -> Value {
                         .as_array_mut()
                         .unwrap()
                         .remove(j);
-                    if differs(&candidate) {
+                    if has_gap(&candidate, signature) {
                         next = Some(candidate);
                         break;
                     }
@@ -266,7 +367,7 @@ fn minimize(mut program: Value) -> Value {
                                     .as_array_mut()
                                     .unwrap()
                                     .remove(k);
-                                if differs(&reduced) {
+                                if has_gap(&reduced, signature) {
                                     next = Some(reduced);
                                     break;
                                 }
@@ -293,7 +394,7 @@ fn minimize(mut program: Value) -> Value {
                                 &mut candidate[section][i][path[0]][path[1]]
                             };
                             args.as_array_mut().unwrap().remove(j);
-                            if differs(&candidate) {
+                            if has_gap(&candidate, signature) {
                                 next = Some(candidate);
                                 break;
                             }
@@ -319,6 +420,42 @@ fn minimize(mut program: Value) -> Value {
     program
 }
 
+fn runner(seed: u64) -> TestRunner {
+    let mut bytes = [0u8; 32];
+    for (i, chunk) in bytes.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+        chunk.copy_from_slice(&seed.wrapping_add(i as u64).to_le_bytes());
+    }
+    let config = Config {
+        cases: 1,
+        max_shrink_iters: 256,
+        failure_persistence: None,
+        ..Config::default()
+    };
+    TestRunner::new_with_rng(config, TestRng::from_seed(RngAlgorithm::ChaCha, &bytes))
+}
+
+fn shrunk_program(seed: u64, signature: &str) -> Value {
+    let generated = strategy();
+    let mut tree = generated.new_tree(&mut runner(seed)).unwrap();
+    let mut best = program_json(seed, &tree.current());
+    assert!(
+        has_gap(&best, signature),
+        "seed {seed}: signature changed before shrinking: {signature}"
+    );
+    for _ in 0..256 {
+        if !tree.simplify() {
+            break;
+        }
+        let candidate = program_json(seed, &tree.current());
+        if has_gap(&candidate, signature) {
+            best = candidate;
+        } else if !tree.complicate() {
+            break;
+        }
+    }
+    minimize(best, signature)
+}
+
 #[test]
 fn random_programs_match_all_evaluators() {
     assert!(
@@ -332,58 +469,140 @@ fn random_programs_match_all_evaluators() {
         .ok()
         .map(|n| n.parse::<u64>().expect("DL8_RANDOM_SEEDS must be u64"))
         .unwrap_or(200);
+    let selected = std::env::var("DL8_RANDOM_CATEGORY").ok();
+    let update = std::env::var_os("DL8_RANDOM_UPDATE_GAPS").is_some();
+    assert!(
+        !update || replay.is_none(),
+        "catalogue update needs the full seed range"
+    );
+    assert!(
+        !update || selected.is_none(),
+        "catalogue update needs all categories"
+    );
     let seeds: Box<dyn Iterator<Item = u64>> = match replay {
         Some(seed) => Box::new(std::iter::once(seed)),
         None => Box::new(0..count),
     };
     let started = Instant::now();
-    let mut coverage = [0usize; 8];
+    let category = [
+        "positive",
+        "recursion",
+        "negation",
+        "repeated_variable",
+        "aggregate",
+        "cons_nil",
+        "int_add",
+        "intern",
+    ];
+    let aggregate = ["count", "sum", "min", "max"];
+    let mut coverage = BTreeMap::<String, usize>::new();
+    let mut found = BTreeMap::<String, Value>::new();
+    let mut ran = 0usize;
     for seed in seeds {
-        coverage[(seed % 8) as usize] += 1;
-        let mut bytes = [0u8; 32];
-        for (i, chunk) in bytes.as_chunks_mut::<8>().0.iter_mut().enumerate() {
-            chunk.copy_from_slice(&seed.wrapping_add(i as u64).to_le_bytes());
+        let kind =
+            (seed % 8 == 4).then(|| format!("aggregate_{}", aggregate[((seed / 8) % 4) as usize]));
+        if selected.as_ref().is_some_and(|selected| {
+            selected != category[(seed % 8) as usize] && kind.as_deref() != Some(selected.as_str())
+        }) {
+            continue;
         }
-        let config = Config {
-            cases: 1,
-            max_shrink_iters: 256,
-            failure_persistence: None,
-            ..Config::default()
-        };
-        let mut runner =
-            TestRunner::new_with_rng(config, TestRng::from_seed(RngAlgorithm::ChaCha, &bytes));
-        let result = runner.run(&strategy(), |spec| {
-            let program = program_json(seed, &spec);
-            if differs(&program) {
-                Err(TestCaseError::fail("closure mismatch"))
-            } else {
-                Ok(())
+        if std::env::var_os("DL8_RANDOM_TRACE").is_some() {
+            println!("random seed={seed}");
+        }
+        ran += 1;
+        *coverage
+            .entry(category[(seed % 8) as usize].into())
+            .or_default() += 1;
+        if let Some(kind) = kind {
+            *coverage.entry(kind).or_default() += 1;
+        }
+        let generated = strategy();
+        let spec = generated.new_tree(&mut runner(seed)).unwrap().current();
+        let program = program_json(seed, &spec);
+        let closure = closures(&program);
+        for signature in signatures(&closure) {
+            let program = shrunk_program(seed, &signature);
+            let [rust, sqlite, dd] = closures(&program);
+            assert!(signatures(&[rust.clone(), sqlite.clone(), dd.clone()]).contains(&signature));
+            let count = found
+                .get(&signature)
+                .map_or(1, |entry| entry["count"].as_u64().unwrap() + 1);
+            if found.get(&signature).is_some_and(|entry| {
+                entry["program"].to_string().len() <= program.to_string().len()
+            }) {
+                found.get_mut(&signature).unwrap()["count"] = json!(count);
+                continue;
             }
-        });
-        match result {
-            Err(TestError::Fail(_, spec)) => {
-                let program = minimize(program_json(seed, &spec));
-                let [rust, sqlite, dd] = closures(&program);
-                let receipt =
-                    json!({"seed":seed,"program":program,"rust":rust,"sqlite":sqlite,"dd":dd});
-                let path = format!(
-                    "plans/v8/receipts/2026-09-26-dd-eval-differential/counterexample-{seed}.json"
-                );
-                std::fs::create_dir_all("plans/v8/receipts/2026-09-26-dd-eval-differential")
-                    .unwrap();
-                std::fs::write(&path, serde_json::to_string_pretty(&receipt).unwrap()).unwrap();
-                panic!(
-                    "seed {seed} mismatch; receipt {path}\n{}",
-                    serde_json::to_string_pretty(&receipt).unwrap()
-                );
-            }
-            Err(TestError::Abort(reason)) => panic!("seed {seed}: {reason}"),
-            Ok(()) => {}
+            found.insert(
+                signature.clone(),
+                json!({
+                    "signature":signature,
+                    "engine":signature.split_once('|').unwrap().0,
+                    "count":count,
+                    "seed":seed,
+                    "program":program,
+                    "rust":rust,
+                    "sqlite":sqlite,
+                    "dd":dd
+                }),
+            );
+        }
+        if ran.is_multiple_of(25) {
+            println!("random progress seeds={ran} distinct_gaps={}", found.len());
         }
     }
+    let receipt_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("plans/v8/receipts/2026-09-26-dd-eval-differential");
+    assert!(
+        ran > 0,
+        "no seeds selected by DL8_RANDOM_CATEGORY={selected:?}"
+    );
+    let known_path = receipt_dir.join("known-gaps.json");
+    let gaps: Vec<Value> = found.values().cloned().collect();
+    let mut per_engine = BTreeMap::<String, usize>::new();
+    for gap in &gaps {
+        *per_engine
+            .entry(gap["engine"].as_str().unwrap().into())
+            .or_default() += 1;
+    }
+    let wall_ms = started.elapsed().as_millis();
     println!(
-        "random seeds={} coverage={coverage:?} wall_ms={}",
-        coverage.iter().sum::<usize>(),
-        started.elapsed().as_millis()
+        "random seeds={ran} coverage={coverage:?} distinct_gaps={per_engine:?} wall_ms={wall_ms}"
+    );
+    if update {
+        let catalogue = json!({"seeds_run":ran,"gaps":gaps});
+        std::fs::write(
+            &known_path,
+            serde_json::to_string_pretty(&catalogue).unwrap(),
+        )
+        .unwrap();
+        let receipt = json!({"seeds_run":ran,"coverage":coverage,"distinct_gaps":per_engine,"wall_ms":wall_ms});
+        let run_path = receipt_dir.join(format!("run-{ran}.json"));
+        std::fs::write(&run_path, serde_json::to_string_pretty(&receipt).unwrap()).unwrap();
+        return;
+    }
+    let known: Value = serde_json::from_slice(&std::fs::read(&known_path).unwrap()).unwrap();
+    let known_gaps = known["gaps"].as_array().unwrap();
+    let mut known_signatures = std::collections::HashSet::new();
+    let mut vanished = Vec::new();
+    for gap in known_gaps {
+        let signature = gap["signature"].as_str().unwrap();
+        assert!(
+            known_signatures.insert(signature),
+            "duplicate known gap: {signature}"
+        );
+        if !has_gap(&gap["program"], signature) {
+            vanished.push(signature);
+        }
+    }
+    let unknown: Vec<_> = found
+        .iter()
+        .filter(|(signature, _)| !known_signatures.contains(signature.as_str()))
+        .map(|(_, entry)| entry)
+        .collect();
+    assert!(
+        unknown.is_empty() && vanished.is_empty(),
+        "unknown gaps: {}; known gaps no longer reproducing: {vanished:?}",
+        serde_json::to_string_pretty(&unknown).unwrap()
     );
 }

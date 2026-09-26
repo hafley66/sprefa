@@ -1,0 +1,21 @@
+{
+  "coverage": {
+    "aggregate": 63,
+    "aggregate_count": 16,
+    "aggregate_max": 15,
+    "aggregate_min": 16,
+    "aggregate_sum": 16,
+    "cons_nil": 62,
+    "int_add": 62,
+    "intern": 62,
+    "negation": 63,
+    "positive": 63,
+    "recursion": 63,
+    "repeated_variable": 63
+  },
+  "distinct_gaps": {
+    "sqlite": 1
+  },
+  "seeds_run": 501,
+  "wall_ms": 2471
+}
