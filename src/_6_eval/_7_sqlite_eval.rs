@@ -1144,8 +1144,7 @@ fn nil_seed(u: &mut Universe) -> Row {
     }
 }
 
-/// The engine of the last call, kept while the rule set stays the same: a
-/// macrotime wave or a comptime round then pays a seed delta, not a view.
+/// A recently evaluated seed state and its materialized view.
 struct Cached {
     rules: u64,
     arena: Arc<Mutex<Universe>>,
@@ -1153,8 +1152,12 @@ struct Cached {
     seeds: Vec<Row>,
 }
 
+/// Comptime can alternate two seed sets while keeping the same rules. This
+/// bounds retained SQLite connections and lets either exact state reuse its view.
+const ENGINE_CACHE_LIMIT: usize = 2;
+
 thread_local! {
-    static CACHE: std::cell::RefCell<Option<Cached>> = const { std::cell::RefCell::new(None) };
+    static CACHE: std::cell::RefCell<Vec<Cached>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 fn rules_fingerprint(program: &Program) -> u64 {
@@ -1190,32 +1193,45 @@ pub fn evaluate_sqlite(
     let rules = rules_fingerprint(&program);
     tracing::debug!(target: "dl8::eval", rules, rule_count = program.rules.len(), seeds = program.seeds.len(), "evaluate_sqlite");
     let seeds = sorted_seeds(&program.seeds);
-    let taken = CACHE.with(|cache| cache.borrow_mut().take());
-    let (arena, run) = match taken {
-        // A retraction rebuilds: sqlite_ivm's delete path and the plain-table
-        // rounds do not yet agree with a fresh view (`DL8_EVAL_CHECK=1`).
-        Some(mut cached)
-            if cached.rules == rules
-                && cached
+    let mut cached = CACHE.with(|cache| std::mem::take(&mut *cache.borrow_mut()));
+    let arena = cached
+        .first()
+        .map(|entry| entry.arena.clone())
+        .unwrap_or_else(|| Arc::new(Mutex::new(Universe::default())));
+    {
+        let mut guard = arena.lock().expect("eval arena poisoned");
+        *guard = std::mem::take(u);
+    }
+    let exact = cached
+        .iter()
+        .position(|entry| entry.rules == rules && entry.seeds == seeds);
+    let reusable = exact.or_else(|| {
+        cached.iter().position(|entry| {
+            entry.rules == rules
+                && entry
                     .seeds
                     .iter()
-                    .all(|row| seeds.binary_search_by_key(&seed_key(row), seed_key).is_ok()) =>
-        {
-            {
-                let mut guard = cached.arena.lock().expect("eval arena poisoned");
-                *guard = std::mem::take(u);
-            }
+                    .all(|row| seeds.binary_search_by_key(&seed_key(row), seed_key).is_ok())
+        })
+    });
+    let run = match reusable {
+        Some(index) if exact == Some(index) => {
+            tracing::info!(target: "dl8::eval", "exact seed state on the cached view");
+            Ok((cached.remove(index).engine, seeds.clone()))
+        }
+        Some(index) => {
+            let mut selected = cached.remove(index);
             let insert: Vec<Row> = seeds
                 .iter()
                 .filter(|row| {
-                    cached
+                    selected
                         .seeds
                         .binary_search_by_key(&seed_key(row), seed_key)
                         .is_err()
                 })
                 .cloned()
                 .collect();
-            let delete: Vec<Row> = cached
+            let delete: Vec<Row> = selected
                 .seeds
                 .iter()
                 .filter(|row| {
@@ -1232,35 +1248,22 @@ pub fn evaluate_sqlite(
                 "seed delta on the cached view"
             );
             let retracted = !delete.is_empty();
-            let arena = cached.arena.clone();
-            let run = cached
+            selected
                 .engine
                 .cover(&insert)
-                .and_then(|()| cached.engine.apply(SeedDelta { insert, delete }))
+                .and_then(|()| selected.engine.apply(SeedDelta { insert, delete }))
                 .and_then(|_| {
                     if retracted {
-                        cached.engine.reset_rounds()
+                        selected.engine.reset_rounds()
                     } else {
-                        cached.engine.run_rounds()
+                        selected.engine.run_rounds()
                     }
                 })
-                .map(|()| (cached.engine, seeds.clone()));
-            (arena, run)
+                .map(|()| (selected.engine, seeds.clone()))
         }
-        cached => {
-            let arena = match cached {
-                Some(cached) => {
-                    {
-                        let mut guard = cached.arena.lock().expect("eval arena poisoned");
-                        *guard = std::mem::take(u);
-                    }
-                    cached.arena
-                }
-                None => Arc::new(Mutex::new(std::mem::take(u))),
-            };
-            let run = fresh_engine(arena.clone(), &program).map(|engine| (engine, seeds.clone()));
-            (arena, run)
-        }
+        // A retraction without an exact cached state rebuilds: sqlite_ivm's
+        // delete path and the plain-table rounds do not yet agree with a fresh view.
+        None => fresh_engine(arena.clone(), &program).map(|engine| (engine, seeds.clone())),
     };
     let closure = match run {
         Ok((engine, seeds)) => {
@@ -1284,12 +1287,16 @@ pub fn evaluate_sqlite(
                 }
             }
             CACHE.with(|cache| {
-                *cache.borrow_mut() = Some(Cached {
+                cached.push(Cached {
                     rules,
                     arena: arena.clone(),
                     engine,
                     seeds,
                 });
+                if cached.len() > ENGINE_CACHE_LIMIT {
+                    cached.remove(0);
+                }
+                *cache.borrow_mut() = cached;
             });
             read
         }
