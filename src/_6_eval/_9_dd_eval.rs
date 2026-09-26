@@ -24,8 +24,7 @@ type Arrangements<'scope, T> = HashMap<
     (u32, usize, Vec<usize>),
     Arranged<'scope, TraceAgent<ValSpine<Vec<u32>, DdRow, T, Weight>>>,
 >;
-type TaggedArrangement<'scope, T> =
-    Arranged<'scope, TraceAgent<ValSpine<u32, DdRow, T, Weight>>>;
+type TaggedArrangement<'scope, T> = Arranged<'scope, TraceAgent<ValSpine<u32, DdRow, T, Weight>>>;
 type RuleSources<'a, 'scope, T> = (
     &'a VecCollection<'scope, T, DdRow, Weight>,
     &'a VecCollection<'scope, T, (), Weight>,
@@ -177,7 +176,11 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                     let level_probe = ProbeHandle::new();
                     known = known.probe_with(&level_probe);
                     level_probes.push((level, level_probe));
-                    tracing::info!(level, build_ms = level_started.elapsed().as_millis(), "dd stratum build");
+                    tracing::info!(
+                        level,
+                        build_ms = level_started.elapsed().as_millis(),
+                        "dd stratum build"
+                    );
                     continue;
                 }
                 let arena = Arc::clone(&arena_worker);
@@ -217,7 +220,11 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 let level_probe = ProbeHandle::new();
                 known = known.probe_with(&level_probe);
                 level_probes.push((level, level_probe));
-                tracing::info!(level, build_ms = level_started.elapsed().as_millis(), "dd stratum build");
+                tracing::info!(
+                    level,
+                    build_ms = level_started.elapsed().as_millis(),
+                    "dd stratum build"
+                );
             }
             let sink = Arc::clone(&captured_worker);
             known
@@ -225,7 +232,10 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 .probe_with(&probe);
             (input, level_probes)
         });
-        tracing::info!(build_ms = build_started.elapsed().as_millis(), "dd dataflow build");
+        tracing::info!(
+            build_ms = build_started.elapsed().as_millis(),
+            "dd dataflow build"
+        );
         input.insert(nil);
         for row in &program.seeds {
             input.insert(tagged(row.rel, &row.args));
@@ -235,7 +245,11 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         for (level, level_probe) in level_probes {
             let step_started = Instant::now();
             worker.step_while(|| level_probe.less_than(&1));
-            tracing::info!(level, step_ms = step_started.elapsed().as_millis(), "dd stratum step");
+            tracing::info!(
+                level,
+                step_ms = step_started.elapsed().as_millis(),
+                "dd stratum step"
+            );
         }
         let step_started = Instant::now();
         worker.step_while(|| probe.less_than(&1));
@@ -276,7 +290,12 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     });
     rows.dedup();
     fx(Trace::Closure { rows: rows.len() });
-    tracing::info!(extract_ms = extraction_started.elapsed().as_millis(), total_ms = evaluation_started.elapsed().as_millis(), rows = rows.len(), "dd row extraction");
+    tracing::info!(
+        extract_ms = extraction_started.elapsed().as_millis(),
+        total_ms = evaluation_started.elapsed().as_millis(),
+        rows = rows.len(),
+        "dd row extraction"
+    );
     *u = std::mem::take(&mut arena);
     Closure {
         rows,
@@ -312,7 +331,14 @@ where
             };
             continue;
         }
-        envs = join_goal(envs, (unit, tagged_rows), relations, arrangements, goal, &bound);
+        envs = join_goal(
+            envs,
+            (unit, tagged_rows),
+            relations,
+            arrangements,
+            goal,
+            &bound,
+        );
         for arg in &goal.args {
             if let Arg::Var(var) = arg {
                 bound[var.0 as usize] = true;
@@ -382,41 +408,42 @@ where
                         .map(|row| ((), DeclaredFoldInput::Stored(row))),
                 );
             let diagnostics = Arc::clone(&diagnostics);
-            inputs.reduce(move |_key, input, output| {
-                let mut groups: BTreeMap<DdRow, Vec<TermId>> = BTreeMap::new();
-                let mut rows = Vec::new();
-                for (item, weight) in input {
-                    for _ in 0..(*weight).max(0) as usize {
-                        match item {
-                            DeclaredFoldInput::Subject(key, value) => {
-                                groups.entry(key.clone()).or_default().push(TermId(*value));
+            inputs
+                .reduce(move |_key, input, output| {
+                    let mut groups: BTreeMap<DdRow, Vec<TermId>> = BTreeMap::new();
+                    let mut rows = Vec::new();
+                    for (item, weight) in input {
+                        for _ in 0..(*weight).max(0) as usize {
+                            match item {
+                                DeclaredFoldInput::Subject(key, value) => {
+                                    groups.entry(key.clone()).or_default().push(TermId(*value));
+                                }
+                                DeclaredFoldInput::Stored(row) => rows.push(Row {
+                                    rel: TermId(row[0]),
+                                    args: row[1..].iter().copied().map(TermId).collect(),
+                                }),
                             }
-                            DeclaredFoldInput::Stored(row) => rows.push(Row {
-                                rel: TermId(row[0]),
-                                args: row[1..].iter().copied().map(TermId).collect(),
-                            }),
                         }
                     }
-                }
-                if groups.is_empty() {
-                    return;
-                }
-                let values: Vec<&[TermId]> = groups.values().map(Vec::as_slice).collect();
-                let results = super::evaluate::fold_generic_row_groups(
-                    &mut arena_for_reduce.lock().unwrap(),
-                    &program,
-                    &rows,
-                    &fold,
-                    &values,
-                );
-                for ((key, _), result) in groups.into_iter().zip(results) {
-                    match result {
-                        Ok(term) => output.push(((key, term.0), 1)),
-                        Err(diagnostic) => diagnostics.lock().unwrap().push(diagnostic),
+                    if groups.is_empty() {
+                        return;
                     }
-                }
-            })
-            .map(|(_, row)| row)
+                    let values: Vec<&[TermId]> = groups.values().map(Vec::as_slice).collect();
+                    let results = super::evaluate::fold_generic_row_groups(
+                        &mut arena_for_reduce.lock().unwrap(),
+                        &program,
+                        &rows,
+                        &fold,
+                        &values,
+                    );
+                    for ((key, _), result) in groups.into_iter().zip(results) {
+                        match result {
+                            Ok(term) => output.push(((key, term.0), 1)),
+                            Err(diagnostic) => diagnostics.lock().unwrap().push(diagnostic),
+                        }
+                    }
+                })
+                .map(|(_, row)| row)
         }
     };
     let rel = rule.rel.0;
@@ -500,9 +527,14 @@ where
                 }
                 solved.map(|(env, _)| env).concat(stored).distinct()
             }
-            None => {
-                join_goal(envs, (unit, tagged_rows), relations, arrangements, goal, &bound)
-            }
+            None => join_goal(
+                envs,
+                (unit, tagged_rows),
+                relations,
+                arrangements,
+                goal,
+                &bound,
+            ),
         };
         for arg in &goal.args {
             if let Arg::Var(var) = arg {
@@ -625,7 +657,8 @@ fn join_goal<'scope, T>(
 where
     T: Timestamp + Lattice + Ord,
 {
-    let keyed: Vec<(usize, Arg)> = goal.args
+    let keyed: Vec<(usize, Arg)> = goal
+        .args
         .iter()
         .enumerate()
         .filter(|(_, arg)| match arg {
@@ -728,7 +761,10 @@ fn schedule_rules(
             .max()
             .unwrap_or(0)
             .min(strata.max_level);
-        hidden_rules.entry(rule.rel).or_default().push((rule, first));
+        hidden_rules
+            .entry(rule.rel)
+            .or_default()
+            .push((rule, first));
     }
     for level in 0..=strata.max_level {
         let mut seen = HashSet::new();
