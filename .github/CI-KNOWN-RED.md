@@ -160,7 +160,6 @@ allow: typegen-golden
 
 ## dl8 cargo battery (root `cargo test`), not a CI leg
 
-| leg | failure text | site | why it stays red |
-|---|---|---|---|
-| `_16_extract_tsi::dl8_compile_consumes_the_extracted_stream` | compiler rows use `ryi`; the golden uses `extract` | `fixtures/extract/expected_tsi_rows.json`, `tests/_16_extract_tsi.rs:378` | the primary checkout's default binary also emits `ryi`; the golden predates `hafley-rs` commit `c9dbcbbe` |
-| `_22_book::probes_compile_as_their_page_says` | `22_curry_prelude_name.dl7`: exit 1, `missing_derived_edge_label`; `12_relation_named_accounts.dl7`: exit 0, expected `duplicate_relation_name`; four module console blocks differ | `book/src/probes/`, `book/src/modules/` | the boop path now resolves; the unchanged curry probe first fails at `54012b05c` |
+| leg | failure text | site | cause | why it stays red |
+|---|---|---|---|---|
+| `_22_book::probes_compile_as_their_page_says` | `missing_derived_edge_label`, rc=1 | `book/src/probes/22_curry_prelude_name.dl7` | `54012b05c` (bisected) | evaluator fix pending approval |
