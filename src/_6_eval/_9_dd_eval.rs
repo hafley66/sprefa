@@ -2,7 +2,7 @@
 
 use super::evaluate::{Closure, Trace};
 use super::program::{Arg, Diagnostic, Folding, Goal, Polarity, Program, Row, Rule, VarId};
-use super::stratify::stratify;
+use super::stratify::{stratify, Strata};
 use super::term::{TermId, Universe};
 use differential_dataflow::input::Input;
 use differential_dataflow::lattice::Lattice;
@@ -20,21 +20,14 @@ const UNBOUND: u32 = u32::MAX;
 
 /// Evaluates positive products and recursive strata as DD collections.
 pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
-    let (_, diagnostics) = stratify(u, program);
+    let (strata, diagnostics) = stratify(u, program);
     if !diagnostics.is_empty() {
         return Closure {
             rows: Vec::new(),
             diagnostics,
         };
     }
-    let (program, hidden) = with_demand(u, program);
-    let (strata, diagnostics) = stratify(u, &program);
-    if !diagnostics.is_empty() {
-        return Closure {
-            rows: Vec::new(),
-            diagnostics,
-        };
-    }
+    let (program, hidden, synthetic_levels) = with_demand(u, program, &strata);
     let program = &program;
 
     let mut aggregate_diagnostics = Vec::new();
@@ -63,10 +56,11 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     let nil = tagged(nil_rel, &[nil_arg]);
     let mut rules_by_level: HashMap<u32, Vec<Rule>> = HashMap::new();
     for rule in &program.rules {
-        rules_by_level
-            .entry(strata.level(rule.rel))
-            .or_default()
-            .push(rule.clone());
+        let level = synthetic_levels
+            .get(&rule.rel)
+            .copied()
+            .unwrap_or_else(|| strata.level(rule.rel));
+        rules_by_level.entry(level).or_default().push(rule.clone());
     }
     for level in 0..=strata.max_level {
         let rules = rules_by_level.get(&level).map_or(0, Vec::len);
@@ -515,7 +509,11 @@ fn unify(args: &[Arg], row: &[u32], env: &mut [u32]) -> bool {
 }
 
 /// Rewrites head-bound products into demand and adorned products.
-fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
+fn with_demand(
+    u: &mut Universe,
+    program: &Program,
+    strata: &Strata,
+) -> (Program, HashSet<TermId>, HashMap<TermId, u32>) {
     let snapshots = kernel_ref(u, "intern_snapshot");
     let mut by_rel: HashMap<TermId, Vec<Rule>> = HashMap::new();
     for rule in &program.rules {
@@ -542,10 +540,11 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
         .collect();
     let mut out = program.clone();
     if demanded.is_empty() {
-        return (out, HashSet::new());
+        return (out, HashSet::new(), HashMap::new());
     }
     let mut hidden: HashSet<TermId> = HashSet::new();
-    let mut adorned: HashMap<(TermId, Vec<usize>), (TermId, TermId)> = HashMap::new();
+    let mut synthetic_levels: HashMap<TermId, u32> = HashMap::new();
+    let mut adorned: HashMap<(TermId, Vec<usize>, u32), (TermId, TermId)> = HashMap::new();
     let mut queue: Vec<Rule> = std::mem::take(&mut out.rules);
     let mut done: Vec<Rule> = Vec::new();
     let budget = program.rules.len() * (1 + program.rules.len() * 8);
@@ -553,6 +552,10 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
         let Some(mut rule) = queue.pop() else {
             break;
         };
+        let rule_level = synthetic_levels
+            .get(&rule.rel)
+            .copied()
+            .unwrap_or_else(|| strata.level(rule.rel));
         let mut bound: HashSet<u32> = HashSet::new();
         for at in 0..rule.body.len() {
             let goal = rule.body[at].clone();
@@ -569,7 +572,7 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
                     })
                     .map(|(position, _)| position)
                     .collect();
-                let key = (goal.rel, positions.clone());
+                let key = (goal.rel, positions.clone(), rule_level);
                 let (demand_rel, adorned_rel) = match adorned.get(&key) {
                     Some(pair) => *pair,
                     None => {
@@ -584,13 +587,17 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
                             .map(|position| position.to_string())
                             .collect();
                         let spelled = u.display(goal.rel).to_string();
-                        let demand_name = u.atom(&format!("dmd__{base}__{mask}__{spelled}"));
+                        let demand_name =
+                            u.atom(&format!("dmd__{base}__{mask}__s{rule_level}__{spelled}"));
                         let demand_rel = u.compound("ref", vec![demand_name]);
-                        let adorned_name = u.atom(&format!("adn__{base}__{mask}__{spelled}"));
+                        let adorned_name =
+                            u.atom(&format!("adn__{base}__{mask}__s{rule_level}__{spelled}"));
                         let adorned_rel = u.compound("ref", vec![adorned_name]);
                         adorned.insert(key, (demand_rel, adorned_rel));
                         hidden.insert(demand_rel);
                         hidden.insert(adorned_rel);
+                        synthetic_levels.insert(demand_rel, rule_level);
+                        synthetic_levels.insert(adorned_rel, rule_level);
                         for original in by_rel.get(&goal.rel).into_iter().flatten() {
                             let mut body = vec![Goal {
                                 polarity: Polarity::Positive,
@@ -654,7 +661,7 @@ fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>
         tracing::error!(target: "dl8::eval", left = queue.len(), "demand rewrite budget exhausted");
     }
     out.rules = done;
-    (out, hidden)
+    (out, hidden, synthetic_levels)
 }
 
 fn tagged(rel: TermId, args: &[TermId]) -> DdRow {
