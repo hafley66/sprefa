@@ -762,19 +762,20 @@ fn fold_group(
     }
 }
 
-/// The eval engine, read once from the environment. `sqlite` runs every
-/// product through `_7_sqlite_eval`; `rust` (the default) keeps this module.
+/// The eval engine, read once from the environment.
 static ENGINE: OnceLock<Engine> = OnceLock::new();
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Engine {
     Rust,
     Sqlite,
+    Dd,
 }
 
 fn engine() -> Engine {
     *ENGINE.get_or_init(|| match std::env::var("DL8_ENGINE").as_deref() {
         Ok("sqlite") => Engine::Sqlite,
+        Ok("dd") => Engine::Dd,
         _ => Engine::Rust,
     })
 }
@@ -788,9 +789,9 @@ impl<'a> Slice for Evaluate<'a> {
     type Effect = Trace;
 
     fn reduce(store: &mut Store, (u, program): Self::Event, fx: &mut dyn FnMut(Trace)) -> Closure {
-        if engine() == Engine::Sqlite {
+        if matches!(engine(), Engine::Sqlite | Engine::Dd) {
             // Rows already in the store (a continuing run) are seeds to the
-            // sqlite engine; every closure row lands back in the store.
+            // selected engine; every closure row lands back in the store.
             let mut seeded = program.clone();
             for (rel, table) in &store.tables {
                 for id in 0..table.len() as u32 {
@@ -800,7 +801,11 @@ impl<'a> Slice for Evaluate<'a> {
                     });
                 }
             }
-            let closure = super::sqlite_eval::evaluate_sqlite(u, &seeded, fx);
+            let closure = match engine() {
+                Engine::Sqlite => super::sqlite_eval::evaluate_sqlite(u, &seeded, fx),
+                Engine::Dd => super::dd_eval::evaluate_dd(u, &seeded, fx),
+                Engine::Rust => unreachable!(),
+            };
             for row in &closure.rows {
                 store.insert(row.rel, row.args.clone().into_boxed_slice());
             }
