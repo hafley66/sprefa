@@ -3,6 +3,11 @@
 default:
     @just --list
 
+# Boop runs this from each new worktree before spawning its lane.
+boop-start:
+    @for link in hafley-rs sqlite_ivm; do if [ ! -e "$link" ] && [ ! -L "$link" ]; then ln -s "$HOME/projects/$link" "$link"; fi; done
+    @exclude="$(git rev-parse --git-path info/exclude)"; for link in hafley-rs sqlite_ivm; do if ! grep -Fxq "/$link" "$exclude"; then printf '/%s\n' "$link" >> "$exclude"; fi; done
+
 build:
     cargo build
 
