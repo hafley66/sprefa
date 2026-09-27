@@ -72,8 +72,8 @@ fn path_owner(
     u.unary(target, "ref").ok_or(inner_label)
 }
 
-/// `:599`. The four alternatives are `(Forward -> Target ; Parent ; Kernel ;
-/// Primitive)`: a forward edge COMMITS, a parent does not.
+/// `:599`. A forward edge commits. Typed kernel members belong to the primitive
+/// owner itself, before lookup continues through its parent scope.
 pub fn resolve_name(
     u: &mut Universe,
     cx: &Cx,
@@ -100,17 +100,20 @@ fn resolve_name_body(
     if let Some(target) = cx.graph.forward(owner, name) {
         return resolve_target(u, cx, target, visited);
     }
+    if let Some(primitive) = u.unary(owner, "primitive") {
+        let typed = atom_name(u, primitive).map(str::to_owned);
+        let label = atom_name(u, name).map(str::to_owned);
+        if let (Some(typed), Some(label)) = (typed, label) {
+            if kernel_relation(Some(&typed), &label).is_some() {
+                let inner = u.compound("kernel", vec![primitive, name]);
+                return Some(u.compound("ref", vec![inner]));
+            }
+        }
+    }
     if let Some(parent) = cx.graph.parent(owner) {
         if let Some(resolved) = resolve_name(u, cx, parent, name, visited) {
             return Some(resolved);
         }
-    }
-    if let Some(primitive) = u.unary(owner, "primitive") {
-        let typed = atom_name(u, primitive).map(|s| s.to_string())?;
-        let label = atom_name(u, name)?;
-        kernel_relation(Some(&typed), label)?;
-        let inner = u.compound("kernel", vec![primitive, name]);
-        return Some(u.compound("ref", vec![inner]));
     }
     if cx.graph.module_member(owner) {
         let label = atom_name(u, name).map(|s| s.to_string())?;
