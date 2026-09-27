@@ -49,6 +49,7 @@ pub struct TermSpec {
 pub struct Lowered {
     pub ir: ir::Program,
     pub terms: Vec<TermSpec>,
+    pub texts: Vec<(TermId, String)>,
     pub seeds: Vec<(ir::RelId, Row)>,
     pub term_map: ir::RelId,
     pub unit: ir::RelId,
@@ -324,7 +325,6 @@ fn compile_kernel(
     bad_lists: ir::RelId,
     plain_lists: ir::RelId,
     term_map: ir::RelId,
-    str_nil: TermId,
     current: &mut ir::NodeId,
     width: &mut usize,
     bound: &mut HashMap<u32, ir::ColId>,
@@ -485,18 +485,84 @@ fn compile_kernel(
             }
         }
         Kernel::Nil => return Err("nil relation routing"),
-        Kernel::StrCons => return Err("str.cons"),
+        Kernel::StrCons => {
+            if inputs.len() != 3 {
+                return Err("str.cons arity");
+            }
+            let wrap = constructor(constructors, "9:1:const", 1, false)?;
+            if let (Some(head), Some(rest)) = (inputs[0], inputs[1]) {
+                *current = join_constructor(b, *current, *width, wrap, head);
+                let head_text = assert_width(*width + 1);
+                *width += 2;
+                *current = join_constructor(b, *current, *width, wrap, rest);
+                let rest_text = assert_width(*width + 1);
+                *width += 2;
+                *current = b.node(ir::Op::StrCons {
+                    input: *current,
+                    mode: ir::StrMode::Construct {
+                        head: head_text,
+                        rest: rest_text,
+                    },
+                });
+                let text = assert_width(*width);
+                *width += 1;
+                *current = b.node(ir::Op::Mint {
+                    input: *current,
+                    functor: wrap,
+                    args: vec![text],
+                });
+                output[2] = Some(assert_width(*width));
+                *width += 1;
+            } else if let Some(whole) = inputs[2] {
+                *current = join_constructor(b, *current, *width, wrap, whole);
+                let whole_text = assert_width(*width + 1);
+                *width += 2;
+                *current = b.node(ir::Op::StrCons {
+                    input: *current,
+                    mode: ir::StrMode::Decompose { whole: whole_text },
+                });
+                let head_text = assert_width(*width);
+                let rest_text = assert_width(*width + 1);
+                *width += 2;
+                *current = b.node(ir::Op::Mint {
+                    input: *current,
+                    functor: wrap,
+                    args: vec![head_text],
+                });
+                output[0] = Some(assert_width(*width));
+                *width += 1;
+                *current = b.node(ir::Op::Mint {
+                    input: *current,
+                    functor: wrap,
+                    args: vec![rest_text],
+                });
+                output[1] = Some(assert_width(*width));
+                *width += 1;
+            } else {
+                *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
+                return Ok(());
+            }
+        }
         Kernel::StrNil => {
             if inputs.len() != 1 {
                 return Err("str.nil arity");
             }
-            let mapped = mapped_ground(b, term_map, str_nil);
-            *current = b.node(ir::Op::Join {
-                inputs: vec![*current, mapped],
-                equivalences: vec![],
+            let wrap = constructor(constructors, "9:1:const", 1, false)?;
+            *current = b.mfp(
+                *current,
+                vec![],
+                vec![ir::Expr::Call(ir::Func::StrNil, vec![])],
+                vec![],
+            );
+            let text = assert_width(*width);
+            *width += 1;
+            *current = b.node(ir::Op::Mint {
+                input: *current,
+                functor: wrap,
+                args: vec![text],
             });
-            output[0] = Some(assert_width(*width + 1));
-            *width += 2;
+            output[0] = Some(assert_width(*width));
+            *width += 1;
         }
         Kernel::IntAdd => {
             if inputs.len() != 3 {
@@ -760,7 +826,6 @@ fn compile_rule(
     bad_lists: ir::RelId,
     plain_lists: ir::RelId,
     term_map: ir::RelId,
-    str_nil: TermId,
     unit: ir::RelId,
     served: &std::collections::HashSet<TermId>,
     none: TermId,
@@ -796,7 +861,6 @@ fn compile_rule(
                 bad_lists,
                 plain_lists,
                 term_map,
-                str_nil,
                 &mut current,
                 &mut width,
                 &mut bound,
@@ -1025,8 +1089,6 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let intern_rel = kernel_ref(u, "intern");
     let effect_rel = kernel_ref(u, "effect");
     let snapshot_rel = kernel_ref(u, "intern_snapshot");
-    let empty_string = u.string("");
-    let str_nil = u.compound("const", vec![empty_string]);
     let none_atom = u.atom("none");
     let none = u.compound("const", vec![none_atom]);
     let empty = u.empty_list();
@@ -1093,6 +1155,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     );
     let mut constructor_keys = BTreeSet::new();
     let mut shapes = Vec::new();
+    let mut texts = Vec::new();
     let atoms: BTreeMap<String, i64> = {
         let mut names: Vec<_> = u.syms.iter().cloned().collect();
         names.sort();
@@ -1107,7 +1170,10 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         let (name, args, raw) = match term {
             Term::Int(n) => ("0:int".to_string(), vec![], Some(*n)),
             Term::Bool(value) => ("1:bool".to_string(), vec![], Some(i64::from(*value))),
-            Term::Str(sym) => ("2:str".to_string(), vec![], Some(atoms[u.sym_str(*sym)])),
+            Term::Str(sym) => {
+                texts.push((TermId(index as u32), u.sym_str(*sym).to_owned()));
+                continue;
+            }
             Term::Atom(sym) => (
                 "3:atom".to_string(),
                 vec![],
@@ -1313,7 +1379,6 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             bad_lists,
             plain_lists,
             term_map,
-            str_nil,
             unit,
             &program.served,
             none,
@@ -1531,6 +1596,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     Ok(Lowered {
         ir: b.ir,
         terms,
+        texts,
         seeds,
         term_map,
         unit,

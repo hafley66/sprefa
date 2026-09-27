@@ -475,6 +475,45 @@ fn rung_6_scalar_kernel_edges() {
             vec![typed("str", "nil", vec![variable(0)])],
         ),
         rule(
+            "joined_str",
+            vec![variable(0)],
+            vec![typed(
+                "str",
+                "cons",
+                vec![
+                    json!({"f":"const","args":[{"s":"é"}]}),
+                    json!({"f":"const","args":[{"s":"cho"}]}),
+                    variable(0),
+                ],
+            )],
+        ),
+        rule(
+            "split_str",
+            vec![variable(0), variable(1)],
+            vec![typed(
+                "str",
+                "cons",
+                vec![
+                    variable(0),
+                    variable(1),
+                    json!({"f":"const","args":[{"s":"écho"}]}),
+                ],
+            )],
+        ),
+        rule(
+            "split_empty_str",
+            vec![variable(0)],
+            vec![typed(
+                "str",
+                "cons",
+                vec![
+                    variable(0),
+                    variable(1),
+                    json!({"f":"const","args":[{"s":""}]}),
+                ],
+            )],
+        ),
+        rule(
             "non_integer",
             vec![],
             vec![typed(
@@ -504,6 +543,23 @@ fn rung_6_scalar_kernel_edges() {
         assert_eq!(
             rows(&closure, "empty_str"),
             vec![vec![json!({"f":"const","args":[{"s":""}]})]],
+            "engine={engine}"
+        );
+        assert_eq!(
+            rows(&closure, "joined_str"),
+            vec![vec![json!({"f":"const","args":[{"s":"écho"}]})]],
+            "engine={engine}"
+        );
+        assert_eq!(
+            rows(&closure, "split_str"),
+            vec![vec![
+                json!({"f":"const","args":[{"s":"é"}]}),
+                json!({"f":"const","args":[{"s":"cho"}]})
+            ]],
+            "engine={engine}"
+        );
+        assert!(
+            rows(&closure, "split_empty_str").is_empty(),
             "engine={engine}"
         );
         assert!(rows(&closure, "non_integer").is_empty(), "engine={engine}");

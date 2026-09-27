@@ -40,6 +40,9 @@ fn run<E: Engine>(
 ) -> Result<Closure, ivm_engine::EngineError> {
     let mut engine = E::install(&lowered.ir, host)?;
     let mut mapped: HashMap<TermId, Cell> = HashMap::new();
+    for (term, value) in &lowered.texts {
+        mapped.insert(*term, engine.intern_text(value, host)?);
+    }
     let mut pending: BTreeSet<usize> = (0..lowered.terms.len()).collect();
     // Each pass adds at least one term. The cap also guards malformed cyclic arenas.
     for _ in 0..lowered.terms.len().min(TERM_BUDGET) + 1 {
@@ -143,6 +146,18 @@ fn run<E: Engine>(
             }
         }
     }
+    for (_, args) in dictionary
+        .values()
+        .filter(|(name, _)| name.starts_with("9:"))
+    {
+        for &id in args {
+            if !decoded.contains_key(&id) {
+                if let Some(value) = engine.text(id, host)? {
+                    decoded.insert(id, u.string(&value));
+                }
+            }
+        }
+    }
     for _ in 0..dictionary.len().min(TERM_BUDGET) + 1 {
         let mut changed = false;
         for (&id, (functor, args)) in &dictionary {
@@ -175,17 +190,23 @@ fn run<E: Engine>(
                 continue;
             }
             let cells = &cells[..arity];
-            let args = cells
-                .iter()
-                .map(|cell| decoded.get(cell).copied())
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| {
-                    ivm_engine::EngineError::new(
+            let mut args = Vec::with_capacity(cells.len());
+            for &cell in cells {
+                let term = if let Some(&term) = decoded.get(&cell) {
+                    term
+                } else if let Some(value) = engine.text(cell, host)? {
+                    let term = u.string(&value);
+                    decoded.insert(cell, term);
+                    term
+                } else {
+                    return Err(ivm_engine::EngineError::new(
                         ivm_engine::Stage::Snapshot,
                         Some(rel),
                         ivm_engine::ErrorKind::Unsupported("undecodable term id"),
-                    )
-                })?;
+                    ));
+                };
+                args.push(term);
+            }
             rows.push(Row {
                 rel: original,
                 args,
