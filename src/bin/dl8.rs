@@ -8,10 +8,10 @@ use dl8::_6_eval::json::{
     closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json,
     serve_relations,
 };
-use dl8::_6_eval::{Trace, Universe};
+use dl8::_6_eval::{Row, Term, TermId, Trace, Universe};
 use dl8::_7_effect::Slice;
 use dl8::_8_driver::{Event, Stop};
-use dl8::_9_runtime::executors::executors_for;
+use dl8::_9_runtime::executors::{executors_for, query_executors_for};
 use dl8::_9_runtime::{IRowStore, Reconciler, SqliteRowStore, StoreError};
 use hafley_observe::{Config, OutputFormat};
 use std::io::IsTerminal;
@@ -99,6 +99,22 @@ enum Command {
         #[arg(long)]
         max_ticks: Option<usize>,
     },
+    /// Compile one query against a repository, settle its sources once and print
+    /// the root file's derived rows.
+    Query {
+        file: PathBuf,
+        /// Repository used as the working directory for relative source roots.
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = QueryFormat::Table)]
+        format: QueryFormat,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum QueryFormat {
+    Json,
+    Table,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -175,6 +191,7 @@ fn run(command: Command) -> ExitCode {
             db.as_deref(),
             max_ticks.unwrap_or(usize::MAX),
         ),
+        Command::Query { file, repo, format } => query_cli(&file, repo.as_deref(), format),
     }
 }
 
@@ -438,6 +455,219 @@ fn run_cli(
     }
 }
 
+fn query_cli(path: &Path, repo: Option<&Path>, format: QueryFormat) -> ExitCode {
+    let fail = |error: &dyn std::fmt::Display| {
+        tracing::error!(phase = "query", error = %error, path = %path.display());
+        ExitCode::from(2)
+    };
+    match std::env::var("DL8_ENGINE").as_deref() {
+        Ok("ir:dd" | "ir:sqlite") => {
+            return fail(&"IR query engines are not available in this build")
+        }
+        Ok("rust" | "sqlite" | "dd") | Err(_) => {}
+        Ok(other) => return fail(&format!("unknown DL8_ENGINE {other}")),
+    }
+
+    let path = match std::fs::canonicalize(path) {
+        Ok(path) => path,
+        Err(e) => return fail(&e),
+    };
+    let repo = repo.unwrap_or_else(|| Path::new("."));
+    let repo = match std::fs::canonicalize(repo) {
+        Ok(repo) => repo,
+        Err(e) => return fail(&e),
+    };
+    if let Err(e) = std::env::set_current_dir(&repo) {
+        return fail(&e);
+    }
+
+    let mut u = Universe::new();
+    let mut event = |_event: Event| {};
+    let compiled = match compile_input(&mut u, std::slice::from_ref(&path), None, &[], &mut event) {
+        Ok(compiled) => compiled,
+        Err(Stop::Io(message)) => return fail(&message),
+        Err(other) => return fail(&format!("{other:?}")),
+    };
+    if !compiled.diagnostics.is_empty() {
+        let diagnostics: Vec<_> = compiled
+            .diagnostics
+            .iter()
+            .map(|term| term_to_json(&u, *term))
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({ "diagnostics": diagnostics })).unwrap()
+        );
+        return ExitCode::from(1);
+    }
+    let encoded = match program_to_json(&mut u, compiled.runtime_program) {
+        Ok(program) => program,
+        Err(diagnostic) => {
+            println!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "diagnostics": [term_to_json(&u, diagnostic)]
+                }))
+                .unwrap()
+            );
+            return ExitCode::from(1);
+        }
+    };
+    let (mut program, names) = match program_from_json(&mut u, &encoded)
+        .and_then(|program| Ok((program, program_names(&mut u, &encoded)?)))
+    {
+        Ok(parts) => parts,
+        Err(e) => return fail(&e),
+    };
+
+    let source_names = ["fs.at", "fs.json", "git.refs", "git.history", "extract"];
+    let serve: Vec<String> = source_names
+        .iter()
+        .filter(|name| names.contains_key(**name))
+        .map(|name| (*name).to_string())
+        .collect();
+    let diagnostics = serve_relations(&mut u, &mut program, &names, &serve);
+    if !diagnostics.is_empty() {
+        let out = closure_to_json(&u, &[], &diagnostics);
+        println!("{}", serde_json::to_string(&out).unwrap());
+        return ExitCode::from(1);
+    }
+    let live_serve: Vec<String> = serve
+        .iter()
+        .filter(|name| name.as_str() == "git.refs")
+        .cloned()
+        .collect();
+    let executors = match query_executors_for(&mut u, &names, &live_serve) {
+        Ok(executors) => executors,
+        Err(diagnostics) => {
+            let out = closure_to_json(&u, &[], &diagnostics);
+            println!("{}", serde_json::to_string(&out).unwrap());
+            return ExitCode::from(1);
+        }
+    };
+    let mut reconciler = match Reconciler::new(&mut u, &names, executors) {
+        Ok(reconciler) => reconciler,
+        Err(diagnostics) => {
+            let out = closure_to_json(&u, &[], &diagnostics);
+            println!("{}", serde_json::to_string(&out).unwrap());
+            return ExitCode::from(1);
+        }
+    };
+    let mut rows = Store::default();
+    seed_compiler_rows(&u, &mut rows, &compiled.compiler_rows);
+    let mut trace = |_trace: Trace| {};
+    let reconciled = match reconciler.run(&mut u, &program, &mut rows, None, 1, &mut trace) {
+        Ok(reconciled) => reconciled,
+        Err(e) => return fail(&e),
+    };
+    if !reconciled.closure.diagnostics.is_empty() {
+        let out = closure_to_json(&u, &[], &reconciled.closure.diagnostics);
+        println!("{}", serde_json::to_string(&out).unwrap());
+        return ExitCode::from(1);
+    }
+
+    let root = path.display().to_string();
+    let derived: std::collections::HashSet<TermId> = program
+        .rules
+        .iter()
+        .map(|rule| rule.rel)
+        .filter(|rel| relation_is_from_file(&u, *rel, &root))
+        .collect();
+    let relation_names: std::collections::HashMap<TermId, &str> = names
+        .iter()
+        .filter(|(_, rel)| derived.contains(rel))
+        .map(|(name, rel)| (*rel, name.as_str()))
+        .collect();
+    let selected: Vec<(&str, &Row)> = reconciled
+        .closure
+        .rows
+        .iter()
+        .filter_map(|row| relation_names.get(&row.rel).map(|name| (*name, row)))
+        .collect();
+    print_query_rows(&u, &selected, format);
+    ExitCode::SUCCESS
+}
+
+/// Comptime already settled every Once source. Carry its ground closure into
+/// the query store so the runtime frontier does not read those sources again.
+fn seed_compiler_rows(u: &Universe, rows: &mut Store, compiler_rows: &[TermId]) {
+    for term in compiler_rows {
+        let Some([relation, arguments]) = u.args::<2>(*term, "call") else {
+            continue;
+        };
+        let Some(arguments) = u.as_list(arguments) else {
+            continue;
+        };
+        rows.insert(relation, arguments.into_boxed_slice());
+    }
+}
+
+fn relation_is_from_file(u: &Universe, relation: TermId, path: &str) -> bool {
+    let Some(target) = u.unary(relation, "ref") else {
+        return false;
+    };
+    let Some([unit, _]) = u.args::<2>(target, "owner") else {
+        return false;
+    };
+    let Some(file) = u.unary(unit, "file") else {
+        return false;
+    };
+    match u.get(file) {
+        Term::Atom(sym) | Term::Str(sym) => u.sym_str(*sym) == path,
+        _ => false,
+    }
+}
+
+fn print_query_rows(u: &Universe, rows: &[(&str, &Row)], format: QueryFormat) {
+    match format {
+        QueryFormat::Json => {
+            let rows: Vec<_> = rows
+                .iter()
+                .map(|(relation, row)| {
+                    serde_json::json!({
+                        "relation": relation,
+                        "args": row.args.iter().map(|arg| term_to_json(u, *arg)).collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string(&rows).unwrap());
+        }
+        QueryFormat::Table => {
+            for (relation, row) in rows {
+                print!("({relation}");
+                for arg in &row.args {
+                    let value = u.unary(*arg, "const").unwrap_or(*arg);
+                    print!(" {}", u.display(value));
+                }
+                println!(")");
+            }
+        }
+    }
+}
+
+fn compile_input(
+    u: &mut Universe,
+    files: &[PathBuf],
+    project: Option<&Path>,
+    streams: &[PathBuf],
+    fx: &mut dyn FnMut(Event),
+) -> Result<dl8::Compile, Stop> {
+    let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+    let streams: Vec<&Path> = streams.iter().map(PathBuf::as_path).collect();
+    match (project, paths.as_slice()) {
+        (None, [one]) if streams.is_empty() => dl8::compile(u, one, fx),
+        (root, _) => {
+            let root = root.map(Path::to_path_buf).unwrap_or_else(|| {
+                paths[0]
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("."))
+            });
+            dl8::compile_project(u, &root, &paths, &streams, fx)
+        }
+    }
+}
+
 fn compile_cli(
     files: &[PathBuf],
     project: Option<&std::path::Path>,
@@ -450,20 +680,7 @@ fn compile_cli(
             tracing::debug!(target: "dl8::trace", event = ?e);
         }
     };
-    let paths: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
-    let streams: Vec<&std::path::Path> = streams.iter().map(|p| p.as_path()).collect();
-    let compiled = match (project, paths.as_slice()) {
-        (None, [one]) if streams.is_empty() => dl8::compile(&mut u, one, &mut fx),
-        (root, _) => {
-            let root = root.map(|r| r.to_path_buf()).unwrap_or_else(|| {
-                paths[0]
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from("."))
-            });
-            dl8::compile_project(&mut u, &root, &paths, &streams, &mut fx)
-        }
-    };
+    let compiled = compile_input(&mut u, files, project, streams, &mut fx);
     let compiled = match compiled {
         Ok(compiled) => compiled,
         Err(Stop::Io(message)) => {

@@ -18,6 +18,7 @@
 - [Diagnostics](14_diagnostics.md)
 - [Demos](15_demos.md)
 - [Not built yet](16_not_built.md)
+- [One query over a repository](17_query.md)
 
 # Modules and the prelude
 

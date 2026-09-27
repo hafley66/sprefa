@@ -2075,7 +2075,10 @@ pub(crate) fn program_plan_with<'a>(
                         })
                         .count()
                         > 1
-                        || rule.body.iter().any(|goal| goal.polarity != Polarity::Positive)
+                        || rule
+                            .body
+                            .iter()
+                            .any(|goal| goal.polarity != Polarity::Positive)
                 })
             });
             if nonlinear {
