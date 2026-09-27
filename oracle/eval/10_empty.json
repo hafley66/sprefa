@@ -1,1 +1,0 @@
-{"expected": {"closure": [ {"args": [ {"args": [ [] ],"f":"const"} ],"rel": {"args": [ {"args": [ {"a":"nil"} ],"f":"kernel"} ],"f":"ref"}} ],"diagnostics": []},"program": {"rules": [],"seeds": []}}

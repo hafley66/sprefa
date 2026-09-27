@@ -145,7 +145,7 @@ exit 1
 Aggregate bodies see stored rows only: `cons_count` has no row, `nil_count` counts the one stored `nil` row:
 
 ```console
-$ bash book/show.sh eval oracle/eval/15_aggregate_tables_only.json
+$ bash book/show.sh eval fixtures/ladder/10_aggregate_tables_only.json
 (item 1)
 (item 2)
 (item 3)
@@ -163,6 +163,6 @@ exit 0
 |---|---|---|
 | `sum`, `min`, `max` and grouping | `fixtures/aggregates/*.expected.json` | `cargo test --test _11_aggregates` |
 | fold with a kernel step, a program step, order, and a missing row | `fixtures/fold/*.expected.json` | `cargo test --test _15_fold` |
-| aggregate bodies read stored rows only | `oracle/eval/15_aggregate_tables_only.pl:1-2` | `cargo test --test _0_eval_oracle` |
+| aggregate bodies read stored rows only | `fixtures/ladder/10_aggregate_tables_only.pl:1-2` | `cargo test -j 4 --test it rung_11_handwritten_oracle_constructs` |
 | two aggregates in one head | `oracle/eval/6_malformed_aggregate.pl` | `bash book/show.sh eval oracle/eval/6_malformed_aggregate.json` |
-| count over a lower stratum, then a filter | `oracle/eval/3_count.pl` | `bash book/show.sh eval oracle/eval/3_count.json` |
+| count over a lower stratum, then a filter | `fixtures/ladder/1_count.pl` | `bash book/show.sh eval fixtures/ladder/1_count.json` |

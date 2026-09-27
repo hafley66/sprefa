@@ -123,7 +123,7 @@ step.
 
 1. `timeout 600 cargo test --test _0_eval_oracle --test _2_macrotime_oracle --test _8_compile_oracle --test _18_sqlite_emit --test _26_bounded_loops --test _27_eval_sqlite > /tmp/s4-targeted.log 2>&1`, with the result lines pasted. The default (Rust) path stays byte-identical, and `git diff --stat origin/main...HEAD -- oracle/eval oracle/macrotime oracle/compile` is empty.
 2. `sqlite oracles <pass>/<total>` and the failing fixture names, each with its `not_built_yet(<shape>)` payload.
-3. The `sql` span count for one fixture: `DL8_ENGINE=sqlite RUST_LOG=dl8=info timeout 10 target/debug/dl8 eval oracle/eval/0_transitive.json 2> /tmp/s4-sql.log; grep -c 'dl8::sql' /tmp/s4-sql.log`. Extract the program first, as `tests/_0_eval_oracle.rs:30-37` does.
+3. The `sql` span count for one fixture: `DL8_ENGINE=sqlite RUST_LOG=dl8=info timeout 10 target/debug/dl8 eval fixtures/ladder/12_transitive.json 2> /tmp/s4-sql.log; grep -c 'dl8::sql' /tmp/s4-sql.log`. Extract the program first, as `tests/_0_eval_oracle.rs:30-37` does.
 4. `timeout 600 cargo test --no-fail-fast > /tmp/s4-battery.log 2>&1`, run once. Compare its reds to `.github/CI-KNOWN-RED.md` "dl8 cargo battery". A red that is not in that file is yours.
 5. `ps -eo pid,pcpu,rss,args | grep -E '[d]l8 '` before and after.
 6. The slices done, and the slices missing.

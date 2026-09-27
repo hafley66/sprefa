@@ -113,7 +113,7 @@ exit 0
 Every comparison, a negated one, and a text value at `int.lt` (`text_never` has no row):
 
 ```console
-$ bash book/show.sh eval oracle/eval/5_int_compare.json
+$ bash book/show.sh eval fixtures/ladder/3_int_compare.json
 (ge_two 2)
 (ge_two 3)
 (le_two 1)
@@ -167,7 +167,7 @@ exit 1
 |---|---|---|
 | `int.add` over literals | `fixtures/literals/2_int_add.expected.json` | `cargo test --test _10_literals` |
 | mixed-kind order | `fixtures/term_lt/0_mixed_kinds.expected.json` | `cargo test --test _12_term_lt` |
-| the order over atoms, strings, lists and compounds | `oracle/eval/13_deep_terms_order.pl` | `bash book/show.sh eval oracle/eval/13_deep_terms_order.json` |
-| comparison complements and text at `int.lt` | `oracle/eval/5_int_compare.pl` | `cargo test --test _0_eval_oracle` |
+| the order over atoms, strings, lists and compounds | `fixtures/ladder/8_deep_terms_order.pl` | `bash book/show.sh eval fixtures/ladder/8_deep_terms_order.json` |
+| comparison complements and text at `int.lt` | `fixtures/ladder/3_int_compare.pl` | `cargo test -j 4 --test it rung_11_handwritten_oracle_constructs` |
 | a text constant is rejected | `oracle/check/cases/8_int_type_mismatch.dl7` | `cargo test --test _4_check_oracle` |
 | `int.gt` and `int.add` lower to SQL | `fixtures/sqlite_emit/0_union_filter.dl7` | `cargo test --test _18_sqlite_emit` |

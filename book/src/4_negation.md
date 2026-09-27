@@ -81,7 +81,7 @@ exit 0
 Order inside a body, at the evaluator, with no checker in front. `lonely` negates before `source` binds `value`; `free` negates after:
 
 ```prolog
-% fixture: oracle/eval/11_nonground_negation.pl
+% fixture: fixtures/ladder/6_nonground_negation.pl
 program(
     [ rule(call(ref(lonely), [var(value)]),
            [ checked_goal(negative, call(ref(taken), [var(value)])),
@@ -96,7 +96,7 @@ program(
 ```
 
 ```console
-$ bash book/show.sh eval oracle/eval/11_nonground_negation.json
+$ bash book/show.sh eval fixtures/ladder/6_nonground_negation.json
 (free one)
 (source one)
 (source two)
@@ -105,7 +105,7 @@ exit 0
 ```
 
 ```console
-$ $DL8 eval oracle/eval/11_nonground_negation.json --trace 2>&1 >/dev/null | sed 's/^[^ ]* //'
+$ $DL8 eval fixtures/ladder/6_nonground_negation.json --trace 2>&1 >/dev/null | sed 's/^[^ ]* //'
 DEBUG dl8::trace: event=Stratum { level: 0, rules: 0, seeds: 3 }
 DEBUG dl8::trace: event=Aggregate { level: 0, rules: 0, rows: 0 }
 DEBUG dl8::trace: event=Round { level: 0, round: 0, new: 0 }
@@ -152,9 +152,9 @@ exit 1
 
 | claim | path | command |
 |---|---|---|
-| an unbound negative goal never holds at eval | `oracle/eval/11_nonground_negation.json` | `cargo test --test _0_eval_oracle` |
+| an unbound negative goal never holds at eval | `fixtures/ladder/6_nonground_negation.json` | `cargo test -j 4 --test it rung_11_handwritten_oracle_constructs` |
 | the checker rejects it first | `oracle/check/cases/2_unbound_negative.dl7`, `oracle/check/status.json` | `cargo test --test _4_check_oracle` |
 | negated `cons` is rejected | `oracle/check/cases/3_negative_cons.dl7` | `bash book/show.sh compile oracle/check/cases/3_negative_cons.dl7` |
-| negated integer comparison is the complement | `oracle/eval/5_int_compare.pl:6-9` | `bash book/show.sh eval oracle/eval/5_int_compare.json` |
+| negated integer comparison is the complement | `fixtures/ladder/3_int_compare.pl:6-9` | `bash book/show.sh eval fixtures/ladder/3_int_compare.json` |
 | a negative cycle stops evaluation | `oracle/eval/2_strict_cycle.pl` | `bash book/show.sh eval oracle/eval/2_strict_cycle.json` |
 | `NOT EXISTS` lowering of a negative goal | `fixtures/sqlite_emit/3_consumers.dl7` | `bash book/show.sh emit fixtures/sqlite_emit/3_consumers.dl7 sqlite` |

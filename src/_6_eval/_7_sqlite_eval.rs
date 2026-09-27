@@ -1523,7 +1523,7 @@ mod probes {
     fn plan_sees_transitive_rules() {
         let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/oracle/eval/0_transitive.json"
+            "/fixtures/ladder/12_transitive.json"
         ))
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&text).unwrap();

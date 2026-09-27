@@ -1,6 +1,6 @@
 # Oracle construct coverage
 
-The evaluation column names `tests/it/_9_ladder.rs` rungs. A size is the input cardinality exercised by the rung. `all` means `rust`, `sqlite`, `dd`, `ir:dd`, and `ir:sqlite`. Rung 11 varies program seed count and compares full-size closure rows to byte-preserved frozen expectations under `fixtures/ladder/`. `kept` means the oracle fixture and its test remain because the observation is outside a sized evaluation case.
+The first column records original oracle names. A size is the input cardinality exercised by the `tests/it/_9_ladder.rs` rung. `all` means `rust`, `sqlite`, `dd`, `ir:dd`, and `ir:sqlite`. Rung 11 varies program seed count and compares full-size closure rows to byte-preserved frozen expectations under `fixtures/ladder/`. Covered Prolog examples used by the book also live there. `kept` means the oracle fixture and its test remain because the observation is outside a sized evaluation case.
 
 | Oracle fixture | Constructs observed | Ladder rung, size, engines or disposition |
 |---|---|---|

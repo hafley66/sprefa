@@ -112,7 +112,7 @@ fn every_oracle_fixture_matches_v7() {
 
 /// Fixtures the sqlite engine must keep passing. Measured at slice S1;
 /// a count below this is a regression, above it raises the floor.
-const FLOOR: usize = 32;
+const FLOOR: usize = 18;
 
 fn s27evalsqlite_fixtures() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/eval");
@@ -220,7 +220,7 @@ fn sqlite_engine_matches_v7_oracles() {
 // Oracle parity through the real binary with `DL8_ENGINE=dd`.
 
 /// Fixtures the DD engine must keep passing.
-const s28evaldd_FLOOR: usize = 32;
+const s28evaldd_FLOOR: usize = 18;
 
 fn s28evaldd_fixtures() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/eval");

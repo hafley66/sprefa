@@ -121,7 +121,7 @@ exit 0
 The fixpoint as a step trace, over the prolog oracle for a four-edge cycle:
 
 ```prolog
-% fixture: oracle/eval/0_transitive.pl
+% fixture: fixtures/ladder/12_transitive.pl
 program(
     [ rule(call(ref(path), [var(from), var(to)]),
            [checked_goal(positive, call(ref(edge), [var(from), var(to)]))]),
@@ -136,7 +136,7 @@ program(
 ```
 
 ```console
-$ $DL8 eval oracle/eval/0_transitive.json --trace 2>&1 >/dev/null | sed 's/^[^ ]* //'
+$ $DL8 eval fixtures/ladder/12_transitive.json --trace 2>&1 >/dev/null | sed 's/^[^ ]* //'
 DEBUG dl8::trace: event=Stratum { level: 0, rules: 2, seeds: 4 }
 DEBUG dl8::trace: event=Aggregate { level: 0, rules: 0, rows: 0 }
 DEBUG dl8::trace: event=Round { level: 0, round: 0, new: 4 }
@@ -153,8 +153,8 @@ Round 0 derives the 4 length-1 paths, rounds 1 to 3 add lengths 2 to 4, round 4 
 
 | claim | path | command |
 |---|---|---|
-| semi-naive closure equals v7 over every eval oracle | `oracle/eval/*.pl`, `oracle/eval/*.json` | `cargo test --test _0_eval_oracle` |
-| demanded rows are used, never stored | `oracle/eval/14_demand_recursion.pl:1-3` | `$DL8 eval oracle/eval/14_demand_recursion.json` |
-| repeated variables and arity | `oracle/eval/12_repeated_vars_and_arity.pl` | `cargo test --test _0_eval_oracle` |
+| retained whole-program oracle closures equal v7 | `oracle/eval/c*.json` | `cargo test -j 4 --test it _2_eval_oracles::every_oracle_fixture_matches_v7` |
+| demanded rows are used, never stored | `fixtures/ladder/9_demand_recursion.pl:1-3` | `$DL8 eval fixtures/ladder/9_demand_recursion.json` |
+| repeated variables and arity | `fixtures/ladder/7_repeated_vars_and_arity.pl` | `cargo test -j 4 --test it rung_11_handwritten_oracle_constructs` |
 | unions and head constants | `fixtures/sqlite_emit/0_union_filter.dl7` | `bash book/show.sh eval fixtures/sqlite_emit/0_union_filter.dl7` |
-| every evaluation inserts one `nil` row | `src/_6_eval/_5_evaluate.rs:704-708` | `$DL8 eval oracle/eval/10_empty.json` |
+| every evaluation inserts one `nil` row | `src/_6_eval/_5_evaluate.rs:704-708` | `$DL8 eval fixtures/ladder/13_empty.json` |
