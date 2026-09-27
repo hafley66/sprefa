@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "shots": "playwright test",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "storybook": "storybook dev -p 6006",
@@ -25,10 +26,11 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@mdx-js/rollup": "3.0.1",
     "@mdx-js/mdx": "3.0.1",
-    "@storybook/react": "^8.6.18",
+    "@mdx-js/rollup": "3.0.1",
+    "@playwright/test": "^1.63.0",
     "@storybook/addon-essentials": "^8.6.14",
+    "@storybook/react": "^8.6.18",
     "@storybook/react-vite": "^8.6.14",
     "@tanstack/router-plugin": "^1.131.35",
     "@types/mdx": "^2.0.13",

@@ -1,7 +1,7 @@
 ## !!steps Update
 
 ```sql !
-// !focus(1:2)
+-- !focus(1:2)
 Δ₁(ada, 7) = +1
 Δ₁(bob, 3) = -1
 ```
@@ -9,28 +9,28 @@
 ## !!steps Integrate
 
 ```sql !
-// !focus(1)
+-- !focus(1)
 S₁ = S₀ + Δ₁
 ```
 
 ## !!steps Differentiate
 
 ```sql !
-// !focus(1)
+-- !focus(1)
 Δ₁ = S₁ - S₀
 ```
 
 ## !!steps First update
 
 ```sql !
-// !focus(1)
+-- !focus(1)
 S₀ = ∅ + { ada: +1 }
 ```
 
 ## !!steps Running state
 
 ```sql !
-// !focus(1:3)
+-- !focus(1:3)
 t=1  +ada  → ada:2
 t=2  +bob  → ada:2 bob:1
 t=3  -bob  → ada:2
@@ -39,6 +39,6 @@ t=3  -bob  → ada:2
 ## !!steps Operator
 
 ```sql !
-// !focus(1)
+-- !focus(1)
 map(Δ input) → Δ output
 ```

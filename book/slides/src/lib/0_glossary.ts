@@ -9,13 +9,47 @@ export const glossary: readonly GlossaryGroup[] = [
   { slug: "core-algebra", title: "Core algebra", ideas: [
     { slug: "z-set", title: "Z-set", summary: "Rows carrying integer weights", built: true, steps: zsetSteps },
     { slug: "delta", title: "Delta", summary: "A change between two states", built: true, steps: deltaSteps },
+    { slug: "integrate-differentiate", title: "Integrate / differentiate", summary: "Move between states and changes", built: false },
+    { slug: "linear-op", title: "Linear op", summary: "An operator that distributes over addition", built: false },
+    { slug: "bilinear-op-join-delta-rule", title: "Bilinear op / join delta rule", summary: "Incrementalize operators with two inputs", built: false },
+    { slug: "distinct-threshold", title: "Distinct / threshold", summary: "Turn integer weights into presence", built: false },
   ] },
-  { slug: "time", title: "Time", ideas: [{ slug: "round-counter", title: "Round counter", summary: "Progress inside an update time", built: false }, { slug: "window-frame", title: "Window frame", summary: "The time range visible to an operator", built: false }] },
-  { slug: "operators", title: "Operators", ideas: [{ slug: "join-index", title: "Join index", summary: "Keys arranged for matching", built: false }, { slug: "arrangement", title: "Arrangement", summary: "Indexed reusable trace state", built: false }, { slug: "reduce-accumulator", title: "Reduce accumulator", summary: "State behind an incremental reduction", built: false }] },
-  { slug: "recursion", title: "Recursion", ideas: [{ slug: "fixed-point", title: "Fixed point", summary: "Rounds until no delta remains", built: false }] },
-  { slug: "kernel", title: "Kernel", ideas: [{ slug: "term-tree-node", title: "Term tree node", summary: "One node in a structured term", built: false }] },
-  { slug: "host", title: "Host", ideas: [{ slug: "dictionary-entry", title: "Dictionary entry", summary: "A host key and value row", built: false }] },
-  { slug: "cross-system", title: "Cross-system", ideas: [{ slug: "request-answer-pair", title: "Request/answer pair", summary: "An effect request and its answer", built: false }] },
+  { slug: "time", title: "Time", ideas: [
+    { slug: "frontier", title: "Frontier", summary: "The boundary of incomplete time", built: false },
+    { slug: "strata", title: "Strata", summary: "An evaluation order for dependent computations", built: false },
+    { slug: "letrec-fixpoint", title: "LetRec fixpoint", summary: "Iterate a recursive definition to stability", built: false },
+    { slug: "nested-time", title: "Nested time", summary: "Outer updates with inner iteration rounds", built: false },
+    { slug: "delay-z-1", title: "Delay z⁻¹", summary: "Shift a value by one logical time", built: false },
+    { slug: "clock-checker", title: "Clock checker", summary: "Verify temporal dependencies before evaluation", built: false },
+  ] },
+  { slug: "operators", title: "Operators", ideas: [
+    { slug: "join", title: "Join", summary: "Match rows through shared keys", built: false },
+    { slug: "antijoin", title: "Antijoin", summary: "Keep rows with no matching counterpart", built: false },
+    { slug: "reduce-aggregates", title: "Reduce / aggregates", summary: "Maintain grouped summaries", built: false },
+    { slug: "top-k", title: "Top-k", summary: "Maintain the first ranked rows", built: false },
+    { slug: "window", title: "Window", summary: "Restrict input to a range of time", built: false },
+    { slug: "union-negate", title: "Union / negate", summary: "Combine collections and reverse weights", built: false },
+  ] },
+  { slug: "recursion", title: "Recursion", ideas: [
+    { slug: "semi-naive", title: "Semi-naive", summary: "Feed only new rows into each round", built: false },
+    { slug: "dred", title: "DRed", summary: "Delete and rederive recursive facts", built: false },
+    { slug: "magic-sets-demand", title: "Magic sets / demand", summary: "Restrict recursion to requested results", built: false },
+  ] },
+  { slug: "kernel", title: "Kernel", ideas: [
+    { slug: "mint-dictionary", title: "Mint dictionary", summary: "Assign stable identities to values", built: false },
+    { slug: "cons-nil-lists", title: "cons / nil lists", summary: "Build lists from a head and tail", built: false },
+    { slug: "intern", title: "intern", summary: "Construct the same node from the same arguments", built: false },
+    { slug: "str-cons", title: "str.cons", summary: "Construct strings from two parts", built: false },
+    { slug: "term-lt", title: "TermLt", summary: "Order terms across their runtime shapes", built: false },
+  ] },
+  { slug: "host", title: "Host", ideas: [
+    { slug: "request-answer-effects", title: "Request / answer effects", summary: "Connect relational requests to host answers", built: false },
+    { slug: "retraction", title: "Retraction", summary: "Withdraw a request or derived answer", built: false },
+    { slug: "fs-watch-continuing", title: "fs.watch continuing", summary: "Stream filesystem changes over time", built: false },
+  ] },
+  { slug: "cross-system", title: "Cross-system", ideas: [
+    { slug: "collision-grid", title: "DBSP / DD / SQL / Redux / RxJS collision grid", summary: "Map shared concepts across data systems", built: false },
+  ] },
 ]
 
 export const builtIdeas = glossary.flatMap((group) => group.ideas.filter((idea) => idea.built).map((idea) => ({ group, idea })))
