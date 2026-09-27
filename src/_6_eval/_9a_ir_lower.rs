@@ -55,6 +55,18 @@ pub struct Lowered {
     pub unit: ir::RelId,
     pub visible: Vec<(ir::RelId, TermId, usize)>,
     pub internal_seeds: Vec<(ir::RelId, Vec<TermId>)>,
+    pub served: Vec<ServedSpec>,
+    pub sources: BTreeMap<(u32, usize), ir::RelId>,
+    pub installers: BTreeMap<(String, usize, bool), (ir::RelId, ir::RelId)>,
+    pub atom_raws: HashMap<TermId, i64>,
+    pub dynamic_atom_base: i64,
+}
+
+pub struct ServedSpec {
+    pub relation: TermId,
+    pub request: ir::RelId,
+    pub answer: ir::RelId,
+    pub arity: usize,
 }
 
 struct Builder {
@@ -65,7 +77,7 @@ struct Builder {
     intern_relation: Option<ir::RelId>,
     intern_readback: bool,
     intern_readback_count: usize,
-    effect_nodes: Vec<ir::NodeId>,
+    effect_nodes: BTreeMap<u32, Vec<ir::NodeId>>,
     snapshot_nodes: Vec<ir::NodeId>,
 }
 
@@ -85,7 +97,7 @@ impl Builder {
             intern_relation: None,
             intern_readback: false,
             intern_readback_count: 0,
-            effect_nodes: Vec::new(),
+            effect_nodes: BTreeMap::new(),
             snapshot_nodes: Vec::new(),
         }
     }
@@ -312,7 +324,7 @@ fn served_effect(
     b.intern_nodes.push(request);
     b.snapshot_nodes.push(request);
     let effect = b.mfp(node, vec![], vec![], vec![rel, application]);
-    b.effect_nodes.push(effect);
+    b.effect_nodes.entry(goal.rel.0).or_default().push(effect);
     Ok(())
 }
 
@@ -1087,7 +1099,6 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let mut program = program.clone();
     let nil_rel = kernel_ref(u, "nil");
     let intern_rel = kernel_ref(u, "intern");
-    let effect_rel = kernel_ref(u, "effect");
     let snapshot_rel = kernel_ref(u, "intern_snapshot");
     let none_atom = u.atom("none");
     let none = u.compound("const", vec![none_atom]);
@@ -1165,6 +1176,8 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             .map(|(i, name)| (name, i as i64 + 1))
             .collect()
     };
+    let mut atom_raws = HashMap::new();
+    let dynamic_atom_base = atoms.values().copied().max().unwrap_or(0) + 1;
     let existing_terms: Vec<_> = u.terms.iter().cloned().collect();
     for (index, term) in existing_terms.iter().enumerate() {
         let (name, args, raw) = match term {
@@ -1191,6 +1204,9 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             Term::Float(_) => return Err(unsupported(u, "float")),
         };
         constructor_keys.insert((name.clone(), args.len(), raw.is_some()));
+        if matches!(term, Term::Atom(_)) {
+            atom_raws.insert(TermId(index as u32), raw.unwrap());
+        }
         shapes.push((TermId(index as u32), name, args, raw));
     }
     for (name, args, raw) in [
@@ -1269,6 +1285,10 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             }
         })
         .collect();
+    let installers = constructors
+        .iter()
+        .map(|(shape, ctor)| (shape.clone(), prewarm[ctor]))
+        .collect();
     let semantic = b.rel(
         "__ir_semantic".into(),
         vec![ir::Ty::Id, ir::Ty::Id],
@@ -1338,7 +1358,11 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     for (rel, width) in keys.iter().copied() {
         let cols = vec![ir::Ty::Id; width.max(1)];
         let source = b.rel(
-            format!("__ir_seed_n{rel}_a{width}"),
+            if program.served.contains(&TermId(rel)) {
+                format!("{}.answer", u.display(TermId(rel)))
+            } else {
+                format!("__ir_seed_n{rel}_a{width}")
+            },
             cols.clone(),
             ir::RelKind::Source,
         );
@@ -1533,20 +1557,31 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             visible.push((request_rel, intern_rel, 3));
         }
     }
-    if !b.effect_nodes.is_empty() {
-        let effect_output = b.rel(
-            "__ir_effects".into(),
+    let mut served = Vec::new();
+    for (relation, nodes) in std::mem::take(&mut b.effect_nodes) {
+        let relation = TermId(relation);
+        let request = b.rel(
+            format!("{}.request", u.display(relation)),
             vec![ir::Ty::Id; 2],
             ir::RelKind::Derived,
         );
-        let nodes = std::mem::take(&mut b.effect_nodes);
         let body = b.node(ir::Op::Union(nodes));
-        b.ir.strata.push(ir::Stratum::Let {
-            id: effect_output,
-            body,
+        let body = b.node(ir::Op::Threshold(body));
+        b.ir.strata.push(ir::Stratum::Let { id: request, body });
+        b.ir.outputs.push(request);
+        visible.push((request, kernel_ref(u, "effect"), 2));
+        let arity = keys
+            .iter()
+            .find_map(|(rel, arity)| (*rel == relation.0).then_some(*arity))
+            .ok_or_else(|| unsupported(u, "served relation arity"))?;
+        served.push(ServedSpec {
+            relation,
+            request,
+            answer: sources[&(relation.0, arity)],
+            arity,
         });
-        b.ir.outputs.push(effect_output);
-        visible.push((effect_output, effect_rel, 2));
+    }
+    if !b.snapshot_nodes.is_empty() {
         let snapshot_output = b.rel(
             "__ir_intern_snapshots".into(),
             vec![ir::Ty::Id; 3],
@@ -1610,5 +1645,10 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
                     .map(|term| (bad_lists, vec![term])),
             )
             .collect(),
+        served,
+        sources,
+        installers,
+        atom_raws,
+        dynamic_atom_base,
     })
 }

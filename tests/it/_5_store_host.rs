@@ -95,7 +95,12 @@ fn transport(binary: &str, source: &Path, stem: &str) -> Result<PathBuf, String>
 
 /// Compile one fixture, evaluate it with its served set, and compare the
 /// closure and diagnostics to the sibling expected file.
-fn check_fixture(binary: &str, stem: &str, served: &str) -> Result<(), String> {
+fn check_fixture(
+    binary: &str,
+    stem: &str,
+    served: &str,
+    engine: Option<&str>,
+) -> Result<(), String> {
     let source = fixture_path(stem);
     let canonical = std::fs::canonicalize(&source).map_err(|e| format!("{stem}: {e}"))?;
     let program_path = transport(binary, &canonical, stem)?;
@@ -105,9 +110,23 @@ fn check_fixture(binary: &str, stem: &str, served: &str) -> Result<(), String> {
         args.push("--serve");
         args.push(served);
     }
-    let got = run(binary, &args).map_err(|e| format!("{stem}: eval {e}"));
+    let output = {
+        let mut command = Command::new(binary);
+        command.args(&args);
+        if let Some(engine) = engine {
+            command.env("DL8_ENGINE", engine);
+        }
+        command.output().map_err(|e| format!("spawn: {e}"))?
+    };
+    let value = serde_json::from_slice(&output.stdout).map_err(|e| {
+        format!(
+            "no JSON on stdout ({e}); stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })?;
+    let got = (value, output.status.code().unwrap_or(-1));
     let _ = std::fs::remove_file(&program_path);
-    let got = normalize(&got?.0, &canonical.to_string_lossy());
+    let got = normalize(&got.0, &canonical.to_string_lossy());
     let expected_path = source.with_file_name(format!("{stem}.expected.json"));
     let text = std::fs::read_to_string(&expected_path).map_err(|e| format!("{stem}: {e}"))?;
     let want: Value = serde_json::from_str(&text).map_err(|e| format!("{stem}: {e}"))?;
@@ -129,10 +148,14 @@ fn check_fixture(binary: &str, stem: &str, served: &str) -> Result<(), String> {
 #[test]
 pub fn every_effect_fixture_matches_expected() {
     let binary = env!("CARGO_BIN_EXE_dl8");
-    let failures: Vec<String> = SERVED
-        .iter()
-        .filter_map(|(stem, served)| check_fixture(binary, stem, served).err())
-        .collect();
+    let mut failures = Vec::new();
+    for engine in [None, Some("ir:dd"), Some("ir:sqlite")] {
+        for (stem, served) in SERVED {
+            if let Err(error) = check_fixture(binary, stem, served, engine) {
+                failures.push(format!("{}: {error}", engine.unwrap_or("default")));
+            }
+        }
+    }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
@@ -950,6 +973,34 @@ pub fn fs_json_reads_an_object_into_edges_under_one_root() {
 }
 
 #[test]
+pub fn ir_fs_json_answers_once_per_request() {
+    let directory = s20hosts_scratch("ir-fs-json-once");
+    let document_path = std::fs::canonicalize(s20hosts_fixture("todo.json")).unwrap();
+    let path = document_path.to_string_lossy().to_string();
+    let compiled = s20hosts_compile(&directory, "4_fs_json.dl7", &[("__DOC__", &path)]);
+
+    for engine in ["ir:dd", "ir:sqlite"] {
+        let (out, code) = s20hosts_run(
+            &compiled.program,
+            &["--serve", "fs.json"],
+            &[("DL8_ENGINE", engine)],
+        );
+        assert_eq!(code, 0, "{engine}: diagnostics {}", out["diagnostics"]);
+        assert_eq!(out["ticks"], json!(1), "{engine}: answer frontier count");
+        assert_eq!(
+            s20hosts_rows(&out, &compiled.names, "Root").len(),
+            1,
+            "{engine}: answer rows"
+        );
+        assert_eq!(
+            s20hosts_rows(&out, &compiled.names, "Member").len(),
+            5,
+            "{engine}: document member rows"
+        );
+    }
+}
+
+#[test]
 pub fn fs_json_reads_a_top_level_array_and_a_top_level_scalar() {
     let directory = s20hosts_scratch("fs-json-roots");
     let (out, names, path) = json_run(&directory, "list.json", "[1, \"a\"]");
@@ -1187,14 +1238,20 @@ fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn s23comptimeeffect_compile(stem: &str) -> s23comptimeeffect_Compiled {
+fn s23comptimeeffect_compile_with_engine(
+    stem: &str,
+    engine: Option<&str>,
+) -> s23comptimeeffect_Compiled {
     let source = format!("fixtures/comptime_effect/{stem}.dl7");
     let started = Instant::now();
-    let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_dl8"));
+    command
         .current_dir(root())
-        .args(["compile", "--trace", &source])
-        .output()
-        .expect("spawn dl8");
+        .args(["compile", "--trace", &source]);
+    if let Some(engine) = engine {
+        command.env("DL8_ENGINE", engine);
+    }
+    let output = command.output().expect("spawn dl8");
     let took = started.elapsed();
     assert!(took < LIMIT, "{stem}: compile took {took:?}");
     let out = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
@@ -1208,6 +1265,10 @@ fn s23comptimeeffect_compile(stem: &str) -> s23comptimeeffect_Compiled {
         trace: String::from_utf8_lossy(&output.stderr).to_string(),
         code: output.status.code().unwrap_or(-1),
     }
+}
+
+fn s23comptimeeffect_compile(stem: &str) -> s23comptimeeffect_Compiled {
+    s23comptimeeffect_compile_with_engine(stem, None)
 }
 
 fn kernel(name: &str) -> Value {
@@ -1258,6 +1319,18 @@ pub fn a_once_executor_answers_its_effect_row_at_comptime() {
     assert_eq!(s23comptimeeffect_rows(&compiled, &kernel("effect")), 1);
     assert_eq!(answers(&compiled), 1);
     assert_eq!(stable_round(&compiled), Some(3));
+}
+
+#[test]
+pub fn ir_comptime_stops_when_the_fs_json_request_is_stable() {
+    for engine in ["ir:dd", "ir:sqlite"] {
+        let compiled = s23comptimeeffect_compile_with_engine("0_fs_json", Some(engine));
+        assert_clean(engine, &compiled);
+        assert_eq!(named(&compiled, "Member"), 2, "{engine}: title and done");
+        assert_eq!(named(&compiled, "fs.json"), 1, "{engine}: one answer row");
+        assert_eq!(answers(&compiled), 1, "{engine}: executor calls");
+        assert_eq!(stable_round(&compiled), Some(3), "{engine}: stable round");
+    }
 }
 
 #[test]
