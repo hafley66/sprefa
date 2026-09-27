@@ -1,15 +1,18 @@
 import { antijoinSteps } from "../ideas/antijoin/0_steps"
 import { bilinearOpJoinDeltaRuleSteps } from "../ideas/bilinear-op-join-delta-rule/0_steps"
 import { clockCheckerSteps } from "../ideas/clock-checker/0_steps"
+import { consNilListsSteps } from "../ideas/cons-nil-lists/0_steps"
 import { deltaSteps } from "../ideas/delta/0_steps"
 import { delayZ1Steps } from "../ideas/delay-z-1/0_steps"
 import { distinctThresholdSteps } from "../ideas/distinct-threshold/0_steps"
 import { frontierSteps } from "../ideas/frontier/0_steps"
 import { integrateDifferentiateSteps } from "../ideas/integrate-differentiate/0_steps"
+import { internSteps } from "../ideas/intern/0_steps"
 import { joinSteps } from "../ideas/join/0_steps"
 import { letrecFixpointSteps } from "../ideas/letrec-fixpoint/0_steps"
 import { linearOpSteps } from "../ideas/linear-op/0_steps"
 import { magicSetsDemandSteps } from "../ideas/magic-sets-demand/0_steps"
+import { mintDictionarySteps } from "../ideas/mint-dictionary/0_steps"
 import { nestedTimeSteps } from "../ideas/nested-time/0_steps"
 import { reduceAggregatesSteps } from "../ideas/reduce-aggregates/0_steps"
 import { strataSteps } from "../ideas/strata/0_steps"
@@ -55,9 +58,9 @@ export const glossary: readonly GlossaryGroup[] = [
     { slug: "magic-sets-demand", title: "Magic sets / demand", summary: "Restrict recursion to requested results", built: true, steps: magicSetsDemandSteps },
   ] },
   { slug: "kernel", title: "Kernel", ideas: [
-    { slug: "mint-dictionary", title: "Mint dictionary", summary: "Assign stable identities to values", built: false },
-    { slug: "cons-nil-lists", title: "cons / nil lists", summary: "Build lists from a head and tail", built: false },
-    { slug: "intern", title: "intern", summary: "Construct the same node from the same arguments", built: false },
+    { slug: "mint-dictionary", title: "Mint dictionary", summary: "Assign stable identities to values", built: true, steps: mintDictionarySteps },
+    { slug: "cons-nil-lists", title: "cons / nil lists", summary: "Build lists from a head and tail", built: true, steps: consNilListsSteps },
+    { slug: "intern", title: "intern", summary: "Construct the same node from the same arguments", built: true, steps: internSteps },
     { slug: "str-cons", title: "str.cons", summary: "Construct strings from two parts", built: false },
     { slug: "term-lt", title: "TermLt", summary: "Order terms across their runtime shapes", built: false },
   ] },

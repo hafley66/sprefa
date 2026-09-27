@@ -3,15 +3,18 @@ import { builtIdeas } from "../lib/0_glossary"
 import { antijoinSteps } from "./antijoin/0_steps"
 import { bilinearOpJoinDeltaRuleSteps } from "./bilinear-op-join-delta-rule/0_steps"
 import { clockCheckerSteps } from "./clock-checker/0_steps"
+import { consNilListsSteps } from "./cons-nil-lists/0_steps"
 import { deltaSteps } from "./delta/0_steps"
 import { delayZ1Steps } from "./delay-z-1/0_steps"
 import { distinctThresholdSteps } from "./distinct-threshold/0_steps"
 import { frontierSteps } from "./frontier/0_steps"
 import { integrateDifferentiateSteps } from "./integrate-differentiate/0_steps"
+import { internSteps } from "./intern/0_steps"
 import { joinSteps } from "./join/0_steps"
 import { letrecFixpointSteps } from "./letrec-fixpoint/0_steps"
 import { linearOpSteps } from "./linear-op/0_steps"
 import { magicSetsDemandSteps } from "./magic-sets-demand/0_steps"
+import { mintDictionarySteps } from "./mint-dictionary/0_steps"
 import { nestedTimeSteps } from "./nested-time/0_steps"
 import { reduceAggregatesSteps } from "./reduce-aggregates/0_steps"
 import { strataSteps } from "./strata/0_steps"
@@ -734,6 +737,84 @@ describe("keyed scene elements", () => {
       ]
     `)
   })
+
+  it("keeps the complete mint dictionary key timeline visible", () => {
+    expect(mintDictionarySteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "terms",
+        ],
+        [
+          "lookup",
+          "intern",
+          "result",
+        ],
+        [
+          "terms",
+        ],
+        [
+          "rows",
+          "equal",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete cons / nil lists key timeline visible", () => {
+    expect(consNilListsSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "nil",
+          "empty",
+        ],
+        [
+          "head",
+          "cons",
+          "list",
+        ],
+        [
+          "head",
+          "tail",
+          "cons",
+          "list",
+        ],
+        [
+          "list",
+          "cons",
+          "parts",
+        ],
+        [
+          "empty",
+          "cons",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete intern key timeline visible", () => {
+    expect(internSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "call",
+        ],
+        [
+          "intern",
+          "identity",
+        ],
+        [
+          "calls",
+        ],
+        [
+          "calls",
+        ],
+        [
+          "known",
+          "intern",
+          "result",
+        ],
+      ]
+    `)
+  })
 })
 
 describe("built glossary scenes", () => {
@@ -987,6 +1068,38 @@ describe("built glossary scenes", () => {
           ],
           "group": "recursion",
           "idea": "magic-sets-demand",
+        },
+        {
+          "captions": [
+            "The evaluator stores each distinct term once and gives it a compact TermId.",
+            "Looking up atom(ada) again returns TermId 0 instead of adding another term.",
+            "A new compound term receives the next identity and refers to its arguments by TermId.",
+            "Rows carry TermIds, so equality of two cells is integer identity equality.",
+          ],
+          "group": "kernel",
+          "idea": "mint-dictionary",
+        },
+        {
+          "captions": [
+            "nil/1 produces the empty proper list [].",
+            "cons/3 builds [cy] from the head cy and the empty tail.",
+            "A second cons builds [bob, cy] by placing bob before [cy].",
+            "With the list bound, the same cons/3 relation splits it into head bob and tail [cy].",
+            "Splitting [] has no result because an empty list has no head.",
+          ],
+          "group": "kernel",
+          "idea": "cons-nil-lists",
+        },
+        {
+          "captions": [
+            "intern/3 takes a constructor and a proper argument list.",
+            "The result is the application identity for Option applied to [str].",
+            "Repeating the same constructor and arguments returns node 42.",
+            "Changing the argument list produces another application identity.",
+            "Constructor and arguments must be bound before intern can construct the result.",
+          ],
+          "group": "kernel",
+          "idea": "intern",
         },
       ]
     `)
