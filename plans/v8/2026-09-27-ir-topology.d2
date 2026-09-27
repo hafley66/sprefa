@@ -10,14 +10,15 @@ syntax: "syntax: one rule" {
 
 today: "today: generic lowering, 11 nodes for one copy" {
   style.fill: "#fdecea"
-  unit: "Get __ir_unit (1 row)" {style.fill: "#f8c9c4"}
-  ev: "Get Event" {style.fill: "#cfe8ff"}
-  join: "Join unit x Event (no keys)" {style.fill: "#f8c9c4"}
-  proj: "Mfp project [1]" {style.fill: "#f8c9c4"}
-  seeds: "Get Action seeds (empty)" {style.fill: "#f8c9c4"}
-  union: "Union" {style.fill: "#f8c9c4"}
-  thr: "Threshold (to set)" {style.fill: "#f8c9c4"}
-  out: "output Action" {style.fill: "#d7f5d0"}
+  style.font-color: "#111111"
+  unit: "Get __ir_unit (1 row)" {style.fill: "#f8c9c4"; style.font-color: "#111111"}
+  ev: "Get Event" {style.fill: "#cfe8ff"; style.font-color: "#111111"}
+  join: "Join unit x Event (no keys)" {style.fill: "#f8c9c4"; style.font-color: "#111111"}
+  proj: "Mfp project [1]" {style.fill: "#f8c9c4"; style.font-color: "#111111"}
+  seeds: "Get Action seeds (empty)" {style.fill: "#f8c9c4"; style.font-color: "#111111"}
+  union: "Union" {style.fill: "#f8c9c4"; style.font-color: "#111111"}
+  thr: "Threshold (to set)" {style.fill: "#f8c9c4"; style.font-color: "#111111"}
+  out: "output Action" {style.fill: "#d7f5d0"; style.font-color: "#111111"}
 }
 
 today_sql: |'sql
@@ -32,8 +33,9 @@ today_sql: |'sql
 
 next: "next: simplify pass, 1 node" {
   style.fill: "#e8f7e4"
-  ev2: "Get Event" {style.fill: "#cfe8ff"}
-  act: "output Action = alias of Event" {style.fill: "#d7f5d0"}
+  style.font-color: "#111111"
+  ev2: "Get Event" {style.fill: "#cfe8ff"; style.font-color: "#111111"}
+  act: "output Action = alias of Event" {style.fill: "#d7f5d0"; style.font-color: "#111111"}
 }
 
 next_sql: |'sql
