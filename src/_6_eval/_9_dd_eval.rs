@@ -37,6 +37,7 @@ type RuleSources<'a, 'scope, T> = (
     &'a TaggedArrangement<'scope, T>,
 );
 const UNBOUND: u32 = u32::MAX;
+const ARG_RECURSION_DEPTH_LIMIT: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 enum DeclaredFoldInput {
@@ -131,6 +132,18 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 payload: u.compound("malformed_aggregate_head", vec![count]),
             });
         }
+    }
+    if program.rules.iter().any(|rule| {
+        rule.head
+            .iter()
+            .chain(rule.body.iter().flat_map(|goal| &goal.args))
+            .any(|arg| !argument_depth_within_limit(arg))
+    }) {
+        let limit = u.int(ARG_RECURSION_DEPTH_LIMIT as i64);
+        aggregate_diagnostics.push(Diagnostic {
+            phase: "evaluate",
+            payload: u.compound("argument_recursion_depth_exceeded", vec![limit]),
+        });
     }
     if !aggregate_diagnostics.is_empty() {
         aggregate_diagnostics.sort_by(|left, right| u.cmp(left.payload, right.payload));
@@ -937,11 +950,21 @@ where
 }
 
 fn value(arg: &Arg, env: &[u32]) -> Option<u32> {
-    match arg {
-        Arg::Ground(term) => Some(term.0),
-        Arg::Var(var) => (env[var.0 as usize] != UNBOUND).then_some(env[var.0 as usize]),
-        Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => value(subject, env),
+    let mut arg = arg;
+    for _ in 0..=ARG_RECURSION_DEPTH_LIMIT {
+        match arg {
+            Arg::Ground(term) => return Some(term.0),
+            Arg::Var(var) => {
+                return (env[var.0 as usize] != UNBOUND).then_some(env[var.0 as usize]);
+            }
+            Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => arg = subject,
+        }
     }
+    tracing::error!(
+        diagnostic = "argument_recursion_depth_exceeded",
+        limit = ARG_RECURSION_DEPTH_LIMIT
+    );
+    None
 }
 
 fn unify(args: &[Arg], row: &[u32], env: &mut [u32]) -> bool {
@@ -949,29 +972,43 @@ fn unify(args: &[Arg], row: &[u32], env: &mut [u32]) -> bool {
         return false;
     }
     for (arg, cell) in args.iter().zip(row) {
-        match arg {
-            Arg::Ground(term) if term.0 != *cell => return false,
-            Arg::Ground(_) => {}
-            Arg::Var(var) => {
-                let slot = &mut env[var.0 as usize];
-                if *slot == UNBOUND {
-                    *slot = *cell;
-                } else if *slot != *cell {
-                    return false;
+        let mut arg = arg;
+        for _ in 0..=ARG_RECURSION_DEPTH_LIMIT {
+            match arg {
+                Arg::Ground(term) if term.0 != *cell => return false,
+                Arg::Ground(_) => break,
+                Arg::Var(var) => {
+                    let slot = &mut env[var.0 as usize];
+                    if *slot == UNBOUND {
+                        *slot = *cell;
+                    } else if *slot != *cell {
+                        return false;
+                    }
+                    break;
                 }
+                Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => arg = subject,
             }
-            Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => {
-                if !unify(
-                    std::slice::from_ref(subject),
-                    std::slice::from_ref(cell),
-                    env,
-                ) {
-                    return false;
-                }
-            }
+        }
+        if matches!(arg, Arg::Aggregate(..) | Arg::Fold(..)) {
+            tracing::error!(
+                diagnostic = "argument_recursion_depth_exceeded",
+                limit = ARG_RECURSION_DEPTH_LIMIT
+            );
+            return false;
         }
     }
     true
+}
+
+fn argument_depth_within_limit(arg: &Arg) -> bool {
+    let mut arg = arg;
+    for _ in 0..=ARG_RECURSION_DEPTH_LIMIT {
+        match arg {
+            Arg::Ground(_) | Arg::Var(_) => return true,
+            Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => arg = subject,
+        }
+    }
+    false
 }
 
 /// Runs synthetic demand rules only where a rule at that level reads them.
@@ -1044,4 +1081,54 @@ fn kernel_ref(u: &mut Universe, name: &str) -> TermId {
     let name = u.atom(name);
     let kernel = u.compound("kernel", vec![name]);
     u.compound("ref", vec![kernel])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::_6_eval::json::diagnostic_to_json;
+    use serde_json::json;
+
+    fn nested_aggregate(subject: Arg, depth: usize) -> Arg {
+        (0..depth).fold(subject, |subject, _| {
+            Arg::Aggregate(
+                super::super::program::AggregateKind::Count,
+                Box::new(subject),
+            )
+        })
+    }
+
+    #[test]
+    fn dd_argument_recursion_reports_257_and_accepts_256_wrappers() {
+        let mut u = Universe::new();
+        let value = u.int(1);
+        let accepted = nested_aggregate(Arg::Ground(value), ARG_RECURSION_DEPTH_LIMIT);
+        assert!(argument_depth_within_limit(&accepted));
+
+        let rejected = nested_aggregate(accepted, 1);
+        let rel = u.atom("deep_argument");
+        let program = Program {
+            rules: vec![Rule {
+                rel,
+                head: vec![rejected],
+                body: Vec::new(),
+                vars: Vec::new(),
+            }],
+            ..Program::default()
+        };
+        let closure = evaluate_dd(&mut u, &program, &mut |_| {});
+
+        assert!(closure.rows.is_empty());
+        assert_eq!(closure.diagnostics.len(), 1);
+        assert_eq!(
+            diagnostic_to_json(&u, &closure.diagnostics[0]),
+            json!({
+                "phase": "evaluate",
+                "payload": {
+                    "f": "argument_recursion_depth_exceeded",
+                    "args": [ARG_RECURSION_DEPTH_LIMIT]
+                }
+            })
+        );
+    }
 }
