@@ -382,6 +382,7 @@ dependencies = [
  "ivm-dd",
  "ivm-engine",
  "ivm-ir",
+ "ivm-rxjs",
  "ivm-sqlite",
  "libc",
  "notify-debouncer-full",
@@ -981,6 +982,15 @@ name = "ivm-ir"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "ivm-rxjs"
+version = "0.1.0"
+dependencies = [
+ "ivm-ir",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

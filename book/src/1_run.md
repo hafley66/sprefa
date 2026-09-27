@@ -128,14 +128,16 @@ Options:
 
 ```console
 $ $DL8 emit --help
-Lower a `dl8 compile` output to one target and print the artifact as JSON
+Lower a `dl8 compile` output to one target and print the artifact
 
 Usage: dl8 emit <TARGET> <PROGRAM>
 
 Arguments:
   <TARGET>
           Possible values:
-          - sqlite: One `sqlite_ivm` view per derived relation over the `eval --db` tables
+          - sqlite:  One `sqlite_ivm` view per derived relation over the `eval --db` tables
+          - ir-rxjs: TypeScript module using the RxJS IVM runtime
+          - ir-json: Shared IVM program as JSON
 
   <PROGRAM>
           

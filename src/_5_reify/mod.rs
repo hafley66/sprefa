@@ -15,6 +15,8 @@ pub mod calls;
 pub mod emit;
 #[path = "_3_graph.rs"]
 pub mod graph;
+#[path = "_8_ir_emit.rs"]
+pub mod ir_emit;
 #[path = "_6_json.rs"]
 pub mod json;
 #[path = "_1_rows.rs"]

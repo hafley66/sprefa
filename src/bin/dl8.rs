@@ -1,8 +1,9 @@
 //! The one subscribe: reads a program, runs the pipe, prints the result.
 
 use clap::{Parser, Subcommand};
-use dl8::_5_reify::emit_sqlite;
+use dl8::_5_reify::{emit_sqlite, ir_emit::IR_TARGETS};
 use dl8::_6_eval::evaluate::{Evaluate, Store};
+use dl8::_6_eval::ir_lower;
 use dl8::_6_eval::json::{
     closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json,
     serve_relations,
@@ -63,6 +64,7 @@ enum Command {
         trace: bool,
     },
     /// Lower a `dl8 compile` output to one target and print the artifact as JSON.
+    #[command(long_about = "Lower a `dl8 compile` output to one target and print the artifact")]
     Emit {
         target: EmitTarget,
         program: PathBuf,
@@ -124,6 +126,10 @@ enum QueryFormat {
 enum EmitTarget {
     /// One `sqlite_ivm` view per derived relation over the `eval --db` tables.
     Sqlite,
+    /// TypeScript module using the RxJS IVM runtime.
+    IrRxjs,
+    /// Shared IVM program as JSON.
+    IrJson,
 }
 
 fn trace_requested(command: &Command) -> bool {
@@ -235,7 +241,6 @@ fn persist(store: &mut SqliteRowStore, u: &Universe, rows: &Store) -> Result<usi
 
 /// The table prefix is `program_name`, the one `eval --db` gives the same file.
 fn emit_cli(target: EmitTarget, path: &Path) -> ExitCode {
-    let EmitTarget::Sqlite = target;
     let value: serde_json::Value = match std::fs::read_to_string(path)
         .map_err(|e| e.to_string())
         .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
@@ -257,6 +262,30 @@ fn emit_cli(target: EmitTarget, path: &Path) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if !matches!(target, EmitTarget::Sqlite) {
+        let lowered = match ir_lower::lower(&mut u, &program) {
+            Ok(lowered) => lowered,
+            Err(diagnostic) => {
+                tracing::error!(phase = "emit", diagnostic = %diagnostic_to_json(&u, &diagnostic));
+                return ExitCode::from(3);
+            }
+        };
+        let emitter = match target {
+            EmitTarget::IrRxjs => &IR_TARGETS[0],
+            EmitTarget::IrJson => &IR_TARGETS[1],
+            EmitTarget::Sqlite => unreachable!(),
+        };
+        match (emitter.emit)(&lowered.ir) {
+            Ok(artifact) => {
+                println!("{artifact}");
+                return ExitCode::SUCCESS;
+            }
+            Err(error) => {
+                tracing::error!(phase = "emit", target = emitter.name, %error);
+                return ExitCode::from(3);
+            }
+        }
+    }
     let artifact = match emit_sqlite(&mut u, &program, &names, &program_name(path)) {
         Ok(artifact) => artifact,
         Err(stop) => {

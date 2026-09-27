@@ -19,6 +19,7 @@ differential-dataflow = "=0.25.1"
 hafley-observe = { path = "sqlite_ivm/hafley-rs/crates/hafley-observe" }
 indexmap = "2"
 ivm-ir = { path = "sqlite_ivm/crates/ivm-ir" }
+ivm-rxjs = { path = "sqlite_ivm/crates/ivm-rxjs" }
 ivm-engine = { path = "sqlite_ivm/crates/ivm-engine" }
 ivm-dd = { path = "sqlite_ivm/crates/ivm-dd" }
 ivm-sqlite = { path = "sqlite_ivm/crates/ivm-sqlite" }
