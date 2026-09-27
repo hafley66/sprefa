@@ -71,6 +71,7 @@ Commands:
   emit      Lower a `dl8 compile` output to one target and print the artifact as JSON
   eval      Evaluate a checked-goal program (JSON) and print its closure as JSON
   run       Run a program as a process: each tick evaluates, hands the `effect` rows of served relations to their executors, and inserts the answers
+  query     Compile one query against a repository, settle its sources once and print the root file's derived rows
   help      Print this message or the help of the given subcommand(s)
 
 Options:

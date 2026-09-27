@@ -11,16 +11,15 @@ use std::time::{Duration, Instant};
 
 pub const RELATION: &str = "git.refs";
 pub const ERROR: &str = "git.refs_error";
-
 /// How often a root whose watcher failed to open is re-read.
 const RESNAPSHOT_EVERY: Duration = Duration::from_secs(1);
 
 pub struct GitRefs {
     relation: TermId,
     error: TermId,
+    continuing: bool,
     roots: BTreeMap<String, WatchedRoot>,
 }
-
 /// One root's last snapshot and the wake source that says when to re-read it.
 struct WatchedRoot {
     root_cell: TermId,
@@ -67,6 +66,7 @@ impl GitRefs {
         GitRefs {
             relation,
             error,
+            continuing: true,
             roots: BTreeMap::new(),
         }
     }
@@ -98,6 +98,31 @@ impl GitRefs {
         let refs = soopy::Refs::open(repository);
         let last = refs.snapshot(&query).map_err(message)?;
         Ok((refs, query, last, wake))
+    }
+
+    /// One opening snapshot with no repository watcher.
+    pub fn snapshot(relation: TermId, error: TermId) -> GitRefs {
+        GitRefs {
+            relation,
+            error,
+            continuing: false,
+            roots: BTreeMap::new(),
+        }
+    }
+
+    fn snapshot_at(
+        root: &str,
+    ) -> Result<(soopy::Refs, soopy::RefQuery, soopy::RefSnapshot), String> {
+        let repository = soopy::discover(root).map_err(message)?;
+        let query = soopy::RefQuery {
+            repository: repository.identity.clone(),
+            namespace: Arc::from(""),
+            name: None,
+            pattern: None,
+        };
+        let refs = soopy::Refs::open(repository);
+        let snapshot = refs.snapshot(&query).map_err(message)?;
+        Ok((refs, query, snapshot))
     }
 
     fn row(&self, u: &mut Universe, root_cell: TermId, name: &str, sha: &str) -> Row {
@@ -173,7 +198,11 @@ impl IExecutor for GitRefs {
     }
 
     fn cadence(&self) -> Cadence {
-        Cadence::Continuing
+        if self.continuing {
+            Cadence::Continuing
+        } else {
+            Cadence::Once
+        }
     }
 
     fn answer(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) -> Vec<Row> {
@@ -186,6 +215,16 @@ impl IExecutor for GitRefs {
                 continue;
             }
             let root_cell = u.compound("const", vec![root]);
+            if !self.continuing {
+                match Self::snapshot_at(&root_text) {
+                    Ok((_, _, snapshot)) => {
+                        rows.extend(self.snapshot_rows(u, root_cell, &snapshot));
+                        tracing::info!(target: "dl8::git_refs", root = %root_text, refs = snapshot.refs.len(), watcher = false, "snapshot");
+                    }
+                    Err(failure) => rows.push(self.error_row(u, root_cell, &failure)),
+                }
+                continue;
+            }
             match Self::open(&root_text) {
                 Ok((refs, query, last, wake)) => {
                     rows.extend(self.snapshot_rows(u, root_cell, &last));

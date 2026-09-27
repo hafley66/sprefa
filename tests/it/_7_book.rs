@@ -234,7 +234,7 @@ fn chapter_holds(stem: &str) {
 }
 
 /// A chapter with no test below would pass unchecked.
-const CHAPTERS: [&str; 17] = [
+const CHAPTERS: [&str; 18] = [
     "0_why",
     "1_run",
     "2_declare",
@@ -252,6 +252,7 @@ const CHAPTERS: [&str; 17] = [
     "14_diagnostics",
     "15_demos",
     "16_not_built",
+    "17_query",
 ];
 
 #[test]
@@ -349,6 +350,11 @@ pub fn chapter_demos() {
 #[test]
 pub fn chapter_not_built() {
     chapter_holds("16_not_built");
+}
+
+#[test]
+pub fn chapter_query() {
+    chapter_holds("17_query");
 }
 
 /// A probe opens with `; expect: rc=0` or `; expect: <diagnostic functor>`,

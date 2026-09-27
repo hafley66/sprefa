@@ -22,6 +22,7 @@ chain=(
   "14|dl7:0|diag"
   "15|store:12|demo"
   "16|store:12 effect:10|nb"
+  "17|dl7:0|query"
 )
 
 fail() {

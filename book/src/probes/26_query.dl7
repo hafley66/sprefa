@@ -1,0 +1,8 @@
+; expect: rc=0
+; List every tracked path at HEAD.
+(fs: (import "@std/fs"))
+
+(: File (* (: path str)))
+
+(<- (File ?Path)
+    (fs.at "." "HEAD" ?Path ?Blob))

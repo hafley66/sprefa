@@ -52,6 +52,25 @@ pub fn executors_for(
     names: &HashMap<String, TermId>,
     served: &[String],
 ) -> Result<Vec<Box<dyn IExecutor>>, Vec<Diagnostic>> {
+    executors_for_mode(u, names, served, true)
+}
+
+/// Query executors settle one frontier. `git.refs` takes its opening snapshot
+/// without creating the continuing runtime's repository watcher.
+pub fn query_executors_for(
+    u: &mut Universe,
+    names: &HashMap<String, TermId>,
+    served: &[String],
+) -> Result<Vec<Box<dyn IExecutor>>, Vec<Diagnostic>> {
+    executors_for_mode(u, names, served, false)
+}
+
+fn executors_for_mode(
+    u: &mut Universe,
+    names: &HashMap<String, TermId>,
+    served: &[String],
+    continuing_refs: bool,
+) -> Result<Vec<Box<dyn IExecutor>>, Vec<Diagnostic>> {
     let mut executors: Vec<Box<dyn IExecutor>> = Vec::new();
     let mut diagnostics = Vec::new();
     let mut missing = |u: &mut Universe, reason: &str, name: &str| {
@@ -105,7 +124,10 @@ pub fn executors_for(
                 };
                 match (names.get(name.as_str()), names.get(error)) {
                     (Some(rel), Some(error)) => executors.push(match name.as_str() {
-                        git_refs::RELATION => Box::new(GitRefs::new(*rel, *error)),
+                        git_refs::RELATION if continuing_refs => {
+                            Box::new(GitRefs::new(*rel, *error))
+                        }
+                        git_refs::RELATION => Box::new(GitRefs::snapshot(*rel, *error)),
                         git_history::RELATION => Box::new(GitHistory::new(*rel, *error)),
                         fs_at::RELATION => Box::new(FsAt::new(*rel, *error)),
                         _ => Box::new(Extract::new(*rel, *error)),
