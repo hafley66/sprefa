@@ -1005,6 +1005,58 @@ pub fn ir_fs_json_answers_once_per_request() {
 }
 
 #[test]
+pub fn ir_retracting_a_goal_retracts_its_request_and_answers() {
+    let directory = s20hosts_scratch("ir-fs-json-retract");
+    let document_path = std::fs::canonicalize(s20hosts_fixture("todo.json")).unwrap();
+    let path = document_path.to_string_lossy().to_string();
+    let compiled = s20hosts_compile(&directory, "5_ir_retract.dl7", &[]);
+    let frontiers_path = directory.join("frontiers.json");
+    std::fs::write(
+        &frontiers_path,
+        serde_json::to_vec(&json!([
+            {"changes": [{"rel": "want", "args": [{"f": "const", "args": [{"s": path.clone()}]}], "w": 1}]},
+            {"changes": [{"rel": "want", "args": [{"f": "const", "args": [{"s": path}]}], "w": -1}]}
+        ]))
+        .unwrap(),
+    )
+    .unwrap();
+    let frontiers_arg = frontiers_path.to_string_lossy().to_string();
+    let (out, code) = s20hosts_run(
+        &compiled.program,
+        &["--serve", "fs.json", "--frontiers", &frontiers_arg],
+        &[("DL8_ENGINE", "ir:dd")],
+    );
+    assert_eq!(code, 0, "diagnostics {}", out["diagnostics"]);
+
+    let frontiers = out["frontiers"].as_array().expect("frontier receipts");
+    assert_eq!(frontiers.len(), 2);
+    for (index, weight) in [(0, 1), (1, -1)] {
+        let deltas = frontiers[index]["deltas"].as_array().expect("deltas");
+        for relation in ["fs.json.request", "fs.json.answer"] {
+            assert!(
+                deltas
+                    .iter()
+                    .any(|delta| delta["rel"] == relation && delta["w"] == weight),
+                "frontier {index}: missing {weight:+} {relation}: {deltas:?}"
+            );
+        }
+    }
+
+    let first = &frontiers[0]["closure"];
+    assert_eq!(s20hosts_rows(first, &compiled.names, "Wants").len(), 1);
+    assert_eq!(s20hosts_rows(first, &compiled.names, "Doc").len(), 1);
+    assert_eq!(s20hosts_rows(first, &compiled.names, "fs.json").len(), 1);
+    assert_eq!(s20hosts_rows(first, &compiled.names, "Member").len(), 5);
+
+    for relation in ["Wants", "Doc", "fs.json", "Member"] {
+        assert!(
+            s20hosts_rows(&out, &compiled.names, relation).is_empty(),
+            "final closure retains {relation}"
+        );
+    }
+}
+
+#[test]
 pub fn fs_json_reads_a_top_level_array_and_a_top_level_scalar() {
     let directory = s20hosts_scratch("fs-json-roots");
     let (out, names, path) = json_run(&directory, "list.json", "[1, \"a\"]");

@@ -221,6 +221,26 @@ impl Reconciler {
         Ok(Reconciled { ticks, closure })
     }
 
+    pub fn run_frontiers(
+        &mut self,
+        u: &mut Universe,
+        program: &Program,
+        backend: crate::_6_eval::ir_eval::Backend,
+        frontiers: &[Vec<crate::_6_eval::ir_eval::SignedRow>],
+        public_names: &HashMap<TermId, String>,
+        fx: &mut dyn FnMut(Trace),
+    ) -> Result<(Closure, Vec<crate::_6_eval::ir_eval::FrontierResult>), Diagnostic> {
+        crate::_6_eval::ir_eval::evaluate_ir_frontiers(
+            u,
+            program,
+            backend,
+            &mut self.answerer,
+            frontiers,
+            public_names,
+            fx,
+        )
+    }
+
     fn armed(&self) -> bool {
         self.answerer.executors.iter().any(|(_, e)| e.armed())
     }

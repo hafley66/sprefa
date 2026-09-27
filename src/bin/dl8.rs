@@ -3,11 +3,11 @@
 use clap::{Parser, Subcommand};
 use dl8::_5_reify::emit_sqlite;
 use dl8::_6_eval::evaluate::{Evaluate, Store};
-use dl8::_6_eval::json::term_to_json;
 use dl8::_6_eval::json::{
     closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json,
     serve_relations,
 };
+use dl8::_6_eval::json::{term_from_json, term_to_json};
 use dl8::_6_eval::{Row, Term, TermId, Trace, Universe};
 use dl8::_7_effect::Slice;
 use dl8::_8_driver::{Event, Stop};
@@ -98,6 +98,9 @@ enum Command {
         /// Stop after this many ticks past tick 0; unset runs until settled.
         #[arg(long)]
         max_ticks: Option<usize>,
+        /// Apply signed source changes as successive frontiers in one live IR engine.
+        #[arg(long, hide = true)]
+        frontiers: Option<PathBuf>,
     },
     /// Compile one query against a repository, settle its sources once and print
     /// the root file's derived rows.
@@ -184,12 +187,14 @@ fn run(command: Command) -> ExitCode {
             trace,
             db,
             max_ticks,
+            frontiers,
         } => run_cli(
             &program,
             &serve,
             trace,
             db.as_deref(),
             max_ticks.unwrap_or(usize::MAX),
+            frontiers.as_deref(),
         ),
         Command::Query { file, repo, format } => query_cli(&file, repo.as_deref(), format),
     }
@@ -406,6 +411,7 @@ fn run_cli(
     trace: bool,
     db: Option<&Path>,
     max_ticks: usize,
+    frontiers_path: Option<&Path>,
 ) -> ExitCode {
     let fail = |error: &dyn std::fmt::Display| {
         tracing::error!(phase = "run", error = %error, path = %path.display());
@@ -464,6 +470,105 @@ fn run_cli(
             tracing::debug!(target: "dl8::trace", event = ?t);
         }
     };
+    if let Some(frontiers_path) = frontiers_path {
+        let Some(backend) = dl8::_6_eval::ir_eval::configured_backend() else {
+            return fail(&"--frontiers requires DL8_ENGINE=ir:dd or ir:sqlite");
+        };
+        let frontier_value: serde_json::Value = match std::fs::read_to_string(frontiers_path)
+            .map_err(|e| e.to_string())
+            .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
+        {
+            Ok(value) => value,
+            Err(e) => return fail(&e),
+        };
+        let Some(frontier_values) = frontier_value.as_array() else {
+            return fail(&"frontiers JSON must be an array");
+        };
+        let mut frontiers = Vec::with_capacity(frontier_values.len());
+        for frontier in frontier_values {
+            let Some(changes) = frontier.get("changes").and_then(|value| value.as_array()) else {
+                return fail(&"each frontier must have a changes array");
+            };
+            let mut parsed = Vec::with_capacity(changes.len());
+            for change in changes {
+                let Some(relation_name) = change.get("rel").and_then(|value| value.as_str()) else {
+                    return fail(&"frontier change rel must be a string");
+                };
+                let Some(&rel) = names.get(relation_name) else {
+                    return fail(&format!("unknown frontier relation {relation_name}"));
+                };
+                let Some(args) = change.get("args").and_then(|value| value.as_array()) else {
+                    return fail(&"frontier change args must be an array");
+                };
+                let args = match args
+                    .iter()
+                    .map(|value| term_from_json(&mut u, value))
+                    .collect::<Result<Vec<_>, _>>()
+                {
+                    Ok(args) => args,
+                    Err(e) => return fail(&e),
+                };
+                let Some(weight) = change.get("w").and_then(|value| value.as_i64()) else {
+                    return fail(&"frontier change w must be an integer");
+                };
+                parsed.push(dl8::_6_eval::ir_eval::SignedRow {
+                    row: Row { rel, args },
+                    weight,
+                });
+            }
+            frontiers.push(parsed);
+        }
+        let public_names: std::collections::HashMap<TermId, String> = names
+            .iter()
+            .map(|(name, relation)| (*relation, name.clone()))
+            .collect();
+        let (closure, results) = match reconciler.run_frontiers(
+            &mut u,
+            &program,
+            backend,
+            &frontiers,
+            &public_names,
+            &mut fx,
+        ) {
+            Ok(result) => result,
+            Err(diagnostic) => {
+                let out = closure_to_json(&u, &[], &[diagnostic]);
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+                return ExitCode::from(1);
+            }
+        };
+        let mut out = closure_to_json(&u, &closure.rows, &closure.diagnostics);
+        out["frontiers"] = serde_json::Value::Array(
+            results
+                .into_iter()
+                .map(|result| {
+                    let closure = closure_to_json(
+                        &u,
+                        &result.closure.rows,
+                        &result.closure.diagnostics,
+                    );
+                    let deltas: Vec<_> = result
+                        .deltas
+                        .into_iter()
+                        .map(|delta| {
+                            serde_json::json!({
+                                "rel": delta.relation,
+                                "args": delta.args.iter().map(|term| term_to_json(&u, *term)).collect::<Vec<_>>(),
+                                "w": delta.weight,
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({ "closure": closure, "deltas": deltas })
+                })
+                .collect(),
+        );
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        return if closure.diagnostics.is_empty() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(1)
+        };
+    }
     let durable = store.as_mut().map(|s| s as &mut dyn IRowStore);
     let reconciled = match reconciler.run(&mut u, &program, &mut rows, durable, max_ticks, &mut fx)
     {

@@ -363,27 +363,6 @@ fn ir_engines_match_v7_oracles() {
                 .iter()
                 .find(|gap| gap["fixture"] == fixture_name.as_ref() && gap["engine"] == engine)
             {
-                if gap["kind"] == "rows_mismatch" {
-                    let expected_rows = fixture["expected"]["closure"]
-                        .as_array()
-                        .map_or(0, Vec::len);
-                    let got_rows = got["closure"].as_array().map_or(0, Vec::len);
-                    assert_eq!(
-                        gap["expected_rows"], expected_rows,
-                        "stale expected row count"
-                    );
-                    assert_eq!(gap["got_rows"], got_rows, "oracle gap stopped reproducing");
-                    assert_eq!(
-                        gap["diagnostics"], got["diagnostics"],
-                        "diagnostics changed"
-                    );
-                    assert!(
-                        got["closure"] != fixture["expected"]["closure"],
-                        "oracle gap stopped reproducing: {fixture_name} {engine}"
-                    );
-                    reproduced.insert((fixture_name.to_string(), engine.to_string()));
-                    continue;
-                }
                 assert_eq!(
                     gap["program"], fixture["program"],
                     "stale oracle gap program: {fixture_name}"

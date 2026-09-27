@@ -32,6 +32,70 @@ pub enum Backend {
     Sqlite,
 }
 
+pub struct SignedRow {
+    pub row: Row,
+    pub weight: i64,
+}
+
+pub struct NamedDelta {
+    pub relation: String,
+    pub args: Vec<TermId>,
+    pub weight: i64,
+}
+
+pub struct FrontierResult {
+    pub closure: Closure,
+    pub deltas: Vec<NamedDelta>,
+}
+
+fn snapshot_closure<E: Engine>(
+    u: &mut Universe,
+    lowered: &Lowered,
+    engine: &E,
+    host: &mut Raw<'_>,
+    mapped: &HashMap<TermId, Cell>,
+) -> Result<Closure, ivm_engine::EngineError> {
+    let mut decoded = decode_terms(u, lowered, engine, host, mapped)?;
+    let mut rows = Vec::new();
+    for &(rel, original, arity) in &lowered.visible {
+        for (cells, weight) in engine.snapshot(rel, host)? {
+            if weight <= 0 {
+                continue;
+            }
+            let mut args = Vec::with_capacity(arity);
+            for &cell in &cells[..arity] {
+                let term = if let Some(&term) = decoded.get(&cell) {
+                    term
+                } else if let Some(value) = engine.text(cell, host)? {
+                    let term = u.string(&value);
+                    decoded.insert(cell, term);
+                    term
+                } else {
+                    return Err(ivm_engine::EngineError::new(
+                        ivm_engine::Stage::Snapshot,
+                        Some(rel),
+                        ivm_engine::ErrorKind::Unsupported("undecodable term id"),
+                    ));
+                };
+                args.push(term);
+            }
+            rows.push(Row {
+                rel: original,
+                args,
+            });
+        }
+    }
+    rows.sort_by(|a, b| {
+        u.cmp(a.rel, b.rel)
+            .then_with(|| u.cmp_rows(&a.args, &b.args))
+    });
+    rows.dedup();
+    Ok(Closure {
+        rows,
+        diagnostics: Vec::new(),
+    })
+}
+
 pub fn configured_backend() -> Option<Backend> {
     match std::env::var("DL8_ENGINE").as_deref() {
         Ok("ir:dd") => Some(Backend::Dd),
@@ -245,8 +309,10 @@ fn run<E: Engine>(
     lowered: &Lowered,
     host: &mut Raw<'_>,
     mut answerer: Option<&mut Answerer>,
+    frontiers: &[Vec<SignedRow>],
+    public_names: Option<&HashMap<TermId, String>>,
     fx: &mut dyn FnMut(Trace),
-) -> Result<(Closure, ivm_engine::Counters), ivm_engine::EngineError> {
+) -> Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError> {
     let mut engine = E::install(&lowered.ir, host)?;
     let mut mapped: HashMap<TermId, Cell> = HashMap::new();
     for (term, value) in &lowered.texts {
@@ -344,7 +410,7 @@ fn run<E: Engine>(
         .iter()
         .map(|served| (served.request, served.relation))
         .collect();
-    let mut answered = HashMap::<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>)>>::new();
+    let mut answered = HashMap::<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>::new();
     let mut request_count = 0;
     while answerer.is_some() {
         let decoded = decode_terms(u, lowered, &engine, host, &mapped)?;
@@ -384,7 +450,7 @@ fn run<E: Engine>(
                     .unwrap()
                     .cancel_request(relation, application);
                 if let Some(rows) = answered.remove(&key) {
-                    next.extend(rows.into_iter().map(|(rel, row)| ir::SourceChange {
+                    next.extend(rows.into_iter().map(|(rel, row, _)| ir::SourceChange {
                         rel,
                         row,
                         w: -1,
@@ -415,8 +481,8 @@ fn run<E: Engine>(
                 if answer.args.is_empty() {
                     cells.push(1);
                 } else {
-                    for term in answer.args {
-                        cells.push(mapped[&term]);
+                    for term in &answer.args {
+                        cells.push(mapped[term]);
                     }
                 }
                 next.push(ir::SourceChange {
@@ -424,7 +490,7 @@ fn run<E: Engine>(
                     row: cells.clone(),
                     w: 1,
                 });
-                recorded.push((source, cells));
+                recorded.push((source, cells, answer));
             }
             answered.insert(key, recorded);
         }
@@ -433,53 +499,158 @@ fn run<E: Engine>(
         }
         delta = settle(&mut engine, host, next)?;
     }
+    let mut frontier_results = Vec::with_capacity(frontiers.len());
+    for frontier in frontiers {
+        let terms: Vec<_> = frontier
+            .iter()
+            .flat_map(|change| change.row.args.iter().copied())
+            .collect();
+        install_terms(u, lowered, &mut engine, host, &mut mapped, &terms)?;
+        let mut source_changes = Vec::with_capacity(frontier.len());
+        for change in frontier {
+            let Some(&source) = lowered
+                .sources
+                .get(&(change.row.rel.0, change.row.args.len()))
+            else {
+                return Err(ivm_engine::EngineError::new(
+                    ivm_engine::Stage::Settle,
+                    None,
+                    ivm_engine::ErrorKind::Unsupported("frontier relation is not a source"),
+                ));
+            };
+            source_changes.push(ir::SourceChange {
+                rel: source,
+                row: change.row.args.iter().map(|term| mapped[term]).collect(),
+                w: change.weight,
+            });
+        }
+        let mut delta = settle(&mut engine, host, source_changes)?;
+        let mut receipts = Vec::new();
+        let mut stable = false;
+        for _ in 0..TERM_BUDGET {
+            let decoded = decode_terms(u, lowered, &engine, host, &mapped)?;
+            let store_closure = snapshot_closure(u, lowered, &engine, host, &mapped)?;
+            let mut store = Store::default();
+            for row in &store_closure.rows {
+                store.insert(row.rel, row.args.clone().into_boxed_slice());
+            }
+            let request_changes: Vec<_> = delta
+                .changes
+                .iter()
+                .filter_map(|(rel, row, weight)| {
+                    request_relations
+                        .get(rel)
+                        .map(|relation| (*relation, row.clone(), *weight))
+                })
+                .collect();
+            let mut next = Vec::new();
+            for (relation, row, weight) in request_changes {
+                let Some(&application) = row.last().and_then(|cell| decoded.get(cell)) else {
+                    continue;
+                };
+                receipts.push(NamedDelta {
+                    relation: format!(
+                        "{}.request",
+                        public_names
+                            .and_then(|names| names.get(&relation))
+                            .cloned()
+                            .unwrap_or_else(|| u.display(relation).to_string())
+                    ),
+                    args: vec![application],
+                    weight,
+                });
+                let key = (relation, application);
+                if weight < 0 {
+                    answerer
+                        .as_deref_mut()
+                        .unwrap()
+                        .cancel_request(relation, application);
+                    if let Some(rows) = answered.remove(&key) {
+                        for (source, cells, answer) in rows {
+                            receipts.push(NamedDelta {
+                                relation: format!(
+                                    "{}.answer",
+                                    public_names
+                                        .and_then(|names| names.get(&relation))
+                                        .cloned()
+                                        .unwrap_or_else(|| u.display(relation).to_string())
+                                ),
+                                args: answer.args,
+                                weight: -1,
+                            });
+                            next.push(ir::SourceChange {
+                                rel: source,
+                                row: cells,
+                                w: -1,
+                            });
+                        }
+                    }
+                    continue;
+                }
+                let (rows, asked) =
+                    answerer
+                        .as_deref_mut()
+                        .unwrap()
+                        .answer_requests(u, &store, [key]);
+                request_count += asked;
+                let answer_terms: Vec<_> = rows
+                    .iter()
+                    .flat_map(|row| row.args.iter().copied())
+                    .collect();
+                install_terms(u, lowered, &mut engine, host, &mut mapped, &answer_terms)?;
+                let mut recorded = Vec::new();
+                for answer in rows {
+                    let Some(&source) = lowered.sources.get(&(answer.rel.0, answer.args.len()))
+                    else {
+                        continue;
+                    };
+                    let cells: Vec<_> = answer.args.iter().map(|term| mapped[term]).collect();
+                    receipts.push(NamedDelta {
+                        relation: format!(
+                            "{}.answer",
+                            public_names
+                                .and_then(|names| names.get(&relation))
+                                .cloned()
+                                .unwrap_or_else(|| u.display(relation).to_string())
+                        ),
+                        args: answer.args.clone(),
+                        weight: 1,
+                    });
+                    next.push(ir::SourceChange {
+                        rel: source,
+                        row: cells.clone(),
+                        w: 1,
+                    });
+                    recorded.push((source, cells, answer));
+                }
+                answered.insert(key, recorded);
+            }
+            if next.is_empty() {
+                stable = true;
+                break;
+            }
+            delta = settle(&mut engine, host, next)?;
+        }
+        if !stable {
+            return Err(ivm_engine::EngineError::new(
+                ivm_engine::Stage::Settle,
+                None,
+                ivm_engine::ErrorKind::Unsupported("effect frontier budget"),
+            ));
+        }
+        frontier_results.push(FrontierResult {
+            closure: snapshot_closure(u, lowered, &engine, host, &mapped)?,
+            deltas: receipts,
+        });
+    }
     LAST_REQUESTS.with(|count| count.set(request_count));
     let counters = engine.counters();
 
-    let mut decoded = decode_terms(u, lowered, &engine, host, &mapped)?;
-    let mut rows = Vec::new();
-    for &(rel, original, arity) in &lowered.visible {
-        for (cells, weight) in engine.snapshot(rel, host)? {
-            if weight <= 0 {
-                continue;
-            }
-            let cells = &cells[..arity];
-            let mut args = Vec::with_capacity(cells.len());
-            for &cell in cells {
-                let term = if let Some(&term) = decoded.get(&cell) {
-                    term
-                } else if let Some(value) = engine.text(cell, host)? {
-                    let term = u.string(&value);
-                    decoded.insert(cell, term);
-                    term
-                } else {
-                    return Err(ivm_engine::EngineError::new(
-                        ivm_engine::Stage::Snapshot,
-                        Some(rel),
-                        ivm_engine::ErrorKind::Unsupported("undecodable term id"),
-                    ));
-                };
-                args.push(term);
-            }
-            rows.push(Row {
-                rel: original,
-                args,
-            });
-        }
-    }
-    rows.sort_by(|a, b| {
-        u.cmp(a.rel, b.rel)
-            .then_with(|| u.cmp_rows(&a.args, &b.args))
+    let closure = snapshot_closure(u, lowered, &engine, host, &mapped)?;
+    fx(Trace::Closure {
+        rows: closure.rows.len(),
     });
-    rows.dedup();
-    fx(Trace::Closure { rows: rows.len() });
-    Ok((
-        Closure {
-            rows,
-            diagnostics: Vec::new(),
-        },
-        counters,
-    ))
+    Ok((closure, frontier_results, counters))
 }
 
 pub fn evaluate_ir(
@@ -499,6 +670,53 @@ pub fn evaluate_ir_answered(
     fx: &mut dyn FnMut(Trace),
 ) -> Closure {
     evaluate_ir_with_answerer(u, program, backend, Some(answerer), fx)
+}
+
+pub fn evaluate_ir_frontiers(
+    u: &mut Universe,
+    program: &Program,
+    backend: Backend,
+    answerer: &mut Answerer,
+    frontiers: &[Vec<SignedRow>],
+    public_names: &HashMap<TermId, String>,
+    fx: &mut dyn FnMut(Trace),
+) -> Result<(Closure, Vec<FrontierResult>), Diagnostic> {
+    let lowered = ir_lower::lower(u, program)?;
+    let result = match backend {
+        Backend::Dd => {
+            let mut host = Raw::default();
+            run::<ivm_dd::Dd>(
+                u,
+                &lowered,
+                &mut host,
+                Some(answerer),
+                frontiers,
+                Some(public_names),
+                fx,
+            )
+        }
+        Backend::Sqlite => {
+            let connection = rusqlite::Connection::open_in_memory()
+                .map_err(|error| diagnostic(u, "sqlite_open", error))?;
+            let mut host = Raw::with_connection(&connection);
+            run::<ivm_sqlite::Sqlite>(
+                u,
+                &lowered,
+                &mut host,
+                Some(answerer),
+                frontiers,
+                Some(public_names),
+                fx,
+            )
+        }
+    };
+    match result {
+        Ok((closure, results, counters)) => {
+            LAST_COUNTERS.with(|last| last.set(Some(counters)));
+            Ok((closure, results))
+        }
+        Err(error) => Err(diagnostic(u, "engine", error)),
+    }
 }
 
 fn evaluate_ir_with_answerer(
@@ -523,12 +741,28 @@ fn evaluate_ir_with_answerer(
     let result = match backend {
         Backend::Dd => {
             let mut host = Raw::default();
-            run::<ivm_dd::Dd>(u, &lowered, &mut host, answerer.as_deref_mut(), fx)
+            run::<ivm_dd::Dd>(
+                u,
+                &lowered,
+                &mut host,
+                answerer.as_deref_mut(),
+                &[],
+                None,
+                fx,
+            )
         }
         Backend::Sqlite => match rusqlite::Connection::open_in_memory() {
             Ok(connection) => {
                 let mut host = Raw::with_connection(&connection);
-                run::<ivm_sqlite::Sqlite>(u, &lowered, &mut host, answerer.as_deref_mut(), fx)
+                run::<ivm_sqlite::Sqlite>(
+                    u,
+                    &lowered,
+                    &mut host,
+                    answerer.as_deref_mut(),
+                    &[],
+                    None,
+                    fx,
+                )
             }
             Err(error) => {
                 return Closure {
@@ -539,7 +773,7 @@ fn evaluate_ir_with_answerer(
         },
     };
     match result {
-        Ok((closure, counters)) => {
+        Ok((closure, _, counters)) => {
             LAST_COUNTERS.with(|last| last.set(Some(counters)));
             closure
         }
