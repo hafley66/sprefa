@@ -137,7 +137,7 @@ Arguments:
           Possible values:
           - sqlite:  One `sqlite_ivm` view per derived relation over the `eval --db` tables
           - ir-rxjs: TypeScript module using the RxJS IVM runtime
-          - ir-json: Shared IVM program as JSON
+          - ir-json: IVM program, first frontier and term table as JSON
 
   <PROGRAM>
           

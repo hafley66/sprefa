@@ -3,6 +3,7 @@
 use clap::{Parser, Subcommand};
 use dl8::_5_reify::{emit_sqlite, ir_emit::IR_TARGETS};
 use dl8::_6_eval::evaluate::{Evaluate, Store};
+use dl8::_6_eval::ir_bundle;
 use dl8::_6_eval::ir_lower;
 use dl8::_6_eval::json::{
     closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json,
@@ -128,7 +129,7 @@ enum EmitTarget {
     Sqlite,
     /// TypeScript module using the RxJS IVM runtime.
     IrRxjs,
-    /// Shared IVM program as JSON.
+    /// IVM program, first frontier and term table as JSON.
     IrJson,
 }
 
@@ -275,7 +276,8 @@ fn emit_cli(target: EmitTarget, path: &Path) -> ExitCode {
             EmitTarget::IrJson => &IR_TARGETS[1],
             EmitTarget::Sqlite => unreachable!(),
         };
-        match (emitter.emit)(&lowered.ir) {
+        let artifact = ir_bundle::bundle(&u, &lowered).and_then(|bundle| (emitter.emit)(&bundle));
+        match artifact {
             Ok(artifact) => {
                 println!("{artifact}");
                 return ExitCode::SUCCESS;

@@ -10,3 +10,4 @@ mod _6_imports;
 mod _7_book;
 mod _8_contracts;
 mod _9_ladder;
+mod _9a_ir_emit;

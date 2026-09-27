@@ -2,9 +2,6 @@
 //! Counters unavailable at this boundary are recorded in the commit body.
 
 use super::_2_eval_oracles::{call, constant, goal, rule, variable};
-use dl8::_6_eval::ir_lower;
-use dl8::_6_eval::json::program_from_json;
-use dl8::_6_eval::Universe;
 use hafley_observe::{assert_growth_sized, Growth, SpanCounts};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -13,70 +10,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
 const ENGINES: [&str; 5] = ["rust", "sqlite", "dd", "ir:dd", "ir:sqlite"];
-
-#[test]
-fn ir_emit_targets_round_trip_three_ladder_programs() {
-    for stem in ["1_count", "3_int_compare", "12_transitive"] {
-        let path = format!("{}/fixtures/ladder/{stem}.json", env!("CARGO_MANIFEST_DIR"));
-        let source: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        let mut universe = Universe::new();
-        let program = program_from_json(&mut universe, &source).unwrap();
-        let lowered = ir_lower::lower(&mut universe, &program)
-            .unwrap_or_else(|_| panic!("{stem}: IR lowering"));
-
-        let ir_json = Command::new(env!("CARGO_BIN_EXE_dl8"))
-            .args(["emit", "ir-json", &path])
-            .output()
-            .unwrap();
-        assert!(
-            ir_json.status.success(),
-            "{stem}: {}",
-            String::from_utf8_lossy(&ir_json.stderr)
-        );
-        let decoded: ivm_ir::Program = serde_json::from_slice(&ir_json.stdout).unwrap();
-        assert_eq!(decoded, lowered.ir, "{stem}: IR JSON round trip");
-
-        let rxjs = Command::new(env!("CARGO_BIN_EXE_dl8"))
-            .args(["emit", "ir-rxjs", &path])
-            .output()
-            .unwrap();
-        assert!(
-            rxjs.status.success(),
-            "{stem}: {}",
-            String::from_utf8_lossy(&rxjs.stderr)
-        );
-        let module = String::from_utf8(rxjs.stdout).unwrap();
-        assert_eq!(
-            module,
-            format!("{}\n", ivm_rxjs::emit(&decoded).unwrap()),
-            "{stem}: emitted module"
-        );
-        let source_ids = module
-            .lines()
-            .find(|line| line.starts_with("const sourceIds = "))
-            .unwrap();
-        let nodes = module
-            .lines()
-            .filter(|line| {
-                line.strip_prefix("  const n")
-                    .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
-            })
-            .map(|line| line.split(".pipe").next().unwrap())
-            .collect::<Vec<_>>();
-        let shape = format!(
-            "{source_ids}\nnodes={}\n{}",
-            nodes.len(),
-            nodes[nodes.len() - 2..].join("\n")
-        );
-        let expected = match stem {
-            "1_count" => "const sourceIds = [0,1,2,3,6,9,12,15,18,21,24,27,30,33,36,39,41,43,45];\nnodes=99\n  const n97: Observable<Batch> = n96\n  const n98: Observable<Batch> = merge(n61, n63, n65, n67, n69, n71, n73, n75, n77, n79, n81, n83, n85, n87, n89, n91, n93, n95, n97)",
-            "3_int_compare" => "const sourceIds = [0,1,2,3,6,9,12,15,18,21,24,27,30,33,36,39,41,43,45,47,49,51,53,55,57];\nnodes=191\n  const n189: Observable<Batch> = n188\n  const n190: Observable<Batch> = merge(n141, n143, n145, n147, n149, n151, n153, n155, n157, n159, n161, n163, n165, n167, n169, n171, n173, n175, n177, n179, n181, n183, n185, n187, n189)",
-            "12_transitive" => "const sourceIds = [0,1,2,3,6,9,12,15,18,21,24,27,30,33,36,38,40];\nnodes=79\n  const n77: Observable<Batch> = n76\n  const n78: Observable<Batch> = merge(n45, n47, n49, n51, n53, n55, n57, n59, n61, n63, n65, n67, n69, n71, n73, n75, n77)",
-            _ => unreachable!(),
-        };
-        assert_eq!(shape, expected, "{stem}: module shape");
-    }
-}
 
 fn run(
     rung: usize,
