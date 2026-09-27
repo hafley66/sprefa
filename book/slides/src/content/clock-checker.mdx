@@ -1,0 +1,41 @@
+## !!steps Same clock
+
+```sql !
+-- !focus(1)
+-- illustrative clock model
+mapped@t = map(input@t)
+```
+
+## !!steps Rejected
+
+```sql !
+-- !focus(1)
+-- proposed rejection
+total@t = input@t + total@t
+```
+
+## !!steps Delayed edge
+
+```sql !
+-- !focus(1)
+-- proposed delayed feedback
+total@t = input@t + delay(total)@(t-1)
+```
+
+## !!steps Accepted
+
+```sql !
+-- !focus(2)
+-- proposed result
+feedback: t-1 -> t
+cycle advances time  -- valid
+```
+
+## !!steps Diagnostic
+
+```sql !
+-- !focus(1:2)
+-- planned diagnostic
+clock cycle: total@t -> total@t
+hint: delay the feedback edge
+```

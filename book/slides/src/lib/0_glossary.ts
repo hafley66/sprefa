@@ -1,10 +1,13 @@
 import { bilinearOpJoinDeltaRuleSteps } from "../ideas/bilinear-op-join-delta-rule/0_steps"
+import { clockCheckerSteps } from "../ideas/clock-checker/0_steps"
 import { deltaSteps } from "../ideas/delta/0_steps"
+import { delayZ1Steps } from "../ideas/delay-z-1/0_steps"
 import { distinctThresholdSteps } from "../ideas/distinct-threshold/0_steps"
 import { frontierSteps } from "../ideas/frontier/0_steps"
 import { integrateDifferentiateSteps } from "../ideas/integrate-differentiate/0_steps"
 import { letrecFixpointSteps } from "../ideas/letrec-fixpoint/0_steps"
 import { linearOpSteps } from "../ideas/linear-op/0_steps"
+import { nestedTimeSteps } from "../ideas/nested-time/0_steps"
 import { strataSteps } from "../ideas/strata/0_steps"
 import { zsetSteps } from "../ideas/zset/0_steps"
 import type { Step } from "./scene/0_types"
@@ -25,9 +28,9 @@ export const glossary: readonly GlossaryGroup[] = [
     { slug: "frontier", title: "Frontier", summary: "The boundary of incomplete time", built: true, steps: frontierSteps },
     { slug: "strata", title: "Strata", summary: "An evaluation order for dependent computations", built: true, steps: strataSteps },
     { slug: "letrec-fixpoint", title: "LetRec fixpoint", summary: "Iterate a recursive definition to stability", built: true, steps: letrecFixpointSteps },
-    { slug: "nested-time", title: "Nested time", summary: "Outer updates with inner iteration rounds", built: false },
-    { slug: "delay-z-1", title: "Delay z⁻¹", summary: "Shift a value by one logical time", built: false },
-    { slug: "clock-checker", title: "Clock checker", summary: "Verify temporal dependencies before evaluation", built: false },
+    { slug: "nested-time", title: "Nested time", summary: "Outer updates with inner iteration rounds", built: true, steps: nestedTimeSteps },
+    { slug: "delay-z-1", title: "Delay z⁻¹", summary: "Shift a value by one logical time", built: true, steps: delayZ1Steps },
+    { slug: "clock-checker", title: "Clock checker", summary: "A planned check for temporal dependencies", built: true, steps: clockCheckerSteps },
   ] },
   { slug: "operators", title: "Operators", ideas: [
     { slug: "join", title: "Join", summary: "Match rows through shared keys", built: false },

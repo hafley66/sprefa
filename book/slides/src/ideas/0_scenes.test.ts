@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest"
 import { builtIdeas } from "../lib/0_glossary"
 import { bilinearOpJoinDeltaRuleSteps } from "./bilinear-op-join-delta-rule/0_steps"
+import { clockCheckerSteps } from "./clock-checker/0_steps"
 import { deltaSteps } from "./delta/0_steps"
+import { delayZ1Steps } from "./delay-z-1/0_steps"
 import { distinctThresholdSteps } from "./distinct-threshold/0_steps"
 import { frontierSteps } from "./frontier/0_steps"
 import { integrateDifferentiateSteps } from "./integrate-differentiate/0_steps"
 import { letrecFixpointSteps } from "./letrec-fixpoint/0_steps"
 import { linearOpSteps } from "./linear-op/0_steps"
+import { nestedTimeSteps } from "./nested-time/0_steps"
 import { strataSteps } from "./strata/0_steps"
 import { zsetSteps } from "./zset/0_steps"
 
@@ -320,6 +323,109 @@ describe("keyed scene elements", () => {
       ]
     `)
   })
+
+  it("keeps the complete nested time key timeline visible", () => {
+    expect(nestedTimeSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "outer",
+          "edge",
+        ],
+        [
+          "pair",
+          "clock",
+        ],
+        [
+          "clock",
+          "join",
+          "path",
+        ],
+        [
+          "clock",
+          "empty",
+        ],
+        [
+          "clock",
+          "edge",
+        ],
+        [
+          "t4",
+          "t5",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete delay z⁻¹ key timeline visible", () => {
+    expect(delayZ1Steps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "t0",
+          "v0",
+          "t1",
+          "v1",
+        ],
+        [
+          "input",
+          "delay",
+          "output",
+        ],
+        [
+          "clock",
+          "delay",
+        ],
+        [
+          "clock",
+          "delay",
+        ],
+        [
+          "clock",
+          "delay",
+        ],
+        [
+          "formula",
+          "values",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete clock checker key timeline visible", () => {
+    expect(clockCheckerSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "clock",
+          "map",
+          "value",
+        ],
+        [
+          "input",
+          "arrow",
+          "mapped",
+        ],
+        [
+          "total",
+          "error",
+        ],
+        [
+          "previous",
+          "delay",
+          "current",
+        ],
+        [
+          "before",
+          "arrow",
+          "after",
+          "ok",
+        ],
+        [
+          "check",
+          "result",
+          "hint",
+        ],
+      ]
+    `)
+  })
 })
 
 describe("built glossary scenes", () => {
@@ -430,6 +536,42 @@ describe("built glossary scenes", () => {
           ],
           "group": "time",
           "idea": "letrec-fixpoint",
+        },
+        {
+          "captions": [
+            "An outer time records the input update. At t=4 the edge Ada → Bob arrives.",
+            "Recursive work adds an inner round: logical time is the pair (outer, round).",
+            "Round (4, 1) derives Ada → Cy from the new edge and an existing Bob → Cy path.",
+            "Round (4, 2) is empty, so the inner iteration for outer time 4 is complete.",
+            "The next input advances outer time to 5 and starts its own round 0.",
+            "Nested time keeps iteration rounds ordered inside each input update.",
+          ],
+          "group": "time",
+          "idea": "nested-time",
+        },
+        {
+          "captions": [
+            "The input signal has concrete values: 8 at t=0, then 13 at t=1.",
+            "Delay z⁻¹ shifts each value forward by one logical time.",
+            "At t=0 there is no previous value, so the delay emits the initial value 0.",
+            "At t=1 the delayed output is the prior input 8.",
+            "At t=2 the delayed output is 13. The feedback edge now crosses time.",
+            "A delayed feedback loop computes running state: s(t) = input(t) + s(t−1).",
+          ],
+          "group": "time",
+          "idea": "delay-z-1",
+        },
+        {
+          "captions": [
+            "In the planned clock model, input and mapped both live at the current time t.",
+            "An illustrative checker accepts this dependency: mapped(t) reads input(t).",
+            "The proposed check rejects recursive same-time dependencies because they make no temporal progress.",
+            "In that model, adding z⁻¹ makes the recursive read come from t−1.",
+            "The proposed check accepts the delayed cycle because each trip advances logical time.",
+            "This planned pre-evaluation check would report the dependency that failed.",
+          ],
+          "group": "time",
+          "idea": "clock-checker",
         },
       ]
     `)

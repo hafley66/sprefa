@@ -1,0 +1,36 @@
+## !!steps Shift
+
+```sql !
+-- !focus(1)
+delay(x)(t) = x(t - 1)
+```
+
+## !!steps Initial
+
+```sql !
+-- !focus(1)
+delay([8, 13, 5], initial=0)[0] = 0
+```
+
+## !!steps Previous
+
+```sql !
+-- !focus(1)
+delay([8, 13, 5])[1] = 8
+```
+
+## !!steps Advance
+
+```sql !
+-- !focus(1)
+delay([8, 13, 5])[2] = 13
+```
+
+## !!steps Feedback
+
+```sql !
+-- !focus(2)
+s(0) = 8  + 0  = 8
+s(1) = 13 + 8  = 21
+s(2) = 5  + 21 = 26
+```
