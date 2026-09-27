@@ -947,11 +947,22 @@ fn with_effects(u: &mut Universe, program: &Program) -> Program {
 /// positions B feeds a demand product; an adorned copy of every rule joins
 /// it; the caller reads the adorned copy. The originals still fire bottom-up.
 pub(super) fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
-    with_demand_selection(u, program, true, false)
+    with_demand_selection(u, program, true, false, None)
+}
+
+pub(super) fn with_demand_in_strata(
+    u: &mut Universe,
+    program: &Program,
+    strata: &super::stratify::Strata,
+) -> (Program, HashSet<TermId>) {
+    // The IR bridge must keep demand copies at the caller's level. A copy
+    // shared by callers in different strata can pull a lower negative read
+    // into the same recursive component as its caller.
+    with_demand_selection(u, program, false, false, Some(strata))
 }
 
 fn with_direct_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
-    with_demand_selection(u, program, false, true)
+    with_demand_selection(u, program, false, true, None)
 }
 
 fn with_demand_selection(
@@ -959,6 +970,7 @@ fn with_demand_selection(
     program: &Program,
     propagate_dependencies: bool,
     adorn_aggregates: bool,
+    strata: Option<&super::stratify::Strata>,
 ) -> (Program, HashSet<TermId>) {
     let snapshots = {
         let name = u.atom("intern_snapshot");
@@ -1010,16 +1022,28 @@ fn with_demand_selection(
         return (out, HashSet::new());
     }
     let mut hidden: HashSet<TermId> = HashSet::new();
-    let mut adorned: HashMap<(TermId, Vec<usize>), (TermId, TermId)> = HashMap::new();
-    let mut queue: Vec<Rule> = std::mem::take(&mut out.rules);
+    let mut adorned: HashMap<(TermId, Vec<usize>, u32), (TermId, TermId)> = HashMap::new();
+    let mut queue: Vec<(Rule, u32)> = std::mem::take(&mut out.rules)
+        .into_iter()
+        .map(|rule| {
+            let level = strata.map_or(0, |strata| strata.level(rule.rel));
+            (rule, level)
+        })
+        .collect();
     let mut done: Vec<Rule> = Vec::new();
     // Every adorned copy re-enters the queue, so the walk is bounded by the
     // number of (product, bound positions) pairs times the rule count.
     let budget = program.rules.len() * (1 + program.rules.len() * 8);
     for _ in 0..budget {
-        let Some(mut rule) = queue.pop() else {
+        let Some((mut rule, level)) = queue.pop() else {
             break;
         };
+        // Aggregate reads already force a strict dependency. Adorning their
+        // bodies can route that dependency back through a demand relation.
+        if strata.is_some() && rule.is_aggregate() {
+            done.push(rule);
+            continue;
+        }
         let mut bound: HashSet<u32> = HashSet::new();
         for at in 0..rule.body.len() {
             let goal = rule.body[at].clone();
@@ -1036,7 +1060,7 @@ fn with_demand_selection(
                     })
                     .map(|(position, _)| position)
                     .collect();
-                let key = (goal.rel, positions.clone());
+                let key = (goal.rel, positions.clone(), level);
                 let (demand_rel, adorned_rel) = match adorned.get(&key) {
                     Some(pair) => *pair,
                     None => {
@@ -1050,9 +1074,16 @@ fn with_demand_selection(
                         // The suffix is the rel term itself, so the name survives a
                         // db reload that renumbers the arena.
                         let spelled = u.display(goal.rel).to_string();
-                        let demand_name = u.atom(&format!("dmd__{base}__{mask}__{spelled}"));
+                        let suffix = if strata.is_some() {
+                            format!("__l{level}")
+                        } else {
+                            String::new()
+                        };
+                        let demand_name =
+                            u.atom(&format!("dmd__{base}__{mask}__{spelled}{suffix}"));
                         let demand_rel = u.compound("ref", vec![demand_name]);
-                        let adorned_name = u.atom(&format!("adn__{base}__{mask}__{spelled}"));
+                        let adorned_name =
+                            u.atom(&format!("adn__{base}__{mask}__{spelled}{suffix}"));
                         let adorned_rel = u.compound("ref", vec![adorned_name]);
                         adorned.insert(key, (demand_rel, adorned_rel));
                         hidden.insert(demand_rel);
@@ -1067,12 +1098,15 @@ fn with_demand_selection(
                                     .collect(),
                             }];
                             body.extend(original.body.iter().cloned());
-                            queue.push(Rule {
-                                rel: adorned_rel,
-                                head: original.head.clone(),
-                                body,
-                                vars: original.vars.clone(),
-                            });
+                            queue.push((
+                                Rule {
+                                    rel: adorned_rel,
+                                    head: original.head.clone(),
+                                    body,
+                                    vars: original.vars.clone(),
+                                },
+                                level,
+                            ));
                         }
                         if seeded.contains(&goal.rel) {
                             // The pass-through reads the product's own table

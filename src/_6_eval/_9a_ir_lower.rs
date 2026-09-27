@@ -55,6 +55,18 @@ pub struct Lowered {
     pub unit: ir::RelId,
     pub visible: Vec<(ir::RelId, TermId, usize)>,
     pub internal_seeds: Vec<(ir::RelId, Vec<TermId>)>,
+    pub served: Vec<ServedSpec>,
+    pub sources: BTreeMap<(u32, usize), ir::RelId>,
+    pub installers: BTreeMap<(String, usize, bool), (ir::RelId, ir::RelId)>,
+    pub atom_raws: HashMap<TermId, i64>,
+    pub dynamic_atom_base: i64,
+}
+
+pub struct ServedSpec {
+    pub relation: TermId,
+    pub request: ir::RelId,
+    pub answer: ir::RelId,
+    pub arity: usize,
 }
 
 struct Builder {
@@ -65,7 +77,7 @@ struct Builder {
     intern_relation: Option<ir::RelId>,
     intern_readback: bool,
     intern_readback_count: usize,
-    effect_nodes: Vec<ir::NodeId>,
+    effect_nodes: BTreeMap<u32, Vec<ir::NodeId>>,
     snapshot_nodes: Vec<ir::NodeId>,
 }
 
@@ -85,7 +97,7 @@ impl Builder {
             intern_relation: None,
             intern_readback: false,
             intern_readback_count: 0,
-            effect_nodes: Vec::new(),
+            effect_nodes: BTreeMap::new(),
             snapshot_nodes: Vec::new(),
         }
     }
@@ -312,7 +324,7 @@ fn served_effect(
     b.intern_nodes.push(request);
     b.snapshot_nodes.push(request);
     let effect = b.mfp(node, vec![], vec![], vec![rel, application]);
-    b.effect_nodes.push(effect);
+    b.effect_nodes.entry(goal.rel.0).or_default().push(effect);
     Ok(())
 }
 
@@ -1101,14 +1113,59 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     if let Some(diag) = diagnostics.into_iter().next() {
         return Err(diag);
     }
-    let (program, hidden) = super::sqlite_eval::with_demand(u, &program);
+    fn collect_arg(arg: &Arg, todo: &mut Vec<TermId>) {
+        match arg {
+            Arg::Ground(term) => todo.push(*term),
+            Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => collect_arg(subject, todo),
+            Arg::Var(_) => {}
+        }
+    }
+    let (program, hidden) = super::sqlite_eval::with_demand_in_strata(u, &program, &strata);
+    let (strata, diagnostics) = stratify(u, &program);
+    if let Some(diag) = diagnostics.into_iter().next() {
+        return Err(diag);
+    }
+    let mut needed = BTreeSet::new();
+    let mut todo = vec![
+        none,
+        empty,
+        nil,
+        nil_rel,
+        intern_rel,
+        effect_rel,
+        snapshot_rel,
+    ];
+    todo.extend(program.served.iter().copied());
+    for seed in &program.seeds {
+        todo.push(seed.rel);
+        todo.extend(seed.args.iter().copied());
+    }
+    for rule in &program.rules {
+        todo.push(rule.rel);
+        for arg in &rule.head {
+            collect_arg(arg, &mut todo);
+        }
+        for goal in &rule.body {
+            todo.push(goal.rel);
+            for arg in &goal.args {
+                collect_arg(arg, &mut todo);
+            }
+        }
+    }
+    while let Some(term) = todo.pop() {
+        if needed.insert(term.0) {
+            if let Term::Compound(_, args) = u.get(term) {
+                todo.extend(args.iter().copied());
+            }
+        }
+    }
     let dynamic_lists = program.rules.iter().any(|rule| {
         rule.body.iter().any(|goal| {
             Kernel::of(u, goal.rel) == Some(Kernel::Intern)
                 && matches!(goal.args.get(1), Some(Arg::Var(_)))
         })
     });
-    let possible_lists: Vec<TermId> = (0..u.terms.len()).map(|i| TermId(i as u32)).collect();
+    let possible_lists: Vec<TermId> = needed.iter().copied().map(TermId).collect();
     let mut plain_list_pairs = Vec::new();
     for tagged in possible_lists {
         let Some(list) = u.unary(tagged, "const").and_then(|id| u.as_list(id)) else {
@@ -1124,8 +1181,18 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         let plain = u.list(&plain);
         plain_list_pairs.push((tagged, plain));
     }
-    let bad_list_terms: Vec<TermId> = (0..u.terms.len())
-        .map(|i| TermId(i as u32))
+    todo.extend(plain_list_pairs.iter().map(|(_, plain)| *plain));
+    while let Some(term) = todo.pop() {
+        if needed.insert(term.0) {
+            if let Term::Compound(_, args) = u.get(term) {
+                todo.extend(args.iter().copied());
+            }
+        }
+    }
+    let bad_list_terms: Vec<TermId> = needed
+        .iter()
+        .copied()
+        .map(TermId)
         .filter(|&id| {
             u.unary(id, "const")
                 .is_some_and(|payload| u.as_list(payload).is_none())
@@ -1165,13 +1232,18 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             .map(|(i, name)| (name, i as i64 + 1))
             .collect()
     };
-    let existing_terms: Vec<_> = u.terms.iter().cloned().collect();
-    for (index, term) in existing_terms.iter().enumerate() {
+    let mut atom_raws = HashMap::new();
+    let dynamic_atom_base = atoms.values().copied().max().unwrap_or(0) + 1;
+    let existing_terms: Vec<_> = needed
+        .iter()
+        .map(|index| (*index as usize, u.terms[*index as usize].clone()))
+        .collect();
+    for (index, term) in &existing_terms {
         let (name, args, raw) = match term {
             Term::Int(n) => ("0:int".to_string(), vec![], Some(*n)),
             Term::Bool(value) => ("1:bool".to_string(), vec![], Some(i64::from(*value))),
             Term::Str(sym) => {
-                texts.push((TermId(index as u32), u.sym_str(*sym).to_owned()));
+                texts.push((TermId(*index as u32), u.sym_str(*sym).to_owned()));
                 continue;
             }
             Term::Atom(sym) => (
@@ -1191,12 +1263,17 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             Term::Float(_) => return Err(unsupported(u, "float")),
         };
         constructor_keys.insert((name.clone(), args.len(), raw.is_some()));
-        shapes.push((TermId(index as u32), name, args, raw));
+        if matches!(term, Term::Atom(_)) {
+            atom_raws.insert(TermId(*index as u32), raw.unwrap());
+        }
+        shapes.push((TermId(*index as u32), name, args, raw));
     }
     for (name, args, raw) in [
         ("0:int", 0, true),
+        ("1:bool", 0, true),
         ("3:atom", 0, true),
         ("9:1:const", 1, false),
+        ("9:1:primitive", 1, false),
         ("9:1:ref", 1, false),
         ("9:2:[|]", 2, false),
         ("9:2:application", 2, false),
@@ -1269,6 +1346,10 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             }
         })
         .collect();
+    let installers = constructors
+        .iter()
+        .map(|(shape, ctor)| (shape.clone(), prewarm[ctor]))
+        .collect();
     let semantic = b.rel(
         "__ir_semantic".into(),
         vec![ir::Ty::Id, ir::Ty::Id],
@@ -1338,7 +1419,11 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     for (rel, width) in keys.iter().copied() {
         let cols = vec![ir::Ty::Id; width.max(1)];
         let source = b.rel(
-            format!("__ir_seed_n{rel}_a{width}"),
+            if program.served.contains(&TermId(rel)) {
+                format!("{}.answer", u.display(TermId(rel)))
+            } else {
+                format!("__ir_seed_n{rel}_a{width}")
+            },
             cols.clone(),
             ir::RelKind::Source,
         );
@@ -1350,16 +1435,25 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             b.ir.outputs.push(output);
         }
     }
-    let request_rel = b.rel(
-        "__ir_intern_requests".into(),
-        vec![ir::Ty::Id; 3],
-        ir::RelKind::Derived,
-    );
-    b.intern_relation = Some(request_rel);
+    // A readback in a lower stratum must not wait for requests produced by
+    // higher strata. Each request relation carries prior requests forward.
+    let request_rels: Vec<_> = (0..=strata.max_level)
+        .map(|level| {
+            b.rel(
+                format!("__ir_intern_requests_{level}"),
+                vec![ir::Ty::Id; 3],
+                ir::RelKind::Derived,
+            )
+        })
+        .collect();
     let mut bodies: BTreeMap<(u32, usize), Vec<ir::NodeId>> = BTreeMap::new();
-    let mut request_dependencies = BTreeSet::new();
-    let mut readback_heads = BTreeSet::new();
+    let mut requests_by_level: BTreeMap<u32, Vec<ir::NodeId>> = BTreeMap::new();
+    let mut request_dependencies: BTreeMap<u32, BTreeSet<RelationKey>> = BTreeMap::new();
+    let mut readback_heads: BTreeMap<u32, BTreeSet<RelationKey>> = BTreeMap::new();
+    let mut effect_dependencies = BTreeSet::new();
     for rule in &program.rules {
+        let level = strata.level(rule.rel);
+        b.intern_relation = Some(request_rels[level as usize]);
         if rule.is_aggregate() && rule.aggregate_args() != 1 {
             let count = u.int(rule.aggregate_args() as i64);
             return Err(Diagnostic {
@@ -1386,15 +1480,33 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         )
         .map_err(|name| unsupported(u, name))?;
         if b.intern_nodes.len() > requests_before {
+            requests_by_level
+                .entry(level)
+                .or_default()
+                .extend(b.intern_nodes.drain(requests_before..));
             for goal in &rule.body {
                 let key = (goal.rel.0, goal.args.len());
                 if keys.contains(&key) {
-                    request_dependencies.insert(key);
+                    request_dependencies.entry(level).or_default().insert(key);
                 }
             }
         }
         if b.intern_readback_count > readbacks_before {
-            readback_heads.insert((rule.rel.0, rule.head.len()));
+            readback_heads
+                .entry(level)
+                .or_default()
+                .insert((rule.rel.0, rule.head.len()));
+        }
+        for (index, goal) in rule.body.iter().enumerate() {
+            if !program.served.contains(&goal.rel) {
+                continue;
+            }
+            for prior in &rule.body[..index] {
+                let key = (prior.rel.0, prior.args.len());
+                if keys.contains(&key) {
+                    effect_dependencies.insert(key);
+                }
+            }
         }
         bodies
             .entry((rule.rel.0, rule.head.len()))
@@ -1402,19 +1514,42 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             .push(body);
     }
     if b.intern_readback {
-        let request_key = (u32::MAX, 3);
-        keys.insert(request_key);
-        let source = b.rel(
-            "__ir_intern_request_seed".into(),
-            vec![ir::Ty::Id; 3],
-            ir::RelKind::Source,
-        );
-        sources.insert(request_key, source);
-        relations.insert(request_key, request_rel);
-        let requests = std::mem::take(&mut b.intern_nodes);
-        bodies.insert(request_key, requests);
-        b.ir.outputs.push(request_rel);
-        visible.push((request_rel, intern_rel, 3));
+        for (level, request_rel) in request_rels.iter().enumerate() {
+            let request_key = (u32::MAX - level as u32, 3);
+            keys.insert(request_key);
+            let source = b.rel(
+                format!("__ir_intern_request_seed_{level}"),
+                vec![ir::Ty::Id; 3],
+                ir::RelKind::Source,
+            );
+            sources.insert(request_key, source);
+            relations.insert(request_key, *request_rel);
+            bodies.insert(
+                request_key,
+                requests_by_level
+                    .remove(&(level as u32))
+                    .unwrap_or_default(),
+            );
+        }
+        let last = *request_rels.last().unwrap();
+        b.ir.outputs.push(last);
+        visible.push((last, intern_rel, 3));
+    }
+    let effect_key = (effect_rel.0, 2);
+    let internal_effect = relations.get(&effect_key).copied();
+    if internal_effect.is_some() {
+        bodies
+            .entry(effect_key)
+            .or_default()
+            .extend(b.effect_nodes.values().flatten().copied());
+    }
+    let snapshot_key = (snapshot_rel.0, 3);
+    let internal_snapshot = relations.get(&snapshot_key).copied();
+    if internal_snapshot.is_some() {
+        bodies
+            .entry(snapshot_key)
+            .or_default()
+            .extend(b.snapshot_nodes.iter().copied());
     }
     let mut pending: BTreeSet<_> = keys.clone();
     let mut edges: BTreeMap<RelationKey, BTreeSet<RelationKey>> = BTreeMap::new();
@@ -1429,15 +1564,36 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             }
         }
     }
-    if b.intern_readback {
-        let request_key = (u32::MAX, 3);
-        for dependency in request_dependencies {
-            edges.entry(request_key).or_default().insert(dependency);
-            reverse.entry(dependency).or_default().insert(request_key);
+    if internal_effect.is_some() || internal_snapshot.is_some() {
+        for dependency in effect_dependencies {
+            if internal_effect.is_some() {
+                edges.entry(effect_key).or_default().insert(dependency);
+                reverse.entry(dependency).or_default().insert(effect_key);
+            }
+            if internal_snapshot.is_some() {
+                edges.entry(snapshot_key).or_default().insert(dependency);
+                reverse.entry(dependency).or_default().insert(snapshot_key);
+            }
         }
-        for head in readback_heads {
-            edges.entry(head).or_default().insert(request_key);
-            reverse.entry(request_key).or_default().insert(head);
+    }
+    if b.intern_readback {
+        for level in 0..=strata.max_level {
+            let request_key = (u32::MAX - level, 3);
+            for dependency in request_dependencies.remove(&level).unwrap_or_default() {
+                edges.entry(request_key).or_default().insert(dependency);
+                reverse.entry(dependency).or_default().insert(request_key);
+            }
+            for head in readback_heads.remove(&level).unwrap_or_default() {
+                edges.entry(head).or_default().insert(request_key);
+                reverse.entry(request_key).or_default().insert(head);
+            }
+            if level > 0 {
+                let prior = (u32::MAX - (level - 1), 3);
+                let prior_rows = b.get(relations[&prior]);
+                bodies.entry(request_key).or_default().push(prior_rows);
+                edges.entry(request_key).or_default().insert(prior);
+                reverse.entry(prior).or_default().insert(request_key);
+            }
         }
     }
     for _ in 0..COMPONENT_BUDGET {
@@ -1510,7 +1666,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         return Err(unsupported(u, "component budget"));
     }
     if !b.intern_readback {
-        let requests = std::mem::take(&mut b.intern_nodes);
+        let requests: Vec<_> = requests_by_level.into_values().flatten().collect();
         let has_requests = !requests.is_empty();
         let body = if has_requests {
             let union = b.node(ir::Op::Union(requests));
@@ -1525,28 +1681,49 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             )
         };
         b.ir.strata.push(ir::Stratum::Let {
-            id: request_rel,
+            id: request_rels[0],
             body,
         });
         if has_requests {
-            b.ir.outputs.push(request_rel);
-            visible.push((request_rel, intern_rel, 3));
+            b.ir.outputs.push(request_rels[0]);
+            visible.push((request_rels[0], intern_rel, 3));
         }
     }
-    if !b.effect_nodes.is_empty() {
-        let effect_output = b.rel(
-            "__ir_effects".into(),
+    let mut served = Vec::new();
+    for (relation, nodes) in std::mem::take(&mut b.effect_nodes) {
+        let relation = TermId(relation);
+        let request = b.rel(
+            format!("{}.request", u.display(relation)),
             vec![ir::Ty::Id; 2],
             ir::RelKind::Derived,
         );
-        let nodes = std::mem::take(&mut b.effect_nodes);
-        let body = b.node(ir::Op::Union(nodes));
-        b.ir.strata.push(ir::Stratum::Let {
-            id: effect_output,
-            body,
+        let body = if let Some(effect) = internal_effect {
+            let effects = b.get(effect);
+            let mapped = mapped_ground(&mut b, term_map, relation);
+            let joined = b.node(ir::Op::Join {
+                inputs: vec![effects, mapped],
+                equivalences: vec![vec![(0, 0), (1, 1)]],
+            });
+            b.mfp(joined, vec![], vec![], vec![0, 1])
+        } else {
+            b.node(ir::Op::Union(nodes))
+        };
+        let body = b.node(ir::Op::Threshold(body));
+        b.ir.strata.push(ir::Stratum::Let { id: request, body });
+        b.ir.outputs.push(request);
+        visible.push((request, effect_rel, 2));
+        let arity = keys
+            .iter()
+            .find_map(|(rel, arity)| (*rel == relation.0).then_some(*arity))
+            .ok_or_else(|| unsupported(u, "served relation arity"))?;
+        served.push(ServedSpec {
+            relation,
+            request,
+            answer: sources[&(relation.0, arity)],
+            arity,
         });
-        b.ir.outputs.push(effect_output);
-        visible.push((effect_output, effect_rel, 2));
+    }
+    if !b.snapshot_nodes.is_empty() && internal_snapshot.is_none() {
         let snapshot_output = b.rel(
             "__ir_intern_snapshots".into(),
             vec![ir::Ty::Id; 3],
@@ -1592,7 +1769,6 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         .into_iter()
         .map(|row| (sources[&(row.rel.0, row.args.len())], row))
         .collect();
-    let _ = strata;
     Ok(Lowered {
         ir: b.ir,
         terms,
@@ -1610,5 +1786,10 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
                     .map(|term| (bad_lists, vec![term])),
             )
             .collect(),
+        served,
+        sources,
+        installers,
+        atom_raws,
+        dynamic_atom_base,
     })
 }

@@ -1,0 +1,28 @@
+; One source row controls interest in one JSON document.
+(fs: (import "@std/fs"))
+
+(: want
+   (* (: path str)))
+
+(: Wants
+   (* (: path str)))
+
+(<- (Wants ?Path)
+    (want ?Path))
+
+(: Doc
+   (* (: path str)
+      (: root any)))
+
+(<- (Doc ?Path ?Root)
+    (Wants ?Path)
+    (fs.json ?Path ?Root))
+
+(: Member
+   (* (: name any)
+      (: target any)
+      (: index int)))
+
+(<- (Member ?Name ?Target ?Index)
+    (Doc ?Path ?Root)
+    (: ?Root ?Name ?Target ?Index))

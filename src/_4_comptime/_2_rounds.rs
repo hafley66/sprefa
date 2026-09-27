@@ -186,13 +186,14 @@ pub struct Pass {
     pub closure: Vec<TermId>,
     pub rules: usize,
     pub seeds: usize,
+    pub ir_answers: Option<(usize, Vec<Row>)>,
 }
 
 /// `:1203`. `Err` carries the outcome that ends the fixpoint before anything
 /// is assembled.
 pub fn round_closure(
     u: &mut Universe,
-    st: &RoundState,
+    st: &mut RoundState,
     authored_rules: &[TermId],
     base_relations: &[TermId],
     base_seeds: &[TermId],
@@ -215,7 +216,10 @@ pub fn round_closure(
         .as_ref()
         .map(|answerer| answerer.relations().collect())
         .unwrap_or_default();
-    let (closure, evaluation_diagnostics) = evaluate_round(u, &rules, &seeds, &served)?;
+    let ir_answered =
+        crate::_6_eval::ir_eval::configured_backend().is_some() && st.answerer.is_some();
+    let (closure, evaluation_diagnostics) =
+        evaluate_round_answered(u, &rules, &seeds, &served, st.answerer.as_mut())?;
     if !evaluation_diagnostics.is_empty() {
         return Ok(Err(RoundOutcome::failed(evaluation_diagnostics)));
     }
@@ -224,6 +228,7 @@ pub fn round_closure(
         closure: strip_snapshot_rows(u, &closure),
         rules: rules.len(),
         seeds: seeds.len(),
+        ir_answers: ir_answered.then(crate::_6_eval::ir_eval::take_answers),
     }))
 }
 
@@ -265,7 +270,20 @@ impl<'a> Slice for Rounds<'a> {
                 seeds: pass.seeds,
                 closure: closure.len(),
             });
-            let answered = answer_round(u, st, &closure);
+            let answered = if let Some((effects, answers)) = pass.ir_answers {
+                let mut rows = 0;
+                for answer in answers {
+                    let args = u.list(&answer.args);
+                    let row = u.compound("call", vec![answer.rel, args]);
+                    if !st.frozen_answers.contains(&row) {
+                        st.frozen_answers.push(row);
+                        rows += 1;
+                    }
+                }
+                (effects > 0).then_some((effects, rows))
+            } else {
+                answer_round(u, st, &closure)
+            };
             if let Some((effects, rows)) = answered {
                 fx(Round::Answer {
                     outer,
@@ -447,9 +465,28 @@ pub fn evaluate_round(
     seeds: &[TermId],
     served: &[TermId],
 ) -> Result<(Vec<TermId>, Vec<TermId>), Stop> {
+    evaluate_round_answered(u, rules, seeds, served, None)
+}
+
+fn evaluate_round_answered(
+    u: &mut Universe,
+    rules: &[TermId],
+    seeds: &[TermId],
+    served: &[TermId],
+    answerer: Option<&mut Answerer>,
+) -> Result<(Vec<TermId>, Vec<TermId>), Stop> {
     let mut program = round_program(u, rules, seeds)?;
     program.served.extend(served.iter().copied());
-    let closure = evaluate(u, &program, &mut |_: Trace| {});
+    let closure = match (crate::_6_eval::ir_eval::configured_backend(), answerer) {
+        (Some(backend), Some(answerer)) => crate::_6_eval::ir_eval::evaluate_ir_answered(
+            u,
+            &program,
+            backend,
+            answerer,
+            &mut |_: Trace| {},
+        ),
+        _ => evaluate(u, &program, &mut |_: Trace| {}),
+    };
     let mut diagnostics = Vec::with_capacity(closure.diagnostics.len());
     for d in &closure.diagnostics {
         let phase = d.phase;

@@ -90,23 +90,37 @@ impl Answerer {
     /// whose data row already exists (a reloaded db) is answered. Returns the
     /// rows to insert and the number of applications handed out.
     pub fn answer(&mut self, u: &mut Universe, rows: &Store) -> (Vec<Row>, usize) {
-        let mut pending: Vec<Vec<TermId>> = vec![Vec::new(); self.executors.len()];
+        let mut requests = Vec::new();
         if let Some(table) = rows.table(self.effect) {
             for index in 0..table.len() {
                 let row = table.row(index as u32);
-                let [rel, application] = [row[0], row[1]];
-                let Some(slot) = self.executors.iter().position(|(r, _)| *r == rel) else {
-                    continue;
-                };
-                if !self.seen.insert((rel, application)) {
-                    continue;
-                }
-                let once = self.executors[slot].1.cadence() == Cadence::Once;
-                if once && data_row_exists(u, rows, rel, application) {
-                    continue;
-                }
-                pending[slot].push(application);
+                requests.push((row[0], row[1]));
             }
+        }
+        self.answer_requests(u, rows, requests)
+    }
+
+    /// Hands signed-IR request additions to executors. Request removals are
+    /// handled by the IR host because it owns the answer rows for each key.
+    pub fn answer_requests(
+        &mut self,
+        u: &mut Universe,
+        rows: &Store,
+        requests: impl IntoIterator<Item = (TermId, TermId)>,
+    ) -> (Vec<Row>, usize) {
+        let mut pending: Vec<Vec<TermId>> = vec![Vec::new(); self.executors.len()];
+        for (rel, application) in requests {
+            let Some(slot) = self.executors.iter().position(|(r, _)| *r == rel) else {
+                continue;
+            };
+            if !self.seen.insert((rel, application)) {
+                continue;
+            }
+            let once = self.executors[slot].1.cadence() == Cadence::Once;
+            if once && data_row_exists(u, rows, rel, application) {
+                continue;
+            }
+            pending[slot].push(application);
         }
         let asked = pending.iter().map(Vec::len).sum();
         let mut answers = Vec::new();
@@ -116,6 +130,10 @@ impl Answerer {
             }
         }
         (answers, asked)
+    }
+
+    pub fn cancel_request(&mut self, relation: TermId, application: TermId) {
+        self.seen.remove(&(relation, application));
     }
 
     /// The served relations, for `Program.served`.
@@ -150,6 +168,32 @@ impl Reconciler {
         max_ticks: usize,
         fx: &mut dyn FnMut(Trace),
     ) -> Result<Reconciled, StoreError> {
+        if let Some(backend) = crate::_6_eval::ir_eval::configured_backend() {
+            let mut seeded = program.clone();
+            for (rel, table) in &rows.tables {
+                for id in 0..table.len() as u32 {
+                    seeded.seeds.push(Row {
+                        rel: *rel,
+                        args: table.row(id).to_vec(),
+                    });
+                }
+            }
+            let closure = crate::_6_eval::ir_eval::evaluate_ir_answered(
+                u,
+                &seeded,
+                backend,
+                &mut self.answerer,
+                fx,
+            );
+            for row in &closure.rows {
+                rows.insert(row.rel, row.args.clone().into_boxed_slice());
+            }
+            if let Some(store) = store.as_mut() {
+                let written = persist(&mut **store, u, rows)?;
+                tracing::info!(target: "dl8::store", phase = "commit", rows = written);
+            }
+            return Ok(Reconciled { ticks: 1, closure });
+        }
         let mut closure = evaluate_tick(u, program, rows, &mut store, fx)?;
         let mut ticks = 0;
         while closure.diagnostics.is_empty() && ticks < max_ticks {
@@ -175,6 +219,26 @@ impl Reconciler {
             ticks += 1;
         }
         Ok(Reconciled { ticks, closure })
+    }
+
+    pub fn run_frontiers(
+        &mut self,
+        u: &mut Universe,
+        program: &Program,
+        backend: crate::_6_eval::ir_eval::Backend,
+        frontiers: &[Vec<crate::_6_eval::ir_eval::SignedRow>],
+        public_names: &HashMap<TermId, String>,
+        fx: &mut dyn FnMut(Trace),
+    ) -> Result<(Closure, Vec<crate::_6_eval::ir_eval::FrontierResult>), Diagnostic> {
+        crate::_6_eval::ir_eval::evaluate_ir_frontiers(
+            u,
+            program,
+            backend,
+            &mut self.answerer,
+            frontiers,
+            public_names,
+            fx,
+        )
     }
 
     fn armed(&self) -> bool {
