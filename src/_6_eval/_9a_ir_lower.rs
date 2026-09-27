@@ -6,8 +6,35 @@ use super::term::{Term, TermId, Universe};
 use ivm_ir as ir;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-const LOWER_SITE: &str = concat!(file!(), ":", line!());
 const COMPONENT_BUDGET: usize = 4096;
+
+type RelationKey = (u32, usize);
+
+fn reachable(
+    start: RelationKey,
+    pending: &BTreeSet<RelationKey>,
+    edges: &BTreeMap<RelationKey, BTreeSet<RelationKey>>,
+) -> Result<BTreeSet<RelationKey>, &'static str> {
+    let mut seen = BTreeSet::new();
+    let mut todo = vec![start];
+    for _ in 0..COMPONENT_BUDGET {
+        let Some(key) = todo.pop() else {
+            return Ok(seen);
+        };
+        if !seen.insert(key) {
+            continue;
+        }
+        todo.extend(
+            edges
+                .get(&key)
+                .into_iter()
+                .flatten()
+                .filter(|key| pending.contains(key))
+                .copied(),
+        );
+    }
+    Err("component reachability budget")
+}
 
 #[derive(Clone)]
 pub struct TermSpec {
@@ -34,6 +61,8 @@ struct Builder {
     next_rel: ir::RelId,
     constructor_gets: HashMap<ir::RelId, ir::NodeId>,
     intern_nodes: Vec<ir::NodeId>,
+    effect_nodes: Vec<ir::NodeId>,
+    snapshot_nodes: Vec<ir::NodeId>,
 }
 
 impl Builder {
@@ -48,6 +77,8 @@ impl Builder {
             next_rel: 0,
             constructor_gets: HashMap::new(),
             intern_nodes: Vec::new(),
+            effect_nodes: Vec::new(),
+            snapshot_nodes: Vec::new(),
         }
     }
     fn rel(&mut self, name: String, cols: Vec<ir::Ty>, kind: ir::RelKind) -> ir::RelId {
@@ -93,9 +124,11 @@ impl Builder {
     }
 }
 
+#[track_caller]
 fn unsupported(u: &mut Universe, name: &str) -> Diagnostic {
     let construct = u.atom(name);
-    let site = u.string(LOWER_SITE);
+    let location = std::panic::Location::caller();
+    let site = u.string(&format!("{}:{}", location.file(), location.line()));
     Diagnostic {
         phase: "ir_lower",
         payload: u.compound("unsupported_construct", vec![construct, site]),
@@ -164,6 +197,115 @@ fn equal_columns(left: ir::ColId, right: ir::ColId) -> ir::Expr {
         ir::Func::Eq,
         vec![ir::Expr::Col(left), ir::Expr::Col(right)],
     )
+}
+
+fn served_effect(
+    b: &mut Builder,
+    goal: &super::program::Goal,
+    current: ir::NodeId,
+    width: usize,
+    bound: &HashMap<u32, ir::ColId>,
+    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
+    semantic: ir::RelId,
+    term_map: ir::RelId,
+    none: TermId,
+    empty: TermId,
+) -> Result<(), &'static str> {
+    let mut node = current;
+    let mut size = width;
+    let mut values = Vec::new();
+    for arg in &goal.args {
+        let term = match arg {
+            Arg::Var(v) => bound.get(&v.0).copied(),
+            Arg::Ground(id) => {
+                let mapped = mapped_ground(b, term_map, *id);
+                node = b.node(ir::Op::Join {
+                    inputs: vec![node, mapped],
+                    equivalences: vec![],
+                });
+                let col = assert_width(size + 1);
+                size += 2;
+                Some(col)
+            }
+            _ => return Err("served aggregate or fold"),
+        };
+        values.push(term);
+    }
+    let missing = mapped_ground(b, term_map, none);
+    node = b.node(ir::Op::Join {
+        inputs: vec![node, missing],
+        equivalences: vec![],
+    });
+    let missing_col = assert_width(size + 1);
+    size += 2;
+    let empty_row = mapped_ground(b, term_map, empty);
+    node = b.node(ir::Op::Join {
+        inputs: vec![node, empty_row],
+        equivalences: vec![],
+    });
+    let mut list = assert_width(size + 1);
+    let mut plain_list = list;
+    size += 2;
+    let cons = constructor(constructors, "9:2:[|]", 2, false)?;
+    for value in values.into_iter().rev() {
+        let tagged = value.unwrap_or(missing_col);
+        node = join_constructor(b, node, size, semantic, tagged);
+        let plain = assert_width(size + 1);
+        size += 2;
+        node = b.node(ir::Op::Mint {
+            input: node,
+            functor: cons,
+            args: vec![tagged, list],
+        });
+        list = assert_width(size);
+        size += 1;
+        node = b.node(ir::Op::Mint {
+            input: node,
+            functor: cons,
+            args: vec![plain, plain_list],
+        });
+        plain_list = assert_width(size);
+        size += 1;
+    }
+    let wrap = constructor(constructors, "9:1:const", 1, false)?;
+    node = b.node(ir::Op::Mint {
+        input: node,
+        functor: wrap,
+        args: vec![list],
+    });
+    let arguments = assert_width(size);
+    size += 1;
+    let relation = mapped_ground(b, term_map, goal.rel);
+    node = b.node(ir::Op::Join {
+        inputs: vec![node, relation],
+        equivalences: vec![],
+    });
+    let rel = assert_width(size + 1);
+    size += 2;
+    let ref_ctor = constructor(constructors, "9:1:ref", 1, false)?;
+    node = join_constructor(b, node, size, ref_ctor, rel);
+    let rel_inner = assert_width(size + 1);
+    size += 2;
+    let app_ctor = constructor(constructors, "9:2:application", 2, false)?;
+    node = b.node(ir::Op::Mint {
+        input: node,
+        functor: app_ctor,
+        args: vec![rel_inner, plain_list],
+    });
+    let app = assert_width(size);
+    size += 1;
+    node = b.node(ir::Op::Mint {
+        input: node,
+        functor: ref_ctor,
+        args: vec![app],
+    });
+    let application = assert_width(size);
+    let request = b.mfp(node, vec![], vec![], vec![rel, arguments, application]);
+    b.intern_nodes.push(request);
+    b.snapshot_nodes.push(request);
+    let effect = b.mfp(node, vec![], vec![], vec![rel, application]);
+    b.effect_nodes.push(effect);
+    Ok(())
 }
 
 fn compile_kernel(
@@ -462,11 +604,28 @@ fn compile_rule(
     plain_lists: ir::RelId,
     term_map: ir::RelId,
     unit: ir::RelId,
+    served: &std::collections::HashSet<TermId>,
+    none: TermId,
+    empty: TermId,
 ) -> Result<ir::NodeId, &'static str> {
     let mut current = b.get(unit);
     let mut width = 1usize;
     let mut bound: HashMap<u32, ir::ColId> = HashMap::new();
     for goal in &rule.body {
+        if served.contains(&goal.rel) {
+            served_effect(
+                b,
+                goal,
+                current,
+                width,
+                &bound,
+                constructors,
+                semantic,
+                term_map,
+                none,
+                empty,
+            )?;
+        }
         if let Some(kernel) = Kernel::of(u, goal.rel).filter(|kernel| *kernel != Kernel::Nil) {
             compile_kernel(
                 b,
@@ -485,8 +644,9 @@ fn compile_rule(
         let rel = *relations
             .get(&(goal.rel.0, goal.args.len()))
             .ok_or("unresolved relation")?;
-        let right = b.get(rel);
+        let mut right = b.get(rel);
         let mut equivalences = Vec::new();
+        let mut repeated = Vec::new();
         let mut first_here: HashMap<u32, ir::ColId> = HashMap::new();
         let mut grounds = Vec::new();
         for (position, arg) in goal.args.iter().enumerate() {
@@ -495,7 +655,7 @@ fn compile_rule(
                 if let Some(&left) = bound.get(&v) {
                     equivalences.push(vec![(0, left), (1, position)]);
                 } else if let Some(&prior) = first_here.get(&v) {
-                    equivalences.push(vec![(1, prior), (1, position)]);
+                    repeated.push(equal_columns(prior, position));
                 } else {
                     first_here.insert(v, position);
                 }
@@ -504,6 +664,9 @@ fn compile_rule(
             } else {
                 return Err("goal aggregate or fold");
             }
+        }
+        if !repeated.is_empty() {
+            right = b.mfp(right, repeated, vec![], vec![]);
         }
         if goal.polarity == Polarity::Negative {
             // Negative arguments must already be bound. A ground term has a
@@ -698,6 +861,10 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let mut program = program.clone();
     let nil_rel = kernel_ref(u, "nil");
     let intern_rel = kernel_ref(u, "intern");
+    let effect_rel = kernel_ref(u, "effect");
+    let snapshot_rel = kernel_ref(u, "intern_snapshot");
+    let none_atom = u.atom("none");
+    let none = u.compound("const", vec![none_atom]);
     let empty = u.empty_list();
     let nil = u.compound("const", vec![empty]);
     program.seeds.push(Row {
@@ -900,6 +1067,9 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             plain_lists,
             term_map,
             unit,
+            &program.served,
+            none,
+            empty,
         )
         .map_err(|name| unsupported(u, name))?;
         bodies
@@ -908,6 +1078,18 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             .push(body);
     }
     let mut pending: BTreeSet<_> = keys.clone();
+    let mut edges: BTreeMap<RelationKey, BTreeSet<RelationKey>> = BTreeMap::new();
+    let mut reverse: BTreeMap<RelationKey, BTreeSet<RelationKey>> = BTreeMap::new();
+    for rule in &program.rules {
+        let head = (rule.rel.0, rule.head.len());
+        for goal in &rule.body {
+            let dependency = (goal.rel.0, goal.args.len());
+            if keys.contains(&dependency) {
+                edges.entry(head).or_default().insert(dependency);
+                reverse.entry(dependency).or_default().insert(head);
+            }
+        }
+    }
     for _ in 0..COMPONENT_BUDGET {
         if pending.is_empty() {
             break;
@@ -928,9 +1110,29 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             })
             .collect();
         if ready.is_empty() {
-            let ids: Vec<_> = pending.iter().map(|key| relations[key]).collect();
+            let mut component = None;
+            for &candidate in &pending {
+                let forward =
+                    reachable(candidate, &pending, &edges).map_err(|name| unsupported(u, name))?;
+                let backward = reachable(candidate, &pending, &reverse)
+                    .map_err(|name| unsupported(u, name))?;
+                let group: BTreeSet<_> = forward.intersection(&backward).copied().collect();
+                let external = group.iter().any(|key| {
+                    edges
+                        .get(key)
+                        .into_iter()
+                        .flatten()
+                        .any(|dep| pending.contains(dep) && !group.contains(dep))
+                });
+                if !external {
+                    component = Some(group);
+                    break;
+                }
+            }
+            let component = component.ok_or_else(|| unsupported(u, "component ordering"))?;
+            let ids: Vec<_> = component.iter().map(|key| relations[key]).collect();
             let mut rec_bodies = Vec::new();
-            for key in &pending {
+            for key in &component {
                 let mut parts = vec![b.get(sources[key])];
                 parts.extend(bodies.remove(key).unwrap_or_default());
                 let union = b.node(ir::Op::Union(parts));
@@ -941,8 +1143,10 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
                 bodies: rec_bodies,
                 limit: None,
             }));
-            pending.clear();
-            break;
+            for key in component {
+                pending.remove(&key);
+            }
+            continue;
         }
         for key in ready {
             let mut parts = vec![b.get(sources[&key])];
@@ -974,6 +1178,34 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         });
         b.ir.outputs.push(request_rel);
         visible.push((request_rel, intern_rel, 3));
+    }
+    if !b.effect_nodes.is_empty() {
+        let effect_output = b.rel(
+            "__ir_effects".into(),
+            vec![ir::Ty::Id; 2],
+            ir::RelKind::Derived,
+        );
+        let nodes = std::mem::take(&mut b.effect_nodes);
+        let body = b.node(ir::Op::Union(nodes));
+        b.ir.strata.push(ir::Stratum::Let {
+            id: effect_output,
+            body,
+        });
+        b.ir.outputs.push(effect_output);
+        visible.push((effect_output, effect_rel, 2));
+        let snapshot_output = b.rel(
+            "__ir_intern_snapshots".into(),
+            vec![ir::Ty::Id; 3],
+            ir::RelKind::Derived,
+        );
+        let nodes = std::mem::take(&mut b.snapshot_nodes);
+        let body = b.node(ir::Op::Union(nodes));
+        b.ir.strata.push(ir::Stratum::Let {
+            id: snapshot_output,
+            body,
+        });
+        b.ir.outputs.push(snapshot_output);
+        visible.push((snapshot_output, snapshot_rel, 3));
     }
     // The SQLite host adapter resolves source columns through its first
     // output plan. Include every source in that plan.

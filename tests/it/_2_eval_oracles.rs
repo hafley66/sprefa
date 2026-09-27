@@ -1,6 +1,7 @@
 use dl8::_6_eval::evaluate;
 use dl8::_6_eval::evaluate_dd;
 use dl8::_6_eval::evaluate_sqlite;
+use dl8::_6_eval::ir_eval::{evaluate_ir, Backend};
 use dl8::_6_eval::json::closure_to_json;
 use dl8::_6_eval::json::program_from_json;
 use dl8::_6_eval::Universe;
@@ -320,6 +321,58 @@ fn dd_engine_matches_v7_oracles() {
 }
 
 #[test]
+fn ir_engines_match_v7_oracles() {
+    let mut failures = Vec::new();
+    for path in fixtures() {
+        let fixture: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let program_path = std::env::temp_dir().join(format!(
+            "dl8-ir-oracle-{}-{}.json",
+            std::process::id(),
+            path.file_stem().unwrap().to_string_lossy()
+        ));
+        std::fs::write(
+            &program_path,
+            serde_json::to_vec(&fixture["program"]).unwrap(),
+        )
+        .unwrap();
+        for engine in ["ir:dd", "ir:sqlite"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
+                .arg("eval")
+                .arg(&program_path)
+                .env("DL8_ENGINE", engine)
+                .output()
+                .unwrap();
+            let got: Value = match serde_json::from_slice(&output.stdout) {
+                Ok(value) => value,
+                Err(error) => {
+                    failures.push(format!(
+                        "{} {engine}: {error}: {}",
+                        path.display(),
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                    continue;
+                }
+            };
+            if got["closure"] != fixture["expected"]["closure"]
+                || got["diagnostics"] != fixture["expected"]["diagnostics"]
+            {
+                failures.push(format!(
+                    "{} {engine}: expected {} rows, got {} rows; diagnostics {}",
+                    path.display(),
+                    fixture["expected"]["closure"]
+                        .as_array()
+                        .map_or(0, Vec::len),
+                    got["closure"].as_array().map_or(0, Vec::len),
+                    got["diagnostics"]
+                ));
+            }
+        }
+        let _ = std::fs::remove_file(program_path);
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn served_goal_matches_rust_on_the_same_program() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = root.join("fixtures/host_effect/0_pending.dl7");
@@ -537,7 +590,7 @@ fn canonical(mut closure: Value) -> Value {
     closure
 }
 
-fn closures(program: &Value) -> [Value; 3] {
+fn closures(program: &Value) -> [Value; 5] {
     let run = |engine: usize| {
         let hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
@@ -547,7 +600,9 @@ fn closures(program: &Value) -> [Value; 3] {
             let closure = match engine {
                 0 => evaluate(&mut universe, &program, &mut |_| {}),
                 1 => evaluate_sqlite(&mut universe, &program, &mut |_| {}),
-                _ => evaluate_dd(&mut universe, &program, &mut |_| {}),
+                2 => evaluate_dd(&mut universe, &program, &mut |_| {}),
+                3 => evaluate_ir(&mut universe, &program, Backend::Dd, &mut |_| {}),
+                _ => evaluate_ir(&mut universe, &program, Backend::Sqlite, &mut |_| {}),
             };
             canonical(closure_to_json(
                 &universe,
@@ -575,7 +630,7 @@ fn closures(program: &Value) -> [Value; 3] {
             }
         }
     };
-    [run(0), run(1), run(2)]
+    [run(0), run(1), run(2), run(3), run(4)]
 }
 
 fn closure_for_seed_indices(program: &Value, seed_indices: &[usize], dd: bool) -> Value {
@@ -662,32 +717,37 @@ fn first_row_difference(rust: &Value, other: &Value) -> String {
     "row:unknown".into()
 }
 
-fn signatures([rust, sqlite, dd]: &[Value; 3]) -> Vec<String> {
-    [("sqlite", sqlite), ("dd", dd)]
-        .into_iter()
-        .filter_map(|(engine, other)| {
-            if rust == other {
-                return None;
-            }
-            if let Some(kind) = other["panic"]["kind"].as_str() {
-                return Some(format!("{engine}|diagnostic:panic:{kind}"));
-            }
-            if let Some(kind) = rust["panic"]["kind"].as_str() {
-                return Some(format!("{engine}|diagnostic:rust_panic:{kind}"));
-            }
-            let rust_diags = rust["diagnostics"].as_array().unwrap();
-            let other_diags = other["diagnostics"].as_array().unwrap();
-            let first = other_diags
-                .iter()
-                .find(|diag| !rust_diags.contains(diag))
-                .or_else(|| rust_diags.iter().find(|diag| !other_diags.contains(diag)));
-            let difference = match first {
-                Some(diag) => format!("diagnostic:{}", diagnostic_kind(diag)),
-                None => first_row_difference(rust, other),
-            };
-            Some(format!("{engine}|{difference}"))
-        })
-        .collect()
+fn signatures([rust, sqlite, dd, ir_dd, ir_sqlite]: &[Value; 5]) -> Vec<String> {
+    [
+        ("sqlite", sqlite),
+        ("dd", dd),
+        ("ir:dd", ir_dd),
+        ("ir:sqlite", ir_sqlite),
+    ]
+    .into_iter()
+    .filter_map(|(engine, other)| {
+        if rust == other {
+            return None;
+        }
+        if let Some(kind) = other["panic"]["kind"].as_str() {
+            return Some(format!("{engine}|diagnostic:panic:{kind}"));
+        }
+        if let Some(kind) = rust["panic"]["kind"].as_str() {
+            return Some(format!("{engine}|diagnostic:rust_panic:{kind}"));
+        }
+        let rust_diags = rust["diagnostics"].as_array().unwrap();
+        let other_diags = other["diagnostics"].as_array().unwrap();
+        let first = other_diags
+            .iter()
+            .find(|diag| !rust_diags.contains(diag))
+            .or_else(|| rust_diags.iter().find(|diag| !other_diags.contains(diag)));
+        let difference = match first {
+            Some(diag) => format!("diagnostic:{}", diagnostic_kind(diag)),
+            None => first_row_difference(rust, other),
+        };
+        Some(format!("{engine}|{difference}"))
+    })
+    .collect()
 }
 
 fn has_gap(program: &Value, signature: &str) -> bool {
@@ -906,8 +966,15 @@ fn random_programs_match_all_evaluators() {
         let closure = closures(&program);
         for signature in signatures(&closure) {
             let program = shrunk_program(seed, &signature);
-            let [rust, sqlite, dd] = closures(&program);
-            assert!(signatures(&[rust.clone(), sqlite.clone(), dd.clone()]).contains(&signature));
+            let [rust, sqlite, dd, ir_dd, ir_sqlite] = closures(&program);
+            assert!(signatures(&[
+                rust.clone(),
+                sqlite.clone(),
+                dd.clone(),
+                ir_dd.clone(),
+                ir_sqlite.clone()
+            ])
+            .contains(&signature));
             let count = found
                 .get(&signature)
                 .map_or(1, |entry| entry["count"].as_u64().unwrap() + 1);
@@ -928,6 +995,7 @@ fn random_programs_match_all_evaluators() {
                     "rust":rust,
                     "sqlite":sqlite,
                     "dd":dd
+                    ,"ir_dd":ir_dd,"ir_sqlite":ir_sqlite
                 }),
             );
         }
