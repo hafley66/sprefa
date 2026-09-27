@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { builtIdeas } from "../lib/0_glossary"
+import { antijoinSteps } from "./antijoin/0_steps"
 import { bilinearOpJoinDeltaRuleSteps } from "./bilinear-op-join-delta-rule/0_steps"
 import { clockCheckerSteps } from "./clock-checker/0_steps"
 import { deltaSteps } from "./delta/0_steps"
@@ -7,9 +8,11 @@ import { delayZ1Steps } from "./delay-z-1/0_steps"
 import { distinctThresholdSteps } from "./distinct-threshold/0_steps"
 import { frontierSteps } from "./frontier/0_steps"
 import { integrateDifferentiateSteps } from "./integrate-differentiate/0_steps"
+import { joinSteps } from "./join/0_steps"
 import { letrecFixpointSteps } from "./letrec-fixpoint/0_steps"
 import { linearOpSteps } from "./linear-op/0_steps"
 import { nestedTimeSteps } from "./nested-time/0_steps"
+import { reduceAggregatesSteps } from "./reduce-aggregates/0_steps"
 import { strataSteps } from "./strata/0_steps"
 import { zsetSteps } from "./zset/0_steps"
 
@@ -426,6 +429,103 @@ describe("keyed scene elements", () => {
       ]
     `)
   })
+
+  it("keeps the complete join key timeline visible", () => {
+    expect(joinSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "orders",
+          "customers",
+        ],
+        [
+          "orders",
+          "join",
+          "customers",
+        ],
+        [
+          "result",
+        ],
+        [
+          "bea",
+          "join",
+          "empty",
+        ],
+        [
+          "left",
+          "join",
+          "right",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete antijoin key timeline visible", () => {
+    expect(antijoinSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "tasks",
+          "done",
+        ],
+        [
+          "tasks",
+          "anti",
+          "out",
+        ],
+        [
+          "a",
+          "blocked",
+          "none",
+        ],
+        [
+          "done",
+          "anti",
+          "pending",
+        ],
+        [
+          "state",
+          "effect",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete reduce / aggregates key timeline visible", () => {
+    expect(reduceAggregatesSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "sales",
+        ],
+        [
+          "sales",
+          "group",
+          "ada-group",
+          "bea-group",
+        ],
+        [
+          "sum",
+          "out",
+        ],
+        [
+          "in",
+          "sum",
+          "old",
+          "new",
+        ],
+        [
+          "in",
+          "sum",
+          "old",
+          "new",
+        ],
+        [
+          "ops",
+          "min",
+          "max",
+          "sum",
+        ],
+      ]
+    `)
+  })
 })
 
 describe("built glossary scenes", () => {
@@ -572,6 +672,40 @@ describe("built glossary scenes", () => {
           ],
           "group": "time",
           "idea": "clock-checker",
+        },
+        {
+          "captions": [
+            "Orders carry a customer name; customers carry a tier.",
+            "Join compares the shared name column. Ada matches Ada.",
+            "The matching pair produces order 7 with tier gold.",
+            "Bea has no customer row, so order 8 produces no output.",
+            "Weights multiply. Two copies of an order and three copies of Ada produce weight 6.",
+          ],
+          "group": "operators",
+          "idea": "join",
+        },
+        {
+          "captions": [
+            "Tasks a and b are candidates. The done set contains a.",
+            "Antijoin keeps left rows whose key is absent on the right.",
+            "Task a is blocked because its key appears in done.",
+            "Retracting done(a) makes a absent and inserts task a into pending.",
+            "Antijoin must remember right-side presence to react when a key crosses zero.",
+          ],
+          "group": "operators",
+          "idea": "antijoin",
+        },
+        {
+          "captions": [
+            "Sales rows pair each clerk with a concrete amount.",
+            "Reduce groups rows by clerk before applying an aggregate.",
+            "Sum emits one value per key: Ada 10 and Bea 3.",
+            "A new Ada sale of 2 changes her aggregate from 10 to 12.",
+            "Retracting Ada's sale of 4 changes the stored total from 12 to 8.",
+            "Count, minimum, maximum, and sum share the same group-and-replace shape.",
+          ],
+          "group": "operators",
+          "idea": "reduce-aggregates",
         },
       ]
     `)

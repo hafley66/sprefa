@@ -5,19 +5,19 @@ import { builtIdeas } from "../src/lib/0_glossary"
 
 const outputDirectory = resolve("review-shots")
 
-test("capture every built step", async ({ browser }) => {
-  test.setTimeout(30_000 + builtIdeas.reduce((total, { idea }) => total + idea.steps!.length, 0) * 4_000)
-  await mkdir(outputDirectory, { recursive: true })
+for (const { group, idea } of builtIdeas) {
+  test(`capture ${group.slug}/${idea.slug}`, async ({ browser }) => {
+    test.setTimeout(30_000 + idea.steps!.length * 4_000)
+    await mkdir(outputDirectory, { recursive: true })
 
-  for (const reducedMotion of ["no-preference", "reduce"] as const) {
-    const context = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
-      reducedMotion,
-    })
-    const page = await context.newPage()
-
-    for (const { group, idea } of builtIdeas) {
+    for (const reducedMotion of ["no-preference", "reduce"] as const) {
+      const context = await browser.newContext({
+        viewport: { width: 1440, height: 900 },
+        reducedMotion,
+      })
+      const page = await context.newPage()
       const stepCount = idea.steps!.length
+
       for (let step = 1; step <= stepCount; step += 1) {
         await page.goto(`/${group.slug}/${idea.slug}/${step}`)
         await expect(page.getByText(`step ${step} of ${stepCount}`)).toBeVisible()
@@ -32,8 +32,8 @@ test("capture every built step", async ({ browser }) => {
           fullPage: true,
         })
       }
-    }
 
-    await context.close()
-  }
-})
+      await context.close()
+    }
+  })
+}

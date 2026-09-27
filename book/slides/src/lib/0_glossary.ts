@@ -1,3 +1,4 @@
+import { antijoinSteps } from "../ideas/antijoin/0_steps"
 import { bilinearOpJoinDeltaRuleSteps } from "../ideas/bilinear-op-join-delta-rule/0_steps"
 import { clockCheckerSteps } from "../ideas/clock-checker/0_steps"
 import { deltaSteps } from "../ideas/delta/0_steps"
@@ -5,9 +6,11 @@ import { delayZ1Steps } from "../ideas/delay-z-1/0_steps"
 import { distinctThresholdSteps } from "../ideas/distinct-threshold/0_steps"
 import { frontierSteps } from "../ideas/frontier/0_steps"
 import { integrateDifferentiateSteps } from "../ideas/integrate-differentiate/0_steps"
+import { joinSteps } from "../ideas/join/0_steps"
 import { letrecFixpointSteps } from "../ideas/letrec-fixpoint/0_steps"
 import { linearOpSteps } from "../ideas/linear-op/0_steps"
 import { nestedTimeSteps } from "../ideas/nested-time/0_steps"
+import { reduceAggregatesSteps } from "../ideas/reduce-aggregates/0_steps"
 import { strataSteps } from "../ideas/strata/0_steps"
 import { zsetSteps } from "../ideas/zset/0_steps"
 import type { Step } from "./scene/0_types"
@@ -33,9 +36,9 @@ export const glossary: readonly GlossaryGroup[] = [
     { slug: "clock-checker", title: "Clock checker", summary: "A planned check for temporal dependencies", built: true, steps: clockCheckerSteps },
   ] },
   { slug: "operators", title: "Operators", ideas: [
-    { slug: "join", title: "Join", summary: "Match rows through shared keys", built: false },
-    { slug: "antijoin", title: "Antijoin", summary: "Keep rows with no matching counterpart", built: false },
-    { slug: "reduce-aggregates", title: "Reduce / aggregates", summary: "Maintain grouped summaries", built: false },
+    { slug: "join", title: "Join", summary: "Match rows through shared keys", built: true, steps: joinSteps },
+    { slug: "antijoin", title: "Antijoin", summary: "Keep rows with no matching counterpart", built: true, steps: antijoinSteps },
+    { slug: "reduce-aggregates", title: "Reduce / aggregates", summary: "Maintain grouped summaries", built: true, steps: reduceAggregatesSteps },
     { slug: "top-k", title: "Top-k", summary: "Maintain the first ranked rows", built: false },
     { slug: "window", title: "Window", summary: "Restrict input to a range of time", built: false },
     { slug: "union-negate", title: "Union / negate", summary: "Combine collections and reverse weights", built: false },

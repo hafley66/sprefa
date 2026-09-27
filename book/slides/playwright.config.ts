@@ -3,6 +3,8 @@ import { defineConfig } from "@playwright/test"
 export default defineConfig({
   testDir: "./scripts",
   testMatch: "0_shots.ts",
+  fullyParallel: true,
+  workers: 3,
   outputDir: ".playwright-results",
   reporter: "line",
   use: {
