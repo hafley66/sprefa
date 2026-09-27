@@ -1,0 +1,56 @@
+direction: right
+
+syntax: "syntax: one rule" {
+  src: |'lisp
+    (: Action (* (: value int)))
+    (: Event  (* (: value int)))
+    (<+ (Action ?Value) (Event ?Value))
+  '|
+}
+
+today: "today: generic lowering, 11 nodes for one copy" {
+  style.fill: "#fdecea"
+  unit: "Get __ir_unit (1 row)" {style.fill: "#f8c9c4"}
+  ev: "Get Event" {style.fill: "#cfe8ff"}
+  join: "Join unit x Event (no keys)" {style.fill: "#f8c9c4"}
+  proj: "Mfp project [1]" {style.fill: "#f8c9c4"}
+  seeds: "Get Action seeds (empty)" {style.fill: "#f8c9c4"}
+  union: "Union" {style.fill: "#f8c9c4"}
+  thr: "Threshold (to set)" {style.fill: "#f8c9c4"}
+  out: "output Action" {style.fill: "#d7f5d0"}
+}
+
+today_sql: |'sql
+  CREATE TABLE ..._n32_d; CREATE TABLE ..._n32_i;  -- join
+  CREATE TABLE ..._n41_d; CREATE TABLE ..._n41_i;  -- union
+  CREATE TABLE ..._n42_d; CREATE TABLE ..._n42_i;  -- threshold
+  CREATE INDEX ..._n32_x0 ON ..._n32_i(c0);
+  CREATE TABLE ... x 39;  -- prewarm: 13 constructor kinds x 3
+  CREATE TABLE ... x 40;  -- __ir_all_sources: 20 branches
+  SELECT 89 AS objects, 86 AS ir_nodes;
+'|
+
+next: "next: simplify pass, 1 node" {
+  style.fill: "#e8f7e4"
+  ev2: "Get Event" {style.fill: "#cfe8ff"}
+  act: "output Action = alias of Event" {style.fill: "#d7f5d0"}
+}
+
+next_sql: |'sql
+  CREATE TABLE Event (value INTEGER);  -- the only table
+  CREATE VIEW Action AS SELECT value FROM Event;  -- optional
+  SELECT 'delta(Action) = delta(Event)' AS per_frontier;
+'|
+
+syntax -> today: "bridge _9a_ir_lower.rs" {style.stroke: "#c0392b"}
+today.unit -> today.join {style.stroke: "#c0392b"}
+today.ev -> today.join {style.stroke: "#2e86de"}
+today.join -> today.proj {style.stroke: "#c0392b"}
+today.proj -> today.union {style.stroke: "#c0392b"}
+today.seeds -> today.union {style.stroke: "#c0392b"}
+today.union -> today.thr {style.stroke: "#c0392b"}
+today.thr -> today.out {style.stroke: "#c0392b"}
+today -> today_sql: "ivm-sqlite NodesPlan" {style.stroke: "#c0392b"}
+syntax -> next: "bridge + simplify" {style.stroke: "#27ae60"}
+next.ev2 -> next.act: "identity" {style.stroke: "#27ae60"}
+next -> next_sql: "ivm-sqlite" {style.stroke: "#27ae60"}
