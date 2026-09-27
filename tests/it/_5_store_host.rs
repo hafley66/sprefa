@@ -1041,17 +1041,21 @@ fn built_candidates() -> Vec<PathBuf> {
     out
 }
 
-/// The `tests/_16_extract_tsi.rs` search. The found path is handed to `dl8 run`
-/// as `SPREFA_EXTRACT_BIN`; the external crate is never built by this suite.
+fn s20hosts_which(program: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|directory| directory.join(program))
+        .find(|candidate| candidate.is_file())
+}
+
+/// `$SPREFA_EXTRACT_BIN`, `ryi` on PATH, then the `tests/_16_extract_tsi.rs`
+/// search. The external crate is never built by this suite.
 fn extract_bin() -> Option<PathBuf> {
-    if let Some(built) = built_candidates().into_iter().find(|path| path.exists()) {
-        return Some(built);
-    }
     if let Some(named) = std::env::var_os("SPREFA_EXTRACT_BIN") {
         let path = PathBuf::from(named);
         return path.is_file().then_some(path);
     }
-    None
+    s20hosts_which("ryi").or_else(|| built_candidates().into_iter().find(|path| path.is_file()))
 }
 
 #[test]

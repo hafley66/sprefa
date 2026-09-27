@@ -81,17 +81,14 @@ fn built_candidates() -> Vec<PathBuf> {
     out
 }
 
-/// A built binary in the worktree or its parent, then `$SPREFA_EXTRACT_BIN`.
+/// `$SPREFA_EXTRACT_BIN`, `ryi` on PATH, then a built binary in the worktree.
 /// The external crate is never built by this test suite.
 fn extract_bin() -> Option<PathBuf> {
-    if let Some(built) = built_candidates().into_iter().find(|path| path.exists()) {
-        return Some(built);
-    }
     if let Some(named) = std::env::var_os("SPREFA_EXTRACT_BIN") {
         let path = PathBuf::from(named);
         return path.is_file().then_some(path);
     }
-    None
+    which("ryi").or_else(|| built_candidates().into_iter().find(|path| path.is_file()))
 }
 
 fn skip_without_extract() -> bool {
