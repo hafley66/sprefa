@@ -6,6 +6,7 @@ import { deltaSteps } from "../ideas/delta/0_steps"
 import { delayZ1Steps } from "../ideas/delay-z-1/0_steps"
 import { distinctThresholdSteps } from "../ideas/distinct-threshold/0_steps"
 import { frontierSteps } from "../ideas/frontier/0_steps"
+import { fsWatchContinuingSteps } from "../ideas/fs-watch-continuing/0_steps"
 import { integrateDifferentiateSteps } from "../ideas/integrate-differentiate/0_steps"
 import { internSteps } from "../ideas/intern/0_steps"
 import { joinSteps } from "../ideas/join/0_steps"
@@ -15,6 +16,8 @@ import { magicSetsDemandSteps } from "../ideas/magic-sets-demand/0_steps"
 import { mintDictionarySteps } from "../ideas/mint-dictionary/0_steps"
 import { nestedTimeSteps } from "../ideas/nested-time/0_steps"
 import { reduceAggregatesSteps } from "../ideas/reduce-aggregates/0_steps"
+import { requestAnswerEffectsSteps } from "../ideas/request-answer-effects/0_steps"
+import { retractionSteps } from "../ideas/retraction/0_steps"
 import { strataSteps } from "../ideas/strata/0_steps"
 import { strConsSteps } from "../ideas/str-cons/0_steps"
 import { semiNaiveSteps } from "../ideas/semi-naive/0_steps"
@@ -67,9 +70,9 @@ export const glossary: readonly GlossaryGroup[] = [
     { slug: "term-lt", title: "TermLt", summary: "Order terms across their runtime shapes", built: true, steps: termLtSteps },
   ] },
   { slug: "host", title: "Host", ideas: [
-    { slug: "request-answer-effects", title: "Request / answer effects", summary: "Connect relational requests to host answers", built: false },
-    { slug: "retraction", title: "Retraction", summary: "Withdraw a request or derived answer", built: false },
-    { slug: "fs-watch-continuing", title: "fs.watch continuing", summary: "Stream filesystem changes over time", built: false },
+    { slug: "request-answer-effects", title: "Request / answer effects", summary: "Connect relational requests to host answers", built: true, steps: requestAnswerEffectsSteps },
+    { slug: "retraction", title: "Retraction", summary: "Withdraw a request or derived answer", built: true, steps: retractionSteps },
+    { slug: "fs-watch-continuing", title: "fs.watch continuing", summary: "Stream filesystem changes over time", built: true, steps: fsWatchContinuingSteps },
   ] },
   { slug: "cross-system", title: "Cross-system", ideas: [
     { slug: "collision-grid", title: "DBSP / DD / SQL / Redux / RxJS collision grid", summary: "Map shared concepts across data systems", built: false },

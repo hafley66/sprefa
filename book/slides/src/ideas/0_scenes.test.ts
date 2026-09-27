@@ -8,6 +8,7 @@ import { deltaSteps } from "./delta/0_steps"
 import { delayZ1Steps } from "./delay-z-1/0_steps"
 import { distinctThresholdSteps } from "./distinct-threshold/0_steps"
 import { frontierSteps } from "./frontier/0_steps"
+import { fsWatchContinuingSteps } from "./fs-watch-continuing/0_steps"
 import { integrateDifferentiateSteps } from "./integrate-differentiate/0_steps"
 import { internSteps } from "./intern/0_steps"
 import { joinSteps } from "./join/0_steps"
@@ -17,6 +18,8 @@ import { magicSetsDemandSteps } from "./magic-sets-demand/0_steps"
 import { mintDictionarySteps } from "./mint-dictionary/0_steps"
 import { nestedTimeSteps } from "./nested-time/0_steps"
 import { reduceAggregatesSteps } from "./reduce-aggregates/0_steps"
+import { requestAnswerEffectsSteps } from "./request-answer-effects/0_steps"
+import { retractionSteps } from "./retraction/0_steps"
 import { strataSteps } from "./strata/0_steps"
 import { strConsSteps } from "./str-cons/0_steps"
 import { semiNaiveSteps } from "./semi-naive/0_steps"
@@ -865,6 +868,99 @@ describe("keyed scene elements", () => {
       ]
     `)
   })
+
+  it("keeps the complete request / answer effects key timeline visible", () => {
+    expect(requestAnswerEffectsSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "effect",
+          "input",
+          "output",
+        ],
+        [
+          "requests",
+        ],
+        [
+          "requests",
+          "host",
+          "disk",
+        ],
+        [
+          "host",
+          "answers",
+        ],
+        [
+          "answers",
+          "derive",
+          "tasks",
+        ],
+        [
+          "cycle",
+          "again",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete retraction key timeline visible", () => {
+    expect(retractionSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "request",
+          "watcher",
+        ],
+        [
+          "answer",
+          "derived",
+        ],
+        [
+          "delete",
+        ],
+        [
+          "reconcile",
+          "watcher",
+        ],
+        [
+          "answer",
+          "gone",
+        ],
+        [
+          "chain",
+          "result",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete fs.watch continuing key timeline visible", () => {
+    expect(fsWatchContinuingSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "request",
+        ],
+        [
+          "request",
+          "watch",
+        ],
+        [
+          "time",
+          "body",
+        ],
+        [
+          "time",
+          "body",
+        ],
+        [
+          "time",
+          "body",
+        ],
+        [
+          "request",
+          "cancel",
+        ],
+      ]
+    `)
+  })
 })
 
 describe("built glossary scenes", () => {
@@ -1172,6 +1268,42 @@ describe("built glossary scenes", () => {
           ],
           "group": "kernel",
           "idea": "term-lt",
+        },
+        {
+          "captions": [
+            "An effect type connects an input product to an output sum.",
+            "A program derives one request row for todo.json.",
+            "The host reads the request and performs the filesystem operation.",
+            "The host inserts an answer row keyed to request req-7.",
+            "Evaluation resumes with the answer row and derives tasks = 3.",
+            "Compiler and runtime use the same request, answer, re-evaluate contract.",
+          ],
+          "group": "host",
+          "idea": "request-answer-effects",
+        },
+        {
+          "captions": [
+            "A live fs.watch application keeps a watch active for app.ts.",
+            "The current UTF-8 body is the answer row for that path.",
+            "When the program withdraws the application its weight changes by −1.",
+            "The host sees no remaining application for the file and cancels its watcher.",
+            "Answers supported by the withdrawn request retract as well.",
+            "Retraction propagates through the same weighted relations as insertion.",
+          ],
+          "group": "host",
+          "idea": "retraction",
+        },
+        {
+          "captions": [
+            "One fs.watch application asks for the current UTF-8 body of app.ts.",
+            "The host watches the file's parent directory so replace-on-save updates are observed.",
+            "The existing file yields its current body v1.",
+            "When the body changes to v2 the old body retracts and the new body inserts.",
+            "Deleting app.ts retracts v2 and leaves no current body row.",
+            "The application keeps listening after deletion. Retracting it cancels the continuing watch.",
+          ],
+          "group": "host",
+          "idea": "fs-watch-continuing",
         },
       ]
     `)
