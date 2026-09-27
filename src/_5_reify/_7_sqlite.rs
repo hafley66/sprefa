@@ -2063,6 +2063,8 @@ pub(crate) fn program_plan_with<'a>(
             if !catalog.recursive(component) {
                 continue;
             }
+            // The extension's recursive step takes one member reference and
+            // no EXISTS, so a nonlinear or negating component runs as rounds.
             let nonlinear = component.iter().any(|key| {
                 catalog.derived[key].iter().any(|rule| {
                     rule.body
@@ -2073,6 +2075,7 @@ pub(crate) fn program_plan_with<'a>(
                         })
                         .count()
                         > 1
+                        || rule.body.iter().any(|goal| goal.polarity != Polarity::Positive)
                 })
             });
             if nonlinear {

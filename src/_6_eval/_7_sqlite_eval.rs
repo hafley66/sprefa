@@ -404,7 +404,7 @@ impl IEvaluate for SqliteEvaluate {
                 let mut material_tables = Vec::new();
                 for (table, columns) in plan.material_tables() {
                     ddl.push('\n');
-                    ddl.push_str(&product_ddl(&table, columns.len()));
+                    ddl.push_str(&table_ddl(&table, &columns));
                     material_tables.push(table);
                 }
                 (
@@ -682,7 +682,11 @@ fn product_columns(arity: usize) -> Vec<String> {
 }
 
 fn product_ddl(table: &str, arity: usize) -> String {
-    let unique = product_columns(arity);
+    table_ddl(table, &product_columns(arity))
+}
+
+/// A set table over the given column names, all `INTEGER NOT NULL`.
+fn table_ddl(table: &str, unique: &[String]) -> String {
     let columns: Vec<String> = unique
         .iter()
         .map(|column| format!("{column} INTEGER NOT NULL"))
