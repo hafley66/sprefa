@@ -67,8 +67,14 @@ impl<E: Engine> EngineSession<E> {
         host: &mut Raw<'_>,
         fingerprint: u64,
     ) -> Result<Self, ivm_engine::EngineError> {
+        let census_start = std::time::Instant::now();
         let engine = E::install(&lowered.ir, host)?;
-        tracing::debug!(target: "dl8::ir", "ir install");
+        tracing::info!(
+            target: "dl8::ir",
+            install_ns = census_start.elapsed().as_nanos(),
+            engine = std::any::type_name::<E>(),
+            "ir install"
+        );
         Ok(Self {
             engine,
             mapped: HashMap::new(),
@@ -175,6 +181,9 @@ impl IrSession {
                             }
                         }
                     };
+                    if let Ok(creates) = sqlite_create_count(&connection) {
+                        tracing::info!(target: "dl8::ir", sqlite_create_count = creates, "ir schema");
+                    }
                     self.sqlite = Some((connection, session));
                 }
                 let (connection, session) = self.sqlite.as_mut().unwrap();
@@ -1295,7 +1304,7 @@ fn evaluate_ir_with_answerer(
         Backend::Sqlite => match rusqlite::Connection::open_in_memory() {
             Ok(connection) => {
                 let mut host = Raw::with_connection(&connection);
-                run::<ivm_sqlite::Sqlite>(
+                let result = run::<ivm_sqlite::Sqlite>(
                     u,
                     &lowered,
                     &mut host,
@@ -1304,7 +1313,11 @@ fn evaluate_ir_with_answerer(
                     None,
                     None,
                     fx,
-                )
+                );
+                if let Ok(creates) = sqlite_create_count(&connection) {
+                    tracing::info!(target: "dl8::ir", sqlite_create_count = creates, "ir schema");
+                }
+                result
             }
             Err(error) => {
                 return Closure {
@@ -1324,4 +1337,12 @@ fn evaluate_ir_with_answerer(
             diagnostics: vec![diagnostic(u, "engine", error)],
         },
     }
+}
+
+fn sqlite_create_count(connection: &rusqlite::Connection) -> rusqlite::Result<i64> {
+    connection.query_row(
+        "SELECT (SELECT count(*) FROM sqlite_master WHERE sql LIKE 'CREATE %') + (SELECT count(*) FROM sqlite_temp_master WHERE sql LIKE 'CREATE %')",
+        [],
+        |row| row.get(0),
+    )
 }
