@@ -121,90 +121,123 @@ fn decode_terms<E: Engine>(
     Ok(decoded)
 }
 
-fn install_term<E: Engine>(
+fn install_terms<E: Engine>(
     u: &Universe,
     lowered: &Lowered,
     engine: &mut E,
     host: &mut Raw<'_>,
     mapped: &mut HashMap<TermId, Cell>,
-    term: TermId,
-) -> Result<Cell, ivm_engine::EngineError> {
-    if let Some(&cell) = mapped.get(&term) {
-        return Ok(cell);
-    }
-    let value = u.get(term).clone();
-    if let Term::Str(sym) = value {
-        let cell = engine.intern_text(u.sym_str(sym), host)?;
-        mapped.insert(term, cell);
-        return Ok(cell);
-    }
-    let (shape, raw, args): ((String, usize, bool), Option<i64>, Vec<TermId>) = match value {
-        Term::Int(n) => (("0:int".into(), 0, true), Some(n), vec![]),
-        Term::Bool(v) => (("1:bool".into(), 0, true), Some(i64::from(v)), vec![]),
-        Term::Atom(_) => {
-            let raw = lowered
-                .atom_raws
-                .get(&term)
-                .copied()
-                .unwrap_or(lowered.dynamic_atom_base + i64::from(term.0));
-            (("3:atom".into(), 0, true), Some(raw), vec![])
+    roots: &[TermId],
+) -> Result<(), ivm_engine::EngineError> {
+    let mut pending = BTreeSet::new();
+    let mut todo = roots.to_vec();
+    while let Some(term) = todo.pop() {
+        if mapped.contains_key(&term) || !pending.insert(term.0) {
+            continue;
         }
-        Term::Compound(sym, args) => (
-            (
-                format!("9:{}:{}", args.len(), u.sym_str(sym)),
-                args.len(),
-                false,
-            ),
-            None,
-            args,
-        ),
-        Term::Float(_) => {
-            return Err(ivm_engine::EngineError::new(
-                ivm_engine::Stage::Settle,
-                None,
-                ivm_engine::ErrorKind::Unsupported("dynamic float term"),
-            ))
+        match u.get(term) {
+            Term::Str(sym) => {
+                let cell = engine.intern_text(u.sym_str(*sym), host)?;
+                mapped.insert(term, cell);
+                pending.remove(&term.0);
+            }
+            Term::Compound(_, args) => todo.extend(args.iter().copied()),
+            _ => {}
         }
-        Term::Str(_) => unreachable!(),
-    };
-    let Some(&(source, output)) = lowered.installers.get(&shape) else {
-        return Err(ivm_engine::EngineError::new(
+    }
+    for _ in 0..pending.len().min(TERM_BUDGET) + 1 {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let ready: Vec<_> = pending
+            .iter()
+            .copied()
+            .map(TermId)
+            .filter(|term| match u.get(*term) {
+                Term::Compound(_, args) => args.iter().all(|arg| mapped.contains_key(arg)),
+                _ => true,
+            })
+            .collect();
+        if ready.is_empty() {
+            break;
+        }
+        let mut changes = Vec::new();
+        let mut outputs = BTreeSet::new();
+        for term in &ready {
+            let value = u.get(*term);
+            let (shape, raw, args): ((String, usize, bool), Option<i64>, &[TermId]) = match value {
+                Term::Int(n) => (("0:int".into(), 0, true), Some(*n), &[]),
+                Term::Bool(v) => (("1:bool".into(), 0, true), Some(i64::from(*v)), &[]),
+                Term::Atom(_) => (
+                    ("3:atom".into(), 0, true),
+                    Some(
+                        lowered
+                            .atom_raws
+                            .get(term)
+                            .copied()
+                            .unwrap_or(lowered.dynamic_atom_base + i64::from(term.0)),
+                    ),
+                    &[],
+                ),
+                Term::Compound(sym, args) => (
+                    (
+                        format!("9:{}:{}", args.len(), u.sym_str(*sym)),
+                        args.len(),
+                        false,
+                    ),
+                    None,
+                    args,
+                ),
+                Term::Float(_) | Term::Str(_) => continue,
+            };
+            let Some(&(source, output)) = lowered.installers.get(&shape) else {
+                return Err(ivm_engine::EngineError::new(
+                    ivm_engine::Stage::Settle,
+                    None,
+                    ivm_engine::ErrorKind::Unsupported("dynamic term constructor"),
+                ));
+            };
+            let mut row = vec![term.0 as i64];
+            if let Some(raw) = raw {
+                row.push(raw);
+            } else {
+                row.extend(args.iter().map(|arg| mapped[arg]));
+            }
+            changes.push(ir::SourceChange {
+                rel: source,
+                row,
+                w: 1,
+            });
+            outputs.insert(output);
+        }
+        settle(engine, host, changes)?;
+        for output in outputs {
+            for (row, weight) in engine.snapshot(output, host)? {
+                if weight > 0 {
+                    if let (Some(&original), Some(&cell)) = (row.first(), row.last()) {
+                        let term = TermId(original as u32);
+                        if pending.contains(&term.0) {
+                            mapped.insert(term, cell);
+                        }
+                    }
+                }
+            }
+        }
+        for term in ready {
+            if mapped.contains_key(&term) {
+                pending.remove(&term.0);
+            }
+        }
+    }
+    if pending.is_empty() {
+        Ok(())
+    } else {
+        Err(ivm_engine::EngineError::new(
             ivm_engine::Stage::Settle,
             None,
-            ivm_engine::ErrorKind::Unsupported("dynamic term constructor"),
-        ));
-    };
-    let mut row = vec![term.0 as i64];
-    if let Some(raw) = raw {
-        row.push(raw);
-    } else {
-        for arg in args {
-            row.push(install_term(u, lowered, engine, host, mapped, arg)?);
-        }
+            ivm_engine::ErrorKind::Unsupported("dynamic term install budget or cycle"),
+        ))
     }
-    settle(
-        engine,
-        host,
-        vec![ir::SourceChange {
-            rel: source,
-            row,
-            w: 1,
-        }],
-    )?;
-    let cell = engine
-        .snapshot(output, host)?
-        .into_iter()
-        .find(|(row, weight)| *weight > 0 && row.first() == Some(&(term.0 as i64)))
-        .and_then(|(row, _)| row.last().copied())
-        .ok_or_else(|| {
-            ivm_engine::EngineError::new(
-                ivm_engine::Stage::Snapshot,
-                Some(output),
-                ivm_engine::ErrorKind::Unsupported("dynamic term install"),
-            )
-        })?;
-    mapped.insert(term, cell);
-    Ok(cell)
 }
 
 fn run<E: Engine>(
@@ -367,6 +400,11 @@ fn run<E: Engine>(
                 .unwrap()
                 .answer_requests(u, &store, [key]);
             request_count += asked;
+            let answer_terms: Vec<_> = rows
+                .iter()
+                .flat_map(|answer| answer.args.iter().copied())
+                .collect();
+            install_terms(u, lowered, &mut engine, host, &mut mapped, &answer_terms)?;
             let mut recorded = Vec::new();
             for answer in rows {
                 LAST_ANSWERS.with(|rows| rows.borrow_mut().push(answer.clone()));
@@ -378,14 +416,7 @@ fn run<E: Engine>(
                     cells.push(1);
                 } else {
                     for term in answer.args {
-                        cells.push(install_term(
-                            u,
-                            lowered,
-                            &mut engine,
-                            host,
-                            &mut mapped,
-                            term,
-                        )?);
+                        cells.push(mapped[&term]);
                     }
                 }
                 next.push(ir::SourceChange {
