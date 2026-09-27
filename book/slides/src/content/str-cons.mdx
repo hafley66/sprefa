@@ -1,0 +1,34 @@
+## !!steps Empty
+
+```sql !
+-- !focus(1)
+(str.nil ?Empty)                  -- ?Empty = ""
+```
+
+## !!steps Join
+
+```sql !
+-- !focus(1)
+(str.cons "h" "ello" ?Text)      -- ?Text = "hello"
+```
+
+## !!steps Head is text
+
+```sql !
+-- !focus(1)
+(str.cons "hi " "Ada" ?Text)     -- ?Text = "hi Ada"
+```
+
+## !!steps Split
+
+```sql !
+-- !focus(1)
+(str.cons ?H ?T "élan")
+```
+
+## !!steps Empty split
+
+```sql !
+-- !focus(1)
+(str.cons ?H ?T "")  -- no row
+```

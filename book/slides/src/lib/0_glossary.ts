@@ -16,7 +16,9 @@ import { mintDictionarySteps } from "../ideas/mint-dictionary/0_steps"
 import { nestedTimeSteps } from "../ideas/nested-time/0_steps"
 import { reduceAggregatesSteps } from "../ideas/reduce-aggregates/0_steps"
 import { strataSteps } from "../ideas/strata/0_steps"
+import { strConsSteps } from "../ideas/str-cons/0_steps"
 import { semiNaiveSteps } from "../ideas/semi-naive/0_steps"
+import { termLtSteps } from "../ideas/term-lt/0_steps"
 import { topKSteps } from "../ideas/top-k/0_steps"
 import { unionNegateSteps } from "../ideas/union-negate/0_steps"
 import { windowSteps } from "../ideas/window/0_steps"
@@ -61,8 +63,8 @@ export const glossary: readonly GlossaryGroup[] = [
     { slug: "mint-dictionary", title: "Mint dictionary", summary: "Assign stable identities to values", built: true, steps: mintDictionarySteps },
     { slug: "cons-nil-lists", title: "cons / nil lists", summary: "Build lists from a head and tail", built: true, steps: consNilListsSteps },
     { slug: "intern", title: "intern", summary: "Construct the same node from the same arguments", built: true, steps: internSteps },
-    { slug: "str-cons", title: "str.cons", summary: "Construct strings from two parts", built: false },
-    { slug: "term-lt", title: "TermLt", summary: "Order terms across their runtime shapes", built: false },
+    { slug: "str-cons", title: "str.cons", summary: "Construct strings from two parts", built: true, steps: strConsSteps },
+    { slug: "term-lt", title: "TermLt", summary: "Order terms across their runtime shapes", built: true, steps: termLtSteps },
   ] },
   { slug: "host", title: "Host", ideas: [
     { slug: "request-answer-effects", title: "Request / answer effects", summary: "Connect relational requests to host answers", built: false },

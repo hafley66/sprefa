@@ -18,7 +18,9 @@ import { mintDictionarySteps } from "./mint-dictionary/0_steps"
 import { nestedTimeSteps } from "./nested-time/0_steps"
 import { reduceAggregatesSteps } from "./reduce-aggregates/0_steps"
 import { strataSteps } from "./strata/0_steps"
+import { strConsSteps } from "./str-cons/0_steps"
 import { semiNaiveSteps } from "./semi-naive/0_steps"
+import { termLtSteps } from "./term-lt/0_steps"
 import { topKSteps } from "./top-k/0_steps"
 import { unionNegateSteps } from "./union-negate/0_steps"
 import { windowSteps } from "./window/0_steps"
@@ -815,6 +817,54 @@ describe("keyed scene elements", () => {
       ]
     `)
   })
+
+  it("keeps the complete str.cons key timeline visible", () => {
+    expect(strConsSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "nil",
+          "empty",
+        ],
+        [
+          "parts",
+        ],
+        [
+          "parts",
+        ],
+        [
+          "split",
+        ],
+        [
+          "empty",
+          "cons",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete TermLt key timeline visible", () => {
+    expect(termLtSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "items",
+        ],
+        [
+          "order",
+        ],
+        [
+          "order-a",
+          "order-b",
+        ],
+        [
+          "sorted",
+        ],
+        [
+          "yes",
+          "no",
+        ],
+      ]
+    `)
+  })
 })
 
 describe("built glossary scenes", () => {
@@ -1100,6 +1150,28 @@ describe("built glossary scenes", () => {
           ],
           "group": "kernel",
           "idea": "intern",
+        },
+        {
+          "captions": [
+            "str.nil/1 produces the empty string.",
+            "With both parts bound, str.cons/3 concatenates them.",
+            "The head may contain more than one character when constructing text.",
+            "With only the whole string bound, str.cons splits its first Unicode character from the rest.",
+            "The empty string has no first character, so split mode yields no row.",
+          ],
+          "group": "kernel",
+          "idea": "str-cons",
+        },
+        {
+          "captions": [
+            "any.lt compares values from different runtime shapes with one standard term order.",
+            "Numbers come first and compare by numeric value; an integer precedes an equal float.",
+            "The kind order continues through booleans, strings, [], atoms and compounds.",
+            "For the concrete items, any.lt holds for 1.5 < 3 < true < "apple".",
+            "any.lt is a predicate: it emits the pair when left precedes right and emits no row otherwise.",
+          ],
+          "group": "kernel",
+          "idea": "term-lt",
         },
       ]
     `)

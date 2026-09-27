@@ -1,0 +1,36 @@
+## !!steps One order
+
+```sql !
+-- !focus(1)
+(any.lt ?Left ?Right)
+```
+
+## !!steps Numbers
+
+```sql !
+-- !focus(1)
+1 < 1.0 < 1.5 < 3
+```
+
+## !!steps Kinds
+
+```sql !
+-- !focus(1:2)
+numbers < booleans < strings
+strings < [] < atoms < compounds
+```
+
+## !!steps Concrete order
+
+```sql !
+-- !focus(1)
+1.5 < 3 < true < "apple"
+```
+
+## !!steps Predicate
+
+```sql !
+-- !focus(1:2)
+(any.lt 1.5 true)  -- one row
+(any.lt true 3)    -- no row
+```
