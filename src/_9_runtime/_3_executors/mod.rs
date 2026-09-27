@@ -8,6 +8,8 @@ pub mod fetch_json;
 pub mod fs_at;
 #[path = "fs_json.rs"]
 pub mod fs_json;
+#[path = "fs_watch.rs"]
+pub mod fs_watch;
 #[path = "git_history.rs"]
 pub mod git_history;
 #[path = "git_refs.rs"]
@@ -24,6 +26,7 @@ pub use extract::Extract;
 pub use fetch_json::FetchJson;
 pub use fs_at::FsAt;
 pub use fs_json::FsJson;
+pub use fs_watch::FsWatch;
 pub use git_history::GitHistory;
 pub use git_refs::GitRefs;
 pub use timer::Timer;
@@ -115,6 +118,10 @@ fn executors_for_mode(
                     (_, _, None) => missing(u, "executor_relation_unknown", fs_json::NONE),
                 }
             }
+            fs_watch::RELATION => match names.get(fs_watch::RELATION) {
+                Some(rel) => executors.push(Box::new(FsWatch::new(*rel))),
+                None => missing(u, "served_relation_unknown", name),
+            },
             git_refs::RELATION | git_history::RELATION | fs_at::RELATION | extract::RELATION => {
                 let error = match name.as_str() {
                     git_refs::RELATION => git_refs::ERROR,
@@ -146,10 +153,11 @@ fn executors_for_mode(
 }
 
 /// Every relation name `executors_for` builds an executor for.
-pub const ROSTER: [&str; 7] = [
+pub const ROSTER: [&str; 8] = [
     timer::RELATION,
     fetch_json::RELATION,
     fs_json::RELATION,
+    fs_watch::RELATION,
     git_refs::RELATION,
     git_history::RELATION,
     fs_at::RELATION,

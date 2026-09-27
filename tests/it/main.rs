@@ -1,5 +1,6 @@
 mod _0_read_lower_check;
 mod _10_query;
+mod _11_watchers;
 mod _1_compile_oracles;
 mod _2_eval_oracles;
 mod _3_eval_fixtures;

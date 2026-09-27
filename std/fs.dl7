@@ -20,3 +20,8 @@
 (: json_error
    (* (: path str)
       (: message str)))
+
+; `watch` keeps one UTF-8 file body current while its request is live.
+(: watch
+   (* (: path str)
+      (: return str)))

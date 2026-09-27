@@ -869,3 +869,8 @@ fn rung_9_comptime_rounds() {
         }
     }
 }
+
+#[test]
+fn rung_10_continuing_executors() {
+    super::_11_watchers::check_fs_watch_edits_retract_requests_and_increment_only_dependents();
+}

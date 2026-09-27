@@ -69,7 +69,7 @@ sequenceDiagram
 ## The trait
 
 ```console
-$ sed -n 12,32p src/_9_runtime/_2_reconcile.rs
+$ sed -n 12,46p src/_9_runtime/_2_reconcile.rs
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Cadence {
     /// One answer per application, never asked again.
@@ -90,6 +90,20 @@ pub trait IExecutor {
     fn poll(&mut self, u: &mut Universe, timeout: Duration) -> Vec<Row>;
     /// A Continuing executor with at least one live clock.
     fn armed(&self) -> bool;
+    /// Signed replacements from an executor's clock. Insert-only executors
+    /// retain their existing poll implementation.
+    fn poll_signed(
+        &mut self,
+        u: &mut Universe,
+        timeout: Duration,
+    ) -> Vec<crate::_6_eval::ir_eval::SignedRow> {
+        self.poll(u, timeout)
+            .into_iter()
+            .map(|row| crate::_6_eval::ir_eval::SignedRow { row, weight: 1 })
+            .collect()
+    }
+    /// Release an application whose request left the IR frontier.
+    fn cancel(&mut self, _u: &Universe, _application: TermId) {}
 }
 ```
 

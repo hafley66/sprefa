@@ -29,6 +29,20 @@ pub trait IExecutor {
     fn poll(&mut self, u: &mut Universe, timeout: Duration) -> Vec<Row>;
     /// A Continuing executor with at least one live clock.
     fn armed(&self) -> bool;
+    /// Signed replacements from an executor's clock. Insert-only executors
+    /// retain their existing poll implementation.
+    fn poll_signed(
+        &mut self,
+        u: &mut Universe,
+        timeout: Duration,
+    ) -> Vec<crate::_6_eval::ir_eval::SignedRow> {
+        self.poll(u, timeout)
+            .into_iter()
+            .map(|row| crate::_6_eval::ir_eval::SignedRow { row, weight: 1 })
+            .collect()
+    }
+    /// Release an application whose request left the IR frontier.
+    fn cancel(&mut self, _u: &Universe, _application: TermId) {}
 }
 
 /// How long one idle wait lasts before the loop polls the next armed executor.
@@ -132,8 +146,51 @@ impl Answerer {
         (answers, asked)
     }
 
-    pub fn cancel_request(&mut self, relation: TermId, application: TermId) {
+    pub fn cancel_request(&mut self, u: &Universe, relation: TermId, application: TermId) {
         self.seen.remove(&(relation, application));
+        if let Some((_, executor)) = self.executors.iter_mut().find(|(rel, _)| *rel == relation) {
+            executor.cancel(u, application);
+        }
+    }
+
+    /// Poll one armed continuing executor for a bounded slice. The caller
+    /// applies all returned changes in one frontier.
+    pub fn poll_signed(
+        &mut self,
+        u: &mut Universe,
+        timeout: Duration,
+    ) -> Vec<crate::_6_eval::ir_eval::SignedRow> {
+        let armed = self.executors.iter().filter(|(_, e)| e.armed()).count();
+        let slice = timeout / armed.max(1) as u32;
+        let mut changes = Vec::new();
+        for (_, executor) in &mut self.executors {
+            if executor.cadence() == Cadence::Continuing {
+                changes.extend(executor.poll_signed(u, slice));
+            }
+        }
+        changes
+    }
+
+    pub fn armed(&self) -> bool {
+        self.executors.iter().any(|(_, executor)| executor.armed())
+    }
+
+    /// Active requests whose bound arguments agree with an executor answer.
+    /// The evaluator uses these keys to retract the current answer when a
+    /// request later leaves the frontier.
+    pub fn matching_requests(&self, u: &Universe, row: &Row) -> Vec<TermId> {
+        self.seen
+            .iter()
+            .filter(|(relation, _)| *relation == row.rel)
+            .filter_map(|(_, application)| {
+                let values = application_values(u, *application)?;
+                let matches = values.iter().zip(&row.args).all(|(wanted, actual)| {
+                    wanted
+                        .is_none_or(|wanted| u.unary(*actual, "const").unwrap_or(*actual) == wanted)
+                });
+                matches.then_some(*application)
+            })
+            .collect()
     }
 
     /// The served relations, for `Program.served`.
@@ -237,6 +294,59 @@ impl Reconciler {
             &mut self.answerer,
             frontiers,
             public_names,
+            fx,
+        )
+    }
+
+    pub fn has_continuing(&self) -> bool {
+        self.answerer
+            .executors
+            .iter()
+            .any(|(_, executor)| executor.cadence() == Cadence::Continuing)
+    }
+
+    pub fn run_live(
+        &mut self,
+        u: &mut Universe,
+        program: &Program,
+        backend: crate::_6_eval::ir_eval::Backend,
+        public_names: &HashMap<TermId, String>,
+        max_ticks: usize,
+        external: &mut dyn FnMut(&mut Universe) -> Option<Vec<crate::_6_eval::ir_eval::SignedRow>>,
+        on_settle: &mut dyn FnMut(
+            &Universe,
+            &Closure,
+            &[crate::_6_eval::ir_eval::NamedDelta],
+            &ivm_engine::Counters,
+        ),
+        fx: &mut dyn FnMut(Trace),
+    ) -> Result<Closure, Diagnostic> {
+        let mut poll = |answerer: &mut Answerer, u: &mut Universe, timeout: Duration| {
+            let external_changes = external(u);
+            if let Some(changes) = &external_changes {
+                if !changes.is_empty() {
+                    return external_changes;
+                }
+            }
+            let changes = answerer.poll_signed(u, timeout);
+            if !changes.is_empty() {
+                return Some(changes);
+            }
+            if !answerer.armed() && external_changes.is_none() {
+                None
+            } else {
+                Some(Vec::new())
+            }
+        };
+        crate::_6_eval::ir_eval::evaluate_ir_live(
+            u,
+            program,
+            backend,
+            &mut self.answerer,
+            public_names,
+            max_ticks,
+            &mut poll,
+            on_settle,
             fx,
         )
     }

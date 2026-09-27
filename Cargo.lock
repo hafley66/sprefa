@@ -384,6 +384,7 @@ dependencies = [
  "ivm-ir",
  "ivm-sqlite",
  "libc",
+ "notify-debouncer-full",
  "ordered-float",
  "proptest",
  "rusqlite",
