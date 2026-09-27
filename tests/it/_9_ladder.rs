@@ -1078,3 +1078,163 @@ fn rung_9_ir_reuses_one_comptime_install() {
 fn rung_10_continuing_executors() {
     super::_11_watchers::check_fs_watch_edits_retract_requests_and_increment_only_dependents();
 }
+
+#[test]
+fn rung_11_handwritten_oracle_constructs() {
+    // These are the program inputs of the hand-written eval cases. The original
+    // expected outputs stay in oracle/eval until the deletion commit. Each
+    // program runs with zero, one, and all of its original input rows.
+    let cases: [(&str, usize, &[(&str, usize)]); 12] = [
+        ("0_negation_cons_intern", 6, &[("upper", 1)]),
+        ("1_count", 7, &[("region_count", 2), ("big_region", 1)]),
+        (
+            "2_cons_lists",
+            21,
+            &[("suffix", 4), ("item", 3), ("pair", 9)],
+        ),
+        (
+            "3_int_compare",
+            23,
+            &[
+                ("less", 3),
+                ("not_less", 6),
+                ("same", 3),
+                ("ge_two", 2),
+                ("ne_two", 2),
+                ("le_two", 2),
+                ("text_never", 0),
+            ],
+        ),
+        (
+            "4_mixed_lower_recursion",
+            17,
+            &[("open", 3), ("reach", 3), ("unreached", 1)],
+        ),
+        (
+            "5_edge_ref",
+            10,
+            &[("edge_of", 2), ("tagged", 2), ("literal_vars", 0)],
+        ),
+        ("6_nonground_negation", 5, &[("free", 1), ("lonely", 0)]),
+        (
+            "7_repeated_vars_and_arity",
+            14,
+            &[("loop", 1), ("triple", 4), ("fact", 1), ("pinned", 2)],
+        ),
+        ("8_deep_terms_order", 31, &[("seen", 15)]),
+        (
+            "9_demand_recursion",
+            19,
+            &[("chain", 7), ("reaches_end", 1), ("wrap_twice", 2)],
+        ),
+        (
+            "10_aggregate_tables_only",
+            9,
+            &[
+                ("nil_count", 1),
+                ("cons_count", 0),
+                ("item_count", 1),
+                ("pair_count", 3),
+            ],
+        ),
+        ("11_intern_row_reuse", 9, &[("made", 2), ("who_made", 2)]),
+    ];
+    for (stem, full_closure, expected_relations) in cases {
+        let path = format!("{}/fixtures/ladder/{stem}.json", env!("CARGO_MANIFEST_DIR"));
+        let source: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let expected_path = format!(
+            "{}/fixtures/ladder/{stem}.expected.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let frozen: Value = serde_json::from_slice(&std::fs::read(expected_path).unwrap()).unwrap();
+        assert_eq!(source, frozen["program"], "case={stem} program bytes");
+        let seeds = source["seeds"].as_array().unwrap();
+        let sizes = if stem == "6_nonground_negation" {
+            [0, seeds.len(), seeds.len()]
+        } else {
+            [0, 1.min(seeds.len()), seeds.len()]
+        };
+        for size in sizes.into_iter().collect::<std::collections::BTreeSet<_>>() {
+            let mut case = source.clone();
+            case["seeds"] = Value::Array(seeds[..size].to_vec());
+            let mut reference = None;
+            for engine in ENGINES {
+                let (closure, _, _) = run(11, size, engine, case.clone());
+                if let Some(want) = &reference {
+                    assert_eq!(&closure, want, "case={stem} size={size} engine={engine}");
+                } else {
+                    reference = Some(closure.clone());
+                }
+                if size == seeds.len() {
+                    assert_eq!(
+                        Value::Array(closure.clone()),
+                        frozen["expected"]["closure"],
+                        "case={stem} size={size} engine={engine} exact closure"
+                    );
+                    check_count(11, size, engine, stem, closure.len(), full_closure);
+                    for (relation, want) in expected_relations {
+                        check_count(
+                            11,
+                            size,
+                            engine,
+                            relation,
+                            rows(&closure, relation).len(),
+                            *want,
+                        );
+                    }
+                }
+            }
+        }
+        if stem == "6_nonground_negation" {
+            let mut grown = source.clone();
+            grown["seeds"].as_array_mut().unwrap().extend([
+                call("source", vec![json!({"f":"const","args":[{"a":"three"}]})]),
+                call("taken", vec![json!({"f":"const","args":[{"a":"three"}]})]),
+            ]);
+            let mut reference = None;
+            for engine in ENGINES {
+                let (closure, _, _) = run(11, 5, engine, grown.clone());
+                if let Some(want) = &reference {
+                    assert_eq!(&closure, want, "case={stem} size=5 engine={engine}");
+                } else {
+                    reference = Some(closure);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn rung_5_nonlinear_recursion() {
+    for engine in ENGINES {
+        for size in 0..=3 {
+            let seeds = (0..size)
+                .map(|i| call("edge", vec![constant(i as i8), constant((i + 1) as i8)]))
+                .collect();
+            let rules = vec![
+                rule(
+                    "path",
+                    vec![variable(0), variable(1)],
+                    vec![goal("edge", vec![variable(0), variable(1)], false)],
+                ),
+                rule(
+                    "path",
+                    vec![variable(0), variable(2)],
+                    vec![
+                        goal("path", vec![variable(0), variable(1)], false),
+                        goal("path", vec![variable(1), variable(2)], false),
+                    ],
+                ),
+            ];
+            let (closure, _, _) = run(5, size, engine, program(seeds, rules));
+            check_count(
+                5,
+                size,
+                engine,
+                "nonlinear_path_rows",
+                rows(&closure, "path").len(),
+                size * (size + 1) / 2,
+            );
+        }
+    }
+}
