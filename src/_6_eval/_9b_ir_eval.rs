@@ -5,7 +5,16 @@ use super::program::{Diagnostic, Program, Row};
 use super::term::{TermId, Universe};
 use ivm_engine::{Engine, Raw};
 use ivm_ir::{self as ir, Cell};
+use std::cell::Cell as ThreadCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+thread_local! {
+    static LAST_COUNTERS: ThreadCell<Option<ivm_engine::Counters>> = const { ThreadCell::new(None) };
+}
+
+pub fn take_counters() -> Option<ivm_engine::Counters> {
+    LAST_COUNTERS.with(|counters| counters.take())
+}
 
 #[derive(Copy, Clone, Debug)]
 pub enum Backend {
@@ -37,7 +46,7 @@ fn run<E: Engine>(
     lowered: &Lowered,
     host: &mut Raw<'_>,
     fx: &mut dyn FnMut(Trace),
-) -> Result<Closure, ivm_engine::EngineError> {
+) -> Result<(Closure, ivm_engine::Counters), ivm_engine::EngineError> {
     let mut engine = E::install(&lowered.ir, host)?;
     let mut mapped: HashMap<TermId, Cell> = HashMap::new();
     for (term, value) in &lowered.texts {
@@ -130,6 +139,7 @@ fn run<E: Engine>(
     changes.sort_by(|a, b| (a.rel, &a.row).cmp(&(b.rel, &b.row)));
     changes.dedup_by(|a, b| a.rel == b.rel && a.row == b.row);
     settle(&mut engine, host, changes)?;
+    let counters = engine.counters();
 
     let mut decoded: HashMap<Cell, TermId> =
         mapped.into_iter().map(|(term, id)| (id, term)).collect();
@@ -219,10 +229,13 @@ fn run<E: Engine>(
     });
     rows.dedup();
     fx(Trace::Closure { rows: rows.len() });
-    Ok(Closure {
-        rows,
-        diagnostics: Vec::new(),
-    })
+    Ok((
+        Closure {
+            rows,
+            diagnostics: Vec::new(),
+        },
+        counters,
+    ))
 }
 
 pub fn evaluate_ir(
@@ -231,6 +244,7 @@ pub fn evaluate_ir(
     backend: Backend,
     fx: &mut dyn FnMut(Trace),
 ) -> Closure {
+    LAST_COUNTERS.with(|counters| counters.set(None));
     let lowered = match ir_lower::lower(u, program) {
         Ok(lowered) => lowered,
         Err(diag) => {
@@ -259,7 +273,10 @@ pub fn evaluate_ir(
         },
     };
     match result {
-        Ok(closure) => closure,
+        Ok((closure, counters)) => {
+            LAST_COUNTERS.with(|last| last.set(Some(counters)));
+            closure
+        }
         Err(error) => Closure {
             rows: vec![],
             diagnostics: vec![diagnostic(u, "engine", error)],

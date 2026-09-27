@@ -762,7 +762,12 @@ fn signatures([rust, sqlite, dd, ir_dd, ir_sqlite]: &[Value; 5]) -> Vec<String> 
     ]
     .into_iter()
     .filter_map(|(engine, other)| {
-        if rust == other {
+        let mut other_without_counters = other.clone();
+        other_without_counters
+            .as_object_mut()
+            .unwrap()
+            .remove("counters");
+        if rust == &other_without_counters {
             return None;
         }
         if let Some(kind) = other["panic"]["kind"].as_str() {

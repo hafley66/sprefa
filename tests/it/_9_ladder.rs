@@ -11,7 +11,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
 const ENGINES: [&str; 5] = ["rust", "sqlite", "dd", "ir:dd", "ir:sqlite"];
 
-fn run(rung: usize, size: usize, engine: &str, program: Value) -> (Vec<Value>, String) {
+fn run(
+    rung: usize,
+    size: usize,
+    engine: &str,
+    program: Value,
+) -> (Vec<Value>, Option<Value>, String) {
     let path = std::env::temp_dir().join(format!(
         "dl8-ladder-{}-{}-{}-{}.json",
         std::process::id(),
@@ -47,7 +52,23 @@ fn run(rung: usize, size: usize, engine: &str, program: Value) -> (Vec<Value>, S
         json!([]),
         "rung={rung} size={size} engine={engine} counter=diagnostics"
     );
-    (value["closure"].as_array().unwrap().clone(), stderr)
+    let counters = value.get("counters").cloned();
+    if engine.starts_with("ir:") {
+        assert!(
+            counters.is_some(),
+            "rung={rung} size={size} engine={engine} counter=object"
+        );
+    } else {
+        assert!(
+            counters.is_none(),
+            "rung={rung} size={size} engine={engine} counter=absent"
+        );
+    }
+    (
+        value["closure"].as_array().unwrap().clone(),
+        counters,
+        stderr,
+    )
 }
 
 fn rows(closure: &[Value], name: &str) -> Vec<Vec<Value>> {
@@ -77,6 +98,53 @@ fn linear_rows(count: usize) -> SpanCounts {
     }
 }
 
+fn counter_counts(counters: &Value, path: &[&str]) -> SpanCounts {
+    let value = path
+        .iter()
+        .fold(counters, |value, key| &value[*key])
+        .as_u64()
+        .unwrap_or_else(|| panic!("counter path {} is absent", path.join(".")));
+    SpanCounts {
+        entries: BTreeMap::from([(path.join("."), value as usize)]),
+        ..SpanCounts::default()
+    }
+}
+
+fn assert_counter_growth(
+    rung: usize,
+    engine: &str,
+    small: &Value,
+    large: &Value,
+    path: &[&str],
+    small_n: usize,
+    large_n: usize,
+    growth: Growth,
+) {
+    let name = path.join(".");
+    for (size, counters) in [(small_n, small), (large_n, large)] {
+        assert!(
+            path.iter()
+                .fold(counters, |value, key| &value[*key])
+                .is_u64(),
+            "rung={rung} size={size} engine={engine} counter={name}"
+        );
+    }
+    let result = std::panic::catch_unwind(|| {
+        assert_growth_sized(
+            &counter_counts(small, path),
+            &counter_counts(large, path),
+            &name,
+            small_n,
+            large_n,
+            growth,
+        );
+    });
+    assert!(
+        result.is_ok(),
+        "rung={rung} size={small_n}->{large_n} engine={engine} counter={name}"
+    );
+}
+
 fn trace_count(trace: &str, marker: &str) -> usize {
     trace
         .lines()
@@ -93,7 +161,7 @@ fn rung_0_seeds() {
             let seeds = (0..size)
                 .map(|i| call("seed", vec![constant(i as i8)]))
                 .collect();
-            let (closure, _) = run(0, size, engine, program(seeds, vec![]));
+            let (closure, _, _) = run(0, size, engine, program(seeds, vec![]));
             check_count(
                 0,
                 size,
@@ -104,7 +172,7 @@ fn rung_0_seeds() {
             );
             if size > 0 {
                 let repeated = vec![call("seed", vec![constant(0)]); size];
-                let (closure, _) = run(0, size, engine, program(repeated, vec![]));
+                let (closure, _, _) = run(0, size, engine, program(repeated, vec![]));
                 check_count(
                     0,
                     size,
@@ -115,7 +183,7 @@ fn rung_0_seeds() {
                 );
             }
         }
-        let small = run(
+        let (small, small_counters, _) = run(
             0,
             8,
             engine,
@@ -125,9 +193,8 @@ fn rung_0_seeds() {
                     .collect(),
                 vec![],
             ),
-        )
-        .0;
-        let large = run(
+        );
+        let (large, large_counters, _) = run(
             0,
             800,
             engine,
@@ -137,8 +204,7 @@ fn rung_0_seeds() {
                     .collect(),
                 vec![],
             ),
-        )
-        .0;
+        );
         assert_growth_sized(
             &linear_rows(rows(&small, "seed").len()),
             &linear_rows(rows(&large, "seed").len()),
@@ -147,6 +213,18 @@ fn rung_0_seeds() {
             800,
             Growth::Linear,
         );
+        if engine.starts_with("ir:") {
+            assert_counter_growth(
+                0,
+                engine,
+                small_counters.as_ref().unwrap(),
+                large_counters.as_ref().unwrap(),
+                &["rows_written"],
+                8,
+                800,
+                Growth::Linear,
+            );
+        }
     }
 }
 
@@ -162,7 +240,7 @@ fn rung_1_filter_project() {
                 vec![variable(0)],
                 vec![goal("source", vec![variable(0), constant(1)], false)],
             )];
-            let (closure, _) = run(1, size, engine, program(seeds, rules));
+            let (closure, _, _) = run(1, size, engine, program(seeds, rules));
             check_count(
                 1,
                 size,
@@ -198,7 +276,7 @@ fn rung_2_join() {
                     goal("right", vec![variable(1), variable(2)], false),
                 ],
             )];
-            let (closure, _) = run(2, size, engine, program(seeds, rules));
+            let (closure, _, _) = run(2, size, engine, program(seeds, rules));
             let want = (0..size)
                 .map(|i| (0..size).filter(|j| i % 2 == j % 2).count())
                 .sum();
@@ -211,6 +289,34 @@ fn rung_2_join() {
                 want,
             );
         }
+    }
+    for engine in ["ir:dd", "ir:sqlite"] {
+        let measure = |size| {
+            let mut seeds: Vec<_> = (0..size)
+                .map(|i| call("padding", vec![json!({"f":"const","args":[i]})]))
+                .collect();
+            seeds.push(call("left", vec![constant(0)]));
+            seeds.push(call("right", vec![constant(0)]));
+            let rules = vec![rule(
+                "joined",
+                vec![variable(0)],
+                vec![
+                    goal("left", vec![variable(0)], false),
+                    goal("right", vec![variable(0)], false),
+                ],
+            )];
+            run(2, size, engine, program(seeds, rules)).1.unwrap()
+        };
+        assert_counter_growth(
+            2,
+            engine,
+            &measure(8),
+            &measure(80),
+            &["delta_rows", "join"],
+            8,
+            80,
+            Growth::Constant,
+        );
     }
 }
 
@@ -228,7 +334,7 @@ fn rung_3_negation() {
                     goal("blocked", vec![variable(0)], true),
                 ],
             )];
-            let (closure, _) = run(3, size, engine, program(seeds, rules));
+            let (closure, _, _) = run(3, size, engine, program(seeds, rules));
             check_count(
                 3,
                 size,
@@ -254,7 +360,7 @@ fn rung_4_aggregates() {
                     vec![json!({kind:variable(0)})],
                     vec![goal("source", vec![variable(0)], false)],
                 )];
-                let (closure, _) = run(4, size, engine, program(seeds, rules));
+                let (closure, _, _) = run(4, size, engine, program(seeds, rules));
                 let actual = rows(&closure, "folded");
                 check_count(4, size, engine, kind, actual.len(), usize::from(size > 0));
                 if size > 0 {
@@ -298,7 +404,7 @@ fn rung_5_recursion() {
                     ],
                 ),
             ];
-            let (closure, trace) = run(5, size, engine, program(seeds, rules));
+            let (closure, _, trace) = run(5, size, engine, program(seeds, rules));
             check_count(
                 5,
                 size,
@@ -337,7 +443,7 @@ fn rung_5_recursion() {
                         ],
                     ),
                 ];
-                let (closure, _) = run(5, size, engine, program(cycle, cycle_rules));
+                let (closure, _, _) = run(5, size, engine, program(cycle, cycle_rules));
                 check_count(
                     5,
                     size,
@@ -348,6 +454,39 @@ fn rung_5_recursion() {
                 );
             }
         }
+    }
+    for engine in ["ir:dd", "ir:sqlite"] {
+        let measure = |size| {
+            let seeds = (0..size)
+                .map(|i| call("edge", vec![constant(i as i8), constant((i + 1) as i8)]))
+                .collect();
+            let rules = vec![
+                rule(
+                    "path",
+                    vec![variable(0), variable(1)],
+                    vec![goal("edge", vec![variable(0), variable(1)], false)],
+                ),
+                rule(
+                    "path",
+                    vec![variable(0), variable(2)],
+                    vec![
+                        goal("path", vec![variable(0), variable(1)], false),
+                        goal("edge", vec![variable(1), variable(2)], false),
+                    ],
+                ),
+            ];
+            run(5, size, engine, program(seeds, rules)).1.unwrap()
+        };
+        assert_counter_growth(
+            5,
+            engine,
+            &measure(8),
+            &measure(32),
+            &["rounds"],
+            8,
+            32,
+            Growth::Linear,
+        );
     }
 }
 
@@ -370,7 +509,7 @@ fn rung_6_kernels() {
                     ),
                 ],
             )];
-            let (closure, _) = run(6, size, engine, program(seeds, rules));
+            let (closure, _, _) = run(6, size, engine, program(seeds, rules));
             check_count(
                 6,
                 size,
@@ -391,7 +530,7 @@ fn rung_6_kernels() {
                     goal("cons", vec![variable(0), variable(1), variable(2)], false),
                 ],
             )];
-            let (closure, _) = run(6, size, engine, program(seeds, rules));
+            let (closure, _, _) = run(6, size, engine, program(seeds, rules));
             check_count(
                 6,
                 size,
@@ -417,7 +556,7 @@ fn rung_6_kernels() {
                     )
                 })
                 .collect();
-            let (closure, _) = run(6, size, engine, program(vec![], rules));
+            let (closure, _, _) = run(6, size, engine, program(vec![], rules));
             check_count(
                 6,
                 size,
@@ -427,6 +566,38 @@ fn rung_6_kernels() {
                 size,
             );
         }
+    }
+    for engine in ["ir:dd", "ir:sqlite"] {
+        let measure = |size| {
+            let rules = (0..size)
+                .map(|i| {
+                    rule(
+                        "constructed",
+                        vec![variable(0)],
+                        vec![goal(
+                            "intern",
+                            vec![
+                                super::_2_eval_oracles::rel("ctor"),
+                                json!({"f":"const","args":[[json!({"f":"const","args":[i]})]]}),
+                                variable(0),
+                            ],
+                            false,
+                        )],
+                    )
+                })
+                .collect();
+            run(6, size, engine, program(vec![], rules)).1.unwrap()
+        };
+        assert_counter_growth(
+            6,
+            engine,
+            &measure(8),
+            &measure(80),
+            &["interned"],
+            8,
+            80,
+            Growth::Linear,
+        );
     }
 }
 
@@ -524,7 +695,7 @@ fn rung_6_scalar_kernel_edges() {
         ),
     ];
     for engine in ["rust", "dd", "ir:dd", "ir:sqlite"] {
-        let (closure, _) = run(6, 4, engine, program(vec![], rules.clone()));
+        let (closure, _, _) = run(6, 4, engine, program(vec![], rules.clone()));
         assert_eq!(
             rows(&closure, "counted"),
             vec![vec![constant(3)]],
@@ -585,7 +756,7 @@ fn rung_7_demand() {
                     ],
                 ),
             ];
-            let (closure, trace) = run(7, size, engine, program(seeds, rules));
+            let (closure, _, trace) = run(7, size, engine, program(seeds, rules));
             check_count(
                 7,
                 size,
@@ -622,7 +793,7 @@ fn rung_8_effects() {
             )];
             let mut case = program(seeds, rules);
             case["names"] = json!({"page_request":super::_2_eval_oracles::rel("page_request")});
-            let (closure, _) = run(8, size, engine, case);
+            let (closure, _, _) = run(8, size, engine, case);
             let effect = json!({"f":"ref","args":[{"f":"kernel","args":[{"a":"effect"}]}]});
             check_count(
                 8,
@@ -686,7 +857,7 @@ fn rung_9_comptime_rounds() {
                     )
                 })
                 .collect();
-            let (closure, _) = run(9, size, engine, program(seeds, rules));
+            let (closure, _, _) = run(9, size, engine, program(seeds, rules));
             check_count(
                 9,
                 size,

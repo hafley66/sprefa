@@ -361,7 +361,37 @@ fn eval_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>) -> Ex
             }
         }
     }
-    let out = closure_to_json(&u, &closure.rows, &closure.diagnostics);
+    let mut out = closure_to_json(&u, &closure.rows, &closure.diagnostics);
+    if let Some(counters) = dl8::_6_eval::ir_eval::take_counters() {
+        let mut delta_rows = serde_json::Map::new();
+        for (name, value) in [
+            ("filter", counters.delta_rows.filter),
+            ("join", counters.delta_rows.join),
+            ("antijoin", counters.delta_rows.antijoin),
+            ("reduce", counters.delta_rows.reduce),
+            ("topk", counters.delta_rows.topk),
+            ("window", counters.delta_rows.window),
+            ("mint", counters.delta_rows.mint),
+        ] {
+            if let Some(value) = value {
+                delta_rows.insert(name.into(), value.into());
+            }
+        }
+        let mut values = serde_json::Map::from_iter([
+            ("rows_written".into(), counters.rows_written.into()),
+            ("delta_rows".into(), delta_rows.into()),
+        ]);
+        for (name, value) in [
+            ("rounds", counters.rounds),
+            ("interned", counters.interned),
+            ("statements", counters.statements),
+        ] {
+            if let Some(value) = value {
+                values.insert(name.into(), value.into());
+            }
+        }
+        out["counters"] = values.into();
+    }
     println!("{}", serde_json::to_string_pretty(&out).unwrap());
     if closure.diagnostics.is_empty() {
         ExitCode::SUCCESS
