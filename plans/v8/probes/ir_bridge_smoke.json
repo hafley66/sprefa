@@ -1,0 +1,63 @@
+{
+  "seeds": [
+    {
+      "rel": {
+        "f": "ref",
+        "args": [
+          {
+            "a": "source"
+          }
+        ]
+      },
+      "args": [
+        {
+          "f": "const",
+          "args": [
+            1
+          ]
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "head": {
+        "rel": {
+          "f": "ref",
+          "args": [
+            {
+              "a": "derived"
+            }
+          ]
+        },
+        "args": [
+          {
+            "v": {
+              "a": "x"
+            }
+          }
+        ]
+      },
+      "body": [
+        {
+          "polarity": "positive",
+          "rel": {
+            "f": "ref",
+            "args": [
+              {
+                "a": "source"
+              }
+            ]
+          },
+          "args": [
+            {
+              "v": {
+                "a": "x"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

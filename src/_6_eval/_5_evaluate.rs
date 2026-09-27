@@ -879,12 +879,16 @@ enum Engine {
     Rust,
     Sqlite,
     Dd,
+    IrDd,
+    IrSqlite,
 }
 
 fn engine() -> Engine {
     *ENGINE.get_or_init(|| match std::env::var("DL8_ENGINE").as_deref() {
         Ok("sqlite") => Engine::Sqlite,
         Ok("dd") => Engine::Dd,
+        Ok("ir:dd") => Engine::IrDd,
+        Ok("ir:sqlite") => Engine::IrSqlite,
         _ => Engine::Rust,
     })
 }
@@ -898,7 +902,10 @@ impl<'a> Slice for Evaluate<'a> {
     type Effect = Trace;
 
     fn reduce(store: &mut Store, (u, program): Self::Event, fx: &mut dyn FnMut(Trace)) -> Closure {
-        if matches!(engine(), Engine::Sqlite | Engine::Dd) {
+        if matches!(
+            engine(),
+            Engine::Sqlite | Engine::Dd | Engine::IrDd | Engine::IrSqlite
+        ) {
             // Rows already in the store (a continuing run) are seeds to the
             // selected engine; every closure row lands back in the store.
             let mut seeded = program.clone();
@@ -913,6 +920,12 @@ impl<'a> Slice for Evaluate<'a> {
             let closure = match engine() {
                 Engine::Sqlite => super::sqlite_eval::evaluate_sqlite(u, &seeded, fx),
                 Engine::Dd => super::dd_eval::evaluate_dd(u, &seeded, fx),
+                Engine::IrDd => {
+                    super::ir_eval::evaluate_ir(u, &seeded, super::ir_eval::Backend::Dd, fx)
+                }
+                Engine::IrSqlite => {
+                    super::ir_eval::evaluate_ir(u, &seeded, super::ir_eval::Backend::Sqlite, fx)
+                }
                 Engine::Rust => unreachable!(),
             };
             for row in &closure.rows {

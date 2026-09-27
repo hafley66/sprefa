@@ -461,10 +461,7 @@ fn query_cli(path: &Path, repo: Option<&Path>, format: QueryFormat) -> ExitCode 
         ExitCode::from(2)
     };
     match std::env::var("DL8_ENGINE").as_deref() {
-        Ok("ir:dd" | "ir:sqlite") => {
-            return fail(&"IR query engines are not available in this build")
-        }
-        Ok("rust" | "sqlite" | "dd") | Err(_) => {}
+        Ok("rust" | "sqlite" | "dd" | "ir:dd" | "ir:sqlite") | Err(_) => {}
         Ok(other) => return fail(&format!("unknown DL8_ENGINE {other}")),
     }
 

@@ -9,7 +9,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
-const ENGINES: [&str; 3] = ["rust", "sqlite", "dd"];
+const ENGINES: [&str; 5] = ["rust", "sqlite", "dd", "ir:dd", "ir:sqlite"];
 
 fn run(rung: usize, size: usize, engine: &str, program: Value) -> (Vec<Value>, String) {
     let path = std::env::temp_dir().join(format!(
@@ -427,6 +427,142 @@ fn rung_6_kernels() {
                 size,
             );
         }
+    }
+}
+
+#[test]
+fn rung_6_scalar_kernel_edges() {
+    let bare = |name: &str, args: Vec<Value>| {
+        json!({
+            "rel":{"f":"ref","args":[{"f":"kernel","args":[{"a":name}]}]},
+            "args":args,"polarity":"positive"
+        })
+    };
+    let typed = |owner: &str, name: &str, args: Vec<Value>| {
+        json!({
+            "rel":{"f":"ref","args":[{"f":"kernel","args":[{"a":owner},{"a":name}]}]},
+            "args":args,"polarity":"positive"
+        })
+    };
+    let rules = vec![
+        rule(
+            "counted",
+            vec![variable(0)],
+            vec![bare(
+                "count_step",
+                vec![constant(2), constant(99), variable(0)],
+            )],
+        ),
+        rule(
+            "minimum",
+            vec![variable(0)],
+            vec![bare(
+                "min_step",
+                vec![constant(2), constant(1), variable(0)],
+            )],
+        ),
+        rule(
+            "maximum",
+            vec![variable(0)],
+            vec![bare(
+                "max_step",
+                vec![constant(2), constant(1), variable(0)],
+            )],
+        ),
+        rule(
+            "empty_str",
+            vec![variable(0)],
+            vec![typed("str", "nil", vec![variable(0)])],
+        ),
+        rule(
+            "joined_str",
+            vec![variable(0)],
+            vec![typed(
+                "str",
+                "cons",
+                vec![
+                    json!({"f":"const","args":[{"s":"é"}]}),
+                    json!({"f":"const","args":[{"s":"cho"}]}),
+                    variable(0),
+                ],
+            )],
+        ),
+        rule(
+            "split_str",
+            vec![variable(0), variable(1)],
+            vec![typed(
+                "str",
+                "cons",
+                vec![
+                    variable(0),
+                    variable(1),
+                    json!({"f":"const","args":[{"s":"écho"}]}),
+                ],
+            )],
+        ),
+        rule(
+            "split_empty_str",
+            vec![variable(0)],
+            vec![typed(
+                "str",
+                "cons",
+                vec![
+                    variable(0),
+                    variable(1),
+                    json!({"f":"const","args":[{"s":""}]}),
+                ],
+            )],
+        ),
+        rule(
+            "non_integer",
+            vec![],
+            vec![typed(
+                "int",
+                "lt",
+                vec![json!({"f":"const","args":[{"a":"oops"}]}), constant(2)],
+            )],
+        ),
+    ];
+    for engine in ["rust", "dd", "ir:dd", "ir:sqlite"] {
+        let (closure, _) = run(6, 4, engine, program(vec![], rules.clone()));
+        assert_eq!(
+            rows(&closure, "counted"),
+            vec![vec![constant(3)]],
+            "engine={engine}"
+        );
+        assert_eq!(
+            rows(&closure, "minimum"),
+            vec![vec![constant(1)]],
+            "engine={engine}"
+        );
+        assert_eq!(
+            rows(&closure, "maximum"),
+            vec![vec![constant(2)]],
+            "engine={engine}"
+        );
+        assert_eq!(
+            rows(&closure, "empty_str"),
+            vec![vec![json!({"f":"const","args":[{"s":""}]})]],
+            "engine={engine}"
+        );
+        assert_eq!(
+            rows(&closure, "joined_str"),
+            vec![vec![json!({"f":"const","args":[{"s":"écho"}]})]],
+            "engine={engine}"
+        );
+        assert_eq!(
+            rows(&closure, "split_str"),
+            vec![vec![
+                json!({"f":"const","args":[{"s":"é"}]}),
+                json!({"f":"const","args":[{"s":"cho"}]})
+            ]],
+            "engine={engine}"
+        );
+        assert!(
+            rows(&closure, "split_empty_str").is_empty(),
+            "engine={engine}"
+        );
+        assert!(rows(&closure, "non_integer").is_empty(), "engine={engine}");
     }
 }
 

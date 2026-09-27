@@ -8,6 +8,10 @@ pub mod dd_eval;
 pub mod evaluate;
 #[path = "_8_functions.rs"]
 pub mod functions;
+#[path = "_9b_ir_eval.rs"]
+pub mod ir_eval;
+#[path = "_9a_ir_lower.rs"]
+pub mod ir_lower;
 #[path = "_6_json.rs"]
 pub mod json;
 #[path = "_4_kernel.rs"]

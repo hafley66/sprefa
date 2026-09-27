@@ -379,6 +379,10 @@ dependencies = [
  "differential-dataflow",
  "hafley-observe",
  "indexmap",
+ "ivm-dd",
+ "ivm-engine",
+ "ivm-ir",
+ "ivm-sqlite",
  "libc",
  "ordered-float",
  "proptest",
@@ -950,6 +954,44 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "ivm-dd"
+version = "0.1.0"
+dependencies = [
+ "differential-dataflow",
+ "ivm-engine",
+ "ivm-ir",
+ "timely",
+ "tracing",
+]
+
+[[package]]
+name = "ivm-engine"
+version = "0.1.0"
+dependencies = [
+ "ivm-ir",
+]
+
+[[package]]
+name = "ivm-ir"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "ivm-sqlite"
+version = "0.1.0"
+dependencies = [
+ "hafley-observe",
+ "ivm-engine",
+ "ivm-ir",
+ "rusqlite",
+ "serde_json",
+ "sqlite-ext",
+ "tracing",
+]
 
 [[package]]
 name = "js-sys"
@@ -1748,6 +1790,16 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "sqlite-ext"
+version = "0.1.0"
+dependencies = [
+ "hafley-observe",
+ "rusqlite",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -16,13 +16,17 @@ path = "tests/it/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 differential-dataflow = "=0.25.1"
-hafley-observe = { path = "hafley-rs/crates/hafley-observe" }
+hafley-observe = { path = "sqlite_ivm/hafley-rs/crates/hafley-observe" }
 indexmap = "2"
+ivm-ir = { path = "sqlite_ivm/crates/ivm-ir" }
+ivm-engine = { path = "sqlite_ivm/crates/ivm-engine" }
+ivm-dd = { path = "sqlite_ivm/crates/ivm-dd" }
+ivm-sqlite = { path = "sqlite_ivm/crates/ivm-sqlite" }
 ordered-float = "3"
 rusqlite = { version = "0.40", features = ["bundled", "limits", "load_extension", "functions"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-soopy = { path = "hafley-rs/crates/soopy" }
+soopy = { path = "sqlite_ivm/hafley-rs/crates/soopy" }
 tracing = "0.1"
 tree-sitter = "0.27"
 timely = "=0.31.0"

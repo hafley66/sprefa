@@ -947,17 +947,18 @@ fn with_effects(u: &mut Universe, program: &Program) -> Program {
 /// positions B feeds a demand product; an adorned copy of every rule joins
 /// it; the caller reads the adorned copy. The originals still fire bottom-up.
 pub(super) fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
-    with_demand_selection(u, program, true)
+    with_demand_selection(u, program, true, false)
 }
 
 fn with_direct_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
-    with_demand_selection(u, program, false)
+    with_demand_selection(u, program, false, true)
 }
 
 fn with_demand_selection(
     u: &mut Universe,
     program: &Program,
     propagate_dependencies: bool,
+    adorn_aggregates: bool,
 ) -> (Program, HashSet<TermId>) {
     let snapshots = {
         let name = u.atom("intern_snapshot");
@@ -968,7 +969,7 @@ fn with_demand_selection(
     for rule in &program.rules {
         by_rel.entry(rule.rel).or_default().push(rule.clone());
     }
-    let demanded = if propagate_dependencies {
+    let mut demanded = if propagate_dependencies {
         let mut rule_refs: HashMap<TermId, Vec<&Rule>> = HashMap::new();
         for rule in &program.rules {
             rule_refs.entry(rule.rel).or_default().push(rule);
@@ -985,6 +986,15 @@ fn with_demand_selection(
             .map(|(relation, _)| *relation)
             .collect()
     };
+    if !adorn_aggregates {
+        let aggregates: HashSet<TermId> = program
+            .rules
+            .iter()
+            .filter(|rule| rule.is_aggregate())
+            .map(|rule| rule.rel)
+            .collect();
+        demanded.retain(|rel| !aggregates.contains(rel));
+    }
     let seeded: HashSet<TermId> = program.seeds.iter().map(|row| row.rel).collect();
     // Pass-through variable names exist from the first run on, so a reload
     // with more seeded products mints nothing new.
