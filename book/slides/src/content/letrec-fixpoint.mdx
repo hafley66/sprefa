@@ -1,0 +1,30 @@
+## !!steps Seed
+
+```sql !
+-- !focus(1)
+reach₀(x, y) = edge(x, y)
+```
+
+## !!steps Iterate
+
+```sql !
+-- !focus(2)
+reach₁ = reach₀
+       ∪ { (x,z) | reach₀(x,y), edge(y,z) }
+```
+
+## !!steps Stable
+
+```sql !
+-- !focus(1)
+Δreach₂ = ∅
+```
+
+## !!steps Fixpoint
+
+```sql !
+-- !focus(1:3)
+reach*(ada, bob)
+reach*(bob, cy)
+reach*(ada, cy)
+```

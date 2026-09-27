@@ -1,0 +1,29 @@
+## !!steps Positive dependency
+
+```sql !
+-- !focus(1)
+active(x) :- people(x), age(x, n), n >= 18
+```
+
+## !!steps Negation
+
+```sql !
+-- !focus(1)
+allowed(x) :- people(x), not banned(x)
+```
+
+## !!steps Order
+
+```sql !
+-- !focus(2)
+banned  = stratum 0
+allowed = stratum 1
+```
+
+## !!steps Rejected cycle
+
+```sql !
+-- !focus(1:2)
+p() :- not q()
+q() :- not p()
+```

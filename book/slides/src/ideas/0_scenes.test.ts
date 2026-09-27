@@ -3,8 +3,11 @@ import { builtIdeas } from "../lib/0_glossary"
 import { bilinearOpJoinDeltaRuleSteps } from "./bilinear-op-join-delta-rule/0_steps"
 import { deltaSteps } from "./delta/0_steps"
 import { distinctThresholdSteps } from "./distinct-threshold/0_steps"
+import { frontierSteps } from "./frontier/0_steps"
 import { integrateDifferentiateSteps } from "./integrate-differentiate/0_steps"
+import { letrecFixpointSteps } from "./letrec-fixpoint/0_steps"
 import { linearOpSteps } from "./linear-op/0_steps"
+import { strataSteps } from "./strata/0_steps"
 import { zsetSteps } from "./zset/0_steps"
 
 describe("keyed scene elements", () => {
@@ -226,6 +229,97 @@ describe("keyed scene elements", () => {
       ]
     `)
   })
+
+  it("keeps the complete frontier key timeline visible", () => {
+    expect(frontierSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "w1",
+          "w2",
+          "labels",
+        ],
+        [
+          "frontier",
+          "w1",
+          "w2",
+        ],
+        [
+          "done",
+          "status",
+          "boundary",
+          "open",
+        ],
+        [
+          "w1",
+          "w2",
+          "frontier",
+        ],
+        [
+          "frontier",
+          "release",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete strata key timeline visible", () => {
+    expect(strataSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "people",
+        ],
+        [
+          "people",
+          "filter",
+          "active",
+        ],
+        [
+          "banned",
+          "not",
+          "allowed",
+        ],
+        [
+          "s0",
+          "facts",
+          "arrow",
+          "s1",
+          "allowed",
+        ],
+        [
+          "p",
+          "cycle",
+          "q",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete LetRec fixpoint key timeline visible", () => {
+    expect(letrecFixpointSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "edge",
+        ],
+        [
+          "round",
+          "reach",
+        ],
+        [
+          "round",
+          "join",
+          "new",
+        ],
+        [
+          "round",
+          "new",
+        ],
+        [
+          "fixed",
+          "reach",
+        ],
+      ]
+    `)
+  })
 })
 
 describe("built glossary scenes", () => {
@@ -303,6 +397,39 @@ describe("built glossary scenes", () => {
           ],
           "group": "core-algebra",
           "idea": "distinct-threshold",
+        },
+        {
+          "captions": [
+            "Workers have reported progress through times 3 and 5.",
+            "The frontier is the earliest time that may still receive data: min(3, 5) = 3.",
+            "Times before 3 are complete. No later message may change their answers.",
+            "Worker A advances to 6. Worker B at 5 now holds the frontier.",
+            "When the frontier passes 5, a result for time 5 can be released as final.",
+          ],
+          "group": "time",
+          "idea": "frontier",
+        },
+        {
+          "captions": [
+            "Base facts enter stratum 0: Ada and Bob are people.",
+            "A positive dependency stays in the same stratum: active reads people.",
+            "Negation must read a settled lower stratum. banned is completed before allowed starts.",
+            "The dependency graph assigns allowed to stratum 1 because it negates banned.",
+            "A negative cycle has no evaluation order: p needs not q while q needs not p.",
+          ],
+          "group": "time",
+          "idea": "strata",
+        },
+        {
+          "captions": [
+            "The graph starts with edges Ada → Bob and Bob → Cy.",
+            "LetRec seeds reach with the direct edges in round 0.",
+            "Round 1 joins reach with edge and derives Ada → Cy.",
+            "Round 2 produces no new rows.",
+            "The empty delta marks the fixpoint. reach contains all three paths.",
+          ],
+          "group": "time",
+          "idea": "letrec-fixpoint",
         },
       ]
     `)
