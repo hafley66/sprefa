@@ -1101,7 +1101,11 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     if let Some(diag) = diagnostics.into_iter().next() {
         return Err(diag);
     }
-    let (program, hidden) = super::sqlite_eval::with_demand(u, &program);
+    let (program, hidden) = super::sqlite_eval::with_demand_in_strata(u, &program, &strata);
+    let (strata, diagnostics) = stratify(u, &program);
+    if let Some(diag) = diagnostics.into_iter().next() {
+        return Err(diag);
+    }
     let dynamic_lists = program.rules.iter().any(|rule| {
         rule.body.iter().any(|goal| {
             Kernel::of(u, goal.rel) == Some(Kernel::Intern)
@@ -1350,16 +1354,24 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             b.ir.outputs.push(output);
         }
     }
-    let request_rel = b.rel(
-        "__ir_intern_requests".into(),
-        vec![ir::Ty::Id; 3],
-        ir::RelKind::Derived,
-    );
-    b.intern_relation = Some(request_rel);
+    // A readback in a lower stratum must not wait for requests produced by
+    // higher strata. Each request relation carries prior requests forward.
+    let request_rels: Vec<_> = (0..=strata.max_level)
+        .map(|level| {
+            b.rel(
+                format!("__ir_intern_requests_{level}"),
+                vec![ir::Ty::Id; 3],
+                ir::RelKind::Derived,
+            )
+        })
+        .collect();
     let mut bodies: BTreeMap<(u32, usize), Vec<ir::NodeId>> = BTreeMap::new();
-    let mut request_dependencies = BTreeSet::new();
-    let mut readback_heads = BTreeSet::new();
+    let mut requests_by_level: BTreeMap<u32, Vec<ir::NodeId>> = BTreeMap::new();
+    let mut request_dependencies: BTreeMap<u32, BTreeSet<RelationKey>> = BTreeMap::new();
+    let mut readback_heads: BTreeMap<u32, BTreeSet<RelationKey>> = BTreeMap::new();
     for rule in &program.rules {
+        let level = strata.level(rule.rel);
+        b.intern_relation = Some(request_rels[level as usize]);
         if rule.is_aggregate() && rule.aggregate_args() != 1 {
             let count = u.int(rule.aggregate_args() as i64);
             return Err(Diagnostic {
@@ -1386,15 +1398,22 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         )
         .map_err(|name| unsupported(u, name))?;
         if b.intern_nodes.len() > requests_before {
+            requests_by_level
+                .entry(level)
+                .or_default()
+                .extend(b.intern_nodes.drain(requests_before..));
             for goal in &rule.body {
                 let key = (goal.rel.0, goal.args.len());
                 if keys.contains(&key) {
-                    request_dependencies.insert(key);
+                    request_dependencies.entry(level).or_default().insert(key);
                 }
             }
         }
         if b.intern_readback_count > readbacks_before {
-            readback_heads.insert((rule.rel.0, rule.head.len()));
+            readback_heads
+                .entry(level)
+                .or_default()
+                .insert((rule.rel.0, rule.head.len()));
         }
         bodies
             .entry((rule.rel.0, rule.head.len()))
@@ -1402,19 +1421,26 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             .push(body);
     }
     if b.intern_readback {
-        let request_key = (u32::MAX, 3);
-        keys.insert(request_key);
-        let source = b.rel(
-            "__ir_intern_request_seed".into(),
-            vec![ir::Ty::Id; 3],
-            ir::RelKind::Source,
-        );
-        sources.insert(request_key, source);
-        relations.insert(request_key, request_rel);
-        let requests = std::mem::take(&mut b.intern_nodes);
-        bodies.insert(request_key, requests);
-        b.ir.outputs.push(request_rel);
-        visible.push((request_rel, intern_rel, 3));
+        for (level, request_rel) in request_rels.iter().enumerate() {
+            let request_key = (u32::MAX - level as u32, 3);
+            keys.insert(request_key);
+            let source = b.rel(
+                format!("__ir_intern_request_seed_{level}"),
+                vec![ir::Ty::Id; 3],
+                ir::RelKind::Source,
+            );
+            sources.insert(request_key, source);
+            relations.insert(request_key, *request_rel);
+            bodies.insert(
+                request_key,
+                requests_by_level
+                    .remove(&(level as u32))
+                    .unwrap_or_default(),
+            );
+        }
+        let last = *request_rels.last().unwrap();
+        b.ir.outputs.push(last);
+        visible.push((last, intern_rel, 3));
     }
     let mut pending: BTreeSet<_> = keys.clone();
     let mut edges: BTreeMap<RelationKey, BTreeSet<RelationKey>> = BTreeMap::new();
@@ -1430,14 +1456,23 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         }
     }
     if b.intern_readback {
-        let request_key = (u32::MAX, 3);
-        for dependency in request_dependencies {
-            edges.entry(request_key).or_default().insert(dependency);
-            reverse.entry(dependency).or_default().insert(request_key);
-        }
-        for head in readback_heads {
-            edges.entry(head).or_default().insert(request_key);
-            reverse.entry(request_key).or_default().insert(head);
+        for level in 0..=strata.max_level {
+            let request_key = (u32::MAX - level, 3);
+            for dependency in request_dependencies.remove(&level).unwrap_or_default() {
+                edges.entry(request_key).or_default().insert(dependency);
+                reverse.entry(dependency).or_default().insert(request_key);
+            }
+            for head in readback_heads.remove(&level).unwrap_or_default() {
+                edges.entry(head).or_default().insert(request_key);
+                reverse.entry(request_key).or_default().insert(head);
+            }
+            if level > 0 {
+                let prior = (u32::MAX - (level - 1), 3);
+                let prior_rows = b.get(relations[&prior]);
+                bodies.entry(request_key).or_default().push(prior_rows);
+                edges.entry(request_key).or_default().insert(prior);
+                reverse.entry(prior).or_default().insert(request_key);
+            }
         }
     }
     for _ in 0..COMPONENT_BUDGET {
@@ -1510,7 +1545,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         return Err(unsupported(u, "component budget"));
     }
     if !b.intern_readback {
-        let requests = std::mem::take(&mut b.intern_nodes);
+        let requests: Vec<_> = requests_by_level.into_values().flatten().collect();
         let has_requests = !requests.is_empty();
         let body = if has_requests {
             let union = b.node(ir::Op::Union(requests));
@@ -1525,12 +1560,12 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             )
         };
         b.ir.strata.push(ir::Stratum::Let {
-            id: request_rel,
+            id: request_rels[0],
             body,
         });
         if has_requests {
-            b.ir.outputs.push(request_rel);
-            visible.push((request_rel, intern_rel, 3));
+            b.ir.outputs.push(request_rels[0]);
+            visible.push((request_rels[0], intern_rel, 3));
         }
     }
     if !b.effect_nodes.is_empty() {
@@ -1592,7 +1627,6 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         .into_iter()
         .map(|row| (sources[&(row.rel.0, row.args.len())], row))
         .collect();
-    let _ = strata;
     Ok(Lowered {
         ir: b.ir,
         terms,
