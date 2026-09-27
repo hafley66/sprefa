@@ -323,6 +323,11 @@ fn dd_engine_matches_v7_oracles() {
 #[test]
 fn ir_engines_match_v7_oracles() {
     let mut failures = Vec::new();
+    let known_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("plans/v8/receipts/2026-09-26-dd-eval-differential/known-gaps.json");
+    let known: Value = serde_json::from_slice(&std::fs::read(known_path).unwrap()).unwrap();
+    let gaps = known["oracle_gaps"].as_array().unwrap();
+    let mut reproduced = std::collections::HashSet::new();
     for path in fixtures() {
         let fixture: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let program_path = std::env::temp_dir().join(format!(
@@ -353,6 +358,32 @@ fn ir_engines_match_v7_oracles() {
                     continue;
                 }
             };
+            let fixture_name = path.file_name().unwrap().to_string_lossy();
+            if let Some(gap) = gaps
+                .iter()
+                .find(|gap| gap["fixture"] == fixture_name.as_ref() && gap["engine"] == engine)
+            {
+                assert_eq!(
+                    gap["program"], fixture["program"],
+                    "stale oracle gap program: {fixture_name}"
+                );
+                let error = gap["error"].as_str().unwrap();
+                let install_error = format!("Install rel None: Unsupported(\"{error}\")");
+                assert!(
+                    got["diagnostics"]
+                        .as_array()
+                        .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| {
+                            diagnostic["phase"] == "ir_eval"
+                                && diagnostic["payload"]["f"] == "ir_engine_error"
+                                && diagnostic["payload"]["args"][1]["s"]
+                                    .as_str()
+                                    .is_some_and(|detail| detail.contains(&install_error))
+                        })),
+                    "oracle gap stopped reproducing: {fixture_name} {engine}: {error}"
+                );
+                reproduced.insert((fixture_name.to_string(), engine.to_string()));
+                continue;
+            }
             if got["closure"] != fixture["expected"]["closure"]
                 || got["diagnostics"] != fixture["expected"]["diagnostics"]
             {
@@ -369,6 +400,11 @@ fn ir_engines_match_v7_oracles() {
         }
         let _ = std::fs::remove_file(program_path);
     }
+    assert_eq!(
+        reproduced.len(),
+        gaps.len(),
+        "listed oracle gap stopped reproducing"
+    );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
@@ -965,7 +1001,11 @@ fn random_programs_match_all_evaluators() {
         let program = program_json(seed, &spec);
         let closure = closures(&program);
         for signature in signatures(&closure) {
-            let program = shrunk_program(seed, &signature);
+            let program = if signature.starts_with("ir:") {
+                program.clone()
+            } else {
+                shrunk_program(seed, &signature)
+            };
             let [rust, sqlite, dd, ir_dd, ir_sqlite] = closures(&program);
             assert!(signatures(&[
                 rust.clone(),
@@ -1022,12 +1062,9 @@ fn random_programs_match_all_evaluators() {
         "random seeds={ran} coverage={coverage:?} distinct_gaps={per_engine:?} wall_ms={wall_ms}"
     );
     if update {
-        let catalogue = json!({"seeds_run":ran,"gaps":gaps});
-        std::fs::write(
-            &known_path,
-            serde_json::to_string_pretty(&catalogue).unwrap(),
-        )
-        .unwrap();
+        let previous: Value = serde_json::from_slice(&std::fs::read(&known_path).unwrap()).unwrap();
+        let catalogue = json!({"seeds_run":ran,"gaps":gaps,"oracle_gaps":previous["oracle_gaps"]});
+        std::fs::write(&known_path, serde_json::to_string(&catalogue).unwrap()).unwrap();
         let receipt = json!({"seeds_run":ran,"coverage":coverage,"distinct_gaps":per_engine,"wall_ms":wall_ms});
         let run_path = receipt_dir.join(format!("run-{ran}.json"));
         std::fs::write(&run_path, serde_json::to_string_pretty(&receipt).unwrap()).unwrap();

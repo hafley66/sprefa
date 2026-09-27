@@ -431,6 +431,86 @@ fn rung_6_kernels() {
 }
 
 #[test]
+fn rung_6_scalar_kernel_edges() {
+    let bare = |name: &str, args: Vec<Value>| {
+        json!({
+            "rel":{"f":"ref","args":[{"f":"kernel","args":[{"a":name}]}]},
+            "args":args,"polarity":"positive"
+        })
+    };
+    let typed = |owner: &str, name: &str, args: Vec<Value>| {
+        json!({
+            "rel":{"f":"ref","args":[{"f":"kernel","args":[{"a":owner},{"a":name}]}]},
+            "args":args,"polarity":"positive"
+        })
+    };
+    let rules = vec![
+        rule(
+            "counted",
+            vec![variable(0)],
+            vec![bare(
+                "count_step",
+                vec![constant(2), constant(99), variable(0)],
+            )],
+        ),
+        rule(
+            "minimum",
+            vec![variable(0)],
+            vec![bare(
+                "min_step",
+                vec![constant(2), constant(1), variable(0)],
+            )],
+        ),
+        rule(
+            "maximum",
+            vec![variable(0)],
+            vec![bare(
+                "max_step",
+                vec![constant(2), constant(1), variable(0)],
+            )],
+        ),
+        rule(
+            "empty_str",
+            vec![variable(0)],
+            vec![typed("str", "nil", vec![variable(0)])],
+        ),
+        rule(
+            "non_integer",
+            vec![],
+            vec![typed(
+                "int",
+                "lt",
+                vec![json!({"f":"const","args":[{"a":"oops"}]}), constant(2)],
+            )],
+        ),
+    ];
+    for engine in ["rust", "dd", "ir:dd", "ir:sqlite"] {
+        let (closure, _) = run(6, 4, engine, program(vec![], rules.clone()));
+        assert_eq!(
+            rows(&closure, "counted"),
+            vec![vec![constant(3)]],
+            "engine={engine}"
+        );
+        assert_eq!(
+            rows(&closure, "minimum"),
+            vec![vec![constant(1)]],
+            "engine={engine}"
+        );
+        assert_eq!(
+            rows(&closure, "maximum"),
+            vec![vec![constant(2)]],
+            "engine={engine}"
+        );
+        assert_eq!(
+            rows(&closure, "empty_str"),
+            vec![vec![json!({"f":"const","args":[{"s":""}]})]],
+            "engine={engine}"
+        );
+        assert!(rows(&closure, "non_integer").is_empty(), "engine={engine}");
+    }
+}
+
+#[test]
 fn rung_7_demand() {
     for engine in ENGINES {
         for size in 0..=3 {

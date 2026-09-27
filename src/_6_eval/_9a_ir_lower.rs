@@ -61,6 +61,9 @@ struct Builder {
     next_rel: ir::RelId,
     constructor_gets: HashMap<ir::RelId, ir::NodeId>,
     intern_nodes: Vec<ir::NodeId>,
+    intern_relation: Option<ir::RelId>,
+    intern_readback: bool,
+    intern_readback_count: usize,
     effect_nodes: Vec<ir::NodeId>,
     snapshot_nodes: Vec<ir::NodeId>,
 }
@@ -69,6 +72,7 @@ impl Builder {
     fn new() -> Self {
         Self {
             ir: ir::Program {
+                texts: Vec::new(),
                 rels: Vec::new(),
                 nodes: Vec::new(),
                 strata: Vec::new(),
@@ -77,6 +81,9 @@ impl Builder {
             next_rel: 0,
             constructor_gets: HashMap::new(),
             intern_nodes: Vec::new(),
+            intern_relation: None,
+            intern_readback: false,
+            intern_readback_count: 0,
             effect_nodes: Vec::new(),
             snapshot_nodes: Vec::new(),
         }
@@ -314,8 +321,10 @@ fn compile_kernel(
     kernel: Kernel,
     constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
     semantic: ir::RelId,
+    bad_lists: ir::RelId,
     plain_lists: ir::RelId,
     term_map: ir::RelId,
+    str_nil: TermId,
     current: &mut ir::NodeId,
     width: &mut usize,
     bound: &mut HashMap<u32, ir::ColId>,
@@ -336,6 +345,34 @@ fn compile_kernel(
             _ => return Err("kernel aggregate or fold"),
         }
     }
+    if kernel == Kernel::Intern
+        && (inputs.first().is_some_and(Option::is_none)
+            || inputs.get(1).is_some_and(Option::is_none))
+    {
+        if goal.polarity == Polarity::Negative {
+            return Err("negative intern readback");
+        }
+        let relation = b.intern_relation.ok_or("intern request relation")?;
+        let right = b.get(relation);
+        let equivalences = inputs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, input)| input.map(|col| vec![(0, col), (1, assert_width(index))]))
+            .collect();
+        *current = b.node(ir::Op::Join {
+            inputs: vec![*current, right],
+            equivalences,
+        });
+        for (index, arg) in goal.args.iter().enumerate() {
+            if let (Arg::Var(v), None) = (arg, inputs[index]) {
+                bound.insert(v.0, assert_width(*width + index));
+            }
+        }
+        *width += 3;
+        b.intern_readback = true;
+        b.intern_readback_count += 1;
+        return Ok(());
+    }
     if goal.polarity == Polarity::Negative && inputs.iter().any(Option::is_none) {
         *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
         return Ok(());
@@ -352,10 +389,29 @@ fn compile_kernel(
                 *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
                 return Ok(());
             };
-            let a = ir::Expr::Col(left);
-            let z = ir::Expr::Col(right);
-            let lt = || ir::Expr::Call(ir::Func::TermLt, vec![a.clone(), z.clone()]);
-            let gt = || ir::Expr::Call(ir::Func::TermLt, vec![z.clone(), a.clone()]);
+            let (left_value, right_value, order) = if matches!(kernel, Kernel::Int(_)) {
+                let wrap = constructor(constructors, "9:1:const", 1, false)?;
+                let int = constructor(constructors, "0:int", 0, true)?;
+                *current = join_constructor(b, *current, *width, wrap, left);
+                let left_inner = assert_width(*width + 1);
+                *width += 2;
+                *current = join_constructor(b, *current, *width, wrap, right);
+                let right_inner = assert_width(*width + 1);
+                *width += 2;
+                *current = join_constructor(b, *current, *width, int, left_inner);
+                let left_raw = assert_width(*width + 1);
+                *width += 2;
+                *current = join_constructor(b, *current, *width, int, right_inner);
+                let right_raw = assert_width(*width + 1);
+                *width += 2;
+                (left_raw, right_raw, ir::Func::Lt)
+            } else {
+                (left, right, ir::Func::TermLt)
+            };
+            let a = ir::Expr::Col(left_value);
+            let z = ir::Expr::Col(right_value);
+            let lt = || ir::Expr::Call(order, vec![a.clone(), z.clone()]);
+            let gt = || ir::Expr::Call(order, vec![z.clone(), a.clone()]);
             let eq = || ir::Expr::Call(ir::Func::Eq, vec![a.clone(), z.clone()]);
             let predicate = match kernel {
                 Kernel::TermLt | Kernel::Int(IntCmp::Lt) => lt(),
@@ -375,6 +431,13 @@ fn compile_kernel(
             let wrap = constructor(constructors, "9:1:const", 1, false)?;
             let list = constructor(constructors, "9:2:[|]", 2, false)?;
             if let Some(whole) = inputs[2] {
+                let bad = b.get(bad_lists);
+                *current = b.node(ir::Op::Antijoin {
+                    l: *current,
+                    r: bad,
+                    lk: vec![whole],
+                    rk: vec![0],
+                });
                 *current = join_constructor(b, *current, *width, wrap, whole);
                 let inner = assert_width(*width + 1);
                 *width += 2;
@@ -395,6 +458,13 @@ fn compile_kernel(
                     *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
                     return Ok(());
                 };
+                let bad = b.get(bad_lists);
+                *current = b.node(ir::Op::Antijoin {
+                    l: *current,
+                    r: bad,
+                    lk: vec![tail],
+                    rk: vec![0],
+                });
                 *current = join_constructor(b, *current, *width, wrap, tail);
                 let tail_inner = assert_width(*width + 1);
                 *width += 2;
@@ -416,7 +486,18 @@ fn compile_kernel(
         }
         Kernel::Nil => return Err("nil relation routing"),
         Kernel::StrCons => return Err("str.cons"),
-        Kernel::StrNil => return Err("str.nil"),
+        Kernel::StrNil => {
+            if inputs.len() != 1 {
+                return Err("str.nil arity");
+            }
+            let mapped = mapped_ground(b, term_map, str_nil);
+            *current = b.node(ir::Op::Join {
+                inputs: vec![*current, mapped],
+                equivalences: vec![],
+            });
+            output[0] = Some(assert_width(*width + 1));
+            *width += 2;
+        }
         Kernel::IntAdd => {
             if inputs.len() != 3 {
                 return Err("int.add arity");
@@ -555,9 +636,84 @@ fn compile_kernel(
             output[2] = Some(assert_width(*width));
             *width += 1;
         }
-        Kernel::CountStep => return Err("count_step"),
-        Kernel::MinStep => return Err("min_step"),
-        Kernel::MaxStep => return Err("max_step"),
+        Kernel::CountStep => {
+            if inputs.len() != 3 {
+                return Err("count_step arity");
+            }
+            let (Some(accumulator), Some(_value)) = (inputs[0], inputs[1]) else {
+                *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
+                return Ok(());
+            };
+            let wrap = constructor(constructors, "9:1:const", 1, false)?;
+            let int = constructor(constructors, "0:int", 0, true)?;
+            *current = join_constructor(b, *current, *width, wrap, accumulator);
+            let inner = assert_width(*width + 1);
+            *width += 2;
+            *current = join_constructor(b, *current, *width, int, inner);
+            let raw = assert_width(*width + 1);
+            *width += 2;
+            *current = b.mfp(
+                *current,
+                vec![ir::Expr::Call(
+                    ir::Func::Ne,
+                    vec![ir::Expr::Col(raw), ir::Expr::Lit(i64::MAX)],
+                )],
+                vec![ir::Expr::Call(
+                    ir::Func::Add,
+                    vec![ir::Expr::Col(raw), ir::Expr::Lit(1)],
+                )],
+                vec![],
+            );
+            let next = assert_width(*width);
+            *width += 1;
+            *current = b.node(ir::Op::Mint {
+                input: *current,
+                functor: int,
+                args: vec![next],
+            });
+            let int_id = assert_width(*width);
+            *width += 1;
+            *current = b.node(ir::Op::Mint {
+                input: *current,
+                functor: wrap,
+                args: vec![int_id],
+            });
+            output[2] = Some(assert_width(*width));
+            *width += 1;
+        }
+        Kernel::MinStep | Kernel::MaxStep => {
+            if inputs.len() != 3 {
+                return Err("extremum step arity");
+            }
+            let (Some(accumulator), Some(value)) = (inputs[0], inputs[1]) else {
+                *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
+                return Ok(());
+            };
+            let wins = if kernel == Kernel::MinStep {
+                (value, accumulator)
+            } else {
+                (accumulator, value)
+            };
+            let less = ir::Expr::Call(
+                ir::Func::TermLt,
+                vec![ir::Expr::Col(wins.0), ir::Expr::Col(wins.1)],
+            );
+            let chosen = b.mfp(
+                *current,
+                vec![less.clone()],
+                vec![ir::Expr::Col(value)],
+                vec![],
+            );
+            let kept = b.mfp(
+                *current,
+                vec![ir::Expr::Call(ir::Func::Not, vec![less])],
+                vec![ir::Expr::Col(accumulator)],
+                vec![],
+            );
+            *current = b.node(ir::Op::Union(vec![chosen, kept]));
+            output[2] = Some(assert_width(*width));
+            *width += 1;
+        }
     }
     let mut filters = Vec::new();
     for (arg, (before, after)) in goal.args.iter().zip(inputs.iter().zip(&output)) {
@@ -601,8 +757,10 @@ fn compile_rule(
     relations: &BTreeMap<(u32, usize), ir::RelId>,
     constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
     semantic: ir::RelId,
+    bad_lists: ir::RelId,
     plain_lists: ir::RelId,
     term_map: ir::RelId,
+    str_nil: TermId,
     unit: ir::RelId,
     served: &std::collections::HashSet<TermId>,
     none: TermId,
@@ -626,15 +784,19 @@ fn compile_rule(
                 empty,
             )?;
         }
-        if let Some(kernel) = Kernel::of(u, goal.rel).filter(|kernel| *kernel != Kernel::Nil) {
+        if let Some(kernel) = Kernel::of(u, goal.rel).filter(|kernel| {
+            *kernel != Kernel::Nil && (!rule.is_aggregate() || goal.polarity == Polarity::Negative)
+        }) {
             compile_kernel(
                 b,
                 goal,
                 kernel,
                 constructors,
                 semantic,
+                bad_lists,
                 plain_lists,
                 term_map,
+                str_nil,
                 &mut current,
                 &mut width,
                 &mut bound,
@@ -863,6 +1025,8 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let intern_rel = kernel_ref(u, "intern");
     let effect_rel = kernel_ref(u, "effect");
     let snapshot_rel = kernel_ref(u, "intern_snapshot");
+    let empty_string = u.string("");
+    let str_nil = u.compound("const", vec![empty_string]);
     let none_atom = u.atom("none");
     let none = u.compound("const", vec![none_atom]);
     let empty = u.empty_list();
@@ -876,6 +1040,12 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         return Err(diag);
     }
     let (program, hidden) = super::sqlite_eval::with_demand(u, &program);
+    let dynamic_lists = program.rules.iter().any(|rule| {
+        rule.body.iter().any(|goal| {
+            Kernel::of(u, goal.rel) == Some(Kernel::Intern)
+                && matches!(goal.args.get(1), Some(Arg::Var(_)))
+        })
+    });
     let possible_lists: Vec<TermId> = (0..u.terms.len()).map(|i| TermId(i as u32)).collect();
     let mut plain_list_pairs = Vec::new();
     for tagged in possible_lists {
@@ -892,6 +1062,13 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         let plain = u.list(&plain);
         plain_list_pairs.push((tagged, plain));
     }
+    let bad_list_terms: Vec<TermId> = (0..u.terms.len())
+        .map(|i| TermId(i as u32))
+        .filter(|&id| {
+            u.unary(id, "const")
+                .is_some_and(|payload| u.as_list(payload).is_none())
+        })
+        .collect();
     let mut b = Builder::new();
     let unit = b.rel("__ir_unit".into(), vec![ir::Ty::Id], ir::RelKind::Source);
     let term_map = b.rel(
@@ -899,10 +1076,20 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         vec![ir::Ty::Int, ir::Ty::Id],
         ir::RelKind::Source,
     );
+    let plain_source = b.rel(
+        "__ir_plain_list_seeds".into(),
+        vec![ir::Ty::Id, ir::Ty::Id],
+        ir::RelKind::Source,
+    );
+    let bad_lists = b.rel(
+        "__ir_bad_lists".into(),
+        vec![ir::Ty::Id],
+        ir::RelKind::Source,
+    );
     let plain_lists = b.rel(
         "__ir_plain_lists".into(),
         vec![ir::Ty::Id, ir::Ty::Id],
-        ir::RelKind::Source,
+        ir::RelKind::Derived,
     );
     let mut constructor_keys = BTreeSet::new();
     let mut shapes = Vec::new();
@@ -1025,6 +1212,46 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let consts = b.get_constructor(constructors[&("9:1:const".to_string(), 1, false)]);
     let body = b.node(ir::Op::Union(vec![refs, consts]));
     b.ir.strata.push(ir::Stratum::Let { id: semantic, body });
+    let seed_lists = b.get(plain_source);
+    if dynamic_lists {
+        let wrap = constructors[&("9:1:const".to_string(), 1, false)];
+        let cons = constructors[&("9:2:[|]".to_string(), 2, false)];
+        let mut pairs = b.get(plain_lists);
+        pairs = join_constructor(&mut b, pairs, 2, wrap, 0);
+        let tail_inner = 3;
+        let cons_rows = b.get_constructor(cons);
+        pairs = b.node(ir::Op::Join {
+            inputs: vec![pairs, cons_rows],
+            equivalences: vec![vec![(0, tail_inner), (1, 2)]],
+        });
+        let tagged_head = 5;
+        let list_inner = 4;
+        let wraps = b.get_constructor(wrap);
+        pairs = b.node(ir::Op::Join {
+            inputs: vec![pairs, wraps],
+            equivalences: vec![vec![(0, list_inner), (1, 1)]],
+        });
+        let whole_tagged = 7;
+        pairs = join_constructor(&mut b, pairs, 9, semantic, tagged_head);
+        let plain_head = 10;
+        pairs = b.node(ir::Op::Mint {
+            input: pairs,
+            functor: cons,
+            args: vec![plain_head, 1],
+        });
+        pairs = b.mfp(pairs, vec![], vec![], vec![whole_tagged, 11]);
+        let body = b.node(ir::Op::Union(vec![seed_lists, pairs]));
+        b.ir.strata.push(ir::Stratum::LetRec(ir::LetRec {
+            ids: vec![plain_lists],
+            bodies: vec![body],
+            limit: None,
+        }));
+    } else {
+        b.ir.strata.push(ir::Stratum::Let {
+            id: plain_lists,
+            body: seed_lists,
+        });
+    }
     let mut keys = BTreeSet::new();
     for seed in &program.seeds {
         keys.insert((seed.rel.0, seed.args.len()));
@@ -1032,7 +1259,9 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     for rule in &program.rules {
         keys.insert((rule.rel.0, rule.head.len()));
         for goal in &rule.body {
-            if Kernel::of(u, goal.rel).is_none_or(|kernel| kernel == Kernel::Nil) {
+            if Kernel::of(u, goal.rel).is_none_or(|kernel| kernel == Kernel::Nil)
+                || (rule.is_aggregate() && goal.polarity == Polarity::Positive)
+            {
                 keys.insert((goal.rel.0, goal.args.len()));
             }
         }
@@ -1055,8 +1284,25 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             b.ir.outputs.push(output);
         }
     }
+    let request_rel = b.rel(
+        "__ir_intern_requests".into(),
+        vec![ir::Ty::Id; 3],
+        ir::RelKind::Derived,
+    );
+    b.intern_relation = Some(request_rel);
     let mut bodies: BTreeMap<(u32, usize), Vec<ir::NodeId>> = BTreeMap::new();
+    let mut request_dependencies = BTreeSet::new();
+    let mut readback_heads = BTreeSet::new();
     for rule in &program.rules {
+        if rule.is_aggregate() && rule.aggregate_args() != 1 {
+            let count = u.int(rule.aggregate_args() as i64);
+            return Err(Diagnostic {
+                phase: "evaluate",
+                payload: u.compound("malformed_aggregate_head", vec![count]),
+            });
+        }
+        let requests_before = b.intern_nodes.len();
+        let readbacks_before = b.intern_readback_count;
         let body = compile_rule(
             &mut b,
             u,
@@ -1064,18 +1310,46 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             &relations,
             &constructors,
             semantic,
+            bad_lists,
             plain_lists,
             term_map,
+            str_nil,
             unit,
             &program.served,
             none,
             empty,
         )
         .map_err(|name| unsupported(u, name))?;
+        if b.intern_nodes.len() > requests_before {
+            for goal in &rule.body {
+                let key = (goal.rel.0, goal.args.len());
+                if keys.contains(&key) {
+                    request_dependencies.insert(key);
+                }
+            }
+        }
+        if b.intern_readback_count > readbacks_before {
+            readback_heads.insert((rule.rel.0, rule.head.len()));
+        }
         bodies
             .entry((rule.rel.0, rule.head.len()))
             .or_default()
             .push(body);
+    }
+    if b.intern_readback {
+        let request_key = (u32::MAX, 3);
+        keys.insert(request_key);
+        let source = b.rel(
+            "__ir_intern_request_seed".into(),
+            vec![ir::Ty::Id; 3],
+            ir::RelKind::Source,
+        );
+        sources.insert(request_key, source);
+        relations.insert(request_key, request_rel);
+        let requests = std::mem::take(&mut b.intern_nodes);
+        bodies.insert(request_key, requests);
+        b.ir.outputs.push(request_rel);
+        visible.push((request_rel, intern_rel, 3));
     }
     let mut pending: BTreeSet<_> = keys.clone();
     let mut edges: BTreeMap<RelationKey, BTreeSet<RelationKey>> = BTreeMap::new();
@@ -1090,6 +1364,17 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             }
         }
     }
+    if b.intern_readback {
+        let request_key = (u32::MAX, 3);
+        for dependency in request_dependencies {
+            edges.entry(request_key).or_default().insert(dependency);
+            reverse.entry(dependency).or_default().insert(request_key);
+        }
+        for head in readback_heads {
+            edges.entry(head).or_default().insert(request_key);
+            reverse.entry(request_key).or_default().insert(head);
+        }
+    }
     for _ in 0..COMPONENT_BUDGET {
         if pending.is_empty() {
             break;
@@ -1098,15 +1383,11 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             .iter()
             .copied()
             .filter(|key| {
-                program
-                    .rules
-                    .iter()
-                    .filter(|rule| (rule.rel.0, rule.head.len()) == *key)
-                    .all(|rule| {
-                        rule.body
-                            .iter()
-                            .all(|goal| !pending.contains(&(goal.rel.0, goal.args.len())))
-                    })
+                edges
+                    .get(key)
+                    .into_iter()
+                    .flatten()
+                    .all(|dependency| !pending.contains(dependency))
             })
             .collect();
         if ready.is_empty() {
@@ -1163,21 +1444,29 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     if !pending.is_empty() {
         return Err(unsupported(u, "component budget"));
     }
-    if !b.intern_nodes.is_empty() {
-        let request_rel = b.rel(
-            "__ir_intern_requests".into(),
-            vec![ir::Ty::Id; 3],
-            ir::RelKind::Derived,
-        );
+    if !b.intern_readback {
         let requests = std::mem::take(&mut b.intern_nodes);
-        let union = b.node(ir::Op::Union(requests));
-        let body = b.node(ir::Op::Threshold(union));
+        let has_requests = !requests.is_empty();
+        let body = if has_requests {
+            let union = b.node(ir::Op::Union(requests));
+            b.node(ir::Op::Threshold(union))
+        } else {
+            let unit_row = b.get(unit);
+            b.mfp(
+                unit_row,
+                vec![ir::Expr::Lit(0)],
+                vec![ir::Expr::Col(0), ir::Expr::Col(0)],
+                vec![0, 1, 2],
+            )
+        };
         b.ir.strata.push(ir::Stratum::Let {
             id: request_rel,
             body,
         });
-        b.ir.outputs.push(request_rel);
-        visible.push((request_rel, intern_rel, 3));
+        if has_requests {
+            b.ir.outputs.push(request_rel);
+            visible.push((request_rel, intern_rel, 3));
+        }
     }
     if !b.effect_nodes.is_empty() {
         let effect_output = b.rel(
@@ -1248,7 +1537,12 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         visible,
         internal_seeds: plain_list_pairs
             .into_iter()
-            .map(|(tagged, plain)| (plain_lists, vec![tagged, plain]))
+            .map(|(tagged, plain)| (plain_source, vec![tagged, plain]))
+            .chain(
+                bad_list_terms
+                    .into_iter()
+                    .map(|term| (bad_lists, vec![term])),
+            )
             .collect(),
     })
 }
