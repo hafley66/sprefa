@@ -343,10 +343,9 @@ pub fn a_declared_relation_names_its_own_table() {
 // of the program without that seed. A fixture's emit diagnostics must equal
 // `fixtures/sqlite_emit/expected_diagnostics.json` (absent key: none).
 //
-// The closure is `dl8 eval`'s, except for a program with a fold head: the eval
-// JSON transport carries no `fold` key (`_15_fold.rs` header), so that closure
-// is the one `dl8 compile` evaluates, and its reduced program is the source
-// without the deleted seed's line.
+// The closure is `dl8 eval`'s, except for a program with a fold head: that
+// closure comes from `dl8 compile` to preserve fixture source locations. Its
+// reduced program is the source without the deleted seed's line.
 //
 // The extension is `SQLITE_IVM_LIB`, else the isolated release build in
 // `sqlite_ivm/target/extension/release` (the sibling-checkout symlink), built with

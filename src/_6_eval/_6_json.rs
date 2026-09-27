@@ -2,11 +2,14 @@
 //! `{"a": name}`, string as `{"s": text}`, proper list as array, compound as
 //! `{"f": name, "args": [...]}`. Rule arguments add `{"v": identity}` and an
 //! aggregate key, one of `{"count": arg}`, `{"sum": arg}`, `{"min": arg}`,
-//! `{"max": arg}`. A program carries an optional `names` table beside its
-//! rules and seeds, which `--serve` resolves against. The oracle dump
+//! `{"max": arg}`, or `{"f":"fold","args":[step,seed,arg]}`. A program
+//! carries an optional `names` table beside its rules and seeds, which
+//! `--serve` resolves against. The oracle dump
 //! `v8/oracle/eval/dump_eval.pl` writes the same shape from v7.
 
-use super::program::{AggregateKind, Arg, Diagnostic, Goal, Polarity, Program, Row, Rule, VarId};
+use super::program::{
+    AggregateKind, Arg, Diagnostic, Fold, Goal, Order, Polarity, Program, Row, Rule, Seed, VarId,
+};
 use super::term::{Term, TermId, Universe};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -260,6 +263,21 @@ fn arg_from_json(u: &mut Universe, v: &Value, vars: &mut Vec<TermId>) -> Result<
                 Box::new(arg_from_json(u, subject, vars)?),
             ));
         }
+        if m.get("f").and_then(Value::as_str) == Some("fold") {
+            let args = m
+                .get("args")
+                .and_then(Value::as_array)
+                .ok_or("fold without args")?;
+            let [step, seed, subject] = args.as_slice() else {
+                return Err(format!("bad fold arity {}", args.len()));
+            };
+            let fold = Fold {
+                step: term_from_json(u, step)?,
+                seed: Seed::Term(term_from_json(u, seed)?),
+                order: Order::TermLt,
+            };
+            return Ok(Arg::Fold(fold, Box::new(arg_from_json(u, subject, vars)?)));
+        }
     }
     Ok(Arg::Ground(term_from_json(u, v)?))
 }
@@ -295,6 +313,16 @@ fn arg_to_json(u: &Universe, id: TermId) -> Value {
                 return json!({ name: arg_to_json(u, subject) });
             }
         }
+    }
+    if let Some([step, seed, subject]) = u.args::<3>(id, "fold") {
+        return json!({
+            "f": "fold",
+            "args": [
+                term_to_json(u, step),
+                term_to_json(u, seed),
+                arg_to_json(u, subject),
+            ],
+        });
     }
     term_to_json(u, id)
 }

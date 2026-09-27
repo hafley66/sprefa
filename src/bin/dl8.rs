@@ -547,6 +547,36 @@ fn run_cli(
                         &result.closure.rows,
                         &result.closure.diagnostics,
                     );
+                    let mut delta_rows = serde_json::Map::new();
+                    for (name, value) in [
+                        ("filter", result.counters.delta_rows.filter),
+                        ("join", result.counters.delta_rows.join),
+                        ("antijoin", result.counters.delta_rows.antijoin),
+                        ("reduce", result.counters.delta_rows.reduce),
+                        ("topk", result.counters.delta_rows.topk),
+                        ("window", result.counters.delta_rows.window),
+                        ("mint", result.counters.delta_rows.mint),
+                    ] {
+                        if let Some(value) = value {
+                            delta_rows.insert(name.into(), value.into());
+                        }
+                    }
+                    let mut counters = serde_json::Map::from_iter([
+                        (
+                            "rows_written".into(),
+                            result.counters.rows_written.into(),
+                        ),
+                        ("delta_rows".into(), delta_rows.into()),
+                    ]);
+                    for (name, value) in [
+                        ("rounds", result.counters.rounds),
+                        ("interned", result.counters.interned),
+                        ("statements", result.counters.statements),
+                    ] {
+                        if let Some(value) = value {
+                            counters.insert(name.into(), value.into());
+                        }
+                    }
                     let deltas: Vec<_> = result
                         .deltas
                         .into_iter()
@@ -558,7 +588,11 @@ fn run_cli(
                             })
                         })
                         .collect();
-                    serde_json::json!({ "closure": closure, "deltas": deltas })
+                    serde_json::json!({
+                        "closure": closure,
+                        "deltas": deltas,
+                        "counters": counters,
+                    })
                 })
                 .collect(),
         );

@@ -47,6 +47,7 @@ pub struct NamedDelta {
 pub struct FrontierResult {
     pub closure: Closure,
     pub deltas: Vec<NamedDelta>,
+    pub counters: ivm_engine::Counters,
 }
 
 struct LiveRun<'a> {
@@ -97,10 +98,50 @@ fn snapshot_closure<E: Engine>(
             .then_with(|| u.cmp_rows(&a.args, &b.args))
     });
     rows.dedup();
-    Ok(Closure {
-        rows,
-        diagnostics: Vec::new(),
-    })
+    let mut diagnostics = Vec::new();
+    if let Some(program) = &lowered.fold_program {
+        for spec in &lowered.declared_folds {
+            let mut groups: BTreeMap<Vec<Cell>, Vec<(Cell, TermId)>> = BTreeMap::new();
+            for (cells, weight) in engine.snapshot(spec.ranked, host)? {
+                if weight <= 0 {
+                    continue;
+                }
+                let subject_cell = cells[spec.key_count];
+                let subject = if let Some(&term) = decoded.get(&subject_cell) {
+                    term
+                } else if let Some(value) = engine.text(subject_cell, host)? {
+                    let term = u.string(&value);
+                    decoded.insert(subject_cell, term);
+                    term
+                } else {
+                    return Err(ivm_engine::EngineError::new(
+                        ivm_engine::Stage::Snapshot,
+                        Some(spec.ranked),
+                        ivm_engine::ErrorKind::Unsupported("undecodable fold subject"),
+                    ));
+                };
+                groups
+                    .entry(cells[..spec.key_count].to_vec())
+                    .or_default()
+                    .push((cells[spec.key_count + 1], subject));
+            }
+            for values in groups.values_mut() {
+                values.sort_by_key(|(rank, _)| *rank);
+                let values: Vec<_> = values.iter().map(|(_, value)| *value).collect();
+                if let Err(diagnostic) =
+                    super::evaluate::fold_generic_rows(u, program, &rows, &spec.fold, &values)
+                {
+                    diagnostics.push(diagnostic);
+                }
+            }
+        }
+    }
+    diagnostics.sort_by_key(|diagnostic| (diagnostic.phase, diagnostic.payload.0));
+    diagnostics.dedup();
+    if !diagnostics.is_empty() {
+        rows.clear();
+    }
+    Ok(Closure { rows, diagnostics })
 }
 
 pub fn configured_backend() -> Option<Backend> {
@@ -649,6 +690,7 @@ fn run<E: Engine>(
         frontier_results.push(FrontierResult {
             closure: snapshot_closure(u, lowered, &engine, host, &mapped)?,
             deltas: receipts,
+            counters: engine.counters(),
         });
     }
 

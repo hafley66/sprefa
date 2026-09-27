@@ -45,7 +45,6 @@ Use it when:
 
 Do not use it when:
 
-- the rows come from `dl8 eval`: its JSON has no `fold` key and the head keeps the fold term (`tests/_15_fold.rs:6-8`); read `dl8 compile` rows
 - an aggregate reads its own head through any path: `aggregate_dependency_cycle`, `oracle/check/cases/10_aggregate_cycle.dl7`
 - the count must drop when a row leaves: nothing retracts, the timer run in [Running dl8](1_run.md) shows `FiredCount` 1, 2 and 3 side by side
 
@@ -124,14 +123,14 @@ step 2  accumulator=1+1+2   = 4          -> (Weighted 4 4 ?Next)
 step 3  accumulator=4+4+4   = 12         -> values exhausted, row (Total 12)
 ```
 
-The same program through `dl8 eval`, which keeps the fold term:
+The same program through `dl8 eval`:
 
 ```console
 $ bash book/show.sh eval fixtures/fold/2_order_matters.dl7
 (Input 1)
 (Input 2)
 (Input 4)
-(Total fold(Weighted, 0, var(variable(reader_node(fixtures/fold/2_order_matters.dl7, 67), Value))))
+(Total 12)
 exit 0
 ```
 
@@ -167,4 +166,3 @@ exit 0
 | aggregate bodies read stored rows only | `oracle/eval/15_aggregate_tables_only.pl:1-2` | `cargo test --test _0_eval_oracle` |
 | two aggregates in one head | `oracle/eval/6_malformed_aggregate.pl` | `bash book/show.sh eval oracle/eval/6_malformed_aggregate.json` |
 | count over a lower stratum, then a filter | `oracle/eval/3_count.pl` | `bash book/show.sh eval oracle/eval/3_count.json` |
-| `dl8 eval` has no fold transport | `tests/_15_fold.rs:6-8`, `src/_6_eval/_6_json.rs:4-5` | `bash book/show.sh eval fixtures/fold/2_order_matters.dl7` |

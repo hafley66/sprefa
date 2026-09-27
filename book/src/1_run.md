@@ -48,7 +48,6 @@ Use it when:
 
 Do not use it when:
 
-- the program folds with `(fold ...)`: `dl8 eval` stores the fold term as the value, read `dl8 compile` rows, [Aggregates and fold](7_aggregate.md)
 - a served name has no executor: `dl8 run` exits 1, [Executors](11_executors.md)
 
 ## Example
@@ -120,7 +119,7 @@ Arguments:
   <PROGRAM>  
 
 Options:
-      --serve <SERVE>          Relations an executor settles: `timer`, `fetch_json`, `git.refs`, `git.history`, `fs.at`, `extract`
+      --serve <SERVE>          Relations an executor settles: `timer`, `fetch_json`, `git.refs`, `git.history`, `fs.at`, `fs.watch`, `extract`
       --trace                  Print one line per stratum, round and tick to stderr
       --db <DB>                Persist every tick into this SQLite file and continue from it
       --max-ticks <MAX_TICKS>  Stop after this many ticks past tick 0; unset runs until settled

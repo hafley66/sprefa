@@ -386,9 +386,8 @@ pub fn every_term_lt_fixture_matches_expected() {
 // process; the rows the fixture's own relations carry, plus the diagnostics,
 // must match the sibling `*.expected.json`.
 //
-// `dl8 eval` is not the door here: its JSON transport
-// (`src/_6_eval/_6_json.rs`) carries the four aggregate keys and no `fold`
-// key, and that file belongs to another lane.
+// Compile supplies the fixture's own relation IDs and source locations used
+// by the frozen expected rows. The eval transport also carries fold heads.
 
 /// A relation reference the fixture file owns, rather than the prelude or the
 /// kernel.
@@ -451,10 +450,13 @@ fn s15fold_fixtures() -> Vec<PathBuf> {
     out
 }
 
-fn compile(binary: &str, input: &Path) -> Result<Value, String> {
-    let output = Command::new(binary)
-        .arg("compile")
-        .arg(input)
+fn compile(binary: &str, input: &Path, engine: Option<&str>) -> Result<Value, String> {
+    let mut command = Command::new(binary);
+    command.arg("compile").arg(input);
+    if let Some(engine) = engine {
+        command.env("DL8_ENGINE", engine);
+    }
+    let output = command
         .output()
         .map_err(|e| format!("compile spawn: {e}"))?;
     serde_json::from_slice(&output.stdout).map_err(|e| {
@@ -465,26 +467,26 @@ fn compile(binary: &str, input: &Path) -> Result<Value, String> {
     })
 }
 
-fn observed(binary: &str, source: &Path) -> Result<(String, Value), String> {
+fn observed(binary: &str, source: &Path, engine: Option<&str>) -> Result<(String, Value), String> {
     let stem = source.file_stem().unwrap().to_string_lossy().to_string();
     let canonical = std::fs::canonicalize(source).map_err(|e| format!("{stem}: {e}"))?;
     let fixture_path = canonical.to_string_lossy().to_string();
-    let compiled = compile(binary, &canonical).map_err(|e| format!("{stem}: {e}"))?;
+    let compiled = compile(binary, &canonical, engine).map_err(|e| format!("{stem}: {e}"))?;
     let rows = fixture_rows(&compiled["compiler_rows"], &fixture_path)
         .map_err(|e| format!("{stem}: {e}"))?;
     let got = json!({ "rows": rows, "diagnostics": compiled["diagnostics"] });
     Ok((stem, s15fold_normalize(&got, &fixture_path)))
 }
 
-fn s15fold_check_fixture(binary: &str, source: &Path) -> Result<(), String> {
-    let (stem, got) = observed(binary, source)?;
+fn s15fold_check_fixture(binary: &str, source: &Path, engine: Option<&str>) -> Result<(), String> {
+    let (stem, got) = observed(binary, source, engine)?;
     let expected_path = source.with_file_name(format!("{stem}.expected.json"));
     let text = std::fs::read_to_string(&expected_path).map_err(|e| format!("{stem}: {e}"))?;
     let want: Value = serde_json::from_str(&text).map_err(|e| format!("{stem}: {e}"))?;
     for key in ["rows", "diagnostics"] {
         if got[key] != want[key] {
             return Err(format!(
-                "{stem}: {key} differ\n  want: {}\n  got:  {}",
+                "{stem} engine={engine:?}: {key} differ\n  want: {}\n  got:  {}",
                 want[key], got[key]
             ));
         }
@@ -497,9 +499,13 @@ pub fn every_fold_fixture_matches_expected() {
     let binary = env!("CARGO_BIN_EXE_dl8");
     let s15fold_fixtures = s15fold_fixtures();
     assert!(!s15fold_fixtures.is_empty(), "no fold fixtures found");
-    let failures: Vec<String> = s15fold_fixtures
-        .iter()
-        .filter_map(|source| s15fold_check_fixture(binary, source).err())
+    let failures: Vec<String> = [None, Some("ir:dd"), Some("ir:sqlite")]
+        .into_iter()
+        .flat_map(|engine| {
+            s15fold_fixtures
+                .iter()
+                .filter_map(move |source| s15fold_check_fixture(binary, source, engine).err())
+        })
         .collect();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -518,23 +524,26 @@ pub fn every_fold_fixture_carries_its_written_answer() {
         ("3_step_no_row", None, "fold_step_no_row"),
     ];
     let mut failures: Vec<String> = Vec::new();
-    for source in s15fold_fixtures() {
-        let (stem, got) = observed(binary, &source).unwrap();
-        let Some((_, value, diagnostic)) = wanted.iter().find(|(name, _, _)| *name == stem) else {
-            failures.push(format!("{stem}: fixture has no written answer"));
-            continue;
-        };
-        let text = got.to_string();
-        match value {
-            Some(n) => {
-                let folded = json!({ "f": "const", "args": [n] }).to_string();
-                if !text.contains(&folded) {
-                    failures.push(format!("{stem}: {n} absent from the rows"));
+    for engine in [None, Some("ir:dd"), Some("ir:sqlite")] {
+        for source in s15fold_fixtures() {
+            let (stem, got) = observed(binary, &source, engine).unwrap();
+            let Some((_, value, diagnostic)) = wanted.iter().find(|(name, _, _)| *name == stem)
+            else {
+                failures.push(format!("{stem}: fixture has no written answer"));
+                continue;
+            };
+            let text = got.to_string();
+            match value {
+                Some(n) => {
+                    let folded = json!({ "f": "const", "args": [n] }).to_string();
+                    if !text.contains(&folded) {
+                        failures.push(format!("{stem}: {n} absent from the rows"));
+                    }
                 }
-            }
-            None => {
-                if !text.contains(diagnostic) {
-                    failures.push(format!("{stem}: {diagnostic} absent"));
+                None => {
+                    if !text.contains(diagnostic) {
+                        failures.push(format!("{stem}: {diagnostic} absent"));
+                    }
                 }
             }
         }

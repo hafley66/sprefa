@@ -154,6 +154,163 @@ fn trace_count(trace: &str, marker: &str) -> usize {
         .sum()
 }
 
+fn fold_frontier(
+    size: usize,
+    engine: &str,
+    step: Value,
+    step_rule: Option<Value>,
+    append: i64,
+) -> Value {
+    let input = super::_2_eval_oracles::rel("input");
+    let total = super::_2_eval_oracles::rel("total");
+    let mut rules = vec![rule(
+        "total",
+        vec![json!({"f":"fold","args":[step, constant(0), variable(0)]})],
+        vec![goal("input", vec![variable(0)], false)],
+    )];
+    if let Some(step_rule) = step_rule {
+        rules.push(step_rule);
+    }
+    let program = json!({
+        "names": {"input": input, "total": total},
+        "seeds": (1..=size).map(|n| call("input", vec![json!({"f":"const","args":[n]})])).collect::<Vec<_>>(),
+        "rules": rules,
+    });
+    let frontiers = json!([{
+        "changes": [{"rel":"input", "args":[json!({"f":"const","args":[append]})], "w":1}]
+    }]);
+    let id = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir();
+    let program_path = dir.join(format!("dl8-fold-ladder-{}-{id}.json", std::process::id()));
+    let frontiers_path = dir.join(format!(
+        "dl8-fold-frontiers-{}-{id}.json",
+        std::process::id()
+    ));
+    std::fs::write(&program_path, serde_json::to_vec(&program).unwrap()).unwrap();
+    std::fs::write(&frontiers_path, serde_json::to_vec(&frontiers).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .arg("run")
+        .arg(&program_path)
+        .arg("--frontiers")
+        .arg(&frontiers_path)
+        .env("DL8_ENGINE", engine)
+        .output()
+        .unwrap();
+    std::fs::remove_file(program_path).unwrap();
+    std::fs::remove_file(frontiers_path).unwrap();
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "engine={engine} size={size} fold frontier json: {error}; {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "engine={engine} size={size}: {value}"
+    );
+    assert_eq!(
+        value["diagnostics"],
+        json!([]),
+        "engine={engine} size={size}: {value}"
+    );
+    value["frontiers"][0].clone()
+}
+
+#[test]
+fn rung_7_declared_fold_growth() {
+    let int_add = json!({"f":"ref","args":[{"f":"kernel","args":[{"a":"int"},{"a":"add"}]}]});
+    let custom_step = super::_2_eval_oracles::rel("step");
+    let step_rule = rule(
+        "step",
+        vec![variable(0), variable(1), variable(2)],
+        vec![json!({
+            "rel": int_add,
+            "args": [variable(0), variable(1), variable(2)],
+            "polarity": "positive",
+        })],
+    );
+    for engine in ["ir:dd", "ir:sqlite"] {
+        let small = fold_frontier(8, engine, int_add.clone(), None, 9);
+        let large = fold_frontier(80, engine, int_add.clone(), None, 81);
+        for (size, frontier) in [(8, &small), (80, &large)] {
+            let closure = frontier["closure"]["closure"].as_array().unwrap();
+            let total = (size * (size + 1) / 2 + size + 1) as i64;
+            assert_eq!(
+                rows(closure, "total"),
+                vec![vec![json!({"f":"const","args":[total]})]],
+                "engine={engine} size={size}"
+            );
+        }
+        assert_counter_growth(
+            7,
+            engine,
+            &small["counters"],
+            &large["counters"],
+            &["delta_rows", "window"],
+            8,
+            80,
+            Growth::Constant,
+        );
+
+        let small = fold_frontier(8, engine, custom_step.clone(), Some(step_rule.clone()), 0);
+        let large = fold_frontier(80, engine, custom_step.clone(), Some(step_rule.clone()), 0);
+        for (size, frontier) in [(8, &small), (80, &large)] {
+            let closure = frontier["closure"]["closure"].as_array().unwrap();
+            let total = (size * (size + 1) / 2) as i64;
+            assert_eq!(
+                rows(closure, "total"),
+                vec![vec![json!({"f":"const","args":[total]})]],
+                "engine={engine} size={size}"
+            );
+        }
+        assert_counter_growth(
+            7,
+            engine,
+            &small["counters"],
+            &large["counters"],
+            &["rows_written"],
+            8,
+            80,
+            Growth::Linear,
+        );
+    }
+}
+
+#[test]
+fn rung_7_declared_fold_algebras() {
+    let steps = [
+        (
+            json!({"f":"kernel","args":[{"a":"int"},{"a":"add"}]}),
+            5,
+            11,
+        ),
+        (json!({"f":"kernel","args":[{"a":"count_step"}]}), 0, 3),
+        (json!({"f":"kernel","args":[{"a":"min_step"}]}), 0, 0),
+        (json!({"f":"kernel","args":[{"a":"max_step"}]}), 0, 3),
+    ];
+    for engine in ["rust", "ir:dd", "ir:sqlite"] {
+        for (step, seed, expected) in &steps {
+            let seeds = (1..=3)
+                .map(|value| call("input", vec![constant(value)]))
+                .collect();
+            let rules = vec![rule(
+                "total",
+                vec![
+                    json!({"f":"fold","args":[{"f":"ref","args":[step]},constant(*seed),variable(0)]}),
+                ],
+                vec![goal("input", vec![variable(0)], false)],
+            )];
+            let (closure, _, _) = run(7, 3, engine, program(seeds, rules));
+            assert_eq!(
+                rows(&closure, "total"),
+                vec![vec![constant(*expected)]],
+                "engine={engine} step={step}"
+            );
+        }
+    }
+}
+
 #[test]
 fn rung_0_seeds() {
     for engine in ENGINES {
