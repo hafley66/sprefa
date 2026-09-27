@@ -162,3 +162,4 @@ allow: typegen-golden
 
 | leg | failure text | site | cause | why it stays red |
 |---|---|---|---|---|
+| `_5_store_host::extract_answers_rows_for_each_family_over_the_corpus`; four `_6_imports` extractor tests | `cargo build --bin ryi` reports `no bin target named ryi`; the linked `hafley-rs` manifest declares `ryii` | `tests/it/_5_store_host.rs`, `tests/it/_6_imports.rs` | The external `ryi` executable is absent. | These tests print `SKIP` and return when no prebuilt `ryi` or valid `SPREFA_EXTRACT_BIN` is available. Tests retain their assertions when the dependency is present and never build the external crate. |
