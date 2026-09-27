@@ -370,7 +370,7 @@ fn strategy() -> impl Strategy<Value = Spec> {
     )
 }
 
-fn rel(name: &str) -> Value {
+pub(crate) fn rel(name: &str) -> Value {
     let inner = match name {
         "nil" | "cons" | "intern" => json!({"f":"kernel","args":[{"a":name}]}),
         "int.add" => json!({"f":"kernel","args":[{"a":"int"},{"a":"add"}]}),
@@ -379,23 +379,23 @@ fn rel(name: &str) -> Value {
     json!({"f":"ref","args":[inner]})
 }
 
-fn constant(value: i8) -> Value {
+pub(crate) fn constant(value: i8) -> Value {
     json!({"f":"const","args":[value]})
 }
 
-fn variable(index: usize) -> Value {
+pub(crate) fn variable(index: usize) -> Value {
     json!({"v":{"a":format!("v{index}")}})
 }
 
-fn call(name: &str, args: Vec<Value>) -> Value {
+pub(crate) fn call(name: &str, args: Vec<Value>) -> Value {
     json!({"rel":rel(name),"args":args})
 }
 
-fn goal(name: &str, args: Vec<Value>, negative: bool) -> Value {
+pub(crate) fn goal(name: &str, args: Vec<Value>, negative: bool) -> Value {
     json!({"rel":rel(name),"args":args,"polarity":if negative {"negative"} else {"positive"}})
 }
 
-fn rule(name: &str, head: Vec<Value>, body: Vec<Value>) -> Value {
+pub(crate) fn rule(name: &str, head: Vec<Value>, body: Vec<Value>) -> Value {
     json!({"head":call(name,head),"body":body})
 }
 
