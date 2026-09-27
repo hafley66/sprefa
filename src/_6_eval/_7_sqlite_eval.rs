@@ -315,7 +315,7 @@ impl IEvaluate for SqliteEvaluate {
                 }
             }
             let program = with_effects(&mut guard, lowered.as_ref().unwrap_or(program));
-            let (program, hidden) = with_demand(&mut guard, &program);
+            let (program, hidden) = with_direct_demand(&mut guard, &program);
             let program = &with_intern_rows(&mut guard, &program);
             self.hidden = hidden;
             let mut rels: Vec<TermId> = program
@@ -947,6 +947,18 @@ fn with_effects(u: &mut Universe, program: &Program) -> Program {
 /// positions B feeds a demand product; an adorned copy of every rule joins
 /// it; the caller reads the adorned copy. The originals still fire bottom-up.
 pub(super) fn with_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
+    with_demand_selection(u, program, true)
+}
+
+fn with_direct_demand(u: &mut Universe, program: &Program) -> (Program, HashSet<TermId>) {
+    with_demand_selection(u, program, false)
+}
+
+fn with_demand_selection(
+    u: &mut Universe,
+    program: &Program,
+    propagate_dependencies: bool,
+) -> (Program, HashSet<TermId>) {
     let snapshots = {
         let name = u.atom("intern_snapshot");
         let kernel = u.compound("kernel", vec![name]);
@@ -956,11 +968,23 @@ pub(super) fn with_demand(u: &mut Universe, program: &Program) -> (Program, Hash
     for rule in &program.rules {
         by_rel.entry(rule.rel).or_default().push(rule.clone());
     }
-    let mut rule_refs: HashMap<TermId, Vec<&Rule>> = HashMap::new();
-    for rule in &program.rules {
-        rule_refs.entry(rule.rel).or_default().push(rule);
-    }
-    let demanded = demanded_relations(u, &rule_refs, snapshots);
+    let demanded = if propagate_dependencies {
+        let mut rule_refs: HashMap<TermId, Vec<&Rule>> = HashMap::new();
+        for rule in &program.rules {
+            rule_refs.entry(rule.rel).or_default().push(rule);
+        }
+        demanded_relations(u, &rule_refs, snapshots)
+    } else {
+        by_rel
+            .iter()
+            .filter(|(_, rules)| {
+                rules
+                    .iter()
+                    .any(|rule| super::evaluate::needs_bound_head(u, rule, snapshots))
+            })
+            .map(|(relation, _)| *relation)
+            .collect()
+    };
     let seeded: HashSet<TermId> = program.seeds.iter().map(|row| row.rel).collect();
     // Pass-through variable names exist from the first run on, so a reload
     // with more seeded products mints nothing new.
