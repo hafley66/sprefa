@@ -1,6 +1,7 @@
 import { antijoinSteps } from "../ideas/antijoin/0_steps"
 import { bilinearOpJoinDeltaRuleSteps } from "../ideas/bilinear-op-join-delta-rule/0_steps"
 import { clockCheckerSteps } from "../ideas/clock-checker/0_steps"
+import { collisionGridSteps } from "../ideas/collision-grid/0_steps"
 import { consNilListsSteps } from "../ideas/cons-nil-lists/0_steps"
 import { deltaSteps } from "../ideas/delta/0_steps"
 import { delayZ1Steps } from "../ideas/delay-z-1/0_steps"
@@ -75,7 +76,7 @@ export const glossary: readonly GlossaryGroup[] = [
     { slug: "fs-watch-continuing", title: "fs.watch continuing", summary: "Stream filesystem changes over time", built: true, steps: fsWatchContinuingSteps },
   ] },
   { slug: "cross-system", title: "Cross-system", ideas: [
-    { slug: "collision-grid", title: "DBSP / DD / SQL / Redux / RxJS collision grid", summary: "Map shared concepts across data systems", built: false },
+    { slug: "collision-grid", title: "DBSP / DD / SQL / Redux / RxJS collision grid", summary: "Map shared concepts across data systems", built: true, steps: collisionGridSteps },
   ] },
 ]
 

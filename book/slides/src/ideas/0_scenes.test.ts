@@ -3,6 +3,7 @@ import { builtIdeas } from "../lib/0_glossary"
 import { antijoinSteps } from "./antijoin/0_steps"
 import { bilinearOpJoinDeltaRuleSteps } from "./bilinear-op-join-delta-rule/0_steps"
 import { clockCheckerSteps } from "./clock-checker/0_steps"
+import { collisionGridSteps } from "./collision-grid/0_steps"
 import { consNilListsSteps } from "./cons-nil-lists/0_steps"
 import { deltaSteps } from "./delta/0_steps"
 import { delayZ1Steps } from "./delay-z-1/0_steps"
@@ -961,6 +962,81 @@ describe("keyed scene elements", () => {
       ]
     `)
   })
+
+  it("keeps the complete collision grid key timeline visible", () => {
+    expect(collisionGridSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "before",
+          "arrow",
+          "after",
+        ],
+        [
+          "sql",
+          "redux",
+          "rxjs",
+          "emissions",
+        ],
+        [
+          "dbsp",
+          "dd",
+          "dd-record",
+        ],
+        [
+          "sql",
+          "sql-value",
+          "redux",
+          "redux-value",
+          "rxjs",
+          "rxjs-value",
+          "dbsp",
+          "dbsp-value",
+          "dd",
+          "dd-value",
+        ],
+        [
+          "relational",
+          "relational-value",
+          "redux",
+          "redux-value",
+          "rxjs",
+          "rxjs-value",
+        ],
+        [
+          "sql",
+          "sql-value",
+          "redux",
+          "redux-value",
+          "rxjs",
+          "rxjs-value",
+          "weighted",
+          "weighted-value",
+        ],
+        [
+          "head",
+          "sql",
+          "dbsp-dd",
+          "redux",
+          "rxjs",
+          "change",
+          "sql-change",
+          "dbsp-change",
+          "redux-change",
+          "rxjs-change",
+          "time",
+          "sql-time",
+          "dbsp-time",
+          "redux-time",
+          "rxjs-time",
+          "remove",
+          "sql-remove",
+          "dbsp-remove",
+          "redux-remove",
+          "rxjs-remove",
+        ],
+      ]
+    `)
+  })
 })
 
 describe("built glossary scenes", () => {
@@ -1304,6 +1380,19 @@ describe("built glossary scenes", () => {
           ],
           "group": "host",
           "idea": "fs-watch-continuing",
+        },
+        {
+          "captions": [
+            "One concrete update anchors the comparison: task 7 changes from open to done.",
+            "State names different stored values: a SQL table and Redux store hold the current task, while an RxJS stream emits values over time.",
+            "DBSP and Differential Dataflow encode the update as weighted changes. Differential Dataflow also attaches a logical timestamp.",
+            "The word time selects different coordinates: commit order, dispatch order, scheduler delivery, or logical progress.",
+            "Join also collides. SQL, DBSP, and Differential Dataflow match keyed collections. Redux selectors and RxJS combineLatest have different update contracts.",
+            "Retraction is explicit in weighted systems. SQL deletes a row. Redux replaces state. RxJS needs a stateful operator or an explicit domain event to remove prior data.",
+            "Translate by operation and contract: current value, change record, time coordinate, keyed match, and removal behavior.",
+          ],
+          "group": "cross-system",
+          "idea": "collision-grid",
         },
       ]
     `)
