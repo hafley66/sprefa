@@ -9,7 +9,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
-const ENGINES: [&str; 3] = ["rust", "sqlite", "dd"];
+const ENGINES: [&str; 5] = ["rust", "sqlite", "dd", "ir:dd", "ir:sqlite"];
 
 fn run(rung: usize, size: usize, engine: &str, program: Value) -> (Vec<Value>, String) {
     let path = std::env::temp_dir().join(format!(

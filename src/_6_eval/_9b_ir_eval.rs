@@ -117,6 +117,13 @@ fn run<E: Engine>(
             w: 1,
         });
     }
+    for (rel, terms) in &lowered.internal_seeds {
+        changes.push(ir::SourceChange {
+            rel: *rel,
+            row: terms.iter().map(|id| mapped[id]).collect(),
+            w: 1,
+        });
+    }
     changes.sort_by(|a, b| (a.rel, &a.row).cmp(&(b.rel, &b.row)));
     changes.dedup_by(|a, b| a.rel == b.rel && a.row == b.row);
     settle(&mut engine, host, changes)?;
@@ -149,7 +156,7 @@ fn run<E: Engine>(
                     .iter()
                     .map(|arg| decoded.get(arg).copied())
                     .collect::<Option<Vec<_>>>()
-                    .map(|items| u.compound(&name[2..], items)),
+                    .map(|items| u.compound(name.splitn(3, ':').nth(2).unwrap(), items)),
                 _ => None,
             };
             if let Some(term) = term {
