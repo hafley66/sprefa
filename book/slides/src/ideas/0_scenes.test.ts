@@ -11,13 +11,16 @@ import { integrateDifferentiateSteps } from "./integrate-differentiate/0_steps"
 import { joinSteps } from "./join/0_steps"
 import { letrecFixpointSteps } from "./letrec-fixpoint/0_steps"
 import { linearOpSteps } from "./linear-op/0_steps"
+import { magicSetsDemandSteps } from "./magic-sets-demand/0_steps"
 import { nestedTimeSteps } from "./nested-time/0_steps"
 import { reduceAggregatesSteps } from "./reduce-aggregates/0_steps"
 import { strataSteps } from "./strata/0_steps"
+import { semiNaiveSteps } from "./semi-naive/0_steps"
 import { topKSteps } from "./top-k/0_steps"
 import { unionNegateSteps } from "./union-negate/0_steps"
 import { windowSteps } from "./window/0_steps"
 import { zsetSteps } from "./zset/0_steps"
+import { dredSteps } from "./dred/0_steps"
 
 describe("keyed scene elements", () => {
   it("keeps the complete Z-set key timeline visible", () => {
@@ -625,6 +628,112 @@ describe("keyed scene elements", () => {
       ]
     `)
   })
+
+  it("keeps the complete semi-naive key timeline visible", () => {
+    expect(semiNaiveSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "edges",
+        ],
+        [
+          "round",
+          "frontier",
+        ],
+        [
+          "in",
+          "join",
+          "out",
+        ],
+        [
+          "round",
+          "in",
+          "join",
+          "out",
+        ],
+        [
+          "round",
+          "empty",
+          "fixed",
+        ],
+        [
+          "formula",
+          "flow",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete DRed key timeline visible", () => {
+    expect(dredSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "edges",
+          "reach",
+        ],
+        [
+          "delete",
+          "support",
+        ],
+        [
+          "overdelete",
+          "maybe",
+        ],
+        [
+          "survivors",
+          "join",
+          "restored",
+        ],
+        [
+          "delete",
+          "overdelete",
+          "gone",
+        ],
+        [
+          "phase1",
+          "phase2",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete magic sets / demand key timeline visible", () => {
+    expect(magicSetsDemandSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "graph",
+        ],
+        [
+          "query",
+          "demand",
+        ],
+        [
+          "magic",
+          "guard",
+        ],
+        [
+          "found",
+          "next",
+        ],
+        [
+          "wanted",
+          "expand",
+          "answer",
+        ],
+        [
+          "demand",
+          "arrow",
+          "answer",
+        ],
+        [
+          "before",
+          "arrow1",
+          "magic",
+          "arrow2",
+          "work",
+        ],
+      ]
+    `)
+  })
 })
 
 describe("built glossary scenes", () => {
@@ -841,6 +950,43 @@ describe("built glossary scenes", () => {
           ],
           "group": "operators",
           "idea": "union-negate",
+        },
+        {
+          "captions": [
+            "The graph has a chain Ada → Bob → Cy → Di.",
+            "Round 0 seeds the frontier with the three direct edges.",
+            "Round 1 joins only Δreach₀ with edge. It discovers Ada → Cy and Bob → Di.",
+            "Round 2 feeds only those two new paths back. Ada → Di is the sole new result.",
+            "Round 3 emits an empty frontier. Six accumulated paths form the fixpoint.",
+            "Each round reads the accumulated relation for membership but expands only the frontier.",
+          ],
+          "group": "recursion",
+          "idea": "semi-naive",
+        },
+        {
+          "captions": [
+            "Two routes support Ada → Cy: a direct edge and the path through Bob.",
+            "Deleting Ada → Cy removes one derivation but leaves the route through Bob.",
+            "DRed first overdeletes every recursive fact that may depend on the removed edge.",
+            "Rederivation checks the surviving graph. Ada → Bob and Bob → Cy prove Ada → Cy again.",
+            "Deleting Bob → Cy removes the last remaining support for Ada → Cy.",
+            "DRed separates possible damage from confirmed damage: delete broadly then restore surviving proofs.",
+          ],
+          "group": "recursion",
+          "idea": "dred",
+        },
+        {
+          "captions": [
+            "The graph contains two disconnected regions: Ada's chain and Uma's chain.",
+            "The query asks only which nodes Ada can reach.",
+            "A magic predicate carries the bound source Ada into the recursive computation.",
+            "The first demanded edge yields Bob and creates demand to continue from Bob.",
+            "Demand from Bob yields Cy. No demand reaches Uma so Uma's region is never expanded.",
+            "A later query for Uma adds a second demand seed and evaluates that region independently.",
+            "Magic sets rewrite a bound query into demand facts and guarded recursive rules.",
+          ],
+          "group": "recursion",
+          "idea": "magic-sets-demand",
         },
       ]
     `)

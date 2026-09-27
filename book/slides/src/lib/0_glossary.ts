@@ -9,13 +9,16 @@ import { integrateDifferentiateSteps } from "../ideas/integrate-differentiate/0_
 import { joinSteps } from "../ideas/join/0_steps"
 import { letrecFixpointSteps } from "../ideas/letrec-fixpoint/0_steps"
 import { linearOpSteps } from "../ideas/linear-op/0_steps"
+import { magicSetsDemandSteps } from "../ideas/magic-sets-demand/0_steps"
 import { nestedTimeSteps } from "../ideas/nested-time/0_steps"
 import { reduceAggregatesSteps } from "../ideas/reduce-aggregates/0_steps"
 import { strataSteps } from "../ideas/strata/0_steps"
+import { semiNaiveSteps } from "../ideas/semi-naive/0_steps"
 import { topKSteps } from "../ideas/top-k/0_steps"
 import { unionNegateSteps } from "../ideas/union-negate/0_steps"
 import { windowSteps } from "../ideas/window/0_steps"
 import { zsetSteps } from "../ideas/zset/0_steps"
+import { dredSteps } from "../ideas/dred/0_steps"
 import type { Step } from "./scene/0_types"
 
 export type GlossaryIdea = { slug: string; title: string; summary: string; built: boolean; steps?: readonly Step[] }
@@ -47,9 +50,9 @@ export const glossary: readonly GlossaryGroup[] = [
     { slug: "union-negate", title: "Union / negate", summary: "Combine collections and reverse weights", built: true, steps: unionNegateSteps },
   ] },
   { slug: "recursion", title: "Recursion", ideas: [
-    { slug: "semi-naive", title: "Semi-naive", summary: "Feed only new rows into each round", built: false },
-    { slug: "dred", title: "DRed", summary: "Delete and rederive recursive facts", built: false },
-    { slug: "magic-sets-demand", title: "Magic sets / demand", summary: "Restrict recursion to requested results", built: false },
+    { slug: "semi-naive", title: "Semi-naive", summary: "Feed only new rows into each round", built: true, steps: semiNaiveSteps },
+    { slug: "dred", title: "DRed", summary: "Delete and rederive recursive facts", built: true, steps: dredSteps },
+    { slug: "magic-sets-demand", title: "Magic sets / demand", summary: "Restrict recursion to requested results", built: true, steps: magicSetsDemandSteps },
   ] },
   { slug: "kernel", title: "Kernel", ideas: [
     { slug: "mint-dictionary", title: "Mint dictionary", summary: "Assign stable identities to values", built: false },

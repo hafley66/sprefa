@@ -1,0 +1,46 @@
+## !!steps Bound query
+
+```sql !
+-- !focus(1)
+reach(ada, ?target)
+```
+
+## !!steps Seed demand
+
+```sql !
+-- !focus(1)
+magic_reach('ada')
+```
+
+## !!steps Propagate demand
+
+```sql !
+-- !focus(1:2)
+answer(x, y) :- magic(x), edge(x, y)
+magic(y) :- magic(x), edge(x, y)
+```
+
+## !!steps Guard recursion
+
+```sql !
+-- !focus(1:2)
+answer(ada, bob)
+answer(ada, cy)
+-- Uma's component is untouched
+```
+
+## !!steps Add another seed
+
+```sql !
+-- !focus(1:2)
+magic_reach('uma')
+-- derives (uma, vic) and (uma, wes)
+```
+
+## !!steps Rewrite
+
+```sql !
+-- !focus(1:2)
+bound_query -> magic_reach(seed)
+recursive_rule -> magic_guard AND rule
+```
