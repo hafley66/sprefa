@@ -1,4 +1,8 @@
+import { bilinearOpJoinDeltaRuleSteps } from "../ideas/bilinear-op-join-delta-rule/0_steps"
 import { deltaSteps } from "../ideas/delta/0_steps"
+import { distinctThresholdSteps } from "../ideas/distinct-threshold/0_steps"
+import { integrateDifferentiateSteps } from "../ideas/integrate-differentiate/0_steps"
+import { linearOpSteps } from "../ideas/linear-op/0_steps"
 import { zsetSteps } from "../ideas/zset/0_steps"
 import type { Step } from "./scene/0_types"
 
@@ -9,10 +13,10 @@ export const glossary: readonly GlossaryGroup[] = [
   { slug: "core-algebra", title: "Core algebra", ideas: [
     { slug: "z-set", title: "Z-set", summary: "Rows carrying integer weights", built: true, steps: zsetSteps },
     { slug: "delta", title: "Delta", summary: "A change between two states", built: true, steps: deltaSteps },
-    { slug: "integrate-differentiate", title: "Integrate / differentiate", summary: "Move between states and changes", built: false },
-    { slug: "linear-op", title: "Linear op", summary: "An operator that distributes over addition", built: false },
-    { slug: "bilinear-op-join-delta-rule", title: "Bilinear op / join delta rule", summary: "Incrementalize operators with two inputs", built: false },
-    { slug: "distinct-threshold", title: "Distinct / threshold", summary: "Turn integer weights into presence", built: false },
+    { slug: "integrate-differentiate", title: "Integrate / differentiate", summary: "Move between states and changes", built: true, steps: integrateDifferentiateSteps },
+    { slug: "linear-op", title: "Linear op", summary: "An operator that distributes over addition", built: true, steps: linearOpSteps },
+    { slug: "bilinear-op-join-delta-rule", title: "Bilinear op / join delta rule", summary: "Incrementalize operators with two inputs", built: true, steps: bilinearOpJoinDeltaRuleSteps },
+    { slug: "distinct-threshold", title: "Distinct / threshold", summary: "Turn integer weights into presence", built: true, steps: distinctThresholdSteps },
   ] },
   { slug: "time", title: "Time", ideas: [
     { slug: "frontier", title: "Frontier", summary: "The boundary of incomplete time", built: false },

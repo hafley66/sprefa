@@ -6,6 +6,7 @@ import { builtIdeas } from "../src/lib/0_glossary"
 const outputDirectory = resolve("review-shots")
 
 test("capture every built step", async ({ browser }) => {
+  test.setTimeout(30_000 + builtIdeas.reduce((total, { idea }) => total + idea.steps!.length, 0) * 4_000)
   await mkdir(outputDirectory, { recursive: true })
 
   for (const reducedMotion of ["no-preference", "reduce"] as const) {

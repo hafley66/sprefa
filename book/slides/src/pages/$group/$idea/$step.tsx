@@ -3,9 +3,8 @@ import ArrowForwardRounded from "@mui/icons-material/ArrowForwardRounded"
 import GridViewRounded from "@mui/icons-material/GridViewRounded"
 import { AppBar, Box, Breadcrumbs, IconButton, LinearProgress, Paper, Stack, Toolbar, Typography } from "@mui/material"
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router"
+import type { MDXContent } from "mdx/types"
 import { useEffect } from "react"
-import DeltaContent from "../../../content/delta.mdx"
-import ZSetContent from "../../../content/zset.mdx"
 import { builtIdeas, findIdea } from "../../../lib/0_glossary"
 import { CodeSteps } from "../../../lib/code/1_CodeSteps"
 import { Scene } from "../../../lib/scene/1_Scene"
@@ -17,7 +16,11 @@ export const Route = createFileRoute("/$group/$idea/$step")({ component: Deck, l
   return { ...found, stepIndex: step - 1 }
 } })
 
-const contentByIdea = { "z-set": ZSetContent, delta: DeltaContent } as const
+const contentModules = import.meta.glob("../../../content/*.mdx", { eager: true, import: "default" }) as Record<string, MDXContent>
+const contentByIdea = Object.fromEntries(Object.entries(contentModules).map(([path, content]) => {
+  const filename = path.split("/").at(-1)!.replace(/\.mdx$/, "")
+  return [filename === "zset" ? "z-set" : filename, content]
+})) as Record<string, MDXContent>
 
 function Deck() {
   const { group, idea, stepIndex } = Route.useLoaderData()
@@ -40,8 +43,9 @@ function Deck() {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [group.slug, idea.slug, navigate, stepIndex, steps.length])
   const codeStep = steps[stepIndex].codeStep
+  const content = contentByIdea[idea.slug]
   return <Box sx={{ minHeight: "100vh" }}>
     <AppBar position="sticky" color="inherit" elevation={0} sx={{ borderBottom: "1px solid", borderColor: "divider" }}><Toolbar><IconButton aria-label="Open idea grid" onClick={() => navigate({ to: "/" })}><GridViewRounded /></IconButton><Breadcrumbs sx={{ ml: 1, flex: 1 }}><Typography>{group.title}</Typography><Typography>{idea.title}</Typography><Typography color="text.primary">step {stepIndex + 1} of {steps.length}</Typography></Breadcrumbs><IconButton aria-label="Previous step" disabled={stepIndex === 0} onClick={() => go(stepIndex - 1)}><ArrowBackRounded /></IconButton><IconButton aria-label="Next step" disabled={stepIndex === steps.length - 1} onClick={() => go(stepIndex + 1)}><ArrowForwardRounded /></IconButton></Toolbar><LinearProgress variant="determinate" value={((stepIndex + 1) / steps.length) * 100} /></AppBar>
-    <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1280, mx: "auto" }}><Stack direction={{ xs: "column", lg: "row" }} spacing={3} alignItems="stretch"><Paper variant="outlined" sx={{ flex: 1, overflow: "hidden", minHeight: 430 }}><Scene steps={steps} stepIndex={stepIndex} /></Paper>{codeStep !== undefined && <Box sx={{ width: { xs: "100%", lg: 380 }, alignSelf: "center" }}><CodeSteps content={contentByIdea[idea.slug as keyof typeof contentByIdea]} stepIndex={codeStep} /></Box>}</Stack><Typography variant="h5" sx={{ maxWidth: 800, mx: "auto", mt: 3, textAlign: "center", lineHeight: 1.45 }}>{steps[stepIndex].caption}</Typography></Box>
+    <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1280, mx: "auto" }}><Stack direction={{ xs: "column", lg: "row" }} spacing={3} alignItems="stretch"><Paper variant="outlined" sx={{ flex: 1, overflow: "hidden", minHeight: 430 }}><Scene steps={steps} stepIndex={stepIndex} /></Paper>{codeStep !== undefined && <Box sx={{ width: { xs: "100%", lg: 380 }, alignSelf: "center" }}><CodeSteps content={content} stepIndex={codeStep} /></Box>}</Stack><Typography variant="h5" sx={{ maxWidth: 800, mx: "auto", mt: 3, textAlign: "center", lineHeight: 1.45 }}>{steps[stepIndex].caption}</Typography></Box>
   </Box>
 }

@@ -1,0 +1,12 @@
+import type { Step } from "../../lib/scene/0_types"
+
+const ada = { key: "ada", values: ["ada", 7], weight: 1 } as const
+const bob = { key: "bob", values: ["bob", 3], weight: 1 } as const
+
+export const integrateDifferentiateSteps: readonly Step[] = [
+  { caption: "A state records the accumulated rows at one logical time.", elements: [{ kind: "clock", key: "clock", x: 220, y: 220, t: 0 }, { kind: "zset", key: "state", x: 390, y: 170, model: { title: "S₀", rows: [ada, bob] } }] },
+  { caption: "Differentiation compares adjacent states. Bob leaves and Ada gains one copy.", elements: [{ kind: "zset", key: "before", x: 90, y: 170, model: { title: "S₀", rows: [ada, bob] } }, { kind: "text", key: "minus", x: 390, y: 225, text: "→  differentiate  →", size: 22 }, { kind: "delta", key: "change", x: 650, y: 225, width: 250, model: { title: "Δ₁ = S₁ − S₀", rows: [{ ...ada, weight: 1 }, { ...bob, weight: -1 }] } }], codeStep: 0 },
+  { caption: "Integration adds that change to S₀. Equal Bob weights cancel and Ada reaches two.", elements: [{ kind: "zset", key: "before", x: 60, y: 170, model: { title: "S₀", rows: [ada, bob] } }, { kind: "text", key: "plus", x: 330, y: 225, text: "+" }, { kind: "delta", key: "change", x: 410, y: 225, width: 230, model: { title: "Δ₁", rows: [{ ...ada, weight: 1 }, { ...bob, weight: -1 }] } }, { kind: "text", key: "equals", x: 680, y: 225, text: "=" }, { kind: "zset", key: "after", x: 750, y: 195, model: { title: "S₁", rows: [{ ...ada, weight: 2 }] } }], codeStep: 1 },
+  { caption: "A stream of deltas is integrated by a running sum: +1 then +2 then −1 gives state 2.", elements: [{ kind: "clock", key: "t0", x: 90, y: 210, t: 0 }, { kind: "delta", key: "d0", x: 140, y: 210, width: 170, model: { rows: [ada] } }, { kind: "clock", key: "t1", x: 370, y: 210, t: 1 }, { kind: "delta", key: "d1", x: 420, y: 210, width: 170, model: { rows: [{ ...ada, weight: 2 }] } }, { kind: "clock", key: "t2", x: 650, y: 210, t: 2 }, { kind: "delta", key: "d2", x: 700, y: 210, width: 170, model: { rows: [{ ...ada, weight: -1 }] } }], codeStep: 2 },
+  { caption: "Differentiating the integrated states recovers the original changes exactly.", elements: [{ kind: "zset", key: "s0", x: 90, y: 170, model: { title: "S₀", rows: [ada] } }, { kind: "zset", key: "s1", x: 380, y: 170, model: { title: "S₁", rows: [{ ...ada, weight: 3 }] } }, { kind: "zset", key: "s2", x: 670, y: 170, model: { title: "S₂", rows: [{ ...ada, weight: 2 }] } }], codeStep: 3 },
+]
