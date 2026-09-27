@@ -1028,6 +1028,53 @@ fn rung_9_comptime_rounds() {
 }
 
 #[test]
+fn rung_9_ir_reuses_one_comptime_install() {
+    let source = "fixtures/comptime_effect/0_fs_json.dl7";
+    let compile = |engine: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .args(["compile", "--trace", source])
+            .env("DL8_ENGINE", engine)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        (
+            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    };
+    let (fresh, _) = compile("rust");
+    for engine in ["ir:dd", "ir:sqlite"] {
+        let (retained, trace) = compile(engine);
+        assert_eq!(retained["diagnostics"], json!([]), "{engine}");
+        assert_eq!(
+            retained["compiler_rows"], fresh["compiler_rows"],
+            "{engine}: closure"
+        );
+        assert_eq!(
+            trace
+                .lines()
+                .filter(|line| line.contains("comptime") && line.contains("Round(Evaluate"))
+                .count(),
+            2,
+            "{engine}: rounds"
+        );
+        assert_eq!(
+            trace
+                .lines()
+                .filter(|line| line.contains("comptime") && line.contains("ir install"))
+                .count(),
+            1,
+            "{engine}: installs"
+        );
+    }
+}
+
+#[test]
 fn rung_10_continuing_executors() {
     super::_11_watchers::check_fs_watch_edits_retract_requests_and_increment_only_dependents();
 }

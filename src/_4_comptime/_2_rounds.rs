@@ -76,6 +76,7 @@ pub struct RoundState {
     /// Built on the first round from the module binds in the base seeds;
     /// `None` when no declared relation has a Once executor.
     pub answerer: Option<Answerer>,
+    pub ir_session: Option<crate::_6_eval::ir_eval::IrSession>,
     pub round: i64,
 }
 
@@ -123,6 +124,7 @@ impl RoundState {
             frozen_generated_rules,
             frozen_answers: Vec::new(),
             answerer: None,
+            ir_session: None,
             round: 1,
         }
     }
@@ -218,8 +220,18 @@ pub fn round_closure(
         .unwrap_or_default();
     let ir_answered =
         crate::_6_eval::ir_eval::configured_backend().is_some() && st.answerer.is_some();
-    let (closure, evaluation_diagnostics) =
-        evaluate_round_answered(u, &rules, &seeds, &served, st.answerer.as_mut())?;
+    if st.ir_session.is_none() {
+        st.ir_session = crate::_6_eval::ir_eval::configured_backend()
+            .map(crate::_6_eval::ir_eval::IrSession::new);
+    }
+    let (closure, evaluation_diagnostics) = evaluate_round_answered(
+        u,
+        &rules,
+        &seeds,
+        &served,
+        st.answerer.as_mut(),
+        st.ir_session.as_mut(),
+    )?;
     if !evaluation_diagnostics.is_empty() {
         return Ok(Err(RoundOutcome::failed(evaluation_diagnostics)));
     }
@@ -465,7 +477,7 @@ pub fn evaluate_round(
     seeds: &[TermId],
     served: &[TermId],
 ) -> Result<(Vec<TermId>, Vec<TermId>), Stop> {
-    evaluate_round_answered(u, rules, seeds, served, None)
+    evaluate_round_answered(u, rules, seeds, served, None, None)
 }
 
 fn evaluate_round_answered(
@@ -474,17 +486,12 @@ fn evaluate_round_answered(
     seeds: &[TermId],
     served: &[TermId],
     answerer: Option<&mut Answerer>,
+    ir_session: Option<&mut crate::_6_eval::ir_eval::IrSession>,
 ) -> Result<(Vec<TermId>, Vec<TermId>), Stop> {
     let mut program = round_program(u, rules, seeds)?;
     program.served.extend(served.iter().copied());
-    let closure = match (crate::_6_eval::ir_eval::configured_backend(), answerer) {
-        (Some(backend), Some(answerer)) => crate::_6_eval::ir_eval::evaluate_ir_answered(
-            u,
-            &program,
-            backend,
-            answerer,
-            &mut |_: Trace| {},
-        ),
+    let closure = match ir_session {
+        Some(session) => session.evaluate(u, &program, answerer, &mut |_: Trace| {}),
         _ => evaluate(u, &program, &mut |_: Trace| {}),
     };
     let mut diagnostics = Vec::with_capacity(closure.diagnostics.len());

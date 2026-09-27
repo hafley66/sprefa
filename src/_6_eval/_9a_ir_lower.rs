@@ -1766,17 +1766,10 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let mut constructor_keys = BTreeSet::new();
     let mut shapes = Vec::new();
     let mut texts = Vec::new();
-    let atoms: BTreeMap<String, i64> = {
-        let mut names: Vec<_> = u.syms.iter().cloned().collect();
-        names.sort();
-        names
-            .into_iter()
-            .enumerate()
-            .map(|(i, name)| (name, i as i64 + 1))
-            .collect()
-    };
     let mut atom_raws = HashMap::new();
-    let dynamic_atom_base = atoms.values().copied().max().unwrap_or(0) + 1;
+    // Universe term IDs are stable for its lifetime. A sorted symbol rank
+    // shifts when an answer introduces a name between two existing names.
+    let dynamic_atom_base = 1;
     let existing_terms: Vec<_> = needed
         .iter()
         .map(|index| (*index as usize, u.terms[*index as usize].clone()))
@@ -1792,11 +1785,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             Term::Atom(sym) => (
                 "3:atom".to_string(),
                 vec![],
-                Some(if *sym == u.nil {
-                    0
-                } else {
-                    atoms[u.sym_str(*sym)]
-                }),
+                Some(if *sym == u.nil { 0 } else { *index as i64 + 1 }),
             ),
             Term::Compound(sym, children) => (
                 format!("9:{}:{}", children.len(), u.sym_str(*sym)),

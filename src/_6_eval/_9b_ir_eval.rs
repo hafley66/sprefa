@@ -9,6 +9,7 @@ use ivm_engine::{Engine, Raw};
 use ivm_ir::{self as ir, Cell};
 use std::cell::{Cell as ThreadCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
 thread_local! {
@@ -48,6 +49,174 @@ pub struct FrontierResult {
     pub closure: Closure,
     pub deltas: Vec<NamedDelta>,
     pub counters: ivm_engine::Counters,
+}
+
+struct EngineSession<E: Engine> {
+    engine: E,
+    mapped: HashMap<TermId, Cell>,
+    answered: HashMap<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>,
+    last_seeds: BTreeSet<(ir::RelId, Vec<Cell>)>,
+    initialized: bool,
+    fingerprint: u64,
+    structure: ir::Program,
+}
+
+impl<E: Engine> EngineSession<E> {
+    fn install(
+        lowered: &Lowered,
+        host: &mut Raw<'_>,
+        fingerprint: u64,
+    ) -> Result<Self, ivm_engine::EngineError> {
+        let engine = E::install(&lowered.ir, host)?;
+        tracing::debug!(target: "dl8::ir", "ir install");
+        Ok(Self {
+            engine,
+            mapped: HashMap::new(),
+            answered: HashMap::new(),
+            last_seeds: BTreeSet::new(),
+            initialized: false,
+            fingerprint,
+            structure: lowered.ir.clone(),
+        })
+    }
+
+    fn matches(&self, lowered: &Lowered, fingerprint: u64) -> bool {
+        self.fingerprint == fingerprint && self.structure == lowered.ir
+    }
+}
+
+pub struct IrSession {
+    backend: Backend,
+    dd: Option<EngineSession<ivm_dd::Dd>>,
+    sqlite: Option<(rusqlite::Connection, EngineSession<ivm_sqlite::Sqlite>)>,
+}
+
+impl IrSession {
+    pub fn new(backend: Backend) -> Self {
+        Self {
+            backend,
+            dd: None,
+            sqlite: None,
+        }
+    }
+
+    pub fn evaluate(
+        &mut self,
+        u: &mut Universe,
+        program: &Program,
+        answerer: Option<&mut Answerer>,
+        fx: &mut dyn FnMut(Trace),
+    ) -> Closure {
+        LAST_COUNTERS.with(|counters| counters.set(None));
+        LAST_ANSWERS.with(|rows| rows.borrow_mut().clear());
+        LAST_REQUESTS.with(|count| count.set(0));
+        let lowered = match ir_lower::lower(u, program) {
+            Ok(lowered) => lowered,
+            Err(diag) => {
+                return Closure {
+                    rows: vec![],
+                    diagnostics: vec![diag],
+                }
+            }
+        };
+        let fingerprint = structural_fingerprint(&lowered.ir);
+        let result = match self.backend {
+            Backend::Dd => {
+                let mut host = Raw::default();
+                if self
+                    .dd
+                    .as_ref()
+                    .is_none_or(|session| !session.matches(&lowered, fingerprint))
+                {
+                    self.dd = match EngineSession::install(&lowered, &mut host, fingerprint) {
+                        Ok(session) => Some(session),
+                        Err(error) => {
+                            return Closure {
+                                rows: vec![],
+                                diagnostics: vec![diagnostic(u, "engine", error)],
+                            }
+                        }
+                    };
+                }
+                run_session(
+                    u,
+                    &lowered,
+                    &mut host,
+                    self.dd.as_mut().unwrap(),
+                    answerer,
+                    &[],
+                    None,
+                    None,
+                    fx,
+                )
+            }
+            Backend::Sqlite => {
+                if self
+                    .sqlite
+                    .as_ref()
+                    .is_none_or(|(_, session)| !session.matches(&lowered, fingerprint))
+                {
+                    let connection = match rusqlite::Connection::open_in_memory() {
+                        Ok(connection) => connection,
+                        Err(error) => {
+                            return Closure {
+                                rows: vec![],
+                                diagnostics: vec![diagnostic(u, "sqlite_open", error)],
+                            }
+                        }
+                    };
+                    let mut host = Raw::with_connection(&connection);
+                    let session = match EngineSession::install(&lowered, &mut host, fingerprint) {
+                        Ok(session) => session,
+                        Err(error) => {
+                            return Closure {
+                                rows: vec![],
+                                diagnostics: vec![diagnostic(u, "engine", error)],
+                            }
+                        }
+                    };
+                    self.sqlite = Some((connection, session));
+                }
+                let (connection, session) = self.sqlite.as_mut().unwrap();
+                let mut host = Raw::with_connection(connection);
+                run_session(
+                    u,
+                    &lowered,
+                    &mut host,
+                    session,
+                    answerer,
+                    &[],
+                    None,
+                    None,
+                    fx,
+                )
+            }
+        };
+        match result {
+            Ok((closure, _, counters)) => {
+                LAST_COUNTERS.with(|last| last.set(Some(counters)));
+                closure
+            }
+            Err(error) => {
+                self.dd = None;
+                self.sqlite = None;
+                Closure {
+                    rows: vec![],
+                    diagnostics: vec![diagnostic(u, "engine", error)],
+                }
+            }
+        }
+    }
+}
+
+fn structural_fingerprint(program: &ir::Program) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // IR has structural equality but no Hash implementation. Hash its canonical
+    // serialized structure, then confirm equality when the hash matches.
+    serde_json::to_vec(program)
+        .expect("IR serializes")
+        .hash(&mut hasher);
+    hasher.finish()
 }
 
 struct LiveRun<'a> {
@@ -352,22 +521,26 @@ fn install_terms<E: Engine>(
     }
 }
 
-fn run<E: Engine>(
+fn run_session<E: Engine>(
     u: &mut Universe,
     lowered: &Lowered,
     host: &mut Raw<'_>,
+    session: &mut EngineSession<E>,
     mut answerer: Option<&mut Answerer>,
     frontiers: &[Vec<SignedRow>],
     public_names: Option<&HashMap<TermId, String>>,
     mut live: Option<&mut LiveRun<'_>>,
     fx: &mut dyn FnMut(Trace),
 ) -> Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError> {
-    let mut engine = E::install(&lowered.ir, host)?;
-    let mut mapped: HashMap<TermId, Cell> = HashMap::new();
+    let engine = &mut session.engine;
+    let mapped = &mut session.mapped;
+    let answered = &mut session.answered;
     for (term, value) in &lowered.texts {
         mapped.insert(*term, engine.intern_text(value, host)?);
     }
-    let mut pending: BTreeSet<usize> = (0..lowered.terms.len()).collect();
+    let mut pending: BTreeSet<usize> = (0..lowered.terms.len())
+        .filter(|&index| !mapped.contains_key(&lowered.terms[index].original))
+        .collect();
     // Each pass adds at least one term. The cap also guards malformed cyclic arenas.
     for _ in 0..lowered.terms.len().min(TERM_BUDGET) + 1 {
         if pending.is_empty() {
@@ -395,7 +568,7 @@ fn run<E: Engine>(
         if ready.is_empty() {
             break;
         }
-        settle(&mut engine, host, changes)?;
+        settle(engine, host, changes)?;
         let mut outputs = BTreeSet::new();
         for &index in &ready {
             outputs.insert(lowered.terms[index].output);
@@ -425,7 +598,7 @@ fn run<E: Engine>(
         row: vec![1],
         w: 1,
     }];
-    for (&original, &id) in &mapped {
+    for (&original, &id) in mapped.iter() {
         changes.push(ir::SourceChange {
             rel: lowered.term_map,
             row: vec![original.0 as i64, id],
@@ -453,16 +626,41 @@ fn run<E: Engine>(
     }
     changes.sort_by(|a, b| (a.rel, &a.row).cmp(&(b.rel, &b.row)));
     changes.dedup_by(|a, b| a.rel == b.rel && a.row == b.row);
-    let mut delta = settle(&mut engine, host, changes)?;
+    let current_seeds: BTreeSet<_> = changes
+        .iter()
+        .map(|change| (change.rel, change.row.clone()))
+        .collect();
+    let frontier = if session.initialized {
+        let mut diff = Vec::new();
+        for (rel, row) in session.last_seeds.difference(&current_seeds) {
+            diff.push(ir::SourceChange {
+                rel: *rel,
+                row: row.clone(),
+                w: -1,
+            });
+        }
+        for (rel, row) in current_seeds.difference(&session.last_seeds) {
+            diff.push(ir::SourceChange {
+                rel: *rel,
+                row: row.clone(),
+                w: 1,
+            });
+        }
+        diff
+    } else {
+        changes
+    };
+    session.last_seeds = current_seeds;
+    session.initialized = true;
+    let mut delta = settle(engine, host, frontier)?;
     let request_relations: HashMap<_, _> = lowered
         .served
         .iter()
         .map(|served| (served.request, served.relation))
         .collect();
-    let mut answered = HashMap::<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>::new();
     let mut request_count = 0;
     while answerer.is_some() {
-        let decoded = decode_terms(u, lowered, &engine, host, &mapped)?;
+        let decoded = decode_terms(u, lowered, engine, host, mapped)?;
         let mut store = Store::default();
         for &(rel, original, arity) in &lowered.visible {
             for (row, weight) in engine.snapshot(rel, host)? {
@@ -519,7 +717,7 @@ fn run<E: Engine>(
                 .iter()
                 .flat_map(|answer| answer.args.iter().copied())
                 .collect();
-            install_terms(u, lowered, &mut engine, host, &mut mapped, &answer_terms)?;
+            install_terms(u, lowered, engine, host, mapped, &answer_terms)?;
             let mut recorded = Vec::new();
             for answer in rows {
                 LAST_ANSWERS.with(|rows| rows.borrow_mut().push(answer.clone()));
@@ -546,7 +744,7 @@ fn run<E: Engine>(
         if next.is_empty() {
             break;
         }
-        delta = settle(&mut engine, host, next)?;
+        delta = settle(engine, host, next)?;
     }
     let mut frontier_results = Vec::with_capacity(frontiers.len());
     for frontier in frontiers {
@@ -554,7 +752,7 @@ fn run<E: Engine>(
             .iter()
             .flat_map(|change| change.row.args.iter().copied())
             .collect();
-        install_terms(u, lowered, &mut engine, host, &mut mapped, &terms)?;
+        install_terms(u, lowered, engine, host, mapped, &terms)?;
         let mut source_changes = Vec::with_capacity(frontier.len());
         for change in frontier {
             let Some(&source) = lowered
@@ -573,12 +771,12 @@ fn run<E: Engine>(
                 w: change.weight,
             });
         }
-        let mut delta = settle(&mut engine, host, source_changes)?;
+        let mut delta = settle(engine, host, source_changes)?;
         let mut receipts = Vec::new();
         let mut stable = false;
         for _ in 0..TERM_BUDGET {
-            let decoded = decode_terms(u, lowered, &engine, host, &mapped)?;
-            let store_closure = snapshot_closure(u, lowered, &engine, host, &mapped)?;
+            let decoded = decode_terms(u, lowered, engine, host, mapped)?;
+            let store_closure = snapshot_closure(u, lowered, engine, host, mapped)?;
             let mut store = Store::default();
             for row in &store_closure.rows {
                 store.insert(row.rel, row.args.clone().into_boxed_slice());
@@ -646,7 +844,7 @@ fn run<E: Engine>(
                     .iter()
                     .flat_map(|row| row.args.iter().copied())
                     .collect();
-                install_terms(u, lowered, &mut engine, host, &mut mapped, &answer_terms)?;
+                install_terms(u, lowered, engine, host, mapped, &answer_terms)?;
                 let mut recorded = Vec::new();
                 for answer in rows {
                     let Some(&source) = lowered.sources.get(&(answer.rel.0, answer.args.len()))
@@ -678,7 +876,7 @@ fn run<E: Engine>(
                 stable = true;
                 break;
             }
-            delta = settle(&mut engine, host, next)?;
+            delta = settle(engine, host, next)?;
         }
         if !stable {
             return Err(ivm_engine::EngineError::new(
@@ -688,14 +886,14 @@ fn run<E: Engine>(
             ));
         }
         frontier_results.push(FrontierResult {
-            closure: snapshot_closure(u, lowered, &engine, host, &mapped)?,
+            closure: snapshot_closure(u, lowered, engine, host, mapped)?,
             deltas: receipts,
             counters: engine.counters(),
         });
     }
 
     if let Some(live) = live.as_deref_mut() {
-        let closure = snapshot_closure(u, lowered, &engine, host, &mapped)?;
+        let closure = snapshot_closure(u, lowered, engine, host, mapped)?;
         let counters = engine.counters();
         (live.on_settle)(u, &closure, &[], &counters);
 
@@ -717,7 +915,7 @@ fn run<E: Engine>(
                 .iter()
                 .flat_map(|change| change.row.args.iter().copied())
                 .collect();
-            install_terms(u, lowered, &mut engine, host, &mut mapped, &terms)?;
+            install_terms(u, lowered, engine, host, mapped, &terms)?;
             let mut source_changes = Vec::with_capacity(frontier.len());
             let mut receipts = Vec::new();
             for change in frontier {
@@ -776,11 +974,11 @@ fn run<E: Engine>(
                 });
             }
 
-            let mut delta = settle(&mut engine, host, source_changes)?;
+            let mut delta = settle(engine, host, source_changes)?;
             let mut stable = false;
             for _ in 0..TERM_BUDGET {
-                let decoded = decode_terms(u, lowered, &engine, host, &mapped)?;
-                let store_closure = snapshot_closure(u, lowered, &engine, host, &mapped)?;
+                let decoded = decode_terms(u, lowered, engine, host, mapped)?;
+                let store_closure = snapshot_closure(u, lowered, engine, host, mapped)?;
                 let mut store = Store::default();
                 for row in &store_closure.rows {
                     store.insert(row.rel, row.args.clone().into_boxed_slice());
@@ -848,7 +1046,7 @@ fn run<E: Engine>(
                         .iter()
                         .flat_map(|answer| answer.args.iter().copied())
                         .collect();
-                    install_terms(u, lowered, &mut engine, host, &mut mapped, &answer_terms)?;
+                    install_terms(u, lowered, engine, host, mapped, &answer_terms)?;
                     let mut recorded = Vec::new();
                     for answer in rows {
                         let Some(&source) = lowered.sources.get(&(answer.rel.0, answer.args.len()))
@@ -880,7 +1078,7 @@ fn run<E: Engine>(
                     stable = true;
                     break;
                 }
-                delta = settle(&mut engine, host, next)?;
+                delta = settle(engine, host, next)?;
             }
             if !stable {
                 return Err(ivm_engine::EngineError::new(
@@ -889,19 +1087,49 @@ fn run<E: Engine>(
                     ivm_engine::ErrorKind::Unsupported("live effect frontier budget"),
                 ));
             }
-            let closure = snapshot_closure(u, lowered, &engine, host, &mapped)?;
+            let closure = snapshot_closure(u, lowered, engine, host, mapped)?;
             let counters = engine.counters();
             (live.on_settle)(u, &closure, &receipts, &counters);
         }
     }
     LAST_REQUESTS.with(|count| count.set(request_count));
+    for rows in answered.values() {
+        for (rel, row, _) in rows {
+            session.last_seeds.insert((*rel, row.clone()));
+        }
+    }
     let counters = engine.counters();
 
-    let closure = snapshot_closure(u, lowered, &engine, host, &mapped)?;
+    let closure = snapshot_closure(u, lowered, engine, host, mapped)?;
     fx(Trace::Closure {
         rows: closure.rows.len(),
     });
     Ok((closure, frontier_results, counters))
+}
+
+fn run<E: Engine>(
+    u: &mut Universe,
+    lowered: &Lowered,
+    host: &mut Raw<'_>,
+    answerer: Option<&mut Answerer>,
+    frontiers: &[Vec<SignedRow>],
+    public_names: Option<&HashMap<TermId, String>>,
+    live: Option<&mut LiveRun<'_>>,
+    fx: &mut dyn FnMut(Trace),
+) -> Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError> {
+    let mut session =
+        EngineSession::<E>::install(lowered, host, structural_fingerprint(&lowered.ir))?;
+    run_session(
+        u,
+        lowered,
+        host,
+        &mut session,
+        answerer,
+        frontiers,
+        public_names,
+        live,
+        fx,
+    )
 }
 
 pub fn evaluate_ir(
