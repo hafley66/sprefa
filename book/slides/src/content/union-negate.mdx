@@ -1,0 +1,45 @@
+## !!steps Add collections
+
+```sql !
+-- !focus(1:2)
+A = {ada: +1, bea: +1}
+B = {ada: +1}
+```
+
+## !!steps Add weights
+
+```sql !
+-- !focus(1:2)
+(A UNION ALL B)[ada] = 1 + 1 = 2
+(A UNION ALL B)[bea] = 1
+```
+
+## !!steps Flip signs
+
+```sql !
+-- !focus(1:2)
+negate({ada: +1, bea: +1})
+     = {ada: -1, bea: -1}
+```
+
+## !!steps Difference
+
+```sql !
+-- !focus(1)
+A - B = A UNION ALL negate(B)
+```
+
+## !!steps Cancellation
+
+```sql !
+-- !focus(1:2)
+ada: +1 + (-1) = 0
+bea: +1 + 0    = 1
+```
+
+## !!steps Linear delta
+
+```sql !
+-- !focus(1)
+Δ negate(A) = negate(ΔA)
+```

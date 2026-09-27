@@ -14,6 +14,9 @@ import { linearOpSteps } from "./linear-op/0_steps"
 import { nestedTimeSteps } from "./nested-time/0_steps"
 import { reduceAggregatesSteps } from "./reduce-aggregates/0_steps"
 import { strataSteps } from "./strata/0_steps"
+import { topKSteps } from "./top-k/0_steps"
+import { unionNegateSteps } from "./union-negate/0_steps"
+import { windowSteps } from "./window/0_steps"
 import { zsetSteps } from "./zset/0_steps"
 
 describe("keyed scene elements", () => {
@@ -526,6 +529,102 @@ describe("keyed scene elements", () => {
       ]
     `)
   })
+
+  it("keeps the complete top-k key timeline visible", () => {
+    expect(topKSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "scores",
+        ],
+        [
+          "scores",
+          "top",
+          "out",
+        ],
+        [
+          "in",
+          "top",
+          "out",
+        ],
+        [
+          "out",
+        ],
+        [
+          "in",
+          "top",
+          "out",
+        ],
+        [
+          "order",
+          "tie",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete window key timeline visible", () => {
+    expect(windowSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "events",
+        ],
+        [
+          "now",
+          "range",
+        ],
+        [
+          "inside",
+        ],
+        [
+          "now",
+          "range",
+        ],
+        [
+          "window",
+          "out",
+        ],
+        [
+          "in",
+          "window",
+          "out",
+        ],
+      ]
+    `)
+  })
+
+  it("keeps the complete union / negate key timeline visible", () => {
+    expect(unionNegateSteps.map((step) => step.elements.map((element) => element.key))).toMatchInlineSnapshot(`
+      [
+        [
+          "a",
+          "union",
+          "b",
+        ],
+        [
+          "out",
+        ],
+        [
+          "a",
+          "negate",
+          "out",
+        ],
+        [
+          "a",
+          "minus",
+          "out",
+        ],
+        [
+          "math",
+          "result",
+        ],
+        [
+          "in",
+          "negate",
+          "out",
+        ],
+      ]
+    `)
+  })
 })
 
 describe("built glossary scenes", () => {
@@ -706,6 +805,42 @@ describe("built glossary scenes", () => {
           ],
           "group": "operators",
           "idea": "reduce-aggregates",
+        },
+        {
+          "captions": [
+            "Three scores arrive in arbitrary row order.",
+            "Top 2 orders by score and retains Ada 91 and Bea 84.",
+            "A new score Dan 88 enters the retained prefix.",
+            "Bea falls out of the prefix, so the delta retracts Bea and inserts Dan.",
+            "Retracting Ada promotes Bea from the ordered remainder.",
+            "A stable tie key makes the selected prefix deterministic when scores are equal.",
+          ],
+          "group": "operators",
+          "idea": "top-k",
+        },
+        {
+          "captions": [
+            "Events carry timestamps: a at 10, b at 12, and c at 16.",
+            "At time 16, a five-second window covers times 12 through 16.",
+            "Events b and c are inside the interval. Event a at 10 is outside.",
+            "The clock advances to 18, moving the interval to times 14 through 18.",
+            "Event b expires at the left boundary and is retracted from the window.",
+            "A late event at time 17 is still inside the current interval and enters with weight +1.",
+          ],
+          "group": "operators",
+          "idea": "window",
+        },
+        {
+          "captions": [
+            "Union adds weights for equal rows from both inputs.",
+            "Ada occurs once in each input, so union gives Ada weight 2. Bea stays at 1.",
+            "Negate flips every weight while keeping each row unchanged.",
+            "Union with a negated collection computes weighted difference A − B.",
+            "Equal positive and negative weights cancel to zero and disappear from the materialized rows.",
+            "Union and negate are linear: input deltas pass through by addition and sign reversal.",
+          ],
+          "group": "operators",
+          "idea": "union-negate",
         },
       ]
     `)

@@ -12,6 +12,9 @@ import { linearOpSteps } from "../ideas/linear-op/0_steps"
 import { nestedTimeSteps } from "../ideas/nested-time/0_steps"
 import { reduceAggregatesSteps } from "../ideas/reduce-aggregates/0_steps"
 import { strataSteps } from "../ideas/strata/0_steps"
+import { topKSteps } from "../ideas/top-k/0_steps"
+import { unionNegateSteps } from "../ideas/union-negate/0_steps"
+import { windowSteps } from "../ideas/window/0_steps"
 import { zsetSteps } from "../ideas/zset/0_steps"
 import type { Step } from "./scene/0_types"
 
@@ -39,9 +42,9 @@ export const glossary: readonly GlossaryGroup[] = [
     { slug: "join", title: "Join", summary: "Match rows through shared keys", built: true, steps: joinSteps },
     { slug: "antijoin", title: "Antijoin", summary: "Keep rows with no matching counterpart", built: true, steps: antijoinSteps },
     { slug: "reduce-aggregates", title: "Reduce / aggregates", summary: "Maintain grouped summaries", built: true, steps: reduceAggregatesSteps },
-    { slug: "top-k", title: "Top-k", summary: "Maintain the first ranked rows", built: false },
-    { slug: "window", title: "Window", summary: "Restrict input to a range of time", built: false },
-    { slug: "union-negate", title: "Union / negate", summary: "Combine collections and reverse weights", built: false },
+    { slug: "top-k", title: "Top-k", summary: "Maintain the first ranked rows", built: true, steps: topKSteps },
+    { slug: "window", title: "Window", summary: "Restrict input to a range of time", built: true, steps: windowSteps },
+    { slug: "union-negate", title: "Union / negate", summary: "Combine collections and reverse weights", built: true, steps: unionNegateSteps },
   ] },
   { slug: "recursion", title: "Recursion", ideas: [
     { slug: "semi-naive", title: "Semi-naive", summary: "Feed only new rows into each round", built: false },
