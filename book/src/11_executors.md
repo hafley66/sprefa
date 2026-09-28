@@ -219,9 +219,9 @@ exit 0
 
 ```console
 $ SPREFA_EXTRACT_BIN=/nonexistent/extract bash book/show.sh run fixtures/hosts/3_extract.dl7 --serve extract | grep '^(Failed \|^ticks\|^exit'
-(Failed "call" "SPREFA_EXTRACT_BIN names /nonexistent/extract, which does not exist")
-(Failed "diet_scip" "SPREFA_EXTRACT_BIN names /nonexistent/extract, which does not exist")
-(Failed "type" "SPREFA_EXTRACT_BIN names /nonexistent/extract, which does not exist")
+(Failed "call" "SPREFA_EXTRACT_BIN names /nonexistent/extract, which is not a file")
+(Failed "diet_scip" "SPREFA_EXTRACT_BIN names /nonexistent/extract, which is not a file")
+(Failed "type" "SPREFA_EXTRACT_BIN names /nonexistent/extract, which is not a file")
 ticks 1
 exit 0
 ```
