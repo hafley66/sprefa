@@ -103,7 +103,12 @@ impl Kernel {
             (Some("any"), "lt") => Kernel::TermLt,
             (Some("str"), "cons") => Kernel::StrCons,
             (Some("str"), "nil") => Kernel::StrNil,
-            (Some("str"), label) => Kernel::Str(super::str_ops::STR_OPS.iter().find(|(name, ..)| *name == label)?.2),
+            (Some(owner), label) => Kernel::Str(
+                super::str_ops::STR_OPS
+                    .iter()
+                    .find(|(op_owner, name, ..)| *op_owner == owner && *name == label)?
+                    .3,
+            ),
             _ => return None,
         })
     }

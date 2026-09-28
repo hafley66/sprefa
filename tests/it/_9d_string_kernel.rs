@@ -97,3 +97,14 @@ fn v5_ports() {
         }),
     );
 }
+
+#[test]
+fn conversions() {
+    run(
+        "1_conversions",
+        json!({
+            "number_text": [[-7, "-7"], [0, "0"], [3, "3"]],
+            "numeral_value": [["+4", 4], ["-5", -5], ["12", 12]],
+        }),
+    );
+}

@@ -95,10 +95,10 @@ pub fn register(connection: &Connection, arena: Arc<Mutex<Universe>>) -> rusqlit
             (args.len() == 2).then(|| row(args, 2, solve, &arena))?
         })?;
     }
-    for (label, arity, op) in STR_OPS {
+    for (owner, label, arity, op) in STR_OPS {
         let arena = arena.clone();
         let op = *op;
-        scalar(connection, &format!("dl_str_{label}"), arity - 1, move |args| {
+        scalar(connection, &format!("dl_{owner}_{label}"), arity - 1, move |args| {
             let mut shaped: Vec<Option<TermId>> = args.iter().map(cell).collect();
             shaped.push(None);
             let mut taken = arena.lock().ok()?;

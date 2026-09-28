@@ -126,13 +126,13 @@ fn kernel_name(u: &Universe, relation: TermId) -> Option<String> {
     atom(u.unary(inner, "kernel")?).map(str::to_string)
 }
 
-/// The input count of `str.<op>` from the generated op table.
+/// The input count of `<owner>.<op>` from the generated op table.
 fn str_op_name(name: &str) -> Option<usize> {
-    let label = name.strip_prefix("str.")?;
+    let (owner, label) = name.split_once('.')?;
     STR_OPS
         .iter()
-        .find(|(op, ..)| *op == label)
-        .map(|(_, arity, _)| arity - 1)
+        .find(|(op_owner, op, ..)| *op_owner == owner && *op == label)
+        .map(|(_, _, arity, _)| arity - 1)
 }
 
 fn comparison(name: &str) -> bool {

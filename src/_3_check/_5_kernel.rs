@@ -82,9 +82,9 @@ pub fn kernel_relation_keys(owner: Option<&str>, label: &str) -> Vec<Vec<i64>> {
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![vec![0, 1]],
         (Some("int"), "add") | (None, "effect") | (Some("any"), "lt") => vec![vec![0, 1]],
         _ if is_comparison(owner, label) => vec![vec![0, 1]],
-        (Some("str"), _) => STR_KERNEL_RELATIONS
+        (Some(owner), _) => STR_KERNEL_RELATIONS
             .iter()
-            .find(|(_, name, _)| *name == label)
+            .find(|(op_owner, name, _)| *op_owner == Some(owner) && *name == label)
             .map_or(vec![], |(_, _, arity)| vec![(0..arity - 1).collect()]),
         (None, "def" | "head") => vec![vec![0]],
         (None, "body") => vec![vec![0, 1]],

@@ -1327,7 +1327,7 @@ impl<'a> Lowering<'a> {
                     };
                     cells.push(cell);
                 }
-                let call = format!("dl_str_{}({})", op.name(), cells.join(", "));
+                let call = format!("dl_{}({})", op.name().replace('.', "_"), cells.join(", "));
                 guards.push(format!("{call} IS NOT NULL"));
                 match self.argument_cell(scope, rule, vars, &goal.args[inputs])? {
                     Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),

@@ -1,0 +1,23 @@
+(: number (* (: value int)))
+(<- (number 3))
+(<- (number -7))
+(<- (number 0))
+
+(: numeral (* (: text str)))
+(<- (numeral "12"))
+(<- (numeral "-5"))
+(<- (numeral "+4"))
+(<- (numeral "abc"))
+(<- (numeral ""))
+(<- (numeral " 7"))
+(<- (numeral "9223372036854775808"))
+
+(: number_text (* (: value int) (: text str)))
+(<- (number_text ?Value ?Text)
+    (number ?Value)
+    (int.to_str ?Value ?Text))
+
+(: numeral_value (* (: text str) (: value int)))
+(<- (numeral_value ?Text ?Value)
+    (numeral ?Text)
+    (str.to_int ?Text ?Value))
