@@ -1,0 +1,49 @@
+; Gameplan for comptime file emit, as a dl7 program. `dl8 compile` then
+; `dl8 eval` prints Ready and Blocked: the next step to build is any Ready row.
+
+(: Step (* (: name str) (: what str)))
+(: Needs (* (: step str) (: before str)))
+(: Done (* (: step str)))
+
+(Step "sum-match" "rule bodies match sum variants: (Event ?K (Result.next ?V))")
+(Step "effects-sum" "effect result column is a dl7-declared sum; engine knows no constructor names")
+(Step "emit-slice" "dl8 emit lowers only rules the outputs read")
+(Step "fs-file" "sink relation (fs.file ?Path ?Text): +1 write, -1 delete, -old +new overwrite")
+(Step "dl8-build" "dl8 build x.dl7 --out dir: dl8 run with sync executors only, settle, write, exit")
+(Step "str-join" "ordered concat aggregate: children in order into one text or Doc")
+(Step "doc-sum" "@std/doc: (: Doc (+ text concat nest group line)) as a dl7 sum")
+(Step "doc-layout" "doc.layout sync effect over the pretty crate: Doc -> str within the tick")
+(Step "refkey" "name_of(target, node) rule: a type term id resolves to its emitted name")
+(Step "imports" "needs_import closure rule: cross-file references collect import rows")
+(Step "demo-dts" "a dl7 file emits a .d.ts of its own declarations; vitest reads it back")
+(Step "watch" "same program under dl8 run without exit: a schema edit rewrites only touched files")
+
+(Needs "effects-sum" "sum-match")
+(Needs "doc-sum" "sum-match")
+(Needs "fs-file" "effects-sum")
+(Needs "dl8-build" "fs-file")
+(Needs "doc-layout" "doc-sum")
+(Needs "doc-layout" "effects-sum")
+(Needs "refkey" "doc-sum")
+(Needs "imports" "refkey")
+(Needs "demo-dts" "dl8-build")
+(Needs "demo-dts" "doc-layout")
+(Needs "demo-dts" "str-join")
+(Needs "demo-dts" "imports")
+(Needs "watch" "demo-dts")
+
+(Done "emit-slice")
+
+(: Blocked (* (: step str) (: waiting_on str)))
+(<- (Blocked ?S ?B)
+    (Needs ?S ?B)
+    (not (Done ?B)))
+
+(: Waiting (* (: step str)))
+(<- (Waiting ?S) (Blocked ?S ?_))
+
+(: Ready (* (: step str)))
+(<- (Ready ?S)
+    (Step ?S ?_)
+    (not (Done ?S))
+    (not (Waiting ?S)))

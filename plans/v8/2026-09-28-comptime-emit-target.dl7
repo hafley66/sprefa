@@ -1,0 +1,60 @@
+; Target shape after the gameplan: a dl7 program that emits a .d.ts of its own
+; declarations. Does not compile today; each block names the step it needs.
+
+; --- @std/doc (doc-sum) --------------------------------------------------
+(: Doc
+   (+ (: text (* (: s str)))
+      (: concat (* (: parts (list Doc))))
+      (: nest (* (: indent int) (: body Doc)))
+      (: group (* (: body Doc)))
+      (: line (*))))
+
+; --- doc.layout (doc-layout): sync effect, answers within the tick --------
+(: doc.layout
+   (* (: doc Doc)
+      (: width int)
+      (: return str)))
+
+; --- fs.file (fs-file): host writes +1, deletes -1 --------------------------
+(: fs.file
+   (* (: path str)
+      (: text str)))
+
+; --- the schema this program emits ------------------------------------------
+(: User (* (: id str) (: name str) (: age int)))
+(: Post (* (: id str) (: author User) (: body str)))
+
+; --- components: a rule whose head is a Doc row -----------------------------
+(: ts_type (* (: type type) (: doc Doc)))
+(<- (ts_type str (Doc.text "string")))
+(<- (ts_type int (Doc.text "number")))
+(<- (ts_type ?T (Doc.text ?Name))          ; refkey: a user type prints its name
+    (name_of ?T ?Name))
+
+(: field_doc (* (: owner type) (: index int) (: doc Doc)))
+(<- (field_doc ?Owner ?I
+       (Doc.concat [(Doc.text ?Field) (Doc.text ": ") ?TypeDoc (Doc.text ";")]))
+    (field ?Owner ?I ?Field ?FieldType)    ; prelude `:` graph
+    (ts_type ?FieldType ?TypeDoc))
+
+; str-join: ordered concat aggregate, children in field order
+(: iface_doc (* (: type type) (: doc Doc)))
+(<- (iface_doc ?T
+       (Doc.concat [(Doc.text "export interface ") (Doc.text ?Name) (Doc.text " {")
+                    (Doc.nest 2 (Doc.concat (ordered ?I [Doc.line ?F])))
+                    Doc.line (Doc.text "}")]))
+    (name_of ?T ?Name)
+    (field_doc ?T ?I ?F))
+
+; --- file assembly ----------------------------------------------------------
+(: file_doc (* (: path str) (: doc Doc)))
+(<- (file_doc "out/types.d.ts" (Doc.concat (ordered ?Name [?D Doc.line])))
+    (iface_doc ?T ?D)
+    (name_of ?T ?Name))
+
+(<- (fs.file ?Path ?Text)
+    (file_doc ?Path ?Doc)
+    (doc.layout ?Doc 80 ?Text))
+
+; dl8 build this.dl7            -> tick 0 Doc rows, layout answers, tick 1 fs.file, tick 2 settled, exit
+; dl8 run this.dl7 (watch step) -> edit User.age: -old +new iface_doc, one file rewritten

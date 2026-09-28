@@ -109,3 +109,79 @@ fn sum_variants_match_and_retract() {
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn imported_sum_variants_construct_and_match_on_all_engines() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture = root.join("fixtures/sum/2_module_variant.dl7");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .current_dir(root)
+        .args(["compile"])
+        .arg(&fixture)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let program: Value = serde_json::from_slice(&compiled.stdout).unwrap();
+    assert_eq!(program["diagnostics"], json!([]));
+    let directory = std::env::temp_dir().join(format!("dl8-module-sum-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let program_path = directory.join("program.json");
+    std::fs::write(&program_path, &compiled.stdout).unwrap();
+
+    for engine in ["rust", "ir:dd", "ir:sqlite"] {
+        let evaluated = Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .arg("eval")
+            .arg(&program_path)
+            .env("DL8_ENGINE", engine)
+            .output()
+            .unwrap();
+        assert!(
+            evaluated.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&evaluated.stderr)
+        );
+        let closure: Value = serde_json::from_slice(&evaluated.stdout).unwrap();
+        assert_eq!(closure["diagnostics"], json!([]), "{engine}");
+        assert_eq!(
+            json!(rows(&closure, &program["program"]["names"]["Matched"])),
+            json!([["hello"]]),
+            "{engine}"
+        );
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn doc_layout_answers_inside_comptime() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture = root.join("fixtures/comptime_effect/4_doc_layout.dl7");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .current_dir(root)
+        .args(["compile"])
+        .arg(&fixture)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let compiled: Value = serde_json::from_slice(&compiled.stdout).unwrap();
+    assert_eq!(compiled["diagnostics"], json!([]));
+    let rendered = &compiled["program"]["names"]["rendered"];
+    let rows: Vec<_> = compiled["compiler_rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| &row["args"][0] == rendered)
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0]["args"][1],
+        json!([{"f":"const","args":[{"s":"hello"}]}])
+    );
+}

@@ -1,0 +1,3 @@
+(: Result
+   (+ (: ready (* (: value str)))
+      (: failed (* (: message str)))))

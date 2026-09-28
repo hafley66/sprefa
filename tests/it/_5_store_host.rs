@@ -1137,9 +1137,7 @@ fn extract_bin() -> Option<PathBuf> {
 #[test]
 pub fn extract_answers_rows_for_each_family_over_the_corpus() {
     let Some(binary) = extract_bin() else {
-        println!(
-            "SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset"
-        );
+        println!("SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset");
         return;
     };
     let directory = s20hosts_scratch("extract");

@@ -1,0 +1,5 @@
+(remote: (import "./fixtures/sum/1_remote_types.dl7"))
+(: Built (* (: value any)))
+(<- (Built (remote.Result.ready "hello")))
+(: Matched (* (: value str)))
+(<- (Matched ?Value) (Built (remote.Result.ready ?Value)))
