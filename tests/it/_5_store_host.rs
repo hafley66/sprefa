@@ -1130,46 +1130,15 @@ pub fn fs_json_on_a_file_that_is_no_document_is_an_error_row() {
     assert_eq!(s20hosts_rows(&out, &names, "Failed").len(), 1);
 }
 
-fn extract_roots() -> [PathBuf; 2] {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
-    let parent = root.parent().unwrap().to_path_buf();
-    [root, parent]
-}
-
-fn built_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(shared) = std::env::var_os("CARGO_TARGET_DIR") {
-        out.push(PathBuf::from(shared).join("debug/ryi"));
-    }
-    for root in extract_roots() {
-        out.push(root.join("hafley-rs/target/debug/ryi"));
-        out.push(root.join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
-    }
-    out
-}
-
-fn s20hosts_which(program: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|directory| directory.join(program))
-        .find(|candidate| candidate.is_file())
-}
-
-/// `$SPREFA_EXTRACT_BIN`, `ryi` on PATH, then the `tests/_16_extract_tsi.rs`
-/// search. The external crate is never built by this suite.
 fn extract_bin() -> Option<PathBuf> {
-    if let Some(named) = std::env::var_os("SPREFA_EXTRACT_BIN") {
-        let path = PathBuf::from(named);
-        return path.is_file().then_some(path);
-    }
-    s20hosts_which("ryi").or_else(|| built_candidates().into_iter().find(|path| path.is_file()))
+    dl8::_9_runtime::executors::extract::extract_bin().ok()
 }
 
 #[test]
 pub fn extract_answers_rows_for_each_family_over_the_corpus() {
     let Some(binary) = extract_bin() else {
         println!(
-            "SKIP: ryi executable is absent; hafley-rs now declares the external extractor binary as ryii"
+            "SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset"
         );
         return;
     };

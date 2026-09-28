@@ -39,27 +39,12 @@ impl Extract {
 pub fn extract_bin() -> Result<PathBuf, String> {
     if let Some(named) = std::env::var_os("SPREFA_EXTRACT_BIN") {
         let path = PathBuf::from(named);
-        return match path.exists() {
+        return match path.is_file() {
             true => Ok(path),
-            false => Err(format!(
-                "SPREFA_EXTRACT_BIN names {}, which does not exist",
-                path.display()
-            )),
+            false => Err(format!("SPREFA_EXTRACT_BIN names {}, which is not a file", path.display())),
         };
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut candidates = Vec::new();
-    if let Some(shared) = std::env::var_os("CARGO_TARGET_DIR") {
-        candidates.push(PathBuf::from(shared).join("debug/ryi"));
-    }
-    for path in [root.to_path_buf(), root.join("..")] {
-        candidates.push(path.join("hafley-rs/target/debug/ryi"));
-        candidates.push(path.join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
-    }
-    candidates
-        .into_iter()
-        .find(|path| path.exists())
-        .ok_or_else(|| "no ryi binary; set SPREFA_EXTRACT_BIN".to_string())
+    which::which("ryi").map_err(|_| "no ryi on PATH; set SPREFA_EXTRACT_BIN".to_string())
 }
 
 /// Files under `root`, relative to it: git's tracked set when `root` sits in a

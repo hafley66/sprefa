@@ -23,19 +23,10 @@ use std::time::Instant;
 // Several paths in one run need `--resolve` for cross-file edges.
 
 const MISSING_EXTRACT_REASON: &str =
-    "ryi executable is absent; hafley-rs now declares the external extractor binary as ryii";
+    "no ryi on PATH and SPREFA_EXTRACT_BIN unset";
 
 fn v8_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
-}
-
-fn extract_roots() -> [PathBuf; 2] {
-    let root = v8_root();
-    let parent = root
-        .parent()
-        .expect("v8 has a parent directory")
-        .to_path_buf();
-    [root, parent]
 }
 
 fn fixture_root() -> PathBuf {
@@ -66,29 +57,8 @@ fn scratch(name: &str) -> PathBuf {
     path
 }
 
-/// Where a built `ryi` can sit. `$CARGO_TARGET_DIR` comes first because a
-/// lane sets it, and then neither target directory ever fills. The workspace
-/// one is second: the crate was a member until hafley-rs excluded it.
-fn built_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(shared) = std::env::var_os("CARGO_TARGET_DIR") {
-        out.push(PathBuf::from(shared).join("debug/ryi"));
-    }
-    for root in extract_roots() {
-        out.push(root.join("hafley-rs/target/debug/ryi"));
-        out.push(root.join("hafley-rs/crates/sprefa-extract/target/debug/ryi"));
-    }
-    out
-}
-
-/// `$SPREFA_EXTRACT_BIN`, `ryi` on PATH, then a built binary in the worktree.
-/// The external crate is never built by this test suite.
 fn extract_bin() -> Option<PathBuf> {
-    if let Some(named) = std::env::var_os("SPREFA_EXTRACT_BIN") {
-        let path = PathBuf::from(named);
-        return path.is_file().then_some(path);
-    }
-    which("ryi").or_else(|| built_candidates().into_iter().find(|path| path.is_file()))
+    dl8::_9_runtime::executors::extract::extract_bin().ok()
 }
 
 fn skip_without_extract() -> bool {
@@ -256,7 +226,7 @@ fn scip_indexes_the_typescript_corpus() {
     if skip_without_extract() {
         return;
     }
-    if which("scip-typescript").is_none() {
+    if which::which("scip-typescript").is_err() {
         println!("ignored: scip-typescript is not on PATH, so ryi scip has no indexer to run");
         return;
     }
@@ -352,15 +322,6 @@ fn dl8_compile_consumes_the_extracted_stream() {
         rows.len(),
         named.len()
     );
-}
-
-/// `Command::new` on a missing program fails at spawn, so the scip case asks
-/// first and says why it stood down.
-fn which(program: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|directory| directory.join(program))
-        .find(|candidate| candidate.is_file())
 }
 
 // From tests/_21_openapi.rs
