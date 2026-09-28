@@ -21,6 +21,8 @@ pub const STR_OPS: &[(&str, &str, usize, StrOp)] = &[
     ("str", "camel", 2, StrOp::Camel),
     ("str", "pascal", 2, StrOp::Pascal),
     ("str", "kebab", 2, StrOp::Kebab),
+    ("str", "escape", 2, StrOp::Escape),
+    ("str", "json", 2, StrOp::Json),
 ];
 
 pub const STR_KERNEL_RELATIONS: &[(Option<&str>, &str, i64)] = &[
@@ -42,6 +44,8 @@ pub const STR_KERNEL_RELATIONS: &[(Option<&str>, &str, i64)] = &[
     (Some("str"), "camel", 2),
     (Some("str"), "pascal", 2),
     (Some("str"), "kebab", 2),
+    (Some("str"), "escape", 2),
+    (Some("str"), "json", 2),
 ];
 
 pub fn str_slot_label(owner: &str, label: &str, index: u32) -> Option<&'static str> {
@@ -88,6 +92,10 @@ pub fn str_slot_label(owner: &str, label: &str, index: u32) -> Option<&'static s
         ("str", "pascal", 1) => "return",
         ("str", "kebab", 0) => "text",
         ("str", "kebab", 1) => "return",
+        ("str", "escape", 0) => "text",
+        ("str", "escape", 1) => "return",
+        ("str", "json", 0) => "text",
+        ("str", "json", 1) => "return",
         _ => return None,
     })
 }
@@ -111,4 +119,6 @@ pub const STR_TYPED_OPS: &[(&str, &str, &[(&str, &str)])] = &[
     ("str", "camel", &[("text", "str"), ("return", "str"), ]),
     ("str", "pascal", &[("text", "str"), ("return", "str"), ]),
     ("str", "kebab", &[("text", "str"), ("return", "str"), ]),
+    ("str", "escape", &[("text", "str"), ("return", "str"), ]),
+    ("str", "json", &[("text", "str"), ("return", "str"), ]),
 ];

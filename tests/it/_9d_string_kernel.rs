@@ -137,3 +137,14 @@ fn case() {
         }),
     );
 }
+
+#[test]
+fn escaping() {
+    run(
+        "4_escaping",
+        json!({
+            "escaped": [["", ""], ["back\\slash", "back\\\\slash"], ["héllo", "héllo"], ["it's", "it\\'s"], ["line\nbreak", "line\\nbreak"], ["plain", "plain"], ["say \"hi\"", "say \\\"hi\\\""]],
+            "jsoned": [["", "\"\""], ["back\\slash", "\"back\\\\slash\""], ["héllo", "\"héllo\""], ["it's", "\"it's\""], ["line\nbreak", "\"line\\nbreak\""], ["plain", "\"plain\""], ["say \"hi\"", "\"say \\\"hi\\\"\""]],
+        }),
+    );
+}

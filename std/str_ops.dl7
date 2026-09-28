@@ -104,3 +104,12 @@
 (<- (str_op 17 "str" "kebab" 2 "str" "case"
        "Some(Text(heck::ToKebabCase::to_kebab_case(a0)))"))
 (<- (str_op_arg "str" "kebab" 0 "text" "str"))
+
+; step 5: escaping
+(<- (str_op 18 "str" "escape" 2 "str" "escape"
+       "Some(Text(a0.escape_debug().to_string()))"))
+(<- (str_op_arg "str" "escape" 0 "text" "str"))
+
+(<- (str_op 19 "str" "json" 2 "str" "escape"
+       "serde_json::to_string(a0).ok().map(Text)"))
+(<- (str_op_arg "str" "json" 0 "text" "str"))
