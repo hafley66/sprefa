@@ -16,7 +16,20 @@ pub fn generic_bind_edge(
     let (_, args) = cx.u.functor(target)?;
     let (target_node, index) = (args[0], args[2]);
     let node = forms::node(cx.u, target_node)?;
-    let items = forms::form(cx.u, node.payload)?;
+    let application = generic_application(cx, owner, node.payload, 0)?;
+    Some(cx.compound("pending_edge", vec![owner, name, application, index]))
+}
+
+/// Nesting of generic applications inside generic arguments.
+const APPLICATION_DEPTH: usize = 16;
+
+/// `application(Callee, Args)` for a form that applies a generic product;
+/// an argument that is itself such a form becomes a nested application.
+fn generic_application(cx: &mut Cx, owner: TermId, payload: TermId, depth: usize) -> Option<TermId> {
+    if depth >= APPLICATION_DEPTH {
+        return None;
+    }
+    let items = forms::form(cx.u, payload)?;
     let head = forms::form_head_atom(cx.u, &items)?;
     if is_path_head(cx.u, head) {
         return None;
@@ -44,6 +57,11 @@ pub fn generic_bind_edge(
     }
     let mut values = Vec::with_capacity(items.len() - 1);
     for item in &items[1..] {
+        let payload = forms::node(cx.u, *item).map(|inner| inner.payload);
+        if let Some(nested) = payload.and_then(|payload| generic_application(cx, owner, payload, depth + 1)) {
+            values.push(nested);
+            continue;
+        }
         let lowered = lower_expression(cx, *item, owner);
         if !lowered.diagnostics.is_empty() || !lowered.goals.is_empty() {
             return None;
@@ -52,6 +70,5 @@ pub fn generic_bind_edge(
     }
     let callee = cx.compound("name", vec![owner, head]);
     let list = cx.u.list(&values);
-    let application = cx.compound("application", vec![callee, list]);
-    Some(cx.compound("pending_edge", vec![owner, name, application, index]))
+    Some(cx.compound("application", vec![callee, list]))
 }

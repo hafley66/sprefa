@@ -26,6 +26,30 @@ pub fn instance_rows(
     application: TermId,
     built: &mut HashSet<TermId>,
 ) -> Result<Vec<TermId>, TermId> {
+    let mut rows = Vec::new();
+    let root_ref = instance(u, cx, name, application, built, 0, &mut rows)?;
+    let index_term = u.int(index);
+    rows.insert(0, u.compound(":", vec![owner, name, root_ref, index_term]));
+    Ok(rows)
+}
+
+/// Nesting of generic applications inside generic arguments.
+const ARGUMENT_DEPTH: usize = 16;
+
+/// Builds the instance of one application, inner argument applications first.
+/// Returns `ref(application(Template, Args))`; the edges go to `rows`.
+fn instance(
+    u: &mut Universe,
+    cx: &Cx,
+    name: TermId,
+    application: TermId,
+    built: &mut HashSet<TermId>,
+    depth: usize,
+    rows: &mut Vec<TermId>,
+) -> Result<TermId, TermId> {
+    if depth >= ARGUMENT_DEPTH {
+        return Err(u.atom("instance_depth_exceeded"));
+    }
     let Some([callee, list]) = u.args::<2>(application, "application") else {
         return Err(u.atom("invalid_application"));
     };
@@ -56,7 +80,11 @@ pub fn instance_rows(
     }
     let mut resolved = Vec::with_capacity(items.len());
     for item in &items {
-        resolved.push(resolve_argument(u, cx, *item)?);
+        if u.args::<2>(*item, "application").is_some() {
+            resolved.push(instance(u, cx, name, *item, built, depth + 1, rows)?);
+        } else {
+            resolved.push(resolve_argument(u, cx, *item)?);
+        }
     }
     let plain: Vec<TermId> = resolved
         .iter()
@@ -78,12 +106,10 @@ pub fn instance_rows(
     };
     let root = u.compound("application", vec![template, arguments]);
     let root_ref = u.compound("ref", vec![root]);
-    let index_term = u.int(index);
-    let mut rows = vec![u.compound(":", vec![owner, name, root_ref, index_term])];
     if built.insert(root) {
-        walk(u, cx, &build, template, root, 0, &mut rows)?;
+        walk(u, cx, &build, template, root, 0, rows)?;
     }
-    Ok(rows)
+    Ok(root_ref)
 }
 
 fn walk(
