@@ -74,6 +74,9 @@ pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<
         let name = path_segment_atom(cx.u, *segment)?;
         let found = cx.reservations.scoped(scope, name)?;
         let inner = cx.u.unary(found.target, "target")?;
+        let found_is_sum =
+            cx.u.functor_or_atom(found.kind)
+                .is_some_and(|(kind, _)| kind == "sum");
         if index + 1 == segments.len() {
             if !parent_is_sum {
                 return None;
@@ -81,7 +84,7 @@ pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<
             return Some(cx.compound("ref", vec![inner]));
         } else {
             scope = inner;
-            parent_is_sum = cx.u.functor_or_atom(found.kind).map(|(kind, _)| kind) == Some("sum");
+            parent_is_sum = found_is_sum;
         }
     }
     None

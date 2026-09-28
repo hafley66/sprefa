@@ -41,7 +41,10 @@ pub fn extract_bin() -> Result<PathBuf, String> {
         let path = PathBuf::from(named);
         return match path.is_file() {
             true => Ok(path),
-            false => Err(format!("SPREFA_EXTRACT_BIN names {}, which is not a file", path.display())),
+            false => Err(format!(
+                "SPREFA_EXTRACT_BIN names {}, which is not a file",
+                path.display()
+            )),
         };
     }
     which::which("ryi").map_err(|_| "no ryi on PATH; set SPREFA_EXTRACT_BIN".to_string())

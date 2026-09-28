@@ -1,5 +1,7 @@
 //! The executor roster: every served name maps to one Rust executor.
 
+#[path = "doc_layout.rs"]
+pub mod doc_layout;
 #[path = "extract.rs"]
 pub mod extract;
 #[path = "fetch_json.rs"]
@@ -22,6 +24,7 @@ use crate::_6_eval::kernel::kernel_ref;
 use crate::_6_eval::{Diagnostic, Term, TermId, Universe};
 use std::collections::HashMap;
 
+pub use doc_layout::DocLayout;
 pub use extract::Extract;
 pub use fetch_json::FetchJson;
 pub use fs_at::FsAt;
@@ -90,6 +93,10 @@ fn executors_for_mode(
                 Some(rel) => executors.push(Box::new(Timer::new(*rel))),
                 None => missing(u, "served_relation_unknown", name),
             },
+            doc_layout::RELATION => match names.get(doc_layout::RELATION) {
+                Some(rel) => executors.push(Box::new(DocLayout::new(*rel))),
+                None => missing(u, "served_relation_unknown", name),
+            },
             fetch_json::RELATION => {
                 match (
                     names.get(fetch_json::RELATION),
@@ -153,7 +160,8 @@ fn executors_for_mode(
 }
 
 /// Every relation name `executors_for` builds an executor for.
-pub const ROSTER: [&str; 8] = [
+pub const ROSTER: [&str; 9] = [
+    doc_layout::RELATION,
     timer::RELATION,
     fetch_json::RELATION,
     fs_json::RELATION,

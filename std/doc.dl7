@@ -1,0 +1,12 @@
+; Wadler document values and their comptime layout effect.
+(: Doc
+   (+ (: text (* (: s str)))
+      (: concat (* (: parts any)))
+      (: nest (* (: indent int) (: body Doc)))
+      (: group (* (: body Doc)))
+      (: line (*))))
+
+(: layout
+   (* (: doc Doc)
+      (: width int)
+      (: return str)))

@@ -104,7 +104,7 @@ pub fn lower_units_with_exporter(
     let exporter_basement = exported_basement(u, &out.basements, exporter_owner);
     let prelude = module_expression_environment(u, exporter_owner, exporter_basement);
 
-    let mut importer_diagnostics = Vec::new();
+    let mut first_pass_diagnostics = HashMap::new();
     for unit in importers {
         let owner = unit_module_owner(u, *unit).unwrap_or(*unit);
         let reowned = reown_expression_reservations(u, prelude, owner);
@@ -114,9 +114,79 @@ pub fn lower_units_with_exporter(
         };
         let mut one = Units::default();
         lower_one(u, policy, *unit, environment, imports, &mut one)?;
+        first_pass_diagnostics.insert(owner, one.diagnostics);
         out.basements.extend(one.basements);
         out.origins.extend(one.origins);
+    }
+
+    // Imported module members must be available under the module node while
+    // lowering paths such as `doc.Doc.text`. First lower each unit to obtain
+    // its graph, then re-lower units that import one of those modules with its
+    // scoped declarations installed in the expression environment.
+    let mut rerun = HashSet::new();
+    let mut importer_diagnostics = Vec::new();
+    for unit in importers {
+        let owner = unit_module_owner(u, *unit).unwrap_or(*unit);
+        let Some(identity) = super::api::unit_parts(u, *unit).map(|parts| parts.origin) else {
+            continue;
+        };
+        let references: Vec<(TermId, TermId)> = imports
+            .iter()
+            .filter_map(|row| {
+                u.args::<3>(*row, "import")
+                    .filter(|parts| parts[0] == identity)
+                    .map(|parts| (parts[1], parts[2]))
+            })
+            .collect();
+        if references.is_empty() {
+            if let Some(diagnostics) = first_pass_diagnostics.remove(&owner) {
+                importer_diagnostics.extend(diagnostics);
+            }
+            continue;
+        }
+
+        let reowned = reown_expression_reservations(u, prelude, owner);
+        let mut environment = match generated {
+            Some(generated) => merge_expression_environments(u, generated, reowned),
+            None => reowned,
+        };
+        for (_, imported) in references {
+            let imported_owner = u.compound("module", vec![imported]);
+            if imported_owner == exporter_owner {
+                continue;
+            }
+            let imported_basement = exported_basement(u, &out.basements, imported_owner);
+            let exported = module_expression_environment(u, imported_owner, imported_basement);
+            let exported = reown_expression_reservations(u, exported, owner);
+            environment = merge_expression_environments(u, environment, exported);
+        }
+
+        let mut one = Units::default();
+        lower_one(u, policy, *unit, environment, imports, &mut one)?;
+        for replacement in one.basements {
+            let Some(parts) = u.args::<2>(replacement, "module_basement") else {
+                continue;
+            };
+            let replacement_owner = parts[0];
+            if let Some(slot) = out.basements.iter_mut().find(|row| {
+                u.args::<2>(**row, "module_basement")
+                    .is_some_and(|parts| parts[0] == replacement_owner)
+            }) {
+                *slot = replacement;
+            }
+        }
+        out.origins.retain(|row| {
+            !u.args::<2>(*row, "module_origins")
+                .is_some_and(|parts| parts[0] == owner)
+        });
+        out.origins.extend(one.origins);
         importer_diagnostics.extend(one.diagnostics);
+        rerun.insert(owner);
+    }
+    for (owner, diagnostics) in first_pass_diagnostics {
+        if !rerun.contains(&owner) {
+            importer_diagnostics.extend(diagnostics);
+        }
     }
     if !importer_diagnostics.is_empty() {
         out.diagnostics = importer_diagnostics;
@@ -175,7 +245,8 @@ fn basement_lists(u: &Universe, basement: TermId) -> Option<[Vec<TermId>; 5]> {
     ])
 }
 
-/// `:303`. Every top-level exporter edge whose target is a declared relation.
+/// `:303`. Top-level callable exports stay available to bare lookup. Every
+/// declared product or sum also keeps its graph owner for module-qualified paths.
 pub fn module_expression_environment(
     u: &mut Universe,
     exporter_owner: TermId,
@@ -184,28 +255,36 @@ pub fn module_expression_environment(
     let Some([nodes, edges, relations, _, _]) = basement_lists(u, basement) else {
         return empty_environment(u);
     };
-    let declared: HashSet<TermId> = nodes
+    let product = u.atom("product");
+    let sum = u.atom("sum");
+    let declared: HashMap<TermId, TermId> = nodes
         .iter()
-        .filter_map(|row| u.unary(*row, "product"))
+        .filter_map(|row| {
+            u.unary(*row, "product")
+                .map(|node| (node, product))
+                .or_else(|| u.unary(*row, "sum").map(|node| (node, sum)))
+        })
         .collect();
     let mut reservations = Vec::new();
     let imported = u.atom("imported");
-    let product = u.atom("product");
     for edge in &edges {
         let Some(("pending_edge", args)) = u.functor(*edge) else {
             continue;
         };
-        if args.len() != 4 || args[0] != exporter_owner {
+        if args.len() != 4 {
             continue;
         }
-        let (name, target) = (args[1], args[2]);
+        let (edge_owner, name, target) = (args[0], args[1], args[2]);
         let Some(callable) = u.unary(target, "target") else {
             continue;
         };
-        if !declared.contains(&callable) {
+        let Some(kind) = declared.get(&callable).copied() else {
             continue;
+        };
+        if edge_owner == exporter_owner && kind == product {
+            reservations.push(u.compound("reservation", vec![imported, name, target, product]));
         }
-        reservations.push(u.compound("reservation", vec![imported, name, target, product]));
+        reservations.push(u.compound("reservation", vec![edge_owner, name, target, kind]));
     }
     let reservations = u.list(&reservations);
     let relations = u.list(&relations);
@@ -229,12 +308,18 @@ pub fn reown_expression_reservations(
     let Some(rows) = u.as_list(reservations) else {
         return environment;
     };
+    let imported = u.atom("imported");
     let reowned: Vec<TermId> = rows
         .iter()
         .map(|row| match u.functor(*row) {
             Some(("reservation", args)) if args.len() == 4 => {
-                let (name, target, kind) = (args[1], args[2], args[3]);
-                u.compound("reservation", vec![owner, name, target, kind])
+                let (row_owner, name, target, kind) = (args[0], args[1], args[2], args[3]);
+                let row_owner = if row_owner == imported {
+                    owner
+                } else {
+                    row_owner
+                };
+                u.compound("reservation", vec![row_owner, name, target, kind])
             }
             _ => *row,
         })

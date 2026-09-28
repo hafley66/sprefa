@@ -1,0 +1,7 @@
+(doc: (import "@std/doc"))
+(: document (* (: value doc.Doc)))
+(<- (document (doc.Doc.text "hello")))
+(: rendered (* (: text str)))
+(<- (rendered ?Text)
+    (document ?Doc)
+    (doc.layout ?Doc 80 ?Text))

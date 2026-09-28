@@ -22,8 +22,7 @@ use std::time::Instant;
 // `tsi` is the envelope `--witness` wraps around `--kinds type`.
 // Several paths in one run need `--resolve` for cross-file edges.
 
-const MISSING_EXTRACT_REASON: &str =
-    "no ryi on PATH and SPREFA_EXTRACT_BIN unset";
+const MISSING_EXTRACT_REASON: &str = "no ryi on PATH and SPREFA_EXTRACT_BIN unset";
 
 fn v8_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
