@@ -1,4 +1,5 @@
 //! Checked DL8 goals lowered to the shared IVM operator algebra.
+use super::evaluate::sum_readback_constructors;
 use super::kernel::{kernel_ref, linear, IntCmp, Kernel};
 use super::program::{AggregateKind, Arg, Diagnostic, Fold, Folding, Polarity, Program, Row, Rule};
 use super::stratify::stratify;
@@ -371,6 +372,7 @@ fn compile_kernel(
     width: &mut usize,
     bound: &mut HashMap<u32, ir::ColId>,
     known_tail_inner: Option<ir::ColId>,
+    known_proper_list: bool,
     minted_list_inner: &mut Option<ir::ColId>,
 ) -> Result<(), &'static str> {
     let mut inputs = Vec::new();
@@ -475,13 +477,17 @@ fn compile_kernel(
             let wrap = constructor(constructors, "9:1:const", 1, false)?;
             let list = constructor(constructors, "9:2:[|]", 2, false)?;
             if let Some(whole) = inputs[2] {
-                let bad = b.get(bad_lists);
-                *current = b.node(ir::Op::Antijoin {
-                    l: *current,
-                    r: bad,
-                    lk: vec![whole],
-                    rk: vec![0],
-                });
+                // A list read from an intern snapshot was accepted by intern,
+                // so its cells and every split tail are proper lists.
+                if !known_proper_list {
+                    let bad = b.get(bad_lists);
+                    *current = b.node(ir::Op::Antijoin {
+                        l: *current,
+                        r: bad,
+                        lk: vec![whole],
+                        rk: vec![0],
+                    });
+                }
                 *current = join_constructor(b, *current, *width, wrap, whole);
                 let inner = assert_width(*width + 1);
                 *width += 2;
@@ -902,6 +908,7 @@ fn compile_fold_step_rule(
                 &mut width,
                 &mut bound,
                 None,
+                false,
                 &mut minted_inner,
             )?;
             continue;
@@ -986,6 +993,15 @@ fn compile_rule(
     let mut width = 1usize;
     let mut bound: HashMap<u32, ir::ColId> = HashMap::new();
     let mut chain_inner: HashMap<u32, ir::ColId> = HashMap::new();
+    let mut proper_lists: BTreeSet<u32> = rule
+        .vars
+        .iter()
+        .enumerate()
+        .filter_map(|(index, key)| {
+            (u.functor_or_atom(*key).map(|(name, _)| name) == Some("sum_arguments"))
+                .then_some(index as u32)
+        })
+        .collect();
     let nil_tails: BTreeSet<u32> = rule
         .body
         .iter()
@@ -1063,6 +1079,8 @@ fn compile_rule(
                 None
             };
             let mut minted_inner = None;
+            let known_proper_list = kernel == Kernel::Cons
+                && matches!(goal.args.get(2), Some(Arg::Var(whole)) if proper_lists.contains(&whole.0));
             compile_kernel(
                 b,
                 goal,
@@ -1076,8 +1094,14 @@ fn compile_rule(
                 &mut width,
                 &mut bound,
                 known_tail_inner,
+                known_proper_list,
                 &mut minted_inner,
             )?;
+            if known_proper_list {
+                if let Some(Arg::Var(tail)) = goal.args.get(1) {
+                    proper_lists.insert(tail.0);
+                }
+            }
             if let (Some(inner), Some(Arg::Var(whole))) = (minted_inner, goal.args.get(2)) {
                 chain_inner.insert(whole.0, inner);
             }
@@ -1760,6 +1784,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         }
     }
     let (program, hidden) = super::sqlite_eval::with_demand_in_strata(u, &program, &strata);
+    let sum_readbacks = sum_readback_constructors(u, &program, snapshot_rel);
     let (strata, diagnostics) = stratify(u, &program);
     if let Some(diag) = diagnostics.into_iter().next() {
         return Err(diag);
@@ -2081,6 +2106,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let mut request_dependencies: BTreeMap<u32, BTreeSet<RelationKey>> = BTreeMap::new();
     let mut readback_heads: BTreeMap<u32, BTreeSet<RelationKey>> = BTreeMap::new();
     let mut effect_dependencies = BTreeSet::new();
+    let mut snapshot_dependencies = BTreeSet::new();
     let mut fold_auxiliaries: BTreeMap<RelationKey, Vec<FoldAux>> = BTreeMap::new();
     for rule in &program.rules {
         let level = strata.level(rule.rel);
@@ -2113,6 +2139,29 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         )
         .map_err(|name| unsupported(u, name))?;
         if b.intern_nodes.len() > requests_before {
+            let constructs_readback = rule.body.iter().any(|goal| {
+                Kernel::of(u, goal.rel) == Some(Kernel::Intern)
+                    && matches!(goal.args.first(), Some(Arg::Ground(ctor)) if sum_readbacks.contains(ctor))
+            });
+            if constructs_readback {
+                for request in b.intern_nodes[requests_before..].to_vec() {
+                    for constructor in &sum_readbacks {
+                        let mapped = mapped_ground(&mut b, term_map, *constructor);
+                        let joined = b.node(ir::Op::Join {
+                            inputs: vec![request, mapped],
+                            equivalences: vec![vec![(0, 0), (1, 1)]],
+                        });
+                        let snapshot = b.mfp(joined, vec![], vec![], vec![0, 1, 2]);
+                        b.snapshot_nodes.push(snapshot);
+                        for goal in &rule.body {
+                            let key = (goal.rel.0, goal.args.len());
+                            if keys.contains(&key) {
+                                snapshot_dependencies.insert(key);
+                            }
+                        }
+                    }
+                }
+            }
             requests_by_level
                 .entry(level)
                 .or_default()
@@ -2236,6 +2285,12 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
                 reverse.entry(dependency).or_default().insert(effect_key);
             }
             if internal_snapshot.is_some() {
+                edges.entry(snapshot_key).or_default().insert(dependency);
+                reverse.entry(dependency).or_default().insert(snapshot_key);
+            }
+        }
+        if internal_snapshot.is_some() {
+            for dependency in snapshot_dependencies {
                 edges.entry(snapshot_key).or_default().insert(dependency);
                 reverse.entry(dependency).or_default().insert(snapshot_key);
             }

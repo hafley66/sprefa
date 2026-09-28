@@ -11,3 +11,4 @@ mod _7_book;
 mod _8_contracts;
 mod _9_ladder;
 mod _9a_ir_emit;
+mod _9b_sum_variants;

@@ -1,0 +1,10 @@
+{
+  "initial": {
+    "Loading": [["a"]],
+    "Value": [["a", "v"]]
+  },
+  "after_raw_retract": {
+    "Loading": [["a"]],
+    "Value": []
+  }
+}

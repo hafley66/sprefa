@@ -156,6 +156,7 @@ struct Context<'a> {
     served: &'a HashSet<TermId>,
     demanded: &'a HashSet<TermId>,
     effects: Effects,
+    sum_readbacks: &'a HashSet<TermId>,
 }
 
 /// One body evaluation. `tables_only` is the aggregate mode of v7
@@ -241,6 +242,9 @@ impl<'a> Eval<'a> {
             if k == Kernel::Intern {
                 for row in &solutions {
                     self.intern_requests.push(row.clone().into_boxed_slice());
+                    if self.cx.sum_readbacks.contains(&row[0]) {
+                        self.snapshot_rows.push(row.clone().into_boxed_slice());
+                    }
                 }
             }
         }
@@ -363,6 +367,34 @@ impl<'a> Eval<'a> {
         }
         true
     }
+}
+
+/// Sum-variant patterns mark their readback variable during lowering. Only
+/// those constructors read newly minted `intern` rows as snapshots.
+pub(super) fn sum_readback_constructors(
+    u: &Universe,
+    program: &Program,
+    snapshot_rel: TermId,
+) -> HashSet<TermId> {
+    program
+        .rules
+        .iter()
+        .flat_map(|rule| {
+            rule.body.iter().filter_map(move |goal| {
+                if goal.rel != snapshot_rel {
+                    return None;
+                }
+                let (Some(Arg::Ground(constructor)), Some(Arg::Var(value))) =
+                    (goal.args.first(), goal.args.get(2))
+                else {
+                    return None;
+                };
+                let key = *rule.vars.get(value.0 as usize)?;
+                (u.functor_or_atom(key).map(|(name, _)| name) == Some("sum_pattern"))
+                    .then_some(*constructor)
+            })
+        })
+        .collect()
 }
 
 /// The three rows one served-goal evaluation writes.
@@ -736,6 +768,7 @@ pub(super) fn fold_generic_row_groups(
             u.compound("const", vec![none])
         },
     };
+    let sum_readbacks = sum_readback_constructors(u, program, effects.intern_snapshot);
     let demanded = demanded_relations(u, &rules_by_rel, effects.intern_snapshot);
     let cx = Context {
         store: &store,
@@ -743,6 +776,7 @@ pub(super) fn fold_generic_row_groups(
         served: &program.served,
         demanded: &demanded,
         effects,
+        sum_readbacks: &sum_readbacks,
     };
     groups
         .iter()
@@ -968,6 +1002,7 @@ fn evaluate_into(
             u.compound("const", vec![n])
         },
     };
+    let sum_readbacks = sum_readback_constructors(u, program, effects.intern_snapshot);
     let nil_rel = {
         let n = u.atom("nil");
         let k = u.compound("kernel", vec![n]);
@@ -1022,6 +1057,7 @@ fn evaluate_into(
                 served: &program.served,
                 demanded: &demanded,
                 effects,
+                sum_readbacks: &sum_readbacks,
             };
             match aggregate_rows(u, cx, rule) {
                 Ok(rows) => aggregate_seeds.extend(rows),
@@ -1060,6 +1096,7 @@ fn evaluate_into(
                     served: &program.served,
                     demanded: &demanded,
                     effects,
+                    sum_readbacks: &sum_readbacks,
                 };
                 if round == 0 {
                     let plan: Plan = rule.body.iter().map(|_| Range::All).collect();
