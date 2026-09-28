@@ -1,0 +1,8 @@
+{
+  "rows": {
+    "Seen": [["complete"], ["error"], ["loading"], ["next"]]
+  },
+  "counts": {
+    "Event": 4
+  }
+}

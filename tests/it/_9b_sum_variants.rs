@@ -185,3 +185,64 @@ fn doc_layout_answers_inside_comptime() {
         json!([{"f":"const","args":[{"s":"hello"}]}])
     );
 }
+
+#[test]
+fn sum_variant_catch_all_and_coexistence() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let directory = root.join(format!("target/sum-variant-cases-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    for stem in ["1_catch_all", "2_coexisting"] {
+        let fixture = root.join(format!("fixtures/sum/{stem}.dl7"));
+        let expected: Value = serde_json::from_slice(
+            &std::fs::read(root.join(format!("fixtures/sum/{stem}.expected.json"))).unwrap(),
+        )
+        .unwrap();
+        let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .arg("compile")
+            .arg(&fixture)
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "{stem}: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let program: Value = serde_json::from_slice(&compiled.stdout).unwrap();
+        assert_eq!(program["diagnostics"], json!([]), "{stem}");
+        let program_path = directory.join(format!("{stem}.json"));
+        std::fs::write(&program_path, &compiled.stdout).unwrap();
+        let names = &program["program"]["names"];
+        for engine in ["rust", "ir:dd", "ir:sqlite"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
+                .arg("eval")
+                .arg(&program_path)
+                .env("DL8_ENGINE", engine)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{stem} {engine}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let closure: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(closure["diagnostics"], json!([]), "{stem} {engine}");
+            for (name, expected_rows) in expected["rows"].as_object().unwrap() {
+                assert_eq!(
+                    json!(rows(&closure, &names[name])),
+                    *expected_rows,
+                    "{stem} {engine} {name}"
+                );
+            }
+            for (name, count) in expected["counts"].as_object().unwrap() {
+                let actual = closure["closure"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|row| row["rel"] == names[name])
+                    .count();
+                assert_eq!(json!(actual), *count, "{stem} {engine} {name}");
+            }
+        }
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
