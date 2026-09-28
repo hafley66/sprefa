@@ -177,6 +177,14 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
             }
             return lower_path_walk(cx, parsed.id, &items[1..], owner);
         }
+        let head_name = cx
+            .u
+            .functor_or_atom(head)
+            .map(|(name, _)| name.to_string());
+        if matches!(head_name.as_deref(), Some("*") | Some("+")) {
+            let constructor = cx.compound("name", vec![owner, head]);
+            return lower_construction(cx, constructor, parsed.id, &items[1..], owner);
+        }
         return match expression_callable(cx, head, owner) {
             Ok(Applied::Relation(callable, arity, key_sets)) => lower_expression_call(
                 cx,
