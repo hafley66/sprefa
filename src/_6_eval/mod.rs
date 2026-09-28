@@ -18,6 +18,8 @@ pub mod ir_lower;
 pub mod json;
 #[path = "_4_kernel.rs"]
 pub mod kernel;
+#[path = "_4a_str_ops.rs"]
+pub mod str_ops;
 #[path = "_1_program.rs"]
 pub mod program;
 #[path = "_7_sqlite_eval.rs"]

@@ -25,6 +25,7 @@ pub fn kernel_relation(owner: Option<&str>, label: &str) -> Option<u32> {
         (Some("str"), "cons") => 3,
         (Some("str"), "nil") => 1,
         _ if is_integer_comparison(owner, label) => 2,
+        (Some("str"), label) => str_op_arity(label)?,
         _ => return None,
     };
     Some(arity)
@@ -55,6 +56,7 @@ pub fn kernel_slot_label(owner: Option<&str>, label: &str, index: u32) -> Option
         (Some("any"), "lt", 1) => "right",
         (_, _, 0) if is_integer_comparison(owner, label) => "left",
         (_, _, 1) if is_integer_comparison(owner, label) => "right",
+        (Some("str"), _, _) => return str_slot_label(label, index),
         _ => return None,
     };
     Some(slot)
@@ -69,6 +71,7 @@ pub fn kernel_keys(owner: Option<&str>, label: &str) -> Vec<Vec<u32>> {
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![vec![0, 1]],
         (Some("int"), "add") | (None, "effect") | (Some("any"), "lt") => vec![vec![0, 1]],
         _ if is_integer_comparison(owner, label) => vec![vec![0, 1]],
+        (Some("str"), _) => str_op_arity(label).map_or(vec![], |arity| vec![(0..arity - 1).collect()]),
         _ => vec![],
     }
 }
@@ -80,6 +83,17 @@ pub fn kernel_return_positions(owner: Option<&str>, label: &str) -> Vec<u32> {
         (None | Some("str"), "cons") => vec![2],
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![2],
         (Some("int"), "add") => vec![2],
+        (Some("str"), _) => str_op_arity(label).map_or(vec![], |arity| vec![arity - 1]),
         _ => vec![],
     }
+}
+
+use crate::_6_eval::str_ops::{str_slot_label, STR_OPS};
+
+/// Arity of `str.<label>` when the generated op table holds it.
+fn str_op_arity(label: &str) -> Option<u32> {
+    STR_OPS
+        .iter()
+        .find(|(name, ..)| *name == label)
+        .map(|(_, arity, _)| *arity as u32)
 }

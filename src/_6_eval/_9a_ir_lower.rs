@@ -5,6 +5,7 @@ use super::program::{AggregateKind, Arg, Diagnostic, Fold, Folding, Polarity, Pr
 use super::stratify::stratify;
 use super::term::{Term, TermId, Universe};
 use ivm_ir as ir;
+use ivm_ir::StrKind;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const COMPONENT_BUDGET: usize = 4096;
@@ -623,6 +624,53 @@ fn compile_kernel(
                 args: vec![text],
             });
             output[0] = Some(assert_width(*width));
+            *width += 1;
+        }
+        Kernel::Str(op) => {
+            let kinds = op.args();
+            if inputs.len() != kinds.len() + 1 {
+                return Err("str op arity");
+            }
+            let wrap = constructor(constructors, "9:1:const", 1, false)?;
+            let int = constructor(constructors, "0:int", 0, true)?;
+            let mut columns = Vec::with_capacity(kinds.len());
+            for (input, kind) in inputs.iter().zip(kinds) {
+                let Some(input) = *input else {
+                    *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
+                    return Ok(());
+                };
+                *current = join_constructor(b, *current, *width, wrap, input);
+                let mut column = assert_width(*width + 1);
+                *width += 2;
+                if *kind == StrKind::Int {
+                    *current = join_constructor(b, *current, *width, int, column);
+                    column = assert_width(*width + 1);
+                    *width += 2;
+                }
+                columns.push(column);
+            }
+            *current = b.node(ir::Op::Str {
+                input: *current,
+                op: op,
+                args: columns,
+            });
+            let mut result = assert_width(*width);
+            *width += 1;
+            if op.out() == StrKind::Int {
+                *current = b.node(ir::Op::Mint {
+                    input: *current,
+                    functor: int,
+                    args: vec![result],
+                });
+                result = assert_width(*width);
+                *width += 1;
+            }
+            *current = b.node(ir::Op::Mint {
+                input: *current,
+                functor: wrap,
+                args: vec![result],
+            });
+            output[kinds.len()] = Some(assert_width(*width));
             *width += 1;
         }
         Kernel::IntAdd => {

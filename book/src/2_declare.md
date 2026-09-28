@@ -98,7 +98,7 @@ A sum, and a product whose field is that sum:
 
 ```console
 $ $DL8 compile oracle/compile/sources/test/fixtures/16_interned_storage.dl7 | jq -c '[.compiler_rows[] | select(.args[0].args[0].f == "kernel") | .args[0].args[0].args[0].a] | group_by(.) | map([.[0], length])'
-[[":",596],["module",2],["nil",1],["node",143],["product",138],["sum",1]]
+[[":",632],["module",2],["nil",1],["node",153],["product",148],["sum",1]]
 ```
 
 A typed default, and one inferred from its literal:

@@ -1,0 +1,66 @@
+; The string kernel op table. `expr` is the body of one `StrOp` arm: `a0`, `a1`,
+; ... are the bound arguments (`&str` for kind str, `i64` for kind int) and the
+; value is `Option<StrOut>`; `None` is a miss and produces no row. The table is
+; the only place an op is spelled; `std/str_ops_emit.dl7` renders every site.
+
+(: str_op
+   (* (: index int)
+      (: name str)
+      (: variant str)
+      (: arity int)
+      (: out str)
+      (: group str)
+      (: expr str)))
+
+(: str_op_arg
+   (* (: name str)
+      (: position int)
+      (: slot str)
+      (: kind str)))
+
+; step 1: v5 ports
+(<- (str_op 0 "len" "Len" 2 "int" "v5"
+       "Some(Int(a0.chars().count() as i64))"))
+(<- (str_op_arg "len" 0 "text" "str"))
+
+(<- (str_op 1 "lower" "Lower" 2 "str" "v5"
+       "Some(Text(a0.to_lowercase()))"))
+(<- (str_op_arg "lower" 0 "text" "str"))
+
+(<- (str_op 2 "upper" "Upper" 2 "str" "v5"
+       "Some(Text(a0.to_uppercase()))"))
+(<- (str_op_arg "upper" 0 "text" "str"))
+
+(<- (str_op 3 "lcfirst" "Lcfirst" 2 "str" "v5"
+       "Some(Text({ let mut chars = a0.chars(); chars.next().map(|first| first.to_lowercase().chain(chars).collect::<String>()).unwrap_or_default() }))"))
+(<- (str_op_arg "lcfirst" 0 "text" "str"))
+
+(<- (str_op 4 "ucfirst" "Ucfirst" 2 "str" "v5"
+       "Some(Text({ let mut chars = a0.chars(); chars.next().map(|first| first.to_uppercase().chain(chars).collect::<String>()).unwrap_or_default() }))"))
+(<- (str_op_arg "ucfirst" 0 "text" "str"))
+
+(<- (str_op 5 "trim" "Trim" 2 "str" "v5"
+       "Some(Text(a0.trim().to_string()))"))
+(<- (str_op_arg "trim" 0 "text" "str"))
+
+(<- (str_op 6 "strip_prefix" "StripPrefix" 3 "str" "v5"
+       "Some(Text(a0.strip_prefix(a1).unwrap_or(a0).to_string()))"))
+(<- (str_op_arg "strip_prefix" 0 "text" "str"))
+(<- (str_op_arg "strip_prefix" 1 "prefix" "str"))
+
+(<- (str_op 7 "strip_suffix" "StripSuffix" 3 "str" "v5"
+       "Some(Text(a0.strip_suffix(a1).unwrap_or(a0).to_string()))"))
+(<- (str_op_arg "strip_suffix" 0 "text" "str"))
+(<- (str_op_arg "strip_suffix" 1 "suffix" "str"))
+
+(<- (str_op 8 "replace" "Replace" 4 "str" "v5"
+       "Some(Text(a0.replace(a1, a2)))"))
+(<- (str_op_arg "replace" 0 "text" "str"))
+(<- (str_op_arg "replace" 1 "from" "str"))
+(<- (str_op_arg "replace" 2 "to" "str"))
+
+(<- (str_op 9 "split" "Split" 4 "str" "v5"
+       "{ let parts: Vec<&str> = a0.split(a1).collect(); let at = if a2 < 0 { a2.checked_add(parts.len() as i64)? } else { a2 }; parts.get(usize::try_from(at).ok()?).map(|part| Text(part.to_string())) }"))
+(<- (str_op_arg "split" 0 "text" "str"))
+(<- (str_op_arg "split" 1 "separator" "str"))
+(<- (str_op_arg "split" 2 "index" "int"))

@@ -3,8 +3,9 @@
 //! kernel has no row, so the functions never reimplement kernel semantics.
 
 use super::kernel::{
-    any_lt_row, cons_row, edge_ref_row, int_dot_add_row, intern_row, str_cons_row,
+    any_lt_row, cons_row, edge_ref_row, int_dot_add_row, intern_row, str_cons_row, str_op_row,
 };
+use super::str_ops::STR_OPS;
 use super::term::{TermId, Universe};
 use rusqlite::functions::FunctionFlags;
 use rusqlite::types::Value as SqlValue;
@@ -92,6 +93,17 @@ pub fn register(connection: &Connection, arena: Arc<Mutex<Universe>>) -> rusqlit
         let arena = arena.clone();
         scalar(connection, name, 2, move |args| {
             (args.len() == 2).then(|| row(args, 2, solve, &arena))?
+        })?;
+    }
+    for (label, arity, op) in STR_OPS {
+        let arena = arena.clone();
+        let op = *op;
+        scalar(connection, &format!("dl_str_{label}"), arity - 1, move |args| {
+            let mut shaped: Vec<Option<TermId>> = args.iter().map(cell).collect();
+            shaped.push(None);
+            let mut taken = arena.lock().ok()?;
+            let solved = str_op_row(&mut taken, op, &shaped)?;
+            Some(SqlValue::Integer(solved.last()?.0 as i64))
         })?;
     }
     let decoding = arena.clone();
