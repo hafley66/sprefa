@@ -10,7 +10,7 @@ use dl8::_6_eval::json::{
     serve_relations,
 };
 use dl8::_6_eval::json::{term_from_json, term_to_json};
-use dl8::_6_eval::{Row, Term, TermId, Trace, Universe};
+use dl8::_6_eval::{Arg, Row, Term, TermId, Trace, Universe};
 use dl8::_7_effect::Slice;
 use dl8::_8_driver::{Event, Stop};
 use dl8::_9_runtime::executors::{executors_for, query_executors_for};
@@ -344,7 +344,7 @@ fn output_slice(
                 return false;
             };
             match u.get(path) {
-                Term::Str(symbol) => !u.sym_str(*symbol).starts_with(&std_dir),
+                Term::Atom(symbol) | Term::Str(symbol) => !u.sym_str(*symbol).starts_with(&std_dir),
                 _ => false,
             }
         })
@@ -352,6 +352,7 @@ fn output_slice(
     if needed.is_empty() {
         return program;
     }
+    let rule_heads: HashSet<_> = program.rules.iter().map(|rule| rule.rel).collect();
     let mut queue: Vec<_> = needed.iter().copied().collect();
     while let Some(relation) = queue.pop() {
         for rule in &program.rules {
@@ -359,6 +360,13 @@ fn output_slice(
                 for goal in &rule.body {
                     if needed.insert(goal.rel) {
                         queue.push(goal.rel);
+                    }
+                    for argument in &goal.args {
+                        if let Arg::Ground(relation) = argument {
+                            if rule_heads.contains(relation) && needed.insert(*relation) {
+                                queue.push(*relation);
+                            }
+                        }
                     }
                 }
             }

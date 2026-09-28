@@ -16,10 +16,12 @@ Commands: `$CARGO_TARGET_DIR/debug/dl8 compile <input> > <case>.compile.json`; `
 | 3 fused cons (notes only) | fs_json | Antijoin=160 Get=1596 Join=796 Mfp=893 Mint=220 Reduce=7 Threshold=140 Union=180 | 3992 | 5600 | 168689958 ns | 935981375 ns |
 | 3b identity-preserving cons | standard_plus | Antijoin=138 Get=1335 Join=865 Mfp=751 Mint=219 Reduce=7 Threshold=140 Union=180 | 3635 | 5302 | 140332583 ns | 769170000 ns |
 | 3b identity-preserving cons | fs_json | Antijoin=138 Get=1341 Join=867 Mfp=753 Mint=220 Reduce=7 Threshold=140 Union=180 | 3646 | 5319 | 126103916 ns | 762203833 ns |
-| emit output slice | standard_plus | Get=26 Mfp=15 Mint=10 Union=1 | 52 | 5302 | 133337125 ns | 769457458 ns |
-| emit output slice | fs_json | Get=34 Mfp=19 Mint=13 Union=1 | 67 | 5319 | 134831791 ns | 796251291 ns |
+| emit output slice (unrooted) | standard_plus | Antijoin=138 Get=1335 Join=865 Mfp=751 Mint=219 Reduce=7 Threshold=140 Union=180 | 3635 | 5302 | 133337125 ns | 769457458 ns |
+| emit output slice (unrooted) | fs_json | Antijoin=138 Get=1341 Join=867 Mfp=753 Mint=220 Reduce=7 Threshold=140 Union=180 | 3646 | 5319 | 134831791 ns | 796251291 ns |
+| emit source slice fixed | standard_plus | Get=38 Mfp=21 Mint=13 Threshold=1 Union=2 | 75 | 5302 | 177678958 ns | 888444917 ns |
+| emit source slice fixed | fs_json | Antijoin=81 Get=838 Join=528 Mfp=469 Mint=145 Reduce=4 Threshold=90 Union=116 | 2271 | 5319 | 144873375 ns | 872692625 ns |
 
-The emit output-slice rows use the same `compile | emit ir-json | jq` op-count command as the earlier rows. The install and SQLite CREATE columns come from `eval` on the complete compiled program; this commit changes only `emit`, so those measurements retain the full evaluation graph. The six-line `plans/v8/probes/2026-09-28-emit-slice.dl7` emits 381 RxJS lines, compared with 24,681 before slicing.
+The emit rows use the same `compile | emit ir-json | jq` op-count command as the earlier rows. The install and SQLite CREATE columns come from `eval` on the complete compiled program, so those measurements retain the full evaluation graph. Commit `2542ff3e1` read file-owner paths as strings, while `dl8 compile` encodes them as atoms. It therefore selected no source roots and emitted the full graph. The previous 52/67-node and 381-line figures came from a stale binary and are corrected here. With atom paths recognized, the six-line `fixtures/emit/0_edge_path.dl7` emits 448 RxJS lines versus 24,681 for the unrooted graph.
 
 Validation (commit 0):
 
@@ -139,3 +141,20 @@ Validation (emit output slice):
 | `python3 plans/v8/probes/2026-09-28-compile-gate.py applications-dl6-0_catalog declare-0_primitive_defaults project-modules-consumer project-modules-plus test-fixtures-0_minimal test-fixtures-14_syntax_macros test-fixtures-2_partial test-fixtures-3_type_algebra test-fixtures-5_curry test-fixtures-binding_symmetry-11_mixed_deferrable_and_real_error test-fixtures-lexical_binding-2_missing_name test-fixtures-lexical_binding-3_self_cycle test-fixtures-lexical_binding-4_two_cycle test-fixtures-modules-1_consumer test-fixtures-modules-2_plus_consumer` | 15/15 passed and matched; `test-fixtures-5_curry` 469.52 s |
 
 CI coverage: unchanged. The six-line emit probe and capped oracle runner are local validation artifacts.
+
+Validation (emit source slice test and atom-path fix):
+
+| Command | Result |
+|---|---|
+| `cargo +stable test --workspace` | 6 library and 148 integration tests passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:dd cargo +stable test --test it _9_ladder::` | 17 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:sqlite cargo +stable test --test it _9_ladder::` | 17 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:dd cargo +stable test --test it _1_compile_oracles::` | 11 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:sqlite cargo +stable test --test it _2_eval_oracles::ir_engines_match_v7_oracles -- --exact` | 1 passed; 0 failed or ignored |
+| `cargo +stable test --manifest-path sqlite_ivm/Cargo.toml --config 'profile.dev.opt-level=1' --config 'profile.dev.package."*".opt-level=3' -p ivm-dd --test 2_random` | 6 passed; 0 failed or ignored |
+| `cargo +stable test --manifest-path sqlite_ivm/Cargo.toml --config 'profile.dev.opt-level=1' --config 'profile.dev.package."*".opt-level=3' -p ivm-sqlite --test 2_random` | 8 passed; 0 failed; 7 pre-existing ignored worker tests |
+| `python3 plans/v8/probes/2026-09-28-compile-gate.py project-tsi-contract` | Baseline timeout at 900.01 s |
+| `python3 plans/v8/probes/2026-09-28-compile-gate.py applications-dl6-0_catalog declare-0_primitive_defaults project-modules-consumer project-modules-plus test-fixtures-0_minimal test-fixtures-14_syntax_macros test-fixtures-2_partial test-fixtures-3_type_algebra test-fixtures-5_curry test-fixtures-binding_symmetry-11_mixed_deferrable_and_real_error test-fixtures-lexical_binding-2_missing_name test-fixtures-lexical_binding-3_self_cycle test-fixtures-lexical_binding-4_two_cycle test-fixtures-modules-1_consumer test-fixtures-modules-2_plus_consumer` | 15/15 passed and matched; `test-fixtures-5_curry` 498.36 s |
+| `cargo +stable test --test it _9a_ir_emit::` | 2 passed; 0 failed or ignored after sharing one-time RxJS setup |
+
+CI coverage: one integration test added for emitted RxJS Path rows from two DL7 sources, including an `intern` target passed as a goal argument.
