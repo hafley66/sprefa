@@ -108,3 +108,17 @@ fn conversions() {
         }),
     );
 }
+
+#[test]
+fn filters() {
+    run(
+        "2_filters",
+        json!({
+            "under_src": [["src/lib/mod.rs"], ["src/main.rs"]],
+            "has_lib": [["src/lib/mod.rs"]],
+            "has_umlaut": [["héllo/wörld"]],
+            "empty_prefix": [[""], ["docs/readme.md"], ["héllo/wörld"], ["src/lib/mod.rs"], ["src/main.rs"]],
+            "never": [],
+        }),
+    );
+}

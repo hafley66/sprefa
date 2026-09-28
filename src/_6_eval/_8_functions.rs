@@ -98,12 +98,19 @@ pub fn register(connection: &Connection, arena: Arc<Mutex<Universe>>) -> rusqlit
     for (owner, label, arity, op) in STR_OPS {
         let arena = arena.clone();
         let op = *op;
-        scalar(connection, &format!("dl_{owner}_{label}"), arity - 1, move |args| {
+        let inputs = op.args().len();
+        scalar(connection, &format!("dl_{owner}_{label}"), inputs, move |args| {
             let mut shaped: Vec<Option<TermId>> = args.iter().map(cell).collect();
-            shaped.push(None);
+            if *arity > inputs {
+                shaped.push(None);
+            }
             let mut taken = arena.lock().ok()?;
             let solved = str_op_row(&mut taken, op, &shaped)?;
-            Some(SqlValue::Integer(solved.last()?.0 as i64))
+            if *arity > inputs {
+                Some(SqlValue::Integer(solved.last()?.0 as i64))
+            } else {
+                Some(SqlValue::Integer(1))
+            }
         })?;
     }
     let decoding = arena.clone();

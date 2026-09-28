@@ -628,7 +628,7 @@ fn compile_kernel(
         }
         Kernel::Str(op) => {
             let kinds = op.args();
-            if inputs.len() != kinds.len() + 1 {
+            if inputs.len() != kinds.len() + usize::from(op.out().is_some()) {
                 return Err("str op arity");
             }
             let wrap = constructor(constructors, "9:1:const", 1, false)?;
@@ -651,12 +651,15 @@ fn compile_kernel(
             }
             *current = b.node(ir::Op::Str {
                 input: *current,
-                op: op,
+                op,
                 args: columns,
             });
+            if op.out().is_none() {
+                return Ok(());
+            }
             let mut result = assert_width(*width);
             *width += 1;
-            if op.out() == StrKind::Int {
+            if op.out() == Some(StrKind::Int) {
                 *current = b.node(ir::Op::Mint {
                     input: *current,
                     functor: int,

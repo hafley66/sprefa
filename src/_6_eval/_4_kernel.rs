@@ -227,10 +227,10 @@ pub fn str_cons_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<Ter
 }
 
 /// `str.<op>(Input.., Result)`: every input bound, `Result` computed by the one
-/// `StrOp::apply`; a miss has no row.
+/// `StrOp::apply`; a miss has no row. A filter op has no `Result` position.
 pub fn str_op_row(u: &mut Universe, op: StrOp, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
     let kinds = op.args();
-    if args.len() != kinds.len() + 1 {
+    if args.len() != kinds.len() + usize::from(op.out().is_some()) {
         return None;
     }
     let mut texts = Vec::with_capacity(kinds.len());
@@ -257,12 +257,14 @@ pub fn str_op_row(u: &mut Universe, op: StrOp, args: &[Option<TermId>]) -> Optio
         })
         .collect();
     let result = match op.apply(&values)? {
-        StrOut::Text(value) => u.string(&value),
-        StrOut::Int(value) => u.int(value),
+        StrOut::Text(value) => Some(u.string(&value)),
+        StrOut::Int(value) => Some(u.int(value)),
+        StrOut::Holds => None,
     };
-    let result = u.compound("const", vec![result]);
     let mut row: Vec<TermId> = args[..kinds.len()].iter().map(|arg| arg.unwrap()).collect();
-    row.push(result);
+    if let Some(result) = result {
+        row.push(u.compound("const", vec![result]));
+    }
     Some(row)
 }
 

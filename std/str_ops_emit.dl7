@@ -5,6 +5,11 @@
 (doc: (import "@std/doc"))
 (ops: (import "./std/str_ops.dl7"))
 
+(: kind_out (* (: kind str) (: rust str)))
+(<- (kind_out "str" "Some(StrKind::Text)"))
+(<- (kind_out "int" "Some(StrKind::Int)"))
+(<- (kind_out "none" "None"))
+
 (: kind_rust (* (: kind str) (: rust str)))
 (<- (kind_rust "str" "Text"))
 (<- (kind_rust "int" "Int"))
@@ -56,11 +61,11 @@
        (doc.Doc.concat
           [(doc.Doc.text "            StrOp::")
            (doc.Doc.text ?Variant)
-           (doc.Doc.text " => StrKind::")
+           (doc.Doc.text " => ")
            (doc.Doc.text ?OutRust)
            (doc.Doc.text ",")]))
     (ops.str_op ?Index ?Owner ?Name ?Variant ?Arity ?Out ?Group ?Expression)
-    (kind_rust ?Out ?OutRust))
+    (kind_out ?Out ?OutRust))
 
 ; ivm-ir: argument kinds, one line per argument between a header and a close.
 (<- (piece "ir_args" ?Index 0
@@ -175,6 +180,7 @@
            (doc.Doc.text ?ReturnText)
            (doc.Doc.text ") => \"return\",")]))
     (ops.str_op ?Index ?Owner ?Name ?Variant ?Arity ?Out ?Group ?Expression)
+    (kind_rust ?Out ?OutRust)
     (int.add ?Arity -1 ?ReturnPosition)
     (int.to_str ?ReturnPosition ?ReturnText))
 
@@ -203,7 +209,12 @@
        (doc.Doc.concat
           [(doc.Doc.text "(\"return\", \"")
            (doc.Doc.text ?Out)
-           (doc.Doc.text "\")]),")]))
+           (doc.Doc.text "\"), ")]))
+    (ops.str_op ?Index ?Owner ?Name ?Variant ?Arity ?Out ?Group ?Expression)
+    (kind_rust ?Out ?OutRust))
+
+(<- (piece "dl8_typed" ?Index 200
+       (doc.Doc.text "]),"))
     (ops.str_op ?Index ?Owner ?Name ?Variant ?Arity ?Out ?Group ?Expression))
 
 (: rendered

@@ -1318,7 +1318,7 @@ impl<'a> Lowering<'a> {
             }
             Kernel::Str(op) if self.catalog.reach == KernelReach::Eval => {
                 let inputs = op.args().len();
-                self.arity(goal, inputs + 1)?;
+                self.arity(goal, inputs + usize::from(op.out().is_some()))?;
                 let mut cells = Vec::with_capacity(inputs);
                 for argument in &goal.args[..inputs] {
                     let Some(cell) = self.input_cell(scope, rule, vars, argument, &mut guards)?
@@ -1329,6 +1329,9 @@ impl<'a> Lowering<'a> {
                 }
                 let call = format!("dl_{}({})", op.name().replace('.', "_"), cells.join(", "));
                 guards.push(format!("{call} IS NOT NULL"));
+                if op.out().is_none() {
+                    return Ok(guards.join(" AND "));
+                }
                 match self.argument_cell(scope, rule, vars, &goal.args[inputs])? {
                     Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
                     Hold::Free(free) if positive => {

@@ -1,0 +1,31 @@
+(: path (* (: text str)))
+(<- (path "src/main.rs"))
+(<- (path "src/lib/mod.rs"))
+(<- (path "docs/readme.md"))
+(<- (path ""))
+(<- (path "héllo/wörld"))
+
+(: under_src (* (: text str)))
+(<- (under_src ?Text)
+    (path ?Text)
+    (str.starts_with ?Text "src/"))
+
+(: has_lib (* (: text str)))
+(<- (has_lib ?Text)
+    (path ?Text)
+    (str.contains ?Text "lib"))
+
+(: has_umlaut (* (: text str)))
+(<- (has_umlaut ?Text)
+    (path ?Text)
+    (str.contains ?Text "ö"))
+
+(: empty_prefix (* (: text str)))
+(<- (empty_prefix ?Text)
+    (path ?Text)
+    (str.starts_with ?Text ""))
+
+(: never (* (: text str)))
+(<- (never ?Text)
+    (path ?Text)
+    (str.contains ?Text "zzz"))

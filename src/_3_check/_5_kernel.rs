@@ -8,7 +8,7 @@
 //! keeps the `integer_comparison/3` declaration order of
 //! `v7/src/1_libtime/0_evaluator.pl:60-65` rather than the lowerer's.
 
-use crate::_6_eval::str_ops::{STR_KERNEL_RELATIONS, STR_TYPED_OPS};
+use crate::_6_eval::str_ops::{STR_KERNEL_RELATIONS, STR_OPS, STR_TYPED_OPS};
 use crate::_6_eval::term::{TermId, Universe};
 
 pub const COMPARISONS: [&str; 6] = ["lt", "le", "eq", "ne", "ge", "gt"];
@@ -82,10 +82,10 @@ pub fn kernel_relation_keys(owner: Option<&str>, label: &str) -> Vec<Vec<i64>> {
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![vec![0, 1]],
         (Some("int"), "add") | (None, "effect") | (Some("any"), "lt") => vec![vec![0, 1]],
         _ if is_comparison(owner, label) => vec![vec![0, 1]],
-        (Some(owner), _) => STR_KERNEL_RELATIONS
+        (Some(owner), _) => STR_OPS
             .iter()
-            .find(|(op_owner, name, _)| *op_owner == Some(owner) && *name == label)
-            .map_or(vec![], |(_, _, arity)| vec![(0..arity - 1).collect()]),
+            .find(|(op_owner, name, ..)| *op_owner == owner && *name == label)
+            .map_or(vec![], |(.., op)| vec![(0..op.args().len() as i64).collect()]),
         (None, "def" | "head") => vec![vec![0]],
         (None, "body") => vec![vec![0, 1]],
         _ => vec![],

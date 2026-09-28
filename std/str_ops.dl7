@@ -76,3 +76,15 @@
 (<- (str_op 11 "str" "to_int" "StrToInt" 2 "int" "conversion"
        "a0.parse::<i64>().ok().map(Int)"))
 (<- (str_op_arg "str" "to_int" 0 "text" "str"))
+
+; step 3: filters. `out` none: the op holds or the row is dropped, and the goal
+; has no result position.
+(<- (str_op 12 "str" "starts_with" "StartsWith" 2 "none" "filter"
+       "a0.starts_with(a1).then_some(Holds)"))
+(<- (str_op_arg "str" "starts_with" 0 "text" "str"))
+(<- (str_op_arg "str" "starts_with" 1 "prefix" "str"))
+
+(<- (str_op 13 "str" "contains" "Contains" 2 "none" "filter"
+       "a0.contains(a1).then_some(Holds)"))
+(<- (str_op_arg "str" "contains" 0 "text" "str"))
+(<- (str_op_arg "str" "contains" 1 "needle" "str"))

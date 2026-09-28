@@ -15,6 +15,8 @@ pub const STR_OPS: &[(&str, &str, usize, StrOp)] = &[
     ("str", "split", 4, StrOp::Split),
     ("int", "to_str", 2, StrOp::IntToStr),
     ("str", "to_int", 2, StrOp::StrToInt),
+    ("str", "starts_with", 2, StrOp::StartsWith),
+    ("str", "contains", 2, StrOp::Contains),
 ];
 
 pub const STR_KERNEL_RELATIONS: &[(Option<&str>, &str, i64)] = &[
@@ -30,6 +32,8 @@ pub const STR_KERNEL_RELATIONS: &[(Option<&str>, &str, i64)] = &[
     (Some("str"), "split", 4),
     (Some("int"), "to_str", 2),
     (Some("str"), "to_int", 2),
+    (Some("str"), "starts_with", 2),
+    (Some("str"), "contains", 2),
 ];
 
 pub fn str_slot_label(owner: &str, label: &str, index: u32) -> Option<&'static str> {
@@ -64,21 +68,27 @@ pub fn str_slot_label(owner: &str, label: &str, index: u32) -> Option<&'static s
         ("int", "to_str", 1) => "return",
         ("str", "to_int", 0) => "text",
         ("str", "to_int", 1) => "return",
+        ("str", "starts_with", 0) => "text",
+        ("str", "starts_with", 1) => "prefix",
+        ("str", "contains", 0) => "text",
+        ("str", "contains", 1) => "needle",
         _ => return None,
     })
 }
 
 pub const STR_TYPED_OPS: &[(&str, &str, &[(&str, &str)])] = &[
-    ("str", "len", &[("text", "str"), ("return", "int")]),
-    ("str", "lower", &[("text", "str"), ("return", "str")]),
-    ("str", "upper", &[("text", "str"), ("return", "str")]),
-    ("str", "lcfirst", &[("text", "str"), ("return", "str")]),
-    ("str", "ucfirst", &[("text", "str"), ("return", "str")]),
-    ("str", "trim", &[("text", "str"), ("return", "str")]),
-    ("str", "strip_prefix", &[("text", "str"), ("prefix", "str"), ("return", "str")]),
-    ("str", "strip_suffix", &[("text", "str"), ("suffix", "str"), ("return", "str")]),
-    ("str", "replace", &[("text", "str"), ("from", "str"), ("to", "str"), ("return", "str")]),
-    ("str", "split", &[("text", "str"), ("separator", "str"), ("index", "int"), ("return", "str")]),
-    ("int", "to_str", &[("value", "int"), ("return", "str")]),
-    ("str", "to_int", &[("text", "str"), ("return", "int")]),
+    ("str", "len", &[("text", "str"), ("return", "int"), ]),
+    ("str", "lower", &[("text", "str"), ("return", "str"), ]),
+    ("str", "upper", &[("text", "str"), ("return", "str"), ]),
+    ("str", "lcfirst", &[("text", "str"), ("return", "str"), ]),
+    ("str", "ucfirst", &[("text", "str"), ("return", "str"), ]),
+    ("str", "trim", &[("text", "str"), ("return", "str"), ]),
+    ("str", "strip_prefix", &[("text", "str"), ("prefix", "str"), ("return", "str"), ]),
+    ("str", "strip_suffix", &[("text", "str"), ("suffix", "str"), ("return", "str"), ]),
+    ("str", "replace", &[("text", "str"), ("from", "str"), ("to", "str"), ("return", "str"), ]),
+    ("str", "split", &[("text", "str"), ("separator", "str"), ("index", "int"), ("return", "str"), ]),
+    ("int", "to_str", &[("value", "int"), ("return", "str"), ]),
+    ("str", "to_int", &[("text", "str"), ("return", "int"), ]),
+    ("str", "starts_with", &[("text", "str"), ("prefix", "str"), ]),
+    ("str", "contains", &[("text", "str"), ("needle", "str"), ]),
 ];

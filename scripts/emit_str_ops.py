@@ -57,7 +57,7 @@ impl StrOp {
         }
     }
 
-    pub fn out(self) -> StrKind {
+    pub fn out(self) -> Option<StrKind> {
         match self {
 @ir_out@
         }
@@ -65,7 +65,7 @@ impl StrOp {
 
     pub fn apply(self, args: &[StrVal]) -> Option<StrOut> {
         use crate::{int, text};
-        use StrOut::{Int, Text};
+        use StrOut::{Holds, Int, Text};
         match self {
 @ir_apply@
         }
