@@ -1,0 +1,10 @@
+{
+  "rows": {
+    "Both": [["a"]],
+    "Loading": [["a"]],
+    "Value": [["a", "v"]]
+  },
+  "counts": {
+    "Event": 2
+  }
+}
