@@ -1,0 +1,13 @@
+(EResult:
+   (* (Next: type)
+      (Error: type)
+      (return:
+         (+ (loading: (*))
+            (next: (* (value: Next)))
+            (error: (* (message: Error)))
+            (complete: (*))))))
+
+(Box: (* (Item: type) (return: (* (item: Item)))))
+
+(: Inner (Box str))
+(: Outer (EResult (Box str) str))

@@ -70,3 +70,71 @@ fn generic_bind_evaluates_and_inserts() {
 
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// The `(: owner name target index)` rows check emitted, as their four arguments.
+fn edge_rows(program: &Value) -> Vec<Vec<Value>> {
+    let kernel = json!({"f": "ref", "args": [{"f": "kernel", "args": [{"a": ":"}]}]});
+    program["compiler_rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["f"] == "call" && row["args"][0] == kernel)
+        .map(|row| row["args"][1].as_array().unwrap().clone())
+        .collect()
+}
+
+fn label(name: &str) -> Value {
+    json!({"f": "const", "args": [{"a": name}]})
+}
+
+fn edge_target<'a>(edges: &'a [Vec<Value>], owner: &Value, name: &str) -> &'a Value {
+    let matched: Vec<_> = edges
+        .iter()
+        .filter(|edge| &edge[0] == owner && edge[1] == label(name))
+        .collect();
+    assert_eq!(matched.len(), 1, "{name}");
+    &matched[0][2]
+}
+
+#[test]
+fn nested_generic_argument_builds_inner_instance_first() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture = root.join("fixtures/generic/1_nested.dl7");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .args(["compile"])
+        .arg(&fixture)
+        .output()
+        .unwrap();
+    let program: Value = serde_json::from_slice(&compiled.stdout).unwrap();
+    assert_eq!(program["diagnostics"], json!([]));
+    assert!(compiled.status.success());
+
+    let edges = edge_rows(&program);
+    let module = &edges
+        .iter()
+        .find(|edge| edge[1] == label("Inner"))
+        .unwrap()[0];
+    let inner = edge_target(&edges, module, "Inner");
+    let outer = edge_target(&edges, module, "Outer");
+    assert_ne!(inner, outer);
+    let next = edge_target(&edges, outer, "next");
+    assert_eq!(edge_target(&edges, next, "value"), inner);
+    assert_eq!(edge_target(&edges, inner, "item"), &json!({"f": "ref", "args": [{"f": "primitive", "args": [{"a": "str"}]}]}));
+
+    let directory = root.join(format!("target/generic-nested-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let program_path = directory.join("program.json");
+    std::fs::write(&program_path, &compiled.stdout).unwrap();
+    for engine in ["rust", "ir:dd", "ir:sqlite"] {
+        let evaluated = Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .args(["eval"])
+            .arg(&program_path)
+            .env("DL8_ENGINE", engine)
+            .output()
+            .unwrap();
+        assert!(evaluated.status.success(), "{engine}: {}", String::from_utf8_lossy(&evaluated.stderr));
+        let closure: Value = serde_json::from_slice(&evaluated.stdout).unwrap();
+        assert_eq!(closure["diagnostics"], json!([]), "{engine}");
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
