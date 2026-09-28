@@ -961,7 +961,7 @@ fn compile_rule(
     let mut current = b.get(unit);
     let mut width = 1usize;
     let mut bound: HashMap<u32, ir::ColId> = HashMap::new();
-    for goal in &rule.body {
+    for (goal_index, goal) in rule.body.iter().enumerate() {
         if served.contains(&goal.rel) {
             served_effect(
                 b,
@@ -1068,10 +1068,17 @@ fn compile_rule(
             });
             continue;
         }
-        current = b.node(ir::Op::Join {
-            inputs: vec![current, right],
-            equivalences,
-        });
+        if goal_index == 0 {
+            // The first positive atom supplies the row. No bound column can
+            // refer to the unit relation's single placeholder column.
+            current = right;
+            width = 0;
+        } else {
+            current = b.node(ir::Op::Join {
+                inputs: vec![current, right],
+                equivalences,
+            });
+        }
         let total = width + goal.args.len().max(1);
         for (position, original) in &grounds {
             let mapped = mapped_ground(b, term_map, *original);
@@ -1887,12 +1894,9 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         vec![ir::Ty::Id, ir::Ty::Id],
         ir::RelKind::Derived,
     );
-    let refs = b.get_constructor(constructors[&("9:1:ref".to_string(), 1, false)]);
-    let consts = b.get_constructor(constructors[&("9:1:const".to_string(), 1, false)]);
-    let body = b.node(ir::Op::Union(vec![refs, consts]));
-    b.ir.strata.push(ir::Stratum::Let { id: semantic, body });
-    let seed_lists = b.get(plain_source);
+    let semantic_stratum = b.ir.strata.len();
     if dynamic_lists {
+        let seed_lists = b.get(plain_source);
         let wrap = constructors[&("9:1:const".to_string(), 1, false)];
         let cons = constructors[&("9:2:[|]".to_string(), 2, false)];
         let mut pairs = b.get(plain_lists);
@@ -1925,7 +1929,12 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             bodies: vec![body],
             limit: None,
         }));
-    } else {
+    } else if program.rules.iter().any(|rule| {
+        rule.body
+            .iter()
+            .any(|goal| Kernel::of(u, goal.rel) == Some(Kernel::Intern))
+    }) {
+        let seed_lists = b.get(plain_source);
         b.ir.strata.push(ir::Stratum::Let {
             id: plain_lists,
             body: seed_lists,
@@ -2047,6 +2056,17 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             fold_auxiliaries.entry(head_key).or_default().push(aux);
         }
         bodies.entry(head_key).or_default().push(body.body);
+    }
+    if b.ir
+        .nodes
+        .iter()
+        .any(|node| matches!(node, ir::Op::Get(id) if *id == semantic))
+    {
+        let refs = b.get_constructor(constructors[&("9:1:ref".to_string(), 1, false)]);
+        let consts = b.get_constructor(constructors[&("9:1:const".to_string(), 1, false)]);
+        let body = b.node(ir::Op::Union(vec![refs, consts]));
+        b.ir.strata
+            .insert(semantic_stratum, ir::Stratum::Let { id: semantic, body });
     }
     if b.intern_readback {
         for (level, request_rel) in request_rels.iter().enumerate() {
@@ -2222,8 +2242,14 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             }
             let mut parts = vec![b.get(sources[&key])];
             parts.extend(bodies.remove(&key).unwrap_or_default());
-            let union = b.node(ir::Op::Union(parts));
-            let body = b.node(ir::Op::Threshold(union));
+            // A source alone is distinct: both hosts reject duplicate inserts
+            // and emit one row per live source key. No rule adds another row.
+            let body = if parts.len() == 1 {
+                parts[0]
+            } else {
+                let union = b.node(ir::Op::Union(parts));
+                b.node(ir::Op::Threshold(union))
+            };
             b.ir.strata.push(ir::Stratum::Let {
                 id: relations[&key],
                 body,
@@ -2237,23 +2263,15 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     if !b.intern_readback {
         let requests: Vec<_> = requests_by_level.into_values().flatten().collect();
         let has_requests = !requests.is_empty();
-        let body = if has_requests {
-            let union = b.node(ir::Op::Union(requests));
-            b.node(ir::Op::Threshold(union))
-        } else {
-            let unit_row = b.get(unit);
-            b.mfp(
-                unit_row,
-                vec![ir::Expr::Lit(0)],
-                vec![ir::Expr::Col(0), ir::Expr::Col(0)],
-                vec![0, 1, 2],
-            )
-        };
-        b.ir.strata.push(ir::Stratum::Let {
-            id: request_rels[0],
-            body,
-        });
         if has_requests {
+            let body = {
+                let union = b.node(ir::Op::Union(requests));
+                b.node(ir::Op::Threshold(union))
+            };
+            b.ir.strata.push(ir::Stratum::Let {
+                id: request_rels[0],
+                body,
+            });
             b.ir.outputs.push(request_rels[0]);
             visible.push((request_rels[0], intern_rel, 3));
         }

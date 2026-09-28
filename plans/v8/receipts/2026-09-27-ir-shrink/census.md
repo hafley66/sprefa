@@ -8,6 +8,8 @@ Commands: `$CARGO_TARGET_DIR/debug/dl8 compile <input> > <case>.compile.json`; `
 |---|---|---|---:|---:|---:|---:|
 | 0 baseline | standard_plus | Antijoin=160 Get=1590 Join=1042 Mfp=891 Mint=219 Reduce=7 Threshold=148 Union=188 | 4245 | 6113 | 195260834 ns | 1051237542 ns |
 | 0 baseline | fs_json | Antijoin=160 Get=1596 Join=1044 Mfp=893 Mint=220 Reduce=7 Threshold=149 Union=189 | 4258 | 6133 | 198478291 ns | 1089195875 ns |
+| 1 scaffolding | standard_plus | Antijoin=160 Get=1590 Join=794 Mfp=891 Mint=219 Reduce=7 Threshold=140 Union=180 | 3981 | 5583 | 166270709 ns | 830623083 ns |
+| 1 scaffolding | fs_json | Antijoin=160 Get=1596 Join=796 Mfp=893 Mint=220 Reduce=7 Threshold=140 Union=180 | 3992 | 5600 | 156593459 ns | 850203042 ns |
 
 Validation (commit 0):
 
@@ -22,3 +24,25 @@ Validation (commit 0):
 The `ir:sqlite` eval oracle filter and the `ivm-*` random suites were not run before commit 0. Parent review confirmed the `tsi_project/0_contract.dl7` timeout on base `1a3faa916`. For commits 1-3, each `ir:sqlite` compile oracle case has a 15-minute cap: baseline completions must still finish and match; baseline timeouts are reported with their elapsed time.
 
 CI coverage: unchanged.
+
+Open items for commit 1:
+
+| Item | Evidence |
+|---|---|
+| Constructor installers | Removing shapes absent from the initial program makes a later `Event(const(1))` insert fail on both IR engines with `Unsupported("dynamic term constructor")`; baseline derives `Action(const(1))`. |
+| `__ir_all_sources` | Removing the sentinel changes `_9_ladder::rung_10_continuing_executors` from 2 expected edit writes to 3 on `ir:dd`; restoring it passes. |
+| `nil` seed | Removing it when no rule reads `nil` drops an observable row in `_9_ladder::rung_11_handwritten_oracle_constructs`; restoring it passes. |
+| Seed source path | A relation with no initial seed can receive later frontier inserts. Dropping its source Get would discard those rows. |
+
+Validation (commit 1):
+
+| Command | Result |
+|---|---|
+| `cargo test --workspace` | 6 library and 147 integration tests passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:dd cargo test --test it _9_ladder::` | 17 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:sqlite cargo test --test it _9_ladder::` | 17 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:dd cargo test --test it _1_compile_oracles::` | 11 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:sqlite cargo test --test it _2_eval_oracles::ir_engines_match_v7_oracles -- --exact` | 1 passed; 0 failed or ignored |
+| `cargo test --manifest-path sqlite_ivm/Cargo.toml --config 'profile.dev.opt-level=1' --config 'profile.dev.package."*".opt-level=3' -p ivm-dd --test 2_random` | 6 passed; 0 failed or ignored |
+| `cargo test --manifest-path sqlite_ivm/Cargo.toml --config 'profile.dev.opt-level=1' --config 'profile.dev.package."*".opt-level=3' -p ivm-sqlite --test 2_random` | 8 passed; 0 failed; 7 pre-existing ignored worker tests |
+| `DL8_ENGINE=ir:sqlite dl8 compile <each committed oracle/compile case>` (900-second cap per case, compare committed expected fields and exit code) | 15/16 passed and matched; `project-tsi-contract` timed out at 900.01 s, as on baseline. `test-fixtures-5_curry` passed in 484.51 s. |
