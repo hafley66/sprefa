@@ -1,0 +1,6 @@
+(: Edge (* (: from str) (: to str)))
+(: Path (* (: from str) (: to str)))
+(Edge "a" "b")
+(Edge "b" "c")
+(<- (Path ?A ?B) (Edge ?A ?B))
+(<- (Path ?A ?C) (Path ?A ?B) (Edge ?B ?C))

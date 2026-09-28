@@ -1,0 +1,8 @@
+(: Edge (* (: from str) (: to str)))
+(: Tagged (* (: from str) (: to str)))
+(: Path (* (: from str) (: to str)))
+(Edge "a" "b")
+(Edge "b" "c")
+(<- (Tagged ?A ?B) (Edge ?A ?B) (nil ?Empty) (cons ?B ?Empty ?Args) (intern Option ?Args ?Id))
+(<- (Path ?A ?B) (Tagged ?A ?B))
+(<- (Path ?A ?C) (Path ?A ?B) (Edge ?B ?C))

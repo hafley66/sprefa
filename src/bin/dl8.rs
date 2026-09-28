@@ -10,12 +10,13 @@ use dl8::_6_eval::json::{
     serve_relations,
 };
 use dl8::_6_eval::json::{term_from_json, term_to_json};
-use dl8::_6_eval::{Row, Term, TermId, Trace, Universe};
+use dl8::_6_eval::{Arg, Row, Term, TermId, Trace, Universe};
 use dl8::_7_effect::Slice;
 use dl8::_8_driver::{Event, Stop};
 use dl8::_9_runtime::executors::{executors_for, query_executors_for};
 use dl8::_9_runtime::{IRowStore, Reconciler, SqliteRowStore, StoreError};
 use hafley_observe::{Config, OutputFormat};
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -264,6 +265,7 @@ fn emit_cli(target: EmitTarget, path: &Path) -> ExitCode {
         }
     };
     if !matches!(target, EmitTarget::Sqlite) {
+        let program = output_slice(&u, program, &names);
         let lowered = match ir_lower::lower(&mut u, &program) {
             Ok(lowered) => lowered,
             Err(diagnostic) => {
@@ -318,6 +320,60 @@ fn emit_cli(target: EmitTarget, path: &Path) -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+/// The IR emit targets expose relations declared by source files. A rule is
+/// needed when its head is one of those relations or feeds a needed rule.
+fn output_slice(
+    u: &Universe,
+    mut program: dl8::_6_eval::Program,
+    names: &HashMap<String, TermId>,
+) -> dl8::_6_eval::Program {
+    let std_dir = format!("{}/std/", env!("CARGO_MANIFEST_DIR"));
+    let mut needed: HashSet<TermId> = names
+        .values()
+        .copied()
+        .filter(|rel| {
+            let Some(inner) = u.unary(*rel, "ref") else {
+                return false;
+            };
+            let Some([file, _]) = u.args::<2>(inner, "owner") else {
+                return false;
+            };
+            let Some(path) = u.unary(file, "file") else {
+                return false;
+            };
+            match u.get(path) {
+                Term::Atom(symbol) | Term::Str(symbol) => !u.sym_str(*symbol).starts_with(&std_dir),
+                _ => false,
+            }
+        })
+        .collect();
+    if needed.is_empty() {
+        return program;
+    }
+    let rule_heads: HashSet<_> = program.rules.iter().map(|rule| rule.rel).collect();
+    let mut queue: Vec<_> = needed.iter().copied().collect();
+    while let Some(relation) = queue.pop() {
+        for rule in &program.rules {
+            if rule.rel == relation {
+                for goal in &rule.body {
+                    if needed.insert(goal.rel) {
+                        queue.push(goal.rel);
+                    }
+                    for argument in &goal.args {
+                        if let Arg::Ground(relation) = argument {
+                            if rule_heads.contains(relation) && needed.insert(*relation) {
+                                queue.push(*relation);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    program.rules.retain(|rule| needed.contains(&rule.rel));
+    program
 }
 
 fn eval_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>) -> ExitCode {
