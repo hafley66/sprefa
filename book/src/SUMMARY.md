@@ -2,6 +2,8 @@
 
 [What dl8 is for](0_why.md)
 
+- [Interactive IVM slides](../slides/)
+
 - [Running dl8](1_run.md)
 - [Declarations](2_declare.md)
 - [Facts and rules](3_rules.md)

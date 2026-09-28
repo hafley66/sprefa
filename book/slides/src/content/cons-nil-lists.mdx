@@ -1,0 +1,35 @@
+## !!steps Empty
+
+```sql !
+-- !focus(1)
+(nil ?Empty)                 -- ?Empty = []
+```
+
+## !!steps Singleton
+
+```sql !
+-- !focus(2)
+(nil ?Empty)
+(cons cy ?Empty ?List)       -- ?List = [cy]
+```
+
+## !!steps Build
+
+```sql !
+-- !focus(1)
+(cons bob [cy] ?List)        -- ?List = [bob cy]
+```
+
+## !!steps Split
+
+```sql !
+-- !focus(1)
+(cons ?Head ?Tail [bob cy])  -- bob · [cy]
+```
+
+## !!steps Empty has no head
+
+```sql !
+-- !focus(1)
+(cons ?Head ?Tail [])        -- no row
+```

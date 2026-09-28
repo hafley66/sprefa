@@ -1,0 +1,50 @@
+## !!steps Effect declaration
+
+```sql !
+-- !focus(1:3)
+(: json
+  (effect (* (: path str))
+          (Result Body str)))
+```
+
+## !!steps Request row
+
+```sql !
+-- !focus(1)
+fs.json_request(
+  'req-7', 'todo.json')
+```
+
+## !!steps Host operation
+
+```sql !
+-- !focus(1:2)
+request('req-7', 'todo.json')
+host_read('todo.json')
+```
+
+## !!steps Answer row
+
+```sql !
+-- !focus(1)
+fs.json_ok('req-7', 'tasks=3')
+```
+
+## !!steps Derive from answer
+
+```sql !
+-- !focus(1:2)
+tasks(N) :-
+  fs.json_ok('req-7', Body),
+  json_field(Body, 'tasks', N)
+```
+
+## !!steps Shared loop
+
+```sql !
+-- !focus(1:3)
+derive request rows
+answer requests in the host
+insert answers
+evaluate to stable
+```

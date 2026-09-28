@@ -1,0 +1,32 @@
+## !!steps Differentiate
+
+```sql !
+-- !focus(1:2)
+Δ₁(ada, 7) = 2 - 1 = +1
+Δ₁(bob, 3) = 0 - 1 = -1
+```
+
+## !!steps Integrate
+
+```sql !
+-- !focus(1:2)
+S₁(ada, 7) = 1 + 1 = 2
+S₁(bob, 3) = 1 - 1 = 0
+```
+
+## !!steps Running sum
+
+```sql !
+-- !focus(1:3)
+S₀(ada) = 0 + 1 = 1
+S₁(ada) = 1 + 2 = 3
+S₂(ada) = 3 - 1 = 2
+```
+
+## !!steps Inverse
+
+```sql !
+-- !focus(1:2)
+differentiate(integrate(Δ)) = Δ
+integrate(differentiate(S), S₋₁) = S
+```

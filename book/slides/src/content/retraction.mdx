@@ -1,0 +1,47 @@
+## !!steps Active request
+
+```sql !
+-- !focus(1:2)
++1 apply fs.watch(
+  'app.ts', Body)
+```
+
+## !!steps Answer
+
+```sql !
+-- !focus(1:2)
+fs.watch('app.ts', 'v1')
+compile('v1')
+```
+
+## !!steps Withdraw
+
+```sql !
+-- !focus(1:2)
+-1 apply fs.watch(
+  'app.ts', Body)
+```
+
+## !!steps Cancel
+
+```sql !
+-- !focus(1:2)
+active('app.ts') = false
+cancel_watcher('app.ts')
+```
+
+## !!steps Retract answers
+
+```sql !
+-- !focus(1:2)
+-1 fs.watch('app.ts', 'v1')
+-1 compile('v1')
+```
+
+## !!steps Propagation
+
+```sql !
+-- !focus(1)
+application -1 -> body -1
+body -1 -> derived row -1
+```

@@ -1,0 +1,32 @@
+## !!steps Boundary
+
+```sql !
+-- !focus(3)
+worker_a >= 3
+worker_b >= 5
+frontier  = 3
+```
+
+## !!steps Complete
+
+```sql !
+-- !focus(1)
+time < frontier  -- complete
+time >= frontier -- may change
+```
+
+## !!steps Advance
+
+```sql !
+-- !focus(3)
+worker_a >= 6
+worker_b >= 5
+frontier  = 5
+```
+
+## !!steps Release
+
+```sql !
+-- !focus(1)
+frontier > 5  -- release result at t=5
+```

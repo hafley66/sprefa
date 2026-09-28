@@ -1,0 +1,38 @@
+## !!steps Candidate and blocker
+
+```sql !
+-- !focus(1:2)
+tasks = {('a', 'write'), ('b', 'test')}
+done  = {('a')}
+```
+
+## !!steps Keep absent keys
+
+```sql !
+-- !focus(3)
+SELECT tasks.* FROM tasks
+WHERE NOT EXISTS
+  (SELECT 1 FROM done WHERE done.id = tasks.id);
+```
+
+## !!steps Existing key
+
+```sql !
+-- !focus(1)
+antijoin(('a', 'write'), done) = {}
+```
+
+## !!steps Retract blocker
+
+```sql !
+-- !focus(1:2)
+Δ done    = -('a')
+Δ pending = +('a', 'write')
+```
+
+## !!steps Presence state
+
+```sql !
+-- !focus(1)
+right_count['a']: 1 -> 0
+```
