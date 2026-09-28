@@ -119,6 +119,8 @@ fn filters() {
             "has_umlaut": [["héllo/wörld"]],
             "empty_prefix": [[""], ["docs/readme.md"], ["héllo/wörld"], ["src/lib/mod.rs"], ["src/main.rs"]],
             "never": [],
+            "outside_src": [[""], ["docs/readme.md"], ["héllo/wörld"]],
+            "without_lib": [[""], ["docs/readme.md"], ["héllo/wörld"], ["src/main.rs"]],
         }),
     );
 }

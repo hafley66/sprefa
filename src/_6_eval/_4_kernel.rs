@@ -226,13 +226,13 @@ pub fn str_cons_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<Ter
     Some(vec![head, rest, whole])
 }
 
-/// `str.<op>(Input.., Result)`: every input bound, `Result` computed by the one
-/// `StrOp::apply`; a miss has no row. A filter op has no `Result` position.
-pub fn str_op_row(u: &mut Universe, op: StrOp, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+/// The bound `const` inputs of a string op, as owned text and integer slots.
+fn str_inputs(
+    u: &Universe,
+    op: StrOp,
+    args: &[Option<TermId>],
+) -> Option<(Vec<String>, Vec<i64>)> {
     let kinds = op.args();
-    if args.len() != kinds.len() + usize::from(op.out().is_some()) {
-        return None;
-    }
     let mut texts = Vec::with_capacity(kinds.len());
     let mut ints = Vec::with_capacity(kinds.len());
     for (arg, kind) in args.iter().zip(kinds) {
@@ -248,14 +248,29 @@ pub fn str_op_row(u: &mut Universe, op: StrOp, args: &[Option<TermId>]) -> Optio
             }
         }
     }
-    let values: Vec<StrVal> = kinds
+    (texts.len() == kinds.len()).then_some((texts, ints))
+}
+
+fn str_values<'a>(op: StrOp, texts: &'a [String], ints: &[i64]) -> Vec<StrVal<'a>> {
+    op.args()
         .iter()
         .enumerate()
         .map(|(at, kind)| match kind {
             StrKind::Text => StrVal::Text(&texts[at]),
             StrKind::Int => StrVal::Int(ints[at]),
         })
-        .collect();
+        .collect()
+}
+
+/// `str.<op>(Input.., Result)`: every input bound, `Result` computed by the one
+/// `StrOp::apply`; a miss has no row. A filter op has no `Result` position.
+pub fn str_op_row(u: &mut Universe, op: StrOp, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    let kinds = op.args();
+    if args.len() != kinds.len() + usize::from(op.out().is_some()) {
+        return None;
+    }
+    let (texts, ints) = str_inputs(u, op, args)?;
+    let values = str_values(op, &texts, &ints);
     let result = match op.apply(&values)? {
         StrOut::Text(value) => Some(u.string(&value)),
         StrOut::Int(value) => Some(u.int(value)),
@@ -383,6 +398,10 @@ pub fn negative_holds(u: &Universe, k: Kernel, args: &[Option<TermId>]) -> bool 
         },
         Kernel::TermLt => match term_pair(u, args) {
             Some((left, right)) => u.cmp(left, right) != Ordering::Less,
+            None => true,
+        },
+        Kernel::Str(op) if op.out().is_none() => match str_inputs(u, op, args) {
+            Some((texts, ints)) => op.apply(&str_values(op, &texts, &ints)).is_none(),
             None => true,
         },
         _ => true,

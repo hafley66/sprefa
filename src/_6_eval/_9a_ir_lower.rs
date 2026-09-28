@@ -654,27 +654,26 @@ fn compile_kernel(
                 op,
                 args: columns,
             });
-            if op.out().is_none() {
-                return Ok(());
-            }
-            let mut result = assert_width(*width);
-            *width += 1;
-            if op.out() == Some(StrKind::Int) {
+            if op.out().is_some() {
+                let mut result = assert_width(*width);
+                *width += 1;
+                if op.out() == Some(StrKind::Int) {
+                    *current = b.node(ir::Op::Mint {
+                        input: *current,
+                        functor: int,
+                        args: vec![result],
+                    });
+                    result = assert_width(*width);
+                    *width += 1;
+                }
                 *current = b.node(ir::Op::Mint {
                     input: *current,
-                    functor: int,
+                    functor: wrap,
                     args: vec![result],
                 });
-                result = assert_width(*width);
+                output[kinds.len()] = Some(assert_width(*width));
                 *width += 1;
             }
-            *current = b.node(ir::Op::Mint {
-                input: *current,
-                functor: wrap,
-                args: vec![result],
-            });
-            output[kinds.len()] = Some(assert_width(*width));
-            *width += 1;
         }
         Kernel::IntAdd => {
             if inputs.len() != 3 {

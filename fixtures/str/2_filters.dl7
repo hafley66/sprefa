@@ -29,3 +29,13 @@
 (<- (never ?Text)
     (path ?Text)
     (str.contains ?Text "zzz"))
+
+(: outside_src (* (: text str)))
+(<- (outside_src ?Text)
+    (path ?Text)
+    (not (str.starts_with ?Text "src/")))
+
+(: without_lib (* (: text str)))
+(<- (without_lib ?Text)
+    (path ?Text)
+    (not (str.contains ?Text "lib")))

@@ -266,7 +266,7 @@ fn check_negative(
         if matches!(
             name.as_str(),
             "cons" | "edge_ref" | "intern" | "nil" | "str.cons" | "str.nil"
-        ) || str_op_name(&name).is_some()
+        ) || str_op_name(&name).is_some_and(|(inputs, arity)| arity > inputs)
         {
             let name = u.atom(&name);
             return Some(u.compound("negative_constructive_kernel_goal", vec![name]));
