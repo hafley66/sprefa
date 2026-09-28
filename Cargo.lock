@@ -989,7 +989,9 @@ dependencies = [
 name = "ivm-ir"
 version = "0.1.0"
 dependencies = [
+ "heck",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

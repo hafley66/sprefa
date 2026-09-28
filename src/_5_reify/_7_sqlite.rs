@@ -864,6 +864,7 @@ impl<'a> Lowering<'a> {
                     | Kernel::StrNil
                     | Kernel::Cons
                     | Kernel::StrCons
+                    | Kernel::Str(_)
                     | Kernel::EdgeRef
                     | Kernel::Intern,
                 ) => self.catalog.reach == KernelReach::Eval,
@@ -1301,6 +1302,37 @@ impl<'a> Lowering<'a> {
                 let call = format!("dl_int_add({left}, {right})");
                 guards.push(format!("{call} IS NOT NULL"));
                 match self.argument_cell(scope, rule, vars, &goal.args[2])? {
+                    Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
+                    Hold::Free(free) if positive => {
+                        vars.insert(
+                            free,
+                            Value {
+                                sql: call,
+                                kind: CellKind::Term,
+                            },
+                        );
+                    }
+                    Hold::Free(_) => {}
+                }
+                "1".to_string()
+            }
+            Kernel::Str(op) if self.catalog.reach == KernelReach::Eval => {
+                let inputs = op.args().len();
+                self.arity(goal, inputs + usize::from(op.out().is_some()))?;
+                let mut cells = Vec::with_capacity(inputs);
+                for argument in &goal.args[..inputs] {
+                    let Some(cell) = self.input_cell(scope, rule, vars, argument, &mut guards)?
+                    else {
+                        return Ok(guards.join(" AND "));
+                    };
+                    cells.push(cell);
+                }
+                let call = format!("dl_{}({})", op.name().replace('.', "_"), cells.join(", "));
+                guards.push(format!("{call} IS NOT NULL"));
+                if op.out().is_none() {
+                    return Ok(guards.join(" AND "));
+                }
+                match self.argument_cell(scope, rule, vars, &goal.args[inputs])? {
                     Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
                     Hold::Free(free) if positive => {
                         vars.insert(

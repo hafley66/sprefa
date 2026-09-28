@@ -8,6 +8,7 @@
 //! keeps the `integer_comparison/3` declaration order of
 //! `v7/src/1_libtime/0_evaluator.pl:60-65` rather than the lowerer's.
 
+use crate::_6_eval::str_ops::{STR_KERNEL_RELATIONS, STR_OPS, STR_TYPED_OPS};
 use crate::_6_eval::term::{TermId, Universe};
 
 pub const COMPARISONS: [&str; 6] = ["lt", "le", "eq", "ne", "ge", "gt"];
@@ -81,6 +82,10 @@ pub fn kernel_relation_keys(owner: Option<&str>, label: &str) -> Vec<Vec<i64>> {
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![vec![0, 1]],
         (Some("int"), "add") | (None, "effect") | (Some("any"), "lt") => vec![vec![0, 1]],
         _ if is_comparison(owner, label) => vec![vec![0, 1]],
+        (Some(owner), _) => STR_OPS
+            .iter()
+            .find(|(op_owner, name, ..)| *op_owner == owner && *name == label)
+            .map_or(vec![], |(.., op)| vec![(0..op.args().len() as i64).collect()]),
         (None, "def" | "head") => vec![vec![0]],
         (None, "body") => vec![vec![0, 1]],
         _ => vec![],
@@ -112,12 +117,13 @@ fn primitive_ref(u: &mut Universe, name: &str) -> TermId {
 
 /// `:622`. Every kernel relation as `relation(ref(kernel(..)), Arity, Keys)`.
 pub fn kernel_relation_rows(u: &mut Universe) -> Vec<TermId> {
-    let mut out = Vec::with_capacity(KERNEL_RELATIONS.len() + 3);
-    for (owner, label, arity) in KERNEL_RELATIONS.iter().copied().chain([
-        (None, "def", 2),
-        (None, "head", 2),
-        (None, "body", 4),
-    ]) {
+    let mut out = Vec::with_capacity(KERNEL_RELATIONS.len() + STR_KERNEL_RELATIONS.len() + 3);
+    for (owner, label, arity) in KERNEL_RELATIONS
+        .iter()
+        .chain(STR_KERNEL_RELATIONS)
+        .copied()
+        .chain([(None, "def", 2), (None, "head", 2), (None, "body", 4)])
+    {
         let reference = kernel_ref(u, owner, label);
         let arity = u.int(arity);
         let keys: Vec<TermId> = kernel_relation_keys(owner, label)
@@ -182,7 +188,7 @@ pub fn kernel_graph(u: &mut Universe) -> (Vec<TermId>, Vec<TermId>) {
     ] {
         node_pair(u, None, name, &mut nodes);
     }
-    for (owner, label, _) in TYPED_OPS {
+    for (owner, label, _) in TYPED_OPS.iter().chain(STR_TYPED_OPS).copied() {
         node_pair(u, Some(owner), label, &mut nodes);
     }
     for name in ["def", "head", "body"] {
@@ -216,7 +222,7 @@ pub fn kernel_graph(u: &mut Universe) -> (Vec<TermId>, Vec<TermId>) {
         edges.push(edge(u, name, "return", kind, 2));
     }
     let mut ordinals: Vec<(&str, i64)> = Vec::new();
-    for (owner, label, slots) in TYPED_OPS {
+    for (owner, label, slots) in TYPED_OPS.iter().chain(STR_TYPED_OPS).copied() {
         let kernel = kernel_term(u, Some(owner), label);
         for (index, (slot, primitive)) in slots.iter().enumerate() {
             let target = primitive_ref(u, primitive);

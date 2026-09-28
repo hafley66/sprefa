@@ -4,6 +4,7 @@
 //! records every request as an output row.
 
 use super::term::{Term, TermId, Universe};
+use ivm_ir::{StrKind, StrOp, StrOut, StrVal};
 use std::cmp::Ordering;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -12,6 +13,7 @@ pub enum Kernel {
     Cons,
     StrNil,
     StrCons,
+    Str(StrOp),
     EdgeRef,
     Intern,
     Int(IntCmp),
@@ -101,6 +103,12 @@ impl Kernel {
             (Some("any"), "lt") => Kernel::TermLt,
             (Some("str"), "cons") => Kernel::StrCons,
             (Some("str"), "nil") => Kernel::StrNil,
+            (Some(owner), label) => Kernel::Str(
+                super::str_ops::STR_OPS
+                    .iter()
+                    .find(|(op_owner, name, ..)| *op_owner == owner && *name == label)?
+                    .3,
+            ),
             _ => return None,
         })
     }
@@ -139,6 +147,7 @@ pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<Te
         Kernel::Cons => cons_row(u, args),
         Kernel::StrNil => str_nil_row(u, args),
         Kernel::StrCons => str_cons_row(u, args),
+        Kernel::Str(op) => str_op_row(u, op, args),
         Kernel::EdgeRef => edge_ref_row(u, args),
         Kernel::Intern => intern_row(u, args),
         Kernel::Int(cmp) => int_row(u, cmp, args),
@@ -215,6 +224,63 @@ pub fn str_cons_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<Ter
     let rest = u.string(rest);
     let rest = u.compound("const", vec![rest]);
     Some(vec![head, rest, whole])
+}
+
+/// The bound `const` inputs of a string op, as owned text and integer slots.
+fn str_inputs(
+    u: &Universe,
+    op: StrOp,
+    args: &[Option<TermId>],
+) -> Option<(Vec<String>, Vec<i64>)> {
+    let kinds = op.args();
+    let mut texts = Vec::with_capacity(kinds.len());
+    let mut ints = Vec::with_capacity(kinds.len());
+    for (arg, kind) in args.iter().zip(kinds) {
+        let tagged = (*arg)?;
+        match kind {
+            StrKind::Text => {
+                texts.push(text(u, tagged)?);
+                ints.push(0);
+            }
+            StrKind::Int => {
+                texts.push(String::new());
+                ints.push(u.as_int(u.unary(tagged, "const")?)?);
+            }
+        }
+    }
+    (texts.len() == kinds.len()).then_some((texts, ints))
+}
+
+fn str_values<'a>(op: StrOp, texts: &'a [String], ints: &[i64]) -> Vec<StrVal<'a>> {
+    op.args()
+        .iter()
+        .enumerate()
+        .map(|(at, kind)| match kind {
+            StrKind::Text => StrVal::Text(&texts[at]),
+            StrKind::Int => StrVal::Int(ints[at]),
+        })
+        .collect()
+}
+
+/// `str.<op>(Input.., Result)`: every input bound, `Result` computed by the one
+/// `StrOp::apply`; a miss has no row. A filter op has no `Result` position.
+pub fn str_op_row(u: &mut Universe, op: StrOp, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    let kinds = op.args();
+    if args.len() != kinds.len() + usize::from(op.out().is_some()) {
+        return None;
+    }
+    let (texts, ints) = str_inputs(u, op, args)?;
+    let values = str_values(op, &texts, &ints);
+    let result = match op.apply(&values)? {
+        StrOut::Text(value) => Some(u.string(&value)),
+        StrOut::Int(value) => Some(u.int(value)),
+        StrOut::Holds => None,
+    };
+    let mut row: Vec<TermId> = args[..kinds.len()].iter().map(|arg| arg.unwrap()).collect();
+    if let Some(result) = result {
+        row.push(u.compound("const", vec![result]));
+    }
+    Some(row)
 }
 
 pub fn edge_ref_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
@@ -332,6 +398,10 @@ pub fn negative_holds(u: &Universe, k: Kernel, args: &[Option<TermId>]) -> bool 
         },
         Kernel::TermLt => match term_pair(u, args) {
             Some((left, right)) => u.cmp(left, right) != Ordering::Less,
+            None => true,
+        },
+        Kernel::Str(op) if op.out().is_none() => match str_inputs(u, op, args) {
+            Some((texts, ints)) => op.apply(&str_values(op, &texts, &ints)).is_none(),
             None => true,
         },
         _ => true,

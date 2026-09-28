@@ -7,6 +7,7 @@
 //! duplicates. Head safety compares the first against the second.
 
 use super::kernel::is_comparison;
+use crate::_6_eval::str_ops::STR_OPS;
 use crate::_6_eval::term::{Term, TermId, Universe};
 use std::collections::HashSet;
 
@@ -125,6 +126,15 @@ fn kernel_name(u: &Universe, relation: TermId) -> Option<String> {
     atom(u.unary(inner, "kernel")?).map(str::to_string)
 }
 
+/// `(input count, arity)` of `<owner>.<op>` from the generated op table.
+fn str_op_name(name: &str) -> Option<(usize, usize)> {
+    let (owner, label) = name.split_once('.')?;
+    STR_OPS
+        .iter()
+        .find(|(op_owner, op, ..)| *op_owner == owner && *op == label)
+        .map(|(.., arity, op)| (op.args().len(), *arity))
+}
+
 fn comparison(name: &str) -> bool {
     name.split_once('.')
         .is_some_and(|(owner, label)| is_comparison(Some(owner), label))
@@ -204,6 +214,19 @@ fn check_positive(
                 Some(underconstrained(u, name, &[&[2], &[0, 1]]))
             }
         }
+        Some(name) if str_op_name(name).is_some_and(|(_, arity)| arguments.len() == arity) => {
+            let (inputs, _) = str_op_name(name).unwrap_or_default();
+            if arguments[..inputs]
+                .iter()
+                .all(|a| argument_is_bound(u, *a, bound))
+            {
+                bound.add_all(variables);
+                None
+            } else {
+                let inputs: Vec<i64> = (0..inputs as i64).collect();
+                Some(underconstrained(u, name, &[&inputs]))
+            }
+        }
         Some("edge_ref") if arguments.len() == 3 => {
             if argument_is_bound(u, arguments[0], bound)
                 && argument_is_bound(u, arguments[1], bound)
@@ -243,7 +266,8 @@ fn check_negative(
         if matches!(
             name.as_str(),
             "cons" | "edge_ref" | "intern" | "nil" | "str.cons" | "str.nil"
-        ) {
+        ) || str_op_name(&name).is_some_and(|(inputs, arity)| arity > inputs)
+        {
             let name = u.atom(&name);
             return Some(u.compound("negative_constructive_kernel_goal", vec![name]));
         }

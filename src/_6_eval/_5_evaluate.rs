@@ -470,6 +470,7 @@ pub(crate) fn needs_bound_head(u: &Universe, rule: &Rule, snapshots: TermId) -> 
                 let ready = match op {
                     Kernel::Nil | Kernel::StrNil => true,
                     Kernel::Cons | Kernel::StrCons => at(2) || (at(0) && at(1)),
+                    Kernel::Str(op) => (0..op.args().len()).all(at),
                     _ => at(0) && at(1),
                 };
                 if !ready {

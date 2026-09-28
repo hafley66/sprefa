@@ -1,0 +1,18 @@
+(: literal (* (: text str)))
+(<- (literal "say \"hi\""))
+(<- (literal "back\\slash"))
+(<- (literal "it's"))
+(<- (literal "line\nbreak"))
+(<- (literal "héllo"))
+(<- (literal "plain"))
+(<- (literal ""))
+
+(: escaped (* (: text str) (: escaped str)))
+(<- (escaped ?Text ?Escaped)
+    (literal ?Text)
+    (str.escape ?Text ?Escaped))
+
+(: jsoned (* (: text str) (: jsoned str)))
+(<- (jsoned ?Text ?Jsoned)
+    (literal ?Text)
+    (str.json ?Text ?Jsoned))

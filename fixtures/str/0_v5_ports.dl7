@@ -1,0 +1,63 @@
+(: word (* (: text str)))
+(<- (word "  User  "))
+(<- (word "userId"))
+(<- (word "UserId"))
+(<- (word ""))
+(<- (word "héllo Ünï"))
+
+(: length (* (: text str) (: length int)))
+(<- (length ?Text ?Length)
+    (word ?Text)
+    (str.len ?Text ?Length))
+
+(: lowered (* (: text str) (: lowered str)))
+(<- (lowered ?Text ?Lowered)
+    (word ?Text)
+    (str.lower ?Text ?Lowered))
+
+(: uppered (* (: text str) (: uppered str)))
+(<- (uppered ?Text ?Uppered)
+    (word ?Text)
+    (str.upper ?Text ?Uppered))
+
+(: lcfirsted (* (: text str) (: lcfirsted str)))
+(<- (lcfirsted ?Text ?Lcfirsted)
+    (word ?Text)
+    (str.lcfirst ?Text ?Lcfirsted))
+
+(: ucfirsted (* (: text str) (: ucfirsted str)))
+(<- (ucfirsted ?Text ?Ucfirsted)
+    (word ?Text)
+    (str.ucfirst ?Text ?Ucfirsted))
+
+(: trimmed (* (: text str) (: trimmed str)))
+(<- (trimmed ?Text ?Trimmed)
+    (word ?Text)
+    (str.trim ?Text ?Trimmed))
+
+(: prefix_stripped (* (: text str) (: stripped str)))
+(<- (prefix_stripped ?Text ?Stripped)
+    (word ?Text)
+    (str.strip_prefix ?Text "user" ?Stripped))
+
+(: suffix_stripped (* (: text str) (: stripped str)))
+(<- (suffix_stripped ?Text ?Stripped)
+    (word ?Text)
+    (str.strip_suffix ?Text "Id" ?Stripped))
+
+(: replaced (* (: text str) (: replaced str)))
+(<- (replaced ?Text ?Replaced)
+    (word ?Text)
+    (str.replace ?Text "e" "3" ?Replaced))
+
+(: split_case (* (: text str) (: separator str) (: index int)))
+(<- (split_case "a.b.c" "." 0))
+(<- (split_case "a.b.c" "." -1))
+(<- (split_case "a.b.c" "." 3))
+(<- (split_case "a.b.c" "." -4))
+(<- (split_case "abc" "," 0))
+
+(: split_part (* (: text str) (: separator str) (: index int) (: part str)))
+(<- (split_part ?Text ?Separator ?Index ?Part)
+    (split_case ?Text ?Separator ?Index)
+    (str.split ?Text ?Separator ?Index ?Part))

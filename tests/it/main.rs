@@ -13,3 +13,4 @@ mod _9_ladder;
 mod _9a_ir_emit;
 mod _9b_sum_variants;
 mod _9c_generic_bind;
+mod _9d_string_kernel;

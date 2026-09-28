@@ -1,0 +1,27 @@
+(: identifier (* (: text str)))
+(<- (identifier "UserId"))
+(<- (identifier "user_id"))
+(<- (identifier "user-id"))
+(<- (identifier "HTTPServer"))
+(<- (identifier "héllo wörld"))
+(<- (identifier ""))
+
+(: snaked (* (: text str) (: snaked str)))
+(<- (snaked ?Text ?Snaked)
+    (identifier ?Text)
+    (str.snake ?Text ?Snaked))
+
+(: cameled (* (: text str) (: cameled str)))
+(<- (cameled ?Text ?Cameled)
+    (identifier ?Text)
+    (str.camel ?Text ?Cameled))
+
+(: pascaled (* (: text str) (: pascaled str)))
+(<- (pascaled ?Text ?Pascaled)
+    (identifier ?Text)
+    (str.pascal ?Text ?Pascaled))
+
+(: kebabed (* (: text str) (: kebabed str)))
+(<- (kebabed ?Text ?Kebabed)
+    (identifier ?Text)
+    (str.kebab ?Text ?Kebabed))
