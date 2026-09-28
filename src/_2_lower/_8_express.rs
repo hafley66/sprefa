@@ -43,6 +43,17 @@ pub fn is_partial(cx: &Cx, value: TermId) -> bool {
         .is_some_and(|(n, a)| n == "partial_application" && a.len() == 2)
 }
 
+/// The last segment of a path whose first segment is a bind still to be derived.
+fn underived_member(cx: &mut Cx, segments: &[TermId], owner: TermId) -> Option<TermId> {
+    let first = path_segment_atom(cx.u, *segments.first()?)?;
+    let last = path_segment_atom(cx.u, *segments.last()?)?;
+    let found = cx.reservations.scoped(owner, first)?;
+    let target = found.target;
+    cx.u.functor(target)
+        .is_some_and(|(n, a)| n == "deferred_expression" && a.len() == 3)
+        .then_some(last)
+}
+
 /// The head atom of a dotted path form.
 pub fn is_path_head(u: &Universe, head: TermId) -> bool {
     u.functor_or_atom(head).is_some_and(|(n, _)| n == ".")
@@ -72,17 +83,36 @@ pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<
     let mut parent_is_sum = false;
     for (index, segment) in segments.iter().enumerate() {
         let name = path_segment_atom(cx.u, *segment)?;
-        let found = cx.reservations.scoped(scope, name)?;
-        let inner = cx.u.unary(found.target, "target")?;
+        let (inner, is_sum) = match cx.reservations.scoped(scope, name) {
+            Some(found) => {
+                let (found_owner, found_target, found_kind) =
+                    (found.owner, found.target, found.kind);
+                let derived = cx
+                    .u
+                    .functor(found_target)
+                    .is_some_and(|(n, a)| n == "deferred_expression" && a.len() == 3);
+                if derived {
+                    let inner = cx.edges.derived_target(cx.u, found_owner, name)?;
+                    (inner, cx.reservations.is_sum_target(cx.u, inner))
+                } else {
+                    let is_sum =
+                        cx.u.functor_or_atom(found_kind).map(|(kind, _)| kind) == Some("sum");
+                    (cx.u.unary(found_target, "target")?, is_sum)
+                }
+            }
+            None => {
+                let inner = cx.edges.derived_target(cx.u, scope, name)?;
+                (inner, cx.reservations.is_sum_target(cx.u, inner))
+            }
+        };
         if index + 1 == segments.len() {
             if !parent_is_sum {
                 return None;
             }
             return Some(cx.compound("ref", vec![inner]));
-        } else {
-            scope = inner;
-            parent_is_sum = cx.u.functor_or_atom(found.kind).map(|(kind, _)| kind) == Some("sum");
         }
+        scope = inner;
+        parent_is_sum = is_sum;
     }
     None
 }
@@ -175,6 +205,11 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
                 let value = cx.compound("name", vec![call_owner, label]);
                 return Lowering::value(value);
             }
+            if let Some(label) = underived_member(cx, &items[1..], owner) {
+                let reason = cx.compound("undeclared_relation", vec![label]);
+                let diagnostic = cx.diagnostic(parsed.id, reason);
+                return none(cx, vec![diagnostic]);
+            }
             return lower_path_walk(cx, parsed.id, &items[1..], owner);
         }
         return match expression_callable(cx, head, owner) {
@@ -227,7 +262,7 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
     }
     // :1458. An operator position that is itself an expression.
     let operator = lower_expression(cx, items[0], owner);
-    apply_expression_operator(cx, operator, parsed.id, &items[1..], owner)
+    apply_expression_operator(cx, operator, items[0], parsed.id, &items[1..], owner)
 }
 
 /// `:1472`.
@@ -461,6 +496,23 @@ pub fn lower_construction(
         goals.extend(lowered.goals);
         origins.extend(lowered.origins);
         values.push(lowered.value);
+    }
+    let ground = cx.ground_values
+        && goals.is_empty()
+        && cx.u.functor(constructor).is_some_and(|(n, _)| n == "ref")
+        && values.iter().all(|v| {
+            cx.u.functor(*v)
+                .is_some_and(|(n, _)| matches!(n, "const" | "name" | "ref"))
+        });
+    if ground {
+        let list = cx.u.list(&values);
+        let value = cx.compound("application", vec![constructor, list]);
+        return Lowering {
+            value,
+            goals,
+            origins,
+            diagnostics: vec![],
+        };
     }
     let mut ordinal: i64 = 0;
     let mut tail = construction_var(cx, node_id, ordinal);
@@ -830,6 +882,7 @@ fn finish_expression_call_arguments(
 fn apply_expression_operator(
     cx: &mut Cx,
     operator: Lowering,
+    head: TermId,
     node_id: TermId,
     argument_nodes: &[TermId],
     owner: TermId,
@@ -838,6 +891,15 @@ fn apply_expression_operator(
         return none(cx, vec![*first]);
     }
     if !is_partial(cx, operator.value) {
+        // A dotted operator whose edge a bind has not derived yet reads as an unknown relation.
+        let unknown = path_segments(cx.u, head)
+            .and_then(|segments| segments.last().copied())
+            .and_then(|last| path_segment_atom(cx.u, last));
+        if let Some(label) = unknown {
+            let reason = cx.compound("undeclared_relation", vec![label]);
+            let diagnostic = cx.diagnostic(node_id, reason);
+            return none(cx, vec![diagnostic]);
+        }
         let reason = cx.compound("expression_operator_not_callable", vec![operator.value]);
         let diagnostic = cx.diagnostic(node_id, reason);
         return none(cx, vec![diagnostic]);

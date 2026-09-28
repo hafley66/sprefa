@@ -169,6 +169,7 @@ pub fn lower_datalog(
         reservations: &scope.reservations,
         edges: &scope.edges,
         policy,
+        ground_values: false,
     };
 
     let derived = lower_derived_bind_rules(&mut cx, &promoted.derived_reservations, 0)?;
