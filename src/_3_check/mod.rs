@@ -4,6 +4,8 @@
 
 #[path = "_0_api.rs"]
 pub mod api;
+#[path = "_2a_instance.rs"]
+pub mod instance;
 #[path = "_3_bind.rs"]
 pub mod bind;
 #[path = "_1_graph.rs"]

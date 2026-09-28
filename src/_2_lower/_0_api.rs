@@ -163,7 +163,7 @@ pub fn lower_datalog(
     };
     bind_imports(u, &mut declared, module_owner, module_identity, imports);
     let scope = build_scope(u, &declared, &imported);
-    let promoted = scope.promoted;
+    let mut promoted = scope.promoted;
     let mut cx = Cx {
         u,
         reservations: &scope.reservations,
@@ -172,6 +172,21 @@ pub fn lower_datalog(
     };
 
     let derived = lower_derived_bind_rules(&mut cx, &promoted.derived_reservations, 0)?;
+    for edge in &derived.edges {
+        let Some(replacement) = edge_parts(cx.u, *edge) else {
+            continue;
+        };
+        for slot in promoted.edges.iter_mut() {
+            let same = edge_parts(cx.u, *slot).is_some_and(|old| {
+                old.owner == replacement.owner
+                    && old.name == replacement.name
+                    && old.index == replacement.index
+            });
+            if same {
+                *slot = *edge;
+            }
+        }
+    }
     let (alias_rules, alias_origins) =
         promoted_alias_rules(&mut cx, &promoted.promotions, derived.rules.len() as i64);
     let rule_index = (derived.rules.len() + alias_rules.len()) as i64;

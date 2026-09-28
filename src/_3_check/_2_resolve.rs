@@ -8,7 +8,8 @@ use super::mode::{call_parts, goal_failures, head_safety, head_variables};
 use crate::_2_lower::kernel::kernel_relation;
 use crate::_6_eval::program::AggregateKind;
 use crate::_6_eval::term::{Term, TermId, Universe};
-use std::collections::HashMap;
+use super::instance::instance_rows;
+use std::collections::{HashMap, HashSet};
 
 pub struct Cx<'a> {
     pub graph: &'a CheckerGraph,
@@ -199,7 +200,7 @@ fn resolve_args(u: &mut Universe, cx: &Cx, args: &[TermId]) -> Result<Vec<TermId
 }
 
 /// `:1022`.
-fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermId, TermId> {
+pub fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermId, TermId> {
     if let Some((name, parts)) = u
         .functor(argument)
         .map(|(n, a)| (n.to_string(), a.to_vec()))
@@ -237,6 +238,7 @@ pub fn resolve_edges(
 ) -> (Vec<TermId>, Vec<TermId>) {
     let check = u.atom("check");
     let mut edges = Vec::new();
+    let mut built = HashSet::new();
     let mut diagnostics = Vec::new();
     let rows: Vec<(TermId, TermId, TermId, i64)> = cx
         .graph
@@ -253,6 +255,13 @@ pub fn resolve_edges(
             }
         }
         let node = origins.edge_origin(owner, name, index);
+        if u.functor(target).is_some_and(|(n, a)| n == "application" && a.len() == 2) {
+            match instance_rows(u, cx, owner, name, index, target, &mut built) {
+                Ok(rows) => edges.extend(rows),
+                Err(reason) => diagnostics.push(u.compound("diagnostic", vec![check, node, reason])),
+            }
+            continue;
+        }
         let mut visited = Vec::new();
         let resolved = match resolve_target(u, cx, target, &mut visited) {
             Some(resolved) => resolved,
