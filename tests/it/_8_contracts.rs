@@ -109,7 +109,7 @@ const UNBUDGETED: &[(&str, &str)] = &[
     ("src/_2_lower/_4_promote.rs", "fn alias_terminal_deferred("),
     ("src/_2_lower/_8_express.rs", "pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {"),
     ("src/_3_check/_2_resolve.rs", "fn path_owner("),
-    ("src/_3_check/_2_resolve.rs", "fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermId, TermId> {"),
+    ("src/_3_check/_2_resolve.rs", "pub fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermId, TermId> {"),
     ("src/_3_check/_4_mode.rs", "fn collect_variables(u: &Universe, id: TermId, out: &mut Vec<TermId>) {"),
     ("src/_3_check/_6_strata.rs", "fn arg_of(u: &Universe, term: TermId, vars: &mut Vec<TermId>) -> Arg {"),
     ("src/_4_comptime/_0_load/_1_paths.rs", "while shared < left.len() && shared < right.len() && left[shared] == right[shared] {"),

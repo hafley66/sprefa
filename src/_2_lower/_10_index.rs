@@ -144,6 +144,18 @@ impl ReservationIndex {
         }
     }
 
+    /// A sum node, or an application whose constructor is one.
+    pub fn is_sum_target(&self, u: &Universe, inner: TermId) -> bool {
+        let template = u
+            .args::<2>(inner, "application")
+            .map_or(inner, |[constructor, _]| constructor);
+        self.rows.iter().any(|row| {
+            u.unary(row.target, "target") == Some(template)
+                && u.functor_or_atom(row.kind)
+                    .is_some_and(|(kind, _)| kind == "sum")
+        })
+    }
+
     fn probe(&self, owner: u32, name: u32, view: View) -> Option<&Reservation> {
         self.by_owner_name
             .get(&(owner, name, view_key(view)))
@@ -253,6 +265,15 @@ impl EdgeIndex {
             .get(&(owner, name))
             .and_then(|rows| rows.first())
             .map(|i| &self.rows[*i])
+    }
+
+    /// The node a comptime row `(: owner name target)` added: the `target(inner)` edge.
+    pub fn derived_target(&self, u: &Universe, owner: TermId, name: TermId) -> Option<TermId> {
+        let (owner, name) = (self.owners.lookup(owner)?, self.names.lookup(name)?);
+        self.by_owner_name
+            .get(&(owner, name))?
+            .iter()
+            .find_map(|i| u.unary(self.rows[*i].target, "target"))
     }
 
     /// `0_graph_lookup.pl:113`. The first edge at that ordinal wins even when

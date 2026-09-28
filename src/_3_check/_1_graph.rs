@@ -19,6 +19,8 @@ pub struct CheckerGraph {
     /// first matching row reproduces `memberchk/2`.
     pub edges: Vec<Edge>,
     pub forward: HashMap<(TermId, TermId), usize>,
+    /// Positions in `edges` per owner, in source order.
+    pub by_owner: HashMap<TermId, Vec<usize>>,
     pub parent: HashMap<TermId, TermId>,
     pub modules: HashSet<TermId>,
     /// `owner_edge_count_index/2` at `1_checker.pl:546`. Also the arity of the
@@ -39,6 +41,7 @@ impl CheckerGraph {
         let mut graph = CheckerGraph {
             edges: Vec::with_capacity(edge_rows.len()),
             forward: HashMap::new(),
+            by_owner: HashMap::new(),
             parent: HashMap::new(),
             modules: HashSet::new(),
             owner_edge_count: HashMap::new(),
@@ -52,6 +55,7 @@ impl CheckerGraph {
                 .forward
                 .entry((parts.owner, parts.name))
                 .or_insert(position);
+            graph.by_owner.entry(parts.owner).or_default().push(position);
             if let Some(target) = u.unary(parts.target, "target") {
                 graph.parent.entry(target).or_insert(parts.owner);
             }

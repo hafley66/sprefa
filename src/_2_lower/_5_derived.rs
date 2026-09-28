@@ -26,6 +26,8 @@ pub struct Block {
 pub struct Derived {
     pub rules: Vec<TermId>,
     pub origins: Vec<TermId>,
+    /// Bind edges that replace their deferred edge: an instance check builds.
+    pub edges: Vec<TermId>,
 }
 
 impl Derived {
@@ -52,6 +54,12 @@ pub fn lower_derived_bind_rules(
             cx.u.functor_or_atom(parts.kind)
                 .map(|(n, _)| n.to_string())
                 .unwrap_or_default();
+        if kind == "expression" {
+            if let Some(edge) = super::generic::generic_bind_edge(cx, parts.owner, parts.name, parts.target) {
+                out.edges.push(edge);
+                continue;
+            }
+        }
         let block = match kind.as_str() {
             "compound_edge" => compound_edge_rule(cx, parts.owner, parts.target, rule_index)?,
             "expression" => expression_rule(cx, parts.owner, parts.name, parts.target, rule_index)?,

@@ -76,7 +76,17 @@ fn lower_seed(
     owner: TermId,
     seed_index: i64,
 ) -> Result<(TermId, TermId), TermId> {
-    let lowered = lower_call(cx, node, owner, false)?;
+    cx.ground_values = true;
+    let lowered = lower_call(cx, node, owner, false).and_then(|first| {
+        // A variant in a fact is a value; readback patterns are for goals.
+        if first.post_goals.is_empty() {
+            Ok(first)
+        } else {
+            lower_call(cx, node, owner, true)
+        }
+    });
+    cx.ground_values = false;
+    let lowered = lowered?;
     let node_id = forms::node_id(cx.u, node).unwrap_or(node);
     if !lowered.goals.is_empty() || !lowered.post_goals.is_empty() {
         return Err(cx.plain(node_id, "expression_goals_in_seed"));

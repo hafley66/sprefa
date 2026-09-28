@@ -24,6 +24,8 @@ pub mod json;
 pub mod kernel;
 #[path = "_3_origins.rs"]
 pub mod origins;
+#[path = "_5a_generic.rs"]
+pub mod generic;
 #[path = "_6_partial.rs"]
 pub mod partial;
 #[path = "_4_promote.rs"]

@@ -15,6 +15,8 @@ pub struct Cx<'a> {
     pub reservations: &'a ReservationIndex,
     pub edges: &'a EdgeIndex,
     pub policy: CallPolicy,
+    /// Constructions with ground arguments lower to one term, not intern goals.
+    pub ground_values: bool,
 }
 
 impl Cx<'_> {

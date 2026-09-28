@@ -8,7 +8,8 @@ use super::mode::{call_parts, goal_failures, head_safety, head_variables};
 use crate::_2_lower::kernel::kernel_relation;
 use crate::_6_eval::program::AggregateKind;
 use crate::_6_eval::term::{Term, TermId, Universe};
-use std::collections::HashMap;
+use super::instance::instance_rows;
+use std::collections::{HashMap, HashSet};
 
 pub struct Cx<'a> {
     pub graph: &'a CheckerGraph,
@@ -199,7 +200,7 @@ fn resolve_args(u: &mut Universe, cx: &Cx, args: &[TermId]) -> Result<Vec<TermId
 }
 
 /// `:1022`.
-fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermId, TermId> {
+pub fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermId, TermId> {
     if let Some((name, parts)) = u
         .functor(argument)
         .map(|(n, a)| (n.to_string(), a.to_vec()))
@@ -210,6 +211,20 @@ fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<TermI
                 Ok(resolved) => Ok(resolved),
                 Err(segment) => Err(u.compound("unresolved_name", vec![segment])),
             };
+        }
+        if name == "application" && parts.len() == 2 {
+            let constructor = resolve_argument(u, cx, parts[0])?;
+            let items = u.as_list(parts[1]).unwrap_or_default();
+            let mut plain = Vec::with_capacity(items.len());
+            for item in items {
+                let tagged = resolve_argument(u, cx, item)?;
+                plain.push(u.unary(tagged, "ref").or_else(|| u.unary(tagged, "const")).unwrap_or(tagged));
+            }
+            let (Some(inner), list) = (u.unary(constructor, "ref"), u.list(&plain)) else {
+                return Ok(argument);
+            };
+            let node = u.compound("application", vec![inner, list]);
+            return Ok(u.compound("ref", vec![node]));
         }
         if name == "aggregate"
             && parts.len() == 2
@@ -237,6 +252,7 @@ pub fn resolve_edges(
 ) -> (Vec<TermId>, Vec<TermId>) {
     let check = u.atom("check");
     let mut edges = Vec::new();
+    let mut built = HashSet::new();
     let mut diagnostics = Vec::new();
     let rows: Vec<(TermId, TermId, TermId, i64)> = cx
         .graph
@@ -253,6 +269,13 @@ pub fn resolve_edges(
             }
         }
         let node = origins.edge_origin(owner, name, index);
+        if u.functor(target).is_some_and(|(n, a)| n == "application" && a.len() == 2) {
+            match instance_rows(u, cx, owner, name, index, target, &mut built) {
+                Ok(rows) => edges.extend(rows),
+                Err(reason) => diagnostics.push(u.compound("diagnostic", vec![check, node, reason])),
+            }
+            continue;
+        }
         let mut visited = Vec::new();
         let resolved = match resolve_target(u, cx, target, &mut visited) {
             Some(resolved) => resolved,
@@ -278,6 +301,7 @@ pub fn resolve_seeds(
     let check = u.atom("check");
     let mut resolved = Vec::with_capacity(seeds.len());
     let mut diagnostics = Vec::new();
+    let mut minted = Vec::new();
     for (index, seed) in seeds.iter().enumerate() {
         let node = origins.seed_origin(index as i64);
         match resolve_call(u, cx, *seed)? {
@@ -288,6 +312,9 @@ pub fn resolve_seeds(
                     diagnostics.push(u.compound("diagnostic", vec![check, node, reason]));
                 } else {
                     resolved.push(term);
+                    for value in &args {
+                        mint_rows(u, *value, 0, &mut minted);
+                    }
                 }
             }
             CallResult::Error(reason) => {
@@ -296,7 +323,47 @@ pub fn resolve_seeds(
             }
         }
     }
+    resolved.extend(minted);
     Ok((resolved, diagnostics))
+}
+
+/// Nesting of value constructions inside one fact argument.
+const MINT_DEPTH: usize = 16;
+
+/// A fact that builds a value inserts the `intern` row of its identity, so the
+/// value reads back the way a rule-built one does.
+fn mint_rows(u: &mut Universe, value: TermId, depth: usize, out: &mut Vec<TermId>) {
+    let depth_exceeded = depth >= MINT_DEPTH;
+    let Some(node) = u.unary(value, "ref") else {
+        return;
+    };
+    let Some([constructor, list]) = u.args::<2>(node, "application") else {
+        return;
+    };
+    if depth_exceeded {
+        return;
+    }
+    let items = u.as_list(list).unwrap_or_default();
+    let mut tagged = Vec::with_capacity(items.len());
+    for item in items {
+        if u.functor(item).is_some() {
+            let reference = u.compound("ref", vec![item]);
+            mint_rows(u, reference, depth + 1, out);
+            tagged.push(reference);
+        } else {
+            tagged.push(u.compound("const", vec![item]));
+        }
+    }
+    let arguments = u.list(&tagged);
+    let arguments = u.compound("const", vec![arguments]);
+    let constructor = u.compound("ref", vec![constructor]);
+    let args = u.list(&[constructor, arguments, value]);
+    for name in ["intern", "intern_snapshot"] {
+        let atom = u.atom(name);
+        let kernel = u.compound("kernel", vec![atom]);
+        let relation = u.compound("ref", vec![kernel]);
+        out.push(u.compound("call", vec![relation, args]));
+    }
 }
 
 /// `:748`.
