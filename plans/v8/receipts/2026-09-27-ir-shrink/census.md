@@ -20,6 +20,8 @@ Commands: `$CARGO_TARGET_DIR/debug/dl8 compile <input> > <case>.compile.json`; `
 | emit output slice (unrooted) | fs_json | Antijoin=138 Get=1341 Join=867 Mfp=753 Mint=220 Reduce=7 Threshold=140 Union=180 | 3646 | 5319 | 134831791 ns | 796251291 ns |
 | emit source slice fixed | standard_plus | Get=38 Mfp=21 Mint=13 Threshold=1 Union=2 | 75 | 5302 | 177678958 ns | 888444917 ns |
 | emit source slice fixed | fs_json | Antijoin=81 Get=838 Join=528 Mfp=469 Mint=145 Reduce=4 Threshold=90 Union=116 | 2271 | 5319 | 144873375 ns | 872692625 ns |
+| sum variant readback | standard_plus | Get=38 Mfp=21 Mint=13 Threshold=1 Union=2 | 75 | 5302 | 153188000 ns | 814276250 ns |
+| sum variant readback | fs_json | Antijoin=81 Get=838 Join=528 Mfp=469 Mint=145 Reduce=4 Threshold=90 Union=116 | 2271 | 5319 | 139983250 ns | 810747959 ns |
 
 The emit rows use the same `compile | emit ir-json | jq` op-count command as the earlier rows. The install and SQLite CREATE columns come from `eval` on the complete compiled program, so those measurements retain the full evaluation graph. Commit `2542ff3e1` read file-owner paths as strings, while `dl8 compile` encodes them as atoms. It therefore selected no source roots and emitted the full graph. The previous 52/67-node and 381-line figures came from a stale binary and are corrected here. With atom paths recognized, the six-line `fixtures/emit/0_edge_path.dl7` emits 448 RxJS lines versus 24,681 for the unrooted graph.
 
@@ -158,3 +160,46 @@ Validation (emit source slice test and atom-path fix):
 | `cargo +stable test --test it _9a_ir_emit::` | 2 passed; 0 failed or ignored after sharing one-time RxJS setup |
 
 CI coverage: one integration test added for emitted RxJS Path rows from two DL7 sources, including an `intern` target passed as a goal argument.
+
+Validation (sum variant readback):
+
+| Command | Result |
+|---|---|
+| `cargo +stable test --test it sum_variants_match_and_retract -- --nocapture` | 1 passed; 0 failed or ignored. `Loading(a)` and `Value(a,v)` on Rust, ir:dd, ir:sqlite; deleting `Raw(a,v)` removes `Value(a,v)` on both IR engines. |
+| `cargo +stable test --workspace` | 6 library and 149 integration tests passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:dd cargo +stable test --test it _9_ladder::` | 17 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:sqlite cargo +stable test --test it _9_ladder::` | 17 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:dd cargo +stable test --test it _1_compile_oracles::` | 11 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:sqlite cargo +stable test --test it _2_eval_oracles::ir_engines_match_v7_oracles -- --exact` | 1 passed; 0 failed or ignored |
+| `cargo +stable test --manifest-path sqlite_ivm/Cargo.toml --config 'profile.dev.opt-level=1' --config 'profile.dev.package."*".opt-level=3' -p ivm-dd --test 2_random` | 6 passed; 0 failed or ignored |
+| `cargo +stable test --manifest-path sqlite_ivm/Cargo.toml --config 'profile.dev.opt-level=1' --config 'profile.dev.package."*".opt-level=3' -p ivm-sqlite --test 2_random` | 8 passed; 0 failed; 7 pre-existing ignored worker tests |
+
+SQLite compile oracle commands, run serially with a 900-second cap per case:
+
+```text
+python3 plans/v8/probes/2026-09-28-compile-gate.py applications-dl6-0_catalog declare-0_primitive_defaults project-modules-consumer project-modules-plus test-fixtures-0_minimal test-fixtures-14_syntax_macros test-fixtures-2_partial test-fixtures-3_type_algebra test-fixtures-5_curry test-fixtures-binding_symmetry-11_mixed_deferrable_and_real_error test-fixtures-lexical_binding-2_missing_name test-fixtures-lexical_binding-3_self_cycle test-fixtures-lexical_binding-4_two_cycle test-fixtures-modules-1_consumer test-fixtures-modules-2_plus_consumer
+python3 plans/v8/probes/2026-09-28-compile-gate.py project-tsi-contract
+```
+
+Results:
+
+```text
+PASS applications-dl6-0_catalog 11.99s
+PASS declare-0_primitive_defaults 3.21s
+PASS project-modules-consumer 2.80s
+PASS project-modules-plus 3.19s
+PASS test-fixtures-0_minimal 1.15s
+PASS test-fixtures-14_syntax_macros 56.72s
+PASS test-fixtures-2_partial 44.77s
+PASS test-fixtures-3_type_algebra 76.46s
+PASS test-fixtures-5_curry 590.07s
+PASS test-fixtures-binding_symmetry-11_mixed_deferrable_and_real_error 0.91s
+PASS test-fixtures-lexical_binding-2_missing_name 0.68s
+PASS test-fixtures-lexical_binding-3_self_cycle 0.70s
+PASS test-fixtures-lexical_binding-4_two_cycle 0.75s
+PASS test-fixtures-modules-1_consumer 0.76s
+PASS test-fixtures-modules-2_plus_consumer 1.23s
+TIMEOUT project-tsi-contract 900.01s
+```
+
+The sum fixture declares payload variants as `(: next (* (: value str)))` under `(: Result (+ ...))`. The `intern` construction path and term IDs are unchanged. The `intern_snapshot` readback is enabled only for constructors referenced by generated `sum_pattern` goals. No existing expected file changed. CI coverage adds one integration case for the three engines and signed Raw retraction.

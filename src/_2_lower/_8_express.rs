@@ -65,6 +65,28 @@ pub fn path_segment_atom(u: &Universe, node: TermId) -> Option<TermId> {
     forms::node(u, node).and_then(|parsed| forms::atom_name(u, parsed.payload))
 }
 
+/// A dotted member of a declared sum is a variant constructor.
+pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<TermId> {
+    let segments = path_segments(cx.u, head)?;
+    let mut scope = owner;
+    let mut parent_is_sum = false;
+    for (index, segment) in segments.iter().enumerate() {
+        let name = path_segment_atom(cx.u, *segment)?;
+        let found = cx.reservations.scoped(scope, name)?;
+        let inner = cx.u.unary(found.target, "target")?;
+        if index + 1 == segments.len() {
+            if !parent_is_sum {
+                return None;
+            }
+            return Some(cx.compound("ref", vec![inner]));
+        } else {
+            scope = inner;
+            parent_is_sum = cx.u.functor_or_atom(found.kind).map(|(kind, _)| kind) == Some("sum");
+        }
+    }
+    None
+}
+
 /// `pending_goal(positive, call(name(Scope, ':'), Arguments))`.
 pub fn colon_call_goal(cx: &mut Cx, scope: TermId, arguments: &[TermId; 4]) -> TermId {
     let colon = cx.atom(":");
@@ -146,6 +168,9 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
     }
     if let Some(head) = forms::form_head_atom(cx.u, &items) {
         if is_path_head(cx.u, head) {
+            if let Some(constructor) = sum_path_constructor(cx, node, owner) {
+                return lower_construction(cx, constructor, parsed.id, &[], owner);
+            }
             if let Some((call_owner, label)) = primitive_path_head(cx, node, owner) {
                 let value = cx.compound("name", vec![call_owner, label]);
                 return Lowering::value(value);
@@ -196,6 +221,9 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
                 none(cx, vec![diagnostic])
             }
         };
+    }
+    if let Some(constructor) = sum_path_constructor(cx, items[0], owner) {
+        return lower_construction(cx, constructor, parsed.id, &items[1..], owner);
     }
     // :1458. An operator position that is itself an expression.
     let operator = lower_expression(cx, items[0], owner);

@@ -19,6 +19,8 @@ pub struct Call {
     pub call: TermId,
     pub goals: Vec<TermId>,
     pub goal_nodes: Vec<TermId>,
+    pub post_goals: Vec<TermId>,
+    pub post_nodes: Vec<TermId>,
 }
 
 /// `:985`. A deferrable error advances neither ordinal.
@@ -76,7 +78,7 @@ fn lower_seed(
 ) -> Result<(TermId, TermId), TermId> {
     let lowered = lower_call(cx, node, owner, false)?;
     let node_id = forms::node_id(cx.u, node).unwrap_or(node);
-    if !lowered.goals.is_empty() {
+    if !lowered.goals.is_empty() || !lowered.post_goals.is_empty() {
         return Err(cx.plain(node_id, "expression_goals_in_seed"));
     }
     if call_contains_var(cx, lowered.call) {
@@ -175,8 +177,10 @@ fn pending_goal_result(
     let goal = cx.compound("pending_goal", vec![polarity, lowered.call]);
     let mut goals = lowered.goals;
     goals.push(goal);
+    goals.extend(lowered.post_goals);
     let mut nodes = lowered.goal_nodes;
     nodes.push(node_id);
+    nodes.extend(lowered.post_nodes);
     (goals, nodes)
 }
 
@@ -250,6 +254,77 @@ struct Arguments {
     arguments: Vec<TermId>,
     goals: Vec<TermId>,
     goal_nodes: Vec<TermId>,
+    post_goals: Vec<TermId>,
+    post_nodes: Vec<TermId>,
+}
+
+/// A sum variant in a goal argument reads back after the outer goal binds
+/// its value. Construction and readback use the same `intern` identity.
+fn sum_pattern(
+    cx: &mut Cx,
+    node: TermId,
+    owner: TermId,
+    head_mode: bool,
+) -> Result<Option<(TermId, Vec<TermId>)>, TermId> {
+    if head_mode {
+        return Ok(None);
+    }
+    let Some(parsed) = forms::node(cx.u, node) else {
+        return Ok(None);
+    };
+    let Some(items) = forms::form(cx.u, parsed.payload) else {
+        return Ok(None);
+    };
+    let constructor = if let Some(name) = forms::form_head_atom(cx.u, &items) {
+        let Some(found) = cx.reservations.scoped(owner, name) else {
+            return Ok(None);
+        };
+        if cx.u.functor_or_atom(found.kind).map(|(kind, _)| kind) != Some("sum") {
+            return Ok(None);
+        }
+        let Some(inner) = cx.u.unary(found.target, "target") else {
+            return Ok(None);
+        };
+        cx.compound("ref", vec![inner])
+    } else {
+        let Some(head) = items.first().copied() else {
+            return Ok(None);
+        };
+        let Some(constructor) = express::sum_path_constructor(cx, head, owner) else {
+            return Ok(None);
+        };
+        constructor
+    };
+    let value_key = cx.compound("sum_pattern", vec![parsed.id]);
+    let value = cx.compound("var", vec![value_key]);
+    let arguments_key = cx.compound("sum_arguments", vec![parsed.id]);
+    let mut list = cx.compound("var", vec![arguments_key]);
+    let mut goals = Vec::new();
+    let mut push = |cx: &mut Cx, label: &str, args: Vec<TermId>, goals: &mut Vec<TermId>| {
+        let name = cx.atom(label);
+        let relation = cx.compound("name", vec![owner, name]);
+        let args = cx.u.list(&args);
+        let call = cx.compound("call", vec![relation, args]);
+        let positive = cx.atom("positive");
+        goals.push(cx.compound("pending_goal", vec![positive, call]));
+    };
+    push(
+        cx,
+        "intern_snapshot",
+        vec![constructor, list, value],
+        &mut goals,
+    );
+    for (index, item) in items[1..].iter().enumerate() {
+        let (value, own_goals, _) = lower_argument(cx, *item, owner, false)?;
+        goals.extend(own_goals);
+        let ordinal = cx.int(index as i64);
+        let tail_key = cx.compound("sum_tail", vec![parsed.id, ordinal]);
+        let tail = cx.compound("var", vec![tail_key]);
+        push(cx, "cons", vec![value, tail, list], &mut goals);
+        list = tail;
+    }
+    push(cx, "nil", vec![list], &mut goals);
+    Ok(Some((value, goals)))
 }
 
 /// `((. a b) x y)`: the callable is a dotted path. Every segment but the last
@@ -285,7 +360,15 @@ fn lower_path_call(
     let mut arguments = Vec::with_capacity(items.len() - 1);
     let mut goals = Vec::new();
     let mut goal_nodes = Vec::new();
+    let mut post_goals = Vec::new();
+    let mut post_nodes = Vec::new();
     for node in &items[1..] {
+        if let Some((value, deferred)) = sum_pattern(cx, *node, owner, head_mode)? {
+            arguments.push(value);
+            post_nodes.extend(std::iter::repeat_n(node_id, deferred.len()));
+            post_goals.extend(deferred);
+            continue;
+        }
         let (value, own_goals, own_nodes) = lower_argument(cx, *node, owner, head_mode)?;
         arguments.push(value);
         goals.extend(own_goals);
@@ -295,6 +378,8 @@ fn lower_path_call(
         arguments,
         goals,
         goal_nodes,
+        post_goals,
+        post_nodes,
     };
     let call = finish_call_arguments(cx, label, node_id, callable_owner, arguments, head_mode)?;
     Ok(Some(call))
@@ -311,6 +396,8 @@ fn lower_colon_arguments(
         arguments: Vec::with_capacity(4),
         goals: Vec::new(),
         goal_nodes: Vec::new(),
+        post_goals: Vec::new(),
+        post_nodes: Vec::new(),
     };
     for (position, node) in nodes.iter().enumerate() {
         // :1178. The label position takes an atom or a symbol literal as a constant.
@@ -367,7 +454,15 @@ fn normalize_call_arguments(
     let mut bound: Vec<(i64, TermId)> = Vec::with_capacity(assigned.len());
     let mut goals = Vec::new();
     let mut goal_nodes = Vec::new();
+    let mut post_goals = Vec::new();
+    let mut post_nodes = Vec::new();
     for item in &assigned {
+        if let Some((value, deferred)) = sum_pattern(cx, item.node, owner, head_mode)? {
+            bound.push((item.index, value));
+            post_nodes.extend(std::iter::repeat_n(node_id, deferred.len()));
+            post_goals.extend(deferred);
+            continue;
+        }
         let (value, own_goals, own_nodes) = lower_argument(cx, item.node, owner, head_mode)?;
         bound.push((item.index, value));
         goals.extend(own_goals);
@@ -377,6 +472,8 @@ fn normalize_call_arguments(
         arguments: slots::fill(cx, all, &bound, node_id),
         goals,
         goal_nodes,
+        post_goals,
+        post_nodes,
     })
 }
 
@@ -411,5 +508,7 @@ fn finish_call_arguments(
         call,
         goals: arguments.goals,
         goal_nodes: arguments.goal_nodes,
+        post_goals: arguments.post_goals,
+        post_nodes: arguments.post_nodes,
     })
 }
