@@ -124,3 +124,16 @@ fn filters() {
         }),
     );
 }
+
+#[test]
+fn case() {
+    run(
+        "3_case",
+        json!({
+            "snaked": [["", ""], ["HTTPServer", "http_server"], ["UserId", "user_id"], ["héllo wörld", "héllo_wörld"], ["user-id", "user_id"], ["user_id", "user_id"]],
+            "cameled": [["", ""], ["HTTPServer", "httpServer"], ["UserId", "userId"], ["héllo wörld", "hélloWörld"], ["user-id", "userId"], ["user_id", "userId"]],
+            "pascaled": [["", ""], ["HTTPServer", "HttpServer"], ["UserId", "UserId"], ["héllo wörld", "HélloWörld"], ["user-id", "UserId"], ["user_id", "UserId"]],
+            "kebabed": [["", ""], ["HTTPServer", "http-server"], ["UserId", "user-id"], ["héllo wörld", "héllo-wörld"], ["user-id", "user-id"], ["user_id", "user-id"]],
+        }),
+    );
+}

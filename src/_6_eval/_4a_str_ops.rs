@@ -17,6 +17,10 @@ pub const STR_OPS: &[(&str, &str, usize, StrOp)] = &[
     ("str", "to_int", 2, StrOp::StrToInt),
     ("str", "starts_with", 2, StrOp::StartsWith),
     ("str", "contains", 2, StrOp::Contains),
+    ("str", "snake", 2, StrOp::Snake),
+    ("str", "camel", 2, StrOp::Camel),
+    ("str", "pascal", 2, StrOp::Pascal),
+    ("str", "kebab", 2, StrOp::Kebab),
 ];
 
 pub const STR_KERNEL_RELATIONS: &[(Option<&str>, &str, i64)] = &[
@@ -34,6 +38,10 @@ pub const STR_KERNEL_RELATIONS: &[(Option<&str>, &str, i64)] = &[
     (Some("str"), "to_int", 2),
     (Some("str"), "starts_with", 2),
     (Some("str"), "contains", 2),
+    (Some("str"), "snake", 2),
+    (Some("str"), "camel", 2),
+    (Some("str"), "pascal", 2),
+    (Some("str"), "kebab", 2),
 ];
 
 pub fn str_slot_label(owner: &str, label: &str, index: u32) -> Option<&'static str> {
@@ -72,6 +80,14 @@ pub fn str_slot_label(owner: &str, label: &str, index: u32) -> Option<&'static s
         ("str", "starts_with", 1) => "prefix",
         ("str", "contains", 0) => "text",
         ("str", "contains", 1) => "needle",
+        ("str", "snake", 0) => "text",
+        ("str", "snake", 1) => "return",
+        ("str", "camel", 0) => "text",
+        ("str", "camel", 1) => "return",
+        ("str", "pascal", 0) => "text",
+        ("str", "pascal", 1) => "return",
+        ("str", "kebab", 0) => "text",
+        ("str", "kebab", 1) => "return",
         _ => return None,
     })
 }
@@ -91,4 +107,8 @@ pub const STR_TYPED_OPS: &[(&str, &str, &[(&str, &str)])] = &[
     ("str", "to_int", &[("text", "str"), ("return", "int"), ]),
     ("str", "starts_with", &[("text", "str"), ("prefix", "str"), ]),
     ("str", "contains", &[("text", "str"), ("needle", "str"), ]),
+    ("str", "snake", &[("text", "str"), ("return", "str"), ]),
+    ("str", "camel", &[("text", "str"), ("return", "str"), ]),
+    ("str", "pascal", &[("text", "str"), ("return", "str"), ]),
+    ("str", "kebab", &[("text", "str"), ("return", "str"), ]),
 ];

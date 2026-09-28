@@ -88,3 +88,20 @@
        "a0.contains(a1).then_some(Holds)"))
 (<- (str_op_arg "str" "contains" 0 "text" "str"))
 (<- (str_op_arg "str" "contains" 1 "needle" "str"))
+
+; step 4: case conversion (`heck`)
+(<- (str_op 14 "str" "snake" "Snake" 2 "str" "case"
+       "Some(Text(heck::ToSnakeCase::to_snake_case(a0)))"))
+(<- (str_op_arg "str" "snake" 0 "text" "str"))
+
+(<- (str_op 15 "str" "camel" "Camel" 2 "str" "case"
+       "Some(Text(heck::ToLowerCamelCase::to_lower_camel_case(a0)))"))
+(<- (str_op_arg "str" "camel" 0 "text" "str"))
+
+(<- (str_op 16 "str" "pascal" "Pascal" 2 "str" "case"
+       "Some(Text(heck::ToUpperCamelCase::to_upper_camel_case(a0)))"))
+(<- (str_op_arg "str" "pascal" 0 "text" "str"))
+
+(<- (str_op 17 "str" "kebab" "Kebab" 2 "str" "case"
+       "Some(Text(heck::ToKebabCase::to_kebab_case(a0)))"))
+(<- (str_op_arg "str" "kebab" 0 "text" "str"))
