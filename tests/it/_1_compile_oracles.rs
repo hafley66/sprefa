@@ -542,6 +542,10 @@ fn s7reifyoracle_truncate(value: &serde_json::Value) -> String {
 // committed subset is whatever fits 6 MB, and `oracle/compile/verify.sh` runs
 // dl8 over every one of them.
 //
+// Each case stores its `compiler_rows` and `runtime_program` as content-anchored
+// hunks against `oracle/compile/baseline.json`, the empty program's output;
+// `expected_of` rebuilds the full value before the comparison.
+//
 // The comparison is byte equality per frozen key: `serde_json::to_string` over
 // a `Map` is a BTreeMap walk with no whitespace, the same bytes `dl8 compile`
 // writes. v7 never printed `program`, so no case freezes it and the 6 MB
@@ -594,9 +598,67 @@ fn arguments(case: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+/// Twin of `apply_hunks` in `oracle/refreeze.py`. Each hunk is anchored by
+/// the baseline row it follows, found at or after the cursor.
+fn apply_hunks(baseline: &[serde_json::Value], hunks: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    let mut cursor = 0;
+    for hunk in hunks {
+        if !hunk["after"].is_null() {
+            let found = cursor
+                + baseline[cursor..]
+                    .iter()
+                    .position(|row| *row == hunk["after"])
+                    .expect("hunk anchor is not a baseline row at or after the cursor");
+            out.extend_from_slice(&baseline[cursor..=found]);
+            cursor = found + 1;
+        }
+        out.extend(hunk["add"].as_array().unwrap().iter().cloned());
+        let remove = hunk["remove"].as_array().unwrap();
+        assert_eq!(
+            &baseline[cursor..cursor + remove.len()],
+            remove.as_slice(),
+            "hunk removes rows the baseline does not hold"
+        );
+        cursor += remove.len();
+    }
+    out.extend_from_slice(&baseline[cursor..]);
+    out
+}
+
+/// `oracle/compile/baseline.json` is the output of an empty program. A case
+/// freezes `expected` keys verbatim and `delta` keys as hunks against it.
+fn expected_of(case: &serde_json::Value, baseline: &serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+    let mut expected = case["expected"].as_object().unwrap().clone();
+    let Some(delta) = case.get("delta") else {
+        return expected;
+    };
+    let rows = |value: &serde_json::Value| value.as_array().unwrap().clone();
+    let hunks = |value: &serde_json::Value| value.as_array().unwrap().clone();
+    if let Some(compiler_rows) = delta.get("compiler_rows") {
+        expected.insert(
+            "compiler_rows".into(),
+            apply_hunks(&rows(&baseline["compiler_rows"]), &hunks(compiler_rows)).into(),
+        );
+    }
+    if let Some(sequences) = delta.get("runtime_program") {
+        let mut term = baseline["runtime_program"].clone();
+        for (path, list) in sequences.as_object().unwrap() {
+            let at = term.pointer_mut(path).expect("delta path is not in the baseline");
+            *at = apply_hunks(&rows(at), &hunks(list)).into();
+        }
+        expected.insert("runtime_program".into(), term);
+    }
+    expected
+}
+
 #[test]
 fn every_committed_case_matches_v7() {
     let sources = sources_dir();
+    let baseline: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(s8compileoracle_oracle_dir().join("baseline.json")).unwrap(),
+    )
+    .unwrap();
     let mut checked = 0;
     let mut rows = Vec::new();
     for entry in s8compileoracle_status()["cases"].as_array().unwrap() {
@@ -622,19 +684,15 @@ fn every_committed_case_matches_v7() {
             .replace(&sources, "<root>")
             .replace(&repo_dir(), "<repo>");
         let got: serde_json::Value = serde_json::from_str(&got).unwrap();
-        for (key, want) in case["expected"].as_object().unwrap() {
+        let expected = expected_of(&case, &baseline);
+        for (key, want) in &expected {
             assert_eq!(
                 serde_json::to_string(&got[key]).unwrap(),
                 serde_json::to_string(want).unwrap(),
                 "{stem}: {key} differs from v7"
             );
         }
-        let expected_code = i32::from(
-            !case["expected"]["diagnostics"]
-                .as_array()
-                .unwrap()
-                .is_empty(),
-        );
+        let expected_code = i32::from(!expected["diagnostics"].as_array().unwrap().is_empty());
         assert_eq!(
             run.status.code(),
             Some(expected_code),
@@ -670,6 +728,9 @@ fn every_committed_case_file_exists_and_every_case_is_indexed() {
             committed += std::fs::metadata(&path).unwrap().len();
         }
     }
+    committed += std::fs::metadata(s8compileoracle_oracle_dir().join("baseline.json"))
+        .unwrap()
+        .len();
     // `oracle/compile/status.json` carries the same number for a reader.
     let budget = s8compileoracle_status()["budget_bytes"].as_u64().unwrap();
     assert!(
