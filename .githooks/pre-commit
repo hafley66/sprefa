@@ -2,6 +2,7 @@
 # Pre-commit. (dl --check rails gate removed for now — restore `exec dl --check`
 # when dl is back on PATH. Bypass this hook: git commit -n)
 repo_root=$(git rev-parse --show-toplevel)
+sh "$(dirname "$0")/no-new-json.sh" || exit 1
 # Comment budget (>2 consecutive comment lines = fail); default = the dl6 rail
 # (comment_rail_golden/README.md), SPREFA_COMMENT_RAIL_DL6=0 = retired bash tool.
 if [ "${SPREFA_COMMENT_RAIL_DL6:-1}" = 1 ]; then
