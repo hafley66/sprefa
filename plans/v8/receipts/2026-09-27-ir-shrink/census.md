@@ -12,6 +12,8 @@ Commands: `$CARGO_TARGET_DIR/debug/dl8 compile <input> > <case>.compile.json`; `
 | 1 scaffolding | fs_json | Antijoin=160 Get=1596 Join=796 Mfp=893 Mint=220 Reduce=7 Threshold=140 Union=180 | 3992 | 5600 | 156593459 ns | 850203042 ns |
 | 2 effects (notes only) | standard_plus | Antijoin=160 Get=1590 Join=794 Mfp=891 Mint=219 Reduce=7 Threshold=140 Union=180 | 3981 | 5583 | 172388541 ns | 843551458 ns |
 | 2 effects (notes only) | fs_json | Antijoin=160 Get=1596 Join=796 Mfp=893 Mint=220 Reduce=7 Threshold=140 Union=180 | 3992 | 5600 | 146958000 ns | 845128917 ns |
+| 3 fused cons (notes only) | standard_plus | Antijoin=160 Get=1590 Join=794 Mfp=891 Mint=219 Reduce=7 Threshold=140 Union=180 | 3981 | 5583 | 184271625 ns | 885468083 ns |
+| 3 fused cons (notes only) | fs_json | Antijoin=160 Get=1596 Join=796 Mfp=893 Mint=220 Reduce=7 Threshold=140 Union=180 | 3992 | 5600 | 168689958 ns | 935981375 ns |
 
 Validation (commit 0):
 
@@ -63,3 +65,18 @@ Validation (commit 2, notes only):
 | `cargo test --manifest-path sqlite_ivm/Cargo.toml --config 'profile.dev.opt-level=1' --config 'profile.dev.package."*".opt-level=3' -p ivm-dd --test 2_random` | 6 passed; 0 failed or ignored |
 | `cargo test --manifest-path sqlite_ivm/Cargo.toml --config 'profile.dev.opt-level=1' --config 'profile.dev.package."*".opt-level=3' -p ivm-sqlite --test 2_random` | 8 passed; 0 failed; 7 pre-existing ignored worker tests |
 | `DL8_ENGINE=ir:sqlite dl8 compile <each committed oracle/compile case>` (900-second cap per case, compare committed expected fields and exit code) | 15/16 passed and matched; `project-tsi-contract` timed out at 900.01 s; `test-fixtures-5_curry` passed in 495.54 s |
+
+Commit 3 dropped item: `intern_row` constructs `ref(application(Name, plain_list))`, and a real `cons` chain can construct that same `plain_list` at runtime. A k-ary Mint of `Name` would decode as `Name(arg1, ..., argk)` instead. Those compounds have different arity and functor structure; `Universe::cmp` compares arity, name, and arguments. Both representations could coexist for the same application and compare unequal. No fusion was applied.
+
+Validation (commit 3, notes only):
+
+| Command | Result |
+|---|---|
+| `cargo test --workspace` | 6 library and 147 integration tests passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:dd cargo test --test it _9_ladder::` | 17 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:sqlite cargo test --test it _9_ladder::` | 17 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:dd cargo test --test it _1_compile_oracles::` | 11 passed; 0 failed or ignored |
+| `DL8_ENGINE=ir:sqlite cargo test --test it _2_eval_oracles::ir_engines_match_v7_oracles -- --exact` | 1 passed; 0 failed or ignored |
+| `cargo test --manifest-path sqlite_ivm/Cargo.toml --config 'profile.dev.opt-level=1' --config 'profile.dev.package."*".opt-level=3' -p ivm-dd --test 2_random` | 6 passed; 0 failed or ignored |
+| `cargo test --manifest-path sqlite_ivm/Cargo.toml --config 'profile.dev.opt-level=1' --config 'profile.dev.package."*".opt-level=3' -p ivm-sqlite --test 2_random` | 8 passed; 0 failed; 7 pre-existing ignored worker tests |
+| `DL8_ENGINE=ir:sqlite dl8 compile <each committed oracle/compile case>` (900-second cap per case, compare committed expected fields and exit code) | 15/16 passed and matched; `project-tsi-contract` timed out at 900.02 s; `test-fixtures-5_curry` passed in 503.80 s |
