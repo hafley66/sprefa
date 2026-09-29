@@ -24,9 +24,9 @@ Each file is an ordinary `.dl7` text; they read in file order, one after another
 $ for f in prelude/*.dl7; do printf '%s declarations=%s rules=%s lines=%s\n' "$f" "$(grep -c '^(: ' "$f")" "$(grep -c '^(<- ' "$f")" "$(grep -c '' "$f")"; done
 prelude/0_constructors.dl7 declarations=3 rules=0 lines=13
 prelude/1_declarations.dl7 declarations=61 rules=0 lines=322
-prelude/2_constructor_rules.dl7 declarations=0 rules=12 lines=77
-prelude/3_derived_rules.dl7 declarations=0 rules=75 lines=321
-prelude/4_type_algebra.dl7 declarations=24 rules=36 lines=339
+prelude/2_constructor_rules.dl7 declarations=0 rules=12 lines=52
+prelude/3_derived_rules.dl7 declarations=0 rules=73 lines=304
+prelude/4_type_algebra.dl7 declarations=27 rules=38 lines=338
 prelude/6_modules.dl7 declarations=5 rules=5 lines=42
 ```
 
@@ -44,16 +44,13 @@ The "depends on" column reads the rule bodies; the load does not need it, becaus
 One example per dependency step:
 
 ```console
-$ sed -n 53,56p prelude/1_declarations.dl7 && sed -n 22,26p prelude/2_constructor_rules.dl7
+$ sed -n 53,56p prelude/1_declarations.dl7 && sed -n 16,17p prelude/2_constructor_rules.dl7
 (: Key
    (* (: name str)
       (: options type)
       (: return type)))
 (<- (Key ?Name ?Options ?Result)
-    (nil ?Empty)
-    (cons ?Options ?Empty ?TailArguments)
-    (cons ?Name ?TailArguments ?Arguments)
-    (intern Key ?Arguments ?Result))
+    (intern Key (tuple ?Name ?Options) ?Result))
 ```
 
 ```console
@@ -70,7 +67,7 @@ $ sed -n 3,6p prelude/4_type_algebra.dl7 && sed -n 55p std/tsi.dl7
 Macrotime is a second built-in program, `macrotime/0_standard.dl7`, that runs over syntax rows before lowering. Its one macro claims a form whose item 0 is `<+` and emits the same form with `<-`:
 
 ```console
-$ sed -n 75,81p macrotime/0_standard.dl7 && printf '\n' && sed -n 108,109p macrotime/0_standard.dl7
+$ sed -n 75,81p macrotime/0_standard.dl7 && printf '\n' && sed -n 100,101p macrotime/0_standard.dl7
 ; function plus(invocation: FormNode): readonly [
 ;   FormNode<[AtomNode<"<-">, ...Tail<typeof invocation.items>]>,
 ; ]

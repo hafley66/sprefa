@@ -133,7 +133,7 @@ exit 0
 Reading a declared product's fields, then building a list of their names, in dl7:
 
 ```dl7
-; fixture: oracle/compile/sources/test/fixtures/2_partial.dl7:32-42
+; fixture: oracle/compile/sources/test/fixtures/2_partial.dl7:32-39
 (: selected_request
    (* (: result type)))
 
@@ -141,18 +141,16 @@ Reading a declared product's fields, then building a list of their names, in dl7
     (Partial User ?Partial)
     (edge_snapshot ?Partial ?FirstName ?FirstType 0)
     (edge_snapshot ?Partial ?SecondName ?SecondType 1)
-    (nil ?Empty)
-    (cons ?SecondName ?Empty ?Tail)
-    (cons ?FirstName ?Tail ?Names)
-    (Pick ?Partial ?Names ?Result))
+    (Pick ?Partial (tuple ?FirstName ?SecondName) ?Result))
 ```
 
 ```console
 $ bash book/show.sh compile oracle/compile/sources/test/fixtures/2_partial.dl7
 (User 7 "Ada")
 (history_request ref(application(HistoryV1, [User HistoryOptions])))
-(selected_request ref(application(Pick, [application(Partial, [User]) [id name]])))
-(excluded_request ref(application(Exclude, [application(Pick, [application(Partial, [User]) [id name]]) [id]])))
+(selected_request ref(application(Pick, [application(Partial, [User]) application(tuple, [id name])])))
+(excluded_request ref(application(Exclude, [application(Pick, [application(Partial, [User]) application(tuple, [id name])]) application(tuple, [id])])))
+(unchanged_request ref(application(Exclude, [application(Pick, [application(Partial, [User]) application(tuple, [id name])]) application(tuple, [])])))
 exit 0
 ```
 

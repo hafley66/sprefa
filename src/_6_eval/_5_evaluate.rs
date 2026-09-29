@@ -413,7 +413,9 @@ pub(super) fn effect_rows(
 ) -> Option<EffectRows> {
     let values: Vec<TermId> = pattern.iter().map(|term| term.unwrap_or(none)).collect();
     let list = u.list(&values);
-    let arguments = u.compound("const", vec![list]);
+    let tuple = u.atom("tuple");
+    let application = u.compound("application", vec![tuple, list]);
+    let arguments = u.compound("ref", vec![application]);
     let intern = kernel::intern_row(u, &[Some(rel), Some(arguments), None])?;
     let application = intern[2];
     Some(EffectRows {
@@ -470,8 +472,7 @@ pub(crate) fn needs_bound_head(u: &Universe, rule: &Rule, snapshots: TermId) -> 
                 let ready = match op {
                     Kernel::Nil | Kernel::StrNil => true,
                     Kernel::Cons | Kernel::StrCons => at(2) || (at(0) && at(1)),
-                    Kernel::Tuple => at(goal.args.len() - 1)
-                        || (0..goal.args.len() - 1).all(at),
+                    Kernel::Tuple => at(goal.args.len() - 1) || (0..goal.args.len() - 1).all(at),
                     Kernel::Str(op) => (0..op.args().len()).all(at),
                     _ => at(0) && at(1),
                 };

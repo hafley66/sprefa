@@ -3,12 +3,12 @@
 
 use super::api::Stop;
 use super::graph::{CheckerGraph, OriginArena};
+use super::instance::instance_rows;
 use super::kernel::primitive_name;
 use super::mode::{call_parts, goal_failures, head_safety, head_variables};
 use crate::_2_lower::kernel::{kernel_relation, kernel_variadic};
 use crate::_6_eval::program::AggregateKind;
 use crate::_6_eval::term::{Term, TermId, Universe};
-use super::instance::instance_rows;
 use std::collections::{HashMap, HashSet};
 
 pub struct Cx<'a> {
@@ -170,9 +170,7 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
     let variadic = u
         .unary(target, "ref")
         .and_then(|inner| u.unary(inner, "kernel"))
-        .is_some_and(|name| {
-            atom_name(u, name).is_some_and(|label| kernel_variadic(None, label))
-        });
+        .is_some_and(|name| atom_name(u, name).is_some_and(|label| kernel_variadic(None, label)));
     if variadic {
         return match resolve_args(u, cx, &args) {
             Ok(resolved) => {
@@ -237,7 +235,11 @@ pub fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<T
             let mut plain = Vec::with_capacity(items.len());
             for item in items {
                 let tagged = resolve_argument(u, cx, item)?;
-                plain.push(u.unary(tagged, "ref").or_else(|| u.unary(tagged, "const")).unwrap_or(tagged));
+                plain.push(
+                    u.unary(tagged, "ref")
+                        .or_else(|| u.unary(tagged, "const"))
+                        .unwrap_or(tagged),
+                );
             }
             let (Some(inner), list) = (u.unary(constructor, "ref"), u.list(&plain)) else {
                 return Ok(argument);
@@ -288,10 +290,14 @@ pub fn resolve_edges(
             }
         }
         let node = origins.edge_origin(owner, name, index);
-        if u.functor(target).is_some_and(|(n, a)| n == "application" && a.len() == 2) {
+        if u.functor(target)
+            .is_some_and(|(n, a)| n == "application" && a.len() == 2)
+        {
             match instance_rows(u, cx, owner, name, index, target, &mut built) {
                 Ok(rows) => edges.extend(rows),
-                Err(reason) => diagnostics.push(u.compound("diagnostic", vec![check, node, reason])),
+                Err(reason) => {
+                    diagnostics.push(u.compound("diagnostic", vec![check, node, reason]))
+                }
             }
             continue;
         }
@@ -374,7 +380,9 @@ fn mint_rows(u: &mut Universe, value: TermId, depth: usize, out: &mut Vec<TermId
         }
     }
     let arguments = u.list(&tagged);
-    let arguments = u.compound("const", vec![arguments]);
+    let tuple = u.atom("tuple");
+    let arguments = u.compound("application", vec![tuple, arguments]);
+    let arguments = u.compound("ref", vec![arguments]);
     let constructor = u.compound("ref", vec![constructor]);
     let args = u.list(&[constructor, arguments, value]);
     for name in ["intern", "intern_snapshot"] {

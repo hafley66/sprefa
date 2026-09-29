@@ -38,10 +38,20 @@ pub fn lower_executables(
         }
         if let Some(rule) = forms::rule_form(cx.u, *item) {
             match lower_rule(cx, &rule, owner, rule_index) {
-                Ok((term, origins)) => {
+                Ok((term, origins, position_rules)) => {
                     out.rules.push(term);
                     out.origins.extend(origins);
                     rule_index += 1;
+                    for (position_rule, prefix_nodes) in position_rules {
+                        out.rules.push(position_rule);
+                        let index = cx.int(rule_index);
+                        let key = cx.compound("rule", vec![index]);
+                        out.origins
+                            .push(cx.compound("origin", vec![key, rule.rule_node]));
+                        out.origins
+                            .extend(indexed_goal_origins(cx.u, &prefix_nodes, rule_index));
+                        rule_index += 1;
+                    }
                 }
                 Err(diagnostic) => {
                     if cx.policy == CallPolicy::DeferUnknownCalls && cx.deferrable(diagnostic) {
@@ -127,7 +137,7 @@ fn lower_rule(
     rule: &forms::RuleForm,
     owner: TermId,
     rule_index: i64,
-) -> Result<(TermId, Vec<TermId>), TermId> {
+) -> Result<(TermId, Vec<TermId>, Vec<(TermId, Vec<TermId>)>), TermId> {
     let head = lower_call(cx, rule.head, owner, true)?;
     let mut goals = Vec::new();
     let mut goal_nodes = Vec::new();
@@ -144,7 +154,120 @@ fn lower_rule(
     let key = cx.compound("rule", vec![index]);
     let mut origins = vec![cx.compound("origin", vec![key, rule.rule_node])];
     origins.extend(indexed_goal_origins(cx.u, &goal_nodes, rule_index));
-    Ok((term, origins))
+    let position_rules = tuple_position_rules(cx, owner, &goals, &goal_nodes);
+    Ok((term, origins, position_rules))
+}
+
+/// A tuple built in a rule body and handed to a relation call is output of the
+/// rule: one sibling rule per position writes `(: Tuple k Element k)` from the
+/// goals up to the tuple goal, so a position reads the same for a written
+/// tuple and a built one. A tuple whose elements are not all bound by earlier
+/// goals is the callee's own construction and writes no positions.
+fn tuple_position_rules(
+    cx: &mut Cx,
+    owner: TermId,
+    goals: &[TermId],
+    goal_nodes: &[TermId],
+) -> Vec<(TermId, Vec<TermId>)> {
+    let mut out = Vec::new();
+    for (at, goal) in goals.iter().enumerate() {
+        let Some(("pending_goal", parts)) = cx.u.functor(*goal) else {
+            continue;
+        };
+        let Some(("call", call)) = cx.u.functor(parts[1]) else {
+            continue;
+        };
+        let Some(("name", name)) = cx.u.functor(call[0]) else {
+            continue;
+        };
+        if cx.u.functor_or_atom(name[1]).map(|(n, _)| n) != Some("tuple") {
+            continue;
+        }
+        let Some(arguments) = cx.u.as_list(call[1]) else {
+            continue;
+        };
+        let Some((whole, elements)) = arguments.split_last() else {
+            continue;
+        };
+        let earlier: Vec<TermId> = goals[..at].to_vec();
+        let bound = |cx: &Cx, term: TermId| {
+            !term_has_var(cx, term) || earlier.iter().any(|g| term_mentions(cx, *g, term))
+        };
+        if !elements.iter().all(|e| bound(cx, *e)) {
+            continue;
+        }
+        let handed_on = goals[at + 1..].iter().any(|later| {
+            let Some(("pending_goal", later_parts)) = cx.u.functor(*later) else {
+                return false;
+            };
+            let Some(("call", later_call)) = cx.u.functor(later_parts[1]) else {
+                return false;
+            };
+            let Some(("name", later_name)) = cx.u.functor(later_call[0]) else {
+                return false;
+            };
+            let label = cx
+                .u
+                .functor_or_atom(later_name[1])
+                .map(|(n, _)| n.to_string())
+                .unwrap_or_default();
+            super::kernel::kernel_relation(None, &label).is_none()
+                && !super::kernel::kernel_variadic(None, &label)
+                && term_mentions(cx, later_parts[1], *whole)
+        });
+        if !handed_on {
+            continue;
+        }
+        for (position, element) in elements.iter().enumerate() {
+            let index = cx.int(position as i64);
+            let index = cx.compound("const", vec![index]);
+            let colon = cx.atom(":");
+            let relation = cx.compound("name", vec![owner, colon]);
+            let list = cx.u.list(&[*whole, index, *element, index]);
+            let head = cx.compound("call", vec![relation, list]);
+            let body = cx.u.list(&goals[..=at]);
+            let rule = cx.compound("rule", vec![head, body]);
+            out.push((rule, goal_nodes[..=at.min(goal_nodes.len() - 1)].to_vec()));
+        }
+    }
+    out
+}
+
+/// Nesting depth searched inside one lowered goal term.
+const POSITION_TERM_DEPTH: usize = 32;
+
+fn term_has_var(cx: &Cx, term: TermId) -> bool {
+    let mut level = vec![term];
+    for _ in 0..POSITION_TERM_DEPTH {
+        let mut next = Vec::new();
+        for t in level {
+            if cx.u.functor(t).is_some_and(|(n, a)| n == "var" && a.len() == 1) {
+                return true;
+            }
+            if let Term::Compound(_, args) = cx.u.get(t) {
+                next.extend(args.iter().copied());
+            }
+        }
+        level = next;
+    }
+    false
+}
+
+fn term_mentions(cx: &Cx, haystack: TermId, needle: TermId) -> bool {
+    let mut level = vec![haystack];
+    for _ in 0..POSITION_TERM_DEPTH {
+        let mut next = Vec::new();
+        for t in level {
+            if t == needle {
+                return true;
+            }
+            if let Term::Compound(_, args) = cx.u.get(t) {
+                next.extend(args.iter().copied());
+            }
+        }
+        level = next;
+    }
+    false
 }
 
 /// `:1092`.
@@ -244,7 +367,25 @@ fn lower_named_call(
     owner: TermId,
     head_mode: bool,
 ) -> Result<Call, TermId> {
-    let (callable, arity) = match expression_callable(cx, head, call_owner) {
+    let head_text =
+        cx.u.functor_or_atom(head)
+            .map(|(n, _)| n.to_string())
+            .unwrap_or_default();
+    let variadic = super::kernel::kernel_variadic(None, &head_text)
+        && cx.reservations.scoped(call_owner, head).is_none();
+    let resolved = if variadic {
+        Ok(express::Applied::Relation(
+            slots::Callable::Kernel {
+                owner: None,
+                label: head_text,
+            },
+            items.len() as i64 - 1,
+            cx.u.list(&[]),
+        ))
+    } else {
+        expression_callable(cx, head, call_owner)
+    };
+    let (callable, arity) = match resolved {
         Ok(express::Applied::Relation(callable, arity, _)) => (callable, arity),
         // A goal position takes a relation only; construction is spelled with
         // `intern` here, so the head names no relation.
@@ -308,7 +449,7 @@ fn sum_pattern(
     let value_key = cx.compound("sum_pattern", vec![parsed.id]);
     let value = cx.compound("var", vec![value_key]);
     let arguments_key = cx.compound("sum_arguments", vec![parsed.id]);
-    let mut list = cx.compound("var", vec![arguments_key]);
+    let list = cx.compound("var", vec![arguments_key]);
     let mut goals = Vec::new();
     let mut push = |cx: &mut Cx, label: &str, args: Vec<TermId>, goals: &mut Vec<TermId>| {
         let name = cx.atom(label);
@@ -324,16 +465,14 @@ fn sum_pattern(
         vec![constructor, list, value],
         &mut goals,
     );
-    for (index, item) in items[1..].iter().enumerate() {
-        let (value, own_goals, _) = lower_argument(cx, *item, owner, false)?;
+    let mut elements = Vec::with_capacity(items.len());
+    for item in &items[1..] {
+        let (element, own_goals, _) = lower_argument(cx, *item, owner, false)?;
         goals.extend(own_goals);
-        let ordinal = cx.int(index as i64);
-        let tail_key = cx.compound("sum_tail", vec![parsed.id, ordinal]);
-        let tail = cx.compound("var", vec![tail_key]);
-        push(cx, "cons", vec![value, tail, list], &mut goals);
-        list = tail;
+        elements.push(element);
     }
-    push(cx, "nil", vec![list], &mut goals);
+    elements.push(list);
+    push(cx, "tuple", elements, &mut goals);
     Ok(Some((value, goals)))
 }
 

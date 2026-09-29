@@ -230,11 +230,7 @@ pub fn str_cons_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<Ter
 }
 
 /// The bound `const` inputs of a string op, as owned text and integer slots.
-fn str_inputs(
-    u: &Universe,
-    op: StrOp,
-    args: &[Option<TermId>],
-) -> Option<(Vec<String>, Vec<i64>)> {
+fn str_inputs(u: &Universe, op: StrOp, args: &[Option<TermId>]) -> Option<(Vec<String>, Vec<i64>)> {
     let kinds = op.args();
     let mut texts = Vec::with_capacity(kinds.len());
     let mut ints = Vec::with_capacity(kinds.len());
@@ -300,6 +296,14 @@ pub fn edge_ref_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<Ter
 
 /// `tuple(Element.., Value)`: with every element bound, `Value` is
 /// `ref(application(tuple, [elements]))`; with `Value` bound, its elements.
+/// A tuple element as stored in the argument vector: its `ref` or `const` tag
+/// is dropped.
+fn tuple_element(u: &Universe, tagged: TermId) -> TermId {
+    u.unary(tagged, "ref")
+        .or_else(|| u.unary(tagged, "const"))
+        .unwrap_or(tagged)
+}
+
 pub fn tuple_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
     let (value, elements) = args.split_last()?;
     if let Some(whole) = *value {
@@ -317,16 +321,11 @@ pub fn tuple_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId
         row.push(whole);
         return Some(row);
     }
-    let mut plain = Vec::with_capacity(elements.len());
+    let mut tagged = Vec::with_capacity(elements.len());
     for element in elements {
-        let tagged = (*element)?;
-        let bare = u
-            .unary(tagged, "ref")
-            .or_else(|| u.unary(tagged, "const"))
-            .unwrap_or(tagged);
-        plain.push(bare);
+        tagged.push((*element)?);
     }
-    let list = u.list(&plain);
+    let list = u.list(&tagged);
     let constructor = u.atom("tuple");
     let application = u.compound("application", vec![constructor, list]);
     let whole = u.compound("ref", vec![application]);
@@ -341,10 +340,7 @@ pub fn intern_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermI
     }
     let (ctor_tagged, arguments) = (args[0]?, args[1]?);
     let ctor = u.unary(ctor_tagged, "ref")?;
-    let plain: Vec<TermId> = match u
-        .unary(arguments, "const")
-        .and_then(|list| u.as_list(list))
-    {
+    let plain: Vec<TermId> = match u.unary(arguments, "const").and_then(|list| u.as_list(list)) {
         Some(tagged_list) => tagged_list
             .iter()
             .map(|t| semantic(u, *t))
@@ -357,8 +353,7 @@ pub fn intern_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermI
     Some(vec![ctor_tagged, arguments, result])
 }
 
-/// `ref(application(tuple, Items))` as an argument vector: the elements are
-/// already plain.
+/// `ref(application(tuple, Items))` as an argument vector, tags stripped.
 fn tuple_arguments(u: &mut Universe, arguments: TermId) -> Option<Vec<TermId>> {
     let application = u.unary(arguments, "ref")?;
     let [constructor, list] = u.args::<2>(application, "application")?;
@@ -366,7 +361,8 @@ fn tuple_arguments(u: &mut Universe, arguments: TermId) -> Option<Vec<TermId>> {
     if u.get(constructor) != u.get(tuple) {
         return None;
     }
-    u.as_list(list)
+    let items = u.as_list(list)?;
+    Some(items.into_iter().map(|t| tuple_element(u, t)).collect())
 }
 
 pub fn int_row(u: &Universe, cmp: IntCmp, args: &[Option<TermId>]) -> Option<Vec<TermId>> {

@@ -32,7 +32,7 @@
    (* (: source type)
       (: contract type)))
 
-; A closed cons list represents conjunction over several contracts.
+; A closed tuple represents conjunction over several contracts.
 (: ConformsAll
    (* (: source type)
       (: contracts any)
@@ -45,8 +45,21 @@
 
 (: all_contracts_conform
    (* (: source type)
-      (: current any)
-      (: root any)))
+      (: contracts any)))
+
+(: conforming_contract
+   (* (: source type)
+      (: contracts any)
+      (: position int)))
+
+(: missing_contract
+   (* (: source type)
+      (: contracts any)
+      (: position int)))
+
+(: has_missing_contract
+   (* (: source type)
+      (: contracts any)))
 
 ; Intersection constructs a canonical product from two ordered edge sets.
 (: Intersect
@@ -139,24 +152,17 @@
 ; Conformance application records its intern request before proof validation.
 ; A failed proof therefore becomes inspectable in a later compiler round.
 (<- (Conforms ?Source ?Contract ?Proof)
-    (nil ?Empty)
-    (cons ?Contract ?Empty ?TailArguments)
-    (cons ?Source ?TailArguments ?Arguments)
-    (intern Conforms ?Arguments ?Proof)
+    (intern Conforms (tuple ?Source ?Contract) ?Proof)
     (valid_conformance ?Source ?Contract))
 
 (<- (Conforms ?Source ?Contract ?Proof)
     (intern_snapshot Conforms ?Arguments ?Proof)
-    (cons ?Source ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Contract ?Empty ?TailArguments)
+    (tuple ?Source ?Contract ?Arguments)
     (valid_conformance ?Source ?Contract))
 
 (<- (conformance_candidate ?Source ?Contract ?Proof)
     (intern_snapshot Conforms ?Arguments ?Proof)
-    (cons ?Source ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Contract ?Empty ?TailArguments))
+    (tuple ?Source ?Contract ?Arguments))
 
 (<- (matching_contract_edge
        ?Source ?Contract ?Name ?Target ?ContractIndex)
@@ -184,58 +190,51 @@
 
 ; Contract-list application and recursive conjunction.
 (<- (ConformsAll ?Source ?Contracts ?Proof)
-    (nil ?Empty)
-    (cons ?Contracts ?Empty ?TailArguments)
-    (cons ?Source ?TailArguments ?Arguments)
-    (intern ConformsAll ?Arguments ?Proof)
-    (all_contracts_conform ?Source ?Contracts ?Contracts))
+    (intern ConformsAll (tuple ?Source ?Contracts) ?Proof)
+    (all_contracts_conform ?Source ?Contracts))
 
 (<- (ConformsAll ?Source ?Contracts ?Proof)
     (intern_snapshot ConformsAll ?Arguments ?Proof)
-    (cons ?Source ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Contracts ?Empty ?TailArguments)
-    (all_contracts_conform ?Source ?Contracts ?Contracts))
+    (tuple ?Source ?Contracts ?Arguments)
+    (all_contracts_conform ?Source ?Contracts))
 
 (<- (conforms_all_candidate ?Source ?Contracts ?Proof)
     (intern_snapshot ConformsAll ?Arguments ?Proof)
-    (cons ?Source ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Contracts ?Empty ?TailArguments))
+    (tuple ?Source ?Contracts ?Arguments))
 
-(<- (all_contracts_conform ?Source ?Empty ?Root)
-    (conforms_all_candidate ?Source ?Root ?Proof)
-    (nil ?Empty))
+(<- (conforming_contract ?Source ?Contracts ?Position)
+    (conforms_all_candidate ?Source ?Contracts ?Proof)
+    (edge_snapshot ?Contracts ?Position ?Contract ?Position)
+    (Conforms ?Source ?Contract ?ContractProof))
 
-(<- (all_contracts_conform ?Source ?Current ?Root)
-    (conforms_all_candidate ?Source ?Root ?Proof)
-    (cons ?Contract ?Tail ?Current)
-    (Conforms ?Source ?Contract ?ContractProof)
-    (all_contracts_conform ?Source ?Tail ?Root))
+(<- (missing_contract ?Source ?Contracts ?Position)
+    (conforms_all_candidate ?Source ?Contracts ?Proof)
+    (edge_snapshot ?Contracts ?Position ?Contract ?Position)
+    (not (conforming_contract ?Source ?Contracts ?Position)))
+
+(<- (has_missing_contract ?Source ?Contracts)
+    (missing_contract ?Source ?Contracts ?Position))
+
+(<- (all_contracts_conform ?Source ?Contracts)
+    (conforms_all_candidate ?Source ?Contracts ?Proof)
+    (not (has_missing_contract ?Source ?Contracts)))
 
 (<- (node ?Proof)
     (ConformsAll ?Source ?Contracts ?Proof))
 
 ; Intersection application records the candidate identity before validation.
 (<- (Intersect ?Left ?Right ?Result)
-    (nil ?Empty)
-    (cons ?Right ?Empty ?TailArguments)
-    (cons ?Left ?TailArguments ?Arguments)
-    (intern Intersect ?Arguments ?Result)
+    (intern Intersect (tuple ?Left ?Right) ?Result)
     (valid_intersection ?Left ?Right))
 
 (<- (Intersect ?Left ?Right ?Result)
     (intern_snapshot Intersect ?Arguments ?Result)
-    (cons ?Left ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Right ?Empty ?TailArguments)
+    (tuple ?Left ?Right ?Arguments)
     (valid_intersection ?Left ?Right))
 
 (<- (intersection_candidate ?Left ?Right ?Result)
     (intern_snapshot Intersect ?Arguments ?Result)
-    (cons ?Left ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Right ?Empty ?TailArguments))
+    (tuple ?Left ?Right ?Arguments))
 
 (<- (intersection_left_name ?Left ?Right ?Name)
     (intersection_candidate ?Left ?Right ?Result)

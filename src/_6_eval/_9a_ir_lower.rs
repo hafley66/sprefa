@@ -262,6 +262,7 @@ fn served_effect(
     term_map: ir::RelId,
     none: TermId,
     empty: TermId,
+    tuple: TermId,
 ) -> Result<(), &'static str> {
     let mut node = current;
     let mut size = width;
@@ -319,11 +320,26 @@ fn served_effect(
         plain_list = assert_width(size);
         size += 1;
     }
-    let wrap = constructor(constructors, "9:1:const", 1, false)?;
+    let wrap = constructor(constructors, "9:1:ref", 1, false)?;
+    let application = constructor(constructors, "9:2:application", 2, false)?;
+    let tuple_atom = mapped_ground(b, term_map, tuple);
+    node = b.node(ir::Op::Join {
+        inputs: vec![node, tuple_atom],
+        equivalences: vec![],
+    });
+    let tuple_col = assert_width(size + 1);
+    size += 2;
+    node = b.node(ir::Op::Mint {
+        input: node,
+        functor: application,
+        args: vec![tuple_col, list],
+    });
+    let tuple_application = assert_width(size);
+    size += 1;
     node = b.node(ir::Op::Mint {
         input: node,
         functor: wrap,
-        args: vec![list],
+        args: vec![tuple_application],
     });
     let arguments = assert_width(size);
     size += 1;
@@ -747,7 +763,7 @@ fn compile_kernel(
             *width += 1;
         }
         Kernel::Tuple => {
-            if inputs.len() < 2 {
+            if inputs.is_empty() {
                 return Err("tuple arity");
             }
             let cons = constructor(constructors, "9:2:[|]", 2, false)?;
@@ -782,12 +798,7 @@ fn compile_kernel(
                     *width += 3;
                     output[position] = Some(head);
                     if let (Some(want), Arg::Var(v)) = (inputs[position], &goal.args[position]) {
-                        *current = b.mfp(
-                            *current,
-                            vec![equal_columns(want, head)],
-                            vec![],
-                            vec![],
-                        );
+                        *current = b.mfp(*current, vec![equal_columns(want, head)], vec![], vec![]);
                         let _ = v;
                     }
                 }
@@ -798,9 +809,7 @@ fn compile_kernel(
                         *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
                         return Ok(());
                     };
-                    *current = join_constructor(b, *current, *width, semantic, element);
-                    plain.push(assert_width(*width + 1));
-                    *width += 2;
+                    plain.push(element);
                 }
                 let empty_row = mapped_ground(b, term_map, empty);
                 *current = b.node(ir::Op::Join {
@@ -854,9 +863,42 @@ fn compile_kernel(
             *current = join_constructor(b, *current, *width, ref_ctor, ctor);
             let ctor_inner = assert_width(*width + 1);
             *width += 2;
-            *current = join_constructor(b, *current, *width, plain_lists, arguments);
-            let plain = assert_width(*width + 1);
-            *width += 2;
+            let kept: Vec<ir::ColId> = (0..*width).map(assert_width).collect();
+            let listed = join_constructor(b, *current, *width, plain_lists, arguments);
+            let mut listed_columns = kept.clone();
+            listed_columns.push(assert_width(*width + 1));
+            let listed = b.mfp(listed, vec![], vec![], listed_columns);
+            let tuple_ctor = mapped_ground(b, term_map, tuple);
+            let mut vector = join_constructor(b, *current, *width, ref_ctor, arguments);
+            let application = assert_width(*width + 1);
+            vector = join_constructor(b, vector, *width + 2, app_ctor, application);
+            let vector_constructor = assert_width(*width + 3);
+            let vector_list = assert_width(*width + 4);
+            vector = b.node(ir::Op::Join {
+                inputs: vec![vector, tuple_ctor],
+                equivalences: vec![],
+            });
+            let tuple_col = assert_width(*width + 6);
+            vector = b.mfp(
+                vector,
+                vec![equal_columns(vector_constructor, tuple_col)],
+                vec![],
+                vec![],
+            );
+            let const_ctor = constructor(constructors, "9:1:const", 1, false)?;
+            vector = b.node(ir::Op::Mint {
+                input: vector,
+                functor: const_ctor,
+                args: vec![vector_list],
+            });
+            let wrapped = assert_width(*width + 7);
+            vector = join_constructor(b, vector, *width + 8, plain_lists, wrapped);
+            let mut vector_columns = kept;
+            vector_columns.push(assert_width(*width + 9));
+            let vector = b.mfp(vector, vec![], vec![], vector_columns);
+            *current = b.node(ir::Op::Union(vec![listed, vector]));
+            let plain = assert_width(*width);
+            *width += 1;
             *current = b.node(ir::Op::Mint {
                 input: *current,
                 functor: app_ctor,
@@ -1181,6 +1223,7 @@ fn compile_rule(
                 term_map,
                 none,
                 empty,
+                tuple,
             )?;
         }
         let nil_start = match goal.args.as_slice() {
@@ -1950,6 +1993,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let mut todo = vec![
         none,
         empty,
+        tuple,
         nil,
         nil_rel,
         intern_rel,
