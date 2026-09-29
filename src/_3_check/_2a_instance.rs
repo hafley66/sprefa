@@ -53,6 +53,10 @@ fn instance(
     let Some([callee, list]) = u.args::<2>(application, "application") else {
         return Err(u.atom("invalid_application"));
     };
+    let tuple = u.atom("tuple");
+    if u.get(callee) == u.get(tuple) {
+        return tuple_instance(u, cx, application, list, 0, rows);
+    }
     let mut visited = Vec::new();
     let callee = resolve_target(u, cx, callee, &mut visited)
         .and_then(|resolved| u.unary(resolved, "ref"))
@@ -110,6 +114,42 @@ fn instance(
         walk(u, cx, &build, template, root, 0, rows)?;
     }
     Ok(root_ref)
+}
+
+/// Nesting of `[..]` literals inside one tuple.
+const TUPLE_DEPTH: usize = 16;
+
+/// `application(tuple, Items)`: one `:` row per item, label and index both
+/// the position. Nested tuple applications mint their own rows.
+fn tuple_instance(
+    u: &mut Universe,
+    cx: &Cx,
+    application: TermId,
+    list: TermId,
+    depth: usize,
+    rows: &mut Vec<TermId>,
+) -> Result<TermId, TermId> {
+    let depth_exceeded = depth >= TUPLE_DEPTH;
+    if depth_exceeded {
+        return Err(u.atom("tuple_depth_exceeded"));
+    }
+    let tuple = u.atom("tuple");
+    let items = u.as_list(list).unwrap_or_default();
+    for (position, item) in items.iter().enumerate() {
+        if let Some([callee, inner]) = u.args::<2>(*item, "application") {
+            if u.get(callee) == u.get(tuple) {
+                tuple_instance(u, cx, *item, inner, depth + 1, rows)?;
+            }
+        }
+        let value = resolve_argument(u, cx, *item)?;
+        let plain = u
+            .unary(value, "ref")
+            .or_else(|| u.unary(value, "const"))
+            .unwrap_or(value);
+        let ordinal = u.int(position as i64);
+        rows.push(u.compound(":", vec![application, ordinal, plain, ordinal]));
+    }
+    Ok(u.compound("ref", vec![application]))
 }
 
 fn walk(

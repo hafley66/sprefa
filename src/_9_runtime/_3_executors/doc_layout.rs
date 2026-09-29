@@ -104,7 +104,7 @@ fn doc_term(
             let [parts] = arguments.as_slice() else {
                 return None;
             };
-            let parts = u.as_list(*parts)?;
+            let parts = tuple_parts(u, *parts)?;
             Some(RcDoc::concat(
                 parts
                     .into_iter()
@@ -128,6 +128,16 @@ fn doc_term(
         "line" if arguments.is_empty() => Some(RcDoc::line()),
         _ => None,
     }
+}
+
+/// `application(tuple, Items)`, `ref`-wrapped or bare: the positional
+/// elements of one anonymous product.
+fn tuple_parts(u: &mut Universe, term: TermId) -> Option<Vec<TermId>> {
+    let term = u.unary(term, "ref").unwrap_or(term);
+    let [constructor, items] = u.args::<2>(term, "application")?;
+    let tuple = u.atom("tuple");
+    (u.get(constructor) == u.get(tuple)).then_some(())?;
+    u.as_list(items)
 }
 
 fn variant_name(u: &mut Universe, rows: &Store, constructor: TermId) -> Option<String> {

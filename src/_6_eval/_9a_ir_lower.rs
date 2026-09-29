@@ -375,6 +375,8 @@ fn compile_kernel(
     known_tail_inner: Option<ir::ColId>,
     known_proper_list: bool,
     minted_list_inner: &mut Option<ir::ColId>,
+    empty: TermId,
+    tuple: TermId,
 ) -> Result<(), &'static str> {
     let mut inputs = Vec::new();
     for arg in &goal.args {
@@ -744,6 +746,101 @@ fn compile_kernel(
             output[2] = Some(assert_width(*width));
             *width += 1;
         }
+        Kernel::Tuple => {
+            if inputs.len() < 2 {
+                return Err("tuple arity");
+            }
+            let cons = constructor(constructors, "9:2:[|]", 2, false)?;
+            let ref_ctor = constructor(constructors, "9:1:ref", 1, false)?;
+            let app_ctor = constructor(constructors, "9:2:application", 2, false)?;
+            let value_at = inputs.len() - 1;
+            if let Some(whole) = inputs[value_at] {
+                *current = join_constructor(b, *current, *width, ref_ctor, whole);
+                let application = assert_width(*width + 1);
+                *width += 2;
+                *current = join_constructor(b, *current, *width, app_ctor, application);
+                let constructor_col = assert_width(*width + 1);
+                let mut list = assert_width(*width + 2);
+                *width += 3;
+                let tuple_atom = mapped_ground(b, term_map, tuple);
+                *current = b.node(ir::Op::Join {
+                    inputs: vec![*current, tuple_atom],
+                    equivalences: vec![],
+                });
+                let tuple_col = assert_width(*width + 1);
+                *width += 2;
+                *current = b.mfp(
+                    *current,
+                    vec![equal_columns(constructor_col, tuple_col)],
+                    vec![],
+                    vec![],
+                );
+                for position in 0..value_at {
+                    *current = join_constructor(b, *current, *width, cons, list);
+                    let head = assert_width(*width + 1);
+                    list = assert_width(*width + 2);
+                    *width += 3;
+                    output[position] = Some(head);
+                    if let (Some(want), Arg::Var(v)) = (inputs[position], &goal.args[position]) {
+                        *current = b.mfp(
+                            *current,
+                            vec![equal_columns(want, head)],
+                            vec![],
+                            vec![],
+                        );
+                        let _ = v;
+                    }
+                }
+            } else {
+                let mut plain: Vec<ir::ColId> = Vec::with_capacity(value_at);
+                for position in 0..value_at {
+                    let Some(element) = inputs[position] else {
+                        *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
+                        return Ok(());
+                    };
+                    *current = join_constructor(b, *current, *width, semantic, element);
+                    plain.push(assert_width(*width + 1));
+                    *width += 2;
+                }
+                let empty_row = mapped_ground(b, term_map, empty);
+                *current = b.node(ir::Op::Join {
+                    inputs: vec![*current, empty_row],
+                    equivalences: vec![],
+                });
+                let mut list = assert_width(*width + 1);
+                *width += 2;
+                for element in plain.into_iter().rev() {
+                    *current = b.node(ir::Op::Mint {
+                        input: *current,
+                        functor: cons,
+                        args: vec![element, list],
+                    });
+                    list = assert_width(*width);
+                    *width += 1;
+                }
+                let tuple_atom = mapped_ground(b, term_map, tuple);
+                *current = b.node(ir::Op::Join {
+                    inputs: vec![*current, tuple_atom],
+                    equivalences: vec![],
+                });
+                let tuple_col = assert_width(*width + 1);
+                *width += 2;
+                *current = b.node(ir::Op::Mint {
+                    input: *current,
+                    functor: app_ctor,
+                    args: vec![tuple_col, list],
+                });
+                let application = assert_width(*width);
+                *width += 1;
+                *current = b.node(ir::Op::Mint {
+                    input: *current,
+                    functor: ref_ctor,
+                    args: vec![application],
+                });
+                output[value_at] = Some(assert_width(*width));
+                *width += 1;
+            }
+        }
         Kernel::Intern => {
             if inputs.len() != 3 {
                 return Err("intern arity");
@@ -941,6 +1038,8 @@ fn compile_fold_step_rule(
     bad_lists: ir::RelId,
     plain_lists: ir::RelId,
     term_map: ir::RelId,
+    empty: TermId,
+    tuple: TermId,
 ) -> Result<(ir::NodeId, ir::ColId), &'static str> {
     for goal in &rule.body {
         if let Some(kernel) = Kernel::of(u, goal.rel).filter(|kernel| *kernel != Kernel::Nil) {
@@ -960,6 +1059,8 @@ fn compile_fold_step_rule(
                 None,
                 false,
                 &mut minted_inner,
+                empty,
+                tuple,
             )?;
             continue;
         }
@@ -1037,6 +1138,7 @@ fn compile_rule(
     none: TermId,
     empty: TermId,
     nil: TermId,
+    tuple: TermId,
     all_rules: &[Rule],
 ) -> Result<CompiledRule, &'static str> {
     let mut current = b.get(unit);
@@ -1146,6 +1248,8 @@ fn compile_rule(
                 known_tail_inner,
                 known_proper_list,
                 &mut minted_inner,
+                empty,
+                tuple,
             )?;
             if known_proper_list {
                 if let Some(Arg::Var(tail)) = goal.args.get(1) {
@@ -1605,6 +1709,8 @@ fn compile_rule(
                     bad_lists,
                     plain_lists,
                     term_map,
+                    empty,
+                    tuple,
                 )?;
                 recursive_parts.push(
                     b.mfp(
@@ -1811,6 +1917,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let none = u.compound("const", vec![none_atom]);
     let empty = u.empty_list();
     let nil = u.compound("const", vec![empty]);
+    let tuple = u.atom("tuple");
     program.seeds.push(Row {
         rel: nil_rel,
         args: vec![nil],
@@ -2185,6 +2292,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             none,
             empty,
             nil,
+            tuple,
             &program.rules,
         )
         .map_err(|name| unsupported(u, name))?;

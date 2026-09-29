@@ -5,7 +5,7 @@ use super::api::Stop;
 use super::graph::{CheckerGraph, OriginArena};
 use super::kernel::primitive_name;
 use super::mode::{call_parts, goal_failures, head_safety, head_variables};
-use crate::_2_lower::kernel::kernel_relation;
+use crate::_2_lower::kernel::{kernel_relation, kernel_variadic};
 use crate::_6_eval::program::AggregateKind;
 use crate::_6_eval::term::{Term, TermId, Universe};
 use super::instance::instance_rows;
@@ -118,7 +118,7 @@ fn resolve_name_body(
     }
     if cx.graph.module_member(owner) {
         let label = atom_name(u, name).map(|s| s.to_string())?;
-        if kernel_relation(None, &label).is_some() {
+        if kernel_relation(None, &label).is_some() || kernel_variadic(None, &label) {
             let inner = u.compound("kernel", vec![name]);
             return Some(u.compound("ref", vec![inner]));
         }
@@ -166,6 +166,25 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
     if u.unary(target, "ref").is_none() {
         let reason = u.compound("not_relation", vec![label]);
         return Ok(CallResult::Error(reason));
+    }
+    let variadic = u
+        .unary(target, "ref")
+        .and_then(|inner| u.unary(inner, "kernel"))
+        .is_some_and(|name| {
+            atom_name(u, name).is_some_and(|label| kernel_variadic(None, label))
+        });
+    if variadic {
+        return match resolve_args(u, cx, &args) {
+            Ok(resolved) => {
+                let list = u.list(&resolved);
+                let term = u.compound("call", vec![target, list]);
+                Ok(CallResult::Ok {
+                    term,
+                    args: resolved,
+                })
+            }
+            Err(reason) => Ok(CallResult::Error(reason)),
+        };
     }
     let Some(arity) = cx.relations.get(&target).copied() else {
         let reason = u.compound("undeclared_relation", vec![label]);
