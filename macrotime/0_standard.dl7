@@ -62,7 +62,8 @@
 (: GeneratedSyntax
    (* (: invocation type)
       (: output_ordinal int)
-      (: template_path int)))
+      (: template_path int)
+      (: return (*))))
 
 (: plus_form
    (* (: invocation type)
@@ -82,11 +83,11 @@
 
 (<- (plus_form ?Form ?Output)
     (syntax_claim ?Form "<+")
-    (intern GeneratedSyntax (tuple ?Form 0 0) ?Output))
+    (GeneratedSyntax ?Form 0 0 ?Output))
 
 (<- (plus_operator ?Form ?Output)
     (syntax_claim ?Form "<+")
-    (intern GeneratedSyntax (tuple ?Form 0 1) ?Output))
+    (GeneratedSyntax ?Form 0 1 ?Output))
 
 (<- (node ?Output)
     (plus_form ?Form ?Output))
