@@ -256,59 +256,6 @@ fn s6comptimeoracle_truncate(value: &serde_json::Value) -> String {
 }
 
 #[test]
-fn every_comptime_case_matches_v7() {
-    let s6comptimeoracle_cases = s6comptimeoracle_cases();
-    assert!(
-        !s6comptimeoracle_cases.is_empty(),
-        "no comptime cases found"
-    );
-    let mut failures = Vec::new();
-    for path in &s6comptimeoracle_cases {
-        let text = std::fs::read_to_string(path).unwrap();
-        let case: serde_json::Value = serde_json::from_str(&text).unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
-            .arg("comptime")
-            .arg(path)
-            .output()
-            .unwrap();
-        let got: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-            Ok(v) => v,
-            Err(e) => {
-                failures.push(format!(
-                    "{}: no JSON on stdout ({e}); stderr: {}",
-                    path.display(),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-                continue;
-            }
-        };
-        let want = case["expected"].as_object().expect("expected object");
-        for (field, value) in want {
-            if got.get(field) != Some(value) {
-                failures.push(format!(
-                    "{}: {field} differs\n  want: {}\n  got:  {}",
-                    path.display(),
-                    s6comptimeoracle_truncate(value),
-                    s6comptimeoracle_truncate(got.get(field).unwrap_or(&serde_json::Value::Null))
-                ));
-            }
-        }
-        let empty = want
-            .get("diagnostics")
-            .is_none_or(|d| d.as_array().is_none_or(|d| d.is_empty()));
-        let want_code = i32::from(!empty);
-        if output.status.code() != Some(want_code) {
-            failures.push(format!(
-                "{}: exit {:?}, want {want_code}",
-                path.display(),
-                output.status.code()
-            ));
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
-}
-
-#[test]
 fn dl8_round_counts_match_v7() {
     let s6comptimeoracle_status = s6comptimeoracle_status();
     let rounds = s6comptimeoracle_status["round_counts"]

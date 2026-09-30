@@ -2,7 +2,7 @@
 //! clean program. Port of `1_checker.pl:617-725`.
 //!
 //! `kernel_relation_keys/2` (`:629`) is NOT the lowerer's `kernel_keys/1`
-//! (`_2_lower/_9_kernel.rs:51`): `nil` is `[[0]]` here and `[[]]` there, and
+//! (`_2_lower/_9_kernel.rs:51`): `str.nil` is `[[0]]` here and `[[]]` there, and
 //! `def`, `head`, `body`, `node`, `module`, `product` and `sum` exist only
 //! here. `CheckedNodes` is an unsorted append at `:423`, so `COMPARISONS`
 //! keeps the `integer_comparison/3` declaration order of
@@ -15,15 +15,13 @@ pub const COMPARISONS: [&str; 6] = ["lt", "le", "eq", "ne", "ge", "gt"];
 pub const PRIMITIVES: [&str; 6] = ["int", "float", "bool", "str", "any", "type"];
 
 /// `0_lowerer.pl:1958-1973`, in declaration order: `(owner, label, arity)`.
-pub const KERNEL_RELATIONS: [(Option<&str>, &str, i64); 22] = [
+pub const KERNEL_RELATIONS: [(Option<&str>, &str, i64); 20] = [
     (None, "node", 1),
     (None, "module", 1),
     (None, "product", 1),
     (None, "sum", 1),
     (None, ":", 4),
     (None, "edge_snapshot", 4),
-    (None, "nil", 1),
-    (None, "cons", 3),
     (None, "edge_ref", 3),
     (None, "intern", 3),
     (None, "intern_snapshot", 3),
@@ -77,8 +75,8 @@ pub fn is_comparison(owner: Option<&str>, label: &str) -> bool {
 pub fn kernel_relation_keys(owner: Option<&str>, label: &str) -> Vec<Vec<i64>> {
     match (owner, label) {
         (None, ":" | "edge_snapshot") => vec![vec![0, 1], vec![0, 3]],
-        (None | Some("str"), "nil") => vec![vec![0]],
-        (None | Some("str"), "cons") => vec![vec![0, 1], vec![2]],
+        (Some("str"), "nil") => vec![vec![0]],
+        (Some("str"), "cons") => vec![vec![0, 1], vec![2]],
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![vec![0, 1]],
         (Some("int"), "add") | (None, "effect") | (Some("any"), "lt") => vec![vec![0, 1]],
         _ if is_comparison(owner, label) => vec![vec![0, 1]],
@@ -180,8 +178,6 @@ pub fn kernel_graph(u: &mut Universe) -> (Vec<TermId>, Vec<TermId>) {
         "sum",
         ":",
         "edge_snapshot",
-        "nil",
-        "cons",
         "edge_ref",
         "intern",
         "intern_snapshot",
@@ -209,10 +205,6 @@ pub fn kernel_graph(u: &mut Universe) -> (Vec<TermId>, Vec<TermId>) {
         edges.push(edge(u, name, "target", any, 2));
         edges.push(edge(u, name, "index", int, 3));
     }
-    edges.push(edge(u, "nil", "return", any, 0));
-    edges.push(edge(u, "cons", "head", any, 0));
-    edges.push(edge(u, "cons", "tail", any, 1));
-    edges.push(edge(u, "cons", "return", any, 2));
     edges.push(edge(u, "edge_ref", "owner", kind, 0));
     edges.push(edge(u, "edge_ref", "label", any, 1));
     edges.push(edge(u, "edge_ref", "return", kind, 2));

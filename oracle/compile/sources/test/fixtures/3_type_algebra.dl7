@@ -30,7 +30,7 @@
 (<- (conformance_attempt MissingName Named)
     (Conforms MissingName Named ?Proof))
 
-; Contract conjunction is a closed cons list built by an ordinary relation.
+; Contract conjunction is a closed tuple built by an ordinary relation.
 (: user_contracts
    (* (: return any)))
 
@@ -67,8 +67,7 @@
 
 (<- (NamedBox ?Source ?Result)
     (Conforms ?Source Named ?Proof)
-    (nil ?Empty)
-    (cons ?Source ?Empty ?Arguments)
+    (tuple ?Source ?Arguments)
     (intern NamedBox ?Arguments ?Result))
 
 (: UserBox (NamedBox User))

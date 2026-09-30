@@ -1005,7 +1005,7 @@ fn rung_8_effects() {
 fn rung_9_comptime_rounds() {
     for engine in ENGINES {
         let empty = json!({"nodes":[],"edges":[],"relations":[],"rules":[],"seeds":[],"depends":[],"strata":[]});
-        let case = json!({"entry":"evaluate_checked","input":{"checked":empty,"replay":[{"deferred":false,"facts_len":1,"generated_len":0,"checked":empty,"diagnostics":[]}]}});
+        let case = json!({"entry":"evaluate_checked","input":{"checked":empty,"replay":[{"deferred":false,"facts_len":0,"generated_len":0,"checked":empty,"diagnostics":[]}]}});
         let path = std::env::temp_dir().join(format!(
             "dl8-ladder-comptime-{}-{}.json",
             std::process::id(),
@@ -1122,11 +1122,11 @@ fn rung_11_handwritten_oracle_constructs() {
     // expected outputs stay in oracle/eval until the deletion commit. Each
     // program runs with zero, one, and all of its original input rows.
     let cases: [(&str, usize, &[(&str, usize)]); 12] = [
-        ("0_negation_tuple_intern", 6, &[("upper", 1)]),
-        ("1_count", 7, &[("region_count", 2), ("big_region", 1)]),
+        ("0_negation_tuple_intern", 5, &[("upper", 1)]),
+        ("1_count", 6, &[("region_count", 2), ("big_region", 1)]),
         (
             "2_tuple_lists",
-            12,
+            11,
             &[
                 ("built", 2),
                 ("first", 1),
@@ -1138,7 +1138,7 @@ fn rung_11_handwritten_oracle_constructs() {
         ),
         (
             "3_int_compare",
-            23,
+            22,
             &[
                 ("less", 3),
                 ("not_less", 6),
@@ -1151,36 +1151,36 @@ fn rung_11_handwritten_oracle_constructs() {
         ),
         (
             "4_mixed_lower_recursion",
-            17,
+            16,
             &[("open", 3), ("reach", 3), ("unreached", 1)],
         ),
         (
             "5_edge_ref",
-            10,
+            9,
             &[("edge_of", 2), ("tagged", 2), ("literal_vars", 0)],
         ),
-        ("6_nonground_negation", 5, &[("free", 1), ("lonely", 0)]),
+        ("6_nonground_negation", 4, &[("free", 1), ("lonely", 0)]),
         (
             "7_repeated_vars_and_arity",
-            14,
+            13,
             &[("loop", 1), ("triple", 4), ("fact", 1), ("pinned", 2)],
         ),
-        ("8_deep_terms_order", 31, &[("seen", 15)]),
+        ("8_deep_terms_order", 30, &[("seen", 15)]),
         (
             "9_demand_recursion",
-            19,
+            18,
             &[("chain", 7), ("reaches_end", 1), ("wrap_twice", 2)],
         ),
         (
             "10_aggregate_tables_only",
-            8,
+            7,
             &[
                 ("tuple_count", 0),
                 ("item_count", 1),
                 ("pair_count", 3),
             ],
         ),
-        ("11_intern_row_reuse", 9, &[("made", 2), ("who_made", 2)]),
+        ("11_intern_row_reuse", 8, &[("made", 2), ("who_made", 2)]),
     ];
     for (stem, full_closure, expected_relations) in cases {
         let path = format!("{}/fixtures/ladder/{stem}.json", env!("CARGO_MANIFEST_DIR"));

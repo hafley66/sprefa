@@ -3,7 +3,7 @@
 //! `kernel_relation_keys_for_expression/2` (`:1617-1627`) and
 //! `kernel_return_position/2` (`:1902-1906`). `integer_comparison/3` is
 //! `v7/src/1_libtime/0_evaluator.pl`.
-//! Keys are `(owner, label)`: untyped `(None, "cons")` is `kernel(cons)`,
+//! Keys are `(owner, label)`: untyped `(None, "intern")` is `kernel(intern)`,
 //! typed `(Some("int"), "add")` is `kernel(int, add)`.
 
 pub const INTEGER_COMPARISONS: [&str; 6] = ["lt", "le", "gt", "ge", "eq", "ne"];
@@ -16,9 +16,9 @@ pub fn is_integer_comparison(owner: Option<&str>, label: &str) -> bool {
 /// `:1958`. Arity of a kernel relation, or `None` when the pair is not one.
 pub fn kernel_relation(owner: Option<&str>, label: &str) -> Option<u32> {
     let arity = match (owner, label) {
-        (None, "node" | "module" | "product" | "sum" | "nil") => 1,
+        (None, "node" | "module" | "product" | "sum") => 1,
         (None, ":" | "edge_snapshot" | "body") => 4,
-        (None, "cons" | "edge_ref" | "intern" | "intern_snapshot") => 3,
+        (None, "edge_ref" | "intern" | "intern_snapshot") => 3,
         (None, "effect" | "def" | "head") => 2,
         (Some("int"), "add") => 3,
         (Some("any"), "lt") => 2,
@@ -44,10 +44,10 @@ pub fn kernel_slot_label(owner: Option<&str>, label: &str, index: u32) -> Option
         (None, ":" | "edge_snapshot", 1) => "name",
         (None, ":" | "edge_snapshot", 2) => "target",
         (None, ":" | "edge_snapshot", 3) => "index",
-        (None | Some("str"), "nil", 0) => "return",
-        (None | Some("str"), "cons", 0) => "head",
-        (None | Some("str"), "cons", 1) => "tail",
-        (None | Some("str"), "cons", 2) => "return",
+        (Some("str"), "nil", 0) => "return",
+        (Some("str"), "cons", 0) => "head",
+        (Some("str"), "cons", 1) => "tail",
+        (Some("str"), "cons", 2) => "return",
         (None, "edge_ref" | "intern" | "intern_snapshot", 2) => "return",
         (None, "edge_ref", 0) => "owner",
         (None, "edge_ref", 1) => "label",
@@ -72,8 +72,8 @@ pub fn kernel_slot_label(owner: Option<&str>, label: &str, index: u32) -> Option
 pub fn kernel_keys(owner: Option<&str>, label: &str) -> Vec<Vec<u32>> {
     match (owner, label) {
         (None, ":" | "edge_snapshot") => vec![vec![0, 1], vec![0, 3]],
-        (None | Some("str"), "nil") => vec![vec![]],
-        (None | Some("str"), "cons") => vec![vec![0, 1], vec![2]],
+        (Some("str"), "nil") => vec![vec![]],
+        (Some("str"), "cons") => vec![vec![0, 1], vec![2]],
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![vec![0, 1]],
         (Some("int"), "add") | (None, "effect") | (Some("any"), "lt") => vec![vec![0, 1]],
         _ if is_integer_comparison(owner, label) => vec![vec![0, 1]],
@@ -85,8 +85,8 @@ pub fn kernel_keys(owner: Option<&str>, label: &str) -> Vec<Vec<u32>> {
 /// `:1902`. At most one position per kernel op.
 pub fn kernel_return_positions(owner: Option<&str>, label: &str) -> Vec<u32> {
     match (owner, label) {
-        (None | Some("str"), "nil") => vec![0],
-        (None | Some("str"), "cons") => vec![2],
+        (Some("str"), "nil") => vec![0],
+        (Some("str"), "cons") => vec![2],
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![2],
         (Some("int"), "add") => vec![2],
         (Some(owner), _) => str_op_inputs(owner, label)

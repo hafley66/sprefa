@@ -808,7 +808,7 @@ struct Flush {
 /// A served goal (a relation the outside answers, with no rule of its own)
 /// writes `effect(Relation, Application)` and an `intern_snapshot` row on
 /// every evaluation, hit or miss (`Eval::write_effect`). The twin rule's
-/// body is the goal's prefix plus the `cons` chain and `intern` call that
+/// body is the goal's prefix plus the `tuple` and `intern` goals that
 /// build the application; an unbound argument is `const(none)`.
 fn with_effects(u: &mut Universe, program: &Program) -> Program {
     let ruled: HashSet<TermId> = program.rules.iter().map(|rule| rule.rel).collect();
@@ -871,8 +871,7 @@ fn with_effects(u: &mut Universe, program: &Program) -> Program {
         let kernel = u.compound("kernel", vec![name]);
         u.compound("ref", vec![kernel])
     };
-    let nil_rel = kernel(u, "nil");
-    let cons_rel = kernel(u, "cons");
+    let tuple_rel = kernel(u, "tuple");
     let intern_rel = kernel(u, "intern");
     let var = |index: usize| Arg::Var(super::program::VarId(index as u32));
     for rule in &program.rules {
@@ -896,21 +895,14 @@ fn with_effects(u: &mut Universe, program: &Program) -> Program {
                         _ => Arg::Ground(none),
                     })
                     .collect();
-                let mut list = fresh(u, &mut vars, "nil");
+                let list = fresh(u, &mut vars, "tuple");
+                let mut elements = cells.clone();
+                elements.push(list.clone());
                 body.push(Goal {
                     polarity: Polarity::Positive,
-                    rel: nil_rel,
-                    args: vec![list.clone()],
+                    rel: tuple_rel,
+                    args: elements,
                 });
-                for cell in cells.iter().rev() {
-                    let next = fresh(u, &mut vars, "cons");
-                    body.push(Goal {
-                        polarity: Polarity::Positive,
-                        rel: cons_rel,
-                        args: vec![cell.clone(), list.clone(), next.clone()],
-                    });
-                    list = next;
-                }
                 let application = fresh(u, &mut vars, "app");
                 body.push(Goal {
                     polarity: Polarity::Positive,
@@ -1298,22 +1290,6 @@ fn flush_commit(connection: &Connection, data: Flush) -> rusqlite::Result<()> {
 
 /// `evaluate` over sqlite: the universe moves into the shared arena for the
 /// run and moves back after the connection drops.
-/// The kernel `nil` bootstrap the Rust engine plants before fixing: one row
-/// holding the empty list.
-fn nil_seed(u: &mut Universe) -> Row {
-    let rel = {
-        let n = u.atom("nil");
-        let k = u.compound("kernel", vec![n]);
-        u.compound("ref", vec![k])
-    };
-    let e = u.empty_list();
-    let arg = u.compound("const", vec![e]);
-    Row {
-        rel,
-        args: vec![arg],
-    }
-}
-
 /// A recently evaluated seed state and its materialized view.
 struct Cached {
     rules: u64,
@@ -1357,8 +1333,6 @@ pub fn evaluate_sqlite(
     fx: &mut dyn FnMut(super::Trace),
 ) -> super::evaluate::Closure {
     let mut program = program.clone();
-    let nil = nil_seed(u);
-    program.seeds.push(nil);
     let before = u.terms.len();
     let rules = rules_fingerprint(&program);
     tracing::debug!(target: "dl8::eval", rules, rule_count = program.rules.len(), seeds = program.seeds.len(), "evaluate_sqlite");
@@ -1606,9 +1580,7 @@ mod incremental {
             let mut u = Universe::new();
             let mut program =
                 program_from_json(&mut u, value.get("program").unwrap_or(&value)).unwrap();
-            let nil = nil_seed(&mut u);
-            program.seeds.push(nil);
-            if program.seeds.len() < 2 {
+            if program.seeds.is_empty() {
                 continue;
             }
             let arena = Arc::new(Mutex::new(std::mem::take(&mut u)));

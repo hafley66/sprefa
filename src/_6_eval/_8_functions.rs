@@ -3,7 +3,7 @@
 //! kernel has no row, so the functions never reimplement kernel semantics.
 
 use super::kernel::{
-    any_lt_row, cons_row, edge_ref_row, int_dot_add_row, intern_row, str_cons_row, str_op_row,
+    any_lt_row, edge_ref_row, int_dot_add_row, intern_row, str_cons_row, str_op_row,
     tuple_row,
 };
 use super::str_ops::STR_OPS;
@@ -71,9 +71,7 @@ fn row(
 /// Every `dl_*` function, bound to one arena. Register on every connection
 /// before any view reads them.
 pub fn register(connection: &Connection, arena: Arc<Mutex<Universe>>) -> rusqlite::Result<()> {
-    let deconstruct: [(&str, usize, Solve); 4] = [
-        ("dl_head", 0, cons_row),
-        ("dl_tail", 1, cons_row),
+    let deconstruct: [(&str, usize, Solve); 2] = [
         ("dl_str_first", 0, str_cons_row),
         ("dl_str_rest", 1, str_cons_row),
     ];
@@ -83,8 +81,7 @@ pub fn register(connection: &Connection, arena: Arc<Mutex<Universe>>) -> rusqlit
             (args.len() == 1).then(|| row(args, out, solve, &arena))?
         })?;
     }
-    let construct: [(&str, Solve); 5] = [
-        ("dl_cons", cons_row),
+    let construct: [(&str, Solve); 4] = [
         ("dl_str_cat", str_cons_row),
         ("dl_edge_ref", edge_ref_row),
         ("dl_application", intern_row),
@@ -180,32 +177,5 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         let arena = Arc::new(Mutex::new(Universe::new()));
         register(&connection, arena).unwrap();
-    }
-}
-
-#[cfg(test)]
-mod probe {
-    use super::*;
-
-    #[test]
-    fn head_and_tail_of_a_seed_list() {
-        let connection = Connection::open_in_memory().unwrap();
-        let mut u = Universe::new();
-        let a = u.atom("a");
-        let a = u.compound("const", vec![a]);
-        let b = u.atom("b");
-        let b = u.compound("const", vec![b]);
-        let items = u.list(&[a, b]);
-        let list = u.compound("const", vec![items]);
-        let arena = Arc::new(Mutex::new(u));
-        register(&connection, arena.clone()).unwrap();
-        let head: Option<i64> = connection
-            .query_row(&format!("SELECT dl_head({})", list.0), [], |r| r.get(0))
-            .unwrap();
-        let tail: Option<i64> = connection
-            .query_row(&format!("SELECT dl_tail({})", list.0), [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(head, Some(a.0 as i64), "head");
-        assert!(tail.is_some(), "tail");
     }
 }

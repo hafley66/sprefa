@@ -195,7 +195,7 @@ fn shared_cte_name(catalog: &Catalog, component: &[Key]) -> String {
     format!("{}_r{}", catalog.name(first.0), first.1)
 }
 
-/// `ref(kernel(cons))` as `cons`, `ref(kernel(str, cons))` as `str.cons`.
+/// `ref(kernel(intern))` as `intern`, `ref(kernel(str, cons))` as `str.cons`.
 fn kernel_label(u: &Universe, rel: TermId) -> Option<String> {
     let inner = u.unary(rel, "ref")?;
     if let Some([owner, label]) = u.args::<2>(inner, "kernel") {
@@ -860,9 +860,7 @@ impl<'a> Lowering<'a> {
             let admitted = match kernel {
                 Some(Kernel::Int(_) | Kernel::IntAdd | Kernel::TermLt) => true,
                 Some(
-                    Kernel::Nil
-                    | Kernel::StrNil
-                    | Kernel::Cons
+                    Kernel::StrNil
                     | Kernel::StrCons
                     | Kernel::Tuple
                     | Kernel::Str(_)
@@ -976,7 +974,7 @@ impl<'a> Lowering<'a> {
     fn body(&self, rule: &Rule) -> Result<(Scope, Vec<Head>), Unsupported> {
         let mut scope = Scope::new();
         let mut vars: HashMap<usize, Value> = HashMap::new();
-        // An aggregate body matches stored rows only (`nil` is stored); a
+        // An aggregate body matches stored rows only (no kernel row is stored); a
         // positive kernel goal there has no row, as in `Eval::tables_only`.
         let tables_only = self.catalog.reach == KernelReach::Eval && rule.is_aggregate();
         for goal in &rule.body {
@@ -985,7 +983,7 @@ impl<'a> Lowering<'a> {
                 (Polarity::Positive, Source::Kernel(kernel)) => {
                     let condition =
                         self.kernel(&mut scope, rule, &mut vars, goal, *kernel, true)?;
-                    if tables_only && !matches!(kernel, Kernel::Nil) {
+                    if tables_only {
                         scope.conditions.push("0".to_string());
                     }
                     scope.conditions.push(condition);
@@ -1184,12 +1182,9 @@ impl<'a> Lowering<'a> {
     ) -> Result<String, Unsupported> {
         let mut guards = Vec::new();
         let condition = match kernel {
-            Kernel::Nil | Kernel::StrNil if self.catalog.reach == KernelReach::Eval => {
+            Kernel::StrNil if self.catalog.reach == KernelReach::Eval => {
                 self.arity(goal, 1)?;
-                let literal = match kernel {
-                    Kernel::Nil => self.catalog.empty_list_cell,
-                    _ => self.catalog.empty_string_cell,
-                };
+                let literal = self.catalog.empty_string_cell;
                 match self.argument_cell(scope, rule, vars, &goal.args[0])? {
                     Hold::Cell(cell) => guards.push(format!("{cell} = {}", literal.0)),
                     Hold::Free(at) if positive => {
@@ -1205,12 +1200,9 @@ impl<'a> Lowering<'a> {
                 }
                 "1".to_string()
             }
-            Kernel::Cons | Kernel::StrCons if self.catalog.reach == KernelReach::Eval => {
+            Kernel::StrCons if self.catalog.reach == KernelReach::Eval => {
                 self.arity(goal, 3)?;
-                let (make, first, rest) = match kernel {
-                    Kernel::Cons => ("dl_cons", "dl_head", "dl_tail"),
-                    _ => ("dl_str_cat", "dl_str_first", "dl_str_rest"),
-                };
+                let (make, first, rest) = ("dl_str_cat", "dl_str_first", "dl_str_rest");
                 match self.argument_cell(scope, rule, vars, &goal.args[2])? {
                     Hold::Free(at) => {
                         let Some(head) =

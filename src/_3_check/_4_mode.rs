@@ -203,7 +203,7 @@ fn check_positive(
                 Some(underconstrained(u, name, &[&[0, 1]]))
             }
         }
-        Some(name @ ("cons" | "str.cons")) if arguments.len() == 3 => {
+        Some(name @ "str.cons") if arguments.len() == 3 => {
             let ready = argument_is_bound(u, arguments[2], bound)
                 || (argument_is_bound(u, arguments[0], bound)
                     && argument_is_bound(u, arguments[1], bound));
@@ -279,7 +279,7 @@ fn check_negative(
     if let Some(name) = kernel_name(u, relation) {
         if matches!(
             name.as_str(),
-            "cons" | "edge_ref" | "intern" | "nil" | "str.cons" | "str.nil" | "tuple"
+            "edge_ref" | "intern" | "str.cons" | "str.nil" | "tuple"
         ) || str_op_name(&name).is_some_and(|(inputs, arity)| arity > inputs)
         {
             let name = u.atom(&name);
