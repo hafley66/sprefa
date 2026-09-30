@@ -759,6 +759,44 @@ fn rung_6_kernels() {
 }
 
 #[test]
+fn rung_6_tuple_feeds_intern() {
+    let kernel = |name: &str, args: Vec<Value>| {
+        json!({
+            "rel":{"f":"ref","args":[{"f":"kernel","args":[{"a":name}]}]},
+            "args":args,"polarity":"positive"
+        })
+    };
+    let seed = call(
+        "field",
+        vec![
+            json!({"f":"ref","args":[{"f":"node","args":[1]}]}),
+            json!({"f":"const","args":[{"a":"name"}]}),
+        ],
+    );
+    let rules = vec![rule(
+        "made",
+        vec![variable(3)],
+        vec![
+            goal("field", vec![variable(0), variable(1)], false),
+            kernel("tuple", vec![variable(0), variable(1), variable(2)]),
+            kernel(
+                "intern",
+                vec![json!({"f":"ref","args":[{"a":"pair"}]}), variable(2), variable(3)],
+            ),
+        ],
+    )];
+    let mut reference = None;
+    for engine in ENGINES {
+        let (closure, _, _) = run(6, 1, engine, program(vec![seed.clone()], rules.clone()));
+        assert_eq!(rows(&closure, "made").len(), 1, "engine={engine}");
+        match &reference {
+            None => reference = Some(closure),
+            Some(want) => assert_eq!(&closure, want, "engine={engine}"),
+        }
+    }
+}
+
+#[test]
 fn rung_6_scalar_kernel_edges() {
     let bare = |name: &str, args: Vec<Value>| {
         json!({
