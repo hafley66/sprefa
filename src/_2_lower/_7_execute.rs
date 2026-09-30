@@ -344,7 +344,7 @@ fn tuple_position_rules(
         if !elements.iter().all(|e| bound(cx, *e)) {
             continue;
         }
-        let handed_on = goals[at + 1..].iter().any(|later| {
+        let handed_to_relation = goals[at + 1..].iter().any(|later| {
             let Some(("pending_goal", later_parts)) = cx.u.functor(*later) else {
                 return false;
             };
@@ -363,6 +363,7 @@ fn tuple_position_rules(
                 && !super::kernel::kernel_variadic(None, &label)
                 && term_mentions(cx, later_parts[1], *whole)
         });
+        let handed_on = handed_to_relation || handed_to_generic(cx, &goals[at + 1..], *whole);
         if !handed_on {
             continue;
         }
@@ -379,6 +380,42 @@ fn tuple_position_rules(
         }
     }
     out
+}
+
+/// A tuple that is a column of a generic application: an element of the
+/// argument tuple a later `intern` or `intern_snapshot` of a generic callee
+/// reads.
+fn handed_to_generic(cx: &mut Cx, later: &[TermId], whole: TermId) -> bool {
+    let calls: Vec<(String, Vec<TermId>)> = later
+        .iter()
+        .filter_map(|goal| {
+            let ("pending_goal", parts) = cx.u.functor(*goal)? else {
+                return None;
+            };
+            let ("call", call) = cx.u.functor(parts[1])? else {
+                return None;
+            };
+            let [_, label] = cx.u.args::<2>(call[0], "name")?;
+            let label = cx.u.functor_or_atom(label)?.0.to_string();
+            Some((label, cx.u.as_list(call[1])?))
+        })
+        .collect();
+    calls.iter().any(|(label, arguments)| {
+        let Some((argument_tuple, columns)) = arguments.split_last() else {
+            return false;
+        };
+        label == "tuple"
+            && columns.contains(&whole)
+            && calls.iter().any(|(reader, read)| {
+                matches!(reader.as_str(), "intern" | "intern_snapshot")
+                    && read.len() == 3
+                    && read[1] == *argument_tuple
+                    && cx
+                        .u
+                        .unary(read[0], "ref")
+                        .is_some_and(|callee| super::generic::is_generic_callable(cx, callee))
+            })
+    })
 }
 
 /// Nesting depth searched inside one lowered goal term.

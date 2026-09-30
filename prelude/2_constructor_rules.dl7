@@ -6,20 +6,6 @@
     (intern_snapshot Key ?Arguments ?Result)
     (tuple ?Name ?Options ?Arguments))
 
-(<- (Pick ?Source ?Names ?Result)
-    (intern Pick (tuple ?Source ?Names) ?Result))
-
-(<- (Pick ?Source ?Names ?Result)
-    (intern_snapshot Pick ?Arguments ?Result)
-    (tuple ?Source ?Names ?Arguments))
-
-(<- (Exclude ?Source ?Names ?Result)
-    (intern Exclude (tuple ?Source ?Names) ?Result))
-
-(<- (Exclude ?Source ?Names ?Result)
-    (intern_snapshot Exclude ?Arguments ?Result)
-    (tuple ?Source ?Names ?Arguments))
-
 ; HistoryV1 options are ordinary typed data. The first version accepts copy
 ; mode plus a source contract and interns source plus options as the
 ; specialization identity.
