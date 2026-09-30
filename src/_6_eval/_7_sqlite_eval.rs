@@ -1100,7 +1100,10 @@ fn with_demand_selection(
                                 level,
                             ));
                         }
-                        if seeded.contains(&goal.rel) {
+                        // Under the IR bridge every product has a source that
+                        // served answers and frontiers write after lowering,
+                        // so the adorned copy reads the product too.
+                        if seeded.contains(&goal.rel) || strata.is_some() {
                             // The pass-through reads the product's own table
                             // and is never itself a demanded call site.
                             let arity = goal.args.len();

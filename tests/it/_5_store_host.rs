@@ -1004,6 +1004,35 @@ pub fn ir_fs_json_answers_once_per_request() {
     }
 }
 
+/// A rule that writes `:` from a built generic and a generic read back with a
+/// free column makes `:` a demanded product; the answers `fs.json` writes to
+/// `:` reach its readers on every engine that serves.
+#[test]
+pub fn served_rows_reach_readers_of_a_demanded_product() {
+    let directory = s20hosts_scratch("generic-readback");
+    let document_path = std::fs::canonicalize(s20hosts_fixture("todo.json")).unwrap();
+    let path = document_path.to_string_lossy().to_string();
+    let compiled = s20hosts_compile(&directory, "6_generic_readback.dl7", &[("__DOC__", &path)]);
+    for engine in ["rust", "ir:dd", "ir:sqlite"] {
+        let (out, code) = s20hosts_run(
+            &compiled.program,
+            &["--serve", "fs.json"],
+            &[("DL8_ENGINE", engine)],
+        );
+        assert_eq!(code, 0, "{engine}: diagnostics {}", out["diagnostics"]);
+        assert_eq!(
+            s20hosts_rows(&out, &compiled.names, "Member").len(),
+            5,
+            "{engine}: document member rows"
+        );
+        assert_eq!(
+            s20hosts_rows(&out, &compiled.names, "Edge").len(),
+            6,
+            "{engine}: edge rows"
+        );
+    }
+}
+
 #[test]
 pub fn ir_retracting_a_goal_retracts_its_request_and_answers() {
     let directory = s20hosts_scratch("ir-fs-json-retract");
