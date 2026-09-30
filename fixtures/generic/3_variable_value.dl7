@@ -1,0 +1,5 @@
+(Box: (* (Item: type) (return: (* (item: Item)))))
+(Names: (* (: name str)))
+(Names "a")
+(Boxed: (* (: name str) (: made any)))
+(<- (Boxed ?Name (Box ?Name)) (Names ?Name))

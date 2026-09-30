@@ -23,6 +23,20 @@ pub fn generic_bind_edge(
 /// Nesting of generic applications inside generic arguments.
 const APPLICATION_DEPTH: usize = 16;
 
+/// A product whose one `return` edge targets an `owner` expression.
+pub fn is_generic_callable(cx: &mut Cx, callable: TermId) -> bool {
+    let return_atom = cx.atom("return");
+    let [return_index] = cx.edges.return_indices(callable, return_atom)[..] else {
+        return false;
+    };
+    cx.edges
+        .owned(callable)
+        .into_iter()
+        .find(|edge| edge.index == return_index && edge.name == return_atom)
+        .and_then(|edge| cx.u.unary(edge.target, "target"))
+        .is_some_and(|inner| cx.u.functor(inner).is_some_and(|(name, _)| name == "owner"))
+}
+
 /// `application(Callee, Args)` for a form that applies a generic product;
 /// an argument that is itself such a form becomes a nested application.
 fn generic_application(cx: &mut Cx, owner: TermId, payload: TermId, depth: usize) -> Option<TermId> {
@@ -41,18 +55,10 @@ fn generic_application(cx: &mut Cx, owner: TermId, payload: TermId, depth: usize
         .functor_or_atom(found_kind)
         .is_some_and(|(kind, _)| kind == "product");
     let callable = cx.u.unary(found_target, "target").filter(|_| is_product)?;
-    let return_atom = cx.atom("return");
-    let [return_index] = cx.edges.return_indices(callable, return_atom)[..] else {
+    if !is_generic_callable(cx, callable) {
         return None;
-    };
-    let returns_node = cx
-        .edges
-        .owned(callable)
-        .into_iter()
-        .find(|edge| edge.index == return_index && edge.name == return_atom)
-        .and_then(|edge| cx.u.unary(edge.target, "target"))
-        .is_some_and(|inner| cx.u.functor(inner).is_some_and(|(name, _)| name == "owner"));
-    if !returns_node || items.len() as i64 != cx.edges.arity(callable) {
+    }
+    if items.len() as i64 != cx.edges.arity(callable) {
         return None;
     }
     let mut values = Vec::with_capacity(items.len() - 1);
