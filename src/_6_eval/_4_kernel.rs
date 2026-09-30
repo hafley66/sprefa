@@ -22,6 +22,7 @@ pub enum Kernel {
     CountStep,
     MinStep,
     MaxStep,
+    Tuple,
 }
 
 /// `ref(kernel(Name))`.
@@ -90,6 +91,7 @@ impl Kernel {
             (None, "cons") => Kernel::Cons,
             (None, "edge_ref") => Kernel::EdgeRef,
             (None, "intern") => Kernel::Intern,
+            (None, "tuple") => Kernel::Tuple,
             (None, "count_step") => Kernel::CountStep,
             (None, "min_step") => Kernel::MinStep,
             (None, "max_step") => Kernel::MaxStep,
@@ -156,6 +158,7 @@ pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<Te
         Kernel::CountStep => count_step_row(u, args),
         Kernel::MinStep => extremum_step_row(u, args, Ordering::Less),
         Kernel::MaxStep => extremum_step_row(u, args, Ordering::Greater),
+        Kernel::Tuple => tuple_row(u, args),
     };
     solution.map(|row| vec![row]).unwrap_or_default()
 }
@@ -227,11 +230,7 @@ pub fn str_cons_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<Ter
 }
 
 /// The bound `const` inputs of a string op, as owned text and integer slots.
-fn str_inputs(
-    u: &Universe,
-    op: StrOp,
-    args: &[Option<TermId>],
-) -> Option<(Vec<String>, Vec<i64>)> {
+fn str_inputs(u: &Universe, op: StrOp, args: &[Option<TermId>]) -> Option<(Vec<String>, Vec<i64>)> {
     let kinds = op.args();
     let mut texts = Vec::with_capacity(kinds.len());
     let mut ints = Vec::with_capacity(kinds.len());
@@ -295,21 +294,75 @@ pub fn edge_ref_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<Ter
     Some(vec![owner_tagged, label, result])
 }
 
+/// `tuple(Element.., Value)`: with every element bound, `Value` is
+/// `ref(application(tuple, [elements]))`; with `Value` bound, its elements.
+/// A tuple element as stored in the argument vector: its `ref` or `const` tag
+/// is dropped.
+fn tuple_element(u: &Universe, tagged: TermId) -> TermId {
+    u.unary(tagged, "ref")
+        .or_else(|| u.unary(tagged, "const"))
+        .unwrap_or(tagged)
+}
+
+pub fn tuple_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    let (value, elements) = args.split_last()?;
+    if let Some(whole) = *value {
+        let application = u.unary(whole, "ref")?;
+        let [constructor, list] = u.args::<2>(application, "application")?;
+        let tuple = u.atom("tuple");
+        if u.get(constructor) != u.get(tuple) {
+            return None;
+        }
+        let items = u.as_list(list)?;
+        if items.len() != elements.len() {
+            return None;
+        }
+        let mut row = items;
+        row.push(whole);
+        return Some(row);
+    }
+    let mut tagged = Vec::with_capacity(elements.len());
+    for element in elements {
+        tagged.push((*element)?);
+    }
+    let list = u.list(&tagged);
+    let constructor = u.atom("tuple");
+    let application = u.compound("application", vec![constructor, list]);
+    let whole = u.compound("ref", vec![application]);
+    let mut row: Vec<TermId> = elements.iter().filter_map(|e| *e).collect();
+    row.push(whole);
+    Some(row)
+}
+
 pub fn intern_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
     if args.len() != 3 {
         return None;
     }
     let (ctor_tagged, arguments) = (args[0]?, args[1]?);
     let ctor = u.unary(ctor_tagged, "ref")?;
-    let tagged_list = u.as_list(u.unary(arguments, "const")?)?;
-    let plain: Vec<TermId> = tagged_list
-        .iter()
-        .map(|t| semantic(u, *t))
-        .collect::<Option<_>>()?;
+    let plain: Vec<TermId> = match u.unary(arguments, "const").and_then(|list| u.as_list(list)) {
+        Some(tagged_list) => tagged_list
+            .iter()
+            .map(|t| semantic(u, *t))
+            .collect::<Option<_>>()?,
+        None => tuple_arguments(u, arguments)?,
+    };
     let plain_list = u.list(&plain);
     let app = u.compound("application", vec![ctor, plain_list]);
     let result = u.compound("ref", vec![app]);
     Some(vec![ctor_tagged, arguments, result])
+}
+
+/// `ref(application(tuple, Items))` as an argument vector, tags stripped.
+fn tuple_arguments(u: &mut Universe, arguments: TermId) -> Option<Vec<TermId>> {
+    let application = u.unary(arguments, "ref")?;
+    let [constructor, list] = u.args::<2>(application, "application")?;
+    let tuple = u.atom("tuple");
+    if u.get(constructor) != u.get(tuple) {
+        return None;
+    }
+    let items = u.as_list(list)?;
+    Some(items.into_iter().map(|t| tuple_element(u, t)).collect())
 }
 
 pub fn int_row(u: &Universe, cmp: IntCmp, args: &[Option<TermId>]) -> Option<Vec<TermId>> {

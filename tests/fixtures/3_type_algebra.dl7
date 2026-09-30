@@ -34,10 +34,7 @@
 (: user_contracts
    (* (: return any)))
 
-(<- (user_contracts ?Contracts)
-    (nil ?Empty)
-    (cons Named ?Empty ?Tail)
-    (cons Identified ?Tail ?Contracts))
+(user_contracts (tuple Identified Named))
 
 (: all_contract_proof
    (* (: proof type)))

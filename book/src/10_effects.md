@@ -12,7 +12,7 @@ flowchart LR
   positive -->|heads a rule| noeffect
   positive -->|intern, none when unbound| effect["(effect Rel App) rows"]
   positive -->|intern| snapshot[intern_snapshot row]
-  effect -->|next round| loading[loading rule over effect, intern_snapshot, cons]
+  effect -->|next round| loading[loading rule over effect, intern_snapshot, tuple]
   snapshot --> loading
 ```
 
@@ -21,7 +21,7 @@ Every evaluation of a positive goal on a served relation that heads no rule writ
 `Application` is the `intern` of the relation over the goal's arguments in position order, the atom `none` at each unbound position (`_5_evaluate.rs:263-276`); the same row is written to `intern_snapshot` so a rule can open it (`:272-273`, `:826-829`).
 Negative goals and aggregate bodies write no `effect` row (`_5_evaluate.rs:175-180`, `:147-149`).
 `effect` is a kernel relation, arity 2, keys `[0,1]` (`src/_3_check/_5_kernel.rs:29`, `:73`). A goal on `effect` reads the round's new rows like a current-stratum goal (`_5_evaluate.rs:341-360`).
-Loading is an ordinary rule over `effect`, `intern_snapshot` and `cons`. A served goal with nothing bound is a source.
+Loading is an ordinary rule over `effect`, `intern_snapshot` and `tuple`. A served goal with nothing bound is a source.
 
 | plan | code | winner |
 |---|---|---|
@@ -34,7 +34,7 @@ Loading is an ordinary rule over `effect`, `intern_snapshot` and `cons`. A serve
 ## Why
 
 Chris, 2026-09-14: any relation is settable from outside; nothing in the program marks a relation as hosted; the outside says what it serves, and loading, failed and ready are ordinary rules (`plans/v8/2026-09-14-v8-effect-demand.brief.md:11`).
-Amendment 3, same day: the row is live interest, and its argument list reads back with `intern_snapshot` then `cons` the way `Partial` does (`effect-demand.brief.md:76-81`).
+Amendment 3, same day: the row is live interest, and its argument list reads back with `intern_snapshot` then `tuple` the way `Partial` does (`effect-demand.brief.md:76-81`).
 
 ## When to use
 
@@ -98,7 +98,7 @@ Loading as a rule:
 (<- (Loading ?Url)
     (effect fetch_json ?App)
     (intern_snapshot fetch_json ?Args ?App)
-    (cons ?Url ?_ ?Args))
+    (tuple ?Url ?_ ?Args))
 ```
 
 ```console

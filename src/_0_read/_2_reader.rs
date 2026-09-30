@@ -290,52 +290,43 @@ impl Reader<'_> {
         Ok(self.node(node_id, payload))
     }
 
-    /// `[a b]` nests one item per level, headed by the atom `[` (`[]` at the
-    /// end) rather than a word, so a relation named `list` is never claimed.
+    /// `[a b]` reads as one flat node headed by the atom `[`, one item per
+    /// element, rather than the word `list`, so a relation named `list` is
+    /// never claimed.
     pub fn read_list(&mut self, top: u32, node_id: TermId, start: Pos) -> Result<TermId, TermId> {
         self.bump();
-        self.read_list_level(top, node_id, start)
-    }
-
-    fn read_list_level(&mut self, top: u32, node_id: TermId, start: Pos) -> Result<TermId, TermId> {
         let slot = self.rows.len();
         self.rows.push(node_id);
         self.skip_layout();
-        let level_start = self.pos;
-        match self.peek() {
-            None => Err(self.plain_error(node_id, "unterminated_form", level_start)),
-            Some(']') => {
-                self.bump();
-                let end = self.pos;
-                self.rows[slot] = self.source_row(node_id, start, end);
-                let atom = self.u.atom("]");
-                let head = self.path_item(atom, level_start, end);
-                let list = self.u.list(&[head]);
-                let payload = self.u.compound("form", vec![list]);
-                Ok(self.node(node_id, payload))
-            }
-            _ => {
-                let atom = self.u.atom("[");
-                let head = self.path_item(atom, level_start, level_start);
-                let item = self.read_term(top)?;
-                let colon_item = self.colon.take().map(|(from, to)| {
-                    let colon = self.u.atom(":");
-                    self.path_item(colon, from, to)
-                });
-                let tail_id = self.node_id(self.index);
-                self.index += 1;
-                let tail_start = self.pos;
-                let tail = self.read_list_level(top, tail_id, tail_start)?;
-                let end = self.pos;
-                self.rows[slot] = self.source_row(node_id, start, end);
-                let mut children = vec![head, item];
-                children.extend(colon_item);
-                children.push(tail);
-                let list = self.u.list(&children);
-                let payload = self.u.compound("form", vec![list]);
-                Ok(self.node(node_id, payload))
+        let head_start = self.pos;
+        let bracket = self.u.atom("[");
+        let mut items = vec![self.path_item(bracket, head_start, head_start)];
+        loop {
+            self.skip_layout();
+            match self.peek() {
+                None => {
+                    let at = self.pos;
+                    return Err(self.plain_error(node_id, "unterminated_form", at));
+                }
+                Some(']') => {
+                    self.bump();
+                    break;
+                }
+                _ => {
+                    let item = self.read_term(top)?;
+                    items.push(item);
+                    if let Some((from, to)) = self.colon.take() {
+                        let colon = self.u.atom(":");
+                        items.push(self.path_item(colon, from, to));
+                    }
+                }
             }
         }
+        let end = self.pos;
+        self.rows[slot] = self.source_row(node_id, start, end);
+        let list = self.u.list(&items);
+        let payload = self.u.compound("form", vec![list]);
+        Ok(self.node(node_id, payload))
     }
 
     pub fn read_query_term(&mut self, node_id: TermId, start: Pos) -> Result<TermId, TermId> {

@@ -214,6 +214,20 @@ fn check_positive(
                 Some(underconstrained(u, name, &[&[2], &[0, 1]]))
             }
         }
+        Some("tuple") => {
+            let value = arguments.len() - 1;
+            let elements: Vec<i64> = (0..value as i64).collect();
+            let ready = argument_is_bound(u, arguments[value], bound)
+                || arguments[..value]
+                    .iter()
+                    .all(|a| argument_is_bound(u, *a, bound));
+            if ready {
+                bound.add_all(variables);
+                None
+            } else {
+                Some(underconstrained(u, "tuple", &[&elements, &[value as i64]]))
+            }
+        }
         Some(name) if str_op_name(name).is_some_and(|(_, arity)| arguments.len() == arity) => {
             let (inputs, _) = str_op_name(name).unwrap_or_default();
             if arguments[..inputs]
@@ -265,7 +279,7 @@ fn check_negative(
     if let Some(name) = kernel_name(u, relation) {
         if matches!(
             name.as_str(),
-            "cons" | "edge_ref" | "intern" | "nil" | "str.cons" | "str.nil"
+            "cons" | "edge_ref" | "intern" | "nil" | "str.cons" | "str.nil" | "tuple"
         ) || str_op_name(&name).is_some_and(|(inputs, arity)| arity > inputs)
         {
             let name = u.atom(&name);

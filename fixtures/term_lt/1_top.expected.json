@@ -27,9 +27,12 @@
       "args": [
         {
           "args": [
+            {
+              "a": "tuple"
+            },
             []
           ],
-          "f": "const"
+          "f": "application"
         }
       ],
       "rel": {

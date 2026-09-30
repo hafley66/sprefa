@@ -1,13 +1,8 @@
 (<- (HeadCall ?Rule ?Call)
-    (nil ?Empty)
-    (cons ?Rule ?Empty ?Arguments)
-    (intern HeadCall ?Arguments ?Call))
+    (intern HeadCall (tuple ?Rule) ?Call))
 
 (<- (BodyCall ?Rule ?Goal ?Call)
-    (nil ?Empty)
-    (cons ?Goal ?Empty ?GoalArguments)
-    (cons ?Rule ?GoalArguments ?Arguments)
-    (intern BodyCall ?Arguments ?Call))
+    (intern BodyCall (tuple ?Rule ?Goal) ?Call))
 
 (<- (node ?Call)
     (Apply ?Call ?Callable))
@@ -17,28 +12,18 @@
 (<- (Variable ?Variable ?Scope ?Name)
     (head ?Scope ?HeadCall)
     (: ?Scope ?Name ?Target ?Position)
-    (nil ?Empty)
-    (cons ?Name ?Empty ?NameArguments)
-    (cons ?Position ?NameArguments ?PositionArguments)
-    (cons ?Scope ?PositionArguments ?Arguments)
-    (intern Variable ?Arguments ?Variable))
+    (intern Variable (tuple ?Scope ?Position ?Name) ?Variable))
 
 (<- (node ?Variable)
     (Variable ?Variable ?Scope ?Name))
 
 (<- (contains ?List ?Value)
-    (cons ?Value ?Tail ?List))
+    (edge_snapshot ?List ?Position ?Value ?Position))
 
-(<- (contains ?List ?Value)
-    (cons ?Head ?Tail ?List)
-    (contains ?Tail ?Value))
-
-(<- (closed_names ?Empty)
-    (nil ?Empty))
+(closed_names (tuple))
 
 (<- (closed_names ?List)
-    (cons ?Head ?Tail ?List)
-    (closed_names ?Tail))
+    (edge_snapshot ?List 0 ?Head 0))
 
 ; A column target that reads back as an intern is a value node, never a type.
 (<- (column_value ?Product ?Name ?Value)
@@ -56,14 +41,12 @@
 (<- (default ?Product ?Name ?Literal)
     (column_value ?Product ?Name ?Value)
     (intern_snapshot ?Type ?Arguments ?Value)
-    (cons ?Literal ?Tail ?Arguments))
+    (tuple ?Literal ?Arguments))
 
 (<- (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
     (edge_snapshot ?Source ?Label ?Target ?SourceIndex)
     (intern_snapshot Key ?Arguments ?Label)
-    (cons ?Name ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Options ?Empty ?TailArguments))
+    (tuple ?Name ?Options ?Arguments))
 
 (<- (key_predecessor ?Source ?SourceIndex ?PriorIndex)
     (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)

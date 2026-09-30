@@ -31,6 +31,12 @@ pub fn kernel_relation(owner: Option<&str>, label: &str) -> Option<u32> {
     Some(arity)
 }
 
+/// A kernel goal whose written arity is its argument count: `tuple` carries
+/// the elements and the value, so it has no fixed table arity.
+pub fn kernel_variadic(owner: Option<&str>, label: &str) -> bool {
+    owner.is_none() && label == "tuple"
+}
+
 /// `:1278`. `None` reproduces the `slot(Index, none)` fallback at `:1276`.
 pub fn kernel_slot_label(owner: Option<&str>, label: &str, index: u32) -> Option<&'static str> {
     let slot = match (owner, label, index) {

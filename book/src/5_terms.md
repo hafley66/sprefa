@@ -133,7 +133,7 @@ exit 0
 Reading a declared product's fields, then building a list of their names, in dl7:
 
 ```dl7
-; fixture: oracle/compile/sources/test/fixtures/2_partial.dl7:32-42
+; fixture: oracle/compile/sources/test/fixtures/2_partial.dl7:32-39
 (: selected_request
    (* (: result type)))
 
@@ -141,53 +141,51 @@ Reading a declared product's fields, then building a list of their names, in dl7
     (Partial User ?Partial)
     (edge_snapshot ?Partial ?FirstName ?FirstType 0)
     (edge_snapshot ?Partial ?SecondName ?SecondType 1)
-    (nil ?Empty)
-    (cons ?SecondName ?Empty ?Tail)
-    (cons ?FirstName ?Tail ?Names)
-    (Pick ?Partial ?Names ?Result))
+    (Pick ?Partial (tuple ?FirstName ?SecondName) ?Result))
 ```
 
 ```console
 $ bash book/show.sh compile oracle/compile/sources/test/fixtures/2_partial.dl7
 (User 7 "Ada")
 (history_request ref(application(HistoryV1, [User HistoryOptions])))
-(selected_request ref(application(Pick, [application(Partial, [User]) [id name]])))
-(excluded_request ref(application(Exclude, [application(Pick, [application(Partial, [User]) [id name]]) [id]])))
+(selected_request ref(application(Pick, [application(Partial, [User]) application(tuple, [id name])])))
+(excluded_request ref(application(Exclude, [application(Pick, [application(Partial, [User]) application(tuple, [id name])]) application(tuple, [id])])))
+(unchanged_request ref(application(Exclude, [application(Pick, [application(Partial, [User]) application(tuple, [id name])]) application(tuple, [])])))
 exit 0
 ```
 
 ## List literal
 
-`[a b]` is sugar the reader emits and macrotime rewrites; the kernel still
-sees only `cons`/`nil`. Reading `[a b]` gives the nested form
-`(list a (list b (list_nil)))`, one item per level
-(`src/_0_read/_2_reader.rs:294-329`, `read_list_level`); macrotime claims each
-`list`/`list_nil` head and rewrites it to a `cons`/`nil` call
-(`macrotime/2_list.dl7`), the same `intern`-backed mint `1_caret.dl7`'s
-`caret_mint` uses.
+`[a b]` is sugar the reader emits and macrotime rewrites; the kernel sees one
+anonymous product. Reading `[a b]` gives one flat form headed by the atom `[`,
+one item per element (`src/_0_read/_2_reader.rs:296`, `read_list`); macrotime
+claims the `[` head and mints one `(tuple a b)` call node, the arity the
+argument count (`macrotime/2_list.dl7`), the same `intern`-backed mint
+`1_caret.dl7`'s `caret_mint` uses. `(tuple a b)` is
+`application(tuple, [a b])`: one `:` edge per element, labels are positions.
 
 ```console
 $ bash book/show.sh expand oracle/macrotime/list_literal_cons_0.json
-(<- (foo ?X) (bar (cons a (cons b (nil)))))
+(<- (foo ?X) (bar (tuple a b)))
 exit 0
 ```
 
-The rewrite runs in `macro_phase` (`src/lib.rs:159-163`), which sees the
+The rewrite runs in `macro_phase` (`src/lib.rs:116`), which sees the
 program and its imports, never the prelude or macrotime units themselves
 (`prelude_unit`/`macrotime_unit` both call `text_unit`,
 `src/_8_driver/_1_unit.rs:55-63`, with no macro-library pass). `[..]` compiles
 in an ordinary source file; written inside `prelude/*.dl7` or
 `macrotime/*.dl7` it lowers as a literal call to an undeclared relation
-`list` (`undeclared_relation(list)`, `src/_2_lower/*` reports the site the
-same way for any unclaimed head).
+(`undeclared_relation([)`, `src/_2_lower/*` reports the site the
+same way for any unclaimed head). The macro library spells its own argument
+builder `(tuple ..)` for the same reason.
 
 ## What proves it
 
 | claim | path | command |
 |---|---|---|
-| `[a b]` reads as `(list a (list b (list_nil)))`, `[]` as `(list_nil)` | `oracle/macrotime/list_literal_cons_0.json`, `list_literal_nil_0.json` | `cargo test --test _1_read_oracle` |
-| `[a b]`, `[]`, `[a [b c]]`, `[a.b ^c]` macrotime-expand to the `cons`/`nil` chain | `oracle/macrotime/list_literal_*.json` | `cargo test --test _2_macrotime_oracle` |
-| `[?Ok ?Err]` in `intern` builds the same rows as hand-spelled `nil`/`cons` | `plans/v8/probes/2026-09-18-generic-result-literal.dl7` | `bash book/show.sh compile plans/v8/probes/2026-09-18-generic-result-literal.dl7` |
+| `[a b]`, `[]`, `[a [b c]]`, `[a.b ^c]` macrotime-expand to one `(tuple ..)` call, `[a [b c]]` to `(tuple a (tuple b c))` | `oracle/macrotime/list_literal_*.json` | `cargo test --test it _0_read_lower_check::every_macrotime_case_matches_v7` |
+| `[?Ok ?Err]` in `intern` builds the same rows as the spelled `(tuple ..)` call | `plans/v8/probes/2026-09-18-generic-result-literal.dl7` | `bash book/show.sh compile plans/v8/probes/2026-09-18-generic-result-literal.dl7` |
 | `cons` splits and builds, never splits `[]` | `fixtures/ladder/2_cons_lists.json` | `cargo test -j 4 --test it rung_11_handwritten_oracle_constructs` |
 | `edge_ref` and `intern` terms | `fixtures/ladder/5_edge_ref.json` | `bash book/show.sh eval fixtures/ladder/5_edge_ref.json` |
 | an `intern` row from a lower stratum matches with the constructor unbound | `fixtures/ladder/11_intern_row_reuse.pl:1-2` | `bash book/show.sh eval fixtures/ladder/11_intern_row_reuse.json` |

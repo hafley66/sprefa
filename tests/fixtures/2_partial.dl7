@@ -36,10 +36,7 @@
     (Partial User ?Partial)
     (edge_snapshot ?Partial ?FirstName ?FirstType 0)
     (edge_snapshot ?Partial ?SecondName ?SecondType 1)
-    (nil ?Empty)
-    (cons ?SecondName ?Empty ?Tail)
-    (cons ?FirstName ?Tail ?Names)
-    (Pick ?Partial ?Names ?Result))
+    (Pick ?Partial (tuple ?FirstName ?SecondName) ?Result))
 
 (: excluded_request
    (* (: result type)))
@@ -47,6 +44,11 @@
 (<- (excluded_request ?Result)
     (selected_request ?Selected)
     (edge_snapshot ?Selected ?RemovedName ?RemovedType 0)
-    (nil ?Empty)
-    (cons ?RemovedName ?Empty ?Names)
-    (Exclude ?Selected ?Names ?Result))
+    (Exclude ?Selected (tuple ?RemovedName) ?Result))
+
+(: unchanged_request
+   (* (: result type)))
+
+(<- (unchanged_request ?Result)
+    (selected_request ?Selected)
+    (Exclude ?Selected (tuple) ?Result))

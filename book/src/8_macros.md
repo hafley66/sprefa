@@ -70,7 +70,7 @@ Step trace: wave 0 evaluates the macro program over 110 seeds (104 syntax rows, 
 The rule that claims, and the rule that swaps the operator:
 
 ```dl7
-; fixture: macrotime/0_standard.dl7:75-109
+; fixture: macrotime/0_standard.dl7:75-101
 ; function plus(invocation: FormNode): readonly [
 ;   FormNode<[AtomNode<"<-">, ...Tail<typeof invocation.items>]>,
 ; ]
@@ -81,19 +81,11 @@ The rule that claims, and the rule that swaps the operator:
 
 (<- (plus_form ?Form ?Output)
     (syntax_claim ?Form "<+")
-    (nil ?Empty)
-    (cons 0 ?Empty ?TemplateArguments)
-    (cons 0 ?TemplateArguments ?OutputArguments)
-    (cons ?Form ?OutputArguments ?Arguments)
-    (intern GeneratedSyntax ?Arguments ?Output))
+    (intern GeneratedSyntax (tuple ?Form 0 0) ?Output))
 
 (<- (plus_operator ?Form ?Output)
     (syntax_claim ?Form "<+")
-    (nil ?Empty)
-    (cons 1 ?Empty ?TemplateArguments)
-    (cons 0 ?TemplateArguments ?OutputArguments)
-    (cons ?Form ?OutputArguments ?Arguments)
-    (intern GeneratedSyntax ?Arguments ?Output))
+    (intern GeneratedSyntax (tuple ?Form 0 1) ?Output))
 
 (<- (node ?Output)
     (plus_form ?Form ?Output))

@@ -94,8 +94,6 @@ const UNBUDGETED: &[(&str, &str)] = &[
     ("src/_0_read/_2_reader.rs", "loop {"),
     ("src/_0_read/_2_reader.rs", "while let Some((from, to)) = self.top_colon() {"),
     ("src/_0_read/_2_reader.rs", "loop {"),
-    ("src/_0_read/_2_reader.rs", "fn read_list_level(&mut self, top: u32, node_id: TermId, start: Pos) -> Result<TermId, TermId> {"),
-    ("src/_0_read/_2_reader.rs", "loop {"),
     ("src/_0_read/_2_reader.rs", "loop {"),
     ("src/_0_read/_4_expand.rs", "fn rewrite_fixpoint("),
     ("src/_0_read/_4_expand.rs", "fn valid_tree(u: &Universe, tree: TermId) -> bool {"),

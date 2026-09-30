@@ -82,19 +82,11 @@
 
 (<- (plus_form ?Form ?Output)
     (syntax_claim ?Form "<+")
-    (nil ?Empty)
-    (cons 0 ?Empty ?TemplateArguments)
-    (cons 0 ?TemplateArguments ?OutputArguments)
-    (cons ?Form ?OutputArguments ?Arguments)
-    (intern GeneratedSyntax ?Arguments ?Output))
+    (intern GeneratedSyntax (tuple ?Form 0 0) ?Output))
 
 (<- (plus_operator ?Form ?Output)
     (syntax_claim ?Form "<+")
-    (nil ?Empty)
-    (cons 1 ?Empty ?TemplateArguments)
-    (cons 0 ?TemplateArguments ?OutputArguments)
-    (cons ?Form ?OutputArguments ?Arguments)
-    (intern GeneratedSyntax ?Arguments ?Output))
+    (intern GeneratedSyntax (tuple ?Form 0 1) ?Output))
 
 (<- (node ?Output)
     (plus_form ?Form ?Output))

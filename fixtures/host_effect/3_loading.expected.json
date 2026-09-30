@@ -199,26 +199,34 @@
         },
         {
           "args": [
-            [
-              {
-                "args": [
+            {
+              "args": [
+                {
+                  "a": "tuple"
+                },
+                [
                   {
-                    "s": "https://a"
-                  }
-                ],
-                "f": "const"
-              },
-              {
-                "args": [
+                    "args": [
+                      {
+                        "s": "https://a"
+                      }
+                    ],
+                    "f": "const"
+                  },
                   {
-                    "a": "none"
+                    "args": [
+                      {
+                        "a": "none"
+                      }
+                    ],
+                    "f": "const"
                   }
-                ],
-                "f": "const"
-              }
-            ]
+                ]
+              ],
+              "f": "application"
+            }
           ],
-          "f": "const"
+          "f": "ref"
         },
         {
           "args": [
@@ -306,26 +314,34 @@
         },
         {
           "args": [
-            [
-              {
-                "args": [
+            {
+              "args": [
+                {
+                  "a": "tuple"
+                },
+                [
                   {
-                    "s": "https://b"
-                  }
-                ],
-                "f": "const"
-              },
-              {
-                "args": [
+                    "args": [
+                      {
+                        "s": "https://b"
+                      }
+                    ],
+                    "f": "const"
+                  },
                   {
-                    "a": "none"
+                    "args": [
+                      {
+                        "a": "none"
+                      }
+                    ],
+                    "f": "const"
                   }
-                ],
-                "f": "const"
-              }
-            ]
+                ]
+              ],
+              "f": "application"
+            }
           ],
-          "f": "const"
+          "f": "ref"
         },
         {
           "args": [
@@ -413,26 +429,34 @@
         },
         {
           "args": [
-            [
-              {
-                "args": [
+            {
+              "args": [
+                {
+                  "a": "tuple"
+                },
+                [
                   {
-                    "s": "https://a"
-                  }
-                ],
-                "f": "const"
-              },
-              {
-                "args": [
+                    "args": [
+                      {
+                        "s": "https://a"
+                      }
+                    ],
+                    "f": "const"
+                  },
                   {
-                    "a": "none"
+                    "args": [
+                      {
+                        "a": "none"
+                      }
+                    ],
+                    "f": "const"
                   }
-                ],
-                "f": "const"
-              }
-            ]
+                ]
+              ],
+              "f": "application"
+            }
           ],
-          "f": "const"
+          "f": "ref"
         },
         {
           "args": [
@@ -520,26 +544,34 @@
         },
         {
           "args": [
-            [
-              {
-                "args": [
+            {
+              "args": [
+                {
+                  "a": "tuple"
+                },
+                [
                   {
-                    "s": "https://b"
-                  }
-                ],
-                "f": "const"
-              },
-              {
-                "args": [
+                    "args": [
+                      {
+                        "s": "https://b"
+                      }
+                    ],
+                    "f": "const"
+                  },
                   {
-                    "a": "none"
+                    "args": [
+                      {
+                        "a": "none"
+                      }
+                    ],
+                    "f": "const"
                   }
-                ],
-                "f": "const"
-              }
-            ]
+                ]
+              ],
+              "f": "application"
+            }
           ],
-          "f": "const"
+          "f": "ref"
         },
         {
           "args": [
@@ -623,9 +655,12 @@
       "args": [
         {
           "args": [
+            {
+              "a": "tuple"
+            },
             []
           ],
-          "f": "const"
+          "f": "application"
         }
       ],
       "rel": {

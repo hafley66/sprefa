@@ -8,6 +8,7 @@
 use super::api::{prolog_sort, Stop};
 use super::mode::{call_parts, goal_call, goal_failures, head_safety, head_variables};
 use super::strata::{depends_rows, strata_rows, stratify_rules};
+use crate::_2_lower::kernel::kernel_variadic;
 use crate::_6_eval::term::{Term, TermId, Universe};
 use std::collections::HashMap;
 
@@ -164,9 +165,19 @@ fn call_diagnostics(u: &mut Universe, call: TermId, arities: &HashMap<TermId, i6
             );
             vec![diagnostic(u, reason)]
         }
+        None if variadic_kernel(u, relation) => vec![],
         None => {
             let reason = u.compound("generated_undeclared_relation", vec![relation]);
             vec![diagnostic(u, reason)]
         }
     }
+}
+
+/// `ref(kernel(tuple))`: the written arity is the argument count, so no fixed
+/// table row can hold it.
+fn variadic_kernel(u: &Universe, relation: TermId) -> bool {
+    u.unary(relation, "ref")
+        .and_then(|inner| u.unary(inner, "kernel"))
+        .and_then(|name| u.functor_or_atom(name).map(|(label, _)| label.to_string()))
+        .is_some_and(|label| kernel_variadic(None, &label))
 }

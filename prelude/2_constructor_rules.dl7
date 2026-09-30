@@ -1,59 +1,38 @@
-; Canonical application identities use the shared cons and intern relations.
+; Canonical application identities use the tuple and intern relations.
 (<- (Partial ?Source ?Result)
-    (nil ?Empty)
-    (cons ?Source ?Empty ?Arguments)
-    (intern Partial ?Arguments ?Result))
+    (intern Partial (tuple ?Source) ?Result))
 
 (<- (Partial ?Source ?Result)
     (intern_snapshot Partial ?Arguments ?Result)
-    (nil ?Empty)
-    (cons ?Source ?Empty ?Arguments))
+    (tuple ?Source ?Arguments))
 
 (<- (Option ?Source ?Result)
-    (nil ?Empty)
-    (cons ?Source ?Empty ?Arguments)
-    (intern Option ?Arguments ?Result))
+    (intern Option (tuple ?Source) ?Result))
 
 (<- (Option ?Source ?Result)
     (intern_snapshot Option ?Arguments ?Result)
-    (nil ?Empty)
-    (cons ?Source ?Empty ?Arguments))
+    (tuple ?Source ?Arguments))
 
 (<- (Key ?Name ?Options ?Result)
-    (nil ?Empty)
-    (cons ?Options ?Empty ?TailArguments)
-    (cons ?Name ?TailArguments ?Arguments)
-    (intern Key ?Arguments ?Result))
+    (intern Key (tuple ?Name ?Options) ?Result))
 
 (<- (Key ?Name ?Options ?Result)
     (intern_snapshot Key ?Arguments ?Result)
-    (cons ?Name ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Options ?Empty ?TailArguments))
+    (tuple ?Name ?Options ?Arguments))
 
 (<- (Pick ?Source ?Names ?Result)
-    (nil ?Empty)
-    (cons ?Names ?Empty ?TailArguments)
-    (cons ?Source ?TailArguments ?Arguments)
-    (intern Pick ?Arguments ?Result))
+    (intern Pick (tuple ?Source ?Names) ?Result))
 
 (<- (Pick ?Source ?Names ?Result)
     (intern_snapshot Pick ?Arguments ?Result)
-    (cons ?Source ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Names ?Empty ?TailArguments))
+    (tuple ?Source ?Names ?Arguments))
 
 (<- (Exclude ?Source ?Names ?Result)
-    (nil ?Empty)
-    (cons ?Names ?Empty ?TailArguments)
-    (cons ?Source ?TailArguments ?Arguments)
-    (intern Exclude ?Arguments ?Result))
+    (intern Exclude (tuple ?Source ?Names) ?Result))
 
 (<- (Exclude ?Source ?Names ?Result)
     (intern_snapshot Exclude ?Arguments ?Result)
-    (cons ?Source ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Names ?Empty ?TailArguments))
+    (tuple ?Source ?Names ?Arguments))
 
 ; HistoryV1 options are ordinary typed data. The first version accepts copy
 ; mode plus a source contract and interns source plus options as the
@@ -62,16 +41,12 @@
     (default ?Options ?Mode "copy")
     (edge_snapshot ?Options ?ContractName ?Contract 1)
     (Conforms ?Source ?Contract ?Proof)
-    (nil ?Empty)
-    (cons ?Options ?Empty ?TailArguments)
-    (cons ?Source ?TailArguments ?Arguments)
-    (intern HistoryV1 ?Arguments ?Result))
+    (intern HistoryV1 (tuple ?Source ?Options) ?Result))
 
 (<- (HistoryV1 ?Source ?Options ?Result)
     (intern_snapshot HistoryV1 ?Arguments ?Result)
-    (cons ?Source ?TailArguments ?Arguments)
-    (nil ?Empty)
-    (cons ?Options ?Empty ?TailArguments)
+    (tuple ?Source ?Options ?Arguments)
     (default ?Options ?Mode "copy")
     (edge_snapshot ?Options ?ContractName ?Contract 1)
     (Conforms ?Source ?Contract ?Proof))
+

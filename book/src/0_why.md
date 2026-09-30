@@ -103,7 +103,7 @@ $ bash book/show.sh eval fixtures/aggregates/2_grouped.dl7
 ```dl7
 ; fixture: fixtures/host_effect/3_loading.dl7
 ; Loading is an ordinary rule over effect; the pattern opens with
-; intern_snapshot then cons, the way Partial reads back in the prelude.
+; intern_snapshot then tuple, the way Partial reads back in the prelude.
 (: fetch_json
    (* (: url str)
       (: body str)))
@@ -127,7 +127,7 @@ $ bash book/show.sh eval fixtures/aggregates/2_grouped.dl7
 (<- (Loading ?Url)
     (effect fetch_json ?App)
     (intern_snapshot fetch_json ?Args ?App)
-    (cons ?Url ?_ ?Args))
+    (tuple ?Url ?_ ?Args))
 ```
 
 ```

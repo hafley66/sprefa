@@ -87,10 +87,9 @@ pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<
             Some(found) => {
                 let (found_owner, found_target, found_kind) =
                     (found.owner, found.target, found.kind);
-                let derived = cx
-                    .u
-                    .functor(found_target)
-                    .is_some_and(|(n, a)| n == "deferred_expression" && a.len() == 3);
+                let derived =
+                    cx.u.functor(found_target)
+                        .is_some_and(|(n, a)| n == "deferred_expression" && a.len() == 3);
                 if derived {
                     let inner = cx.edges.derived_target(cx.u, found_owner, name)?;
                     (inner, cx.reservations.is_sum_target(cx.u, inner))
@@ -211,6 +210,13 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
                 return none(cx, vec![diagnostic]);
             }
             return lower_path_walk(cx, parsed.id, &items[1..], owner);
+        }
+        if cx
+            .u
+            .functor_or_atom(head)
+            .is_some_and(|(text, _)| text == "tuple")
+        {
+            return lower_tuple(cx, parsed.id, &items[1..], owner);
         }
         return match expression_callable(cx, head, owner) {
             Ok(Applied::Relation(callable, arity, key_sets)) => lower_expression_call(
@@ -471,7 +477,7 @@ fn construction_var(cx: &mut Cx, node_id: TermId, ordinal: i64) -> TermId {
 }
 
 /// `(<Type> <Argument>...)` where the head names a node with no rows. The
-/// argument list is built tail first, because `cons/3` takes head and tail.
+/// arguments are one `tuple` goal feeding `intern`.
 pub fn lower_construction(
     cx: &mut Cx,
     constructor: TermId,
@@ -514,30 +520,70 @@ pub fn lower_construction(
             diagnostics: vec![],
         };
     }
-    let mut ordinal: i64 = 0;
-    let mut tail = construction_var(cx, node_id, ordinal);
-    goals.push(kernel_goal(cx, owner, (None, "nil"), &[tail]));
+    let tuple = construction_var(cx, node_id, 0);
+    let mut tuple_arguments = values.clone();
+    tuple_arguments.push(tuple);
+    goals.push(kernel_goal(cx, owner, (None, "tuple"), &tuple_arguments));
     origins.push(node_id);
-    for value in values.iter().rev() {
-        ordinal += 1;
-        let next = construction_var(cx, node_id, ordinal);
-        goals.push(kernel_goal(
-            cx,
-            owner,
-            (None, "cons"),
-            &[*value, tail, next],
-        ));
-        origins.push(node_id);
-        tail = next;
-    }
-    ordinal += 1;
-    let value = construction_var(cx, node_id, ordinal);
+    let value = construction_var(cx, node_id, 1);
     goals.push(kernel_goal(
         cx,
         owner,
         (None, "intern"),
-        &[constructor, tail, value],
+        &[constructor, tuple, value],
     ));
+    origins.push(node_id);
+    Lowering {
+        value,
+        goals,
+        origins,
+        diagnostics: vec![],
+    }
+}
+
+/// `(tuple Element...)`, the expansion of `[a b c]`: the anonymous product of
+/// that arity, one `:` edge per element, labels are positions.
+fn lower_tuple(cx: &mut Cx, node_id: TermId, argument_nodes: &[TermId], owner: TermId) -> Lowering {
+    let mut goals = Vec::new();
+    let mut origins = Vec::new();
+    let mut values = Vec::with_capacity(argument_nodes.len());
+    for node in argument_nodes {
+        let lowered = lower_expression(cx, *node, owner);
+        if let Some(first) = lowered.diagnostics.first() {
+            return none(cx, vec![*first]);
+        }
+        if is_partial(cx, lowered.value) {
+            let constructor = cx.atom("tuple");
+            let reason = cx.compound("partial_construction_argument", vec![constructor]);
+            let diagnostic = cx.diagnostic(node_id, reason);
+            return none(cx, vec![diagnostic]);
+        }
+        goals.extend(lowered.goals);
+        origins.extend(lowered.origins);
+        values.push(lowered.value);
+    }
+    let ground = cx.ground_values
+        && goals.is_empty()
+        && values.iter().all(|v| {
+            cx.u.functor(*v)
+                .is_some_and(|(n, _)| matches!(n, "const" | "name" | "ref"))
+        });
+    let constructor = cx.atom("tuple");
+    if ground {
+        let list = cx.u.list(&values);
+        let value = cx.compound("application", vec![constructor, list]);
+        return Lowering {
+            value,
+            goals,
+            origins,
+            diagnostics: vec![],
+        };
+    }
+    let output_key = cx.compound("tuple_output", vec![node_id]);
+    let value = cx.compound("var", vec![output_key]);
+    let mut arguments = values;
+    arguments.push(value);
+    goals.push(kernel_goal(cx, owner, (None, "tuple"), &arguments));
     origins.push(node_id);
     Lowering {
         value,
