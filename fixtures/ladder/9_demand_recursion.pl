@@ -1,10 +1,9 @@
-% A rule whose body needs its head bound (cons construct) is a function under
-% demand. suffix_of/2 walks a list by demand from a bound list; the free-head
-% closure of wrap/2 stays empty because cons cannot construct without a head.
+% A rule whose body needs its head bound (tuple construct) is a function under
+% demand. wrapped/2 supplies the bound element; the free-head
+% closure of wrap/2 stays empty because tuple cannot construct without a head.
 program(
     [ rule(call(ref(wrap), [var(item), var(list)]),
-           [ checked_goal(positive, call(ref(kernel(nil)), [var(empty)])),
-             checked_goal(positive, call(ref(kernel(cons)), [var(item), var(empty), var(list)])) ]),
+           [checked_goal(positive, call(ref(kernel(tuple)), [var(item), var(list)]))]),
       rule(call(ref(wrapped), [var(list)]),
            [ checked_goal(positive, call(ref(thing), [var(item)])),
              checked_goal(positive, call(ref(wrap), [var(item), var(list)])) ]),

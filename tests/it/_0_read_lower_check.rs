@@ -400,7 +400,7 @@ fn every_diagnostic_reason_named_in_status_is_reachable_or_explained() {
             .as_object()
             .unwrap()
             .len();
-    assert_eq!(total, 25, "every reason functor must be classified");
+    assert_eq!(total, 24, "every reason functor must be classified");
 }
 
 fn s4checkoracle_truncate(value: &serde_json::Value) -> String {

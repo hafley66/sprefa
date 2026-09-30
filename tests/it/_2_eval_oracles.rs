@@ -461,7 +461,7 @@ fn strategy() -> impl Strategy<Value = Spec> {
 
 pub(crate) fn rel(name: &str) -> Value {
     let inner = match name {
-        "nil" | "cons" | "intern" => json!({"f":"kernel","args":[{"a":name}]}),
+        "tuple" | "intern" => json!({"f":"kernel","args":[{"a":name}]}),
         "int.add" => json!({"f":"kernel","args":[{"a":"int"},{"a":"add"}]}),
         _ => json!({"a":name}),
     };
@@ -545,8 +545,7 @@ fn program_json(seed: u64, spec: &Spec) -> Value {
                 "d1",
                 vec![variable(1)],
                 vec![
-                    goal("nil", vec![variable(0)], false),
-                    goal("cons", vec![constant(1), variable(0), variable(1)], false),
+                    goal("tuple", vec![constant(1), variable(1)], false),
                 ],
             ));
         }

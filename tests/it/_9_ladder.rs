@@ -683,8 +683,7 @@ fn rung_6_kernels() {
                 vec![variable(2)],
                 vec![
                     goal("source", vec![variable(0)], false),
-                    goal("nil", vec![variable(1)], false),
-                    goal("cons", vec![variable(0), variable(1), variable(2)], false),
+                    goal("tuple", vec![variable(0), variable(2)], false),
                 ],
             )];
             let (closure, _, _) = run(6, size, engine, program(seeds, rules));
@@ -692,7 +691,7 @@ fn rung_6_kernels() {
                 6,
                 size,
                 engine,
-                "cons_rows",
+                "tuple_rows",
                 rows(&closure, "list").len(),
                 size,
             );
@@ -1123,12 +1122,19 @@ fn rung_11_handwritten_oracle_constructs() {
     // expected outputs stay in oracle/eval until the deletion commit. Each
     // program runs with zero, one, and all of its original input rows.
     let cases: [(&str, usize, &[(&str, usize)]); 12] = [
-        ("0_negation_cons_intern", 6, &[("upper", 1)]),
+        ("0_negation_tuple_intern", 6, &[("upper", 1)]),
         ("1_count", 7, &[("region_count", 2), ("big_region", 1)]),
         (
-            "2_cons_lists",
-            21,
-            &[("suffix", 4), ("item", 3), ("pair", 9)],
+            "2_tuple_lists",
+            12,
+            &[
+                ("built", 2),
+                ("first", 1),
+                ("second", 2),
+                ("third", 2),
+                ("reversed", 2),
+                ("arity_mismatch", 0),
+            ],
         ),
         (
             "3_int_compare",
@@ -1167,10 +1173,9 @@ fn rung_11_handwritten_oracle_constructs() {
         ),
         (
             "10_aggregate_tables_only",
-            9,
+            8,
             &[
-                ("nil_count", 1),
-                ("cons_count", 0),
+                ("tuple_count", 0),
                 ("item_count", 1),
                 ("pair_count", 3),
             ],
