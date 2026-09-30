@@ -1,0 +1,23 @@
+(EResult:
+   (* (Next: type)
+      (Error: type)
+      (return:
+         (+ (loading: (*))
+            (next: (* (value: Next)))
+            (error: (* (message: Error)))
+            (complete: (*))))))
+
+(FetchStatus: (EResult str str))
+
+(status_arguments:
+   (* (next: type)
+      (error: type)))
+
+(status_arguments str str)
+
+(status_type:
+   (* (made: any)))
+
+(<- (status_type
+       (EResult ?Next ?Error))
+    (status_arguments ?Next ?Error))

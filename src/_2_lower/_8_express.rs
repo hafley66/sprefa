@@ -251,11 +251,8 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
             Ok(Applied::Construction(constructor)) => {
                 lower_construction(cx, constructor, parsed.id, &items[1..], owner)
             }
-            Ok(Applied::Generic(_)) => {
-                let shape = cx.atom("generic_application");
-                let reason = cx.compound("not_built_yet", vec![shape]);
-                let diagnostic = cx.diagnostic(parsed.id, reason);
-                none(cx, vec![diagnostic])
+            Ok(Applied::Generic(callable)) => {
+                lower_generic_value(cx, callable, head, parsed.id, &items[1..], owner)
             }
             Err(reason) => {
                 let diagnostic = cx.diagnostic(parsed.id, reason);
@@ -571,6 +568,35 @@ pub fn lower_construction(
         origins,
         diagnostics: vec![],
     }
+}
+
+/// `(Callee Column..)` as a value in a rule: the instance is built with
+/// `tuple` and `intern` like any construction, and the rule's generated
+/// siblings write its `return` edges. A fact holds no such value yet.
+fn lower_generic_value(
+    cx: &mut Cx,
+    callable: TermId,
+    name: TermId,
+    node_id: TermId,
+    argument_nodes: &[TermId],
+    owner: TermId,
+) -> Lowering {
+    if cx.ground_values {
+        let shape = cx.atom("generic_application");
+        let reason = cx.compound("not_built_yet", vec![shape]);
+        let diagnostic = cx.diagnostic(node_id, reason);
+        return none(cx, vec![diagnostic]);
+    }
+    let columns = cx.edges.arity(callable) - 1;
+    if argument_nodes.len() as i64 != columns {
+        let expected = cx.int(columns);
+        let observed = cx.int(argument_nodes.len() as i64);
+        let reason = cx.compound("arity_mismatch", vec![name, expected, observed]);
+        let diagnostic = cx.diagnostic(node_id, reason);
+        return none(cx, vec![diagnostic]);
+    }
+    let constructor = cx.compound("ref", vec![callable]);
+    lower_construction(cx, constructor, node_id, argument_nodes, owner)
 }
 
 /// `(tuple Element...)`, the expansion of `[a b c]`: the anonymous product of

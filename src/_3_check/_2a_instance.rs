@@ -16,6 +16,7 @@ struct Build<'a> {
     graph: &'a CheckerGraph,
     columns: Vec<(TermId, TermId)>,
     arguments: TermId,
+    tagged: Vec<TermId>,
 }
 
 /// The rows of one bind, or the reason it did not resolve.
@@ -113,12 +114,13 @@ fn instance(
             .map(|((_, label), value)| (*label, *value))
             .collect(),
         arguments,
+        tagged: resolved.clone(),
     };
     let root = u.compound("application", vec![callee, arguments]);
     let root_ref = u.compound("ref", vec![root]);
     if built.insert(root) {
         intern_calls(u, callee, &resolved, root_ref, minted);
-        walk(u, cx, &build, template, root, 0, rows)?;
+        walk(u, cx, &build, template, root, 0, rows, minted)?;
     }
     Ok(root_ref)
 }
@@ -159,6 +161,10 @@ fn tuple_instance(
     Ok(u.compound("ref", vec![application]))
 }
 
+/// The `:` rows of `instance` from `template`; a nested expression is the node
+/// `application(Expression, Args)` with its own `intern` rows, as a rule
+/// builds it.
+#[allow(clippy::too_many_arguments)]
 fn walk(
     u: &mut Universe,
     cx: &Cx,
@@ -167,6 +173,7 @@ fn walk(
     instance: TermId,
     depth: usize,
     rows: &mut Vec<TermId>,
+    minted: &mut Vec<TermId>,
 ) -> Result<(), TermId> {
     let depth_exceeded = depth >= INSTANCE_DEPTH;
     if depth_exceeded {
@@ -184,8 +191,10 @@ fn walk(
             .and_then(|[_, label]| build.columns.iter().find(|(name, _)| *name == label));
         let value = if let Some(inner) = nested {
             let child = u.compound("application", vec![inner, build.arguments]);
-            walk(u, cx, build, inner, child, depth + 1, rows)?;
-            u.compound("ref", vec![child])
+            let child_ref = u.compound("ref", vec![child]);
+            intern_calls(u, inner, &build.tagged, child_ref, minted);
+            walk(u, cx, build, inner, child, depth + 1, rows, minted)?;
+            child_ref
         } else if let Some((_, value)) = column {
             *value
         } else {
