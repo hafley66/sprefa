@@ -444,17 +444,26 @@ fn arg_vars(arg: &Arg) -> Vec<VarId> {
 /// matching each op's row function: comparisons need both sides, `str.cons`
 /// takes head and tail or the whole text, `str.nil` needs nothing, every other op takes its first two arguments.
 /// That readiness argument only holds while every table the rule reads is
-/// present when its stratum starts. A rule reading `intern_snapshot` fires
-/// against the rows known at round zero and never revisits them, so such a
-/// rule keeps the plain blocking walk and demand answers it in place.
+/// present when its stratum starts. A sum readback's `intern_snapshot` rows
+/// arrive inside the evaluation that interns them, and the snapshot relation
+/// never joins the delta, so a rule with such a goal keeps the plain blocking
+/// walk and demand answers it in place. Every other snapshot row is a seed of
+/// the evaluation.
 pub(crate) fn needs_bound_head(u: &Universe, rule: &Rule, snapshots: TermId) -> bool {
     if rule.is_aggregate() {
         return false;
     }
-    let anchored = rule
-        .body
-        .iter()
-        .all(|g| g.polarity != Polarity::Positive || g.rel != snapshots);
+    let anchored = rule.body.iter().all(|g| {
+        let sum_readback = matches!(
+            g.args.get(2),
+            Some(Arg::Var(value)) if rule
+                .vars
+                .get(value.0 as usize)
+                .and_then(|key| u.functor_or_atom(*key))
+                .is_some_and(|(name, _)| name == "sum_pattern")
+        );
+        g.polarity != Polarity::Positive || g.rel != snapshots || !sum_readback
+    });
     let head: HashSet<VarId> = rule.head.iter().flat_map(arg_vars).collect();
     let mut bound: HashSet<VarId> = HashSet::new();
     for goal in &rule.body {
