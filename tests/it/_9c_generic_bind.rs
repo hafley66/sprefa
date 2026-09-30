@@ -138,3 +138,29 @@ fn nested_generic_argument_builds_inner_instance_first() {
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn variable_application_in_rule_reports_not_built_yet() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (fixture, offset) in [("2_variable_goal", 46), ("3_variable_value", 42)] {
+        let path = root.join(format!("fixtures/generic/{fixture}.dl7"));
+        let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .args(["compile"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        let program: Value = serde_json::from_slice(&compiled.stdout).unwrap();
+        assert_eq!(
+            program["diagnostics"],
+            json!([{
+                "f": "diagnostic",
+                "args": [
+                    {"a": "lower"},
+                    {"f": "reader_node", "args": [{"a": path.to_str().unwrap()}, offset]},
+                    {"f": "not_built_yet", "args": [{"a": "generic_application"}]},
+                ],
+            }]),
+            "{fixture}"
+        );
+    }
+}

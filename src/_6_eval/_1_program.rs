@@ -1,5 +1,5 @@
 //! The checked-goal program shape from v7: `rule(call(Rel, Args), [checked_goal(Polarity, call(Rel, Args))])`.
-//! Relations are terms (`ref(source)`, `ref(kernel(cons))`). Arguments are a
+//! Relations are terms (`ref(source)`, `ref(kernel(intern))`). Arguments are a
 //! variable, a ground term, `aggregate(Kind, Arg)` or `fold(Step, Seed, Arg)`
 //! in a head, where `Kind` is one of `count`, `sum`, `min`, `max`.
 

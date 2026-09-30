@@ -21,95 +21,95 @@
       (: kind str)))
 
 ; step 1: v5 ports
-(<- (str_op 0 "str" "len" 2 "int" "v5"
-       "Some(Int(a0.chars().count() as i64))"))
-(<- (str_op_arg "str" "len" 0 "text" "str"))
+(str_op 0 "str" "len" 2 "int" "v5"
+   "Some(Int(a0.chars().count() as i64))")
+(str_op_arg "str" "len" 0 "text" "str")
 
-(<- (str_op 1 "str" "lower" 2 "str" "v5"
-       "Some(Text(a0.to_lowercase()))"))
-(<- (str_op_arg "str" "lower" 0 "text" "str"))
+(str_op 1 "str" "lower" 2 "str" "v5"
+   "Some(Text(a0.to_lowercase()))")
+(str_op_arg "str" "lower" 0 "text" "str")
 
-(<- (str_op 2 "str" "upper" 2 "str" "v5"
-       "Some(Text(a0.to_uppercase()))"))
-(<- (str_op_arg "str" "upper" 0 "text" "str"))
+(str_op 2 "str" "upper" 2 "str" "v5"
+   "Some(Text(a0.to_uppercase()))")
+(str_op_arg "str" "upper" 0 "text" "str")
 
-(<- (str_op 3 "str" "lcfirst" 2 "str" "v5"
-       "Some(Text({ let mut chars = a0.chars(); chars.next().map(|first| first.to_lowercase().chain(chars).collect::<String>()).unwrap_or_default() }))"))
-(<- (str_op_arg "str" "lcfirst" 0 "text" "str"))
+(str_op 3 "str" "lcfirst" 2 "str" "v5"
+   "Some(Text({ let mut chars = a0.chars(); chars.next().map(|first| first.to_lowercase().chain(chars).collect::<String>()).unwrap_or_default() }))")
+(str_op_arg "str" "lcfirst" 0 "text" "str")
 
-(<- (str_op 4 "str" "ucfirst" 2 "str" "v5"
-       "Some(Text({ let mut chars = a0.chars(); chars.next().map(|first| first.to_uppercase().chain(chars).collect::<String>()).unwrap_or_default() }))"))
-(<- (str_op_arg "str" "ucfirst" 0 "text" "str"))
+(str_op 4 "str" "ucfirst" 2 "str" "v5"
+   "Some(Text({ let mut chars = a0.chars(); chars.next().map(|first| first.to_uppercase().chain(chars).collect::<String>()).unwrap_or_default() }))")
+(str_op_arg "str" "ucfirst" 0 "text" "str")
 
-(<- (str_op 5 "str" "trim" 2 "str" "v5"
-       "Some(Text(a0.trim().to_string()))"))
-(<- (str_op_arg "str" "trim" 0 "text" "str"))
+(str_op 5 "str" "trim" 2 "str" "v5"
+   "Some(Text(a0.trim().to_string()))")
+(str_op_arg "str" "trim" 0 "text" "str")
 
-(<- (str_op 6 "str" "strip_prefix" 3 "str" "v5"
-       "Some(Text(a0.strip_prefix(a1).unwrap_or(a0).to_string()))"))
-(<- (str_op_arg "str" "strip_prefix" 0 "text" "str"))
-(<- (str_op_arg "str" "strip_prefix" 1 "prefix" "str"))
+(str_op 6 "str" "strip_prefix" 3 "str" "v5"
+   "Some(Text(a0.strip_prefix(a1).unwrap_or(a0).to_string()))")
+(str_op_arg "str" "strip_prefix" 0 "text" "str")
+(str_op_arg "str" "strip_prefix" 1 "prefix" "str")
 
-(<- (str_op 7 "str" "strip_suffix" 3 "str" "v5"
-       "Some(Text(a0.strip_suffix(a1).unwrap_or(a0).to_string()))"))
-(<- (str_op_arg "str" "strip_suffix" 0 "text" "str"))
-(<- (str_op_arg "str" "strip_suffix" 1 "suffix" "str"))
+(str_op 7 "str" "strip_suffix" 3 "str" "v5"
+   "Some(Text(a0.strip_suffix(a1).unwrap_or(a0).to_string()))")
+(str_op_arg "str" "strip_suffix" 0 "text" "str")
+(str_op_arg "str" "strip_suffix" 1 "suffix" "str")
 
-(<- (str_op 8 "str" "replace" 4 "str" "v5"
-       "Some(Text(a0.replace(a1, a2)))"))
-(<- (str_op_arg "str" "replace" 0 "text" "str"))
-(<- (str_op_arg "str" "replace" 1 "from" "str"))
-(<- (str_op_arg "str" "replace" 2 "to" "str"))
+(str_op 8 "str" "replace" 4 "str" "v5"
+   "Some(Text(a0.replace(a1, a2)))")
+(str_op_arg "str" "replace" 0 "text" "str")
+(str_op_arg "str" "replace" 1 "from" "str")
+(str_op_arg "str" "replace" 2 "to" "str")
 
-(<- (str_op 9 "str" "split" 4 "str" "v5"
-       "{ let parts: Vec<&str> = a0.split(a1).collect(); let at = if a2 < 0 { a2.checked_add(parts.len() as i64)? } else { a2 }; parts.get(usize::try_from(at).ok()?).map(|part| Text(part.to_string())) }"))
-(<- (str_op_arg "str" "split" 0 "text" "str"))
-(<- (str_op_arg "str" "split" 1 "separator" "str"))
-(<- (str_op_arg "str" "split" 2 "index" "int"))
+(str_op 9 "str" "split" 4 "str" "v5"
+   "{ let parts: Vec<&str> = a0.split(a1).collect(); let at = if a2 < 0 { a2.checked_add(parts.len() as i64)? } else { a2 }; parts.get(usize::try_from(at).ok()?).map(|part| Text(part.to_string())) }")
+(str_op_arg "str" "split" 0 "text" "str")
+(str_op_arg "str" "split" 1 "separator" "str")
+(str_op_arg "str" "split" 2 "index" "int")
 
 ; step 2: conversions
-(<- (str_op 10 "int" "to_str" 2 "str" "conversion"
-       "Some(Text(a0.to_string()))"))
-(<- (str_op_arg "int" "to_str" 0 "value" "int"))
+(str_op 10 "int" "to_str" 2 "str" "conversion"
+   "Some(Text(a0.to_string()))")
+(str_op_arg "int" "to_str" 0 "value" "int")
 
-(<- (str_op 11 "str" "to_int" 2 "int" "conversion"
-       "a0.parse::<i64>().ok().map(Int)"))
-(<- (str_op_arg "str" "to_int" 0 "text" "str"))
+(str_op 11 "str" "to_int" 2 "int" "conversion"
+   "a0.parse::<i64>().ok().map(Int)")
+(str_op_arg "str" "to_int" 0 "text" "str")
 
 ; step 3: filters. `out` none: the op holds or the row is dropped, and the goal
 ; has no result position.
-(<- (str_op 12 "str" "starts_with" 2 "none" "filter"
-       "a0.starts_with(a1).then_some(Holds)"))
-(<- (str_op_arg "str" "starts_with" 0 "text" "str"))
-(<- (str_op_arg "str" "starts_with" 1 "prefix" "str"))
+(str_op 12 "str" "starts_with" 2 "none" "filter"
+   "a0.starts_with(a1).then_some(Holds)")
+(str_op_arg "str" "starts_with" 0 "text" "str")
+(str_op_arg "str" "starts_with" 1 "prefix" "str")
 
-(<- (str_op 13 "str" "contains" 2 "none" "filter"
-       "a0.contains(a1).then_some(Holds)"))
-(<- (str_op_arg "str" "contains" 0 "text" "str"))
-(<- (str_op_arg "str" "contains" 1 "needle" "str"))
+(str_op 13 "str" "contains" 2 "none" "filter"
+   "a0.contains(a1).then_some(Holds)")
+(str_op_arg "str" "contains" 0 "text" "str")
+(str_op_arg "str" "contains" 1 "needle" "str")
 
 ; step 4: case conversion (`heck`)
-(<- (str_op 14 "str" "snake" 2 "str" "case"
-       "Some(Text(heck::ToSnakeCase::to_snake_case(a0)))"))
-(<- (str_op_arg "str" "snake" 0 "text" "str"))
+(str_op 14 "str" "snake" 2 "str" "case"
+   "Some(Text(heck::ToSnakeCase::to_snake_case(a0)))")
+(str_op_arg "str" "snake" 0 "text" "str")
 
-(<- (str_op 15 "str" "camel" 2 "str" "case"
-       "Some(Text(heck::ToLowerCamelCase::to_lower_camel_case(a0)))"))
-(<- (str_op_arg "str" "camel" 0 "text" "str"))
+(str_op 15 "str" "camel" 2 "str" "case"
+   "Some(Text(heck::ToLowerCamelCase::to_lower_camel_case(a0)))")
+(str_op_arg "str" "camel" 0 "text" "str")
 
-(<- (str_op 16 "str" "pascal" 2 "str" "case"
-       "Some(Text(heck::ToUpperCamelCase::to_upper_camel_case(a0)))"))
-(<- (str_op_arg "str" "pascal" 0 "text" "str"))
+(str_op 16 "str" "pascal" 2 "str" "case"
+   "Some(Text(heck::ToUpperCamelCase::to_upper_camel_case(a0)))")
+(str_op_arg "str" "pascal" 0 "text" "str")
 
-(<- (str_op 17 "str" "kebab" 2 "str" "case"
-       "Some(Text(heck::ToKebabCase::to_kebab_case(a0)))"))
-(<- (str_op_arg "str" "kebab" 0 "text" "str"))
+(str_op 17 "str" "kebab" 2 "str" "case"
+   "Some(Text(heck::ToKebabCase::to_kebab_case(a0)))")
+(str_op_arg "str" "kebab" 0 "text" "str")
 
 ; step 5: escaping
-(<- (str_op 18 "str" "escape" 2 "str" "escape"
-       "Some(Text(a0.escape_debug().to_string()))"))
-(<- (str_op_arg "str" "escape" 0 "text" "str"))
+(str_op 18 "str" "escape" 2 "str" "escape"
+   "Some(Text(a0.escape_debug().to_string()))")
+(str_op_arg "str" "escape" 0 "text" "str")
 
-(<- (str_op 19 "str" "json" 2 "str" "escape"
-       "serde_json::to_string(a0).ok().map(Text)"))
-(<- (str_op_arg "str" "json" 0 "text" "str"))
+(str_op 19 "str" "json" 2 "str" "escape"
+   "serde_json::to_string(a0).ok().map(Text)")
+(str_op_arg "str" "json" 0 "text" "str")

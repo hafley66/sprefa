@@ -6,13 +6,13 @@
 (ops: (import "./std/str_ops.dl7"))
 
 (: kind_out (* (: kind str) (: rust str)))
-(<- (kind_out "str" "Some(StrKind::Text)"))
-(<- (kind_out "int" "Some(StrKind::Int)"))
-(<- (kind_out "none" "None"))
+(kind_out "str" "Some(StrKind::Text)")
+(kind_out "int" "Some(StrKind::Int)")
+(kind_out "none" "None")
 
 (: kind_rust (* (: kind str) (: rust str)))
-(<- (kind_rust "str" "Text"))
-(<- (kind_rust "int" "Int"))
+(kind_rust "str" "Text")
+(kind_rust "int" "Int")
 
 (: piece
    (* (: section str)
@@ -135,8 +135,8 @@
     (str.pascal ?Name ?Variant))
 
 (: reader (* (: kind str) (: function str)))
-(<- (reader "str" "text"))
-(<- (reader "int" "int"))
+(reader "str" "text")
+(reader "int" "int")
 
 ; dl8: the name and arity table.
 (<- (piece "dl8_table" ?Index 0

@@ -341,6 +341,12 @@ pub fn expression_callable(cx: &mut Cx, name: TermId, owner: TermId) -> Result<A
         if kind_name == "product" || kind_name == "derived_callable" {
             if let Some(callable) = cx.u.unary(target, "target") {
                 let arity = cx.edges.arity(callable);
+                // A goal over the product's own rows never sees the instance
+                // an application builds.
+                if kind_name == "product" && super::generic::is_generic_callable(cx, callable) {
+                    let shape = cx.atom("generic_application");
+                    return Err(cx.compound("not_built_yet", vec![shape]));
+                }
                 if arity == 0 {
                     return Err(cx.compound("undeclared_relation", vec![callable]));
                 }
