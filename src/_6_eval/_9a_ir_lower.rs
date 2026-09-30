@@ -802,6 +802,15 @@ fn compile_kernel(
                         let _ = v;
                     }
                 }
+                // Exactly `value_at` elements: the list ends after the last one.
+                let empty_row = mapped_ground(b, term_map, empty);
+                *current = b.node(ir::Op::Join {
+                    inputs: vec![*current, empty_row],
+                    equivalences: vec![],
+                });
+                let end = assert_width(*width + 1);
+                *width += 2;
+                *current = b.mfp(*current, vec![equal_columns(list, end)], vec![], vec![]);
             } else {
                 let mut plain: Vec<ir::ColId> = Vec::with_capacity(value_at);
                 for position in 0..value_at {
