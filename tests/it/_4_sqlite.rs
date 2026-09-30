@@ -1453,3 +1453,34 @@ fn rust_time_is_separable_from_sql_time() {
     );
     let _ = std::fs::remove_dir_all(&directory);
 }
+
+/// `main.unit` references in the sqlite engine's comptime view for the
+/// prelude. SQLite expands a CTE at every reference and stops a statement at
+/// 65535 references to one table, so identical bodyless rules share one
+/// select and no product's CTE reads `main.unit` twice.
+const PRELUDE_UNIT_REFERENCES: usize = 15;
+
+#[test]
+fn sqlite_view_reads_unit_once_per_product() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .arg("compile")
+        .arg(root.join("fixtures/generic/2_variable_goal.dl7"))
+        .env("DL8_ENGINE", "sqlite")
+        .env("RUST_LOG", "dl8::eval=debug")
+        .output()
+        .unwrap();
+    assert!(compiled.status.success());
+    let log = String::from_utf8(compiled.stderr).unwrap();
+    let views: Vec<&str> = log.lines().filter(|line| line.contains("declare_view sql")).collect();
+    assert!(!views.is_empty());
+    let mut most = 0;
+    for view in views {
+        let total = view.matches("main.unit").count();
+        most = most.max(total);
+        for body in view.split(" AS (") {
+            assert!(body.matches("main.unit").count() <= 1, "{body}");
+        }
+    }
+    assert!(most <= PRELUDE_UNIT_REFERENCES, "{most}");
+}
