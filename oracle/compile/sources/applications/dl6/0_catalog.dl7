@@ -9,14 +9,11 @@
       (: return type)))
 
 (<- (Interned ?Source ?Result)
-    (nil ?Empty)
-    (cons ?Source ?Empty ?Arguments)
-    (intern Interned ?Arguments ?Result))
+    (intern Interned (tuple ?Source) ?Result))
 
 (<- (Interned ?Source ?Result)
     (intern_snapshot Interned ?Arguments ?Result)
-    (nil ?Empty)
-    (cons ?Source ?Empty ?Arguments))
+    (tuple ?Source ?Arguments))
 
 (: Repository
    (* (: url str)))

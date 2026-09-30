@@ -154,7 +154,6 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         };
     }
 
-    let nil_rel = kernel_ref(u, "nil");
     let intern_rel = kernel_ref(u, "intern");
     let effect_rel = kernel_ref(u, "effect");
     let snapshot_rel = kernel_ref(u, "intern_snapshot");
@@ -162,9 +161,6 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         let none = u.atom("none");
         u.compound("const", vec![none])
     };
-    let empty = u.empty_list();
-    let nil_arg = u.compound("const", vec![empty]);
-    let nil = tagged(nil_rel, &[nil_arg]);
     let mut rules_by_level = schedule_rules(program, &strata, &hidden);
     for level in 0..=strata.max_level {
         let rules = rules_by_level.get(&level).map_or(0, Vec::len);
@@ -187,7 +183,6 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         .seeds
         .iter()
         .map(|row| tagged(row.rel, &row.args))
-        .chain([nil.clone()])
         .collect();
     let mut cache = CACHE.with(|cache| std::mem::take(&mut *cache.borrow_mut()));
     // The arena prefix guards captured TermIds when a different program is evaluated.
@@ -242,7 +237,8 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
         let build_started = Instant::now();
         let (input, level_probes, profiles, trace) = worker.dataflow::<u64, _, _>(|scope| {
             let (input, seeds) = scope.new_collection::<DdRow, Weight>();
-            let mut known = seeds.clone().filter(move |row| row[0] == nil_rel.0);
+            let (_unit_input, unit_source) = scope.new_collection_from(vec![()]);
+            let mut known = seeds.clone().filter(|_| false);
             let mut level_probes = Vec::new();
             let mut profiles = Vec::new();
             let levels: Vec<(u32, HashMap<TermId, u32>, Vec<Rule>)> = (0..=strata.max_level)
@@ -265,11 +261,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 let mut aggregate_rows = known.clone().filter(|_| false);
                 let mut relations = Relations::new();
                 let mut arrangements = Arrangements::new();
-                let unit = known
-                    .clone()
-                    .filter(move |row| row[0] == nil_rel.0)
-                    .map(|_| ())
-                    .distinct();
+                let unit = unit_source.clone();
                 let tagged_rows = known
                     .clone()
                     .map(|row| (row[0], row[1..].to_vec()))
@@ -319,7 +311,9 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                 let round_counter = Arc::clone(&rounds);
                 let round_inspect = Arc::new(Mutex::new(None));
                 let round_inspect_worker = Arc::clone(&round_inspect);
+                let unit_enter = unit_source.clone();
                 known = base.iterate(move |_scope, current| {
+                    let unit_inner = unit_enter.enter(_scope);
                     let current = if profile {
                         let operator_id = _scope.worker().peek_identifier();
                         let rounds = Arc::clone(&round_counter);
@@ -334,11 +328,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
                     let mut derived = current.clone().filter(|_| false);
                     let mut relations = Relations::new();
                     let mut arrangements = Arrangements::new();
-                    let unit = current
-                        .clone()
-                        .filter(move |row| row[0] == nil_rel.0)
-                        .map(|_| ())
-                        .distinct();
+                    let unit = unit_inner.clone();
                     let tagged_rows = current
                         .clone()
                         .map(|row| (row[0], row[1..].to_vec()))
@@ -421,7 +411,7 @@ pub fn evaluate_dd(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace
     let inserted = seeds.difference(&entry.seeds).count();
     let removed = entry.seeds.difference(&seeds).count();
     tracing::info!(reused, inserted, removed, "dd dataflow reuse");
-    if seeds != entry.seeds {
+    if seeds != entry.seeds || !reused {
         for row in seeds.difference(&entry.seeds) {
             entry.input.insert(row.clone());
         }

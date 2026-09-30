@@ -441,9 +441,8 @@ fn arg_vars(arg: &Arg) -> Vec<VarId> {
 /// negative goal reads a head variable no earlier goal binds, so bottom-up
 /// derivation cannot reach its rows. A positive kernel goal never blocks
 /// when the op computes its row from the arguments bound at that point,
-/// matching each op's row function: comparisons need both sides, `cons`
-/// and `str.cons` take head and tail or the whole list, `nil` and
-/// `str.nil` need nothing, every other op takes its first two arguments.
+/// matching each op's row function: comparisons need both sides, `str.cons`
+/// takes head and tail or the whole text, `str.nil` needs nothing, every other op takes its first two arguments.
 /// That readiness argument only holds while every table the rule reads is
 /// present when its stratum starts. A rule reading `intern_snapshot` fires
 /// against the rows known at round zero and never revisits them, so such a
@@ -470,8 +469,8 @@ pub(crate) fn needs_bound_head(u: &Universe, rule: &Rule, snapshots: TermId) -> 
                         .unwrap_or(false)
                 };
                 let ready = match op {
-                    Kernel::Nil | Kernel::StrNil => true,
-                    Kernel::Cons | Kernel::StrCons => at(2) || (at(0) && at(1)),
+                    Kernel::StrNil => true,
+                    Kernel::StrCons => at(2) || (at(0) && at(1)),
                     Kernel::Tuple => at(goal.args.len() - 1) || (0..goal.args.len() - 1).all(at),
                     Kernel::Str(op) => (0..op.args().len()).all(at),
                     _ => at(0) && at(1),
@@ -1007,21 +1006,11 @@ fn evaluate_into(
         },
     };
     let sum_readbacks = sum_readback_constructors(u, program, effects.intern_snapshot);
-    let nil_rel = {
-        let n = u.atom("nil");
-        let k = u.compound("kernel", vec![n]);
-        u.compound("ref", vec![k])
-    };
     let intern_rel = {
         let n = u.atom("intern");
         let k = u.compound("kernel", vec![n]);
         u.compound("ref", vec![k])
     };
-    let nil_row = {
-        let e = u.empty_list();
-        u.compound("const", vec![e])
-    };
-    store.insert(nil_rel, vec![nil_row].into_boxed_slice());
 
     let mut seeds_by_level: HashMap<u32, Vec<&Row>> = HashMap::new();
     for seed in &program.seeds {

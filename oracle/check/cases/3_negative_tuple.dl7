@@ -2,4 +2,4 @@
    (* (: seen int)))
 
 (<- (reader 1)
-    (cons ?Head ?Tail ?List))
+    (not (tuple 1 2 ?List)))

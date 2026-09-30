@@ -1,0 +1,25 @@
+% tuple/4 builds a triple from bound elements, reads it back by position,
+% and reverses it; a tuple goal of another arity does not match.
+program(
+    [ rule(call(ref(built), [var(t)]),
+           [ checked_goal(positive, call(ref(source), [var(a), var(b), var(c)])),
+             checked_goal(positive, call(ref(kernel(tuple)), [var(a), var(b), var(c), var(t)])) ]),
+      rule(call(ref(first), [var(a)]),
+           [ checked_goal(positive, call(ref(built), [var(t)])),
+             checked_goal(positive, call(ref(kernel(tuple)), [var(a), var(b), var(c), var(t)])) ]),
+      rule(call(ref(second), [var(b)]),
+           [ checked_goal(positive, call(ref(built), [var(t)])),
+             checked_goal(positive, call(ref(kernel(tuple)), [var(a), var(b), var(c), var(t)])) ]),
+      rule(call(ref(third), [var(c)]),
+           [ checked_goal(positive, call(ref(built), [var(t)])),
+             checked_goal(positive, call(ref(kernel(tuple)), [var(a), var(b), var(c), var(t)])) ]),
+      rule(call(ref(reversed), [var(r)]),
+           [ checked_goal(positive, call(ref(built), [var(t)])),
+             checked_goal(positive, call(ref(kernel(tuple)), [var(a), var(b), var(c), var(t)])),
+             checked_goal(positive, call(ref(kernel(tuple)), [var(c), var(b), var(a), var(r)])) ]),
+      rule(call(ref(arity_mismatch), []),
+           [ checked_goal(positive, call(ref(built), [var(t)])),
+             checked_goal(positive, call(ref(kernel(tuple)), [var(a), var(b), var(t)])) ])
+    ],
+    [ call(ref(source), [const(one), const(two), const(three)]),
+      call(ref(source), [const(one), const(one), const(two)]) ]).

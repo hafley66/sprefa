@@ -30,8 +30,3 @@
 
 (<- (Uses ?Value)
     (Level ?Value))
-
-(: Empty (* (: list any)))
-
-(<- (Empty ?List)
-    (nil ?List))

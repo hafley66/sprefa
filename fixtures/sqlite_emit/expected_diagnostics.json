@@ -97,23 +97,6 @@
         {
           "args": [
             {
-              "a": "Empty"
-            },
-            0
-          ],
-          "f": "rule"
-        },
-        {
-          "a": "nil"
-        }
-      ],
-      "f": "emit_sqlite_unsupported"
-    },
-    {
-      "args": [
-        {
-          "args": [
-            {
               "a": "Level"
             },
             0

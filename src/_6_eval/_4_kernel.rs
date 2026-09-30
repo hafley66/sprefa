@@ -9,8 +9,6 @@ use std::cmp::Ordering;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Kernel {
-    Nil,
-    Cons,
     StrNil,
     StrCons,
     Str(StrOp),
@@ -87,8 +85,6 @@ impl Kernel {
             None => (None, atom(u.unary(inner, "kernel")?)?),
         };
         Some(match (owner, label) {
-            (None, "nil") => Kernel::Nil,
-            (None, "cons") => Kernel::Cons,
             (None, "edge_ref") => Kernel::EdgeRef,
             (None, "intern") => Kernel::Intern,
             (None, "tuple") => Kernel::Tuple,
@@ -145,8 +141,6 @@ pub fn term_pair(u: &Universe, args: &[Option<TermId>]) -> Option<(TermId, TermI
 /// argument vector, with the caller unifying the unbound positions.
 pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<TermId>> {
     let solution = match k {
-        Kernel::Nil => nil_row(u, args),
-        Kernel::Cons => cons_row(u, args),
         Kernel::StrNil => str_nil_row(u, args),
         Kernel::StrCons => str_cons_row(u, args),
         Kernel::Str(op) => str_op_row(u, op, args),
@@ -161,33 +155,6 @@ pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<Te
         Kernel::Tuple => tuple_row(u, args),
     };
     solution.map(|row| vec![row]).unwrap_or_default()
-}
-
-pub fn nil_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
-    (args.len() == 1).then(|| {
-        let empty = u.empty_list();
-        vec![u.compound("const", vec![empty])]
-    })
-}
-
-/// Deconstruct when the list is bound, otherwise construct from head and tail.
-pub fn cons_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
-    if args.len() != 3 {
-        return None;
-    }
-    if let Some(list) = args[2] {
-        let items = u.as_list(u.unary(list, "const")?)?;
-        let head = *items.first()?;
-        let rest = u.list(&items[1..]);
-        let tail = u.compound("const", vec![rest]);
-        return Some(vec![head, tail, list]);
-    }
-    let (head, tail) = (args[0]?, args[1]?);
-    let mut items = u.as_list(u.unary(tail, "const")?)?;
-    items.insert(0, head);
-    let full = u.list(&items);
-    let list = u.compound("const", vec![full]);
-    Some(vec![head, tail, list])
 }
 
 /// `str.nil(Empty)`: `Empty` is `""`.
@@ -472,6 +439,6 @@ mod tests {
         assert!(linear((None, "count_step")));
         assert!(!linear((None, "min_step")));
         assert!(!linear((None, "max_step")));
-        assert!(!linear((None, "cons")));
+        assert!(!linear((None, "intern")));
     }
 }

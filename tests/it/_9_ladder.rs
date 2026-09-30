@@ -683,8 +683,7 @@ fn rung_6_kernels() {
                 vec![variable(2)],
                 vec![
                     goal("source", vec![variable(0)], false),
-                    goal("nil", vec![variable(1)], false),
-                    goal("cons", vec![variable(0), variable(1), variable(2)], false),
+                    goal("tuple", vec![variable(0), variable(2)], false),
                 ],
             )];
             let (closure, _, _) = run(6, size, engine, program(seeds, rules));
@@ -692,7 +691,7 @@ fn rung_6_kernels() {
                 6,
                 size,
                 engine,
-                "cons_rows",
+                "tuple_rows",
                 rows(&closure, "list").len(),
                 size,
             );
@@ -755,6 +754,44 @@ fn rung_6_kernels() {
             80,
             Growth::Linear,
         );
+    }
+}
+
+#[test]
+fn rung_6_tuple_feeds_intern() {
+    let kernel = |name: &str, args: Vec<Value>| {
+        json!({
+            "rel":{"f":"ref","args":[{"f":"kernel","args":[{"a":name}]}]},
+            "args":args,"polarity":"positive"
+        })
+    };
+    let seed = call(
+        "field",
+        vec![
+            json!({"f":"ref","args":[{"f":"node","args":[1]}]}),
+            json!({"f":"const","args":[{"a":"name"}]}),
+        ],
+    );
+    let rules = vec![rule(
+        "made",
+        vec![variable(3)],
+        vec![
+            goal("field", vec![variable(0), variable(1)], false),
+            kernel("tuple", vec![variable(0), variable(1), variable(2)]),
+            kernel(
+                "intern",
+                vec![json!({"f":"ref","args":[{"a":"pair"}]}), variable(2), variable(3)],
+            ),
+        ],
+    )];
+    let mut reference = None;
+    for engine in ENGINES {
+        let (closure, _, _) = run(6, 1, engine, program(vec![seed.clone()], rules.clone()));
+        assert_eq!(rows(&closure, "made").len(), 1, "engine={engine}");
+        match &reference {
+            None => reference = Some(closure),
+            Some(want) => assert_eq!(&closure, want, "engine={engine}"),
+        }
     }
 }
 
@@ -968,7 +1005,7 @@ fn rung_8_effects() {
 fn rung_9_comptime_rounds() {
     for engine in ENGINES {
         let empty = json!({"nodes":[],"edges":[],"relations":[],"rules":[],"seeds":[],"depends":[],"strata":[]});
-        let case = json!({"entry":"evaluate_checked","input":{"checked":empty,"replay":[{"deferred":false,"facts_len":1,"generated_len":0,"checked":empty,"diagnostics":[]}]}});
+        let case = json!({"entry":"evaluate_checked","input":{"checked":empty,"replay":[{"deferred":false,"facts_len":0,"generated_len":0,"checked":empty,"diagnostics":[]}]}});
         let path = std::env::temp_dir().join(format!(
             "dl8-ladder-comptime-{}-{}.json",
             std::process::id(),
@@ -1085,16 +1122,23 @@ fn rung_11_handwritten_oracle_constructs() {
     // expected outputs stay in oracle/eval until the deletion commit. Each
     // program runs with zero, one, and all of its original input rows.
     let cases: [(&str, usize, &[(&str, usize)]); 12] = [
-        ("0_negation_cons_intern", 6, &[("upper", 1)]),
-        ("1_count", 7, &[("region_count", 2), ("big_region", 1)]),
+        ("0_negation_tuple_intern", 5, &[("upper", 1)]),
+        ("1_count", 6, &[("region_count", 2), ("big_region", 1)]),
         (
-            "2_cons_lists",
-            21,
-            &[("suffix", 4), ("item", 3), ("pair", 9)],
+            "2_tuple_lists",
+            11,
+            &[
+                ("built", 2),
+                ("first", 1),
+                ("second", 2),
+                ("third", 2),
+                ("reversed", 2),
+                ("arity_mismatch", 0),
+            ],
         ),
         (
             "3_int_compare",
-            23,
+            22,
             &[
                 ("less", 3),
                 ("not_less", 6),
@@ -1107,37 +1151,36 @@ fn rung_11_handwritten_oracle_constructs() {
         ),
         (
             "4_mixed_lower_recursion",
-            17,
+            16,
             &[("open", 3), ("reach", 3), ("unreached", 1)],
         ),
         (
             "5_edge_ref",
-            10,
+            9,
             &[("edge_of", 2), ("tagged", 2), ("literal_vars", 0)],
         ),
-        ("6_nonground_negation", 5, &[("free", 1), ("lonely", 0)]),
+        ("6_nonground_negation", 4, &[("free", 1), ("lonely", 0)]),
         (
             "7_repeated_vars_and_arity",
-            14,
+            13,
             &[("loop", 1), ("triple", 4), ("fact", 1), ("pinned", 2)],
         ),
-        ("8_deep_terms_order", 31, &[("seen", 15)]),
+        ("8_deep_terms_order", 30, &[("seen", 15)]),
         (
             "9_demand_recursion",
-            19,
+            18,
             &[("chain", 7), ("reaches_end", 1), ("wrap_twice", 2)],
         ),
         (
             "10_aggregate_tables_only",
-            9,
+            7,
             &[
-                ("nil_count", 1),
-                ("cons_count", 0),
+                ("tuple_count", 0),
                 ("item_count", 1),
                 ("pair_count", 3),
             ],
         ),
-        ("11_intern_row_reuse", 9, &[("made", 2), ("who_made", 2)]),
+        ("11_intern_row_reuse", 8, &[("made", 2), ("who_made", 2)]),
     ];
     for (stem, full_closure, expected_relations) in cases {
         let path = format!("{}/fixtures/ladder/{stem}.json", env!("CARGO_MANIFEST_DIR"));

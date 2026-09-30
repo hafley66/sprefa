@@ -112,7 +112,8 @@ fn every_oracle_fixture_matches_v7() {
 
 /// Fixtures the sqlite engine must keep passing. Measured at slice S1;
 /// a count below this is a regression, above it raises the floor.
-const FLOOR: usize = 18;
+/// The frozen programs that named kernel cons/nil are deleted; three remain.
+const FLOOR: usize = 3;
 
 fn s27evalsqlite_fixtures() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/eval");
@@ -220,7 +221,7 @@ fn sqlite_engine_matches_v7_oracles() {
 // Oracle parity through the real binary with `DL8_ENGINE=dd`.
 
 /// Fixtures the DD engine must keep passing.
-const s28evaldd_FLOOR: usize = 18;
+const s28evaldd_FLOOR: usize = 3;
 
 fn s28evaldd_fixtures() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/eval");
@@ -461,7 +462,7 @@ fn strategy() -> impl Strategy<Value = Spec> {
 
 pub(crate) fn rel(name: &str) -> Value {
     let inner = match name {
-        "nil" | "cons" | "intern" => json!({"f":"kernel","args":[{"a":name}]}),
+        "tuple" | "intern" => json!({"f":"kernel","args":[{"a":name}]}),
         "int.add" => json!({"f":"kernel","args":[{"a":"int"},{"a":"add"}]}),
         _ => json!({"a":name}),
     };
@@ -545,8 +546,7 @@ fn program_json(seed: u64, spec: &Spec) -> Value {
                 "d1",
                 vec![variable(1)],
                 vec![
-                    goal("nil", vec![variable(0)], false),
-                    goal("cons", vec![constant(1), variable(0), variable(1)], false),
+                    goal("tuple", vec![constant(1), variable(1)], false),
                 ],
             ));
         }
