@@ -4,6 +4,7 @@
 
 use super::kernel::{
     any_lt_row, cons_row, edge_ref_row, int_dot_add_row, intern_row, str_cons_row, str_op_row,
+    tuple_row,
 };
 use super::str_ops::STR_OPS;
 use super::term::{TermId, Universe};
@@ -30,10 +31,10 @@ fn cell(value: &SqlValue) -> Option<TermId> {
 fn scalar(
     connection: &Connection,
     name: &str,
-    arguments: usize,
+    arguments: i32,
     body: impl Fn(&[SqlValue]) -> Option<SqlValue> + Send + 'static,
 ) -> rusqlite::Result<()> {
-    connection.create_scalar_function(name, arguments as i32, flags(), move |ctx| {
+    connection.create_scalar_function(name, arguments, flags(), move |ctx| {
         let mut args = Vec::with_capacity(ctx.len());
         for at in 0..ctx.len() {
             args.push(SqlValue::try_from(ctx.get_raw(at)).unwrap_or(SqlValue::Null));
@@ -99,7 +100,7 @@ pub fn register(connection: &Connection, arena: Arc<Mutex<Universe>>) -> rusqlit
         let arena = arena.clone();
         let op = *op;
         let inputs = op.args().len();
-        scalar(connection, &format!("dl_{owner}_{label}"), inputs, move |args| {
+        scalar(connection, &format!("dl_{owner}_{label}"), inputs as i32, move |args| {
             let mut shaped: Vec<Option<TermId>> = args.iter().map(cell).collect();
             if *arity > inputs {
                 shaped.push(None);
@@ -113,6 +114,28 @@ pub fn register(connection: &Connection, arena: Arc<Mutex<Universe>>) -> rusqlit
             }
         })?;
     }
+    // `dl_tuple(Element..)` builds the tuple term over the arena; `dl_tuple_at
+    // (Whole, Position, Count)` reads one element, NULL on an arity mismatch.
+    let building = arena.clone();
+    scalar(connection, "dl_tuple", -1, move |args| {
+        let mut shaped: Vec<Option<TermId>> = args.iter().map(cell).collect();
+        shaped.push(None);
+        let mut taken = building.lock().ok()?;
+        let solved = tuple_row(&mut taken, &shaped)?;
+        Some(SqlValue::Integer(solved.last()?.0 as i64))
+    })?;
+    let reading = arena.clone();
+    scalar(connection, "dl_tuple_at", 3, move |args| {
+        let [whole, SqlValue::Integer(position), SqlValue::Integer(count)] = args else {
+            return None;
+        };
+        let mut shaped: Vec<Option<TermId>> = vec![None; usize::try_from(*count).ok()?];
+        shaped.push(Some(cell(whole)?));
+        let mut taken = reading.lock().ok()?;
+        let solved = tuple_row(&mut taken, &shaped)?;
+        let term = solved.get(usize::try_from(*position).ok()?)?;
+        Some(SqlValue::Integer(term.0 as i64))
+    })?;
     let decoding = arena.clone();
     scalar(connection, "dl_int", 1, move |args| {
         if args.len() != 1 {

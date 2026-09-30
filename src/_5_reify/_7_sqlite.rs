@@ -864,6 +864,7 @@ impl<'a> Lowering<'a> {
                     | Kernel::StrNil
                     | Kernel::Cons
                     | Kernel::StrCons
+                    | Kernel::Tuple
                     | Kernel::Str(_)
                     | Kernel::EdgeRef
                     | Kernel::Intern,
@@ -1240,6 +1241,55 @@ impl<'a> Lowering<'a> {
                         guards.push(format!("{head} IS NOT NULL"));
                         guards.push(format!("{tail} IS NOT NULL"));
                         for (position, call) in [(0usize, head), (1usize, tail)] {
+                            match self.argument_cell(scope, rule, vars, &goal.args[position])? {
+                                Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
+                                Hold::Free(free) if positive => {
+                                    vars.insert(
+                                        free,
+                                        Value {
+                                            sql: call,
+                                            kind: CellKind::Term,
+                                        },
+                                    );
+                                }
+                                Hold::Free(_) => {}
+                            }
+                        }
+                    }
+                }
+                "1".to_string()
+            }
+            Kernel::Tuple if self.catalog.reach == KernelReach::Eval => {
+                let Some(count) = goal.args.len().checked_sub(1).filter(|n| *n > 0) else {
+                    return Err(Unsupported::Kernel("tuple".to_string()));
+                };
+                match self.argument_cell(scope, rule, vars, &goal.args[count])? {
+                    Hold::Free(at) => {
+                        let mut cells = Vec::with_capacity(count);
+                        for argument in &goal.args[..count] {
+                            let Some(cell) =
+                                self.input_cell(scope, rule, vars, argument, &mut guards)?
+                            else {
+                                return Ok(guards.join(" AND "));
+                            };
+                            cells.push(cell);
+                        }
+                        let call = format!("dl_tuple({})", cells.join(", "));
+                        guards.push(format!("{call} IS NOT NULL"));
+                        if positive {
+                            vars.insert(
+                                at,
+                                Value {
+                                    sql: call,
+                                    kind: CellKind::Term,
+                                },
+                            );
+                        }
+                    }
+                    Hold::Cell(whole) => {
+                        for position in 0..count {
+                            let call = format!("dl_tuple_at({whole}, {position}, {count})");
+                            guards.push(format!("{call} IS NOT NULL"));
                             match self.argument_cell(scope, rule, vars, &goal.args[position])? {
                                 Hold::Cell(cell) => guards.push(format!("{call} = {cell}")),
                                 Hold::Free(free) if positive => {
