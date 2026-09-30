@@ -591,7 +591,7 @@ fn lower_generic_value(
     if argument_nodes.len() as i64 != columns {
         let expected = cx.int(columns);
         let observed = cx.int(argument_nodes.len() as i64);
-        let reason = cx.compound("arity_mismatch", vec![name, expected, observed]);
+        let reason = cx.compound("expression_arity_mismatch", vec![name, expected, observed]);
         let diagnostic = cx.diagnostic(node_id, reason);
         return none(cx, vec![diagnostic]);
     }

@@ -3,6 +3,6 @@
 (: Path (* (: from str) (: to str)))
 (Edge "a" "b")
 (Edge "b" "c")
-(<- (Tagged ?A ?B) (Edge ?A ?B) (tuple ?B ?Args) (intern Option ?Args ?Id))
+(<- (Tagged ?A ?B) (Edge ?A ?B) (tuple ?A ?B ?Args) (intern Key ?Args ?Id))
 (<- (Path ?A ?B) (Tagged ?A ?B))
 (<- (Path ?A ?C) (Path ?A ?B) (Edge ?B ?C))

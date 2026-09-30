@@ -1,18 +1,4 @@
 ; Canonical application identities use the tuple and intern relations.
-(<- (Partial ?Source ?Result)
-    (intern Partial (tuple ?Source) ?Result))
-
-(<- (Partial ?Source ?Result)
-    (intern_snapshot Partial ?Arguments ?Result)
-    (tuple ?Source ?Arguments))
-
-(<- (Option ?Source ?Result)
-    (intern Option (tuple ?Source) ?Result))
-
-(<- (Option ?Source ?Result)
-    (intern_snapshot Option ?Arguments ?Result)
-    (tuple ?Source ?Arguments))
-
 (<- (Key ?Name ?Options ?Result)
     (intern Key (tuple ?Name ?Options) ?Result))
 

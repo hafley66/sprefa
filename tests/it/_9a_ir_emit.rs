@@ -312,14 +312,14 @@ fn emitted_rxjs_keeps_source_outputs_and_relation_arguments() {
         );
 
         if stem == "1_relation_argument" {
-            let option = &source["program"]["names"]["Option"];
+            let key = &source["program"]["names"]["Key"];
             let original = bundle
                 .atoms
                 .values()
-                .find(|entry| &entry.printed == option)
+                .find(|entry| &entry.printed == key)
                 .unwrap()
                 .original;
-            let name = format!("__ir_n{original}_a2");
+            let name = format!("__ir_n{original}_a3");
             let relation = bundle
                 .program
                 .rels
@@ -336,14 +336,14 @@ fn emitted_rxjs_keeps_source_outputs_and_relation_arguments() {
                 })
                 .unwrap();
             let Op::Threshold(union) = &bundle.program.nodes[body as usize] else {
-                panic!("Option threshold")
+                panic!("Key threshold")
             };
             let Op::Union(inputs) = &bundle.program.nodes[*union as usize] else {
-                panic!("Option union")
+                panic!("Key union")
             };
             assert!(
                 inputs.len() > 1,
-                "Option constructor rules were sliced away"
+                "Key constructor rules were sliced away"
             );
         }
         std::fs::remove_dir_all(&directory).unwrap();

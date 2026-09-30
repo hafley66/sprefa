@@ -1,11 +1,11 @@
 ; Userland unary type constructors.
 (: Partial
    (* (: source type)
-      (: return type)))
+      (: return (*))))
 
 (: Option
    (* (: source type)
-      (: return type)))
+      (: return (*))))
 
 ; The zero-column product every `(Option T)` reaches for when the value is
 ; absent. A JSON null is this node; a key with no edge is a different graph.
