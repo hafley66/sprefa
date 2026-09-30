@@ -1,21 +1,12 @@
-(<- (HeadCall ?Rule ?Call)
-    (intern HeadCall (tuple ?Rule) ?Call))
-
-(<- (BodyCall ?Rule ?Goal ?Call)
-    (intern BodyCall (tuple ?Rule ?Goal) ?Call))
-
 (<- (node ?Call)
     (Apply ?Call ?Callable))
 
 ; A generated relation edge names one variable scoped to that generated rule.
-; The interned identity uses [scope, position, name].
-(<- (Variable ?Variable ?Scope ?Name)
+; The identity is [scope, position, name].
+(<- (node ?Variable)
     (head ?Scope ?HeadCall)
     (: ?Scope ?Name ?Target ?Position)
-    (intern Variable (tuple ?Scope ?Position ?Name) ?Variable))
-
-(<- (node ?Variable)
-    (Variable ?Variable ?Scope ?Name))
+    (Variable ?Scope ?Position ?Name ?Variable))
 
 (<- (contains ?List ?Value)
     (edge_snapshot ?List ?Position ?Value ?Position))
@@ -187,7 +178,7 @@
     (history_v1_edge ?Source ?Options ?Result
                      ?Name ?Target ?Position)
     (HeadCall ?Result ?HeadCall)
-    (Variable ?Variable ?Result ?Name))
+    (Variable ?Result ?Position ?Name ?Variable))
 
 (<- (body ?Result 0 "positive" ?BodyCall)
     (HistoryV1 ?Source ?Options ?Result)
@@ -201,7 +192,7 @@
     (history_v1_edge ?Source ?Options ?Result
                      ?Name ?Target ?Position)
     (BodyCall ?Result 0 ?BodyCall)
-    (Variable ?Variable ?Result ?Name))
+    (Variable ?Result ?Position ?Name ?Variable))
 
 ; A partial callable removes captured source slots, densely reindexes the
 ; remaining edges, and emits a forwarding relation through the public
@@ -281,7 +272,7 @@
     (curry_edge ?Source ?Result ?Name ?Target
                 ?SourceIndex ?ResultIndex)
     (HeadCall ?Result ?HeadCall)
-    (Variable ?Variable ?Result ?Name))
+    (Variable ?Result ?ResultIndex ?Name ?Variable))
 
 (<- (body ?Result 0 "positive" ?BodyCall)
     (curry_specialization ?Source ?Result)
@@ -301,4 +292,4 @@
     (curry_edge ?Source ?Result ?Name ?Target
                 ?SourceIndex ?ResultIndex)
     (BodyCall ?Result 0 ?BodyCall)
-    (Variable ?Variable ?Result ?Name))
+    (Variable ?Result ?ResultIndex ?Name ?Variable))

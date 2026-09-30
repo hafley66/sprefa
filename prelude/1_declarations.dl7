@@ -161,19 +161,20 @@
       (: raw any)))
 
 (: Variable
-   (* (: node type)
-      (: scope type)
-      (: name str)))
+   (* (: scope type)
+      (: position int)
+      (: name str)
+      (: return (*))))
 
 ; Generated rule heads and body goals use distinct application identities.
 (: HeadCall
    (* (: rule type)
-      (: return type)))
+      (: return (*))))
 
 (: BodyCall
    (* (: rule type)
       (: goal int)
-      (: return type)))
+      (: return (*))))
 
 ; Curry identities are canonical callable specializations. The source lowerer
 ; supplies Apply and call-edge facts. These Curry views, the remaining shape,
