@@ -92,7 +92,7 @@ pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<
                         .is_some_and(|(n, a)| n == "deferred_expression" && a.len() == 3);
                 if derived {
                     let inner = cx.edges.derived_target(cx.u, found_owner, name)?;
-                    (inner, cx.reservations.is_sum_target(cx.u, inner))
+                    (inner, instance_is_sum(cx, inner))
                 } else {
                     let is_sum =
                         cx.u.functor_or_atom(found_kind).map(|(kind, _)| kind) == Some("sum");
@@ -101,7 +101,7 @@ pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<
             }
             None => {
                 let inner = cx.edges.derived_target(cx.u, scope, name)?;
-                (inner, cx.reservations.is_sum_target(cx.u, inner))
+                (inner, instance_is_sum(cx, inner))
             }
         };
         if index + 1 == segments.len() {
@@ -114,6 +114,24 @@ pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<
         parent_is_sum = is_sum;
     }
     None
+}
+
+/// A generic instance `application(Callee, Args)` is a sum when the callee's
+/// `return` expression is one; any other node is checked as itself.
+fn instance_is_sum(cx: &mut Cx, inner: TermId) -> bool {
+    let return_atom = cx.atom("return");
+    let template = cx
+        .u
+        .args::<2>(inner, "application")
+        .and_then(|[callee, _]| {
+            cx.edges
+                .owned(callee)
+                .into_iter()
+                .find(|edge| edge.name == return_atom)
+                .and_then(|edge| cx.u.unary(edge.target, "target"))
+        })
+        .unwrap_or(inner);
+    cx.reservations.is_sum_target(cx.u, template)
 }
 
 /// `pending_goal(positive, call(name(Scope, ':'), Arguments))`.
@@ -233,6 +251,12 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
             Ok(Applied::Construction(constructor)) => {
                 lower_construction(cx, constructor, parsed.id, &items[1..], owner)
             }
+            Ok(Applied::Generic(_)) => {
+                let shape = cx.atom("generic_application");
+                let reason = cx.compound("not_built_yet", vec![shape]);
+                let diagnostic = cx.diagnostic(parsed.id, reason);
+                none(cx, vec![diagnostic])
+            }
             Err(reason) => {
                 let diagnostic = cx.diagnostic(parsed.id, reason);
                 none(cx, vec![diagnostic])
@@ -252,7 +276,7 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
                 call_owner,
                 owner,
             ),
-            Ok(Applied::Construction(_)) => {
+            Ok(Applied::Construction(_) | Applied::Generic(_)) => {
                 let reason = not_a_relation(cx, label, call_owner);
                 let diagnostic = cx.diagnostic(parsed.id, reason);
                 none(cx, vec![diagnostic])
@@ -327,6 +351,9 @@ pub enum Applied {
     /// A node with no rows: the application is construction, and the term is
     /// the constructor the interned value carries.
     Construction(TermId),
+    /// A product whose `return` is an expression: the application is its
+    /// instance, `application(Callee, Args)`.
+    Generic(TermId),
 }
 
 /// `:1488`. `Err` carries the bare reason term.
@@ -341,11 +368,10 @@ pub fn expression_callable(cx: &mut Cx, name: TermId, owner: TermId) -> Result<A
         if kind_name == "product" || kind_name == "derived_callable" {
             if let Some(callable) = cx.u.unary(target, "target") {
                 let arity = cx.edges.arity(callable);
-                // A goal over the product's own rows never sees the instance
-                // an application builds.
+                // A product whose `return` is an expression has no rows of its
+                // own: applying it builds or reads back an instance.
                 if kind_name == "product" && super::generic::is_generic_callable(cx, callable) {
-                    let shape = cx.atom("generic_application");
-                    return Err(cx.compound("not_built_yet", vec![shape]));
+                    return Ok(Applied::Generic(callable));
                 }
                 if arity == 0 {
                     return Err(cx.compound("undeclared_relation", vec![callable]));

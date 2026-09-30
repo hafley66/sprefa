@@ -265,15 +265,17 @@ pub fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<T
     Ok(argument)
 }
 
-/// `:570`. Deferred targets are dropped at `:571` and `:575`.
+/// `:570`. Deferred targets are dropped at `:571` and `:575`. The middle list
+/// is the `intern` rows of the instances generic binds build.
 pub fn resolve_edges(
     u: &mut Universe,
     cx: &Cx,
     origins: &OriginArena,
-) -> (Vec<TermId>, Vec<TermId>) {
+) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
     let check = u.atom("check");
     let mut edges = Vec::new();
     let mut built = HashSet::new();
+    let mut minted = Vec::new();
     let mut diagnostics = Vec::new();
     let rows: Vec<(TermId, TermId, TermId, i64)> = cx
         .graph
@@ -293,7 +295,7 @@ pub fn resolve_edges(
         if u.functor(target)
             .is_some_and(|(n, a)| n == "application" && a.len() == 2)
         {
-            match instance_rows(u, cx, owner, name, index, target, &mut built) {
+            match instance_rows(u, cx, owner, name, index, target, &mut built, &mut minted) {
                 Ok(rows) => edges.extend(rows),
                 Err(reason) => {
                     diagnostics.push(u.compound("diagnostic", vec![check, node, reason]))
@@ -313,7 +315,7 @@ pub fn resolve_edges(
         let index = u.int(index);
         edges.push(u.compound(":", vec![owner, name, resolved, index]));
     }
-    (edges, diagnostics)
+    (edges, minted, diagnostics)
 }
 
 /// `:727`.
@@ -379,7 +381,19 @@ fn mint_rows(u: &mut Universe, value: TermId, depth: usize, out: &mut Vec<TermId
             tagged.push(u.compound("const", vec![item]));
         }
     }
-    let arguments = u.list(&tagged);
+    intern_calls(u, constructor, &tagged, value, out);
+}
+
+/// The `intern` and `intern_snapshot` rows of `value`, built by `constructor`
+/// from the tagged arguments.
+pub fn intern_calls(
+    u: &mut Universe,
+    constructor: TermId,
+    tagged: &[TermId],
+    value: TermId,
+    out: &mut Vec<TermId>,
+) {
+    let arguments = u.list(tagged);
     let tuple = u.atom("tuple");
     let arguments = u.compound("application", vec![tuple, arguments]);
     let arguments = u.compound("ref", vec![arguments]);

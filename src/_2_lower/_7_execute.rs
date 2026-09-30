@@ -148,6 +148,7 @@ fn lower_rule(
     }
     goals.extend(head.goals);
     goal_nodes.extend(head.goal_nodes);
+    let (goals, goal_nodes) = expand_generic_goals(cx, owner, &goals, &goal_nodes)?;
     let list = cx.u.list(&goals);
     let term = cx.compound("rule", vec![head.call, list]);
     let index = cx.int(rule_index);
@@ -387,6 +388,9 @@ fn lower_named_call(
     };
     let (callable, arity) = match resolved {
         Ok(express::Applied::Relation(callable, arity, _)) => (callable, arity),
+        Ok(express::Applied::Generic(callable)) => {
+            return generic_goal(cx, head, node_id, callable, &items[1..], owner, head_mode);
+        }
         // A goal position takes a relation only; construction is spelled with
         // `intern` here, so the head names no relation.
         Ok(express::Applied::Construction(_)) => {
@@ -399,6 +403,129 @@ fn lower_named_call(
     let arguments =
         normalize_call_arguments(cx, head, node_id, &all, &items[1..], owner, head_mode)?;
     finish_call_arguments(cx, head, node_id, call_owner, arguments, head_mode)
+}
+
+/// `(Callee Column.. Return)` as a goal: a `generic_goal(Callee, Columns,
+/// Return)` placeholder that `expand_generic_goals` spells once the goals
+/// before it are known. A head or a fact holds no such goal.
+#[allow(clippy::too_many_arguments)]
+fn generic_goal(
+    cx: &mut Cx,
+    head: TermId,
+    node_id: TermId,
+    callable: TermId,
+    argument_nodes: &[TermId],
+    owner: TermId,
+    head_mode: bool,
+) -> Result<Call, TermId> {
+    if head_mode || cx.ground_values {
+        return Err(not_built_yet(cx, node_id));
+    }
+    let arity = cx.edges.arity(callable);
+    let all = slots::callable_slots(cx, &slots::Callable::Target(callable), arity);
+    let arguments =
+        normalize_call_arguments(cx, head, node_id, &all, argument_nodes, owner, head_mode)?;
+    let return_atom = cx.atom("return");
+    let return_indices = cx.edges.return_indices(callable, return_atom);
+    let mut columns = Vec::with_capacity(all.len());
+    let mut result = None;
+    for (slot, value) in all.iter().zip(&arguments.arguments) {
+        if return_indices.contains(&slot.index) {
+            result = Some(*value);
+        } else {
+            columns.push(*value);
+        }
+    }
+    let Some(result) = result else {
+        return Err(not_built_yet(cx, node_id));
+    };
+    let constructor = cx.compound("ref", vec![callable]);
+    let columns = cx.u.list(&columns);
+    let call = cx.compound("generic_goal", vec![constructor, columns, result]);
+    Ok(Call {
+        call,
+        goals: arguments.goals,
+        goal_nodes: arguments.goal_nodes,
+        post_goals: arguments.post_goals,
+        post_nodes: arguments.post_nodes,
+    })
+}
+
+fn not_built_yet(cx: &mut Cx, node_id: TermId) -> TermId {
+    let shape = cx.atom("generic_application");
+    let reason = cx.compound("not_built_yet", vec![shape]);
+    cx.diagnostic(node_id, reason)
+}
+
+/// Every `generic_goal` placeholder in rule order. Columns bound by earlier
+/// goals and a free return build the instance; any other binding reads it
+/// back: `intern_snapshot(Callee, Arguments, Return)` then
+/// `tuple(Column.., Arguments)`.
+fn expand_generic_goals(
+    cx: &mut Cx,
+    owner: TermId,
+    goals: &[TermId],
+    goal_nodes: &[TermId],
+) -> Result<(Vec<TermId>, Vec<TermId>), TermId> {
+    let mut out = Vec::with_capacity(goals.len());
+    let mut nodes = Vec::with_capacity(goal_nodes.len());
+    for (at, goal) in goals.iter().enumerate() {
+        let node = goal_nodes.get(at).copied().unwrap_or(*goal);
+        let placeholder = match cx.u.functor(*goal) {
+            Some(("pending_goal", parts)) => match cx.u.functor(parts[1]) {
+                Some(("generic_goal", args)) => Some((parts[0], args[0], args[1], args[2])),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some((polarity, constructor, columns, result)) = placeholder else {
+            out.push(*goal);
+            nodes.push(node);
+            continue;
+        };
+        if cx.u.functor_or_atom(polarity).map(|(n, _)| n) != Some("positive") {
+            return Err(not_built_yet(cx, node));
+        }
+        let columns = cx.u.as_list(columns).unwrap_or_default();
+        let bound = |cx: &Cx, term: TermId| {
+            !term_has_var(cx, term) || out.iter().any(|g| positive_mentions(cx, *g, term))
+        };
+        let builds = columns.iter().all(|c| bound(cx, *c)) && !bound(cx, result);
+        if builds {
+            return Err(not_built_yet(cx, node));
+        }
+        let node_id = forms::node_id(cx.u, node).unwrap_or(node);
+        let key = cx.compound("generic_arguments", vec![node_id]);
+        let arguments = cx.compound("var", vec![key]);
+        let mut elements = columns;
+        elements.push(arguments);
+        let snapshot = generic_kernel_goal(
+            cx,
+            owner,
+            "intern_snapshot",
+            &[constructor, arguments, result],
+        );
+        let tuple = generic_kernel_goal(cx, owner, "tuple", &elements);
+        out.extend([snapshot, tuple]);
+        nodes.extend([node, node]);
+    }
+    Ok((out, nodes))
+}
+
+fn generic_kernel_goal(cx: &mut Cx, owner: TermId, label: &str, arguments: &[TermId]) -> TermId {
+    let label = cx.atom(label);
+    let relation = cx.compound("name", vec![owner, label]);
+    let list = cx.u.list(arguments);
+    let call = cx.compound("call", vec![relation, list]);
+    let positive = cx.atom("positive");
+    cx.compound("pending_goal", vec![positive, call])
+}
+
+fn positive_mentions(cx: &Cx, goal: TermId, term: TermId) -> bool {
+    let positive = cx.u.functor(goal).is_some_and(|(n, parts)| {
+        n == "pending_goal" && cx.u.functor_or_atom(parts[0]).map(|(p, _)| p) == Some("positive")
+    });
+    positive && term_mentions(cx, goal, term)
 }
 
 struct Arguments {

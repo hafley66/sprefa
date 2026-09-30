@@ -1,9 +1,11 @@
 //! The instance a bind builds from `application(Callee, Args)`: the node is the
-//! `application(Template, Args)` term `intern_row` mints, and every edge of the
-//! template's `return` expression is a ground `:` row over it.
+//! `application(Callee, Args)` term `intern_row` mints, the same id a rule
+//! builds with `intern`, and every edge of the callee's `return` expression is
+//! a ground `:` row over it. The instance's `intern` and `intern_snapshot` rows
+//! are seeds, so a readback sees a bound instance and a built one alike.
 
 use super::graph::CheckerGraph;
-use super::resolve::{resolve_argument, resolve_target, Cx};
+use super::resolve::{intern_calls, resolve_argument, resolve_target, Cx};
 use crate::_6_eval::term::{TermId, Universe};
 use std::collections::HashSet;
 
@@ -25,9 +27,10 @@ pub fn instance_rows(
     index: i64,
     application: TermId,
     built: &mut HashSet<TermId>,
+    minted: &mut Vec<TermId>,
 ) -> Result<Vec<TermId>, TermId> {
     let mut rows = Vec::new();
-    let root_ref = instance(u, cx, name, application, built, 0, &mut rows)?;
+    let root_ref = instance(u, cx, name, application, built, 0, &mut rows, minted)?;
     let index_term = u.int(index);
     rows.insert(0, u.compound(":", vec![owner, name, root_ref, index_term]));
     Ok(rows)
@@ -37,7 +40,9 @@ pub fn instance_rows(
 const ARGUMENT_DEPTH: usize = 16;
 
 /// Builds the instance of one application, inner argument applications first.
-/// Returns `ref(application(Template, Args))`; the edges go to `rows`.
+/// Returns `ref(application(Callee, Args))`; the edges go to `rows`, the
+/// `intern` rows to `minted`.
+#[allow(clippy::too_many_arguments)]
 fn instance(
     u: &mut Universe,
     cx: &Cx,
@@ -46,6 +51,7 @@ fn instance(
     built: &mut HashSet<TermId>,
     depth: usize,
     rows: &mut Vec<TermId>,
+    minted: &mut Vec<TermId>,
 ) -> Result<TermId, TermId> {
     if depth >= ARGUMENT_DEPTH {
         return Err(u.atom("instance_depth_exceeded"));
@@ -85,7 +91,7 @@ fn instance(
     let mut resolved = Vec::with_capacity(items.len());
     for item in &items {
         if u.args::<2>(*item, "application").is_some() {
-            resolved.push(instance(u, cx, name, *item, built, depth + 1, rows)?);
+            resolved.push(instance(u, cx, name, *item, built, depth + 1, rows, minted)?);
         } else {
             resolved.push(resolve_argument(u, cx, *item)?);
         }
@@ -108,9 +114,10 @@ fn instance(
             .collect(),
         arguments,
     };
-    let root = u.compound("application", vec![template, arguments]);
+    let root = u.compound("application", vec![callee, arguments]);
     let root_ref = u.compound("ref", vec![root]);
     if built.insert(root) {
+        intern_calls(u, callee, &resolved, root_ref, minted);
         walk(u, cx, &build, template, root, 0, rows)?;
     }
     Ok(root_ref)

@@ -217,8 +217,9 @@ pub fn check_datalog(
     };
 
     let mut diagnostics = bind_diagnostics(u, &graph, &origins);
-    let (colon_edges, edge_diagnostics) = resolve_edges(u, &cx, &origins);
-    let (seeds, seed_diagnostics) = resolve_seeds(u, &cx, &basement.seeds, &origins)?;
+    let (colon_edges, instance_interns, edge_diagnostics) = resolve_edges(u, &cx, &origins);
+    let (mut seeds, seed_diagnostics) = resolve_seeds(u, &cx, &basement.seeds, &origins)?;
+    seeds.extend(instance_interns);
     let (rules, rule_diagnostics) = resolve_rules(u, &cx, &basement.rules, &origins)?;
     diagnostics.extend(edge_diagnostics);
     diagnostics.extend(seed_diagnostics);
