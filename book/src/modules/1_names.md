@@ -84,7 +84,7 @@ A user product named `intern` hides the kernel `intern` for every rule in that f
 
 ```console
 $ bash book/show.sh compile book/src/probes/4_user_intern_kernel_goal.dl7
-diagnostic diagnostic(lower, reader_node(book/src/probes/4_user_intern_kernel_goal.dl7, 36), arity_mismatch(intern, 1, 3))
+diagnostic diagnostic(lower, reader_node(book/src/probes/4_user_intern_kernel_goal.dl7, 32), arity_mismatch(intern, 1, 3))
 exit 1
 ```
 

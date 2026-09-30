@@ -5,8 +5,7 @@
       (: return type)))
 
 (<- (Wrap ?Source ?Result)
-    (nil ?Empty)
-    (cons ?Source ?Empty ?Arguments)
+    (tuple ?Source ?Arguments)
     (intern Wrap ?Arguments ?Result))
 
 (: Holder
