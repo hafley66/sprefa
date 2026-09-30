@@ -290,10 +290,10 @@ fn truncate(value: &serde_json::Value) -> String {
 //    (`lt, le, gt, ge, eq, ne` off `int`): all four
 //    `*_check_datalog` cases report `checked differs`. The kernel node list is
 //    an unsorted append at `1_checker.pl:423`, so the order is observable.
-// 2. `_5_kernel.rs` `kernel_relation_keys("nil")` set to the lowerer's
+// 2. `_5_kernel.rs` `kernel_relation_keys(Some("str"), "nil")` set to the lowerer's
 //    `[[]]` instead of the checker's `[[0]]`: the same four cases report
 //    `checked differs`.
-// 3. `_4_mode.rs` `cons` input modes reordered to `[[0,1],[2]]`:
+// 3. `_4_mode.rs` `str.cons` input modes reordered to `[[0,1],[2]]`:
 //    `case-4_under_cons_0` reports `diagnostics differs`.
 //
 // A fourth mutation did NOT fail and is recorded as an uncovered path:
