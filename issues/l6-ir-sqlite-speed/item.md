@@ -2,11 +2,12 @@
 created: 2026-10-01
 updated: 2026-10-01
 type: improvement
-status: open
+status: done
 priority: normal
 epic: emitter-v1-burndown
 labels:
 - size:large
+closed: 2026-10-01
 ---
 
 # L6 ir:sqlite speed: integer joins, sort keys at term creation
