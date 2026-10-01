@@ -1,0 +1,29 @@
+; A `checker_of` row names `Exact`, a sum: it declares no relation, so the call site reports
+; `not_built_yet(call, Exact)`.
+(checker_of:
+   (* (bound: type)
+      (checker: type)))
+
+(passes:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(<- (passes ?Source ?Bound ?Result)
+    (checker_of ?Bound ?Checker)
+    (?Checker ?Source ?Bound ?Result))
+
+(Exact:
+   (+ (same: type)))
+
+(Display:
+   (* (name: str)))
+
+(User:
+   (* (name: str)))
+
+(checker_of Display Extends)
+
+(checker_of Display Exact)
+
+(asked User Display)

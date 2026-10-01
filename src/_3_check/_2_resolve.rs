@@ -111,6 +111,16 @@ fn resolve_name_body(
             }
         }
     }
+    // A kernel name a module does not declare stays the kernel's; an importer's
+    // declaration shadows it only for the importer's own goals.
+    if cx.graph.module_member(owner) {
+        if let Some(label) = atom_name(u, name).map(str::to_owned) {
+            if kernel_relation(None, &label).is_some() || kernel_variadic(None, &label) {
+                let inner = u.compound("kernel", vec![name]);
+                return Some(u.compound("ref", vec![inner]));
+            }
+        }
+    }
     if let Some(parent) = cx.graph.parent(owner) {
         if let Some(resolved) = resolve_name(u, cx, parent, name, visited) {
             return Some(resolved);
@@ -118,10 +128,6 @@ fn resolve_name_body(
     }
     if cx.graph.module_member(owner) {
         let label = atom_name(u, name).map(|s| s.to_string())?;
-        if kernel_relation(None, &label).is_some() || kernel_variadic(None, &label) {
-            let inner = u.compound("kernel", vec![name]);
-            return Some(u.compound("ref", vec![inner]));
-        }
         if primitive_name(&label) {
             let inner = u.compound("primitive", vec![name]);
             return Some(u.compound("ref", vec![inner]));
@@ -151,6 +157,22 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
     else {
         return Err(Stop::Fail("name/2 callable expected"));
     };
+    if name == "variable_call" && parts.len() == 2 {
+        let resolved = resolve_argument(u, cx, parts[0])
+            .and_then(|value| Ok((value, resolve_args(u, cx, &args)?)));
+        return Ok(match resolved {
+            Ok((value, resolved)) => {
+                let relation = u.compound("variable_call", vec![value, parts[1]]);
+                let list = u.list(&resolved);
+                let term = u.compound("call", vec![relation, list]);
+                CallResult::Ok {
+                    term,
+                    args: resolved,
+                }
+            }
+            Err(reason) => CallResult::Error(reason),
+        });
+    }
     if name != "name" || parts.len() != 2 {
         return Err(Stop::Fail("name/2 callable expected"));
     }

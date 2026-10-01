@@ -60,6 +60,7 @@ fn clone_checked(c: &Checked) -> Checked {
         rules: c.rules.clone(),
         depends: c.depends.clone(),
         strata: c.strata.clone(),
+        calls: c.calls.clone(),
     }
 }
 
@@ -90,6 +91,7 @@ pub fn checked_from_json(u: &mut Universe, value: &Value) -> Result<Checked, Str
         rules: terms(u, m.get("rules"))?,
         depends: terms(u, m.get("depends"))?,
         strata: terms(u, m.get("strata"))?,
+        calls: terms(u, m.get("calls"))?,
     })
 }
 

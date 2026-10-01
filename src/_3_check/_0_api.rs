@@ -6,6 +6,7 @@
 use super::bind::bind_diagnostics;
 use super::graph::{CheckerGraph, OriginArena};
 use super::kernel::{kernel_graph, kernel_relation_rows};
+use super::mode::{call_parts, goal_call, variable_call};
 use super::resolve::{resolve_edges, resolve_rules, resolve_seeds, Cx};
 use super::strata::{depends_rows, locate_strata_diagnostics, strata_rows, stratify_rules};
 use crate::_2_lower::Lowered;
@@ -30,6 +31,8 @@ pub struct Checked {
     pub rules: Vec<TermId>,
     pub depends: Vec<TermId>,
     pub strata: Vec<TermId>,
+    /// Rules with a call goal; comptime expands them once per relation.
+    pub calls: Vec<TermId>,
 }
 
 impl Checked {
@@ -235,6 +238,8 @@ pub fn check_datalog(
         return Ok((None, located));
     }
 
+    let (calls, rules): (Vec<TermId>, Vec<TermId>) =
+        rules.into_iter().partition(|rule| rule_calls(u, *rule));
     let depends = depends_rows(u, &rules);
     let strata = strata_rows(u, &relations, &stratified.levels);
     let (kernel_nodes, kernel_edges) = kernel_graph(u);
@@ -253,7 +258,18 @@ pub fn check_datalog(
             rules,
             depends,
             strata,
+            calls,
         }),
         vec![],
     ))
+}
+
+/// A resolved rule with a `variable_call` goal.
+pub fn rule_calls(u: &Universe, rule: TermId) -> bool {
+    let body = u.args::<2>(rule, "rule").and_then(|[_, body]| u.as_list(body));
+    body.unwrap_or_default().iter().any(|goal| {
+        goal_call(u, *goal)
+            .and_then(|(_, call)| call_parts(u, call))
+            .is_some_and(|(relation, _)| variable_call(u, relation).is_some())
+    })
 }

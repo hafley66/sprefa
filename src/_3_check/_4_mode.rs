@@ -187,6 +187,25 @@ fn underconstrained(u: &mut Universe, name: &str, sets: &[&[i64]]) -> TermId {
     u.compound("underconstrained_kernel_goal", vec![name, list])
 }
 
+/// `variable_call(Value, Site)`: the relation a call goal names by value.
+pub fn variable_call(u: &Universe, relation: TermId) -> Option<[TermId; 2]> {
+    u.args::<2>(relation, "variable_call")
+}
+
+/// A call goal runs once its relation value is bound.
+fn unbound_call(u: &mut Universe, relation: TermId, bound: &Bound) -> Option<TermId> {
+    let [value, _] = variable_call(u, relation)?;
+    let unbound: Vec<TermId> = argument_variables(u, value)
+        .into_iter()
+        .filter(|v| !bound.holds(*v))
+        .collect();
+    if unbound.is_empty() {
+        return None;
+    }
+    let list = u.list(&unbound);
+    Some(u.compound("unbound_call", vec![list]))
+}
+
 /// `:840-889`. `None` is v7's `none` reason.
 fn check_positive(
     u: &mut Universe,
@@ -195,6 +214,13 @@ fn check_positive(
     variables: &[TermId],
     bound: &mut Bound,
 ) -> Option<TermId> {
+    if variable_call(u, relation).is_some() {
+        let reason = unbound_call(u, relation, bound);
+        if reason.is_none() {
+            bound.add_all(variables);
+        }
+        return reason;
+    }
     match kernel_name(u, relation).as_deref() {
         Some(name) if comparison(name) => {
             if arguments.iter().all(|a| argument_is_bound(u, *a, bound)) {
@@ -276,6 +302,9 @@ fn check_negative(
     variables: &[TermId],
     bound: &Bound,
 ) -> Option<TermId> {
+    if let Some(reason) = unbound_call(u, relation, bound) {
+        return Some(reason);
+    }
     if let Some(name) = kernel_name(u, relation) {
         if matches!(
             name.as_str(),

@@ -1,0 +1,32 @@
+; `field` and `product` declared here shadow the kernel names for goals in this module. The
+; imported module declares neither, so its `product` goal is the kernel relation.
+(kernel_names: (import "./fixtures/call/7a_kernel_names.dl7"))
+
+(field:
+   (* (form: type)
+      (label: str)))
+
+(product:
+   (* (form: type)
+      (label: str)))
+
+(required:
+   (* (form: type)
+      (label: str)))
+
+(listed:
+   (* (form: type)
+      (label: str)))
+
+(Signup:
+   (* (email: str)))
+
+(field Signup "email")
+
+(product Signup "listing")
+
+(<- (required ?Form ?Label)
+    (field ?Form ?Label))
+
+(<- (listed ?Form ?Label)
+    (product ?Form ?Label))

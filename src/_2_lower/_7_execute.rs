@@ -515,6 +515,9 @@ pub fn lower_call(
     let Some(items) = forms::form(cx.u, parsed.payload) else {
         return Err(cx.plain(parsed.id, "expected_call"));
     };
+    if let Some(call) = lower_variable_call(cx, parsed.id, &items, owner, head_mode)? {
+        return Ok(call);
+    }
     let head = forms::form_head_atom(cx.u, &items);
     if head.is_none() {
         let typed = items
@@ -790,6 +793,60 @@ fn sum_pattern(
     elements.push(list);
     push(cx, "tuple", elements, &mut goals);
     Ok(Some((value, goals)))
+}
+
+/// `(?Relation x ..)`, `(?Owner.label x ..)`: comptime emits one rule per relation
+/// reaching the value. Arguments keep source order; `None` for any other head.
+fn lower_variable_call(
+    cx: &mut Cx,
+    node_id: TermId,
+    items: &[TermId],
+    owner: TermId,
+    head_mode: bool,
+) -> Result<Option<Call>, TermId> {
+    let Some(first) = items.first().copied() else {
+        return Ok(None);
+    };
+    let variable_head = forms::node(cx.u, first)
+        .is_some_and(|parsed| forms::variable(cx.u, parsed.payload).is_some());
+    let variable_path = express::path_segments(cx.u, first)
+        .and_then(|segments| segments.first().copied())
+        .and_then(|segment| forms::node(cx.u, segment))
+        .is_some_and(|parsed| forms::variable(cx.u, parsed.payload).is_some());
+    if !variable_head && !variable_path {
+        return Ok(None);
+    }
+    if head_mode || cx.ground_values {
+        let shape = cx.atom("call");
+        let reason = cx.compound("not_built_yet", vec![shape]);
+        return Err(cx.diagnostic(node_id, reason));
+    }
+    let (relation, mut goals, mut goal_nodes) = lower_argument(cx, first, owner, false)?;
+    let mut arguments = Vec::with_capacity(items.len() - 1);
+    let mut post_goals = Vec::new();
+    let mut post_nodes = Vec::new();
+    for node in &items[1..] {
+        if let Some((value, deferred)) = sum_pattern(cx, *node, owner, false)? {
+            arguments.push(value);
+            post_nodes.extend(std::iter::repeat_n(node_id, deferred.len()));
+            post_goals.extend(deferred);
+            continue;
+        }
+        let (value, own_goals, own_nodes) = lower_argument(cx, *node, owner, false)?;
+        arguments.push(value);
+        goals.extend(own_goals);
+        goal_nodes.extend(own_nodes);
+    }
+    let relation = cx.compound("variable_call", vec![relation, node_id]);
+    let list = cx.u.list(&arguments);
+    let call = cx.compound("call", vec![relation, list]);
+    Ok(Some(Call {
+        call,
+        goals,
+        goal_nodes,
+        post_goals,
+        post_nodes,
+    }))
 }
 
 /// `((. a b) x y)`: the callable is a dotted path. Every segment but the last

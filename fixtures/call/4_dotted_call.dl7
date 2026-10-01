@@ -1,0 +1,73 @@
+; Dotted call `(?Policy.check ..)`: the owner's `check` edge target is the relation. A policy
+; is a product whose `check` field names the checker; a contract names its policy by row.
+(policy_of:
+   (* (bound: type)
+      (policy: type)))
+
+(passes:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(<- (passes ?Source ?Bound ?Result)
+    (policy_of ?Bound ?Policy)
+    (?Policy.check ?Source ?Bound ?Result))
+
+(LoosePolicy:
+   (* (check: Extends)))
+
+(StrictPolicy:
+   (* (check: Invariant)))
+
+; Invariant: Extends, and every contract field target is the source field target itself.
+(Invariant:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(same_target:
+   (* (source: type)
+      (bound: type)
+      (name: any)))
+
+(target_differs:
+   (* (source: type)
+      (bound: type)))
+
+(<- (same_target ?Source ?Bound ?Name)
+    (asked ?Source ?Bound)
+    (edge_snapshot ?Bound ?Name ?Target ?BoundIndex)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex))
+
+(<- (target_differs ?Source ?Bound)
+    (asked ?Source ?Bound)
+    (edge_snapshot ?Bound ?Name ?Target ?BoundIndex)
+    (not (same_target ?Source ?Bound ?Name)))
+
+(<- (Invariant ?Source ?Bound ?Source)
+    (Extends ?Source ?Bound ?Source)
+    (not (target_differs ?Source ?Bound)))
+
+(Named:
+   (* (name: str)))
+
+(User:
+   (* (name: str)
+      (age: int)))
+
+(Owner:
+   (* (owner: Named)))
+
+(StrictOwner:
+   (* (owner: Named)))
+
+(Account:
+   (* (owner: User)))
+
+(policy_of Owner LoosePolicy)
+
+(policy_of StrictOwner StrictPolicy)
+
+(asked Account Owner)
+
+(asked Account StrictOwner)

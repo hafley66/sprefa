@@ -137,6 +137,7 @@ pub fn expand_source_compiler(
         authored_rules: &checked.rules,
         base_relations: &base_relations,
         base_seeds: &base_seeds,
+        call_templates: &checked.calls,
         outer,
     };
     let next = Rounds::reduce(&mut st, input, fx)?;
@@ -197,6 +198,7 @@ pub fn finish_final_check(
                 rules,
                 depends: resolved.depends,
                 strata: resolved.strata,
+                calls: vec![],
             },
             compiler_facts: facts.to_vec(),
         }),
