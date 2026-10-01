@@ -16,3 +16,4 @@ mod _9c_generic_bind;
 mod _9d_string_kernel;
 mod _9e_generic_rules;
 mod _9f_extends;
+mod _9g_call_hand;

@@ -1,0 +1,122 @@
+; Kernel `call` goal with comptime monomorphization: examples (2026-10-01, proposal, not built).
+; `(call ?Relation Arg..)` runs the relation named by ?Relation. Comptime records every name that
+; reaches a call site (`called_with`) and emits one branch per name, one round late.
+
+; ---- shared declarations -------------------------------------------------------------
+
+(Named:
+   (* (name: str)))
+
+(User:
+   (* (name: str)
+      (age: int)))
+
+(Robot:
+   (* (serial: int)))
+
+; ---- 1. default checker -----------------------------------------------------------------
+
+(checker_of Named Extends)
+
+(<- (passes ?Source ?Bound ?Result)
+    (checker_of ?Bound ?Checker)
+    (call ?Checker ?Source ?Bound ?Result))
+
+; asked: (passes User Named ?Result)
+; round 1: (called_with passes Extends)
+; round 2 branch: (<- (passes ?S ?B ?R) (checker_of ?B Extends) (Extends ?S ?B ?R))
+; result: (passes User Named User)
+; asked: (passes Robot Named ?Result)  -> no row; fails_at(Robot, Named, name, missing)
+
+; ---- 2. per-bound variance knob -------------------------------------------------------------
+
+(Owner:
+   (* (owner: Named)))
+
+(StrictOwner:
+   (* (owner: Named)))
+
+(checker_of Owner Extends)
+
+(checker_of StrictOwner Invariant)
+
+(Account:
+   (* (owner: User)))
+
+; (passes Account Owner ?R)       -> Account   (covariant: User extends Named)
+; (passes Account StrictOwner ?R) -> no row    (invariant: User is not Named)
+; round 1: (called_with passes Extends), (called_with passes Invariant) -> two branches
+
+; ---- 3. user-written nominal checker ----------------------------------------------------------
+
+(implements:
+   (* (source: type)
+      (bound: type)))
+
+(Nominal:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(<- (Nominal ?Source ?Bound ?Source)
+    (implements ?Source ?Bound))
+
+(Serial:
+   (* (serial: int)))
+
+(checker_of Serial Nominal)
+
+(implements Robot Serial)
+
+; (passes Robot Serial ?R) -> Robot   (fact says so; binds never read)
+; (passes User Serial ?R)  -> no row  (User has no implements row, even if it had a serial bind)
+
+; ---- 4. checker that returns a different type (the result side is programmable) ------------------
+
+(Widen:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(<- (Widen ?Source ?Bound ?Bound)
+    (Extends ?Source ?Bound ?Source))
+
+(Display:
+   (* (name: str)))
+
+(checker_of Display Widen)
+
+; (passes User Display ?R) -> Display, the instance is built over Display, User's age is dropped
+; (TS: assigning a User to a Display-typed slot)
+
+; ---- 5. checker chosen by a rule (needs a second comptime round) -----------------------------------
+
+(strict_module:
+   (* (contract: type)))
+
+(strict_module StrictOwner)
+
+(<- (checker_of ?Contract Invariant)
+    (strict_module ?Contract))
+
+; round 1: checker_of rows derived; call records (called_with passes Invariant)
+; round 2: Invariant branch emitted
+; round 3: no new called_with -> fixpoint
+
+; ---- 6. runtime meets a name comptime never saw -------------------------------------------------------
+
+; runtime fact arriving after emit: (checker_of Display Exact)
+; (passes User Display ?R) -> no row
+; diagnostic: not_built_yet(call, Exact) at the passes call site
+
+; ---- 7. generic parameter bounds lowered through call (HistoryV1 without intern or <- gates) ------------
+
+; declaration: (HistoryV1: (* (Source: UserContract) (Options: HistoryOptions) (return: ...)))
+; application site S: (HistoryV1 User HistoryOptions)
+; compiler emits:
+;   (obligation S 0 User UserContract)
+;   (<- (discharged ?Site ?Position ?Result)
+;       (obligation ?Site ?Position ?Argument ?Bound)
+;       (checker_of ?Bound ?Checker)
+;       (call ?Checker ?Argument ?Bound ?Result))
+;   instance built only from discharged results; unmet -> diagnostic at S

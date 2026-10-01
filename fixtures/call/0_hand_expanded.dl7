@@ -1,0 +1,168 @@
+; Call goal step 1 (plans/v8/2026-10-01-call-goal.examples.dl7, examples 1-4 and 7), with
+; every `call` branch written by hand: one `passes` rule per checker. A `checker_of` row names
+; the contract's checker; an edge on the contract would be a bind the structural walk reads.
+; An `asked` row is the ask.
+(checker_of:
+   (* (bound: type)
+      (checker: type)))
+
+(passes:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(<- (passes ?Source ?Bound ?Result)
+    (checker_of ?Bound Extends)
+    (Extends ?Source ?Bound ?Result))
+
+(<- (passes ?Source ?Bound ?Result)
+    (checker_of ?Bound Invariant)
+    (Invariant ?Source ?Bound ?Result))
+
+(<- (passes ?Source ?Bound ?Result)
+    (checker_of ?Bound Nominal)
+    (Nominal ?Source ?Bound ?Result))
+
+(<- (passes ?Source ?Bound ?Result)
+    (checker_of ?Bound Widen)
+    (Widen ?Source ?Bound ?Result))
+
+; Invariant: Extends, and every contract field target is the source field target itself.
+(Invariant:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(same_target:
+   (* (source: type)
+      (bound: type)
+      (name: any)))
+
+(target_differs:
+   (* (source: type)
+      (bound: type)))
+
+(<- (same_target ?Source ?Bound ?Name)
+    (asked ?Source ?Bound)
+    (edge_snapshot ?Bound ?Name ?Target ?BoundIndex)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex))
+
+(<- (target_differs ?Source ?Bound)
+    (asked ?Source ?Bound)
+    (edge_snapshot ?Bound ?Name ?Target ?BoundIndex)
+    (not (same_target ?Source ?Bound ?Name)))
+
+(<- (Invariant ?Source ?Bound ?Source)
+    (Extends ?Source ?Bound ?Source)
+    (not (target_differs ?Source ?Bound)))
+
+; Nominal: an `implements` fact decides; fields are never read.
+(Nominal:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(<- (Nominal ?Source ?Bound ?Source)
+    (asked ?Source ?Bound)
+    (implements ?Bound ?Source ?Witness))
+
+; Widen: Extends, returning the bound.
+(Widen:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(<- (Widen ?Source ?Bound ?Bound)
+    (Extends ?Source ?Bound ?Source))
+
+; ---- shared declarations
+
+(Named:
+   (* (name: str)))
+
+(User:
+   (* (name: str)
+      (age: int)))
+
+(Robot:
+   (* (serial: int)))
+
+; ---- 1. default checker
+
+(checker_of Named Extends)
+
+(asked User Named)
+
+(asked Robot Named)
+
+; ---- 2. per-bound variance
+
+(Owner:
+   (* (owner: Named)))
+
+(StrictOwner:
+   (* (owner: Named)))
+
+(checker_of Owner Extends)
+
+(checker_of StrictOwner Invariant)
+
+(Account:
+   (* (owner: User)))
+
+(asked Account Owner)
+
+(asked Account StrictOwner)
+
+; ---- 3. nominal checker
+
+(Serial:
+   (* (serial: int)))
+
+(checker_of Serial Nominal)
+
+(implements Serial Robot Robot)
+
+(asked Robot Serial)
+
+(asked User Serial)
+
+; ---- 4. checker returning the bound
+
+(Display:
+   (* (name: str)))
+
+(checker_of Display Widen)
+
+(asked User Display)
+
+; ---- 7. generic parameter bound, lowered by hand
+; (HistoryV1: (* (Source: UserContract) (Options: HistoryOptions) (return: ..)))
+; application sites: (HistoryV1 User HistoryOptions), (HistoryV1 Robot HistoryOptions)
+
+(UserContract:
+   (* (name: str)))
+
+(checker_of UserContract Extends)
+
+(obligation:
+   (* (site: any)
+      (position: int)
+      (argument: type)
+      (bound: type)))
+
+(discharged:
+   (* (site: any)
+      (position: int)
+      (result: type)))
+
+(obligation "user_history" 0 User UserContract)
+
+(obligation "robot_history" 0 Robot UserContract)
+
+(<- (asked ?Argument ?Bound)
+    (obligation ?Site ?Position ?Argument ?Bound))
+
+(<- (discharged ?Site ?Position ?Result)
+    (obligation ?Site ?Position ?Argument ?Bound)
+    (passes ?Argument ?Bound ?Result))
