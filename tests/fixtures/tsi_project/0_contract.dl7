@@ -9,6 +9,9 @@
    (* (: source type)
       (: proof type)))
 
+(<- (asked ?Source Mapper)
+    (field ?Source ?Name ?Target ?Index))
+
 (<- (tsi_conforms_probe ?Source ?Proof)
     (product ?Source)
-    (Conforms ?Source Mapper ?Proof))
+    (Extends ?Source Mapper ?Proof))

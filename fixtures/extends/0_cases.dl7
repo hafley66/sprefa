@@ -1,0 +1,136 @@
+; `Extends` and `ExtendsAll` test plan cases 1-15 (plans/v8/2026-09-30-extends.test-plan.md).
+(Named:
+   (* (name: str)))
+
+(Aged:
+   (* (age: int)))
+
+(User:
+   (* (name: str)
+      (age: int)))
+
+; 1 exact match, 2 extra fields, 3 missing field, 7 asymmetry.
+(asked Named Named)
+(asked User Named)
+(asked Aged Named)
+(asked Named User)
+
+; 4 same name, other type.
+(NumericName:
+   (* (name: int)))
+
+(asked NumericName Named)
+
+; 5 empty contract.
+(Empty: (*))
+
+(asked User Empty)
+
+; 6 field order differs.
+(Reordered:
+   (* (age: int)
+      (name: str)))
+
+(asked Reordered Named)
+
+; 8 field of product type, same type. 9 covariant field.
+(OwnedByUser:
+   (* (owner: User)))
+
+(OwnerUserContract:
+   (* (owner: User)))
+
+(OwnerNamedContract:
+   (* (owner: Named)))
+
+(asked OwnedByUser OwnerUserContract)
+(asked OwnedByUser OwnerNamedContract)
+
+; 10 generic instance field: one id per instance.
+(EResult:
+   (* (Next: type)
+      (Error: type)
+      (return:
+         (+ (loading: (*))
+            (next: (* (value: Next)))
+            (error: (* (message: Error)))
+            (complete: (*))))))
+
+(FetchStatus: (EResult str str))
+
+(StatusHolder:
+   (* (status: (EResult str str))))
+
+(StatusContract:
+   (* (status: FetchStatus)))
+
+(asked StatusHolder StatusContract)
+
+; 11 recursive types.
+(Node:
+   (* (next: Node)))
+
+(Chain:
+   (* (value: int)
+      (next: Chain)))
+
+(Tagged:
+   (* (tag: str)
+      (next: Tagged)))
+
+(TaggedChain:
+   (* (tag: int)
+      (next: TaggedChain)))
+
+(asked Node Node)
+(asked Chain Node)
+(asked TaggedChain Tagged)
+
+; 12 inference: every product asked against one contract.
+(Titled:
+   (* (title: str)))
+
+(Book:
+   (* (title: str)
+      (pages: int)))
+
+(Post:
+   (* (body: str)
+      (title: str)))
+
+(<- (asked ?Type Titled)
+    (edge_snapshot ?Type ?Name ?Target ?Index))
+
+(titled_type:
+   (* (checked: type)))
+
+(<- (titled_type ?Checked)
+    (product ?Type)
+    (Extends ?Type Titled ?Checked))
+
+; 13 all pass, 14 one fails, 15 empty list. A tuple handed to a relation
+; call in a body writes its positions; the head-only ask reads the same node.
+(extends_all_checked:
+   (* (source: type)
+      (checked: type)))
+
+(<- (asked_all User ?Contracts)
+    (tuple Named Aged ?Contracts))
+
+(<- (asked_all Named ?Contracts)
+    (tuple Named Aged ?Contracts))
+
+(asked_all User (tuple))
+
+(<- (extends_all_checked ?Source ?Checked)
+    (tuple Named Aged ?Contracts)
+    (ExtendsAll ?Source ?Contracts ?Checked))
+
+(empty_contracts:
+   (* (contracts: any)))
+
+(empty_contracts (tuple))
+
+(<- (extends_all_checked ?Source ?Checked)
+    (empty_contracts ?Contracts)
+    (ExtendsAll ?Source ?Contracts ?Checked))

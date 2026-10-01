@@ -91,7 +91,7 @@ The flag repeats; every document shares that one owner.
 Key-absent stays unspellable: the unrequired property and the nullable one land
 on one sum. `openapi.route` and `openapi.param` are not TSI registry relations,
 so `install_openapi_graph` seeds them on the owner's basement after the TSI
-install. `fixtures/openapi/todo.dl7` joins `openapi.route` with `Conforms`;
+install. `fixtures/openapi/todo.dl7` joins `openapi.route` with `Extends`;
 `tests/_21_openapi.rs` pins the rows.
 
 ## dl8 run

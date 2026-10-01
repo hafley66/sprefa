@@ -11,6 +11,9 @@
    (* (: loaded type)
       (: proof type)))
 
+(<- (asked ?Loaded UserShape)
+    (edge_snapshot ?Loaded ?Name ?Target ?Index))
+
 (<- (extracted_user_conforms ?Loaded ?Proof)
     (product ?Loaded)
-    (Conforms ?Loaded UserShape ?Proof))
+    (Extends ?Loaded UserShape ?Proof))

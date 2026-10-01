@@ -8,17 +8,22 @@
 
 ; HistoryV1 options are ordinary typed data. The first version accepts copy
 ; mode plus a source contract and interns source plus options as the
-; specialization identity.
+; specialization identity. The intern request comes before the check: the
+; next round reads it back as the `asked` pair the check needs.
 (<- (HistoryV1 ?Source ?Options ?Result)
     (default ?Options ?Mode "copy")
     (edge_snapshot ?Options ?ContractName ?Contract 1)
-    (Conforms ?Source ?Contract ?Proof)
-    (intern HistoryV1 (tuple ?Source ?Options) ?Result))
+    (intern HistoryV1 (tuple ?Source ?Options) ?Result)
+    (Extends ?Source ?Contract ?Source))
 
 (<- (HistoryV1 ?Source ?Options ?Result)
     (intern_snapshot HistoryV1 ?Arguments ?Result)
     (tuple ?Source ?Options ?Arguments)
     (default ?Options ?Mode "copy")
     (edge_snapshot ?Options ?ContractName ?Contract 1)
-    (Conforms ?Source ?Contract ?Proof))
+    (Extends ?Source ?Contract ?Source))
 
+(<- (asked ?Source ?Contract)
+    (intern_snapshot HistoryV1 ?Arguments ?Result)
+    (tuple ?Source ?Options ?Arguments)
+    (edge_snapshot ?Options ?ContractName ?Contract 1))

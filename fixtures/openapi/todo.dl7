@@ -15,6 +15,9 @@
    (* (: path str)
       (: method any)))
 
+(<- (asked ?ResponseType TodoShape)
+    (api.route ?Path ?Method ?OperationId ?RequestType ?ResponseType))
+
 (<- (route_returns_todo ?Path ?Method)
     (api.route ?Path ?Method ?OperationId ?RequestType ?ResponseType)
-    (Conforms ?ResponseType TodoShape ?Proof))
+    (Extends ?ResponseType TodoShape ?Checked))
