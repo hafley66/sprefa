@@ -102,7 +102,7 @@ block is a defect. Textbook register: short sentences, present tense, no "we".
   is Tower-named `IService` with `call` and `poll`. Construct names use rxjs,
   prolog, or SQL words; "support" is banned, use refCount.
 - Every `.dl7` snippet shown to Chris: descriptive variable names never single
-  letters, parens broken across lines, no `^` unless namespacing, JS/TS twin
+  letters, parens broken across lines, `^` only for its listed uses, JS/TS twin
   beside it (class = product, instance = row, static = `^` body).
 - Chris reads one page at a time; plans conversational in chat, pictures are
   row tables and one-line-per-edge trees, never mermaid for language pictures.
@@ -123,7 +123,13 @@ block is a defect. Textbook register: short sentences, present tense, no "we".
   from rows; kernel keeps only `effect/2`; Rust `IService` answers.
 - Generics are rule-body constructors over `intern_snapshot`; no template
   engine, no generic syntax. `Result` and `Option` are prelude constructors.
-- Caret is namespacing only, off the demo path.
+- Caret uses (`macrotime/1_caret.dl7`):
+  - return mark: `(^name: ..)` in a product names the `return` bind;
+    two marks in one product are `ambiguous_return`;
+  - namespacing: a marked outer edge reparents its members (static = `^` body);
+  - edge insect glaive operator (eigo): `^` marks the pass-through edge of a
+    decorated node; following the edge lands on the `^` target, the node's
+    other edges are decorations (TS twin `type Deco<Type> = Type;`). Not built.
 - Zero shell in the engine. Infra is bought (HTTP, scheduler, queue, logging).
 - No v5 anything runs. `v6/tsv2` takes no new work.
 - hafley66 is an org, watched whole. One server, one db.
