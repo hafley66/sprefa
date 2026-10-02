@@ -578,11 +578,22 @@ fn run_cli(
             };
             let mut parsed = Vec::with_capacity(changes.len());
             for change in changes {
-                let Some(relation_name) = change.get("rel").and_then(|value| value.as_str()) else {
-                    return fail(&"frontier change rel must be a string");
-                };
-                let Some(&rel) = names.get(relation_name) else {
-                    return fail(&format!("unknown frontier relation {relation_name}"));
+                // A program name, or a relation term as seeds spell it (kernel
+                // relations such as `edge_snapshot` have no program name).
+                let rel = match change.get("rel") {
+                    Some(serde_json::Value::String(relation_name)) => {
+                        match names.get(relation_name.as_str()) {
+                            Some(&rel) => rel,
+                            None => {
+                                return fail(&format!("unknown frontier relation {relation_name}"))
+                            }
+                        }
+                    }
+                    Some(term @ serde_json::Value::Object(_)) => match term_from_json(&mut u, term) {
+                        Ok(rel) => rel,
+                        Err(e) => return fail(&e),
+                    },
+                    _ => return fail(&"frontier change rel must be a name or a relation term"),
                 };
                 let Some(args) = change.get("args").and_then(|value| value.as_array()) else {
                     return fail(&"frontier change args must be an array");
