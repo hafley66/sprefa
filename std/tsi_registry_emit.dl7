@@ -1,0 +1,293 @@
+; Renders `registry.rs`, the TSI relation table of hafley_scm
+; (`crates/hafley_scm/src/read/tsi/registry.rs`), from the `registry`,
+; `registry_arg`, `registry_note` and `arg_kind` rows of `@std/tsi`.
+; `piece` rows carry one Doc per line, `section_text` a section's lines in
+; key order, and `fs.file` the template chunks and sections in order. Run
+; from the repository root:
+;
+;     dl8 build std/tsi_registry_emit.dl7
+(doc: (import "@std/doc"))
+(fs: (import "@std/fs"))
+(tsi: (import "@std/tsi"))
+
+(variant_of:
+   (* (word: str)
+      (variant: str)))
+
+(<- (variant_of ?Word ?Variant)
+    (tsi.arg_kind ?Index ?Word ?Pattern)
+    (str.pascal ?Word ?Variant))
+
+(piece:
+   (* (section: str)
+      (key: any)
+      (document: doc.Doc)))
+
+; ArgKind: the enum, its wire words, its match on `Arg`, its import list.
+(<- (piece "variant" ?Index
+       (doc.Doc.concat
+          [(doc.Doc.text "    ")
+           (doc.Doc.text ?Variant)
+           (doc.Doc.text ",")]))
+    (tsi.arg_kind ?Index ?Word ?Pattern)
+    (variant_of ?Word ?Variant))
+
+(<- (piece "word" ?Index
+       (doc.Doc.concat
+          [(doc.Doc.text "            ArgKind::")
+           (doc.Doc.text ?Variant)
+           (doc.Doc.text " => \"")
+           (doc.Doc.text ?Word)
+           (doc.Doc.text "\",")]))
+    (tsi.arg_kind ?Index ?Word ?Pattern)
+    (variant_of ?Word ?Variant))
+
+(<- (piece "of" ?Index
+       (doc.Doc.concat
+          [(doc.Doc.text "            Arg::")
+           (doc.Doc.text ?Variant)
+           (doc.Doc.text "(")
+           (doc.Doc.text ?Pattern)
+           (doc.Doc.text ") => ArgKind::")
+           (doc.Doc.text ?Variant)
+           (doc.Doc.text ",")]))
+    (tsi.arg_kind ?Index ?Word ?Pattern)
+    (variant_of ?Word ?Variant))
+
+; The import list is sorted by name: the key is the variant itself.
+(first_variant:
+   (* (variant: str)))
+
+(<- (first_variant (min ?Variant))
+    (variant_of ?Word ?Variant))
+
+(<- (piece "use" ?Variant (doc.Doc.text ?Variant))
+    (first_variant ?Variant))
+
+(<- (piece "use" ?Variant
+       (doc.Doc.concat
+          [(doc.Doc.text ", ")
+           (doc.Doc.text ?Variant)]))
+    (variant_of ?Word ?Variant)
+    (not (first_variant ?Variant)))
+
+; REGISTRY: per relation its notes, then the four lines of its row.
+(args_item:
+   (* (name: str)
+      (item: any)))
+
+(<- (args_item ?Name (tuple 0 ?Variant))
+    (tsi.registry_arg ?Name 0 ?Kind)
+    (variant_of ?Kind ?Variant))
+
+(<- (args_item ?Name (tuple ?Position ?Text))
+    (tsi.registry_arg ?Name ?Position ?Kind)
+    (int.ne ?Position 0)
+    (variant_of ?Kind ?Variant)
+    (str.cons ", " ?Variant ?Text))
+
+(args_text:
+   (* (name: str)
+      (text: str)))
+
+(<- (args_text ?Name (fold doc.join "" ?Item))
+    (args_item ?Name ?Item))
+
+(role_suffix:
+   (* (name: str)
+      (suffix: str)))
+
+(<- (role_suffix ?Name "")
+    (tsi.registry ?Index ?Name ""))
+
+(<- (role_suffix ?Name ?Suffix)
+    (tsi.registry ?Index ?Name ?Role)
+    (str.len ?Role ?Length)
+    (int.gt ?Length 0)
+    (str.cons " // " ?Role ?Suffix))
+
+(<- (piece "entries" (tuple ?Index 0 ?Line)
+       (doc.Doc.concat
+          [(doc.Doc.text "    // ")
+           (doc.Doc.text ?Note)]))
+    (tsi.registry ?Index ?Name ?Role)
+    (tsi.registry_note ?Name ?Line ?Note))
+
+(<- (piece "entries" (tuple ?Index 1 0)
+       (doc.Doc.text "    Relation {"))
+    (tsi.registry ?Index ?Name ?Role))
+
+(<- (piece "entries" (tuple ?Index 2 0)
+       (doc.Doc.concat
+          [(doc.Doc.text "        name: \"")
+           (doc.Doc.text ?Name)
+           (doc.Doc.text "\",")]))
+    (tsi.registry ?Index ?Name ?Role))
+
+(<- (piece "entries" (tuple ?Index 3 0)
+       (doc.Doc.concat
+          [(doc.Doc.text "        args: &[")
+           (doc.Doc.text ?Args)
+           (doc.Doc.text "],")
+           (doc.Doc.text ?Suffix)]))
+    (tsi.registry ?Index ?Name ?Role)
+    (args_text ?Name ?Args)
+    (role_suffix ?Name ?Suffix))
+
+(<- (piece "entries" (tuple ?Index 4 0)
+       (doc.Doc.text "    },"))
+    (tsi.registry ?Index ?Name ?Role))
+
+; Every piece is a line, the newline before it included, except the pieces
+; of the import list, which share one line.
+(rendered:
+   (* (section: str)
+      (key: any)
+      (text: str)))
+
+(<- (rendered ?Section ?Key ?Text)
+    (piece ?Section ?Key ?Document)
+    (doc.layout ?Document 1000 ?Text))
+
+(inline_section:
+   (* (section: str)))
+
+(inline_section "use")
+
+(section_item:
+   (* (section: str)
+      (item: any)))
+
+(<- (section_item ?Section (tuple ?Key ?Line))
+    (rendered ?Section ?Key ?Text)
+    (not (inline_section ?Section))
+    (str.cons "\n" ?Text ?Line))
+
+(<- (section_item ?Section (tuple ?Key ?Text))
+    (rendered ?Section ?Key ?Text)
+    (inline_section ?Section))
+
+(section_text:
+   (* (section: str)
+      (text: str)))
+
+(<- (section_text ?Section (fold doc.join "" ?Item))
+    (section_item ?Section ?Item))
+
+; The file: template chunks and section slots in `order`.
+(chunk:
+   (* (order: int)
+      (text: str)))
+
+(slot:
+   (* (order: int)
+      (section: str)))
+
+(chunk 0
+   "//! The relation table, DATA rather than code: `ryi schema` prints these rows and
+//! `ryi ingest` validates against them. A relation absent here is a named stop.
+
+use super::types::Arg;
+
+/// The five argument shapes the wire spells: `{\"id\"}`, `{\"span\"}`, `{\"text\"}`,
+/// `{\"int\"}`, `{\"atom\"}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArgKind {")
+
+(slot 1 "variant")
+
+(chunk 2
+   "
+}
+
+impl ArgKind {
+    /// The wire's own spelling, which is the word a mismatch names.
+    pub const fn word(self) -> &'static str {
+        match self {")
+
+(slot 3 "word")
+
+(chunk 4
+   "
+        }
+    }
+
+    /// The kind an argument carries.
+    pub const fn of(arg: &Arg) -> Self {
+        match arg {")
+
+(slot 5 "of")
+
+(chunk 6
+   "
+        }
+    }
+}
+
+/// One registry row. `args` is the arity and the kinds at once.
+pub struct Relation {
+    pub name: &'static str,
+    pub args: &'static [ArgKind],
+}
+
+use ArgKind::{")
+
+(slot 7 "use")
+
+(chunk 8
+   "};
+
+/// A `const` slice: no allocation, no map built per lookup. Trailing comments
+/// name each argument's role, which the kinds alone cannot show.
+pub const REGISTRY: &[Relation] = &[")
+
+(slot 9 "entries")
+
+(chunk 10
+   "
+];
+
+/// Linear scan over the table. The row count is small enough that a hash map
+/// would cost more to build than the scan costs to run.
+pub fn relation(name: &str) -> Option<&'static Relation> {
+    REGISTRY.iter().find(|row| row.name == name)
+}
+
+/// The check both doors run: the sink's `debug_assert!` and the reverse door's
+/// per-line validation. `Err` carries the detail a caller reports verbatim.
+pub fn check(name: &str, args: &[Arg]) -> Result<(), String> {
+    let Some(row) = relation(name) else {
+        return Err(\"not in registry\".to_string());
+    };
+    if args.len() != row.args.len() {
+        return Err(format!(
+            \"arity {}, the registry says {}\",
+            args.len(),
+            row.args.len()
+        ));
+    }
+    for (position, (given, want)) in args.iter().zip(row.args).enumerate() {
+        let got = ArgKind::of(given);
+        if got != *want {
+            return Err(format!(
+                \"argument at position {position} is {}, the registry says {}\",
+                got.word(),
+                want.word()
+            ));
+        }
+    }
+    Ok(())
+}
+")
+(file_item:
+   (* (item: any)))
+
+(<- (file_item (tuple ?Order ?Text))
+    (chunk ?Order ?Text))
+
+(<- (file_item (tuple ?Order ?Text))
+    (slot ?Order ?Section)
+    (section_text ?Section ?Text))
+
+(<- (fs.file "target/tsi/registry.rs" (fold doc.join "" ?Item))
+    (file_item ?Item))

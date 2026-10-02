@@ -7,6 +7,10 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// The engines a whole-file emitter runs on. The IR engines mint every text
+/// one char at a time (`sqlite_ivm/crates/ivm-ir/src/1_terms.rs` `mint_text`).
+const EMIT_ENGINES: [&str; 3] = ["rust", "dd", "sqlite"];
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -84,13 +88,37 @@ fn build_reports_a_path_with_two_texts() {
 /// builds, byte for byte.
 #[test]
 fn string_kernel_files_are_current() {
-    let built = build(&root().join("std/str_ops_emit.dl7"), root(), "rust", true);
-    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stdout));
-    assert_eq!(
-        report(&built)["files"],
-        json!([
-            {"path": "sqlite_ivm/crates/ivm-ir/src/3_str_ops.rs", "bytes": 9037, "changed": false},
-            {"path": "src/_6_eval/_4a_str_ops.rs", "bytes": 5313, "changed": false}
-        ])
-    );
+    for engine in EMIT_ENGINES {
+        let built = build(&root().join("std/str_ops_emit.dl7"), root(), engine, true);
+        assert!(built.status.success(), "{engine}: {}", String::from_utf8_lossy(&built.stdout));
+        assert_eq!(
+            report(&built)["files"],
+            json!([
+                {"path": "sqlite_ivm/crates/ivm-ir/src/3_str_ops.rs", "bytes": 9037, "changed": false},
+                {"path": "src/_6_eval/_4a_str_ops.rs", "bytes": 5313, "changed": false}
+            ]),
+            "{engine}"
+        );
+    }
+}
+
+/// `std/tsi_registry_emit.dl7` writes hafley_scm's `registry.rs` byte for
+/// byte. The file lives in the linked `hafley-rs` checkout.
+#[test]
+fn tsi_registry_matches_hafley_scm() {
+    let oracle = root().join("hafley-rs/crates/hafley_scm/src/read/tsi/registry.rs");
+    let Ok(expected) = std::fs::read_to_string(&oracle) else {
+        println!("SKIP: {} is absent", oracle.display());
+        return;
+    };
+    let directory = scratch("registry");
+    let source = root().join("std/tsi_registry_emit.dl7");
+    for engine in EMIT_ENGINES {
+        let out = directory.join(engine.replace(':', "_"));
+        let built = build(&source, &out, engine, false);
+        assert!(built.status.success(), "{engine}: {}", String::from_utf8_lossy(&built.stdout));
+        let written = std::fs::read_to_string(out.join("target/tsi/registry.rs")).unwrap();
+        assert!(written == expected, "{engine}: registry.rs differs");
+    }
+    std::fs::remove_dir_all(directory).unwrap();
 }
