@@ -67,25 +67,12 @@
 (implements Hashable User UserHashWitness)
 (implements Hashable User BrokenHashWitness)
 
-; Generic constraints are ordinary `Extends` goals in the body.
-(: NamedBox
-   (* (: source type)
-      (: return type)))
-
-(asked User Named)
-
-(<- (NamedBox ?Source ?Result)
-    (Extends ?Source Named ?Source)
-    (tuple ?Source ?Arguments)
-    (intern NamedBox ?Arguments ?Result))
+; A generic constraint is a bound on the parameter, checked by `Extends`.
+(NamedBox:
+   (* (Source: Named)
+      (return: (*))))
 
 (: UserBox (NamedBox User))
-
-(: box_attempt
-   (* (: source type)))
-
-(<- (box_attempt MissingName)
-    (NamedBox MissingName ?Result))
 
 ; Intersection keeps left order, deduplicates name, then appends updated.
 (: IdentifiedNamed

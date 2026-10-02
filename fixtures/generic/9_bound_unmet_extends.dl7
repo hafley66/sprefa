@@ -1,0 +1,14 @@
+; `Robot` has no `name`: the bind builds no instance and the site reports the
+; parameter, the argument, the bound and the `Extends` reason.
+(Named:
+   (* (name: str)))
+
+(Robot:
+   (* (serial: int)))
+
+(NamedBox:
+   (* (Source: Named)
+      (return:
+         (* (source: Source)))))
+
+(RobotBox: (NamedBox Robot))

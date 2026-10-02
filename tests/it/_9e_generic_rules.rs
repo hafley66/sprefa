@@ -312,3 +312,93 @@ fn key_application_builds_reads_back_and_splits() {
         assert_eq!(rows, expected, "{engine}");
     }
 }
+
+/// Bounded parameters (plans/v8/2026-10-02-generic-bounds.brief.md): a bind, a
+/// rule head value and a body application each write one obligation per
+/// bounded parameter; `Extends` discharges `Source: Named`, the `checker_of`
+/// relation discharges `Target: Indexable`, `Item: type` writes none, and the
+/// instance builds over the discharged result.
+#[test]
+fn bounded_applications_build_behind_their_checks() {
+    let expected = vec![
+        "box_source: ref(Team), ref(application(NamedBox, [Team, primitive(str)]))",
+        "box_source: ref(User), ref(application(NamedBox, [User, primitive(int)]))",
+        "boxed: ref(application(NamedBox, [Team, primitive(str)]))",
+        "discharged: const(expansion_node(reader_node(163), infix_colon, 1, 5)), const(Target), ref(edge(Account, name)), ref(edge(Account, name))",
+        "discharged: const(expansion_node(reader_node(47), infix_colon, 1, 3)), const(Source), ref(User), ref(User)",
+        "discharged: const(reader_node(74)), const(Source), ref(Team), ref(Team)",
+        "index_instance: ref(edge(Account, name)), ref(application(Index, [edge(Account, name)]))",
+        "kernel(:): ref(application(Index, [edge(Account, name)])), const(Target), ref(edge(Account, name)), const(0)",
+        "kernel(:): ref(application(Index, [edge(Account, name)])), const(unique), ref(application(primitive(bool), [false])), const(1)",
+        "kernel(:): ref(application(NamedBox, [Team, primitive(str)])), const(item), ref(primitive(str)), const(1)",
+        "kernel(:): ref(application(NamedBox, [Team, primitive(str)])), const(source), ref(Team), const(0)",
+        "kernel(:): ref(application(NamedBox, [User, primitive(int)])), const(item), ref(primitive(int)), const(1)",
+        "kernel(:): ref(application(NamedBox, [User, primitive(int)])), const(source), ref(User), const(0)",
+        "kernel(:): ref(module(file)), const(UserBox), ref(application(NamedBox, [User, primitive(int)])), const(4)",
+        "obligation: const(expansion_node(reader_node(163), infix_colon, 1, 5)), const(Target), ref(edge(Account, name)), ref(Indexable)",
+        "obligation: const(expansion_node(reader_node(47), infix_colon, 1, 3)), const(Source), ref(User), ref(Named)",
+        "obligation: const(reader_node(74)), const(Source), ref(Team), ref(Named)",
+    ];
+    for engine in ENGINES {
+        let program = compile("8_bounds.dl7", engine);
+        let names = &program["program"]["names"];
+        let rendered: BTreeSet<String> = program["compiler_rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| render_row(row, names))
+            .filter(|row| {
+                ["kernel(:): ref(application", "kernel(:): ref(module(file)), const(UserBox)"]
+                    .iter()
+                    .any(|prefix| row.starts_with(prefix))
+                    || ["obligation", "discharged", "boxed", "box_source", "index_instance"]
+                        .iter()
+                        .any(|relation| row.starts_with(&format!("{relation}: ")))
+            })
+            .collect();
+        let rows: Vec<String> = rendered.into_iter().collect();
+        assert_eq!(rows, expected, "{engine}");
+    }
+}
+
+/// An unmet bound builds no instance and fails the compile at the application
+/// site with the parameter, argument and bound; an `Extends` bound adds the
+/// failing name and reason label.
+#[test]
+fn unmet_bounds_report_at_the_application_site() {
+    let cases = [
+        (
+            "9_bound_unmet_extends.dl7",
+            vec![
+                "diagnostic(check, expansion_node(reader_node(28), infix_colon, 1, 3), unmet_bound(Source, ref(owner(file, expansion_node(reader_node(7), infix_colon, 1, 3))), ref(owner(file, expansion_node(reader_node(0), infix_colon, 1, 3))), const(name), const(\"missing\")))",
+                "diagnostic(compile, expansion_node(reader_node(28), infix_colon, 1, 0), missing_derived_bind(module(file), RobotBox, 3))",
+            ],
+        ),
+        (
+            "9a_bound_unmet_checker.dl7",
+            vec![
+                "diagnostic(check, reader_node(101), unmet_bound(Source, ref(owner(file, expansion_node(reader_node(14), infix_colon, 1, 3))), ref(owner(file, expansion_node(reader_node(0), infix_colon, 1, 3)))))",
+            ],
+        ),
+    ];
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (fixture, expected) in cases {
+        for engine in ENGINES {
+            let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
+                .arg("compile")
+                .arg(root.join("fixtures/generic").join(fixture))
+                .env("DL8_ENGINE", engine)
+                .output()
+                .unwrap();
+            let program: Value = serde_json::from_slice(&compiled.stdout)
+                .unwrap_or_else(|_| panic!("{engine}: {}", String::from_utf8_lossy(&compiled.stderr)));
+            let rendered: Vec<String> = program["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|diagnostic| render(diagnostic, &Value::Null))
+                .collect();
+            assert_eq!(rendered, expected, "{fixture} {engine}");
+        }
+    }
+}

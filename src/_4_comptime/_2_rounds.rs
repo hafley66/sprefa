@@ -7,7 +7,7 @@ use super::api::{
 };
 use super::assemble::{assemble_generated_program, Assembled};
 use super::call::call_rules;
-use super::finish::{derived_bind_diagnostics, validate_functional_rows};
+use super::finish::{derived_bind_diagnostics, unmet_bound_diagnostics, validate_functional_rows};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::resolved::Resolved;
 use crate::_3_check::{check_resolved_rules, Stop};
@@ -162,12 +162,14 @@ pub fn stable_outcome(
     u: &mut Universe,
     authored_rules: &[TermId],
     base_relations: &[TermId],
+    base_seeds: &[TermId],
     closure: &[TermId],
     assembled: Assembled,
     resolved: Resolved,
 ) -> RoundOutcome {
     let all = merged_sorted(u, base_relations, &assembled.relations);
     let mut stable = derived_bind_diagnostics(u, authored_rules, closure);
+    stable.extend(unmet_bound_diagnostics(u, base_seeds, closure));
     stable.extend(validate_functional_rows(u, &all, closure));
     let stable = prolog_sort(u, stable);
     if !stable.is_empty() {
@@ -346,6 +348,7 @@ impl<'a> Slice for Rounds<'a> {
                     u,
                     authored_rules,
                     base_relations,
+                    base_seeds,
                     &closure,
                     assembled,
                     resolved,

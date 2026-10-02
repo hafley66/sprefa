@@ -149,15 +149,145 @@ fn lower_rule(
     goals.extend(head.goals);
     goal_nodes.extend(head.goal_nodes);
     let (goals, goal_nodes) = expand_generic_goals(cx, owner, &goals, &goal_nodes)?;
+    let gated = bound_gates(cx, &goals, &goal_nodes);
+    let (goals, goal_nodes) = (gated.goals, gated.goal_nodes);
     let list = cx.u.list(&goals);
     let term = cx.compound("rule", vec![head.call, list]);
     let index = cx.int(rule_index);
     let key = cx.compound("rule", vec![index]);
     let mut origins = vec![cx.compound("origin", vec![key, rule.rule_node])];
     origins.extend(indexed_goal_origins(cx.u, &goal_nodes, rule_index));
-    let mut position_rules = tuple_position_rules(cx, owner, &goals, &goal_nodes);
+    let mut position_rules = gated.rules;
+    position_rules.extend(tuple_position_rules(cx, owner, &goals, &goal_nodes));
     position_rules.extend(generic_edge_rules(cx, owner, &goals, &goal_nodes));
     Ok((term, origins, position_rules))
+}
+
+/// A rule's goals with every bounded application behind its checks, plus the
+/// sibling rules that write the obligations.
+pub struct Gated {
+    pub goals: Vec<TermId>,
+    pub goal_nodes: Vec<TermId>,
+    pub rules: Vec<(TermId, Vec<TermId>)>,
+}
+
+/// Per bounded column of a generic `intern`: a rule writes the obligation from the goals
+/// before the argument tuple; `discharged` precedes the tuple, which takes `?Checked`.
+pub fn bound_gates(cx: &mut Cx, goals: &[TermId], goal_nodes: &[TermId]) -> Gated {
+    let intern = cx.atom("intern");
+    // tuple goal position -> (bounds, site node) of the `intern` reading it.
+    let mut gated_tuples: Vec<(usize, Vec<super::generic::Bound>, TermId)> = Vec::new();
+    for (at, goal) in goals.iter().enumerate() {
+        let Some(("pending_goal", parts)) = cx.u.functor(*goal) else {
+            continue;
+        };
+        let Some(("call", call)) = cx.u.functor(parts[1]) else {
+            continue;
+        };
+        let is_intern = cx
+            .u
+            .args::<2>(call[0], "name")
+            .is_some_and(|[_, label]| label == intern);
+        let Some(arguments) = cx.u.as_list(call[1]).filter(|_| is_intern) else {
+            continue;
+        };
+        let [constructor, tuple, _] = arguments[..] else {
+            continue;
+        };
+        let Some(callable) = cx.u.unary(constructor, "ref") else {
+            continue;
+        };
+        let bounds = super::generic::bounds(cx, callable);
+        if bounds.is_empty() {
+            continue;
+        }
+        let Some(position) = (0..at)
+            .rev()
+            .find(|position| tuple_elements(cx, goals[*position], tuple).is_some())
+        else {
+            continue;
+        };
+        let node = goal_nodes.get(at).copied().unwrap_or(*goal);
+        let site = forms::node_id(cx.u, node).unwrap_or(node);
+        gated_tuples.push((position, bounds, site));
+    }
+    let mut out = Gated {
+        goals: Vec::with_capacity(goals.len()),
+        goal_nodes: Vec::with_capacity(goal_nodes.len()),
+        rules: Vec::new(),
+    };
+    for (at, goal) in goals.iter().enumerate() {
+        let node = goal_nodes.get(at).copied().unwrap_or(*goal);
+        let Some((_, bounds, site)) = gated_tuples.iter().find(|(position, _, _)| *position == at)
+        else {
+            out.goals.push(*goal);
+            out.goal_nodes.push(node);
+            continue;
+        };
+        let (bounds, site) = (bounds.clone(), *site);
+        let Some([polarity, call]) = cx.u.args::<2>(*goal, "pending_goal") else {
+            continue;
+        };
+        let Some([relation, list]) = cx.u.args::<2>(call, "call") else {
+            continue;
+        };
+        let mut elements = cx.u.as_list(list).unwrap_or_default();
+        let before = out.goals.clone();
+        let before_nodes = out.goal_nodes.clone();
+        for bound in &bounds {
+            let Some(argument) = elements.get(bound.column).copied() else {
+                continue;
+            };
+            let gate = bound_gate(cx, site, bound, argument);
+            let body = cx.u.list(&before);
+            out.rules
+                .push((cx.compound("rule", vec![gate.obligation, body]), before_nodes.clone()));
+            out.goals.push(gate.discharged);
+            out.goal_nodes.push(node);
+            elements[bound.column] = gate.checked;
+        }
+        let list = cx.u.list(&elements);
+        let call = cx.compound("call", vec![relation, list]);
+        out.goals
+            .push(cx.compound("pending_goal", vec![polarity, call]));
+        out.goal_nodes.push(node);
+    }
+    out
+}
+
+/// One bounded argument at `site`: the obligation head, the `discharged` goal, and
+/// the variable holding the checker's result.
+pub struct Gate {
+    pub obligation: TermId,
+    pub discharged: TermId,
+    pub checked: TermId,
+}
+
+pub fn bound_gate(cx: &mut Cx, site: TermId, bound: &super::generic::Bound, argument: TermId) -> Gate {
+    let site_const = cx.compound("const", vec![site]);
+    let parameter = cx.compound("const", vec![bound.label]);
+    let obligation = prelude_call(cx, "obligation", &[site_const, parameter, argument, bound.bound]);
+    let key = cx.compound("bound_checked", vec![site, bound.label]);
+    let checked = cx.compound("var", vec![key]);
+    let call = prelude_call(cx, "discharged", &[site_const, parameter, argument, checked]);
+    let positive = cx.atom("positive");
+    let discharged = cx.compound("pending_goal", vec![positive, call]);
+    Gate {
+        obligation,
+        discharged,
+        checked,
+    }
+}
+
+/// A call of a prelude relation, resolved from the prelude module whatever the
+/// calling scope declares.
+fn prelude_call(cx: &mut Cx, label: &str, arguments: &[TermId]) -> TermId {
+    let prelude = cx.atom("prelude");
+    let module = cx.compound("module", vec![prelude]);
+    let label = cx.atom(label);
+    let relation = cx.compound("name", vec![module, label]);
+    let list = cx.u.list(arguments);
+    cx.compound("call", vec![relation, list])
 }
 
 /// Nesting of `(* ...)` and `(+ ...)` inside one `return` expression.
@@ -168,7 +298,7 @@ const GENERIC_TEMPLATE_DEPTH: usize = 16;
 /// `(: Instance Label Value Index)` from the goals up to that `intern`, the
 /// rows a bind writes for the same instance. A nested expression is its own
 /// node, `application(Expression, Args)`, built by one more `intern`.
-fn generic_edge_rules(
+pub fn generic_edge_rules(
     cx: &mut Cx,
     owner: TermId,
     goals: &[TermId],

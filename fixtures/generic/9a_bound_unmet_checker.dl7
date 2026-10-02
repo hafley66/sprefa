@@ -1,0 +1,44 @@
+; `Clone` has no `implemented` row for `Serial`: the rule site reports the
+; parameter, the argument and the bound; `Robot` passes.
+(Serial:
+   (* (serial: int)))
+
+(Robot:
+   (* (serial: int)))
+
+(Clone:
+   (* (serial: int)))
+
+(implemented:
+   (* (source: type)
+      (bound: type)))
+
+(Nominal:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(<- (Nominal ?Source ?Bound ?Source)
+    (implemented ?Source ?Bound))
+
+(checker_of Serial Nominal)
+
+(implemented Robot Serial)
+
+(Tagged:
+   (* (Source: Serial)
+      (return:
+         (* (source: Source)))))
+
+(candidate_source:
+   (* (source: type)))
+
+(candidate_source Robot)
+
+(candidate_source Clone)
+
+(tagged:
+   (* (box: any)))
+
+(<- (tagged (Tagged ?Source))
+    (candidate_source ?Source))

@@ -76,6 +76,28 @@
    (* (source: type)
       (contracts: any)))
 
+; A bound's checker. A bound with no `checker_of` row is checked by `Extends`.
+(checker_of:
+   (* (bound: type)
+      (checker: any)))
+
+(has_checker:
+   (* (bound: type)))
+
+; One row per bounded parameter of a generic application, written by the
+; compiler at the application site. The instance builds over `result`.
+(obligation:
+   (* (site: any)
+      (parameter: any)
+      (argument: any)
+      (bound: type)))
+
+(discharged:
+   (* (site: any)
+      (parameter: any)
+      (argument: any)
+      (result: any)))
+
 ; Intersection constructs a canonical product from two ordered edge sets.
 (: Intersect
    (* (: left type)
@@ -263,6 +285,23 @@
 (<- (ExtendsAll ?Source ?Contracts ?Source)
     (asked_all ?Source ?Contracts)
     (not (missing_contract ?Source ?Contracts)))
+
+(<- (has_checker ?Bound)
+    (checker_of ?Bound ?Checker))
+
+(<- (asked ?Argument ?Bound)
+    (obligation ?Site ?Parameter ?Argument ?Bound)
+    (not (has_checker ?Bound)))
+
+(<- (discharged ?Site ?Parameter ?Argument ?Result)
+    (obligation ?Site ?Parameter ?Argument ?Bound)
+    (not (has_checker ?Bound))
+    (Extends ?Argument ?Bound ?Result))
+
+(<- (discharged ?Site ?Parameter ?Argument ?Result)
+    (obligation ?Site ?Parameter ?Argument ?Bound)
+    (checker_of ?Bound ?Checker)
+    (?Checker ?Argument ?Bound ?Result))
 
 ; Intersection application records the candidate identity before validation.
 (<- (Intersect ?Left ?Right ?Result)

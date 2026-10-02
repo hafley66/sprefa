@@ -143,15 +143,35 @@ fn expression_rule(
     let bind = cx.compound("derived_bind", vec![bind_node_id]);
     let bind_value = cx.compound("var", vec![bind]);
     let goals = replace_in(cx, lowered.value, bind_value, &lowered.goals);
+    let gated = super::execute::bound_gates(cx, &goals, &lowered.origins);
     let name_const = cx.compound("const", vec![name]);
     let index_const = cx.compound("const", vec![index]);
     let head = colon_head(cx, owner, name_const, bind_value, index_const);
-    let body = cx.u.list(&goals);
+    let body = cx.u.list(&gated.goals);
     let rule = cx.compound("rule", vec![head, body]);
-    Ok(Some(Block {
+    let mut block = Block {
         rules: vec![rule],
-        origins: rule_origins(cx, rule_index, bind_node_id, &lowered.origins),
-    }))
+        origins: rule_origins(cx, rule_index, bind_node_id, &gated.goal_nodes),
+    };
+    if gated.rules.is_empty() {
+        return Ok(Some(block));
+    }
+    // A bounded application builds by rule, so the rule writes its instance edges.
+    let mut siblings = gated.rules;
+    siblings.extend(super::execute::generic_edge_rules(
+        cx,
+        owner,
+        &gated.goals,
+        &gated.goal_nodes,
+    ));
+    for (sibling, nodes) in siblings {
+        let index = rule_index + block.rules.len() as i64;
+        block.rules.push(sibling);
+        block
+            .origins
+            .extend(rule_origins(cx, index, bind_node_id, &nodes));
+    }
+    Ok(Some(block))
 }
 
 /// `(: name 3)`: the literal's own primitive is the constructor, so the edge
@@ -363,7 +383,7 @@ fn colon_head(cx: &mut Cx, owner: TermId, label: TermId, target: TermId, index: 
     cx.compound("call", vec![relation, arguments])
 }
 
-fn rule_origins(cx: &mut Cx, rule_index: i64, node: TermId, goal_nodes: &[TermId]) -> Vec<TermId> {
+pub fn rule_origins(cx: &mut Cx, rule_index: i64, node: TermId, goal_nodes: &[TermId]) -> Vec<TermId> {
     let index = cx.int(rule_index);
     let key = cx.compound("rule", vec![index]);
     let mut origins = vec![cx.compound("origin", vec![key, node])];
