@@ -1,0 +1,71 @@
+; Bounded generic parameters. `Source: Named` is checked by `Extends`;
+; `Item: type` is unbounded; `Target: Indexable` is checked by the
+; `checker_of` row's relation. Every application here passes.
+(Named:
+   (* (name: str)))
+
+(User:
+   (* (name: str)
+      (age: int)))
+
+(Team:
+   (* (name: str)
+      (size: int)))
+
+(NamedBox:
+   (* (Source: Named)
+      (Item: type)
+      (return:
+         (* (source: Source)
+            (item: Item)))))
+
+(UserBox: (NamedBox User int))
+
+(boxable:
+   (* (source: type)))
+
+(boxable Team)
+
+(boxed:
+   (* (box: any)))
+
+(<- (boxed (NamedBox ?Source str))
+    (boxable ?Source))
+
+(box_source:
+   (* (source: type)
+      (box: any)))
+
+(<- (box_source ?Source ?Box)
+    (NamedBox ?Source ?Item ?Box))
+
+; A body application: the argument is the edge, checked by `TextColumn`.
+(Indexable:
+   (* (column: any)))
+
+(TextColumn:
+   (* (edge: any)
+      (bound: type)
+      (return: any)))
+
+(<- (TextColumn ?Edge ?Bound ?Edge)
+    (obligation ?Site ?Parameter ?Edge ?Bound)
+    (edge_snapshot ?Owner ?Label str ?Index)
+    (edge_ref ?Owner ?Label ?Edge))
+
+(checker_of Indexable TextColumn)
+
+(Index:
+   (* (^Target: Indexable)
+      (unique: false)))
+
+(Account:
+   (* (Index (name: str))
+      (age: int)))
+
+(index_instance:
+   (* (target: any)
+      (instance: any)))
+
+(<- (index_instance ?Target ?Instance)
+    (Index ?Target ?Instance))

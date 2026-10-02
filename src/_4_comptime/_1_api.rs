@@ -66,6 +66,7 @@ pub fn evaluate_checked(
         authored_rules: &checked.rules,
         base_relations: &checked.relations,
         base_seeds: &base_seeds,
+        call_templates: &checked.calls,
         outer: 1,
     };
     let outcome = Rounds::reduce(&mut st, input, fx)?;

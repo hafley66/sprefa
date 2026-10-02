@@ -113,7 +113,7 @@
 ; GeneratedSyntax(invocation, output ordinal, template path), as `<+` mints.
 (<- (caret_mint ?Invocation ?OutputOrdinal ?TemplatePath ?Output)
     (caret_key ?Invocation ?OutputOrdinal ?TemplatePath)
-    (intern GeneratedSyntax (tuple ?Invocation ?OutputOrdinal ?TemplatePath) ?Output))
+    (GeneratedSyntax ?Invocation ?OutputOrdinal ?TemplatePath ?Output))
 
 (<- (node ?Output)
     (caret_form ?Output ?Invocation))

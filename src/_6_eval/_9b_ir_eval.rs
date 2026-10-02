@@ -695,6 +695,7 @@ fn run_session<E: Engine>(
                     .map(|relation| (*relation, row.clone(), *weight))
             })
             .collect();
+        let mut answers = Vec::new();
         for (relation, row, weight) in request_changes {
             let Some(&application) = row.last().and_then(|cell| decoded.get(cell)) else {
                 continue;
@@ -722,11 +723,14 @@ fn run_session<E: Engine>(
                 .unwrap()
                 .answer_requests(u, &store, [key]);
             request_count += asked;
-            let answer_terms: Vec<_> = rows
-                .iter()
-                .flat_map(|answer| answer.args.iter().copied())
-                .collect();
-            install_terms(u, lowered, engine, host, mapped, &answer_terms)?;
+            answers.push((key, relation, rows));
+        }
+        let answer_terms: Vec<_> = answers
+            .iter()
+            .flat_map(|(_, _, rows)| rows.iter().flat_map(|answer| answer.args.iter().copied()))
+            .collect();
+        install_terms(u, lowered, engine, host, mapped, &answer_terms)?;
+        for (key, _, rows) in answers {
             let mut recorded = Vec::new();
             for answer in rows {
                 LAST_ANSWERS.with(|rows| rows.borrow_mut().push(answer.clone()));
@@ -800,6 +804,7 @@ fn run_session<E: Engine>(
                 })
                 .collect();
             let mut next = Vec::new();
+            let mut answers = Vec::new();
             for (relation, row, weight) in request_changes {
                 let Some(&application) = row.last().and_then(|cell| decoded.get(cell)) else {
                     continue;
@@ -849,11 +854,14 @@ fn run_session<E: Engine>(
                         .unwrap()
                         .answer_requests(u, &store, [key]);
                 request_count += asked;
-                let answer_terms: Vec<_> = rows
-                    .iter()
-                    .flat_map(|row| row.args.iter().copied())
-                    .collect();
-                install_terms(u, lowered, engine, host, mapped, &answer_terms)?;
+                answers.push((key, relation, rows));
+            }
+            let answer_terms: Vec<_> = answers
+                .iter()
+                .flat_map(|(_, _, rows)| rows.iter().flat_map(|answer| answer.args.iter().copied()))
+                .collect();
+            install_terms(u, lowered, engine, host, mapped, &answer_terms)?;
+            for (key, relation, rows) in answers {
                 let mut recorded = Vec::new();
                 for answer in rows {
                     let Some(&source) = lowered.sources.get(&(answer.rel.0, answer.args.len()))
@@ -1002,6 +1010,7 @@ fn run_session<E: Engine>(
                     })
                     .collect();
                 let mut next = Vec::new();
+                let mut answers = Vec::new();
                 for (relation, row, weight) in request_changes {
                     let Some(&application) = row.last().and_then(|cell| decoded.get(cell)) else {
                         continue;
@@ -1051,11 +1060,14 @@ fn run_session<E: Engine>(
                             .unwrap()
                             .answer_requests(u, &store, [key]);
                     request_count += asked;
-                    let answer_terms: Vec<_> = rows
-                        .iter()
-                        .flat_map(|answer| answer.args.iter().copied())
-                        .collect();
-                    install_terms(u, lowered, engine, host, mapped, &answer_terms)?;
+                    answers.push((key, relation, rows));
+                }
+                let answer_terms: Vec<_> = answers
+                    .iter()
+                    .flat_map(|(_, _, rows)| rows.iter().flat_map(|answer| answer.args.iter().copied()))
+                    .collect();
+                install_terms(u, lowered, engine, host, mapped, &answer_terms)?;
+                for (key, relation, rows) in answers {
                     let mut recorded = Vec::new();
                     for answer in rows {
                         let Some(&source) = lowered.sources.get(&(answer.rel.0, answer.args.len()))

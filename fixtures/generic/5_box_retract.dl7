@@ -1,0 +1,26 @@
+(Box:
+   (* (Item: type)
+      (return:
+         (* (item: Item)))))
+
+(product_column:
+   (* (product: str)
+      (name: str)
+      (column_type: type)))
+
+(product_column "Product" "name" str)
+
+(product_column "Product" "count" int)
+
+(Wrapped: (Box int))
+
+(boxed_column:
+   (* (product: str)
+      (name: str)
+      (boxed: any)))
+
+(<- (boxed_column
+       ?Product
+       ?Name
+       (Box ?ColumnType))
+    (product_column ?Product ?Name ?ColumnType))

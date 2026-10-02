@@ -440,11 +440,47 @@ impl Reader<'_> {
             });
         }
         let end = self.pos;
+        if let Some(segments) = dotted_segments(&name) {
+            if segments.iter().any(|segment| !valid_identifier(segment)) {
+                return Err(self.named_error(node_id, "invalid_path", &name, start));
+            }
+            return Ok(self.read_variable_path(top, node_id, start, &segments));
+        }
         let identity = self.variable_identity(top, node_id, &name);
         let name = self.u.atom(&name);
         let payload = self.u.compound("variable", vec![identity, name]);
         self.push_row(node_id, start, end);
         Ok(self.node(node_id, payload))
+    }
+
+    /// `?a.b` reads as the path form `(. ?a b)`: the variable owns the walk.
+    fn read_variable_path(
+        &mut self,
+        top: u32,
+        node_id: TermId,
+        start: Pos,
+        segments: &[&str],
+    ) -> TermId {
+        let end = self.pos;
+        self.push_row(node_id, start, end);
+        let head = self.u.atom(".");
+        let mut items = Vec::with_capacity(segments.len() + 1);
+        items.push(self.path_item(head, start, end));
+        let index = self.index;
+        self.index += 1;
+        let variable_id = self.node_id(index);
+        let identity = self.variable_identity(top, variable_id, segments[0]);
+        let name = self.u.atom(segments[0]);
+        let payload = self.u.compound("variable", vec![identity, name]);
+        self.push_row(variable_id, start, end);
+        items.push(self.node(variable_id, payload));
+        for segment in &segments[1..] {
+            let atom = self.u.atom(segment);
+            items.push(self.path_item(atom, start, end));
+        }
+        let list = self.u.list(&items);
+        let payload = self.u.compound("form", vec![list]);
+        self.node(node_id, payload)
     }
 
     /// `_` is fresh per node; every other name is shared across one top form.

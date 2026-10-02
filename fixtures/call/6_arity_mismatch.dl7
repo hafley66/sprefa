@@ -1,0 +1,27 @@
+; A `checker_of` row names `Pair`, arity 2, at a call of arity 3.
+(checker_of:
+   (* (bound: type)
+      (checker: type)))
+
+(passes:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(<- (passes ?Source ?Bound ?Result)
+    (checker_of ?Bound ?Checker)
+    (?Checker ?Source ?Bound ?Result))
+
+(Pair:
+   (* (left: type)
+      (right: type)))
+
+(Display:
+   (* (name: str)))
+
+(User:
+   (* (name: str)))
+
+(checker_of Display Pair)
+
+(asked User Display)

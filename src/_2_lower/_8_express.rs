@@ -92,7 +92,7 @@ pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<
                         .is_some_and(|(n, a)| n == "deferred_expression" && a.len() == 3);
                 if derived {
                     let inner = cx.edges.derived_target(cx.u, found_owner, name)?;
-                    (inner, cx.reservations.is_sum_target(cx.u, inner))
+                    (inner, instance_is_sum(cx, inner))
                 } else {
                     let is_sum =
                         cx.u.functor_or_atom(found_kind).map(|(kind, _)| kind) == Some("sum");
@@ -101,7 +101,7 @@ pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<
             }
             None => {
                 let inner = cx.edges.derived_target(cx.u, scope, name)?;
-                (inner, cx.reservations.is_sum_target(cx.u, inner))
+                (inner, instance_is_sum(cx, inner))
             }
         };
         if index + 1 == segments.len() {
@@ -114,6 +114,24 @@ pub fn sum_path_constructor(cx: &mut Cx, head: TermId, owner: TermId) -> Option<
         parent_is_sum = is_sum;
     }
     None
+}
+
+/// A generic instance `application(Callee, Args)` is a sum when the callee's
+/// `return` expression is one; any other node is checked as itself.
+fn instance_is_sum(cx: &mut Cx, inner: TermId) -> bool {
+    let return_atom = cx.atom("return");
+    let template = cx
+        .u
+        .args::<2>(inner, "application")
+        .and_then(|[callee, _]| {
+            cx.edges
+                .owned(callee)
+                .into_iter()
+                .find(|edge| edge.name == return_atom)
+                .and_then(|edge| cx.u.unary(edge.target, "target"))
+        })
+        .unwrap_or(inner);
+    cx.reservations.is_sum_target(cx.u, template)
 }
 
 /// `pending_goal(positive, call(name(Scope, ':'), Arguments))`.
@@ -233,6 +251,9 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
             Ok(Applied::Construction(constructor)) => {
                 lower_construction(cx, constructor, parsed.id, &items[1..], owner)
             }
+            Ok(Applied::Generic(callable)) => {
+                lower_generic_value(cx, callable, head, parsed.id, &items[1..], owner)
+            }
             Err(reason) => {
                 let diagnostic = cx.diagnostic(parsed.id, reason);
                 none(cx, vec![diagnostic])
@@ -252,7 +273,7 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
                 call_owner,
                 owner,
             ),
-            Ok(Applied::Construction(_)) => {
+            Ok(Applied::Construction(_) | Applied::Generic(_)) => {
                 let reason = not_a_relation(cx, label, call_owner);
                 let diagnostic = cx.diagnostic(parsed.id, reason);
                 none(cx, vec![diagnostic])
@@ -327,6 +348,9 @@ pub enum Applied {
     /// A node with no rows: the application is construction, and the term is
     /// the constructor the interned value carries.
     Construction(TermId),
+    /// A product whose `return` is an expression: the application is its
+    /// instance, `application(Callee, Args)`.
+    Generic(TermId),
 }
 
 /// `:1488`. `Err` carries the bare reason term.
@@ -341,11 +365,12 @@ pub fn expression_callable(cx: &mut Cx, name: TermId, owner: TermId) -> Result<A
         if kind_name == "product" || kind_name == "derived_callable" {
             if let Some(callable) = cx.u.unary(target, "target") {
                 let arity = cx.edges.arity(callable);
-                // A goal over the product's own rows never sees the instance
-                // an application builds.
-                if kind_name == "product" && super::generic::is_generic_callable(cx, callable) {
-                    let shape = cx.atom("generic_application");
-                    return Err(cx.compound("not_built_yet", vec![shape]));
+                // A product whose `return` is an expression has no rows of its
+                // own: applying it builds or reads back an instance.
+                let generic = super::generic::is_generic_callable(cx, callable)
+                    || super::generic::eigo(cx, callable).is_some();
+                if kind_name == "product" && generic {
+                    return Ok(Applied::Generic(callable));
                 }
                 if arity == 0 {
                     return Err(cx.compound("undeclared_relation", vec![callable]));
@@ -545,6 +570,35 @@ pub fn lower_construction(
         origins,
         diagnostics: vec![],
     }
+}
+
+/// `(Callee Column..)` as a value in a rule: the instance is built with
+/// `tuple` and `intern` like any construction, and the rule's generated
+/// siblings write its `return` edges. A fact holds no such value yet.
+fn lower_generic_value(
+    cx: &mut Cx,
+    callable: TermId,
+    name: TermId,
+    node_id: TermId,
+    argument_nodes: &[TermId],
+    owner: TermId,
+) -> Lowering {
+    if cx.ground_values || super::generic::eigo(cx, callable).is_some() {
+        let shape = cx.atom("generic_application");
+        let reason = cx.compound("not_built_yet", vec![shape]);
+        let diagnostic = cx.diagnostic(node_id, reason);
+        return none(cx, vec![diagnostic]);
+    }
+    let columns = cx.edges.arity(callable) - 1;
+    if argument_nodes.len() as i64 != columns {
+        let expected = cx.int(columns);
+        let observed = cx.int(argument_nodes.len() as i64);
+        let reason = cx.compound("expression_arity_mismatch", vec![name, expected, observed]);
+        let diagnostic = cx.diagnostic(node_id, reason);
+        return none(cx, vec![diagnostic]);
+    }
+    let constructor = cx.compound("ref", vec![callable]);
+    lower_construction(cx, constructor, node_id, argument_nodes, owner)
 }
 
 /// `(tuple Element...)`, the expansion of `[a b c]`: the anonymous product of
@@ -1049,7 +1103,15 @@ fn lower_fold_argument(
     let mut parts = Vec::with_capacity(3);
     let mut goals = Vec::new();
     let mut origins = Vec::new();
-    for item in &items[1..] {
+    for (position, item) in items[1..].iter().enumerate() {
+        // A dotted step names a relation, as a dotted goal head does
+        // (`lower_path_call`), never the value a dot walk reads.
+        if position == 0 {
+            if let Some(step) = relation_path(cx, *item, owner) {
+                parts.push(step);
+                continue;
+            }
+        }
         let lowered = lower_expression(cx, *item, owner);
         if let Some(first) = lowered.diagnostics.first() {
             return Err(*first);
@@ -1063,6 +1125,21 @@ fn lower_fold_argument(
     }
     let value = cx.compound("fold", parts);
     Ok((value, goals, origins))
+}
+
+/// `a.b.c` as the relation `name(name(name(Owner, a), b), c)`; `None` for any
+/// node that is not a path of two or more segments.
+fn relation_path(cx: &mut Cx, node: TermId, owner: TermId) -> Option<TermId> {
+    let segments = path_segments(cx.u, node)?;
+    if segments.len() < 2 {
+        return None;
+    }
+    let mut relation = owner;
+    for segment in segments {
+        let name = path_segment_atom(cx.u, segment)?;
+        relation = cx.compound("name", vec![relation, name]);
+    }
+    Some(relation)
 }
 
 /// `:1908`.

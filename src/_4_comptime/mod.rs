@@ -5,6 +5,8 @@
 pub mod api;
 #[path = "_3_assemble.rs"]
 pub mod assemble;
+#[path = "_4_call.rs"]
+pub mod call;
 #[path = "_5_finish.rs"]
 pub mod finish;
 #[path = "_6_json.rs"]

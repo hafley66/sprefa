@@ -1,0 +1,14 @@
+; `Extends` test plan cases 16 (retract `User.name`) and 17 (add `name` to
+; `Aged`). The test edits this source and the field rows; the asks stay.
+(Named:
+   (* (name: str)))
+
+(Aged:
+   (* (age: int)))
+
+(User:
+   (* (name: str)
+      (age: int)))
+
+(asked User Named)
+(asked Aged Named)

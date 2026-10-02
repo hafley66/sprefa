@@ -1,65 +1,102 @@
-; Structural contracts are ordinary product nodes. Conformance returns one
-; canonical proof identity after every contract edge matches the source.
-(: Conforms
-   (* (: source type)
-      (: contract type)
-      (: return type)))
+; Structural contracts are ordinary product nodes. `Extends` answers the
+; asked pairs whose check finds no failure and returns the source. Only
+; asked pairs are checked: a caller or a prelude rule writes `asked`.
+(Extends:
+   (* (source: type)
+      (contract: type)
+      (return: type)))
 
-(: conformance_candidate
-   (* (: source type)
-      (: contract type)
-      (: proof type)))
+(asked:
+   (* (source: type)
+      (contract: type)))
 
-(: matching_contract_edge
-   (* (: source type)
-      (: contract type)
-      (: name any)
-      (: target any)
-      (: contract_index int)))
+; A contract list is a declared tuple; the source must extend every position.
+(ExtendsAll:
+   (* (source: type)
+      (contracts: any)
+      (return: type)))
 
-(: missing_contract_edge
-   (* (: source type)
-      (: contract type)
-      (: name any)
-      (: target any)
-      (: contract_index int)))
+(asked_all:
+   (* (source: type)
+      (contracts: any)))
 
-(: has_missing_contract_edge
-   (* (: source type)
-      (: contract type)))
+(ExtendsReason:
+   (+ (missing: (*))
+      (primitive: (*))
+      (nested: (*))
+      (sum_contract: (*))))
 
-(: valid_conformance
-   (* (: source type)
-      (: contract type)))
+; Reason values are facts, so a rule reads one instead of building it.
+(extends_reason:
+   (* (label: str)
+      (reason: ExtendsReason)))
 
-; A closed tuple represents conjunction over several contracts.
-(: ConformsAll
-   (* (: source type)
-      (: contracts any)
-      (: return type)))
+; Every pair the walk reaches from an asked pair through same-named fields.
+(candidate:
+   (* (source: type)
+      (contract: type)))
 
-(: conforms_all_candidate
-   (* (: source type)
-      (: contracts any)
-      (: proof type)))
+(same_pair:
+   (* (source: type)
+      (contract: type)))
 
-(: all_contracts_conform
-   (* (: source type)
-      (: contracts any)))
+(has_field:
+   (* (source: type)
+      (name: any)))
 
-(: conforming_contract
-   (* (: source type)
-      (: contracts any)
-      (: position int)))
+(primitive_contract:
+   (* (contract: type)))
 
-(: missing_contract
-   (* (: source type)
-      (: contracts any)
-      (: position int)))
+(primitive_mismatch:
+   (* (source: type)
+      (contract: type)))
 
-(: has_missing_contract
-   (* (: source type)
-      (: contracts any)))
+(fails_at:
+   (* (source: type)
+      (contract: type)
+      (name: any)
+      (reason: ExtendsReason)))
+
+(fails:
+   (* (source: type)
+      (contract: type)))
+
+; A sum on either side is "one of these": outside the conjunctive check.
+(undecided:
+   (* (source: type)
+      (contract: type)))
+
+(extends_diagnostic:
+   (* (source: type)
+      (contract: type)
+      (name: any)
+      (reason: ExtendsReason)))
+
+(missing_contract:
+   (* (source: type)
+      (contracts: any)))
+
+; A bound's checker. A bound with no `checker_of` row is checked by `Extends`.
+(checker_of:
+   (* (bound: type)
+      (checker: any)))
+
+(has_checker:
+   (* (bound: type)))
+
+; One row per bounded parameter of a generic application, written by the
+; compiler at the application site. The instance builds over `result`.
+(obligation:
+   (* (site: any)
+      (parameter: any)
+      (argument: any)
+      (bound: type)))
+
+(discharged:
+   (* (site: any)
+      (parameter: any)
+      (argument: any)
+      (result: any)))
 
 ; Intersection constructs a canonical product from two ordered edge sets.
 (: Intersect
@@ -141,86 +178,130 @@
       (: source type)
       (: witness type)))
 
-(: invalid_impl_edge
-   (* (: contract type)
-      (: source type)
-      (: witness type)
-      (: name any)
-      (: target any)
-      (: contract_index int)))
+(invalid_impl_edge:
+   (* (contract: type)
+      (source: type)
+      (witness: type)
+      (name: any)
+      (reason: ExtendsReason)))
 
-; Conformance application records its intern request before proof validation.
-; A failed proof therefore becomes inspectable in a later compiler round.
-(<- (Conforms ?Source ?Contract ?Proof)
-    (intern Conforms (tuple ?Source ?Contract) ?Proof)
-    (valid_conformance ?Source ?Contract))
+(extends_reason "missing" ExtendsReason.missing)
+(extends_reason "primitive" ExtendsReason.primitive)
+(extends_reason "nested" ExtendsReason.nested)
+(extends_reason "sum_contract" ExtendsReason.sum_contract)
 
-(<- (Conforms ?Source ?Contract ?Proof)
-    (intern_snapshot Conforms ?Arguments ?Proof)
-    (tuple ?Source ?Contract ?Arguments)
-    (valid_conformance ?Source ?Contract))
+(primitive_contract int)
+(primitive_contract float)
+(primitive_contract bool)
+(primitive_contract str)
 
-(<- (conformance_candidate ?Source ?Contract ?Proof)
-    (intern_snapshot Conforms ?Arguments ?Proof)
-    (tuple ?Source ?Contract ?Arguments))
+; The walk reads `edge_snapshot`, never `:`: last round's edges, so a check
+; answered this round reads the graph one round late. A primitive's binds
+; are its namespace members, so the walk stops at a primitive contract.
+(<- (candidate ?Source ?Contract)
+    (asked ?Source ?Contract))
 
-(<- (matching_contract_edge
-       ?Source ?Contract ?Name ?Target ?ContractIndex)
-    (conformance_candidate ?Source ?Contract ?Proof)
-    (edge_snapshot ?Contract ?Name ?Target ?ContractIndex)
-    (edge_snapshot ?Source ?Name ?Target ?SourceIndex))
+(<- (candidate ?SourceTarget ?ContractTarget)
+    (candidate ?Source ?Contract)
+    (not (primitive_contract ?Contract))
+    (edge_snapshot ?Contract ?Name ?ContractTarget ?ContractIndex)
+    (edge_snapshot ?Source ?Name ?SourceTarget ?SourceIndex))
 
-(<- (missing_contract_edge
-       ?Source ?Contract ?Name ?Target ?ContractIndex)
-    (conformance_candidate ?Source ?Contract ?Proof)
-    (edge_snapshot ?Contract ?Name ?Target ?ContractIndex)
-    (not (matching_contract_edge
-           ?Source ?Contract ?Name ?Target ?ContractIndex)))
+(<- (same_pair ?Node ?Node)
+    (candidate ?Node ?Node))
 
-(<- (has_missing_contract_edge ?Source ?Contract)
-    (missing_contract_edge
-      ?Source ?Contract ?Name ?Target ?ContractIndex))
+(<- (has_field ?Source ?Name)
+    (candidate ?Source ?Contract)
+    (edge_snapshot ?Source ?Name ?Target ?Index))
 
-(<- (valid_conformance ?Source ?Contract)
-    (conformance_candidate ?Source ?Contract ?Proof)
-    (not (has_missing_contract_edge ?Source ?Contract)))
+(<- (primitive_mismatch ?Source ?Contract)
+    (candidate ?Source ?Contract)
+    (primitive_contract ?Contract)
+    (not (same_pair ?Source ?Contract)))
 
-(<- (node ?Proof)
-    (Conforms ?Source ?Contract ?Proof))
+(<- (fails_at ?Source ?Contract ?Name ?Reason)
+    (extends_reason "missing" ?Reason)
+    (candidate ?Source ?Contract)
+    (not (primitive_contract ?Contract))
+    (edge_snapshot ?Contract ?Name ?ContractTarget ?ContractIndex)
+    (not (has_field ?Source ?Name)))
 
-; Contract-list application and recursive conjunction.
-(<- (ConformsAll ?Source ?Contracts ?Proof)
-    (intern ConformsAll (tuple ?Source ?Contracts) ?Proof)
-    (all_contracts_conform ?Source ?Contracts))
+(<- (fails_at ?Source ?Contract "" ?Reason)
+    (extends_reason "primitive" ?Reason)
+    (primitive_mismatch ?Source ?Contract))
 
-(<- (ConformsAll ?Source ?Contracts ?Proof)
-    (intern_snapshot ConformsAll ?Arguments ?Proof)
-    (tuple ?Source ?Contracts ?Arguments)
-    (all_contracts_conform ?Source ?Contracts))
+(<- (fails_at ?Source ?Contract ?Name ?Reason)
+    (extends_reason "nested" ?Reason)
+    (candidate ?Source ?Contract)
+    (edge_snapshot ?Contract ?Name ?ContractTarget ?ContractIndex)
+    (edge_snapshot ?Source ?Name ?SourceTarget ?SourceIndex)
+    (fails ?SourceTarget ?ContractTarget))
 
-(<- (conforms_all_candidate ?Source ?Contracts ?Proof)
-    (intern_snapshot ConformsAll ?Arguments ?Proof)
-    (tuple ?Source ?Contracts ?Arguments))
+(<- (fails ?Source ?Contract)
+    (fails_at ?Source ?Contract ?Name ?Reason))
 
-(<- (conforming_contract ?Source ?Contracts ?Position)
-    (conforms_all_candidate ?Source ?Contracts ?Proof)
+(<- (undecided ?Source ?Contract)
+    (candidate ?Source ?Contract)
+    (sum ?Contract)
+    (not (same_pair ?Source ?Contract)))
+
+(<- (undecided ?Source ?Contract)
+    (candidate ?Source ?Contract)
+    (sum ?Source)
+    (not (same_pair ?Source ?Contract)))
+
+(<- (undecided ?Source ?Contract)
+    (candidate ?Source ?Contract)
+    (not (primitive_contract ?Contract))
+    (edge_snapshot ?Contract ?Name ?ContractTarget ?ContractIndex)
+    (edge_snapshot ?Source ?Name ?SourceTarget ?SourceIndex)
+    (undecided ?SourceTarget ?ContractTarget))
+
+(<- (Extends ?Source ?Contract ?Source)
+    (asked ?Source ?Contract)
+    (not (fails ?Source ?Contract))
+    (not (undecided ?Source ?Contract)))
+
+(<- (extends_diagnostic ?Source ?Contract ?Name ?Reason)
+    (asked ?Source ?Contract)
+    (fails_at ?Source ?Contract ?Name ?Reason))
+
+(<- (extends_diagnostic ?Source ?Contract "" ?Reason)
+    (extends_reason "sum_contract" ?Reason)
+    (asked ?Source ?Contract)
+    (undecided ?Source ?Contract))
+
+; Each list position is asked on its own. A rule builds the list, so its
+; positions are `:` rows; the check reads them one round later.
+(<- (asked ?Source ?Contract)
+    (asked_all ?Source ?Contracts)
+    (edge_snapshot ?Contracts ?Position ?Contract ?Position))
+
+(<- (missing_contract ?Source ?Contracts)
+    (asked_all ?Source ?Contracts)
     (edge_snapshot ?Contracts ?Position ?Contract ?Position)
-    (Conforms ?Source ?Contract ?ContractProof))
+    (not (Extends ?Source ?Contract ?Source)))
 
-(<- (missing_contract ?Source ?Contracts ?Position)
-    (conforms_all_candidate ?Source ?Contracts ?Proof)
-    (edge_snapshot ?Contracts ?Position ?Contract ?Position)
-    (not (conforming_contract ?Source ?Contracts ?Position)))
+(<- (ExtendsAll ?Source ?Contracts ?Source)
+    (asked_all ?Source ?Contracts)
+    (not (missing_contract ?Source ?Contracts)))
 
-(<- (has_missing_contract ?Source ?Contracts)
-    (missing_contract ?Source ?Contracts ?Position))
+(<- (has_checker ?Bound)
+    (checker_of ?Bound ?Checker))
 
-(<- (all_contracts_conform ?Source ?Contracts)
-    (conforms_all_candidate ?Source ?Contracts ?Proof)
-    (not (has_missing_contract ?Source ?Contracts)))
+(<- (asked ?Argument ?Bound)
+    (obligation ?Site ?Parameter ?Argument ?Bound)
+    (not (has_checker ?Bound)))
 
-(<- (node ?Proof)
-    (ConformsAll ?Source ?Contracts ?Proof))
+(<- (discharged ?Site ?Parameter ?Argument ?Result)
+    (obligation ?Site ?Parameter ?Argument ?Bound)
+    (not (has_checker ?Bound))
+    (Extends ?Argument ?Bound ?Result))
+
+(<- (discharged ?Site ?Parameter ?Argument ?Result)
+    (obligation ?Site ?Parameter ?Argument ?Bound)
+    (checker_of ?Bound ?Checker)
+    (?Checker ?Argument ?Bound ?Result))
 
 ; Intersection application records the candidate identity before validation.
 (<- (Intersect ?Left ?Right ?Result)
@@ -326,13 +407,15 @@
 (<- (Extend ?Base ?Extension ?Result)
     (Intersect ?Base ?Extension ?Result))
 
-; Impl validation reuses conformance and retains failed contract edges.
+
+; Impl witnesses are asked against their contract.
+(<- (asked ?Witness ?Contract)
+    (implements ?Contract ?Source ?Witness))
+
 (<- (valid_impl ?Contract ?Source ?Witness)
     (implements ?Contract ?Source ?Witness)
-    (Conforms ?Witness ?Contract ?Proof))
+    (Extends ?Witness ?Contract ?Witness))
 
-(<- (invalid_impl_edge
-       ?Contract ?Source ?Witness ?Name ?Target ?ContractIndex)
+(<- (invalid_impl_edge ?Contract ?Source ?Witness ?Name ?Reason)
     (implements ?Contract ?Source ?Witness)
-    (missing_contract_edge
-      ?Witness ?Contract ?Name ?Target ?ContractIndex))
+    (fails_at ?Witness ?Contract ?Name ?Reason))

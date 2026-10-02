@@ -14,7 +14,7 @@
 (: Pick
    (* (: source type)
       (: names any)
-      (: return type)))
+      (: return (*))))
 
 (: pick_edge
    (* (: source type)
@@ -43,15 +43,10 @@
 (: Exclude
    (* (: source type)
       (: names any)
-      (: return type)))
+      (: return (*))))
 
 (: HistoryV1
    (* (: source type)
-      (: options type)
-      (: return type)))
-
-(: Key
-   (* (: name str)
       (: options type)
       (: return type)))
 
@@ -71,33 +66,6 @@
    (* (: source type)
       (: name any)
       (: return any)))
-
-(: keyed_edge
-   (* (: source type)
-      (: name str)
-      (: options type)
-      (: target any)
-      (: source_index int)))
-
-(: key_predecessor
-   (* (: source type)
-      (: source_index int)
-      (: prior_index int)))
-
-(: key_has_predecessor
-   (* (: source type)
-      (: source_index int)))
-
-(: key_rank
-   (* (: source type)
-      (: source_index int)
-      (: result_index int)))
-
-(: composite_key
-   (* (: source type)
-      (: position int)
-      (: name str)
-      (: options type)))
 
 (: history_v1_edge
    (* (: source type)
@@ -161,19 +129,20 @@
       (: raw any)))
 
 (: Variable
-   (* (: node type)
-      (: scope type)
-      (: name str)))
+   (* (: scope type)
+      (: position int)
+      (: name str)
+      (: return (*))))
 
 ; Generated rule heads and body goals use distinct application identities.
 (: HeadCall
    (* (: rule type)
-      (: return type)))
+      (: return (*))))
 
 (: BodyCall
    (* (: rule type)
       (: goal int)
-      (: return type)))
+      (: return (*))))
 
 ; Curry identities are canonical callable specializations. The source lowerer
 ; supplies Apply and call-edge facts. These Curry views, the remaining shape,

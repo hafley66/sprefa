@@ -1,0 +1,9 @@
+; No `product` declaration here: `(product ?Type)` is the kernel relation.
+(declared_type:
+   (* (declared: type)))
+
+(Gadget:
+   (* (serial: int)))
+
+(<- (declared_type ?Type)
+    (product ?Type))

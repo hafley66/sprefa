@@ -148,14 +148,292 @@ fn lower_rule(
     }
     goals.extend(head.goals);
     goal_nodes.extend(head.goal_nodes);
+    let (goals, goal_nodes) = expand_generic_goals(cx, owner, &goals, &goal_nodes)?;
+    let gated = bound_gates(cx, &goals, &goal_nodes);
+    let (goals, goal_nodes) = (gated.goals, gated.goal_nodes);
     let list = cx.u.list(&goals);
     let term = cx.compound("rule", vec![head.call, list]);
     let index = cx.int(rule_index);
     let key = cx.compound("rule", vec![index]);
     let mut origins = vec![cx.compound("origin", vec![key, rule.rule_node])];
     origins.extend(indexed_goal_origins(cx.u, &goal_nodes, rule_index));
-    let position_rules = tuple_position_rules(cx, owner, &goals, &goal_nodes);
+    let mut position_rules = gated.rules;
+    position_rules.extend(tuple_position_rules(cx, owner, &goals, &goal_nodes));
+    position_rules.extend(generic_edge_rules(cx, owner, &goals, &goal_nodes));
     Ok((term, origins, position_rules))
+}
+
+/// A rule's goals with every bounded application behind its checks, plus the
+/// sibling rules that write the obligations.
+pub struct Gated {
+    pub goals: Vec<TermId>,
+    pub goal_nodes: Vec<TermId>,
+    pub rules: Vec<(TermId, Vec<TermId>)>,
+}
+
+/// Per bounded column of a generic `intern`: a rule writes the obligation from the goals
+/// before the argument tuple; `discharged` precedes the tuple, which takes `?Checked`.
+pub fn bound_gates(cx: &mut Cx, goals: &[TermId], goal_nodes: &[TermId]) -> Gated {
+    let intern = cx.atom("intern");
+    // tuple goal position -> (bounds, site node) of the `intern` reading it.
+    let mut gated_tuples: Vec<(usize, Vec<super::generic::Bound>, TermId)> = Vec::new();
+    for (at, goal) in goals.iter().enumerate() {
+        let Some(("pending_goal", parts)) = cx.u.functor(*goal) else {
+            continue;
+        };
+        let Some(("call", call)) = cx.u.functor(parts[1]) else {
+            continue;
+        };
+        let is_intern = cx
+            .u
+            .args::<2>(call[0], "name")
+            .is_some_and(|[_, label]| label == intern);
+        let Some(arguments) = cx.u.as_list(call[1]).filter(|_| is_intern) else {
+            continue;
+        };
+        let [constructor, tuple, _] = arguments[..] else {
+            continue;
+        };
+        let Some(callable) = cx.u.unary(constructor, "ref") else {
+            continue;
+        };
+        let bounds = super::generic::bounds(cx, callable);
+        if bounds.is_empty() {
+            continue;
+        }
+        let Some(position) = (0..at)
+            .rev()
+            .find(|position| tuple_elements(cx, goals[*position], tuple).is_some())
+        else {
+            continue;
+        };
+        let node = goal_nodes.get(at).copied().unwrap_or(*goal);
+        let site = forms::node_id(cx.u, node).unwrap_or(node);
+        gated_tuples.push((position, bounds, site));
+    }
+    let mut out = Gated {
+        goals: Vec::with_capacity(goals.len()),
+        goal_nodes: Vec::with_capacity(goal_nodes.len()),
+        rules: Vec::new(),
+    };
+    for (at, goal) in goals.iter().enumerate() {
+        let node = goal_nodes.get(at).copied().unwrap_or(*goal);
+        let Some((_, bounds, site)) = gated_tuples.iter().find(|(position, _, _)| *position == at)
+        else {
+            out.goals.push(*goal);
+            out.goal_nodes.push(node);
+            continue;
+        };
+        let (bounds, site) = (bounds.clone(), *site);
+        let Some([polarity, call]) = cx.u.args::<2>(*goal, "pending_goal") else {
+            continue;
+        };
+        let Some([relation, list]) = cx.u.args::<2>(call, "call") else {
+            continue;
+        };
+        let mut elements = cx.u.as_list(list).unwrap_or_default();
+        let before = out.goals.clone();
+        let before_nodes = out.goal_nodes.clone();
+        for bound in &bounds {
+            let Some(argument) = elements.get(bound.column).copied() else {
+                continue;
+            };
+            let gate = bound_gate(cx, site, bound, argument);
+            let body = cx.u.list(&before);
+            out.rules
+                .push((cx.compound("rule", vec![gate.obligation, body]), before_nodes.clone()));
+            out.goals.push(gate.discharged);
+            out.goal_nodes.push(node);
+            elements[bound.column] = gate.checked;
+        }
+        let list = cx.u.list(&elements);
+        let call = cx.compound("call", vec![relation, list]);
+        out.goals
+            .push(cx.compound("pending_goal", vec![polarity, call]));
+        out.goal_nodes.push(node);
+    }
+    out
+}
+
+/// One bounded argument at `site`: the obligation head, the `discharged` goal, and
+/// the variable holding the checker's result.
+pub struct Gate {
+    pub obligation: TermId,
+    pub discharged: TermId,
+    pub checked: TermId,
+}
+
+pub fn bound_gate(cx: &mut Cx, site: TermId, bound: &super::generic::Bound, argument: TermId) -> Gate {
+    let site_const = cx.compound("const", vec![site]);
+    let parameter = cx.compound("const", vec![bound.label]);
+    let obligation = prelude_call(cx, "obligation", &[site_const, parameter, argument, bound.bound]);
+    let key = cx.compound("bound_checked", vec![site, bound.label]);
+    let checked = cx.compound("var", vec![key]);
+    let call = prelude_call(cx, "discharged", &[site_const, parameter, argument, checked]);
+    let positive = cx.atom("positive");
+    let discharged = cx.compound("pending_goal", vec![positive, call]);
+    Gate {
+        obligation,
+        discharged,
+        checked,
+    }
+}
+
+/// A call of a prelude relation, resolved from the prelude module whatever the
+/// calling scope declares.
+fn prelude_call(cx: &mut Cx, label: &str, arguments: &[TermId]) -> TermId {
+    let prelude = cx.atom("prelude");
+    let module = cx.compound("module", vec![prelude]);
+    let label = cx.atom(label);
+    let relation = cx.compound("name", vec![module, label]);
+    let list = cx.u.list(arguments);
+    cx.compound("call", vec![relation, list])
+}
+
+/// Nesting of `(* ...)` and `(+ ...)` inside one `return` expression.
+const GENERIC_TEMPLATE_DEPTH: usize = 16;
+
+/// An instance a rule builds with `intern` is output of the rule: one sibling
+/// rule per edge of the callee's `return` expression writes
+/// `(: Instance Label Value Index)` from the goals up to that `intern`, the
+/// rows a bind writes for the same instance. A nested expression is its own
+/// node, `application(Expression, Args)`, built by one more `intern`.
+pub fn generic_edge_rules(
+    cx: &mut Cx,
+    owner: TermId,
+    goals: &[TermId],
+    goal_nodes: &[TermId],
+) -> Vec<(TermId, Vec<TermId>)> {
+    let mut out = Vec::new();
+    let intern = cx.atom("intern");
+    let return_atom = cx.atom("return");
+    for (at, goal) in goals.iter().enumerate() {
+        let Some(("pending_goal", parts)) = cx.u.functor(*goal) else {
+            continue;
+        };
+        let Some(("call", call)) = cx.u.functor(parts[1]) else {
+            continue;
+        };
+        let is_intern = cx
+            .u
+            .args::<2>(call[0], "name")
+            .is_some_and(|[_, label]| label == intern);
+        let Some(arguments) = cx.u.as_list(call[1]).filter(|_| is_intern) else {
+            continue;
+        };
+        let [constructor, tuple, instance] = arguments[..] else {
+            continue;
+        };
+        let Some(callable) = cx.u.unary(constructor, "ref") else {
+            continue;
+        };
+        if !super::generic::is_generic_callable(cx, callable) {
+            continue;
+        }
+        let Some(tuple_goal) = goals[..at].iter().rev().find_map(|g| tuple_elements(cx, *g, tuple))
+        else {
+            continue;
+        };
+        let columns: Vec<(TermId, TermId)> = {
+            let mut labelled: Vec<(i64, TermId)> = cx
+                .edges
+                .owned(callable)
+                .into_iter()
+                .filter(|edge| edge.name != return_atom)
+                .map(|edge| (edge.index, edge.name))
+                .collect();
+            labelled.sort_by_key(|(index, _)| *index);
+            labelled.dedup_by_key(|(index, _)| *index);
+            labelled
+                .into_iter()
+                .map(|(_, label)| label)
+                .zip(tuple_goal)
+                .collect()
+        };
+        let Some(template) = cx
+            .edges
+            .owned(callable)
+            .into_iter()
+            .find(|edge| edge.name == return_atom)
+            .and_then(|edge| cx.u.unary(edge.target, "target"))
+        else {
+            continue;
+        };
+        let body = goals[..=at].to_vec();
+        let nodes = goal_nodes[..=at.min(goal_nodes.len() - 1)].to_vec();
+        let node = nodes.last().copied().unwrap_or(*goal);
+        let mut level = vec![(template, instance, body, nodes)];
+        for _ in 0..GENERIC_TEMPLATE_DEPTH {
+            let mut next = Vec::new();
+            for (template, instance, body, nodes) in level {
+                let mut seen = Vec::new();
+                let edges: Vec<(TermId, TermId, i64)> = cx
+                    .edges
+                    .owned(template)
+                    .into_iter()
+                    .map(|edge| (edge.name, edge.target, edge.index))
+                    .collect();
+                for (label, target, index) in edges {
+                    if seen.contains(&index) {
+                        continue;
+                    }
+                    seen.push(index);
+                    let mut edge_body = body.clone();
+                    let mut edge_nodes = nodes.clone();
+                    let value = if let Some(inner) = cx.u.unary(target, "target") {
+                        let key = cx.compound("generic_instance", vec![instance, inner]);
+                        let child = cx.compound("var", vec![key]);
+                        let inner_ref = cx.compound("ref", vec![inner]);
+                        let relation = cx.compound("name", vec![owner, intern]);
+                        let list = cx.u.list(&[inner_ref, tuple, child]);
+                        let call = cx.compound("call", vec![relation, list]);
+                        let positive = cx.atom("positive");
+                        edge_body.push(cx.compound("pending_goal", vec![positive, call]));
+                        edge_nodes.push(node);
+                        next.push((inner, child, edge_body.clone(), edge_nodes.clone()));
+                        child
+                    } else if let Some(value) = cx
+                        .u
+                        .args::<2>(target, "name")
+                        .and_then(|[_, name]| columns.iter().find(|(column, _)| *column == name))
+                        .map(|(_, value)| *value)
+                    {
+                        value
+                    } else {
+                        target
+                    };
+                    let label = cx.compound("const", vec![label]);
+                    let index = cx.int(index);
+                    let index = cx.compound("const", vec![index]);
+                    let colon = cx.atom(":");
+                    let relation = cx.compound("name", vec![owner, colon]);
+                    let list = cx.u.list(&[instance, label, value, index]);
+                    let head = cx.compound("call", vec![relation, list]);
+                    let list = cx.u.list(&edge_body);
+                    out.push((cx.compound("rule", vec![head, list]), edge_nodes));
+                }
+            }
+            level = next;
+        }
+    }
+    out
+}
+
+/// The elements of the `tuple` goal whose last argument is `whole`.
+fn tuple_elements(cx: &Cx, goal: TermId, whole: TermId) -> Option<Vec<TermId>> {
+    let ("pending_goal", parts) = cx.u.functor(goal)? else {
+        return None;
+    };
+    let ("call", call) = cx.u.functor(parts[1])? else {
+        return None;
+    };
+    let [_, label] = cx.u.args::<2>(call[0], "name")?;
+    if cx.u.functor_or_atom(label).map(|(n, _)| n) != Some("tuple") {
+        return None;
+    }
+    let arguments = cx.u.as_list(call[1])?;
+    let (last, elements) = arguments.split_last()?;
+    (*last == whole).then(|| elements.to_vec())
 }
 
 /// A tuple built in a rule body and handed to a relation call is output of the
@@ -196,7 +474,7 @@ fn tuple_position_rules(
         if !elements.iter().all(|e| bound(cx, *e)) {
             continue;
         }
-        let handed_on = goals[at + 1..].iter().any(|later| {
+        let handed_to_relation = goals[at + 1..].iter().any(|later| {
             let Some(("pending_goal", later_parts)) = cx.u.functor(*later) else {
                 return false;
             };
@@ -215,6 +493,7 @@ fn tuple_position_rules(
                 && !super::kernel::kernel_variadic(None, &label)
                 && term_mentions(cx, later_parts[1], *whole)
         });
+        let handed_on = handed_to_relation || handed_to_generic(cx, &goals[at + 1..], *whole);
         if !handed_on {
             continue;
         }
@@ -231,6 +510,42 @@ fn tuple_position_rules(
         }
     }
     out
+}
+
+/// A tuple that is a column of a generic application: an element of the
+/// argument tuple a later `intern` or `intern_snapshot` of a generic callee
+/// reads.
+fn handed_to_generic(cx: &mut Cx, later: &[TermId], whole: TermId) -> bool {
+    let calls: Vec<(String, Vec<TermId>)> = later
+        .iter()
+        .filter_map(|goal| {
+            let ("pending_goal", parts) = cx.u.functor(*goal)? else {
+                return None;
+            };
+            let ("call", call) = cx.u.functor(parts[1])? else {
+                return None;
+            };
+            let [_, label] = cx.u.args::<2>(call[0], "name")?;
+            let label = cx.u.functor_or_atom(label)?.0.to_string();
+            Some((label, cx.u.as_list(call[1])?))
+        })
+        .collect();
+    calls.iter().any(|(label, arguments)| {
+        let Some((argument_tuple, columns)) = arguments.split_last() else {
+            return false;
+        };
+        label == "tuple"
+            && columns.contains(&whole)
+            && calls.iter().any(|(reader, read)| {
+                matches!(reader.as_str(), "intern" | "intern_snapshot")
+                    && read.len() == 3
+                    && read[1] == *argument_tuple
+                    && cx
+                        .u
+                        .unary(read[0], "ref")
+                        .is_some_and(|callee| super::generic::is_generic_callable(cx, callee))
+            })
+    })
 }
 
 /// Nesting depth searched inside one lowered goal term.
@@ -330,6 +645,9 @@ pub fn lower_call(
     let Some(items) = forms::form(cx.u, parsed.payload) else {
         return Err(cx.plain(parsed.id, "expected_call"));
     };
+    if let Some(call) = lower_variable_call(cx, parsed.id, &items, owner, head_mode)? {
+        return Ok(call);
+    }
     let head = forms::form_head_atom(cx.u, &items);
     if head.is_none() {
         let typed = items
@@ -387,6 +705,9 @@ fn lower_named_call(
     };
     let (callable, arity) = match resolved {
         Ok(express::Applied::Relation(callable, arity, _)) => (callable, arity),
+        Ok(express::Applied::Generic(callable)) => {
+            return generic_goal(cx, head, node_id, callable, &items[1..], owner, head_mode);
+        }
         // A goal position takes a relation only; construction is spelled with
         // `intern` here, so the head names no relation.
         Ok(express::Applied::Construction(_)) => {
@@ -399,6 +720,163 @@ fn lower_named_call(
     let arguments =
         normalize_call_arguments(cx, head, node_id, &all, &items[1..], owner, head_mode)?;
     finish_call_arguments(cx, head, node_id, call_owner, arguments, head_mode)
+}
+
+/// `(Callee Column.. Return)` as a goal: a `generic_goal(Callee, Columns,
+/// Return)` placeholder that `expand_generic_goals` spells once the goals
+/// before it are known. A head or a fact holds no such goal.
+#[allow(clippy::too_many_arguments)]
+fn generic_goal(
+    cx: &mut Cx,
+    head: TermId,
+    node_id: TermId,
+    callable: TermId,
+    argument_nodes: &[TermId],
+    owner: TermId,
+    head_mode: bool,
+) -> Result<Call, TermId> {
+    if head_mode || cx.ground_values {
+        return Err(not_built_yet(cx, node_id));
+    }
+    let return_atom = cx.atom("return");
+    let (all, return_indices) = match super::generic::eigo(cx, callable) {
+        // An eigo product reads back as its parameters, then the instance.
+        Some(binds) => {
+            let mut all: Vec<slots::Slot> = binds
+                .iter()
+                .filter(|bind| bind.parameter)
+                .enumerate()
+                .map(|(index, bind)| slots::Slot {
+                    index: index as i64,
+                    label: Some(bind.label),
+                })
+                .collect();
+            let instance = all.len() as i64;
+            all.push(slots::Slot {
+                index: instance,
+                label: Some(return_atom),
+            });
+            (all, vec![instance])
+        }
+        None => {
+            let arity = cx.edges.arity(callable);
+            let all = slots::callable_slots(cx, &slots::Callable::Target(callable), arity);
+            (all, cx.edges.return_indices(callable, return_atom))
+        }
+    };
+    let arguments =
+        normalize_call_arguments(cx, head, node_id, &all, argument_nodes, owner, head_mode)?;
+    let mut columns = Vec::with_capacity(all.len());
+    let mut result = None;
+    for (slot, value) in all.iter().zip(&arguments.arguments) {
+        if return_indices.contains(&slot.index) {
+            result = Some(*value);
+        } else {
+            columns.push(*value);
+        }
+    }
+    let Some(result) = result else {
+        return Err(not_built_yet(cx, node_id));
+    };
+    let constructor = cx.compound("ref", vec![callable]);
+    let columns = cx.u.list(&columns);
+    let call = cx.compound("generic_goal", vec![constructor, columns, result]);
+    Ok(Call {
+        call,
+        goals: arguments.goals,
+        goal_nodes: arguments.goal_nodes,
+        post_goals: arguments.post_goals,
+        post_nodes: arguments.post_nodes,
+    })
+}
+
+fn not_built_yet(cx: &mut Cx, node_id: TermId) -> TermId {
+    let shape = cx.atom("generic_application");
+    let reason = cx.compound("not_built_yet", vec![shape]);
+    cx.diagnostic(node_id, reason)
+}
+
+/// Every `generic_goal` placeholder in rule order. Columns bound by earlier
+/// goals and a free return build the instance; any other binding reads it
+/// back: `intern_snapshot(Callee, Arguments, Return)` then
+/// `tuple(Column.., Arguments)`.
+fn expand_generic_goals(
+    cx: &mut Cx,
+    owner: TermId,
+    goals: &[TermId],
+    goal_nodes: &[TermId],
+) -> Result<(Vec<TermId>, Vec<TermId>), TermId> {
+    let mut out = Vec::with_capacity(goals.len());
+    let mut nodes = Vec::with_capacity(goal_nodes.len());
+    for (at, goal) in goals.iter().enumerate() {
+        let node = goal_nodes.get(at).copied().unwrap_or(*goal);
+        let placeholder = match cx.u.functor(*goal) {
+            Some(("pending_goal", parts)) => match cx.u.functor(parts[1]) {
+                Some(("generic_goal", args)) => Some((parts[0], args[0], args[1], args[2])),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some((polarity, constructor, columns, result)) = placeholder else {
+            out.push(*goal);
+            nodes.push(node);
+            continue;
+        };
+        if cx.u.functor_or_atom(polarity).map(|(n, _)| n) != Some("positive") {
+            return Err(not_built_yet(cx, node));
+        }
+        let columns = cx.u.as_list(columns).unwrap_or_default();
+        let bound = |cx: &Cx, term: TermId| {
+            !term_has_var(cx, term) || out.iter().any(|g| positive_mentions(cx, *g, term))
+        };
+        let builds = columns.iter().all(|c| bound(cx, *c)) && !bound(cx, result);
+        let eigo = cx
+            .u
+            .unary(constructor, "ref")
+            .is_some_and(|callable| super::generic::eigo(cx, callable).is_some());
+        if builds && eigo {
+            return Err(not_built_yet(cx, node));
+        }
+        let node_id = forms::node_id(cx.u, node).unwrap_or(node);
+        let key = cx.compound("generic_arguments", vec![node_id]);
+        let arguments = cx.compound("var", vec![key]);
+        let mut elements = columns;
+        elements.push(arguments);
+        if builds {
+            let tuple = generic_kernel_goal(cx, owner, "tuple", &elements);
+            let intern =
+                generic_kernel_goal(cx, owner, "intern", &[constructor, arguments, result]);
+            out.extend([tuple, intern]);
+            nodes.extend([node, node]);
+            continue;
+        }
+        let snapshot = generic_kernel_goal(
+            cx,
+            owner,
+            "intern_snapshot",
+            &[constructor, arguments, result],
+        );
+        let tuple = generic_kernel_goal(cx, owner, "tuple", &elements);
+        out.extend([snapshot, tuple]);
+        nodes.extend([node, node]);
+    }
+    Ok((out, nodes))
+}
+
+fn generic_kernel_goal(cx: &mut Cx, owner: TermId, label: &str, arguments: &[TermId]) -> TermId {
+    let label = cx.atom(label);
+    let relation = cx.compound("name", vec![owner, label]);
+    let list = cx.u.list(arguments);
+    let call = cx.compound("call", vec![relation, list]);
+    let positive = cx.atom("positive");
+    cx.compound("pending_goal", vec![positive, call])
+}
+
+fn positive_mentions(cx: &Cx, goal: TermId, term: TermId) -> bool {
+    let positive = cx.u.functor(goal).is_some_and(|(n, parts)| {
+        n == "pending_goal" && cx.u.functor_or_atom(parts[0]).map(|(p, _)| p) == Some("positive")
+    });
+    positive && term_mentions(cx, goal, term)
 }
 
 struct Arguments {
@@ -476,6 +954,60 @@ fn sum_pattern(
     Ok(Some((value, goals)))
 }
 
+/// `(?Relation x ..)`, `(?Owner.label x ..)`: comptime emits one rule per relation
+/// reaching the value. Arguments keep source order; `None` for any other head.
+fn lower_variable_call(
+    cx: &mut Cx,
+    node_id: TermId,
+    items: &[TermId],
+    owner: TermId,
+    head_mode: bool,
+) -> Result<Option<Call>, TermId> {
+    let Some(first) = items.first().copied() else {
+        return Ok(None);
+    };
+    let variable_head = forms::node(cx.u, first)
+        .is_some_and(|parsed| forms::variable(cx.u, parsed.payload).is_some());
+    let variable_path = express::path_segments(cx.u, first)
+        .and_then(|segments| segments.first().copied())
+        .and_then(|segment| forms::node(cx.u, segment))
+        .is_some_and(|parsed| forms::variable(cx.u, parsed.payload).is_some());
+    if !variable_head && !variable_path {
+        return Ok(None);
+    }
+    if head_mode || cx.ground_values {
+        let shape = cx.atom("call");
+        let reason = cx.compound("not_built_yet", vec![shape]);
+        return Err(cx.diagnostic(node_id, reason));
+    }
+    let (relation, mut goals, mut goal_nodes) = lower_argument(cx, first, owner, false)?;
+    let mut arguments = Vec::with_capacity(items.len() - 1);
+    let mut post_goals = Vec::new();
+    let mut post_nodes = Vec::new();
+    for node in &items[1..] {
+        if let Some((value, deferred)) = sum_pattern(cx, *node, owner, false)? {
+            arguments.push(value);
+            post_nodes.extend(std::iter::repeat_n(node_id, deferred.len()));
+            post_goals.extend(deferred);
+            continue;
+        }
+        let (value, own_goals, own_nodes) = lower_argument(cx, *node, owner, false)?;
+        arguments.push(value);
+        goals.extend(own_goals);
+        goal_nodes.extend(own_nodes);
+    }
+    let relation = cx.compound("variable_call", vec![relation, node_id]);
+    let list = cx.u.list(&arguments);
+    let call = cx.compound("call", vec![relation, list]);
+    Ok(Some(Call {
+        call,
+        goals,
+        goal_nodes,
+        post_goals,
+        post_nodes,
+    }))
+}
+
 /// `((. a b) x y)`: the callable is a dotted path. Every segment but the last
 /// names an owner and the last names the relation, so the callable is a `name/2`
 /// chain the checker walks. Slots are unknown here, so the arguments keep their
@@ -506,6 +1038,12 @@ fn lower_path_call(
     let Some(label) = express::path_segment_atom(cx.u, segments[segments.len() - 1]) else {
         return Err(cx.plain(node_id, "invalid_path"));
     };
+    let eigo = super::generic::head_product(cx, first, owner)
+        .filter(|callable| super::generic::eigo(cx, *callable).is_some());
+    if let Some(callable) = eigo {
+        let call = generic_goal(cx, label, node_id, callable, &items[1..], owner, head_mode)?;
+        return Ok(Some(call));
+    }
     let mut arguments = Vec::with_capacity(items.len() - 1);
     let mut goals = Vec::new();
     let mut goal_nodes = Vec::new();

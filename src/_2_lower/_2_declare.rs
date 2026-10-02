@@ -266,16 +266,116 @@ pub fn lower_bind_list(
     module_identity: TermId,
 ) -> Fallible<Declared> {
     let mut out = Declared::default();
-    for (index, bind) in bindings.iter().enumerate() {
-        out.extend(lower_edge_bind(
-            u,
-            *bind,
-            owner,
-            module_identity,
-            index as i64,
-        )?);
+    let mut index: i64 = 0;
+    for bind in bindings {
+        if application_head(u, *bind).is_some() {
+            out.extend(lower_application_item(
+                u,
+                *bind,
+                owner,
+                module_identity,
+                &mut index,
+            )?);
+            continue;
+        }
+        out.extend(lower_edge_bind(u, *bind, owner, module_identity, index)?);
+        index += 1;
     }
     Ok(out)
+}
+
+/// The head node of a body item `(Head Argument..)` whose head is an atom other
+/// than `:`, `*` and `+`, or a dotted path.
+fn application_head(u: &Universe, item: TermId) -> Option<TermId> {
+    let node = forms::node(u, item)?;
+    let items = forms::form(u, node.payload)?;
+    let head = *items.first()?;
+    if super::express::path_segments(u, head).is_some() {
+        return Some(head);
+    }
+    let atom = forms::form_head_atom(u, &items)?;
+    let text = u.functor_or_atom(atom).map(|(n, _)| n)?;
+    (!matches!(text, ":" | "*" | "+")).then_some(head)
+}
+
+/// A generic application as a body item. A bind argument lands on `owner` at
+/// the next index and passes `ref(edge(Owner, Label))`; a `(* ..)` argument
+/// lands each bind in order and passes the tuple of their refs. Derived rules
+/// build the instance from the `application` reservation.
+fn lower_application_item(
+    u: &mut Universe,
+    item: TermId,
+    owner: TermId,
+    module_identity: TermId,
+    index: &mut i64,
+) -> Fallible<Declared> {
+    let Some(node) = forms::node(u, item) else {
+        return Ok(Declared::default());
+    };
+    let items = forms::form(u, node.payload).unwrap_or_default();
+    let mut out = Declared::default();
+    let mut arguments = Vec::with_capacity(items.len().saturating_sub(1));
+    for argument in &items[1..] {
+        if let Some(edge) = bind_argument(u, *argument, owner, module_identity, index, &mut out)? {
+            arguments.push(edge);
+            continue;
+        }
+        let group = forms::node(u, *argument)
+            .and_then(|inner| forms::form(u, inner.payload))
+            .filter(|inner| {
+                forms::form_head_atom(u, inner)
+                    .is_some_and(|head| u.functor_or_atom(head).is_some_and(|(n, _)| n == "*"))
+            });
+        let Some(group) = group else {
+            let shape = u.atom("generic_application");
+            let reason = u.compound("not_built_yet", vec![shape]);
+            let at = forms::node_id(u, *argument).unwrap_or(*argument);
+            return Err(diagnostic(u, at, reason));
+        };
+        let mut edges = Vec::with_capacity(group.len().saturating_sub(1));
+        for member in &group[1..] {
+            let Some(edge) = bind_argument(u, *member, owner, module_identity, index, &mut out)?
+            else {
+                let r = reason(u, "expected_bind");
+                let at = forms::node_id(u, *member).unwrap_or(*member);
+                return Err(diagnostic(u, at, r));
+            };
+            edges.push(edge);
+        }
+        let tuple = u.atom("tuple");
+        let list = u.list(&edges);
+        arguments.push(u.compound("application", vec![tuple, list]));
+    }
+    let list = u.list(&arguments);
+    let target = u.compound("application", vec![items[0], list]);
+    let kind = u.atom("application");
+    out.reservations
+        .push(u.compound("reservation", vec![owner, node.id, target, kind]));
+    Ok(out)
+}
+
+/// A bind argument lowered onto `owner`; `None` when the node is no bind.
+fn bind_argument(
+    u: &mut Universe,
+    argument: TermId,
+    owner: TermId,
+    module_identity: TermId,
+    index: &mut i64,
+    out: &mut Declared,
+) -> Fallible<Option<TermId>> {
+    let Some(bind) = forms::bind_form(u, argument) else {
+        return Ok(None);
+    };
+    out.extend(lower_edge_bind(
+        u,
+        argument,
+        owner,
+        module_identity,
+        *index,
+    )?);
+    *index += 1;
+    let edge = u.compound("edge", vec![owner, bind.name]);
+    Ok(Some(u.compound("ref", vec![edge])))
 }
 
 /// `:938`.

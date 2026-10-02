@@ -111,6 +111,16 @@ fn resolve_name_body(
             }
         }
     }
+    // A kernel name a module does not declare stays the kernel's; an importer's
+    // declaration shadows it only for the importer's own goals.
+    if cx.graph.module_member(owner) {
+        if let Some(label) = atom_name(u, name).map(str::to_owned) {
+            if kernel_relation(None, &label).is_some() || kernel_variadic(None, &label) {
+                let inner = u.compound("kernel", vec![name]);
+                return Some(u.compound("ref", vec![inner]));
+            }
+        }
+    }
     if let Some(parent) = cx.graph.parent(owner) {
         if let Some(resolved) = resolve_name(u, cx, parent, name, visited) {
             return Some(resolved);
@@ -118,10 +128,6 @@ fn resolve_name_body(
     }
     if cx.graph.module_member(owner) {
         let label = atom_name(u, name).map(|s| s.to_string())?;
-        if kernel_relation(None, &label).is_some() || kernel_variadic(None, &label) {
-            let inner = u.compound("kernel", vec![name]);
-            return Some(u.compound("ref", vec![inner]));
-        }
         if primitive_name(&label) {
             let inner = u.compound("primitive", vec![name]);
             return Some(u.compound("ref", vec![inner]));
@@ -151,6 +157,22 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
     else {
         return Err(Stop::Fail("name/2 callable expected"));
     };
+    if name == "variable_call" && parts.len() == 2 {
+        let resolved = resolve_argument(u, cx, parts[0])
+            .and_then(|value| Ok((value, resolve_args(u, cx, &args)?)));
+        return Ok(match resolved {
+            Ok((value, resolved)) => {
+                let relation = u.compound("variable_call", vec![value, parts[1]]);
+                let list = u.list(&resolved);
+                let term = u.compound("call", vec![relation, list]);
+                CallResult::Ok {
+                    term,
+                    args: resolved,
+                }
+            }
+            Err(reason) => CallResult::Error(reason),
+        });
+    }
     if name != "name" || parts.len() != 2 {
         return Err(Stop::Fail("name/2 callable expected"));
     }
@@ -265,15 +287,17 @@ pub fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<T
     Ok(argument)
 }
 
-/// `:570`. Deferred targets are dropped at `:571` and `:575`.
+/// `:570`. Deferred targets are dropped at `:571` and `:575`. The middle list
+/// is the `intern` rows of the instances generic binds build.
 pub fn resolve_edges(
     u: &mut Universe,
     cx: &Cx,
     origins: &OriginArena,
-) -> (Vec<TermId>, Vec<TermId>) {
+) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
     let check = u.atom("check");
     let mut edges = Vec::new();
     let mut built = HashSet::new();
+    let mut minted = Vec::new();
     let mut diagnostics = Vec::new();
     let rows: Vec<(TermId, TermId, TermId, i64)> = cx
         .graph
@@ -290,10 +314,27 @@ pub fn resolve_edges(
             }
         }
         let node = origins.edge_origin(owner, name, index);
+        // A body application's instance owns its edges and mints its intern
+        // rows once.
+        if let Some([callee, list]) = u.args::<2>(owner, "application") {
+            if built.insert(owner) {
+                let tagged: Vec<TermId> = u
+                    .as_list(list)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|item| match u.functor(item) {
+                        Some(_) => u.compound("ref", vec![item]),
+                        None => u.compound("const", vec![item]),
+                    })
+                    .collect();
+                let instance = u.compound("ref", vec![owner]);
+                intern_calls(u, callee, &tagged, instance, &mut minted);
+            }
+        }
         if u.functor(target)
             .is_some_and(|(n, a)| n == "application" && a.len() == 2)
         {
-            match instance_rows(u, cx, owner, name, index, target, &mut built) {
+            match instance_rows(u, cx, owner, name, index, target, &mut built, &mut minted) {
                 Ok(rows) => edges.extend(rows),
                 Err(reason) => {
                     diagnostics.push(u.compound("diagnostic", vec![check, node, reason]))
@@ -313,7 +354,7 @@ pub fn resolve_edges(
         let index = u.int(index);
         edges.push(u.compound(":", vec![owner, name, resolved, index]));
     }
-    (edges, diagnostics)
+    (edges, minted, diagnostics)
 }
 
 /// `:727`.
@@ -379,7 +420,19 @@ fn mint_rows(u: &mut Universe, value: TermId, depth: usize, out: &mut Vec<TermId
             tagged.push(u.compound("const", vec![item]));
         }
     }
-    let arguments = u.list(&tagged);
+    intern_calls(u, constructor, &tagged, value, out);
+}
+
+/// The `intern` and `intern_snapshot` rows of `value`, built by `constructor`
+/// from the tagged arguments.
+pub fn intern_calls(
+    u: &mut Universe,
+    constructor: TermId,
+    tagged: &[TermId],
+    value: TermId,
+    out: &mut Vec<TermId>,
+) {
+    let arguments = u.list(tagged);
     let tuple = u.atom("tuple");
     let arguments = u.compound("application", vec![tuple, arguments]);
     let arguments = u.compound("ref", vec![arguments]);

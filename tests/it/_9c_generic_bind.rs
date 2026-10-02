@@ -139,28 +139,56 @@ fn nested_generic_argument_builds_inner_instance_first() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// A generic product applied to rule variables, as a goal and as a head
+/// value, builds the instance: its `intern` row, its `item` edge and the row.
 #[test]
-fn variable_application_in_rule_reports_not_built_yet() {
+fn variable_application_in_rule_builds_the_instance() {
+    use super::_9e_generic_rules::{render_row, ENGINES};
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for (fixture, offset) in [("2_variable_goal", 46), ("3_variable_value", 42)] {
+    let directory = root.join(format!("target/generic-variable-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let program_path = directory.join("program.json");
+    for fixture in ["2_variable_goal", "3_variable_value"] {
         let path = root.join(format!("fixtures/generic/{fixture}.dl7"));
         let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
             .args(["compile"])
             .arg(&path)
             .output()
             .unwrap();
+        assert!(compiled.status.success(), "{fixture}");
         let program: Value = serde_json::from_slice(&compiled.stdout).unwrap();
-        assert_eq!(
-            program["diagnostics"],
-            json!([{
-                "f": "diagnostic",
-                "args": [
-                    {"a": "lower"},
-                    {"f": "reader_node", "args": [{"a": path.to_str().unwrap()}, offset]},
-                    {"f": "not_built_yet", "args": [{"a": "generic_application"}]},
+        assert_eq!(program["diagnostics"], json!([]), "{fixture}");
+        std::fs::write(&program_path, &compiled.stdout).unwrap();
+        let names = &program["program"]["names"];
+        for engine in ENGINES {
+            let evaluated = Command::new(env!("CARGO_BIN_EXE_dl8"))
+                .arg("eval")
+                .arg(&program_path)
+                .env("DL8_ENGINE", engine)
+                .output()
+                .unwrap();
+            assert!(evaluated.status.success(), "{fixture} {engine}");
+            let closure: Value = serde_json::from_slice(&evaluated.stdout).unwrap();
+            assert_eq!(closure["diagnostics"], json!([]), "{fixture} {engine}");
+            let mut rows: Vec<String> = closure["closure"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| render_row(row, names))
+                .filter(|row| row.contains("Box") || row.starts_with("Names"))
+                .collect();
+            rows.sort();
+            assert_eq!(
+                rows,
+                vec![
+                    "Boxed: const(\"a\"), ref(application(Box, [\"a\"]))",
+                    "Names: const(\"a\")",
+                    "kernel(:): ref(application(Box, [\"a\"])), const(item), const(\"a\"), const(0)",
+                    "kernel(intern): ref(Box), ref(application(tuple, [const(\"a\")])), ref(application(Box, [\"a\"]))",
                 ],
-            }]),
-            "{fixture}"
-        );
+                "{fixture} {engine}"
+            );
+        }
     }
+    std::fs::remove_dir_all(directory).unwrap();
 }

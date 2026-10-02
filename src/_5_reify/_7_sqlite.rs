@@ -175,6 +175,11 @@ fn mark_component(
 /// Marks a CTE that recurses; the view's `WITH` takes `RECURSIVE` when any does.
 const RECURSIVE_MARK: &str = "\u{0}recursive\u{0}";
 
+/// Table references one component's CTE may expand to inside the eval view
+/// before it runs as rounds instead; SQLite stops a statement at 65535
+/// references to one table.
+const EXPANSION_BUDGET: usize = 256;
+
 /// Marks a round statement of a materialized component; it runs outside the
 /// view, once per round, until no row changes.
 const ROUND_MARK: &str = "\u{0}round\u{0}";
@@ -589,9 +594,12 @@ fn lower_component(
                     !recursive,
                 )
             });
+            // Rules that render to the same select add no rows to the UNION;
+            // each copy is one more expansion of every table it reads.
             match rendered {
-                Ok(select) if own == 0 => anchors.push(select),
-                Ok(select) => steps.push(select),
+                Ok(select) if own == 0 && !anchors.contains(&select) => anchors.push(select),
+                Ok(select) if own > 0 && !steps.contains(&select) => steps.push(select),
+                Ok(_) => {}
                 // Bottom-up, Rust fires such a rule and finds no row; the
                 // demand rewrite already gave every caller an adorned copy.
                 Err(Unsupported::Unbound(_)) if catalog.reach == KernelReach::Eval => {}
@@ -2157,6 +2165,34 @@ pub(crate) fn program_plan_with<'a>(
             });
             if nonlinear {
                 catalog.materialized.extend(component.iter().copied());
+            }
+        }
+        // SQLite expands every CTE at every reference, so a product read along
+        // many paths multiplies the table references of its whole body. A
+        // component past the budget runs as rounds into its own table.
+        let mut expansion: HashMap<Key, usize> = HashMap::new();
+        for component in &components {
+            let mut weight = 0usize;
+            for key in component {
+                for rule in &catalog.derived[key] {
+                    for goal in &rule.body {
+                        let read = (goal.rel, goal.args.len());
+                        let cost = match expansion.get(&read) {
+                            Some(cost) if !component.contains(&read) => *cost,
+                            _ => 1,
+                        };
+                        weight = weight.saturating_add(cost);
+                    }
+                }
+            }
+            if weight > EXPANSION_BUDGET {
+                catalog.materialized.extend(component.iter().copied());
+            }
+            if catalog.materialized.contains(&component[0]) {
+                weight = 1;
+            }
+            for key in component {
+                expansion.insert(*key, weight);
             }
         }
     }

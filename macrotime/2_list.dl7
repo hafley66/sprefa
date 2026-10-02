@@ -40,7 +40,7 @@
 (<- (list_mint ?Form ?TemplatePath ?Output)
     (list_form ?Form)
     (list_template_path ?TemplatePath)
-    (intern GeneratedSyntax (tuple ?Form 0 ?TemplatePath) ?Output))
+    (GeneratedSyntax ?Form 0 ?TemplatePath ?Output))
 
 (<- (node ?Output)
     (list_mint ?Form ?TemplatePath ?Output))

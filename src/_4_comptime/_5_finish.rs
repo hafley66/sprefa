@@ -137,6 +137,7 @@ pub fn expand_source_compiler(
         authored_rules: &checked.rules,
         base_relations: &base_relations,
         base_seeds: &base_seeds,
+        call_templates: &checked.calls,
         outer,
     };
     let next = Rounds::reduce(&mut st, input, fx)?;
@@ -197,6 +198,7 @@ pub fn finish_final_check(
                 rules,
                 depends: resolved.depends,
                 strata: resolved.strata,
+                calls: vec![],
             },
             compiler_facts: facts.to_vec(),
         }),
@@ -258,6 +260,81 @@ pub fn derived_bind_diagnostics(
     }
     bind.extend(label);
     prolog_sort(u, bind)
+}
+
+/// The prelude's own relation bound to `name`, whatever a program declares.
+fn prelude_relation(u: &mut Universe, base_seeds: &[TermId], name: &str) -> Option<TermId> {
+    let prelude = u.atom("prelude");
+    let module = u.compound("module", vec![prelude]);
+    let owner = u.compound("ref", vec![module]);
+    let label = u.atom(name);
+    let label = u.compound("const", vec![label]);
+    base_seeds.iter().find_map(|seed| {
+        let [row_owner, row_name, relation, _] = colon_call_parts(u, *seed)?;
+        (row_owner == owner && row_name == label).then_some(relation)
+    })
+}
+
+/// An obligation no checker discharged: `unmet_bound(Parameter, Argument, Bound)` at
+/// its site, with `Name, Reason` from each `extends_diagnostic` row of the pair, the reason as its label.
+pub fn unmet_bound_diagnostics(
+    u: &mut Universe,
+    base_seeds: &[TermId],
+    rows: &[TermId],
+) -> Vec<TermId> {
+    let (Some(obligation), Some(discharged), Some(extends_diagnostic), Some(extends_reason)) = (
+        prelude_relation(u, base_seeds, "obligation"),
+        prelude_relation(u, base_seeds, "discharged"),
+        prelude_relation(u, base_seeds, "extends_diagnostic"),
+        prelude_relation(u, base_seeds, "extends_reason"),
+    ) else {
+        return vec![];
+    };
+    let by_relation = rows_by_relation(u, rows);
+    let arguments = |relation: TermId| -> Vec<Vec<TermId>> {
+        by_relation
+            .get(&relation)
+            .map(|rows| rows.iter().map(|(_, items)| items.clone()).collect())
+            .unwrap_or_default()
+    };
+    let passed: Vec<Vec<TermId>> = arguments(discharged)
+        .into_iter()
+        .filter(|items| items.len() == 4)
+        .map(|items| items[..3].to_vec())
+        .collect();
+    let reasons = arguments(extends_diagnostic);
+    let labels = arguments(extends_reason);
+    let mut out = Vec::new();
+    for items in arguments(obligation) {
+        let [site, parameter, argument, bound] = items[..] else {
+            continue;
+        };
+        if passed.contains(&items[..3].to_vec()) {
+            continue;
+        }
+        let at = u.unary(site, "const").unwrap_or(site);
+        let parameter = u.unary(parameter, "const").unwrap_or(parameter);
+        let found: Vec<(TermId, TermId)> = reasons
+            .iter()
+            .filter(|reason| reason.len() == 4 && reason[0] == argument && reason[1] == bound)
+            .map(|reason| {
+                let label = labels
+                    .iter()
+                    .find(|label| label.len() == 2 && label[1] == reason[3])
+                    .map_or(reason[3], |label| label[0]);
+                (reason[2], label)
+            })
+            .collect();
+        if found.is_empty() {
+            let reason = u.compound("unmet_bound", vec![parameter, argument, bound]);
+            out.push(located(u, "check", at, reason));
+        }
+        for (name, why) in found {
+            let reason = u.compound("unmet_bound", vec![parameter, argument, bound, name, why]);
+            out.push(located(u, "check", at, reason));
+        }
+    }
+    prolog_sort(u, out)
 }
 
 fn located(u: &mut Universe, phase: &str, node: TermId, reason: TermId) -> TermId {

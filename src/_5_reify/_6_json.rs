@@ -76,6 +76,7 @@ fn checked_from_term(u: &Universe, checked: TermId) -> Result<Checked, String> {
         rules: rules.ok_or("rules")?,
         depends: depends.ok_or("depends")?,
         strata: strata.ok_or("strata")?,
+        calls: vec![],
     })
 }
 

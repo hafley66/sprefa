@@ -1,0 +1,36 @@
+; One JSON document as `:` rows, beside a rule that writes `:` from a generic
+; built from the path and a generic read back with its column free.
+(fs: (import "@std/fs"))
+
+(Doc:
+   (* (path: str)))
+
+(Doc "__DOC__")
+
+(Box:
+   (* (Item: any)
+      (return: (*))))
+
+(<- (: ?PathBox ?Path ?OtherBox 0)
+    (Doc ?Path)
+    (Box ?Path ?PathBox)
+    (Box ?AnyItem ?OtherBox))
+
+(Member:
+   (* (name: any)
+      (target: any)
+      (index: int)))
+
+(<- (Member ?Name ?Target ?Index)
+    (Doc ?Path)
+    (fs.json ?Path ?Root)
+    (: ?Root ?Name ?Target ?Index))
+
+(Edge:
+   (* (owner: any)
+      (name: any)
+      (target: any)
+      (index: int)))
+
+(<- (Edge ?Owner ?Name ?Target ?Index)
+    (: ?Owner ?Name ?Target ?Index))

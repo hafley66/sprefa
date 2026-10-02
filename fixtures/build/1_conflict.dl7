@@ -1,0 +1,5 @@
+; Two texts for one path: `fs_file_conflict`, nothing written.
+(fs: (import "@std/fs"))
+
+(fs.file "same.txt" "first\n")
+(fs.file "same.txt" "second\n")

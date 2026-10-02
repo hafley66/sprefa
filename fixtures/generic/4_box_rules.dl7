@@ -1,0 +1,38 @@
+(Box:
+   (* (Item: type)
+      (return:
+         (* (item: Item)))))
+
+(Product:
+   (* (name: str)
+      (count: int)))
+
+(Wrapped: (Box str))
+
+(Flagged: (Box bool))
+
+(boxable:
+   (* (product: type)))
+
+(boxable Product)
+
+(boxed_column:
+   (* (product: type)
+      (name: any)
+      (boxed: any)))
+
+(<- (boxed_column
+       ?Product
+       ?Name
+       (Box ?ColumnType))
+    (boxable ?Product)
+    (: ?Product ?Name ?ColumnType ?Position))
+
+(box_item_type:
+   (* (boxed: any)
+      (item_type: type)))
+
+(<- (box_item_type
+       ?Boxed
+       ?ItemType)
+    (Box ?ItemType ?Boxed))

@@ -1,3 +1,5 @@
+(: dl6 (import "@std/dl6"))
+
 (: User
    (* (: id int)
       (: name str)))
@@ -21,13 +23,10 @@
 (: UserPatch (Partial User))
 (: MaybePatch (Option (Partial User)))
 
-(: PrimaryKeyOptions
-   (* (: unique "yes")))
-
 (: Ledger
-   (* (: (Key "account" PrimaryKeyOptions) int)
+   (* (dl6.Key (: account int))
       (: payload str)
-      (: (Key "revision" PrimaryKeyOptions) int)))
+      (dl6.Key (: revision int))))
 
 (: selected_request
    (* (: result type)))

@@ -1,0 +1,225 @@
+; Call goal demand: 50 products and one ask `(passes User Named ?Result)` through
+; `(?Checker ..)`. The walk reaches only the asked pair's closure, as in `1_demand.dl7`.
+(checker_of:
+   (* (bound: type)
+      (checker: type)))
+
+(passes:
+   (* (source: type)
+      (bound: type)
+      (return: type)))
+
+(<- (passes ?Source ?Bound ?Result)
+    (checker_of ?Bound ?Checker)
+    (?Checker ?Source ?Bound ?Result))
+
+(checker_of Named Extends)
+
+(Named:
+   (* (name: str)))
+
+(User:
+   (* (name: str)
+      (age: int)))
+
+(Product00:
+   (* (name: str)
+      (serial: int)))
+
+(Product01:
+   (* (name: str)
+      (serial: int)))
+
+(Product02:
+   (* (name: str)
+      (serial: int)))
+
+(Product03:
+   (* (name: str)
+      (serial: int)))
+
+(Product04:
+   (* (name: str)
+      (serial: int)))
+
+(Product05:
+   (* (name: str)
+      (serial: int)))
+
+(Product06:
+   (* (name: str)
+      (serial: int)))
+
+(Product07:
+   (* (name: str)
+      (serial: int)))
+
+(Product08:
+   (* (name: str)
+      (serial: int)))
+
+(Product09:
+   (* (name: str)
+      (serial: int)))
+
+(Product10:
+   (* (name: str)
+      (serial: int)))
+
+(Product11:
+   (* (name: str)
+      (serial: int)))
+
+(Product12:
+   (* (name: str)
+      (serial: int)))
+
+(Product13:
+   (* (name: str)
+      (serial: int)))
+
+(Product14:
+   (* (name: str)
+      (serial: int)))
+
+(Product15:
+   (* (name: str)
+      (serial: int)))
+
+(Product16:
+   (* (name: str)
+      (serial: int)))
+
+(Product17:
+   (* (name: str)
+      (serial: int)))
+
+(Product18:
+   (* (name: str)
+      (serial: int)))
+
+(Product19:
+   (* (name: str)
+      (serial: int)))
+
+(Product20:
+   (* (name: str)
+      (serial: int)))
+
+(Product21:
+   (* (name: str)
+      (serial: int)))
+
+(Product22:
+   (* (name: str)
+      (serial: int)))
+
+(Product23:
+   (* (name: str)
+      (serial: int)))
+
+(Product24:
+   (* (name: str)
+      (serial: int)))
+
+(Product25:
+   (* (name: str)
+      (serial: int)))
+
+(Product26:
+   (* (name: str)
+      (serial: int)))
+
+(Product27:
+   (* (name: str)
+      (serial: int)))
+
+(Product28:
+   (* (name: str)
+      (serial: int)))
+
+(Product29:
+   (* (name: str)
+      (serial: int)))
+
+(Product30:
+   (* (name: str)
+      (serial: int)))
+
+(Product31:
+   (* (name: str)
+      (serial: int)))
+
+(Product32:
+   (* (name: str)
+      (serial: int)))
+
+(Product33:
+   (* (name: str)
+      (serial: int)))
+
+(Product34:
+   (* (name: str)
+      (serial: int)))
+
+(Product35:
+   (* (name: str)
+      (serial: int)))
+
+(Product36:
+   (* (name: str)
+      (serial: int)))
+
+(Product37:
+   (* (name: str)
+      (serial: int)))
+
+(Product38:
+   (* (name: str)
+      (serial: int)))
+
+(Product39:
+   (* (name: str)
+      (serial: int)))
+
+(Product40:
+   (* (name: str)
+      (serial: int)))
+
+(Product41:
+   (* (name: str)
+      (serial: int)))
+
+(Product42:
+   (* (name: str)
+      (serial: int)))
+
+(Product43:
+   (* (name: str)
+      (serial: int)))
+
+(Product44:
+   (* (name: str)
+      (serial: int)))
+
+(Product45:
+   (* (name: str)
+      (serial: int)))
+
+(Product46:
+   (* (name: str)
+      (serial: int)))
+
+(Product47:
+   (* (name: str)
+      (serial: int)))
+
+(Product48:
+   (* (name: str)
+      (serial: int)))
+
+(Product49:
+   (* (name: str)
+      (serial: int)))
+
+(asked User Named)

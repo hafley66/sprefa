@@ -65,6 +65,23 @@ enum Command {
         #[arg(long)]
         trace: bool,
     },
+    /// Compile, then write every `fs.file` row of the settled comptime fixpoint
+    /// and print the paths as JSON.
+    Build {
+        /// Source files; more than one, or `--project`, selects the project door.
+        #[arg(required = true)]
+        file: Vec<PathBuf>,
+        #[arg(long)]
+        project: Option<PathBuf>,
+        #[arg(long)]
+        tsi: Vec<PathBuf>,
+        /// Directory relative paths are written under.
+        #[arg(long, default_value = ".")]
+        out: PathBuf,
+        /// Write nothing; exit 1 when a file differs from its row.
+        #[arg(long)]
+        check: bool,
+    },
     /// Lower a `dl8 compile` output to one target and print the artifact as JSON.
     #[command(long_about = "Lower a `dl8 compile` output to one target and print the artifact")]
     Emit {
@@ -182,6 +199,13 @@ fn run(command: Command) -> ExitCode {
             tsi,
             trace,
         } => compile_cli(&file, project.as_deref(), &tsi, trace),
+        Command::Build {
+            file,
+            project,
+            tsi,
+            out,
+            check,
+        } => build_cli(&file, project.as_deref(), &tsi, &out, check),
         Command::Emit { target, program } => emit_cli(target, &program),
         Command::Eval {
             program,
@@ -578,11 +602,22 @@ fn run_cli(
             };
             let mut parsed = Vec::with_capacity(changes.len());
             for change in changes {
-                let Some(relation_name) = change.get("rel").and_then(|value| value.as_str()) else {
-                    return fail(&"frontier change rel must be a string");
-                };
-                let Some(&rel) = names.get(relation_name) else {
-                    return fail(&format!("unknown frontier relation {relation_name}"));
+                // A program name, or a relation term as seeds spell it (kernel
+                // relations such as `edge_snapshot` have no program name).
+                let rel = match change.get("rel") {
+                    Some(serde_json::Value::String(relation_name)) => {
+                        match names.get(relation_name.as_str()) {
+                            Some(&rel) => rel,
+                            None => {
+                                return fail(&format!("unknown frontier relation {relation_name}"))
+                            }
+                        }
+                    }
+                    Some(term @ serde_json::Value::Object(_)) => match term_from_json(&mut u, term) {
+                        Ok(rel) => rel,
+                        Err(e) => return fail(&e),
+                    },
+                    _ => return fail(&"frontier change rel must be a name or a relation term"),
                 };
                 let Some(args) = change.get("args").and_then(|value| value.as_array()) else {
                     return fail(&"frontier change args must be an array");
@@ -1117,5 +1152,66 @@ fn compile_cli(
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
+    }
+}
+
+fn build_cli(
+    files: &[PathBuf],
+    project: Option<&std::path::Path>,
+    streams: &[PathBuf],
+    out: &Path,
+    check: bool,
+) -> ExitCode {
+    let mut u = Universe::new();
+    let compiled = match compile_input(&mut u, files, project, streams, &mut |_: Event| {}) {
+        Ok(compiled) => compiled,
+        Err(Stop::Io(message)) => {
+            tracing::error!(phase = "build", error = %message);
+            return ExitCode::from(2);
+        }
+        Err(other) => {
+            tracing::error!(phase = "build", error = ?other);
+            return ExitCode::from(3);
+        }
+    };
+    let report = |u: &Universe, diagnostics: &[TermId], written: serde_json::Value| {
+        let diagnostics: Vec<serde_json::Value> =
+            diagnostics.iter().map(|t| term_to_json(u, *t)).collect();
+        let out = serde_json::json!({"diagnostics": diagnostics, "files": written});
+        println!("{}", serde_json::to_string(&out).unwrap());
+    };
+    if !compiled.diagnostics.is_empty() {
+        report(&u, &compiled.diagnostics, serde_json::json!([]));
+        return ExitCode::from(1);
+    }
+    let rows = match dl8::_8_driver::_6_build::files(&mut u, &compiled.compiler_rows) {
+        Ok(rows) => rows,
+        Err(diagnostics) => {
+            report(&u, &diagnostics, serde_json::json!([]));
+            return ExitCode::from(1);
+        }
+    };
+    let mut written = Vec::with_capacity(rows.len());
+    let mut stale = false;
+    for (path, text) in &rows {
+        let target = out.join(path);
+        let same = std::fs::read(&target).is_ok_and(|bytes| bytes == text.as_bytes());
+        stale |= !same;
+        if !check && !same {
+            let made = target
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|_| std::fs::write(&target, text));
+            if let Err(e) = made {
+                tracing::error!(phase = "build", path = %target.display(), error = %e);
+                return ExitCode::from(2);
+            }
+        }
+        written.push(serde_json::json!({"path": path, "bytes": text.len(), "changed": !same}));
+    }
+    report(&u, &[], serde_json::Value::Array(written));
+    match check && stale {
+        true => ExitCode::from(1),
+        false => ExitCode::SUCCESS,
     }
 }

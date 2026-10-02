@@ -64,3 +64,207 @@
 
 ; Rust names this primitive class `unit` on the TSI wire.
 (: () (* ))
+
+; The relation table a TSI stream is checked against, one `registry` row per
+; relation in table order. `role` names the arguments ("" for none);
+; `registry_note` lines precede a row; `registry_arg` gives each argument's
+; wire kind; `arg_kind` lists the kinds with the Rust match pattern of each.
+(: arg_kind
+   (* (: index int)
+      (: word str)
+      (: pattern str)))
+
+(: registry
+   (* (: index int)
+      (: name str)
+      (: role str)))
+
+(: registry_arg
+   (* (: name str)
+      (: position int)
+      (: kind str)))
+
+(: registry_note
+   (* (: name str)
+      (: line int)
+      (: text str)))
+
+(arg_kind 0 "id" "_")
+(arg_kind 1 "span" "_, _, _")
+(arg_kind 2 "text" "_")
+(arg_kind 3 "int" "_")
+(arg_kind 4 "atom" "_")
+
+(registry 0 "tsi.type" "")
+(registry_arg "tsi.type" 0 "id")
+
+(registry_note "tsi.symbol" 0
+   "A declaration symbol's own id: the declaring row for the symbol")
+(registry_note "tsi.symbol" 1
+   "positions of `tsi.denotes` and `rust.impl`, as `tsi.type` is for types.")
+(registry 1 "tsi.symbol" "")
+(registry_arg "tsi.symbol" 0 "id")
+
+(registry 2 "tsi.denotes" "symbol, type")
+(registry_arg "tsi.denotes" 0 "id")
+(registry_arg "tsi.denotes" 1 "id")
+
+(registry_note "tsi.scip_symbol" 0
+   "Optional bridge from a run-local symbol id to the SCIP symbol text,")
+(registry_note "tsi.scip_symbol" 1
+   "present only when a SCIP index also ran; identity stays run-local.")
+(registry 3 "tsi.scip_symbol" "symbol, scip symbol text")
+(registry_arg "tsi.scip_symbol" 0 "id")
+(registry_arg "tsi.scip_symbol" 1 "text")
+
+(registry_note "tsi.value" 0
+   "A value entity with its type; the declaring row for value ids.")
+(registry_note "tsi.value" 1
+   "`tsi.argument` stays type-only; a value in argument position goes")
+(registry_note "tsi.value" 2
+   "through `tsi.value_argument`.")
+(registry 4 "tsi.value" "value, type")
+(registry_arg "tsi.value" 0 "id")
+(registry_arg "tsi.value" 1 "id")
+
+(registry 5 "tsi.value_argument" "argument list, position, value")
+(registry_arg "tsi.value_argument" 0 "id")
+(registry_arg "tsi.value_argument" 1 "int")
+(registry_arg "tsi.value_argument" 2 "id")
+
+(registry 6 "tsi.has_type" "occurrence range, type")
+(registry_arg "tsi.has_type" 0 "span")
+(registry_arg "tsi.has_type" 1 "id")
+
+(registry 7 "tsi.origin" "type, language, declaration range")
+(registry_arg "tsi.origin" 0 "id")
+(registry_arg "tsi.origin" 1 "atom")
+(registry_arg "tsi.origin" 2 "span")
+
+(registry_note "tsi.name" 0
+   "The spelling a consumer prints for an id: the written text at the syntax")
+(registry_note "tsi.name" 1
+   "tier, the checker's rendering at the semantic tier. Types and symbols both.")
+(registry 8 "tsi.name" "type or symbol, spelling")
+(registry_arg "tsi.name" 0 "id")
+(registry_arg "tsi.name" 1 "text")
+
+(registry 9 "tsi.product" "")
+(registry_arg "tsi.product" 0 "id")
+
+(registry 10 "tsi.sum" "")
+(registry_arg "tsi.sum" 0 "id")
+
+(registry 11 "tsi.callable" "")
+(registry_arg "tsi.callable" 0 "id")
+
+(registry 12 "tsi.primitive" "type, class")
+(registry_arg "tsi.primitive" 0 "id")
+(registry_arg "tsi.primitive" 1 "atom")
+
+(registry 13 "tsi.edge" "edge, owner, label, target, position")
+(registry_arg "tsi.edge" 0 "id")
+(registry_arg "tsi.edge" 1 "id")
+(registry_arg "tsi.edge" 2 "text")
+(registry_arg "tsi.edge" 3 "id")
+(registry_arg "tsi.edge" 4 "int")
+
+(registry 14 "tsi.parameter" "param, callee, position, variance")
+(registry_arg "tsi.parameter" 0 "id")
+(registry_arg "tsi.parameter" 1 "id")
+(registry_arg "tsi.parameter" 2 "int")
+(registry_arg "tsi.parameter" 3 "atom")
+
+(registry 15 "tsi.called" "result, callee, argument list")
+(registry_arg "tsi.called" 0 "id")
+(registry_arg "tsi.called" 1 "id")
+(registry_arg "tsi.called" 2 "id")
+
+(registry 16 "tsi.argument" "list, position, type")
+(registry_arg "tsi.argument" 0 "id")
+(registry_arg "tsi.argument" 1 "int")
+(registry_arg "tsi.argument" 2 "id")
+
+(registry 17 "tsi.input" "callable, position, type")
+(registry_arg "tsi.input" 0 "id")
+(registry_arg "tsi.input" 1 "int")
+(registry_arg "tsi.input" 2 "id")
+
+(registry 18 "tsi.output" "callable, position, type")
+(registry_arg "tsi.output" 0 "id")
+(registry_arg "tsi.output" 1 "int")
+(registry_arg "tsi.output" 2 "id")
+
+(registry 19 "tsi.subtype" "")
+(registry_arg "tsi.subtype" 0 "id")
+(registry_arg "tsi.subtype" 1 "id")
+(registry_arg "tsi.subtype" 2 "atom")
+
+(registry 20 "tsi.assignable" "")
+(registry_arg "tsi.assignable" 0 "id")
+(registry_arg "tsi.assignable" 1 "id")
+(registry_arg "tsi.assignable" 2 "atom")
+
+(registry 21 "tsi.conforms" "")
+(registry_arg "tsi.conforms" 0 "id")
+(registry_arg "tsi.conforms" 1 "id")
+(registry_arg "tsi.conforms" 2 "atom")
+
+(registry 22 "tsi.equivalent" "")
+(registry_arg "tsi.equivalent" 0 "id")
+(registry_arg "tsi.equivalent" 1 "id")
+(registry_arg "tsi.equivalent" 2 "atom")
+
+(registry 23 "ts.interface" "")
+(registry_arg "ts.interface" 0 "id")
+
+(registry 24 "ts.conditional" "result, check, extends, true, false")
+(registry_arg "ts.conditional" 0 "id")
+(registry_arg "ts.conditional" 1 "id")
+(registry_arg "ts.conditional" 2 "id")
+(registry_arg "ts.conditional" 3 "id")
+(registry_arg "ts.conditional" 4 "id")
+
+(registry 25 "ts.mapped" "result, key param, constraint, template")
+(registry_arg "ts.mapped" 0 "id")
+(registry_arg "ts.mapped" 1 "id")
+(registry_arg "ts.mapped" 2 "id")
+(registry_arg "ts.mapped" 3 "id")
+
+(registry 26 "ts.readonly" "edge")
+(registry_arg "ts.readonly" 0 "id")
+
+(registry 27 "ts.optional" "edge")
+(registry_arg "ts.optional" 0 "id")
+
+(registry 28 "rust.trait" "")
+(registry_arg "rust.trait" 0 "id")
+
+(registry 29 "rust.impl" "impl symbol, type, trait")
+(registry_arg "rust.impl" 0 "id")
+(registry_arg "rust.impl" 1 "id")
+(registry_arg "rust.impl" 2 "id")
+
+(registry 30 "rust.lifetime" "param, name")
+(registry_arg "rust.lifetime" 0 "id")
+(registry_arg "rust.lifetime" 1 "atom")
+
+(registry 31 "rust.ownership" "edge, shared|exclusive|owned")
+(registry_arg "rust.ownership" 0 "id")
+(registry_arg "rust.ownership" 1 "atom")
+
+(registry 32 "rust.assoc" "owner, name, target")
+(registry_arg "rust.assoc" 0 "id")
+(registry_arg "rust.assoc" 1 "text")
+(registry_arg "rust.assoc" 2 "id")
+
+(registry 33 "go.interface" "")
+(registry_arg "go.interface" 0 "id")
+
+(registry 34 "go.type_set" "")
+(registry_arg "go.type_set" 0 "id")
+(registry_arg "go.type_set" 1 "id")
+
+(registry 35 "go.embedding" "")
+(registry_arg "go.embedding" 0 "id")
+(registry_arg "go.embedding" 1 "id")

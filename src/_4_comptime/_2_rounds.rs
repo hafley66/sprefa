@@ -6,7 +6,8 @@ use super::api::{
     strip_snapshot_rows, Generated,
 };
 use super::assemble::{assemble_generated_program, Assembled};
-use super::finish::{derived_bind_diagnostics, validate_functional_rows};
+use super::call::call_rules;
+use super::finish::{derived_bind_diagnostics, unmet_bound_diagnostics, validate_functional_rows};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::resolved::Resolved;
 use crate::_3_check::{check_resolved_rules, Stop};
@@ -106,6 +107,8 @@ pub struct RoundInput<'a> {
     pub authored_rules: &'a [TermId],
     pub base_relations: &'a [TermId],
     pub base_seeds: &'a [TermId],
+    /// Rules with a call goal, expanded every round.
+    pub call_templates: &'a [TermId],
     pub outer: i64,
 }
 
@@ -159,12 +162,14 @@ pub fn stable_outcome(
     u: &mut Universe,
     authored_rules: &[TermId],
     base_relations: &[TermId],
+    base_seeds: &[TermId],
     closure: &[TermId],
     assembled: Assembled,
     resolved: Resolved,
 ) -> RoundOutcome {
     let all = merged_sorted(u, base_relations, &assembled.relations);
     let mut stable = derived_bind_diagnostics(u, authored_rules, closure);
+    stable.extend(unmet_bound_diagnostics(u, base_seeds, closure));
     stable.extend(validate_functional_rows(u, &all, closure));
     let stable = prolog_sort(u, stable);
     if !stable.is_empty() {
@@ -264,11 +269,18 @@ impl<'a> Slice for Rounds<'a> {
             authored_rules,
             base_relations,
             base_seeds,
+            call_templates,
             outer,
         } = ev;
         if st.answerer.is_none() {
             st.answerer = comptime_answerer(u, base_seeds);
         }
+        let relations = merged_sorted(u, base_relations, &st.frozen_generated_relations);
+        let declared = call_rules(u, call_templates, &[base_seeds], &relations);
+        if !declared.diagnostics.is_empty() {
+            return Ok(RoundOutcome::failed(declared.diagnostics));
+        }
+        st.frozen_generated_rules = merged_sorted(u, &st.frozen_generated_rules, &declared.rules);
         loop {
             let pass = match round_closure(u, st, authored_rules, base_relations, base_seeds)? {
                 Ok(pass) => pass,
@@ -308,7 +320,7 @@ impl<'a> Slice for Rounds<'a> {
 
             let next_edges = colon_rows(u, &closure);
             let next_requests = intern_rows(u, &closure);
-            let assembled = assemble_generated_program(u, &closure, base_relations);
+            let mut assembled = assemble_generated_program(u, &closure, base_relations);
             fx(Round::Assemble {
                 outer,
                 round: st.round,
@@ -318,6 +330,12 @@ impl<'a> Slice for Rounds<'a> {
             if !assembled.diagnostics.is_empty() {
                 return Ok(RoundOutcome::failed(assembled.diagnostics));
             }
+            let relations = merged_sorted(u, base_relations, &assembled.relations);
+            let called = call_rules(u, call_templates, &[base_seeds, &closure], &relations);
+            if !called.diagnostics.is_empty() {
+                return Ok(RoundOutcome::failed(called.diagnostics));
+            }
+            assembled.rules = merged_sorted(u, &assembled.rules, &called.rules);
 
             if answered == 0
                 && next_edges == st.frozen_edges
@@ -330,6 +348,7 @@ impl<'a> Slice for Rounds<'a> {
                     u,
                     authored_rules,
                     base_relations,
+                    base_seeds,
                     &closure,
                     assembled,
                     resolved,

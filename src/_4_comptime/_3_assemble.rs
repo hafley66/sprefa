@@ -135,8 +135,8 @@ pub fn index(u: &mut Universe, rows: &[TermId]) -> Cx {
             }
         }
     }
-    cx.variables = node_family(u, &scratch.named, "Variable", &scratch.by_rel, true);
-    cx.literals = node_family(u, &scratch.named, "Literal", &scratch.by_rel, false);
+    cx.variables = variable_nodes(u, &scratch.named, &scratch.by_rel);
+    cx.literals = literal_nodes(u, &scratch.named, &scratch.by_rel);
     cx.def_ids = sorted_unique(u, scratch.def_ids);
     cx.head_ids = sorted_unique(u, scratch.head_ids);
     cx.fragment_ids = sorted_unique(u, scratch.fragment_ids);
@@ -204,17 +204,14 @@ pub fn index_row(u: &mut Universe, cx: &mut Cx, scratch: &mut Scratch, row: Term
     }
 }
 
-/// `variable_node_rows/3` at `:379` and `literal_node_rows/3` at `:388`. The
-/// variable row needs `const(Name)`; the literal row takes the value as read.
-fn node_family(
+/// `literal_node_rows/3` at `:388`. The literal row takes the value as read.
+fn literal_nodes(
     u: &mut Universe,
     named: &HashMap<String, Vec<TermId>>,
-    family: &str,
     by_rel: &HashMap<TermId, Vec<Vec<TermId>>>,
-    variable: bool,
 ) -> HashMap<TermId, Vec<TermId>> {
     let mut out: HashMap<TermId, Vec<TermId>> = HashMap::new();
-    let relations = named.get(family).map_or(&[][..], |v| v.as_slice());
+    let relations = named.get("Literal").map_or(&[][..], |v| v.as_slice());
     for rel in relations {
         for args in by_rel.get(rel).into_iter().flatten() {
             if args.len() != 3 {
@@ -223,19 +220,54 @@ fn node_family(
             let Some(node) = ref_of(u, args[0]) else {
                 continue;
             };
-            let payload = if variable {
-                let (Some(scope), Some(name)) = (ref_of(u, args[1]), const_of(u, args[2])) else {
-                    continue;
-                };
-                u.compound("variable", vec![scope, name])
-            } else {
-                let Some(primitive) = ref_of(u, args[1]) else {
-                    continue;
-                };
-                u.compound("literal", vec![primitive, args[2]])
+            let Some(primitive) = ref_of(u, args[1]) else {
+                continue;
             };
+            let payload = u.compound("literal", vec![primitive, args[2]]);
             out.entry(node).or_default().push(payload);
         }
+    }
+    out
+}
+
+/// `variable_node_rows/3` at `:379`. A variable is an instance of the generic
+/// `Variable(scope, position, name)`; its `intern` row carries the node and
+/// the arguments.
+fn variable_nodes(
+    u: &mut Universe,
+    named: &HashMap<String, Vec<TermId>>,
+    by_rel: &HashMap<TermId, Vec<Vec<TermId>>>,
+) -> HashMap<TermId, Vec<TermId>> {
+    let mut out: HashMap<TermId, Vec<TermId>> = HashMap::new();
+    let intern = {
+        let name = u.atom("intern");
+        u.compound("kernel", vec![name])
+    };
+    let constructors = named.get("Variable").map_or(&[][..], |v| v.as_slice());
+    for args in by_rel.get(&intern).into_iter().flatten() {
+        let [constructor, arguments, node] = args[..] else {
+            continue;
+        };
+        if !ref_of(u, constructor).is_some_and(|c| constructors.contains(&c)) {
+            continue;
+        }
+        let Some(node) = ref_of(u, node) else {
+            continue;
+        };
+        let Some([_, items]) = ref_of(u, arguments).and_then(|a| u.args::<2>(a, "application"))
+        else {
+            continue;
+        };
+        let Some([scope, _, name]) =
+            u.as_list(items).and_then(|items| <[TermId; 3]>::try_from(items).ok())
+        else {
+            continue;
+        };
+        let (Some(scope), Some(name)) = (ref_of(u, scope), const_of(u, name)) else {
+            continue;
+        };
+        let payload = u.compound("variable", vec![scope, name]);
+        out.entry(node).or_default().push(payload);
     }
     out
 }
