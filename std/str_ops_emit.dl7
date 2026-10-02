@@ -1,8 +1,8 @@
 ; Renders every generated site of the string kernel op table in
 ; `std/str_ops.dl7` into two Rust files. `piece` rows carry one Doc per line
-; part, `rendered` the laid out text, `section_text` the parts joined in
-; (index, position) order, and `fs.file` each file: template chunks and
-; sections joined in order. Run from the repository root:
+; part, `section_document` the parts joined in (index, position) order, and
+; `fs.file` each file: template chunks and sections joined in order, one
+; document the sink renders once. Run from the repository root:
 ;
 ;     dl8 build std/str_ops_emit.dl7
 (doc: (import "@std/doc"))
@@ -241,15 +241,6 @@
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant))
 
-(: rendered
-   (* (: section str)
-      (: index int)
-      (: position int)
-      (: text str)))
-(<- (rendered ?Section ?Index ?Position ?Text)
-    (piece ?Section ?Index ?Position ?Document)
-    (doc.layout ?Document 1000 ?Text))
-
 ; A piece starts a line unless it continues an inline section's line; a line
 ; start carries the newline before it, so a section's text begins with one.
 (: inline_section (* (: section str)))
@@ -260,26 +251,32 @@
    (* (: section str)
       (: item any)))
 
-(<- (line_item ?Section (tuple (tuple ?Index ?Position) ?Line))
-    (rendered ?Section ?Index ?Position ?Text)
-    (not (inline_section ?Section))
-    (str.cons "\n" ?Text ?Line))
+(<- (line_item ?Section
+       (tuple (tuple ?Index ?Position)
+          (doc.Doc.concat
+             [(doc.Doc.text "\n")
+              ?Document])))
+    (piece ?Section ?Index ?Position ?Document)
+    (not (inline_section ?Section)))
 
-(<- (line_item ?Section (tuple (tuple ?Index 0) ?Line))
-    (rendered ?Section ?Index 0 ?Text)
-    (inline_section ?Section)
-    (str.cons "\n" ?Text ?Line))
+(<- (line_item ?Section
+       (tuple (tuple ?Index 0)
+          (doc.Doc.concat
+             [(doc.Doc.text "\n")
+              ?Document])))
+    (piece ?Section ?Index 0 ?Document)
+    (inline_section ?Section))
 
-(<- (line_item ?Section (tuple (tuple ?Index ?Position) ?Text))
-    (rendered ?Section ?Index ?Position ?Text)
+(<- (line_item ?Section (tuple (tuple ?Index ?Position) ?Document))
+    (piece ?Section ?Index ?Position ?Document)
     (inline_section ?Section)
     (int.ne ?Position 0))
 
-(: section_text
+(: section_document
    (* (: section str)
-      (: text str)))
+      (: document doc.Doc)))
 
-(<- (section_text ?Section (fold doc.join "" ?Item))
+(<- (section_document ?Section (fold doc.join "" ?Item))
     (line_item ?Section ?Item))
 
 ; The two files: template chunks and section slots in `order`.
@@ -423,14 +420,14 @@ pub const STR_TYPED_OPS: &[(&str, &str, &[(&str, &str)])] = &[")
    (* (: path str)
       (: item any)))
 
-(<- (file_item ?Path (tuple ?Order ?Text))
+(<- (file_item ?Path (tuple ?Order (doc.Doc.text ?Text)))
     (target ?File ?Path)
     (chunk ?File ?Order ?Text))
 
-(<- (file_item ?Path (tuple ?Order ?Text))
+(<- (file_item ?Path (tuple ?Order ?Document))
     (target ?File ?Path)
     (slot ?File ?Order ?Section)
-    (section_text ?Section ?Text))
+    (section_document ?Section ?Document))
 
 (<- (fs.file ?Path (fold doc.join "" ?Item))
     (file_item ?Path ?Item))

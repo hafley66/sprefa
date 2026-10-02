@@ -603,7 +603,8 @@ pub(super) fn fold_generic_row_groups(
 }
 
 /// `(Step Acc Value ?Next)` as a one-goal rule; exactly one distinct `Next` is
-/// the only outcome that folds.
+/// the only outcome that folds. A step that constructs its `Next` (a `Doc`
+/// accumulator) yields the constructed term, the one the engine mints.
 fn fold_step(
     u: &mut Universe,
     cx: Context,
@@ -628,7 +629,6 @@ fn fold_step(
     };
     let plan: Plan = vec![Range::All];
     let mut nexts: Vec<TermId> = Vec::new();
-    let interned;
     {
         let mut demand_memo = Memo::default();
         let mut env = Env::new(1);
@@ -648,18 +648,13 @@ fn fold_step(
             }
         };
         eval.solve(&rule, 0, &plan, &mut env, &mut out);
-        interned = !eval.intern_requests.is_empty();
     }
-    let reason = if interned {
-        "fold_step_interns"
-    } else {
-        nexts.sort_by(|left, right| u.cmp(*left, *right));
-        nexts.dedup();
-        match nexts.len() {
-            1 => return Ok(nexts[0]),
-            0 => "fold_step_no_row",
-            _ => "fold_step_ambiguous",
-        }
+    nexts.sort_by(|left, right| u.cmp(*left, *right));
+    nexts.dedup();
+    let reason = match nexts.len() {
+        1 => return Ok(nexts[0]),
+        0 => "fold_step_no_row",
+        _ => "fold_step_ambiguous",
     };
     let payload = u.compound(reason, vec![step, accumulator, value]);
     Err(Diagnostic {

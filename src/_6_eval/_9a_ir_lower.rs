@@ -100,6 +100,10 @@ struct Builder {
     declared_folds: Vec<DeclaredFoldSpec>,
     /// `__ir_semantic` and the `9:1:ref` and `9:1:const` constructors it unions.
     semantic: Option<(ir::RelId, [ir::RelId; 2])>,
+    /// Tuples the current rule body constructed: the value column to its
+    /// tagged element columns. An `intern` over one builds the plain list from
+    /// the elements and never waits on `__ir_plain_lists` for a fresh tuple.
+    built_tuples: HashMap<ir::ColId, Vec<ir::ColId>>,
 }
 
 struct FoldAux {
@@ -133,6 +137,7 @@ impl Builder {
             intern_readback_count: 0,
             effect_nodes: BTreeMap::new(),
             snapshot_nodes: Vec::new(),
+            built_tuples: HashMap::new(),
             declared_folds: Vec::new(),
             semantic: None,
         }
@@ -783,6 +788,7 @@ fn compile_kernel(
                     };
                     plain.push(element);
                 }
+                let elements = plain.clone();
                 let empty_row = mapped_ground(b, term_map, empty);
                 *current = b.node(ir::Op::Join {
                     inputs: vec![*current, empty_row],
@@ -818,8 +824,10 @@ fn compile_kernel(
                     functor: ref_ctor,
                     args: vec![application],
                 });
-                output[value_at] = Some(assert_width(*width));
+                let whole = assert_width(*width);
+                output[value_at] = Some(whole);
                 *width += 1;
+                b.built_tuples.insert(whole, elements);
             }
         }
         Kernel::Intern => {
@@ -835,42 +843,70 @@ fn compile_kernel(
             *current = join_constructor(b, *current, *width, ref_ctor, ctor);
             let ctor_inner = assert_width(*width + 1);
             *width += 2;
-            let kept: Vec<ir::ColId> = (0..*width).map(assert_width).collect();
-            let listed = join_constructor(b, *current, *width, plain_lists, arguments);
-            let mut listed_columns = kept.clone();
-            listed_columns.push(assert_width(*width + 1));
-            let listed = b.mfp(listed, vec![], vec![], listed_columns);
-            let tuple_ctor = mapped_ground(b, term_map, tuple);
-            let mut vector = join_constructor(b, *current, *width, ref_ctor, arguments);
-            let application = assert_width(*width + 1);
-            vector = join_constructor(b, vector, *width + 2, app_ctor, application);
-            let vector_constructor = assert_width(*width + 3);
-            let vector_list = assert_width(*width + 4);
-            vector = b.node(ir::Op::Join {
-                inputs: vec![vector, tuple_ctor],
-                equivalences: vec![],
-            });
-            let tuple_col = assert_width(*width + 6);
-            vector = b.mfp(
-                vector,
-                vec![equal_columns(vector_constructor, tuple_col)],
-                vec![],
-                vec![],
-            );
-            let const_ctor = constructor(constructors, "9:1:const", 1, false)?;
-            vector = b.node(ir::Op::Mint {
-                input: vector,
-                functor: const_ctor,
-                args: vec![vector_list],
-            });
-            let wrapped = assert_width(*width + 7);
-            vector = join_constructor(b, vector, *width + 8, plain_lists, wrapped);
-            let mut vector_columns = kept;
-            vector_columns.push(assert_width(*width + 9));
-            let vector = b.mfp(vector, vec![], vec![], vector_columns);
-            *current = b.node(ir::Op::Union(vec![listed, vector]));
-            let plain = assert_width(*width);
-            *width += 1;
+            let plain = if let Some(elements) = b.built_tuples.get(&arguments).cloned() {
+                let cons = constructor(constructors, "9:2:[|]", 2, false)?;
+                let mut plain = Vec::with_capacity(elements.len());
+                for element in elements {
+                    *current = join_constructor(b, *current, *width, semantic, element);
+                    plain.push(assert_width(*width + 1));
+                    *width += 2;
+                }
+                let empty_row = mapped_ground(b, term_map, empty);
+                *current = b.node(ir::Op::Join {
+                    inputs: vec![*current, empty_row],
+                    equivalences: vec![],
+                });
+                let mut list = assert_width(*width + 1);
+                *width += 2;
+                for element in plain.into_iter().rev() {
+                    *current = b.node(ir::Op::Mint {
+                        input: *current,
+                        functor: cons,
+                        args: vec![element, list],
+                    });
+                    list = assert_width(*width);
+                    *width += 1;
+                }
+                list
+            } else {
+                let kept: Vec<ir::ColId> = (0..*width).map(assert_width).collect();
+                let listed = join_constructor(b, *current, *width, plain_lists, arguments);
+                let mut listed_columns = kept.clone();
+                listed_columns.push(assert_width(*width + 1));
+                let listed = b.mfp(listed, vec![], vec![], listed_columns);
+                let tuple_ctor = mapped_ground(b, term_map, tuple);
+                let mut vector = join_constructor(b, *current, *width, ref_ctor, arguments);
+                let application = assert_width(*width + 1);
+                vector = join_constructor(b, vector, *width + 2, app_ctor, application);
+                let vector_constructor = assert_width(*width + 3);
+                let vector_list = assert_width(*width + 4);
+                vector = b.node(ir::Op::Join {
+                    inputs: vec![vector, tuple_ctor],
+                    equivalences: vec![],
+                });
+                let tuple_col = assert_width(*width + 6);
+                vector = b.mfp(
+                    vector,
+                    vec![equal_columns(vector_constructor, tuple_col)],
+                    vec![],
+                    vec![],
+                );
+                let const_ctor = constructor(constructors, "9:1:const", 1, false)?;
+                vector = b.node(ir::Op::Mint {
+                    input: vector,
+                    functor: const_ctor,
+                    args: vec![vector_list],
+                });
+                let wrapped = assert_width(*width + 7);
+                vector = join_constructor(b, vector, *width + 8, plain_lists, wrapped);
+                let mut vector_columns = kept;
+                vector_columns.push(assert_width(*width + 9));
+                let vector = b.mfp(vector, vec![], vec![], vector_columns);
+                *current = b.node(ir::Op::Union(vec![listed, vector]));
+                let plain = assert_width(*width);
+                *width += 1;
+                plain
+            };
             *current = b.node(ir::Op::Mint {
                 input: *current,
                 functor: app_ctor,
@@ -1034,8 +1070,59 @@ fn compile_kernel(
             rk: columns,
         });
         *width = base_width;
+        b.built_tuples.retain(|whole, elements| {
+            usize::from(*whole) < base_width
+                && elements
+                    .iter()
+                    .all(|element| usize::from(*element) < base_width)
+        });
     }
     Ok(())
+}
+
+/// `(not (Relation Args..))` in a fold step: the step rows whose bound
+/// arguments have no row in the relation. The right side reads the stored
+/// relation, never the step's own recursive rows.
+fn fold_step_antijoin(
+    b: &mut Builder,
+    goal: &Goal,
+    current: ir::NodeId,
+    bound: &HashMap<u32, ir::ColId>,
+    relations: &BTreeMap<(u32, usize), ir::RelId>,
+    term_map: ir::RelId,
+) -> Result<ir::NodeId, &'static str> {
+    let mut right = b.get(
+        *relations
+            .get(&(goal.rel.0, goal.args.len()))
+            .ok_or("unresolved fold step relation")?,
+    );
+    let mut lk = Vec::new();
+    let mut rk = Vec::new();
+    for (position, arg) in goal.args.iter().enumerate() {
+        let position = assert_width(position);
+        match arg {
+            Arg::Var(v) => {
+                lk.push(*bound.get(&v.0).ok_or("unbound negative fold step goal")?);
+                rk.push(position);
+            }
+            Arg::Ground(id) => {
+                let mapped = mapped_ground(b, term_map, *id);
+                right = b.node(ir::Op::Join {
+                    inputs: vec![right, mapped],
+                    equivalences: vec![vec![(0, position), (1, 1)]],
+                });
+            }
+            _ => return Err("fold step aggregate"),
+        }
+    }
+    let projected = b.mfp(right, vec![], vec![], rk);
+    let columns = (0..lk.len()).map(assert_width).collect();
+    Ok(b.node(ir::Op::Antijoin {
+        l: current,
+        r: projected,
+        lk,
+        rk: columns,
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1054,6 +1141,7 @@ fn compile_fold_step_rule(
     empty: TermId,
     tuple: TermId,
 ) -> Result<(ir::NodeId, ir::ColId), &'static str> {
+    b.built_tuples.clear();
     for goal in &rule.body {
         if let Some(kernel) = Kernel::of(u, goal.rel) {
             compile_kernel(
@@ -1073,7 +1161,8 @@ fn compile_fold_step_rule(
             continue;
         }
         if goal.polarity == Polarity::Negative {
-            return Err("negative declared fold step");
+            current = fold_step_antijoin(b, goal, current, &bound, relations, term_map)?;
+            continue;
         }
         let right = b.get(
             *relations
@@ -1147,6 +1236,7 @@ fn compile_rule(
     tuple: TermId,
     all_rules: &[Rule],
 ) -> Result<CompiledRule, &'static str> {
+    b.built_tuples.clear();
     let mut current = b.get(unit);
     let mut width = 1usize;
     let mut bound: HashMap<u32, ir::ColId> = HashMap::new();
@@ -1215,9 +1305,16 @@ fn compile_rule(
         if goal.polarity == Polarity::Negative {
             // Negative arguments must already be bound. A ground term has a
             // one-row map source and joins the right before the antijoin.
+            // Unbound here: no rows, in the head's arity.
             if first_here.keys().any(|v| !bound.contains_key(v)) {
+                let out_width = rule.head.len().max(1);
                 return Ok(CompiledRule {
-                    body: b.mfp(current, vec![ir::Expr::Lit(0)], vec![], vec![]),
+                    body: b.mfp(
+                        current,
+                        vec![ir::Expr::Lit(0)],
+                        (0..out_width).map(|_| ir::Expr::Col(0)).collect(),
+                        (width..width + out_width).map(assert_width).collect(),
+                    ),
                     fold_aux: None,
                 });
             }
@@ -1264,6 +1361,7 @@ fn compile_rule(
             // refer to the unit relation's single placeholder column.
             current = right;
             width = 0;
+            b.built_tuples.clear();
         } else {
             current = b.node(ir::Op::Join {
                 inputs: vec![current, right],

@@ -11,6 +11,7 @@ use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, Recom
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub const RELATION: &str = "fs.watch";
@@ -20,7 +21,7 @@ type Watcher = Debouncer<RecommendedWatcher, RecommendedCache>;
 
 struct WatchedFile {
     path_cell: TermId,
-    body: Option<String>,
+    body: Option<Arc<str>>,
     body_cell: Option<TermId>,
     applications: HashSet<TermId>,
 }
@@ -68,8 +69,8 @@ impl FsWatch {
         Ok((parent.join(file), parent))
     }
 
-    fn body(path: &Path) -> Option<String> {
-        std::fs::read_to_string(path).ok()
+    fn body(path: &Path) -> Option<Arc<str>> {
+        std::fs::read_to_string(path).ok().map(Arc::from)
     }
 
     fn row(&self, path_cell: TermId, body_cell: TermId) -> Row {
@@ -164,7 +165,7 @@ impl IExecutor for FsWatch {
             let path_cell = u.compound("const", vec![path]);
             let body = Self::body(&target);
             let body_cell = body.as_ref().map(|body| {
-                let body = u.string(body);
+                let body = u.blob_string(body.clone());
                 u.compound("const", vec![body])
             });
             let mut applications = HashSet::new();
@@ -221,7 +222,7 @@ impl IExecutor for FsWatch {
             }
             watched.body = after;
             watched.body_cell = watched.body.as_ref().map(|body| {
-                let body = u.string(body);
+                let body = u.blob_string(body.clone());
                 u.compound("const", vec![body])
             });
             if let Some(new_cell) = watched.body_cell {
