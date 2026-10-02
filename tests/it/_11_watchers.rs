@@ -200,7 +200,7 @@ fn rows(receipt: &Value, names: &Value, name: &str) -> Vec<Value> {
 }
 
 pub(super) fn check_fs_watch_edits_retract_requests_and_increment_only_dependents() {
-    for engine in ["ir:dd", "ir:sqlite"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let case = scratch(engine);
         let watched = case.0.join("watched.txt");
         std::fs::write(&watched, "before\n").unwrap();

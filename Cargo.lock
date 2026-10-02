@@ -382,7 +382,6 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "clap",
- "differential-dataflow",
  "hafley-observe",
  "indexmap",
  "ivm-dd",
@@ -399,7 +398,6 @@ dependencies = [
  "serde",
  "serde_json",
  "soopy",
- "timely",
  "tracing",
  "tracing-subscriber",
  "tree-sitter",

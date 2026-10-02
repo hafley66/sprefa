@@ -7,10 +7,6 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// The engines a whole-file emitter runs on. The IR engines mint every text
-/// one char at a time (`sqlite_ivm/crates/ivm-ir/src/1_terms.rs` `mint_text`).
-const EMIT_ENGINES: [&str; 3] = ["rust", "dd", "sqlite"];
-
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -50,7 +46,11 @@ fn build_writes_joined_files_on_every_engine() {
     for engine in ENGINES {
         let out = directory.join(engine.replace(':', "_"));
         let built = build(&source, &out, engine, false);
-        assert!(built.status.success(), "{engine}: {}", String::from_utf8_lossy(&built.stderr));
+        assert!(
+            built.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&built.stderr)
+        );
         assert_eq!(
             report(&built),
             json!({"diagnostics": [], "files": [
@@ -59,13 +59,25 @@ fn build_writes_joined_files_on_every_engine() {
             ]}),
             "{engine}"
         );
-        assert_eq!(std::fs::read_to_string(out.join("a.txt")).unwrap(), "zero\ntwo\nten\n");
-        assert_eq!(std::fs::read_to_string(out.join("nested/b.txt")).unwrap(), "one\n");
-        assert!(build(&source, &out, engine, true).status.success(), "{engine}");
+        assert_eq!(
+            std::fs::read_to_string(out.join("a.txt")).unwrap(),
+            "zero\ntwo\nten\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(out.join("nested/b.txt")).unwrap(),
+            "one\n"
+        );
+        assert!(
+            build(&source, &out, engine, true).status.success(),
+            "{engine}"
+        );
         std::fs::write(out.join("a.txt"), "edited\n").unwrap();
         let checked = build(&source, &out, engine, true);
         assert_eq!(checked.status.code(), Some(1), "{engine}");
-        assert_eq!(std::fs::read_to_string(out.join("a.txt")).unwrap(), "edited\n");
+        assert_eq!(
+            std::fs::read_to_string(out.join("a.txt")).unwrap(),
+            "edited\n"
+        );
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -74,7 +86,12 @@ fn build_writes_joined_files_on_every_engine() {
 #[test]
 fn build_reports_a_path_with_two_texts() {
     let directory = scratch("conflict");
-    let built = build(&root().join("fixtures/build/1_conflict.dl7"), &directory, "rust", false);
+    let built = build(
+        &root().join("fixtures/build/1_conflict.dl7"),
+        &directory,
+        "ir:sqlite",
+        false,
+    );
     assert_eq!(built.status.code(), Some(1));
     assert_eq!(
         report(&built),
@@ -88,9 +105,13 @@ fn build_reports_a_path_with_two_texts() {
 /// builds, byte for byte.
 #[test]
 fn string_kernel_files_are_current() {
-    for engine in EMIT_ENGINES {
+    for engine in ENGINES {
         let built = build(&root().join("std/str_ops_emit.dl7"), root(), engine, true);
-        assert!(built.status.success(), "{engine}: {}", String::from_utf8_lossy(&built.stdout));
+        assert!(
+            built.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&built.stdout)
+        );
         assert_eq!(
             report(&built)["files"],
             json!([
@@ -113,10 +134,14 @@ fn tsi_registry_matches_hafley_scm() {
     };
     let directory = scratch("registry");
     let source = root().join("std/tsi_registry_emit.dl7");
-    for engine in EMIT_ENGINES {
+    for engine in ENGINES {
         let out = directory.join(engine.replace(':', "_"));
         let built = build(&source, &out, engine, false);
-        assert!(built.status.success(), "{engine}: {}", String::from_utf8_lossy(&built.stdout));
+        assert!(
+            built.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&built.stdout)
+        );
         let written = std::fs::read_to_string(out.join("target/tsi/registry.rs")).unwrap();
         assert!(written == expected, "{engine}: registry.rs differs");
     }

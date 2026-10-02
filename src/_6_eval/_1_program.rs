@@ -38,8 +38,7 @@ impl AggregateKind {
         }
     }
 
-    /// The step and seed each builtin folds with; `fold_group` is the Rust
-    /// fast path for the same four and must agree with folding these.
+    /// The step and seed each builtin folds with.
     pub fn as_fold(self, u: &mut Universe) -> Fold {
         let (step, seed) = match self {
             Self::Count => ((None, "count_step"), Seed::Zero),

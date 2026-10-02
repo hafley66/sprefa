@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
-pub const ENGINES: [&str; 5] = ["rust", "dd", "sqlite", "ir:dd", "ir:sqlite"];
+pub const ENGINES: [&str; 2] = ["ir:sqlite", "ir:dd"];
 
 /// A term as text: declared names for their owner nodes, no file paths.
 pub fn render(term: &Value, names: &Value) -> String {

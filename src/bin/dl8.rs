@@ -178,7 +178,13 @@ fn main() -> ExitCode {
             ansi,
         });
     let _ = hafley_observe::init(config);
-    let exit = run(cli.command);
+    let exit = match dl8::_6_eval::ir_eval::configured_backend() {
+        Ok(_) => run(cli.command),
+        Err(error) => {
+            tracing::error!(phase = "engine", error = %error);
+            ExitCode::from(2)
+        }
+    };
     hafley_observe::shutdown();
     hafley_observe::finish_trace();
     exit
@@ -582,8 +588,9 @@ fn run_cli(
         }
     };
     if let Some(frontiers_path) = frontiers_path.filter(|path| *path != Path::new("-")) {
-        let Some(backend) = dl8::_6_eval::ir_eval::configured_backend() else {
-            return fail(&"--frontiers requires DL8_ENGINE=ir:dd or ir:sqlite");
+        let backend = match dl8::_6_eval::ir_eval::configured_backend() {
+            Ok(backend) => backend,
+            Err(e) => return fail(&e),
         };
         let frontier_value: serde_json::Value = match std::fs::read_to_string(frontiers_path)
             .map_err(|e| e.to_string())
@@ -613,7 +620,8 @@ fn run_cli(
                             }
                         }
                     }
-                    Some(term @ serde_json::Value::Object(_)) => match term_from_json(&mut u, term) {
+                    Some(term @ serde_json::Value::Object(_)) => match term_from_json(&mut u, term)
+                    {
                         Ok(rel) => rel,
                         Err(e) => return fail(&e),
                     },
@@ -725,146 +733,146 @@ fn run_cli(
             ExitCode::from(1)
         };
     }
-    // Without a stdin frontier stream, every engine runs the tick loop below and
-    // prints one closure, as the Rust evaluator does.
-    if let Some(backend) = dl8::_6_eval::ir_eval::configured_backend() {
-        if frontiers_path == Some(Path::new("-")) {
-            let stream = if frontiers_path == Some(Path::new("-")) {
-                let (sender, receiver) = std::sync::mpsc::channel();
-                std::thread::spawn(move || {
-                    for line in std::io::stdin().lock().lines() {
-                        if sender.send(line).is_err() {
-                            break;
-                        }
+    // Without a stdin frontier stream, the tick loop below prints one closure.
+    if frontiers_path == Some(Path::new("-")) {
+        let backend = match dl8::_6_eval::ir_eval::configured_backend() {
+            Ok(backend) => backend,
+            Err(e) => return fail(&e),
+        };
+        let stream = if frontiers_path == Some(Path::new("-")) {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                for line in std::io::stdin().lock().lines() {
+                    if sender.send(line).is_err() {
+                        break;
                     }
-                });
-                Some(receiver)
-            } else {
-                None
+                }
+            });
+            Some(receiver)
+        } else {
+            None
+        };
+        let mut input_error = None;
+        let mut external = |u: &mut Universe| -> Option<Vec<dl8::_6_eval::ir_eval::SignedRow>> {
+            let Some(receiver) = &stream else {
+                return None;
             };
-            let mut input_error = None;
-            let mut external = |u: &mut Universe| -> Option<Vec<dl8::_6_eval::ir_eval::SignedRow>> {
-                let Some(receiver) = &stream else {
-                    return None;
-                };
-                match receiver.try_recv() {
-                    Ok(Ok(line)) => {
-                        let value: serde_json::Value = match serde_json::from_str(&line) {
-                            Ok(value) => value,
+            match receiver.try_recv() {
+                Ok(Ok(line)) => {
+                    let value: serde_json::Value = match serde_json::from_str(&line) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            input_error = Some(error.to_string());
+                            return None;
+                        }
+                    };
+                    let Some(changes) = value.get("changes").and_then(|v| v.as_array()) else {
+                        input_error = Some("frontier changes must be an array".into());
+                        return None;
+                    };
+                    let mut parsed = Vec::with_capacity(changes.len());
+                    for change in changes {
+                        let Some(relation_name) = change.get("rel").and_then(|v| v.as_str()) else {
+                            input_error = Some("frontier change rel must be a string".into());
+                            return None;
+                        };
+                        let Some(&rel) = names.get(relation_name) else {
+                            input_error =
+                                Some(format!("unknown frontier relation {relation_name}"));
+                            return None;
+                        };
+                        let Some(args) = change.get("args").and_then(|v| v.as_array()) else {
+                            input_error = Some("frontier change args must be an array".into());
+                            return None;
+                        };
+                        let args = match args
+                            .iter()
+                            .map(|v| term_from_json(u, v))
+                            .collect::<Result<Vec<_>, _>>()
+                        {
+                            Ok(args) => args,
                             Err(error) => {
                                 input_error = Some(error.to_string());
                                 return None;
                             }
                         };
-                        let Some(changes) = value.get("changes").and_then(|v| v.as_array()) else {
-                            input_error = Some("frontier changes must be an array".into());
+                        let Some(weight) = change.get("w").and_then(|v| v.as_i64()) else {
+                            input_error = Some("frontier change w must be an integer".into());
                             return None;
                         };
-                        let mut parsed = Vec::with_capacity(changes.len());
-                        for change in changes {
-                            let Some(relation_name) = change.get("rel").and_then(|v| v.as_str())
-                            else {
-                                input_error = Some("frontier change rel must be a string".into());
-                                return None;
-                            };
-                            let Some(&rel) = names.get(relation_name) else {
-                                input_error =
-                                    Some(format!("unknown frontier relation {relation_name}"));
-                                return None;
-                            };
-                            let Some(args) = change.get("args").and_then(|v| v.as_array()) else {
-                                input_error = Some("frontier change args must be an array".into());
-                                return None;
-                            };
-                            let args = match args
-                                .iter()
-                                .map(|v| term_from_json(u, v))
-                                .collect::<Result<Vec<_>, _>>()
-                            {
-                                Ok(args) => args,
-                                Err(error) => {
-                                    input_error = Some(error.to_string());
-                                    return None;
-                                }
-                            };
-                            let Some(weight) = change.get("w").and_then(|v| v.as_i64()) else {
-                                input_error = Some("frontier change w must be an integer".into());
-                                return None;
-                            };
-                            parsed.push(dl8::_6_eval::ir_eval::SignedRow {
-                                row: Row { rel, args },
-                                weight,
-                            });
-                        }
-                        Some(parsed)
+                        parsed.push(dl8::_6_eval::ir_eval::SignedRow {
+                            row: Row { rel, args },
+                            weight,
+                        });
                     }
-                    Ok(Err(error)) => {
-                        input_error = Some(error.to_string());
-                        None
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => Some(Vec::new()),
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+                    Some(parsed)
                 }
-            };
-            let mut tick = 0usize;
-            let public_names: std::collections::HashMap<TermId, String> = names
-                .iter()
-                .map(|(name, relation)| (*relation, name.clone()))
-                .collect();
-            let mut on_settle = |u: &Universe,
-                                 closure: &dl8::_6_eval::evaluate::Closure,
-                                 deltas: &[dl8::_6_eval::ir_eval::NamedDelta],
-                                 counters: &ivm_engine::Counters| {
-                let mut out = closure_to_json(u, &closure.rows, &closure.diagnostics);
-                out["ticks"] = serde_json::json!(tick);
-                out["deltas"] = serde_json::json!(deltas.iter().map(|delta| {
+                Ok(Err(error)) => {
+                    input_error = Some(error.to_string());
+                    None
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => Some(Vec::new()),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+            }
+        };
+        let mut tick = 0usize;
+        let public_names: std::collections::HashMap<TermId, String> = names
+            .iter()
+            .map(|(name, relation)| (*relation, name.clone()))
+            .collect();
+        let mut on_settle = |u: &Universe,
+                             closure: &dl8::_6_eval::evaluate::Closure,
+                             deltas: &[dl8::_6_eval::ir_eval::NamedDelta],
+                             counters: &ivm_engine::Counters| {
+            let mut out = closure_to_json(u, &closure.rows, &closure.diagnostics);
+            out["ticks"] = serde_json::json!(tick);
+            out["deltas"] = serde_json::json!(deltas.iter().map(|delta| {
                     serde_json::json!({
                         "rel": delta.relation,
                         "args": delta.args.iter().map(|term| term_to_json(u, *term)).collect::<Vec<_>>(),
                         "w": delta.weight,
                     })
                 }).collect::<Vec<_>>());
-                out["counters"] = serde_json::json!({
-                    "rows_written": counters.rows_written,
-                    "delta_rows": {
-                        "filter": counters.delta_rows.filter,
-                        "join": counters.delta_rows.join,
-                        "antijoin": counters.delta_rows.antijoin,
-                        "reduce": counters.delta_rows.reduce,
-                        "topk": counters.delta_rows.topk,
-                        "window": counters.delta_rows.window,
-                        "mint": counters.delta_rows.mint,
-                    },
-                    "rounds": counters.rounds,
-                    "interned": counters.interned,
-                    "statements": counters.statements,
-                });
-                println!("{}", serde_json::to_string(&out).unwrap());
-                let _ = std::io::stdout().flush();
-                tick += 1;
-            };
-            let result = reconciler.run_live(
-                &mut u,
-                &program,
-                backend,
-                &public_names,
-                max_ticks,
-                &mut external,
-                &mut on_settle,
-                &mut fx,
-            );
-            if let Some(error) = input_error {
-                return fail(&error);
-            }
-            return match result {
-                Ok(closure) if closure.diagnostics.is_empty() => ExitCode::SUCCESS,
-                Ok(_) => ExitCode::from(1),
-                Err(diagnostic) => {
-                    tracing::error!(phase = "run", error = ?diagnostic);
-                    ExitCode::from(1)
-                }
-            };
+            out["counters"] = serde_json::json!({
+                "rows_written": counters.rows_written,
+                "delta_rows": {
+                    "filter": counters.delta_rows.filter,
+                    "join": counters.delta_rows.join,
+                    "antijoin": counters.delta_rows.antijoin,
+                    "reduce": counters.delta_rows.reduce,
+                    "topk": counters.delta_rows.topk,
+                    "window": counters.delta_rows.window,
+                    "mint": counters.delta_rows.mint,
+                },
+                "rounds": counters.rounds,
+                "interned": counters.interned,
+                "statements": counters.statements,
+            });
+            println!("{}", serde_json::to_string(&out).unwrap());
+            let _ = std::io::stdout().flush();
+            tick += 1;
+        };
+        let result = reconciler.run_live(
+            &mut u,
+            &program,
+            backend,
+            &public_names,
+            max_ticks,
+            &mut external,
+            &mut on_settle,
+            &mut fx,
+        );
+        if let Some(error) = input_error {
+            return fail(&error);
         }
+        return match result {
+            Ok(closure) if closure.diagnostics.is_empty() => ExitCode::SUCCESS,
+            Ok(_) => ExitCode::from(1),
+            Err(diagnostic) => {
+                tracing::error!(phase = "run", error = ?diagnostic);
+                ExitCode::from(1)
+            }
+        };
     }
     let durable = store.as_mut().map(|s| s as &mut dyn IRowStore);
     let reconciled = match reconciler.run(&mut u, &program, &mut rows, durable, max_ticks, &mut fx)
@@ -892,9 +900,8 @@ fn query_cli(path: &Path, repo: Option<&Path>, format: QueryFormat) -> ExitCode 
         tracing::error!(phase = "query", error = %error, path = %path.display());
         ExitCode::from(2)
     };
-    match std::env::var("DL8_ENGINE").as_deref() {
-        Ok("rust" | "sqlite" | "dd" | "ir:dd" | "ir:sqlite") | Err(_) => {}
-        Ok(other) => return fail(&format!("unknown DL8_ENGINE {other}")),
+    if let Err(e) = dl8::_6_eval::ir_eval::configured_backend() {
+        return fail(&e);
     }
 
     let path = match std::fs::canonicalize(path) {

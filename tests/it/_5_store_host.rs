@@ -149,9 +149,7 @@ fn check_fixture(
 pub fn every_effect_fixture_matches_expected() {
     let binary = env!("CARGO_BIN_EXE_dl8");
     let mut failures = Vec::new();
-    // `ir:sqlite` is omitted while ivm-sqlite's `install_program` does not
-    // finish this program within the 20-second binary-run budget.
-    for engine in [None, Some("ir:dd")] {
+    for engine in [Some("ir:sqlite"), Some("ir:dd")] {
         for (stem, served) in SERVED {
             if let Err(error) = check_fixture(binary, stem, served, engine) {
                 failures.push(format!("{}: {error}", engine.unwrap_or("default")));
@@ -981,9 +979,7 @@ pub fn ir_fs_json_answers_once_per_request() {
     let path = document_path.to_string_lossy().to_string();
     let compiled = s20hosts_compile(&directory, "4_fs_json.dl7", &[("__DOC__", &path)]);
 
-    // `ir:sqlite` is omitted while ivm-sqlite's `install_program` does not
-    // finish this program within the 20-second binary-run budget.
-    for engine in ["ir:dd"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let (out, code) = s20hosts_run(
             &compiled.program,
             &["--serve", "fs.json"],
@@ -1013,7 +1009,7 @@ pub fn served_rows_reach_readers_of_a_demanded_product() {
     let document_path = std::fs::canonicalize(s20hosts_fixture("todo.json")).unwrap();
     let path = document_path.to_string_lossy().to_string();
     let compiled = s20hosts_compile(&directory, "6_generic_readback.dl7", &[("__DOC__", &path)]);
-    for engine in ["rust", "ir:dd", "ir:sqlite"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let (out, code) = s20hosts_run(
             &compiled.program,
             &["--serve", "fs.json"],
@@ -1357,16 +1353,6 @@ fn stable_round(compiled: &s23comptimeeffect_Compiled) -> Option<i64> {
     rest.split(',').next()?.trim().parse().ok()
 }
 
-/// Stable round of a program with one answer step: IR engines settle the answer
-/// and its dependent rules in one live-engine round, the Rust fixpoint in two.
-fn answered_stable_round() -> Option<i64> {
-    if dl8::_6_eval::ir_eval::configured_backend().is_some() {
-        Some(2)
-    } else {
-        Some(3)
-    }
-}
-
 fn assert_clean(stem: &str, compiled: &s23comptimeeffect_Compiled) {
     assert_eq!(compiled.code, 0, "{stem}: {}", compiled.out["diagnostics"]);
     assert_eq!(compiled.out["diagnostics"], json!([]), "{stem}");
@@ -1380,14 +1366,13 @@ pub fn a_once_executor_answers_its_effect_row_at_comptime() {
     assert_eq!(named(&compiled, "fs.json"), 1);
     assert_eq!(s23comptimeeffect_rows(&compiled, &kernel("effect")), 1);
     assert_eq!(answers(&compiled), 1);
-    assert_eq!(stable_round(&compiled), answered_stable_round());
+    // The engine settles the answer and its dependent rules in one round.
+    assert_eq!(stable_round(&compiled), Some(2));
 }
 
 #[test]
 pub fn ir_comptime_stops_when_the_fs_json_request_is_stable() {
-    // `ir:sqlite` is omitted while ivm-sqlite's `install_program` does not
-    // finish this program within the 20-second binary-run budget.
-    for engine in ["ir:dd"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let compiled = s23comptimeeffect_compile_with_engine("0_fs_json", Some(engine));
         assert_clean(engine, &compiled);
         assert_eq!(named(&compiled, "Member"), 2, "{engine}: title and done");
@@ -1443,5 +1428,6 @@ pub fn answered_rows_feed_a_rule_that_mints_an_edge() {
     assert_clean("3_two_rounds", &compiled);
     assert_eq!(named(&compiled, "Heading"), 1);
     assert_eq!(answers(&compiled), 1);
-    assert_eq!(stable_round(&compiled), answered_stable_round());
+    // The engine settles the answer and its dependent rules in one round.
+    assert_eq!(stable_round(&compiled), Some(2));
 }

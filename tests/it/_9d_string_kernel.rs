@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::process::Command;
 
-const ENGINES: [&str; 3] = ["rust", "ir:dd", "ir:sqlite"];
+const ENGINES: [&str; 2] = ["ir:sqlite", "ir:dd"];
 
 fn cell(arg: &Value) -> Value {
     let payload = &arg["args"][0];

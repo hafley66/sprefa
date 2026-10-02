@@ -58,7 +58,7 @@ fn sum_variants_match_and_retract() {
     )
     .unwrap();
     let names = &program["program"]["names"];
-    for engine in ["rust", "ir:dd", "ir:sqlite"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let initial = Command::new(env!("CARGO_BIN_EXE_dl8"))
             .arg("eval")
             .arg(&program_path)
@@ -78,9 +78,6 @@ fn sum_variants_match_and_retract() {
                 expected["initial"][name],
                 "{engine} {name}"
             );
-        }
-        if engine == "rust" {
-            continue;
         }
         let run = Command::new(env!("CARGO_BIN_EXE_dl8"))
             .arg("run")
@@ -132,7 +129,7 @@ fn imported_sum_variants_construct_and_match_on_all_engines() {
     let program_path = directory.join("program.json");
     std::fs::write(&program_path, &compiled.stdout).unwrap();
 
-    for engine in ["rust", "ir:dd", "ir:sqlite"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let evaluated = Command::new(env!("CARGO_BIN_EXE_dl8"))
             .arg("eval")
             .arg(&program_path)
@@ -212,7 +209,7 @@ fn sum_variant_catch_all_and_coexistence() {
         let program_path = directory.join(format!("{stem}.json"));
         std::fs::write(&program_path, &compiled.stdout).unwrap();
         let names = &program["program"]["names"];
-        for engine in ["rust", "ir:dd", "ir:sqlite"] {
+        for engine in ["ir:sqlite", "ir:dd"] {
             let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
                 .arg("eval")
                 .arg(&program_path)
