@@ -1,4 +1,4 @@
-use dl8::_6_eval::evaluate;
+use dl8::_6_eval::evaluate_rust;
 use dl8::_6_eval::evaluate_dd;
 use dl8::_6_eval::evaluate_sqlite;
 use dl8::_6_eval::ir_eval::{evaluate_ir, Backend};
@@ -634,7 +634,7 @@ fn closures(program: &Value) -> [Value; 5] {
             let mut universe = Universe::new();
             let program = program_from_json(&mut universe, program).unwrap();
             let closure = match engine {
-                0 => evaluate(&mut universe, &program, &mut |_| {}),
+                0 => evaluate_rust(&mut universe, &program, &mut |_| {}),
                 1 => evaluate_sqlite(&mut universe, &program, &mut |_| {}),
                 2 => evaluate_dd(&mut universe, &program, &mut |_| {}),
                 3 => evaluate_ir(&mut universe, &program, Backend::Dd, &mut |_| {}),
@@ -680,7 +680,7 @@ fn closure_for_seed_indices(program: &Value, seed_indices: &[usize], dd: bool) -
     let closure = if dd {
         evaluate_dd(&mut universe, &program, &mut |_| {})
     } else {
-        evaluate(&mut universe, &program, &mut |_| {})
+        evaluate_rust(&mut universe, &program, &mut |_| {})
     };
     canonical(closure_to_json(
         &universe,
@@ -943,10 +943,6 @@ fn shrunk_program(seed: u64, signature: &str) -> Value {
 
 #[test]
 fn random_programs_match_all_evaluators() {
-    assert!(
-        std::env::var_os("DL8_ENGINE").is_none(),
-        "Rust path requires DL8_ENGINE unset"
-    );
     let replay = std::env::var("DL8_RANDOM_SEED")
         .ok()
         .map(|n| n.parse::<u64>().expect("DL8_RANDOM_SEED must be u64"));
@@ -1103,10 +1099,6 @@ fn random_programs_match_all_evaluators() {
 
 #[test]
 fn random_seed_retractions_match_fresh_dd_and_rust() {
-    assert!(
-        std::env::var_os("DL8_ENGINE").is_none(),
-        "Rust path requires DL8_ENGINE unset"
-    );
     let replay = std::env::var("DL8_RANDOM_SEED")
         .ok()
         .map(|n| n.parse::<u64>().expect("DL8_RANDOM_SEED must be u64"));

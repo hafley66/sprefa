@@ -32,7 +32,7 @@ pub mod table;
 pub mod term;
 
 pub use dd_eval::evaluate_dd;
-pub use evaluate::{evaluate, Closure, Trace};
+pub use evaluate::{evaluate, evaluate_rust, Closure, Trace};
 pub use program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule};
 pub use sqlite_eval::{evaluate_sqlite, IEvaluate, SeedDelta, SqliteEvaluate};
 pub use term::{Sym, Term, TermId, Universe};
