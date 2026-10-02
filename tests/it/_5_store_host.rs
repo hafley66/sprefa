@@ -1357,6 +1357,16 @@ fn stable_round(compiled: &s23comptimeeffect_Compiled) -> Option<i64> {
     rest.split(',').next()?.trim().parse().ok()
 }
 
+/// Stable round of a program with one answer step: IR engines settle the answer
+/// and its dependent rules in one live-engine round, the Rust fixpoint in two.
+fn answered_stable_round() -> Option<i64> {
+    if dl8::_6_eval::ir_eval::configured_backend().is_some() {
+        Some(2)
+    } else {
+        Some(3)
+    }
+}
+
 fn assert_clean(stem: &str, compiled: &s23comptimeeffect_Compiled) {
     assert_eq!(compiled.code, 0, "{stem}: {}", compiled.out["diagnostics"]);
     assert_eq!(compiled.out["diagnostics"], json!([]), "{stem}");
@@ -1370,7 +1380,7 @@ pub fn a_once_executor_answers_its_effect_row_at_comptime() {
     assert_eq!(named(&compiled, "fs.json"), 1);
     assert_eq!(s23comptimeeffect_rows(&compiled, &kernel("effect")), 1);
     assert_eq!(answers(&compiled), 1);
-    assert_eq!(stable_round(&compiled), Some(3));
+    assert_eq!(stable_round(&compiled), answered_stable_round());
 }
 
 #[test]
@@ -1433,5 +1443,5 @@ pub fn answered_rows_feed_a_rule_that_mints_an_edge() {
     assert_clean("3_two_rounds", &compiled);
     assert_eq!(named(&compiled, "Heading"), 1);
     assert_eq!(answers(&compiled), 1);
-    assert_eq!(stable_round(&compiled), Some(3));
+    assert_eq!(stable_round(&compiled), answered_stable_round());
 }
