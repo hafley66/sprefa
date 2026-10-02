@@ -13,6 +13,8 @@ pub mod _3_units;
 pub mod _4_project;
 #[path = "_5_import.rs"]
 pub mod _5_import;
+#[path = "_6_build.rs"]
+pub mod _6_build;
 
 use crate::_1_macrotime::Wave;
 use crate::_4_comptime::Round;

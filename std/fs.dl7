@@ -25,3 +25,9 @@
 (: watch
    (* (: path str)
       (: return str)))
+
+; `file` is a sink: `dl8 build` writes every row's text to its path, relative
+; to `--out`, after the comptime fixpoint settles.
+(: file
+   (* (: path str)
+      (: text str)))

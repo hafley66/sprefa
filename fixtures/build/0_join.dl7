@@ -1,0 +1,24 @@
+; `dl8 build`: lines joined in index order into one file per path. Index 10
+; sorts after 2 because the key is an int.
+(doc: (import "@std/doc"))
+(fs: (import "@std/fs"))
+
+(line:
+   (* (path: str)
+      (index: int)
+      (text: str)))
+
+(line "a.txt" 2 "two\n")
+(line "a.txt" 0 "zero\n")
+(line "a.txt" 10 "ten\n")
+(line "nested/b.txt" 1 "one\n")
+
+(line_item:
+   (* (path: str)
+      (item: any)))
+
+(<- (line_item ?Path (tuple ?Index ?Text))
+    (line ?Path ?Index ?Text))
+
+(<- (fs.file ?Path (fold doc.join "" ?Item))
+    (line_item ?Path ?Item))
