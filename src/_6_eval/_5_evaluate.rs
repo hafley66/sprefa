@@ -1,21 +1,17 @@
-//! `evaluate(program) -> closure + diagnostics`, the port of `evaluate/4`.
-//! Strata in order; inside a stratum, aggregate rules first over the completed
-//! lower rows, then semi-naive rounds of the plain rules until a round adds
-//! nothing. Every state change is reported to the trace sink.
+//! `evaluate(program) -> closure + diagnostics` through the IR engine
+//! `DL8_ENGINE` selects, the row store a continuing run seeds from, and the
+//! goal solver a declared fold runs its step through.
 
+use super::ir_eval::{configured_backend, evaluate_ir, unknown_engine};
 use super::kernel::{self, Kernel};
 use super::program::{
-    AggregateKind, Arg, Diagnostic, Fold, Folding, Goal, Order, Polarity, Program, Row, Rule, Seed,
-    VarId,
+    Arg, Diagnostic, Fold, Goal, Order, Polarity, Program, Row, Rule, Seed, VarId,
 };
-use super::stratify::{stratify, Strata};
 use super::table::{Range, Table};
 use super::term::{TermId, Universe};
 use crate::_7_effect::Slice;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
-use std::sync::OnceLock;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Trace {
@@ -126,9 +122,6 @@ impl Env {
 /// Which row range each body goal reads in one rule variant.
 type Plan = Vec<Range>;
 
-/// Derived rows waiting to be inserted after a round: `(relation, args)`.
-type Sink = Vec<(TermId, Box<[TermId]>)>;
-
 type Pattern = Vec<Option<TermId>>;
 type DemandKey = (TermId, Pattern);
 
@@ -143,7 +136,6 @@ struct Memo {
 /// The relations the effect branch writes into, minted once per evaluation.
 #[derive(Copy, Clone)]
 struct Effects {
-    effect: TermId,
     intern_snapshot: TermId,
     /// `_1_slots.rs:13`: `const(none)` fills an argument the goal left unbound.
     none: TermId,
@@ -159,13 +151,10 @@ struct Context<'a> {
     sum_readbacks: &'a HashSet<TermId>,
 }
 
-/// One body evaluation. `tables_only` is the aggregate mode of v7
-/// (`completed_body_holds/2`): goals match stored rows only, no kernel
-/// functions, no demanded rules, no effects.
+/// One body evaluation.
 struct Eval<'a> {
     u: &'a mut Universe,
     cx: Context<'a>,
-    tables_only: bool,
     intern_requests: Vec<Box<[TermId]>>,
     effect_rows: Vec<Box<[TermId]>>,
     snapshot_rows: Vec<Box<[TermId]>>,
@@ -237,7 +226,7 @@ impl<'a> Eval<'a> {
     ) -> Vec<Vec<TermId>> {
         let pattern: Pattern = goal.args.iter().map(|a| env.value(a)).collect();
         let mut solutions: Vec<Vec<TermId>> = Vec::new();
-        if let (Some(k), false) = (kernel, self.tables_only) {
+        if let Some(k) = kernel {
             solutions = kernel::solve(self.u, k, &pattern);
             if k == Kernel::Intern {
                 for row in &solutions {
@@ -261,14 +250,12 @@ impl<'a> Eval<'a> {
                 }
             }
         }
-        let served = !self.tables_only
-            && self.cx.served.contains(&goal.rel)
-            && !self.cx.rules_by_rel.contains_key(&goal.rel);
+        let served =
+            self.cx.served.contains(&goal.rel) && !self.cx.rules_by_rel.contains_key(&goal.rel);
         if served {
             self.write_effect(goal.rel, &pattern);
         }
-        let demand = !self.tables_only
-            && kernel.is_none()
+        let demand = kernel.is_none()
             && pattern.iter().any(|t| t.is_some())
             && self.cx.demanded.contains(&goal.rel);
         if demand {
@@ -536,174 +523,6 @@ pub(crate) fn demanded_relations(
     }
 }
 
-/// Neither relation the branch writes heads a rule, so `Strata` never levels
-/// them, yet their rows arrive inside a round: a goal on one joins the delta.
-fn current_goal_positions(
-    rule: &Rule,
-    strata: &Strata,
-    level: u32,
-    effects: Effects,
-    u: &Universe,
-) -> Vec<usize> {
-    rule.body
-        .iter()
-        .enumerate()
-        .filter(|(_, g)| {
-            g.polarity == Polarity::Positive
-                && Kernel::of(u, g.rel).is_none()
-                && (strata.levels.get(&g.rel) == Some(&level) || g.rel == effects.effect)
-        })
-        .map(|(i, _)| i)
-        .collect()
-}
-
-#[derive(Default)]
-struct Pending {
-    sink: Sink,
-    requests: Vec<Box<[TermId]>>,
-    effects: Vec<Box<[TermId]>>,
-    snapshots: Vec<Box<[TermId]>>,
-}
-
-fn fire(
-    u: &mut Universe,
-    cx: Context,
-    rule: &Rule,
-    plan: &Plan,
-    out: &mut Pending,
-    memo: &mut Memo,
-) {
-    let mut env = Env::new(rule.vars.len());
-    let mut eval = Eval {
-        u,
-        cx,
-        tables_only: false,
-        intern_requests: Vec::new(),
-        effect_rows: Vec::new(),
-        snapshot_rows: Vec::new(),
-        memo,
-        in_progress: HashSet::new(),
-        cycle_hits: Vec::new(),
-    };
-    let rel = rule.rel;
-    let mut derived = |_u: &mut Universe, env: &Env| {
-        if let Some(row) = head_row(env, rule) {
-            out.sink.push((rel, row.into_boxed_slice()));
-        }
-    };
-    eval.solve(rule, 0, plan, &mut env, &mut derived);
-    out.requests.append(&mut eval.intern_requests);
-    out.effects.append(&mut eval.effect_rows);
-    out.snapshots.append(&mut eval.snapshot_rows);
-}
-
-/// `completed_body_holds/2`: one bag entry per body proof over the stored
-/// rows, with a non-ground head rejecting the whole rule.
-fn aggregate_proofs(
-    u: &mut Universe,
-    cx: Context,
-    rule: &Rule,
-) -> Result<Vec<Vec<TermId>>, Diagnostic> {
-    let plan: Plan = rule.body.iter().map(|_| Range::All).collect();
-    let mut proofs: Vec<Vec<TermId>> = Vec::new();
-    let mut non_ground = false;
-    {
-        let mut env = Env::new(rule.vars.len());
-        let mut demand_memo = Memo::default();
-        let mut eval = Eval {
-            u: &mut *u,
-            cx,
-            tables_only: true,
-            intern_requests: Vec::new(),
-            effect_rows: Vec::new(),
-            snapshot_rows: Vec::new(),
-            memo: &mut demand_memo,
-            in_progress: HashSet::new(),
-            cycle_hits: Vec::new(),
-        };
-        let mut out = |_u: &mut Universe, env: &Env| match head_row(env, rule) {
-            Some(row) => proofs.push(row),
-            None => non_ground = true,
-        };
-        eval.solve(rule, 0, &plan, &mut env, &mut out);
-    }
-    if non_ground {
-        let payload = u.atom("non_ground_aggregate_proof");
-        return Err(Diagnostic {
-            phase: "evaluate",
-            payload,
-        });
-    }
-    Ok(proofs)
-}
-
-/// Port of `derive_aggregate_rows/4`: every body proof over the completed
-/// lower rows is one bag entry; plain head positions form the group key, and
-/// the aggregate position is folded by kind.
-fn aggregate_rows(u: &mut Universe, cx: Context, rule: &Rule) -> Result<Sink, Diagnostic> {
-    let aggregate_args = rule.aggregate_args();
-    if aggregate_args != 1 {
-        let n = u.int(aggregate_args as i64);
-        let payload = u.compound("malformed_aggregate_head", vec![n]);
-        return Err(Diagnostic {
-            phase: "evaluate",
-            payload,
-        });
-    }
-    let proofs = aggregate_proofs(u, cx, rule)?;
-    let (position, folding, _) = rule.folding_head().unwrap();
-    let mut groups: HashMap<Vec<TermId>, Vec<TermId>> = HashMap::new();
-    let mut order: Vec<Vec<TermId>> = Vec::new();
-    for proof in proofs {
-        let mut key = proof;
-        let value = key.remove(position);
-        groups
-            .entry(key.clone())
-            .or_insert_with(|| {
-                order.push(key);
-                Vec::new()
-            })
-            .push(value);
-    }
-    let mut rows = Vec::new();
-    for key in order {
-        let result = fold_head_value(u, cx, folding, &groups[&key])?;
-        let mut row = key;
-        row.insert(position, result);
-        rows.push((rule.rel, row.into_boxed_slice()));
-    }
-    Ok(rows)
-}
-
-/// One group's value. A builtin takes the Rust fast path, and a debug build
-/// re-folds it generically and reports any disagreement.
-fn fold_head_value(
-    u: &mut Universe,
-    cx: Context,
-    folding: Folding,
-    values: &[TermId],
-) -> Result<TermId, Diagnostic> {
-    let aggregation = match folding {
-        Folding::Declared(fold) => return fold_generic(u, cx, &fold, values),
-        Folding::Builtin(aggregation) => aggregation,
-    };
-    let fast = fold_group(u, aggregation, values)?;
-    #[cfg(debug_assertions)]
-    {
-        let fold = aggregation.as_fold(u);
-        let generic = fold_generic(u, cx, &fold, values)?;
-        if generic != fast {
-            let name = u.atom(aggregation.name());
-            let payload = u.compound("fold_path_disagreement", vec![name, fast, generic]);
-            return Err(Diagnostic {
-                phase: "evaluate",
-                payload,
-            });
-        }
-    }
-    Ok(fast)
-}
-
 /// The generic path: values in `order`, then the step run as a goal per value.
 fn fold_generic(
     u: &mut Universe,
@@ -773,7 +592,6 @@ pub(super) fn fold_generic_row_groups(
         u.compound("ref", vec![kernel])
     };
     let effects = Effects {
-        effect: kernel_rel(u, "effect"),
         intern_snapshot: kernel_rel(u, "intern_snapshot"),
         none: {
             let none = u.atom("none");
@@ -829,7 +647,6 @@ fn fold_step(
         let mut eval = Eval {
             u: &mut *u,
             cx,
-            tables_only: false,
             intern_requests: Vec::new(),
             effect_rows: Vec::new(),
             snapshot_rows: Vec::new(),
@@ -863,83 +680,7 @@ fn fold_step(
     })
 }
 
-/// One group's folded value. `count` and `sum` produce `const(Int)`; `min`
-/// and `max` return the winning subject term unchanged.
-pub(super) fn fold_group(
-    u: &mut Universe,
-    aggregation: AggregateKind,
-    values: &[TermId],
-) -> Result<TermId, Diagnostic> {
-    match aggregation {
-        AggregateKind::Count => {
-            let n = u.int(values.len() as i64);
-            Ok(u.compound("const", vec![n]))
-        }
-        AggregateKind::Sum => {
-            let mut running: i64 = 0;
-            for &value in values {
-                let Some(addend) = u
-                    .unary(value, "const")
-                    .and_then(|payload| u.as_int(payload))
-                else {
-                    let payload = u.compound("aggregate_type_mismatch", vec![value]);
-                    return Err(Diagnostic {
-                        phase: "evaluate",
-                        payload,
-                    });
-                };
-                let Some(next) = running.checked_add(addend) else {
-                    let payload = u.atom("aggregate_overflow");
-                    return Err(Diagnostic {
-                        phase: "evaluate",
-                        payload,
-                    });
-                };
-                running = next;
-            }
-            let n = u.int(running);
-            Ok(u.compound("const", vec![n]))
-        }
-        AggregateKind::Min | AggregateKind::Max => {
-            let mut best = values[0];
-            for &value in &values[1..] {
-                let ordering = u.cmp(value, best);
-                let wins = match aggregation {
-                    AggregateKind::Min => ordering == Ordering::Less,
-                    _ => ordering == Ordering::Greater,
-                };
-                if wins {
-                    best = value;
-                }
-            }
-            Ok(best)
-        }
-    }
-}
-
-/// The eval engine, read once from the environment.
-static ENGINE: OnceLock<Engine> = OnceLock::new();
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Engine {
-    Rust,
-    Sqlite,
-    Dd,
-    IrDd,
-    IrSqlite,
-}
-
-fn engine() -> Engine {
-    *ENGINE.get_or_init(|| match std::env::var("DL8_ENGINE").as_deref() {
-        Ok("sqlite") => Engine::Sqlite,
-        Ok("dd") => Engine::Dd,
-        Ok("ir:dd") => Engine::IrDd,
-        Ok("ir:sqlite") => Engine::IrSqlite,
-        _ => Engine::Rust,
-    })
-}
-
-/// The semi-naive fixpoint as a reducer over its own row store.
+/// IR evaluation as a reducer over its own row store.
 pub struct Evaluate<'a>(PhantomData<&'a ()>);
 impl<'a> Slice for Evaluate<'a> {
     type State = Store;
@@ -948,242 +689,32 @@ impl<'a> Slice for Evaluate<'a> {
     type Effect = Trace;
 
     fn reduce(store: &mut Store, (u, program): Self::Event, fx: &mut dyn FnMut(Trace)) -> Closure {
-        if matches!(
-            engine(),
-            Engine::Sqlite | Engine::Dd | Engine::IrDd | Engine::IrSqlite
-        ) {
-            // Rows already in the store (a continuing run) are seeds to the
-            // selected engine; every closure row lands back in the store.
-            let mut seeded = program.clone();
-            for (rel, table) in &store.tables {
-                for id in 0..table.len() as u32 {
-                    seeded.seeds.push(Row {
-                        rel: *rel,
-                        args: table.row(id).to_vec(),
-                    });
-                }
+        // Rows already in the store (a continuing run) are seeds to the
+        // engine; every closure row lands back in the store.
+        let mut seeded = program.clone();
+        for (rel, table) in &store.tables {
+            for id in 0..table.len() as u32 {
+                seeded.seeds.push(Row {
+                    rel: *rel,
+                    args: table.row(id).to_vec(),
+                });
             }
-            let closure = match engine() {
-                Engine::Sqlite => super::sqlite_eval::evaluate_sqlite(u, &seeded, fx),
-                Engine::Dd => super::dd_eval::evaluate_dd(u, &seeded, fx),
-                Engine::IrDd => {
-                    super::ir_eval::evaluate_ir(u, &seeded, super::ir_eval::Backend::Dd, fx)
-                }
-                Engine::IrSqlite => {
-                    super::ir_eval::evaluate_ir(u, &seeded, super::ir_eval::Backend::Sqlite, fx)
-                }
-                Engine::Rust => unreachable!(),
-            };
-            for row in &closure.rows {
-                store.insert(row.rel, row.args.clone().into_boxed_slice());
-            }
-            return closure;
         }
-        evaluate_into(store, u, program, fx)
+        let closure = match configured_backend() {
+            Ok(backend) => evaluate_ir(u, &seeded, backend, fx),
+            Err(message) => Closure {
+                rows: Vec::new(),
+                diagnostics: vec![unknown_engine(u, &message)],
+            },
+        };
+        for row in &closure.rows {
+            store.insert(row.rel, row.args.clone().into_boxed_slice());
+        }
+        closure
     }
 }
 
 #[tracing::instrument(skip_all, fields(rules = program.rules.len(), seeds = program.seeds.len()))]
 pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
     Evaluate::reduce(&mut Store::default(), (u, program), fx)
-}
-
-/// The Rust semi-naive fixpoint regardless of `DL8_ENGINE`: the reference
-/// the engine cross-checks compare against.
-pub fn evaluate_rust(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
-    evaluate_into(&mut Store::default(), u, program, fx)
-}
-
-fn evaluate_into(
-    store: &mut Store,
-    u: &mut Universe,
-    program: &Program,
-    fx: &mut dyn FnMut(Trace),
-) -> Closure {
-    let (strata, diagnostics) = stratify(u, program);
-    if !diagnostics.is_empty() {
-        return Closure {
-            rows: Vec::new(),
-            diagnostics,
-        };
-    }
-    let kernel_rel = |u: &mut Universe, name: &str| {
-        let n = u.atom(name);
-        let k = u.compound("kernel", vec![n]);
-        u.compound("ref", vec![k])
-    };
-    let effects = Effects {
-        effect: kernel_rel(u, "effect"),
-        intern_snapshot: kernel_rel(u, "intern_snapshot"),
-        none: {
-            let n = u.atom("none");
-            u.compound("const", vec![n])
-        },
-    };
-    let sum_readbacks = sum_readback_constructors(u, program, effects.intern_snapshot);
-    let intern_rel = {
-        let n = u.atom("intern");
-        let k = u.compound("kernel", vec![n]);
-        u.compound("ref", vec![k])
-    };
-
-    let mut seeds_by_level: HashMap<u32, Vec<&Row>> = HashMap::new();
-    for seed in &program.seeds {
-        seeds_by_level
-            .entry(strata.level(seed.rel))
-            .or_default()
-            .push(seed);
-    }
-    let mut rules_by_level: HashMap<u32, Vec<&Rule>> = HashMap::new();
-    let mut rules_by_rel: HashMap<TermId, Vec<&Rule>> = HashMap::new();
-    for rule in &program.rules {
-        rules_by_level
-            .entry(strata.level(rule.rel))
-            .or_default()
-            .push(rule);
-        rules_by_rel.entry(rule.rel).or_default().push(rule);
-    }
-    let demanded = demanded_relations(u, &rules_by_rel, effects.intern_snapshot);
-
-    for level in 0..=strata.max_level {
-        let rules = rules_by_level.get(&level).cloned().unwrap_or_default();
-        let seeds = seeds_by_level.get(&level).cloned().unwrap_or_default();
-        fx(Trace::Stratum {
-            level,
-            rules: rules.len(),
-            seeds: seeds.len(),
-        });
-
-        let (aggregate, plain): (Vec<&Rule>, Vec<&Rule>) =
-            rules.iter().partition(|r| r.is_aggregate());
-        let mut aggregate_diags = Vec::new();
-        let mut aggregate_seeds = Vec::new();
-        for rule in &aggregate {
-            let cx = Context {
-                store,
-                rules_by_rel: &rules_by_rel,
-                served: &program.served,
-                demanded: &demanded,
-                effects,
-                sum_readbacks: &sum_readbacks,
-            };
-            match aggregate_rows(u, cx, rule) {
-                Ok(rows) => aggregate_seeds.extend(rows),
-                Err(d) => aggregate_diags.push(d),
-            }
-        }
-        if !aggregate_diags.is_empty() {
-            aggregate_diags.sort_by(|a, b| u.cmp(a.payload, b.payload));
-            aggregate_diags.dedup();
-            return Closure {
-                rows: Vec::new(),
-                diagnostics: aggregate_diags,
-            };
-        }
-        fx(Trace::Aggregate {
-            level,
-            rules: aggregate.len(),
-            rows: aggregate_seeds.len(),
-        });
-
-        for seed in &seeds {
-            store.insert(seed.rel, seed.args.clone().into_boxed_slice());
-        }
-        for (rel, row) in aggregate_seeds {
-            store.insert(rel, row);
-        }
-
-        let mut round: u32 = 0;
-        let mut memo = Memo::default();
-        loop {
-            let mut pending = Pending::default();
-            for rule in &plain {
-                let cx = Context {
-                    store,
-                    rules_by_rel: &rules_by_rel,
-                    served: &program.served,
-                    demanded: &demanded,
-                    effects,
-                    sum_readbacks: &sum_readbacks,
-                };
-                if round == 0 {
-                    let plan: Plan = rule.body.iter().map(|_| Range::All).collect();
-                    fire(u, cx, rule, &plan, &mut pending, &mut memo);
-                } else {
-                    let positions = current_goal_positions(rule, &strata, level, effects, u);
-                    for &delta_at in &positions {
-                        let plan: Plan = rule
-                            .body
-                            .iter()
-                            .enumerate()
-                            .map(|(j, _)| {
-                                if !positions.contains(&j) {
-                                    Range::All
-                                } else if j < delta_at {
-                                    Range::Old
-                                } else if j == delta_at {
-                                    Range::Delta
-                                } else {
-                                    Range::All
-                                }
-                            })
-                            .collect();
-                        fire(u, cx, rule, &plan, &mut pending, &mut memo);
-                    }
-                }
-            }
-            store.mark_all();
-            let mut new = 0;
-            for (rel, row) in pending.sink {
-                if store.insert(rel, row) {
-                    new += 1;
-                }
-            }
-            for r in pending.requests {
-                if store.insert(intern_rel, r) {
-                    new += 1;
-                }
-            }
-            for row in pending.effects {
-                if store.insert(effects.effect, row) {
-                    new += 1;
-                }
-            }
-            for row in pending.snapshots {
-                if store.insert(effects.intern_snapshot, row) {
-                    new += 1;
-                }
-            }
-            if memo.calls > 0 {
-                fx(Trace::Demand { calls: memo.calls });
-            }
-            fx(Trace::Round { level, round, new });
-            tracing::trace!(target: "dl8::eval", level, round, new);
-            memo = Memo::default();
-            round += 1;
-            if new == 0 {
-                break;
-            }
-        }
-    }
-
-    let mut rows: Vec<Row> = Vec::new();
-    for (rel, table) in &store.tables {
-        for row in table.rows.iter() {
-            rows.push(Row {
-                rel: *rel,
-                args: row.to_vec(),
-            });
-        }
-    }
-    rows.sort_by(|a, b| {
-        u.cmp(a.rel, b.rel)
-            .then_with(|| u.cmp_rows(&a.args, &b.args))
-    });
-    rows.dedup();
-    fx(Trace::Closure { rows: rows.len() });
-    Closure {
-        rows,
-        diagnostics: Vec::new(),
-    }
 }

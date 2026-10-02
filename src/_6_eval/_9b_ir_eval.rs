@@ -85,24 +85,116 @@ impl<E: Engine> EngineSession<E> {
             structure: lowered.ir.clone(),
         })
     }
+}
 
+type RunResult =
+    Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError>;
+
+/// An installed engine and the connection its host hands it. The dd backend
+/// never reads the connection.
+struct Hosted<E: Engine> {
+    connection: rusqlite::Connection,
+    session: EngineSession<E>,
+}
+
+trait Session {
+    fn matches(&self, lowered: &Lowered, fingerprint: u64) -> bool;
+    #[allow(clippy::too_many_arguments)]
+    fn run(
+        &mut self,
+        u: &mut Universe,
+        lowered: &Lowered,
+        answerer: Option<&mut Answerer>,
+        frontiers: &[Vec<SignedRow>],
+        public_names: Option<&HashMap<TermId, String>>,
+        live: Option<&mut LiveRun<'_>>,
+        fx: &mut dyn FnMut(Trace),
+    ) -> RunResult;
+}
+
+impl<E: Engine> Session for Hosted<E> {
     fn matches(&self, lowered: &Lowered, fingerprint: u64) -> bool {
-        self.fingerprint == fingerprint && self.structure == lowered.ir
+        self.session.fingerprint == fingerprint && self.session.structure == lowered.ir
+    }
+
+    fn run(
+        &mut self,
+        u: &mut Universe,
+        lowered: &Lowered,
+        answerer: Option<&mut Answerer>,
+        frontiers: &[Vec<SignedRow>],
+        public_names: Option<&HashMap<TermId, String>>,
+        live: Option<&mut LiveRun<'_>>,
+        fx: &mut dyn FnMut(Trace),
+    ) -> RunResult {
+        let mut host = Raw::with_connection(&self.connection);
+        run_session(
+            u,
+            lowered,
+            &mut host,
+            &mut self.session,
+            answerer,
+            frontiers,
+            public_names,
+            live,
+            fx,
+        )
+    }
+}
+
+fn hosted<E: Engine + 'static>(
+    u: &mut Universe,
+    lowered: &Lowered,
+    fingerprint: u64,
+) -> Result<Box<dyn Session>, Diagnostic> {
+    let connection = rusqlite::Connection::open_in_memory()
+        .map_err(|error| diagnostic(u, "sqlite_open", error))?;
+    let session = {
+        let mut host = Raw::with_connection(&connection);
+        EngineSession::<E>::install(lowered, &mut host, fingerprint)
+    }
+    .map_err(|error| diagnostic(u, "engine", error))?;
+    if let Ok(creates @ 1..) = sqlite_create_count(&connection) {
+        tracing::info!(target: "dl8::ir", sqlite_create_count = creates, "ir schema");
+    }
+    Ok(Box::new(Hosted {
+        connection,
+        session,
+    }))
+}
+
+/// The one place a backend type is named.
+fn open_session(
+    u: &mut Universe,
+    backend: Backend,
+    lowered: &Lowered,
+    fingerprint: u64,
+) -> Result<Box<dyn Session>, Diagnostic> {
+    match backend {
+        Backend::Dd => hosted::<ivm_dd::Dd>(u, lowered, fingerprint),
+        Backend::Sqlite => hosted::<ivm_sqlite::Sqlite>(u, lowered, fingerprint),
     }
 }
 
 pub struct IrSession {
-    backend: Backend,
-    dd: Option<EngineSession<ivm_dd::Dd>>,
-    sqlite: Option<(rusqlite::Connection, EngineSession<ivm_sqlite::Sqlite>)>,
+    backend: Result<Backend, String>,
+    session: Option<Box<dyn Session>>,
 }
 
 impl IrSession {
     pub fn new(backend: Backend) -> Self {
         Self {
-            backend,
-            dd: None,
-            sqlite: None,
+            backend: Ok(backend),
+            session: None,
+        }
+    }
+
+    /// The backend `DL8_ENGINE` names; an unknown name surfaces as a
+    /// diagnostic on the first evaluation.
+    pub fn configured() -> Self {
+        Self {
+            backend: configured_backend(),
+            session: None,
         }
     }
 
@@ -116,6 +208,15 @@ impl IrSession {
         LAST_COUNTERS.with(|counters| counters.set(None));
         LAST_ANSWERS.with(|rows| rows.borrow_mut().clear());
         LAST_REQUESTS.with(|count| count.set(0));
+        let backend = match &self.backend {
+            Ok(backend) => *backend,
+            Err(message) => {
+                return Closure {
+                    rows: vec![],
+                    diagnostics: vec![unknown_engine(u, message)],
+                }
+            }
+        };
         let lowered = match ir_lower::lower(u, program) {
             Ok(lowered) => lowered,
             Err(diag) => {
@@ -126,89 +227,33 @@ impl IrSession {
             }
         };
         let fingerprint = structural_fingerprint(&lowered.ir);
-        let result = match self.backend {
-            Backend::Dd => {
-                let mut host = Raw::default();
-                if self
-                    .dd
-                    .as_ref()
-                    .is_none_or(|session| !session.matches(&lowered, fingerprint))
-                {
-                    self.dd = match EngineSession::install(&lowered, &mut host, fingerprint) {
-                        Ok(session) => Some(session),
-                        Err(error) => {
-                            return Closure {
-                                rows: vec![],
-                                diagnostics: vec![diagnostic(u, "engine", error)],
-                            }
-                        }
-                    };
-                }
-                run_session(
-                    u,
-                    &lowered,
-                    &mut host,
-                    self.dd.as_mut().unwrap(),
-                    answerer,
-                    &[],
-                    None,
-                    None,
-                    fx,
-                )
-            }
-            Backend::Sqlite => {
-                if self
-                    .sqlite
-                    .as_ref()
-                    .is_none_or(|(_, session)| !session.matches(&lowered, fingerprint))
-                {
-                    let connection = match rusqlite::Connection::open_in_memory() {
-                        Ok(connection) => connection,
-                        Err(error) => {
-                            return Closure {
-                                rows: vec![],
-                                diagnostics: vec![diagnostic(u, "sqlite_open", error)],
-                            }
-                        }
-                    };
-                    let mut host = Raw::with_connection(&connection);
-                    let session = match EngineSession::install(&lowered, &mut host, fingerprint) {
-                        Ok(session) => session,
-                        Err(error) => {
-                            return Closure {
-                                rows: vec![],
-                                diagnostics: vec![diagnostic(u, "engine", error)],
-                            }
-                        }
-                    };
-                    if let Ok(creates) = sqlite_create_count(&connection) {
-                        tracing::info!(target: "dl8::ir", sqlite_create_count = creates, "ir schema");
+        if self
+            .session
+            .as_ref()
+            .is_none_or(|session| !session.matches(&lowered, fingerprint))
+        {
+            self.session = match open_session(u, backend, &lowered, fingerprint) {
+                Ok(session) => Some(session),
+                Err(diag) => {
+                    return Closure {
+                        rows: vec![],
+                        diagnostics: vec![diag],
                     }
-                    self.sqlite = Some((connection, session));
                 }
-                let (connection, session) = self.sqlite.as_mut().unwrap();
-                let mut host = Raw::with_connection(connection);
-                run_session(
-                    u,
-                    &lowered,
-                    &mut host,
-                    session,
-                    answerer,
-                    &[],
-                    None,
-                    None,
-                    fx,
-                )
-            }
-        };
+            };
+        }
+        let result = self
+            .session
+            .as_mut()
+            .unwrap()
+            .run(u, &lowered, answerer, &[], None, None, fx);
         match result {
             Ok((closure, _, counters)) => {
                 LAST_COUNTERS.with(|last| last.set(Some(counters)));
                 closure
             }
             Err(error) => {
-                self.dd = None;
-                self.sqlite = None;
+                self.session = None;
                 Closure {
                     rows: vec![],
                     diagnostics: vec![diagnostic(u, "engine", error)],
@@ -322,11 +367,23 @@ fn snapshot_closure<E: Engine>(
     Ok(Closure { rows, diagnostics })
 }
 
-pub fn configured_backend() -> Option<Backend> {
+/// `DL8_ENGINE`: unset is `ir:sqlite`.
+pub fn configured_backend() -> Result<Backend, String> {
     match std::env::var("DL8_ENGINE").as_deref() {
-        Ok("ir:dd") => Some(Backend::Dd),
-        Ok("ir:sqlite") => Some(Backend::Sqlite),
-        _ => None,
+        Err(std::env::VarError::NotPresent) | Ok("ir:sqlite") => Ok(Backend::Sqlite),
+        Ok("ir:dd") => Ok(Backend::Dd),
+        Ok(other) => Err(format!(
+            "unknown DL8_ENGINE {other:?}; expected ir:dd or ir:sqlite"
+        )),
+        Err(error) => Err(format!("DL8_ENGINE {error}; expected ir:dd or ir:sqlite")),
+    }
+}
+
+pub fn unknown_engine(u: &mut Universe, message: &str) -> Diagnostic {
+    let detail = u.string(message);
+    Diagnostic {
+        phase: "ir_eval",
+        payload: u.compound("unknown_engine", vec![detail]),
     }
 }
 
@@ -370,10 +427,7 @@ fn decode_terms<E: Engine>(
             }
         }
     }
-    for (&id, (_, args)) in dictionary
-        .iter()
-        .filter(|(_, (name, _))| name == "2:str")
-    {
+    for (&id, (_, args)) in dictionary.iter().filter(|(_, (name, _))| name == "2:str") {
         if !decoded.contains_key(&id) {
             if let Some(value) = engine.text(args[0], host)? {
                 decoded.insert(id, u.string(&value));
@@ -1068,7 +1122,9 @@ fn run_session<E: Engine>(
                 }
                 let answer_terms: Vec<_> = answers
                     .iter()
-                    .flat_map(|(_, _, rows)| rows.iter().flat_map(|answer| answer.args.iter().copied()))
+                    .flat_map(|(_, _, rows)| {
+                        rows.iter().flat_map(|answer| answer.args.iter().copied())
+                    })
                     .collect();
                 install_terms(u, lowered, engine, host, mapped, &answer_terms)?;
                 for (key, relation, rows) in answers {
@@ -1132,29 +1188,28 @@ fn run_session<E: Engine>(
     Ok((closure, frontier_results, counters))
 }
 
-fn run<E: Engine>(
+/// One fresh install of `program` on `backend`, run to its closure.
+#[allow(clippy::too_many_arguments)]
+fn run_fresh(
     u: &mut Universe,
-    lowered: &Lowered,
-    host: &mut Raw<'_>,
+    program: &Program,
+    backend: Backend,
     answerer: Option<&mut Answerer>,
     frontiers: &[Vec<SignedRow>],
     public_names: Option<&HashMap<TermId, String>>,
     live: Option<&mut LiveRun<'_>>,
     fx: &mut dyn FnMut(Trace),
-) -> Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError> {
-    let mut session =
-        EngineSession::<E>::install(lowered, host, structural_fingerprint(&lowered.ir))?;
-    run_session(
-        u,
-        lowered,
-        host,
-        &mut session,
-        answerer,
-        frontiers,
-        public_names,
-        live,
-        fx,
-    )
+) -> Result<(Closure, Vec<FrontierResult>), Diagnostic> {
+    let lowered = ir_lower::lower(u, program)?;
+    let fingerprint = structural_fingerprint(&lowered.ir);
+    let mut session = open_session(u, backend, &lowered, fingerprint)?;
+    match session.run(u, &lowered, answerer, frontiers, public_names, live, fx) {
+        Ok((closure, results, counters)) => {
+            LAST_COUNTERS.with(|last| last.set(Some(counters)));
+            Ok((closure, results))
+        }
+        Err(error) => Err(diagnostic(u, "engine", error)),
+    }
 }
 
 pub fn evaluate_ir(
@@ -1185,46 +1240,19 @@ pub fn evaluate_ir_frontiers(
     public_names: &HashMap<TermId, String>,
     fx: &mut dyn FnMut(Trace),
 ) -> Result<(Closure, Vec<FrontierResult>), Diagnostic> {
-    let lowered = ir_lower::lower(u, program)?;
-    let result = match backend {
-        Backend::Dd => {
-            let mut host = Raw::default();
-            run::<ivm_dd::Dd>(
-                u,
-                &lowered,
-                &mut host,
-                Some(answerer),
-                frontiers,
-                Some(public_names),
-                None,
-                fx,
-            )
-        }
-        Backend::Sqlite => {
-            let connection = rusqlite::Connection::open_in_memory()
-                .map_err(|error| diagnostic(u, "sqlite_open", error))?;
-            let mut host = Raw::with_connection(&connection);
-            run::<ivm_sqlite::Sqlite>(
-                u,
-                &lowered,
-                &mut host,
-                Some(answerer),
-                frontiers,
-                Some(public_names),
-                None,
-                fx,
-            )
-        }
-    };
-    match result {
-        Ok((closure, results, counters)) => {
-            LAST_COUNTERS.with(|last| last.set(Some(counters)));
-            Ok((closure, results))
-        }
-        Err(error) => Err(diagnostic(u, "engine", error)),
-    }
+    run_fresh(
+        u,
+        program,
+        backend,
+        Some(answerer),
+        frontiers,
+        Some(public_names),
+        None,
+        fx,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate_ir_live(
     u: &mut Universe,
     program: &Program,
@@ -1239,118 +1267,39 @@ pub fn evaluate_ir_live(
     LAST_COUNTERS.with(|counters| counters.set(None));
     LAST_ANSWERS.with(|rows| rows.borrow_mut().clear());
     LAST_REQUESTS.with(|count| count.set(0));
-    let lowered = ir_lower::lower(u, program)?;
     let mut live = LiveRun {
         max_settles,
         poll,
         on_settle,
     };
-    let result = match backend {
-        Backend::Dd => {
-            let mut host = Raw::default();
-            run::<ivm_dd::Dd>(
-                u,
-                &lowered,
-                &mut host,
-                Some(answerer),
-                &[],
-                Some(public_names),
-                Some(&mut live),
-                fx,
-            )
-        }
-        Backend::Sqlite => {
-            let connection = rusqlite::Connection::open_in_memory()
-                .map_err(|error| diagnostic(u, "sqlite_open", error))?;
-            let mut host = Raw::with_connection(&connection);
-            run::<ivm_sqlite::Sqlite>(
-                u,
-                &lowered,
-                &mut host,
-                Some(answerer),
-                &[],
-                Some(public_names),
-                Some(&mut live),
-                fx,
-            )
-        }
-    };
-    match result {
-        Ok((closure, _, counters)) => {
-            LAST_COUNTERS.with(|last| last.set(Some(counters)));
-            Ok(closure)
-        }
-        Err(error) => Err(diagnostic(u, "engine", error)),
-    }
+    run_fresh(
+        u,
+        program,
+        backend,
+        Some(answerer),
+        &[],
+        Some(public_names),
+        Some(&mut live),
+        fx,
+    )
+    .map(|(closure, _)| closure)
 }
 
 fn evaluate_ir_with_answerer(
     u: &mut Universe,
     program: &Program,
     backend: Backend,
-    mut answerer: Option<&mut Answerer>,
+    answerer: Option<&mut Answerer>,
     fx: &mut dyn FnMut(Trace),
 ) -> Closure {
     LAST_COUNTERS.with(|counters| counters.set(None));
     LAST_ANSWERS.with(|rows| rows.borrow_mut().clear());
     LAST_REQUESTS.with(|count| count.set(0));
-    let lowered = match ir_lower::lower(u, program) {
-        Ok(lowered) => lowered,
-        Err(diag) => {
-            return Closure {
-                rows: vec![],
-                diagnostics: vec![diag],
-            }
-        }
-    };
-    let result = match backend {
-        Backend::Dd => {
-            let mut host = Raw::default();
-            run::<ivm_dd::Dd>(
-                u,
-                &lowered,
-                &mut host,
-                answerer.as_deref_mut(),
-                &[],
-                None,
-                None,
-                fx,
-            )
-        }
-        Backend::Sqlite => match rusqlite::Connection::open_in_memory() {
-            Ok(connection) => {
-                let mut host = Raw::with_connection(&connection);
-                let result = run::<ivm_sqlite::Sqlite>(
-                    u,
-                    &lowered,
-                    &mut host,
-                    answerer.as_deref_mut(),
-                    &[],
-                    None,
-                    None,
-                    fx,
-                );
-                if let Ok(creates) = sqlite_create_count(&connection) {
-                    tracing::info!(target: "dl8::ir", sqlite_create_count = creates, "ir schema");
-                }
-                result
-            }
-            Err(error) => {
-                return Closure {
-                    rows: vec![],
-                    diagnostics: vec![diagnostic(u, "sqlite_open", error)],
-                }
-            }
-        },
-    };
-    match result {
-        Ok((closure, _, counters)) => {
-            LAST_COUNTERS.with(|last| last.set(Some(counters)));
-            closure
-        }
-        Err(error) => Closure {
+    match run_fresh(u, program, backend, answerer, &[], None, None, fx) {
+        Ok((closure, _)) => closure,
+        Err(diagnostic) => Closure {
             rows: vec![],
-            diagnostics: vec![diagnostic(u, "engine", error)],
+            diagnostics: vec![diagnostic],
         },
     }
 }

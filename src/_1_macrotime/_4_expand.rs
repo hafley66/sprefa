@@ -9,7 +9,7 @@ use super::_2_protocol::{
     MacroProgram, MacroResults,
 };
 use super::_3_rewrite::{reported_diagnostics, rewrite_active_graph};
-use crate::_6_eval::{evaluate, Program, Row, TermId, Trace, Universe};
+use crate::_6_eval::{Program, Row, TermId, Trace, Universe};
 use crate::_7_effect::{reduce_then_apply, Slice};
 use std::marker::PhantomData;
 
@@ -118,19 +118,14 @@ fn expand_rows(
     let none = u.atom("none");
     let mut seen: Vec<Vec<TermId>> = vec![graph.rows.clone()];
     let mut origin: Vec<TermId> = Vec::new();
-    let mut ir_session =
-        crate::_6_eval::ir_eval::configured_backend().map(crate::_6_eval::ir_eval::IrSession::new);
+    let mut ir_session = crate::_6_eval::ir_eval::IrSession::configured();
 
     for wave in 0..WAVE_LIMIT {
         program.seeds = macro_program.program.seeds.clone();
         program
             .seeds
             .extend(syntax_seeds(u, &protocol, &graph.rows));
-        let closure = if let Some(session) = ir_session.as_mut() {
-            session.evaluate(u, &program, None, &mut |_: Trace| {})
-        } else {
-            evaluate(u, &program, &mut |_: Trace| {})
-        };
+        let closure = ir_session.evaluate(u, &program, None, &mut |_: Trace| {});
         if !closure.diagnostics.is_empty() {
             let terms = closure
                 .diagnostics

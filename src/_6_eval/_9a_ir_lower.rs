@@ -1,12 +1,14 @@
 //! Checked DL8 goals lowered to the shared IVM operator algebra.
-use super::evaluate::sum_readback_constructors;
+use super::evaluate::{needs_bound_head, sum_readback_constructors};
 use super::kernel::{kernel_ref, linear, IntCmp, Kernel};
-use super::program::{AggregateKind, Arg, Diagnostic, Fold, Folding, Polarity, Program, Row, Rule};
+use super::program::{
+    AggregateKind, Arg, Diagnostic, Fold, Folding, Goal, Polarity, Program, Row, Rule,
+};
 use super::stratify::stratify;
 use super::term::{Term, TermId, Universe};
 use ivm_ir as ir;
 use ivm_ir::StrKind;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 const COMPONENT_BUDGET: usize = 4096;
 
@@ -1808,6 +1810,178 @@ fn compile_rule(
     })
 }
 
+/// Magic sets, one demand copy per caller level: a copy shared across strata
+/// can pull a lower negative read into its caller's recursive component.
+fn with_demand_in_strata(
+    u: &mut Universe,
+    program: &Program,
+    strata: &super::stratify::Strata,
+) -> (Program, HashSet<TermId>) {
+    let snapshots = {
+        let name = u.atom("intern_snapshot");
+        let kernel = u.compound("kernel", vec![name]);
+        u.compound("ref", vec![kernel])
+    };
+    let mut by_rel: HashMap<TermId, Vec<Rule>> = HashMap::new();
+    for rule in &program.rules {
+        by_rel.entry(rule.rel).or_default().push(rule.clone());
+    }
+    let aggregates: HashSet<TermId> = program
+        .rules
+        .iter()
+        .filter(|rule| rule.is_aggregate())
+        .map(|rule| rule.rel)
+        .collect();
+    let demanded: HashSet<TermId> = by_rel
+        .iter()
+        .filter(|(relation, rules)| {
+            !aggregates.contains(*relation)
+                && rules
+                    .iter()
+                    .any(|rule| needs_bound_head(u, rule, snapshots))
+        })
+        .map(|(relation, _)| *relation)
+        .collect();
+    // Pass-through variable names exist from the first run on, so a reload
+    // with more seeded products mints nothing new.
+    let widest = program
+        .rules
+        .iter()
+        .map(|rule| rule.head.len())
+        .max()
+        .unwrap_or(0);
+    let pass_vars: Vec<TermId> = (0..widest).map(|i| u.atom(&format!("__s{i}"))).collect();
+    let mut out = program.clone();
+    if demanded.is_empty() {
+        return (out, HashSet::new());
+    }
+    let mut hidden: HashSet<TermId> = HashSet::new();
+    let mut adorned: HashMap<(TermId, Vec<usize>, u32), (TermId, TermId)> = HashMap::new();
+    let mut queue: Vec<(Rule, u32)> = std::mem::take(&mut out.rules)
+        .into_iter()
+        .map(|rule| {
+            let level = strata.level(rule.rel);
+            (rule, level)
+        })
+        .collect();
+    let mut done: Vec<Rule> = Vec::new();
+    // Every adorned copy re-enters the queue, so the walk is bounded by the
+    // number of (product, bound positions) pairs times the rule count.
+    let budget = program.rules.len() * (1 + program.rules.len() * 8);
+    for _ in 0..budget {
+        let Some((mut rule, level)) = queue.pop() else {
+            break;
+        };
+        // Aggregate reads already force a strict dependency. Adorning their
+        // bodies can route that dependency back through a demand relation.
+        if rule.is_aggregate() {
+            done.push(rule);
+            continue;
+        }
+        let mut bound: HashSet<u32> = HashSet::new();
+        for at in 0..rule.body.len() {
+            let goal = rule.body[at].clone();
+            let positive = goal.polarity == Polarity::Positive;
+            if positive && demanded.contains(&goal.rel) {
+                let positions: Vec<usize> = goal
+                    .args
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, arg)| match arg {
+                        Arg::Var(v) => bound.contains(&v.0),
+                        Arg::Ground(_) => true,
+                        _ => false,
+                    })
+                    .map(|(position, _)| position)
+                    .collect();
+                let key = (goal.rel, positions.clone(), level);
+                let (demand_rel, adorned_rel) = match adorned.get(&key) {
+                    Some(pair) => *pair,
+                    None => {
+                        let base = u
+                            .unary(goal.rel, "ref")
+                            .and_then(|inner| {
+                                u.functor_or_atom(inner).map(|(name, _)| name.to_string())
+                            })
+                            .unwrap_or_else(|| format!("n{}", goal.rel.0));
+                        let mask: String = positions.iter().map(|p| p.to_string()).collect();
+                        // The suffix is the rel term itself, so the name survives a
+                        // db reload that renumbers the arena.
+                        let spelled = u.display(goal.rel).to_string();
+                        let demand_name =
+                            u.atom(&format!("dmd__{base}__{mask}__{spelled}__l{level}"));
+                        let demand_rel = u.compound("ref", vec![demand_name]);
+                        let adorned_name =
+                            u.atom(&format!("adn__{base}__{mask}__{spelled}__l{level}"));
+                        let adorned_rel = u.compound("ref", vec![adorned_name]);
+                        adorned.insert(key, (demand_rel, adorned_rel));
+                        hidden.insert(demand_rel);
+                        hidden.insert(adorned_rel);
+                        for original in by_rel.get(&goal.rel).into_iter().flatten() {
+                            let mut body = vec![Goal {
+                                polarity: Polarity::Positive,
+                                rel: demand_rel,
+                                args: positions
+                                    .iter()
+                                    .map(|p| original.head[*p].clone())
+                                    .collect(),
+                            }];
+                            body.extend(original.body.iter().cloned());
+                            queue.push((
+                                Rule {
+                                    rel: adorned_rel,
+                                    head: original.head.clone(),
+                                    body,
+                                    vars: original.vars.clone(),
+                                },
+                                level,
+                            ));
+                        }
+                        // Answers and frontiers write every product's source,
+                        // so the adorned copy reads the product too.
+                        let arity = goal.args.len();
+                        let vars: Vec<TermId> = pass_vars[..arity.min(pass_vars.len())].to_vec();
+                        let args: Vec<Arg> = (0..arity)
+                            .map(|i| Arg::Var(super::program::VarId(i as u32)))
+                            .collect();
+                        done.push(Rule {
+                            rel: adorned_rel,
+                            head: args.clone(),
+                            body: vec![Goal {
+                                polarity: Polarity::Positive,
+                                rel: goal.rel,
+                                args,
+                            }],
+                            vars,
+                        });
+                        (demand_rel, adorned_rel)
+                    }
+                };
+                done.push(Rule {
+                    rel: demand_rel,
+                    head: positions.iter().map(|p| goal.args[*p].clone()).collect(),
+                    body: rule.body[..at].to_vec(),
+                    vars: rule.vars.clone(),
+                });
+                rule.body[at].rel = adorned_rel;
+            }
+            if positive {
+                for arg in &goal.args {
+                    if let Arg::Var(v) = arg {
+                        bound.insert(v.0);
+                    }
+                }
+            }
+        }
+        done.push(rule);
+    }
+    if !queue.is_empty() {
+        tracing::error!(target: "dl8::eval", left = queue.len(), "demand rewrite budget exhausted");
+    }
+    out.rules = done;
+    (out, hidden)
+}
+
 pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic> {
     let mut program = program.clone();
     let intern_rel = kernel_ref(u, "intern");
@@ -1835,21 +2009,14 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
             Arg::Var(_) => {}
         }
     }
-    let (program, hidden) = super::sqlite_eval::with_demand_in_strata(u, &program, &strata);
+    let (program, hidden) = with_demand_in_strata(u, &program, &strata);
     let sum_readbacks = sum_readback_constructors(u, &program, snapshot_rel);
     let (strata, diagnostics) = stratify(u, &program);
     if let Some(diag) = diagnostics.into_iter().next() {
         return Err(diag);
     }
     let mut needed = BTreeSet::new();
-    let mut todo = vec![
-        none,
-        empty,
-        tuple,
-        intern_rel,
-        effect_rel,
-        snapshot_rel,
-    ];
+    let mut todo = vec![none, empty, tuple, intern_rel, effect_rel, snapshot_rel];
     todo.extend(program.served.iter().copied());
     for seed in &program.seeds {
         todo.push(seed.rel);

@@ -223,11 +223,9 @@ pub fn round_closure(
         .as_ref()
         .map(|answerer| answerer.relations().collect())
         .unwrap_or_default();
-    let ir_answered =
-        crate::_6_eval::ir_eval::configured_backend().is_some() && st.answerer.is_some();
+    let ir_answered = st.answerer.is_some();
     if st.ir_session.is_none() {
-        st.ir_session = crate::_6_eval::ir_eval::configured_backend()
-            .map(crate::_6_eval::ir_eval::IrSession::new);
+        st.ir_session = Some(crate::_6_eval::ir_eval::IrSession::configured());
     }
     let (closure, evaluation_diagnostics) = evaluate_round_answered(
         u,

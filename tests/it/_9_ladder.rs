@@ -9,7 +9,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
-const ENGINES: [&str; 5] = ["rust", "sqlite", "dd", "ir:dd", "ir:sqlite"];
+const ENGINES: [&str; 2] = ["ir:sqlite", "ir:dd"];
 
 fn run(
     rung: usize,
@@ -145,15 +145,6 @@ fn assert_counter_growth(
     );
 }
 
-fn trace_count(trace: &str, marker: &str) -> usize {
-    trace
-        .lines()
-        .filter_map(|line| line.split(marker).nth(1))
-        .filter_map(|tail| tail.split(|c: char| !c.is_ascii_digit()).next())
-        .filter_map(|digits| digits.parse::<usize>().ok())
-        .sum()
-}
-
 fn fold_frontier(
     size: usize,
     engine: &str,
@@ -230,7 +221,7 @@ fn rung_7_declared_fold_growth() {
             "polarity": "positive",
         })],
     );
-    for engine in ["ir:dd", "ir:sqlite"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let small = fold_frontier(8, engine, int_add.clone(), None, 9);
         let large = fold_frontier(80, engine, int_add.clone(), None, 81);
         for (size, frontier) in [(8, &small), (80, &large)] {
@@ -289,7 +280,7 @@ fn rung_7_declared_fold_algebras() {
         (json!({"f":"kernel","args":[{"a":"min_step"}]}), 0, 0),
         (json!({"f":"kernel","args":[{"a":"max_step"}]}), 0, 3),
     ];
-    for engine in ["rust", "ir:dd", "ir:sqlite"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         for (step, seed, expected) in &steps {
             let seeds = (1..=3)
                 .map(|value| call("input", vec![constant(value)]))
@@ -447,7 +438,7 @@ fn rung_2_join() {
             );
         }
     }
-    for engine in ["ir:dd", "ir:sqlite"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let measure = |size| {
             let mut seeds: Vec<_> = (0..size)
                 .map(|i| call("padding", vec![json!({"f":"const","args":[i]})]))
@@ -561,7 +552,7 @@ fn rung_5_recursion() {
                     ],
                 ),
             ];
-            let (closure, _, trace) = run(5, size, engine, program(seeds, rules));
+            let (closure, _, _) = run(5, size, engine, program(seeds, rules));
             check_count(
                 5,
                 size,
@@ -570,12 +561,6 @@ fn rung_5_recursion() {
                 rows(&closure, "path").len(),
                 size * (size + 1) / 2,
             );
-            if engine == "rust" && size > 0 {
-                assert!(
-                    trace.contains("Round"),
-                    "rung=5 size={size} engine={engine} counter=round_trace"
-                );
-            }
             if size >= 2 {
                 let cycle = (0..size)
                     .map(|i| {
@@ -612,7 +597,7 @@ fn rung_5_recursion() {
             }
         }
     }
-    for engine in ["ir:dd", "ir:sqlite"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let measure = |size| {
             let seeds = (0..size)
                 .map(|i| call("edge", vec![constant(i as i8), constant((i + 1) as i8)]))
@@ -723,7 +708,7 @@ fn rung_6_kernels() {
             );
         }
     }
-    for engine in ["ir:dd", "ir:sqlite"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let measure = |size| {
             let rules = (0..size)
                 .map(|i| {
@@ -780,7 +765,11 @@ fn rung_6_tuple_feeds_intern() {
             kernel("tuple", vec![variable(0), variable(1), variable(2)]),
             kernel(
                 "intern",
-                vec![json!({"f":"ref","args":[{"a":"pair"}]}), variable(2), variable(3)],
+                vec![
+                    json!({"f":"ref","args":[{"a":"pair"}]}),
+                    variable(2),
+                    variable(3),
+                ],
             ),
         ],
     )];
@@ -888,7 +877,7 @@ fn rung_6_scalar_kernel_edges() {
             )],
         ),
     ];
-    for engine in ["rust", "dd", "ir:dd", "ir:sqlite"] {
+    for engine in ["ir:sqlite", "ir:dd"] {
         let (closure, _, _) = run(6, 4, engine, program(vec![], rules.clone()));
         assert_eq!(
             rows(&closure, "counted"),
@@ -950,7 +939,7 @@ fn rung_7_demand() {
                     ],
                 ),
             ];
-            let (closure, _, trace) = run(7, size, engine, program(seeds, rules));
+            let (closure, _, _) = run(7, size, engine, program(seeds, rules));
             check_count(
                 7,
                 size,
@@ -959,13 +948,6 @@ fn rung_7_demand() {
                 rows(&closure, "derived").len(),
                 size,
             );
-            if engine == "rust" && size > 0 {
-                let calls = trace_count(&trace, "Demand { calls: ");
-                assert!(
-                    calls > 0 && calls <= 4 * size,
-                    "rung=7 size={size} engine={engine} counter=demand_calls: {calls}"
-                );
-            }
         }
     }
 }
@@ -1084,8 +1066,8 @@ fn rung_9_ir_reuses_one_comptime_install() {
             String::from_utf8(output.stderr).unwrap(),
         )
     };
-    let (fresh, _) = compile("rust");
-    for engine in ["ir:dd", "ir:sqlite"] {
+    let (fresh, _) = compile("ir:sqlite");
+    for engine in ["ir:sqlite", "ir:dd"] {
         let (retained, trace) = compile(engine);
         assert_eq!(retained["diagnostics"], json!([]), "{engine}");
         assert_eq!(
@@ -1174,11 +1156,7 @@ fn rung_11_handwritten_oracle_constructs() {
         (
             "10_aggregate_tables_only",
             7,
-            &[
-                ("tuple_count", 0),
-                ("item_count", 1),
-                ("pair_count", 3),
-            ],
+            &[("tuple_count", 0), ("item_count", 1), ("pair_count", 3)],
         ),
         ("11_intern_row_reuse", 8, &[("made", 2), ("who_made", 2)]),
     ];

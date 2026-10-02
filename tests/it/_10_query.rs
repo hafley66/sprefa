@@ -1,6 +1,6 @@
 //! `dl8 query` through the real binary over one throwaway git repository.
 //! Each source family is compared with `dl8 run` using the same compiled
-//! program and the Rust engine. The file test also reads the existing
+//! program and the default engine. The file test also reads the existing
 //! `dl8::fs_at` `files` trace field as the executor's enumeration count.
 
 use serde_json::{json, Value};
@@ -97,15 +97,14 @@ fn query(case: &Scratch, source: &Path, format: &str, log: Option<&str>) -> Outp
         .arg(source)
         .arg("--repo")
         .arg(&case.repo)
-        .args(["--format", format])
-        .env("DL8_ENGINE", "rust");
+        .args(["--format", format]);
     if let Some(log) = log {
         command.env("RUST_LOG", log);
     }
     command_output(&mut command, &format!("query --format {format}"))
 }
 
-fn rust_eval(case: &Scratch, source: &Path, served: &str, relation: &str) -> Vec<Value> {
+fn run_eval(case: &Scratch, source: &Path, served: &str, relation: &str) -> Vec<Value> {
     let compiled = command_output(
         Command::new(env!("CARGO_BIN_EXE_dl8"))
             .arg("compile")
@@ -122,7 +121,6 @@ fn rust_eval(case: &Scratch, source: &Path, served: &str, relation: &str) -> Vec
             .arg("run")
             .arg(&program)
             .args(["--serve", served])
-            .env("DL8_ENGINE", "rust")
             .current_dir(&case.repo),
         "run",
     );
@@ -171,7 +169,7 @@ fn traced_count(trace: &str, target: &str, field: &str) -> usize {
 }
 
 #[test]
-fn files_query_matches_rust_eval_in_json_and_table_and_counts_enumerated_files() {
+fn files_query_matches_run_eval_in_json_and_table_and_counts_enumerated_files() {
     let case = scratch("files");
     let source = case.directory.join("files.dl7");
     std::fs::write(
@@ -189,7 +187,7 @@ fn files_query_matches_rust_eval_in_json_and_table_and_counts_enumerated_files()
 
     let json = query(&case, &source, "json", Some("dl8::fs_at=info"));
     let rows = json_rows(&json);
-    assert_eq!(rows, rust_eval(&case, &source, "fs.at", "File"));
+    assert_eq!(rows, run_eval(&case, &source, "fs.at", "File"));
     assert_eq!(rows.len(), 1, "one constant-path match");
     assert_eq!(
         rows[0]["args"][0],
@@ -214,7 +212,7 @@ fn files_query_matches_rust_eval_in_json_and_table_and_counts_enumerated_files()
 }
 
 #[test]
-fn git_query_matches_rust_eval_in_json_and_table() {
+fn git_query_matches_run_eval_in_json_and_table() {
     let case = scratch("git");
     let source = case.directory.join("git.dl7");
     std::fs::write(
@@ -232,7 +230,7 @@ fn git_query_matches_rust_eval_in_json_and_table() {
 
     let json = query(&case, &source, "json", None);
     let rows = json_rows(&json);
-    assert_eq!(rows, rust_eval(&case, &source, "git.history", "Edge"));
+    assert_eq!(rows, run_eval(&case, &source, "git.history", "Edge"));
     assert_eq!(
         rows,
         vec![json!({
