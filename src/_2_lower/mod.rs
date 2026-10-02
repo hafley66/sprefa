@@ -10,7 +10,7 @@ pub mod cx;
 pub mod declare;
 #[path = "_5_derived.rs"]
 pub mod derived;
-#[path = "_7_execute.rs"]
+#[path = "_7_goals.rs"]
 pub mod execute;
 #[path = "_8_express.rs"]
 pub mod express;
@@ -34,6 +34,7 @@ pub mod promote;
 pub mod slots;
 #[path = "_12_units.rs"]
 pub mod units;
+pub mod _7a_tuple_positions;
 
 pub use api::{lower_datalog, Lowered};
 pub use cx::{CallPolicy, Cx};
