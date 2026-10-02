@@ -348,12 +348,19 @@ fn snapshot_closure<E: Engine>(
                     .or_default()
                     .push((cells[spec.key_count + 1], subject));
             }
-            for values in groups.values_mut() {
-                values.sort_by_key(|(rank, _)| *rank);
-                let values: Vec<_> = values.iter().map(|(_, value)| *value).collect();
-                if let Err(diagnostic) =
-                    super::evaluate::fold_generic_rows(u, program, &rows, &spec.fold, &values)
-                {
+            let values: Vec<Vec<TermId>> = groups
+                .into_values()
+                .map(|mut values| {
+                    values.sort_by_key(|(rank, _)| *rank);
+                    values.into_iter().map(|(_, value)| value).collect()
+                })
+                .collect();
+            let groups: Vec<&[TermId]> = values.iter().map(Vec::as_slice).collect();
+            // One row store for every group of the fold.
+            for result in
+                super::evaluate::fold_generic_row_groups(u, program, &rows, &spec.fold, &groups)
+            {
+                if let Err(diagnostic) = result {
                     diagnostics.push(diagnostic);
                 }
             }
@@ -503,8 +510,7 @@ fn install_terms<E: Engine>(
         if ready.is_empty() {
             break;
         }
-        let mut changes = Vec::new();
-        let mut outputs = BTreeSet::new();
+        let mut terms = Vec::with_capacity(ready.len());
         for term in &ready {
             let value = u.get(*term);
             let (shape, raw, args): ((String, usize, bool), Option<i64>, &[TermId]) = match value {
@@ -533,45 +539,26 @@ fn install_terms<E: Engine>(
                     args,
                 ),
             };
-            let Some(&(source, output)) = lowered.installers.get(&shape) else {
+            let Some(&functor) = lowered.constructors.get(&shape) else {
                 return Err(ivm_engine::EngineError::new(
                     ivm_engine::Stage::Settle,
                     None,
                     ivm_engine::ErrorKind::Unsupported("dynamic term constructor"),
                 ));
             };
-            let mut row = vec![term.0 as i64];
-            if let Some(raw) = raw {
-                row.push(raw);
+            let row = if let Some(raw) = raw {
+                vec![raw]
             } else if let Some(&cell) = text_cells.get(term) {
-                row.push(cell);
+                vec![cell]
             } else {
-                row.extend(args.iter().map(|arg| mapped[arg]));
-            }
-            changes.push(ir::SourceChange {
-                rel: source,
-                row,
-                w: 1,
-            });
-            outputs.insert(output);
+                args.iter().map(|arg| mapped[arg]).collect()
+            };
+            terms.push((functor, row));
         }
-        settle(engine, host, changes)?;
-        for output in outputs {
-            for (row, weight) in engine.snapshot(output, host)? {
-                if weight > 0 {
-                    if let (Some(&original), Some(&cell)) = (row.first(), row.last()) {
-                        let term = TermId(original as u32);
-                        if pending.contains(&term.0) {
-                            mapped.insert(term, cell);
-                        }
-                    }
-                }
-            }
-        }
-        for term in ready {
-            if mapped.contains_key(&term) {
-                pending.remove(&term.0);
-            }
+        let cells = engine.intern_terms(&terms, host)?;
+        for (term, cell) in ready.into_iter().zip(cells) {
+            mapped.insert(term, cell);
+            pending.remove(&term.0);
         }
     }
     if pending.is_empty() {
@@ -612,44 +599,27 @@ fn run_session<E: Engine>(
             break;
         }
         let mut ready = Vec::new();
-        let mut changes = Vec::new();
+        let mut terms = Vec::new();
         for &index in &pending {
             let spec = &lowered.terms[index];
             if spec.args.iter().all(|id| mapped.contains_key(id)) {
-                let mut row = vec![spec.original.0 as i64];
-                if let Some(raw) = spec.raw {
-                    row.push(raw);
+                let row = if let Some(raw) = spec.raw {
+                    vec![raw]
                 } else if let Some(text) = spec.text {
-                    row.push(text_cells[text]);
+                    vec![text_cells[text]]
                 } else {
-                    row.extend(spec.args.iter().map(|id| mapped[id]));
-                }
-                changes.push(ir::SourceChange {
-                    rel: spec.source,
-                    row,
-                    w: 1,
-                });
+                    spec.args.iter().map(|id| mapped[id]).collect()
+                };
+                terms.push((spec.functor, row));
                 ready.push(index);
             }
         }
         if ready.is_empty() {
             break;
         }
-        settle(engine, host, changes)?;
-        let mut outputs = BTreeSet::new();
-        for &index in &ready {
-            outputs.insert(lowered.terms[index].output);
-        }
-        for output in outputs {
-            for (row, weight) in engine.snapshot(output, host)? {
-                if weight > 0 {
-                    if let (Some(&original), Some(&id)) = (row.first(), row.last()) {
-                        mapped.insert(TermId(original as u32), id);
-                    }
-                }
-            }
-        }
-        for index in ready {
+        let cells = engine.intern_terms(&terms, host)?;
+        for (index, cell) in ready.into_iter().zip(cells) {
+            mapped.insert(lowered.terms[index].original, cell);
             pending.remove(&index);
         }
     }
