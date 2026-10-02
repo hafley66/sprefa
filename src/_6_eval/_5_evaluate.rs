@@ -557,20 +557,8 @@ fn fold_generic(
     Ok(accumulator)
 }
 
-/// Runs a declared fold against a completed row snapshot.
-pub(super) fn fold_generic_rows(
-    u: &mut Universe,
-    program: &Program,
-    rows: &[Row],
-    fold: &Fold,
-    values: &[TermId],
-) -> Result<TermId, Diagnostic> {
-    fold_generic_row_groups(u, program, rows, fold, &[values])
-        .pop()
-        .unwrap()
-}
-
-/// Shares the row snapshot and rule index across declared fold groups.
+/// Runs a declared fold against a completed row snapshot, one result per group; the row
+/// snapshot and rule index are built once for every group.
 pub(super) fn fold_generic_row_groups(
     u: &mut Universe,
     program: &Program,

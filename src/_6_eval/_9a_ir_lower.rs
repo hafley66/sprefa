@@ -64,6 +64,8 @@ pub struct Lowered {
     pub served: Vec<ServedSpec>,
     pub sources: BTreeMap<(u32, usize), ir::RelId>,
     pub installers: BTreeMap<(String, usize, bool), (ir::RelId, ir::RelId)>,
+    /// Constructor relation per term shape `(name, arity, raw)`.
+    pub constructors: BTreeMap<(String, usize, bool), ir::RelId>,
     pub atom_raws: HashMap<TermId, i64>,
     pub dynamic_atom_base: i64,
     pub fold_program: Option<Program>,
@@ -96,6 +98,8 @@ struct Builder {
     effect_nodes: BTreeMap<u32, Vec<ir::NodeId>>,
     snapshot_nodes: Vec<ir::NodeId>,
     declared_folds: Vec<DeclaredFoldSpec>,
+    /// `__ir_semantic` and the `9:1:ref` and `9:1:const` constructors it unions.
+    semantic: Option<(ir::RelId, [ir::RelId; 2])>,
 }
 
 struct FoldAux {
@@ -130,6 +134,7 @@ impl Builder {
             effect_nodes: BTreeMap::new(),
             snapshot_nodes: Vec::new(),
             declared_folds: Vec::new(),
+            semantic: None,
         }
     }
     fn rel(&mut self, name: String, cols: Vec<ir::Ty>, kind: ir::RelKind) -> ir::RelId {
@@ -241,6 +246,21 @@ fn join_constructor(
     relation: ir::RelId,
     id: ir::ColId,
 ) -> ir::NodeId {
+    if let Some((semantic, wrappers)) = b.semantic {
+        if relation == semantic {
+            // A wrapper read per constructor: each join is a decode of a constructor's id.
+            let parts = wrappers
+                .map(|wrapper| {
+                    let ctor = b.get_constructor(wrapper);
+                    b.node(ir::Op::Join {
+                        inputs: vec![input, ctor],
+                        equivalences: vec![vec![(0, id), (1, 0)]],
+                    })
+                })
+                .to_vec();
+            return b.node(ir::Op::Union(parts));
+        }
+    }
     let ctor = b.get_constructor(relation);
     b.node(ir::Op::Join {
         inputs: vec![input, ctor],
@@ -2235,6 +2255,13 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         ir::RelKind::Derived,
     );
     let semantic_stratum = b.ir.strata.len();
+    b.semantic = Some((
+        semantic,
+        [
+            constructors[&("9:1:ref".to_string(), 1, false)],
+            constructors[&("9:1:const".to_string(), 1, false)],
+        ],
+    ));
     if dynamic_lists {
         // `plain_inner` maps an untagged list cell to its plain twin. The
         // recursion walks cons cells, so a list built at run time needs no
@@ -2760,6 +2787,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         served,
         sources,
         installers,
+        constructors,
         atom_raws,
         dynamic_atom_base,
         fold_program,
