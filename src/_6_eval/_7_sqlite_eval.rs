@@ -42,6 +42,9 @@ const SNAPSHOT_ROWS: &str = "snapshot_rows";
 /// runaway the recursive CTE's depth cap catches); one round is one pass of
 /// every INSERT OR IGNORE statement of every materialized component.
 const NONLINEAR_ROUND_LIMIT: usize = 64;
+/// Flushes of minted terms into the dictionary per evaluation; a term a
+/// `dl_*` function mints reaches dictionary joins (`min`, `max`) one flush late.
+const DICTIONARY_SETTLE_LIMIT: usize = 16;
 
 /// Source tables plus one sqlite_ivm view for the program.
 pub trait IEvaluate {
@@ -91,6 +94,10 @@ pub struct SqliteEvaluate {
     folded_rows: Vec<Row>,
     fold_diagnostics: Vec<Diagnostic>,
     fold_failed: bool,
+    /// The view joins `sym`, `term`, `term_arg`; `flushed` counts the
+    /// `(terms, syms)` of the arena those tables hold.
+    uses_dictionary: bool,
+    flushed: (usize, usize),
 }
 
 impl SqliteEvaluate {
@@ -118,7 +125,46 @@ impl SqliteEvaluate {
             folded_rows: Vec::new(),
             fold_diagnostics: Vec::new(),
             fold_failed: false,
+            uses_dictionary: false,
+            flushed: (0, 0),
         })
+    }
+
+    /// Writes the terms and syms minted since the last flush; `false` when
+    /// there were none.
+    fn flush_dictionary(&mut self) -> Result<bool, Stop> {
+        if !self.uses_dictionary {
+            return Ok(false);
+        }
+        let (flush, flushed) = {
+            let guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+            let flushed = (guard.terms.len(), guard.syms.len());
+            if flushed == self.flushed {
+                return Ok(false);
+            }
+            (flush_rows(&guard, self.flushed), flushed)
+        };
+        flush_commit(&self.connection, flush).map_err(|_| Stop::Fail("eval flush"))?;
+        self.flushed = flushed;
+        Ok(true)
+    }
+
+    /// Rounds and folds again while the dictionary takes new terms.
+    fn settle_dictionary(&mut self) -> Result<(), Stop> {
+        for _ in 0..DICTIONARY_SETTLE_LIMIT {
+            if !self.flush_dictionary()? {
+                return Ok(());
+            }
+            self.run_rounds()?;
+            self.refresh_folds()?;
+        }
+        let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+        let limit = guard.int(DICTIONARY_SETTLE_LIMIT as i64);
+        self.diagnostics.push(Diagnostic {
+            phase: "evaluate",
+            payload: guard.compound("dictionary_settle_limit_exceeded", vec![limit]),
+        });
+        Ok(())
     }
 
     /// A retracted seed cannot be undone by INSERT OR IGNORE rounds: the
@@ -203,13 +249,40 @@ impl SqliteEvaluate {
     }
 
     /// Materialize declared aggregate heads after SQL has produced their body
-    /// proofs. The Rust fold helper owns ordering and step evaluation.
+    /// proofs. The Rust fold helper owns ordering and step evaluation. A fold
+    /// over another fold's rows settles one pass later, so passes repeat until
+    /// the folded rows stop moving; folds stratify, so one pass per fold ends it.
     fn refresh_folds(&mut self) -> Result<(), Stop> {
         if self.folds.is_empty() {
             return Ok(());
         }
         let prior = std::mem::take(&mut self.folded_rows);
         self.write_delta(&[], &prior)?;
+        for _ in 0..=self.folds.len() {
+            let folded = self.fold_pass()?;
+            let held: HashSet<&Row> = self.folded_rows.iter().collect();
+            let next: HashSet<&Row> = folded.iter().collect();
+            if held == next {
+                return Ok(());
+            }
+            let insert: Vec<Row> = folded.iter().filter(|row| !held.contains(row)).cloned().collect();
+            let delete: Vec<Row> =
+                self.folded_rows.iter().filter(|row| !next.contains(row)).cloned().collect();
+            self.write_delta(&insert, &delete)?;
+            self.folded_rows = folded;
+        }
+        let mut guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
+        let limit = guard.int(self.folds.len() as i64 + 1);
+        self.fold_diagnostics.push(Diagnostic {
+            phase: "evaluate",
+            payload: guard.compound("fold_refresh_limit_exceeded", vec![limit]),
+        });
+        self.fold_failed = true;
+        Ok(())
+    }
+
+    /// Every declared fold over the current closure, folded rows included.
+    fn fold_pass(&mut self) -> Result<Vec<Row>, Stop> {
         self.fold_diagnostics.clear();
         self.fold_failed = false;
         for (proof, _, _, _) in &self.folds {
@@ -258,9 +331,7 @@ impl SqliteEvaluate {
         self.fold_diagnostics
             .sort_by_key(|diagnostic| (diagnostic.phase, diagnostic.payload.0));
         self.fold_diagnostics.dedup();
-        self.write_delta(&folded, &[])?;
-        self.folded_rows = folded;
-        Ok(())
+        Ok(folded)
     }
 }
 
@@ -473,13 +544,8 @@ impl IEvaluate for SqliteEvaluate {
             tracing::error!(target: "dl8::eval", phase = "declare_tables", error = %e);
             Stop::Fail("eval declare_tables")
         })?;
-        if uses_dictionary {
-            let flush = {
-                let guard = self.arena.lock().map_err(|_| Stop::Fail("eval arena"))?;
-                flush_rows(&guard)
-            };
-            flush_commit(&self.connection, flush).map_err(|_| Stop::Fail("eval flush"))?;
-        }
+        self.uses_dictionary = uses_dictionary;
+        self.flush_dictionary()?;
         self.write_delta(&program.seeds, &[])?;
         if !view.is_empty() {
             tracing::debug!(target: "dl8::eval", view = %view, "declare_view sql");
@@ -1195,16 +1261,17 @@ fn with_intern_rows(u: &mut Universe, program: &Program) -> Program {
     out
 }
 
-fn flush_rows(u: &Universe) -> Flush {
+fn flush_rows(u: &Universe, (terms_from, syms_from): (usize, usize)) -> Flush {
     let syms = u
         .syms
         .iter()
         .enumerate()
+        .skip(syms_from)
         .map(|(id, text)| (id as i64, text.clone()))
         .collect();
     let mut terms: Vec<(i64, i64, i64, f64, i64)> = Vec::new();
     let mut arguments: Vec<(i64, i64, i64)> = Vec::new();
-    for (id, term) in u.terms.iter().enumerate() {
+    for (id, term) in u.terms.iter().enumerate().skip(terms_from) {
         let id = id as i64;
         match term {
             Term::Int(n) => terms.push((id, KIND_INT, *n, 0.0, 0)),
@@ -1407,6 +1474,7 @@ pub fn evaluate_sqlite(
                     }
                 })
                 .and_then(|_| selected.engine.refresh_folds())
+                .and_then(|_| selected.engine.settle_dictionary())
                 .map(|()| (selected.engine, seeds.clone()))
         }
         // A retraction without an exact cached state rebuilds: sqlite_ivm's
@@ -1488,6 +1556,7 @@ fn fresh_engine(arena: Arc<Mutex<Universe>>, program: &Program) -> Result<Sqlite
         delete: Vec::new(),
     })?;
     engine.refresh_folds()?;
+    engine.settle_dictionary()?;
     Ok(engine)
 }
 
