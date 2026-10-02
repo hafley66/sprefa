@@ -173,17 +173,23 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
             Err(reason) => CallResult::Error(reason),
         });
     }
-    if name != "name" || parts.len() != 2 {
-        return Err(Stop::Fail("name/2 callable expected"));
-    }
-    let (owner, label) = (parts[0], parts[1]);
-    let mut visited = Vec::new();
-    let target = match resolve_path(u, cx, owner, label, &mut visited) {
-        Ok(target) => target,
-        Err(segment) => {
-            let reason = u.compound("unresolved_name", vec![segment]);
-            return Ok(CallResult::Error(reason));
+    let (target, label) = match (name.as_str(), &parts[..]) {
+        // A generated goal names its kernel or prelude relation by identity.
+        ("ref", &[identity]) => {
+            let label = u.functor(identity).and_then(|(_, args)| args.last().copied());
+            (callable, label.unwrap_or(identity))
         }
+        ("name", &[owner, label]) => {
+            let mut visited = Vec::new();
+            match resolve_path(u, cx, owner, label, &mut visited) {
+                Ok(target) => (target, label),
+                Err(segment) => {
+                    let reason = u.compound("unresolved_name", vec![segment]);
+                    return Ok(CallResult::Error(reason));
+                }
+            }
+        }
+        _ => return Err(Stop::Fail("name/2 callable expected")),
     };
     if u.unary(target, "ref").is_none() {
         let reason = u.compound("not_relation", vec![label]);

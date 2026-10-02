@@ -1,7 +1,7 @@
 //! `lower_datalog/4`, `/5` and `lower_datalog_deferred/5`.
 //! Port of `0_lowerer.pl:21-147` and `:281-292`.
 
-use super::cx::{CallPolicy, Cx};
+use super::cx::{CallPolicy, Cx, Prelude};
 use super::declare::{lower_declarations, Declared};
 use super::derived::{lower_derived_bind_rules, Stop};
 use super::execute::lower_executables;
@@ -164,12 +164,14 @@ pub fn lower_datalog(
     bind_imports(u, &mut declared, module_owner, module_identity, imports);
     let scope = build_scope(u, &declared, &imported);
     let mut promoted = scope.promoted;
+    let prelude = Prelude::resolve(u, &scope.edges);
     let mut cx = Cx {
         u,
         reservations: &scope.reservations,
         edges: &scope.edges,
         policy,
         ground_values: false,
+        prelude,
     };
 
     let derived = lower_derived_bind_rules(&mut cx, &promoted.derived_reservations, 0)?;

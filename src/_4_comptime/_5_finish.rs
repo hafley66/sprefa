@@ -262,16 +262,32 @@ pub fn derived_bind_diagnostics(
     prolog_sort(u, bind)
 }
 
-/// The prelude's own relation bound to `name`, whatever a program declares.
-fn prelude_relation(u: &mut Universe, base_seeds: &[TermId], name: &str) -> Option<TermId> {
+/// Whether the program holds the prelude module's own `:` rows.
+fn prelude_loaded(u: &mut Universe, base_seeds: &[TermId]) -> bool {
     let prelude = u.atom("prelude");
     let module = u.compound("module", vec![prelude]);
     let owner = u.compound("ref", vec![module]);
-    let label = u.atom(name);
-    let label = u.compound("const", vec![label]);
-    base_seeds.iter().find_map(|seed| {
+    base_seeds
+        .iter()
+        .any(|seed| colon_call_parts(u, *seed).is_some_and(|[row_owner, ..]| row_owner == owner))
+}
+
+/// The prelude's own relation bound to `name`, whatever a program declares. `Err`
+/// is the `missing_prelude_relation(Name)` diagnostic.
+fn prelude_relation(u: &mut Universe, base_seeds: &[TermId], name: &str) -> Result<TermId, TermId> {
+    let prelude = u.atom("prelude");
+    let module = u.compound("module", vec![prelude]);
+    let owner = u.compound("ref", vec![module]);
+    let atom = u.atom(name);
+    let label = u.compound("const", vec![atom]);
+    let found = base_seeds.iter().find_map(|seed| {
         let [row_owner, row_name, relation, _] = colon_call_parts(u, *seed)?;
         (row_owner == owner && row_name == label).then_some(relation)
+    });
+    found.ok_or_else(|| {
+        let reason = u.compound("missing_prelude_relation", vec![atom]);
+        let none = u.atom("none");
+        located(u, "check", none, reason)
     })
 }
 
@@ -282,13 +298,20 @@ pub fn unmet_bound_diagnostics(
     base_seeds: &[TermId],
     rows: &[TermId],
 ) -> Vec<TermId> {
-    let (Some(obligation), Some(discharged), Some(extends_diagnostic), Some(extends_reason)) = (
-        prelude_relation(u, base_seeds, "obligation"),
-        prelude_relation(u, base_seeds, "discharged"),
-        prelude_relation(u, base_seeds, "extends_diagnostic"),
-        prelude_relation(u, base_seeds, "extends_reason"),
-    ) else {
+    // Without the prelude, lowering wrote no obligation (`missing_prelude_relation`).
+    if !prelude_loaded(u, base_seeds) {
         return vec![];
+    }
+    let mut found = Vec::with_capacity(4);
+    let mut missing = Vec::new();
+    for name in ["obligation", "discharged", "extends_diagnostic", "extends_reason"] {
+        match prelude_relation(u, base_seeds, name) {
+            Ok(relation) => found.push(relation),
+            Err(diagnostic) => missing.push(diagnostic),
+        }
+    }
+    let [obligation, discharged, extends_diagnostic, extends_reason] = found[..] else {
+        return missing;
     };
     let by_relation = rows_by_relation(u, rows);
     let arguments = |relation: TermId| -> Vec<Vec<TermId>> {

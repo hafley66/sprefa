@@ -143,7 +143,7 @@ fn expression_rule(
     let bind = cx.compound("derived_bind", vec![bind_node_id]);
     let bind_value = cx.compound("var", vec![bind]);
     let goals = replace_in(cx, lowered.value, bind_value, &lowered.goals);
-    let gated = super::execute::bound_gates(cx, &goals, &lowered.origins);
+    let gated = super::execute::bound_gates(cx, &goals, &lowered.origins).map_err(Stop::Diagnostic)?;
     let name_const = cx.compound("const", vec![name]);
     let index_const = cx.compound("const", vec![index]);
     let head = colon_head(cx, owner, name_const, bind_value, index_const);
@@ -160,7 +160,6 @@ fn expression_rule(
     let mut siblings = gated.rules;
     siblings.extend(super::execute::generic_edge_rules(
         cx,
-        owner,
         &gated.goals,
         &gated.goal_nodes,
     ));
@@ -183,7 +182,8 @@ fn literal_construction(cx: &mut Cx, target_node: TermId, owner: TermId) -> Opti
     let node = super::forms::node(cx.u, target_node)?;
     let value = super::forms::literal_value(cx.u, node.payload)?;
     let primitive = super::express::literal_primitive(cx, value);
-    let constructor = cx.compound("name", vec![owner, primitive]);
+    let primitive = cx.compound("primitive", vec![primitive]);
+    let constructor = cx.compound("ref", vec![primitive]);
     Some(super::express::lower_construction(
         cx,
         constructor,
@@ -342,7 +342,6 @@ fn compound_edge_target(cx: &mut Cx, target: TermId, owner: TermId) -> Outcome {
                     let value = cx.compound("var", vec![lookup]);
                     let goal = super::express::colon_goal(
                         cx,
-                        lookup_owner,
                         bind_owner,
                         name,
                         value,
@@ -376,11 +375,8 @@ fn compound_edge_target(cx: &mut Cx, target: TermId, owner: TermId) -> Outcome {
 }
 
 fn colon_head(cx: &mut Cx, owner: TermId, label: TermId, target: TermId, index: TermId) -> TermId {
-    let colon = cx.atom(":");
-    let relation = cx.compound("name", vec![owner, colon]);
     let owner_ref = cx.compound("ref", vec![owner]);
-    let arguments = cx.u.list(&[owner_ref, label, target, index]);
-    cx.compound("call", vec![relation, arguments])
+    cx.kernel_call(None, ":", &[owner_ref, label, target, index])
 }
 
 pub fn rule_origins(cx: &mut Cx, rule_index: i64, node: TermId, goal_nodes: &[TermId]) -> Vec<TermId> {

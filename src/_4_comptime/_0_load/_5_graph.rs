@@ -301,7 +301,8 @@ fn comptime_relations(
             continue;
         }
         let relation = u.atom(&fact.relation);
-        let head = u.compound("name", vec![owner, relation]);
+        let callable = u.compound("tsi_relation", vec![owner, relation]);
+        let head = u.compound("ref", vec![callable]);
         let argument_list = u.list(&arguments);
         seeds.push(u.compound("call", vec![head, argument_list]));
     }

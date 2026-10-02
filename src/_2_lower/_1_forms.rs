@@ -21,6 +21,12 @@ pub fn node(u: &Universe, term: TermId) -> Option<Node> {
     })
 }
 
+/// `name(Scope, Label)`, a name the source wrote. Generated goals call kernel and
+/// prelude relations by identity, never through this.
+pub fn written_name(u: &mut Universe, scope: TermId, label: TermId) -> TermId {
+    u.compound("name", vec![scope, label])
+}
+
 pub fn node_id(u: &Universe, term: TermId) -> Option<TermId> {
     node(u, term).map(|n| n.id)
 }
