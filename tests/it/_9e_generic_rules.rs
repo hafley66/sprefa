@@ -262,3 +262,53 @@ fn eresult_in_a_rule_is_the_bound_instance() {
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// `dl6.Key` applied as a body item (plans/v8/2026-10-02-key-as-generic.plan.md):
+/// the bind lands on its owner, the instance `application(Key, [edge])` owns
+/// `Target` and `unique`, a `(* ..)` group is one instance over the tuple of
+/// both edges, `(dl6.Key ?Target ?Instance)` reads every instance back,
+/// `key_column` splits them into owner columns, and `Extends` sees only the
+/// owner's own binds.
+#[test]
+fn key_application_builds_reads_back_and_splits() {
+    let expected = vec![
+        "Extends: ref(Account), ref(Named), ref(Account)",
+        "Extends: ref(Person), ref(Named), ref(Person)",
+        "dl6.key_column: ref(Account), const(name), const(0)",
+        "dl6.key_column: ref(Person), const(name), const(0)",
+        "dl6.key_column: ref(Person), const(ssn), const(1)",
+        "kernel(:): ref(Account), const(age), ref(primitive(int)), const(1)",
+        "kernel(:): ref(Account), const(name), ref(primitive(str)), const(0)",
+        "kernel(:): ref(Person), const(age), ref(primitive(int)), const(2)",
+        "kernel(:): ref(Person), const(name), ref(primitive(str)), const(0)",
+        "kernel(:): ref(Person), const(ssn), ref(primitive(str)), const(1)",
+        "kernel(:): ref(application(dl6.Key, [application(tuple, [ref(edge(Person, name)), ref(edge(Person, ssn))])])), const(Target), ref(application(tuple, [ref(edge(Person, name)), ref(edge(Person, ssn))])), const(0)",
+        "kernel(:): ref(application(dl6.Key, [application(tuple, [ref(edge(Person, name)), ref(edge(Person, ssn))])])), const(unique), ref(application(primitive(bool), [true])), const(1)",
+        "kernel(:): ref(application(dl6.Key, [edge(Account, name)])), const(Target), ref(edge(Account, name)), const(0)",
+        "kernel(:): ref(application(dl6.Key, [edge(Account, name)])), const(unique), ref(application(primitive(bool), [true])), const(1)",
+        "kernel(:): ref(application(tuple, [ref(edge(Person, name)), ref(edge(Person, ssn))])), const(0), ref(edge(Person, name)), const(0)",
+        "kernel(:): ref(application(tuple, [ref(edge(Person, name)), ref(edge(Person, ssn))])), const(1), ref(edge(Person, ssn)), const(1)",
+        "key_instance: ref(application(tuple, [ref(edge(Person, name)), ref(edge(Person, ssn))])), ref(application(dl6.Key, [application(tuple, [ref(edge(Person, name)), ref(edge(Person, ssn))])]))",
+        "key_instance: ref(edge(Account, name)), ref(application(dl6.Key, [edge(Account, name)]))",
+    ];
+    for engine in ENGINES {
+        let program = compile("7_key.dl7", engine);
+        let names = &program["program"]["names"];
+        let rendered: BTreeSet<String> = program["compiler_rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| render_row(row, names))
+            .filter(|row| {
+                ["kernel(:): ref(Account", "kernel(:): ref(Person", "kernel(:): ref(application"]
+                    .iter()
+                    .any(|prefix| row.starts_with(prefix))
+                    || ["Extends: ", "dl6.key_column: ", "key_instance: "]
+                        .iter()
+                        .any(|prefix| row.starts_with(prefix))
+            })
+            .collect();
+        let rows: Vec<String> = rendered.into_iter().collect();
+        assert_eq!(rows, expected, "{engine}");
+    }
+}

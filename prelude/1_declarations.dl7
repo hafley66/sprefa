@@ -50,11 +50,6 @@
       (: options type)
       (: return type)))
 
-(: Key
-   (* (: name str)
-      (: options type)
-      (: return type)))
-
 ; A column whose target is a value node carries a type and a default. The
 ; value node is `intern Type [Literal]`, so both read out of one intern.
 (: column_value
@@ -71,33 +66,6 @@
    (* (: source type)
       (: name any)
       (: return any)))
-
-(: keyed_edge
-   (* (: source type)
-      (: name str)
-      (: options type)
-      (: target any)
-      (: source_index int)))
-
-(: key_predecessor
-   (* (: source type)
-      (: source_index int)
-      (: prior_index int)))
-
-(: key_has_predecessor
-   (* (: source type)
-      (: source_index int)))
-
-(: key_rank
-   (* (: source type)
-      (: source_index int)
-      (: result_index int)))
-
-(: composite_key
-   (* (: source type)
-      (: position int)
-      (: name str)
-      (: options type)))
 
 (: history_v1_edge
    (* (: source type)

@@ -151,12 +151,8 @@ fn tuple_instance(
             }
         }
         let value = resolve_argument(u, cx, *item)?;
-        let plain = u
-            .unary(value, "ref")
-            .or_else(|| u.unary(value, "const"))
-            .unwrap_or(value);
         let ordinal = u.int(position as i64);
-        rows.push(u.compound(":", vec![application, ordinal, plain, ordinal]));
+        rows.push(u.compound(":", vec![application, ordinal, value, ordinal]));
     }
     Ok(u.compound("ref", vec![application]))
 }

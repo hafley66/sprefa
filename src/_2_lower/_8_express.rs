@@ -367,7 +367,9 @@ pub fn expression_callable(cx: &mut Cx, name: TermId, owner: TermId) -> Result<A
                 let arity = cx.edges.arity(callable);
                 // A product whose `return` is an expression has no rows of its
                 // own: applying it builds or reads back an instance.
-                if kind_name == "product" && super::generic::is_generic_callable(cx, callable) {
+                let generic = super::generic::is_generic_callable(cx, callable)
+                    || super::generic::eigo(cx, callable).is_some();
+                if kind_name == "product" && generic {
                     return Ok(Applied::Generic(callable));
                 }
                 if arity == 0 {
@@ -581,7 +583,7 @@ fn lower_generic_value(
     argument_nodes: &[TermId],
     owner: TermId,
 ) -> Lowering {
-    if cx.ground_values {
+    if cx.ground_values || super::generic::eigo(cx, callable).is_some() {
         let shape = cx.atom("generic_application");
         let reason = cx.compound("not_built_yet", vec![shape]);
         let diagnostic = cx.diagnostic(node_id, reason);

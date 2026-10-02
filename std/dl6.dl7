@@ -6,3 +6,30 @@
    (* (: rel type)
       (: arity int)
       (: keys any)))
+
+; `Key` marks the binds it is applied to. Applied as a body item it builds one
+; instance per application; `Target` is the bind's edge, or the tuple of the
+; edges of a `(* ..)` group, and the application evaluates to it.
+(Key:
+   (* (^Target: any)
+      (unique: true)))
+
+(<- (node ?Instance)
+    (Key ?Target ?Instance))
+
+; The binds a `Key` instance targets, at their position on the owner.
+(key_column:
+   (* (rel: type)
+      (column: any)
+      (position: int)))
+
+(<- (key_column ?Owner ?Column ?Position)
+    (Key ?Edge ?Instance)
+    (: ?Owner ?Column ?Type ?Position)
+    (edge_ref ?Owner ?Column ?Edge))
+
+(<- (key_column ?Owner ?Column ?Position)
+    (Key ?Group ?Instance)
+    (: ?Group ?Slot ?Edge ?Slot)
+    (: ?Owner ?Column ?Type ?Position)
+    (edge_ref ?Owner ?Column ?Edge))

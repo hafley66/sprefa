@@ -28,6 +28,8 @@ pub struct Derived {
     pub origins: Vec<TermId>,
     /// Bind edges that replace their deferred edge: an instance check builds.
     pub edges: Vec<TermId>,
+    /// Edges of the instances product-body applications build.
+    pub instance_edges: Vec<TermId>,
 }
 
 impl Derived {
@@ -59,6 +61,27 @@ pub fn lower_derived_bind_rules(
                 out.edges.push(edge);
                 continue;
             }
+        }
+        if kind == "application" {
+            match super::generic::application_item(cx, parts.owner, parts.name, parts.target, rule_index) {
+                Ok(applied) => {
+                    out.instance_edges.extend(applied.edges);
+                    out.push(
+                        &mut rule_index,
+                        Block {
+                            rules: applied.rules,
+                            origins: applied.origins,
+                        },
+                    );
+                }
+                Err(diagnostic) => {
+                    if deferrable_skip(cx, &[diagnostic]) {
+                        continue;
+                    }
+                    return Err(Stop::Diagnostic(diagnostic));
+                }
+            }
+            continue;
         }
         let block = match kind.as_str() {
             "compound_edge" => compound_edge_rule(cx, parts.owner, parts.target, rule_index)?,

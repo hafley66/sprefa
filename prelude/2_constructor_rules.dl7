@@ -1,11 +1,3 @@
-; Canonical application identities use the tuple and intern relations.
-(<- (Key ?Name ?Options ?Result)
-    (intern Key (tuple ?Name ?Options) ?Result))
-
-(<- (Key ?Name ?Options ?Result)
-    (intern_snapshot Key ?Arguments ?Result)
-    (tuple ?Name ?Options ?Arguments))
-
 ; HistoryV1 options are ordinary typed data. The first version accepts copy
 ; mode plus a source contract and interns source plus options as the
 ; specialization identity. The intern request comes before the check: the

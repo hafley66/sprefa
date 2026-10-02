@@ -314,6 +314,23 @@ pub fn resolve_edges(
             }
         }
         let node = origins.edge_origin(owner, name, index);
+        // A body application's instance owns its edges and mints its intern
+        // rows once.
+        if let Some([callee, list]) = u.args::<2>(owner, "application") {
+            if built.insert(owner) {
+                let tagged: Vec<TermId> = u
+                    .as_list(list)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|item| match u.functor(item) {
+                        Some(_) => u.compound("ref", vec![item]),
+                        None => u.compound("const", vec![item]),
+                    })
+                    .collect();
+                let instance = u.compound("ref", vec![owner]);
+                intern_calls(u, callee, &tagged, instance, &mut minted);
+            }
+        }
         if u.functor(target)
             .is_some_and(|(n, a)| n == "application" && a.len() == 2)
         {

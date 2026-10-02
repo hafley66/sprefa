@@ -1,0 +1,27 @@
+; `dl6.Key` applied as a body item: one bind, a `(* ..)` group of two, and the
+; readback of every instance. `Named` checks that Key edges sit on the
+; instance, never on the owner.
+(dl6: (import "@std/dl6"))
+
+(Account:
+   (* (dl6.Key (name: str))
+      (age: int)))
+
+(Person:
+   (* (dl6.Key
+         (* (name: str)
+            (ssn: str)))
+      (age: int)))
+
+(Named:
+   (* (name: str)))
+
+(asked Account Named)
+(asked Person Named)
+
+(key_instance:
+   (* (target: any)
+      (instance: any)))
+
+(<- (key_instance ?Target ?Instance)
+    (dl6.Key ?Target ?Instance))

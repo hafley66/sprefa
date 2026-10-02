@@ -608,12 +608,34 @@ fn generic_goal(
     if head_mode || cx.ground_values {
         return Err(not_built_yet(cx, node_id));
     }
-    let arity = cx.edges.arity(callable);
-    let all = slots::callable_slots(cx, &slots::Callable::Target(callable), arity);
+    let return_atom = cx.atom("return");
+    let (all, return_indices) = match super::generic::eigo(cx, callable) {
+        // An eigo product reads back as its parameters, then the instance.
+        Some(binds) => {
+            let mut all: Vec<slots::Slot> = binds
+                .iter()
+                .filter(|bind| bind.parameter)
+                .enumerate()
+                .map(|(index, bind)| slots::Slot {
+                    index: index as i64,
+                    label: Some(bind.label),
+                })
+                .collect();
+            let instance = all.len() as i64;
+            all.push(slots::Slot {
+                index: instance,
+                label: Some(return_atom),
+            });
+            (all, vec![instance])
+        }
+        None => {
+            let arity = cx.edges.arity(callable);
+            let all = slots::callable_slots(cx, &slots::Callable::Target(callable), arity);
+            (all, cx.edges.return_indices(callable, return_atom))
+        }
+    };
     let arguments =
         normalize_call_arguments(cx, head, node_id, &all, argument_nodes, owner, head_mode)?;
-    let return_atom = cx.atom("return");
-    let return_indices = cx.edges.return_indices(callable, return_atom);
     let mut columns = Vec::with_capacity(all.len());
     let mut result = None;
     for (slot, value) in all.iter().zip(&arguments.arguments) {
@@ -678,6 +700,13 @@ fn expand_generic_goals(
             !term_has_var(cx, term) || out.iter().any(|g| positive_mentions(cx, *g, term))
         };
         let builds = columns.iter().all(|c| bound(cx, *c)) && !bound(cx, result);
+        let eigo = cx
+            .u
+            .unary(constructor, "ref")
+            .is_some_and(|callable| super::generic::eigo(cx, callable).is_some());
+        if builds && eigo {
+            return Err(not_built_yet(cx, node));
+        }
         let node_id = forms::node_id(cx.u, node).unwrap_or(node);
         let key = cx.compound("generic_arguments", vec![node_id]);
         let arguments = cx.compound("var", vec![key]);
@@ -879,6 +908,12 @@ fn lower_path_call(
     let Some(label) = express::path_segment_atom(cx.u, segments[segments.len() - 1]) else {
         return Err(cx.plain(node_id, "invalid_path"));
     };
+    let eigo = super::generic::head_product(cx, first, owner)
+        .filter(|callable| super::generic::eigo(cx, *callable).is_some());
+    if let Some(callable) = eigo {
+        let call = generic_goal(cx, label, node_id, callable, &items[1..], owner, head_mode)?;
+        return Ok(Some(call));
+    }
     let mut arguments = Vec::with_capacity(items.len() - 1);
     let mut goals = Vec::new();
     let mut goal_nodes = Vec::new();

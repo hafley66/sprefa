@@ -188,6 +188,9 @@ pub fn lower_datalog(
             }
         }
     }
+    promoted
+        .edges
+        .extend(derived.instance_edges.iter().copied());
     let (alias_rules, alias_origins) =
         promoted_alias_rules(&mut cx, &promoted.promotions, derived.rules.len() as i64);
     let rule_index = (derived.rules.len() + alias_rules.len()) as i64;
