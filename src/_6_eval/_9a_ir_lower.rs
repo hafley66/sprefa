@@ -44,6 +44,8 @@ pub struct TermSpec {
     pub functor: ir::RelId,
     pub args: Vec<TermId>,
     pub raw: Option<ir::Cell>,
+    /// Index into `Lowered::texts`: the one argument of a `2:str` term is that text's cell.
+    pub text: Option<usize>,
     pub source: ir::RelId,
     pub output: ir::RelId,
 }
@@ -242,6 +244,52 @@ fn join_constructor(
         inputs: vec![input, ctor],
         equivalences: vec![vec![(0, id), (1, 0)]],
     })
+}
+
+/// `const(2:str(Text))` at `id` to the text cell column.
+fn const_text(
+    b: &mut Builder,
+    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
+    current: &mut ir::NodeId,
+    width: &mut usize,
+    id: ir::ColId,
+) -> Result<ir::ColId, &'static str> {
+    let wrap = constructor(constructors, "9:1:const", 1, false)?;
+    let text = constructor(constructors, "2:str", 1, false)?;
+    *current = join_constructor(b, *current, *width, wrap, id);
+    let inner = assert_width(*width + 1);
+    *width += 2;
+    *current = join_constructor(b, *current, *width, text, inner);
+    let cell = assert_width(*width + 1);
+    *width += 2;
+    Ok(cell)
+}
+
+/// The text cell at `cell` minted as `const(2:str(Text))`.
+fn text_const(
+    b: &mut Builder,
+    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
+    current: &mut ir::NodeId,
+    width: &mut usize,
+    cell: ir::ColId,
+) -> Result<ir::ColId, &'static str> {
+    let wrap = constructor(constructors, "9:1:const", 1, false)?;
+    let text = constructor(constructors, "2:str", 1, false)?;
+    *current = b.node(ir::Op::Mint {
+        input: *current,
+        functor: text,
+        args: vec![cell],
+    });
+    let inner = assert_width(*width);
+    *width += 1;
+    *current = b.node(ir::Op::Mint {
+        input: *current,
+        functor: wrap,
+        args: vec![inner],
+    });
+    let id = assert_width(*width);
+    *width += 1;
+    Ok(id)
 }
 
 fn equal_columns(left: ir::ColId, right: ir::ColId) -> ir::Expr {
@@ -489,14 +537,9 @@ fn compile_kernel(
             if inputs.len() != 3 {
                 return Err("str.cons arity");
             }
-            let wrap = constructor(constructors, "9:1:const", 1, false)?;
             if let (Some(head), Some(rest)) = (inputs[0], inputs[1]) {
-                *current = join_constructor(b, *current, *width, wrap, head);
-                let head_text = assert_width(*width + 1);
-                *width += 2;
-                *current = join_constructor(b, *current, *width, wrap, rest);
-                let rest_text = assert_width(*width + 1);
-                *width += 2;
+                let head_text = const_text(b, constructors, current, width, head)?;
+                let rest_text = const_text(b, constructors, current, width, rest)?;
                 *current = b.node(ir::Op::StrCons {
                     input: *current,
                     mode: ir::StrMode::Construct {
@@ -506,17 +549,9 @@ fn compile_kernel(
                 });
                 let text = assert_width(*width);
                 *width += 1;
-                *current = b.node(ir::Op::Mint {
-                    input: *current,
-                    functor: wrap,
-                    args: vec![text],
-                });
-                output[2] = Some(assert_width(*width));
-                *width += 1;
+                output[2] = Some(text_const(b, constructors, current, width, text)?);
             } else if let Some(whole) = inputs[2] {
-                *current = join_constructor(b, *current, *width, wrap, whole);
-                let whole_text = assert_width(*width + 1);
-                *width += 2;
+                let whole_text = const_text(b, constructors, current, width, whole)?;
                 *current = b.node(ir::Op::StrCons {
                     input: *current,
                     mode: ir::StrMode::Decompose { whole: whole_text },
@@ -524,20 +559,8 @@ fn compile_kernel(
                 let head_text = assert_width(*width);
                 let rest_text = assert_width(*width + 1);
                 *width += 2;
-                *current = b.node(ir::Op::Mint {
-                    input: *current,
-                    functor: wrap,
-                    args: vec![head_text],
-                });
-                output[0] = Some(assert_width(*width));
-                *width += 1;
-                *current = b.node(ir::Op::Mint {
-                    input: *current,
-                    functor: wrap,
-                    args: vec![rest_text],
-                });
-                output[1] = Some(assert_width(*width));
-                *width += 1;
+                output[0] = Some(text_const(b, constructors, current, width, head_text)?);
+                output[1] = Some(text_const(b, constructors, current, width, rest_text)?);
             } else {
                 *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
                 return Ok(());
@@ -547,7 +570,6 @@ fn compile_kernel(
             if inputs.len() != 1 {
                 return Err("str.nil arity");
             }
-            let wrap = constructor(constructors, "9:1:const", 1, false)?;
             *current = b.mfp(
                 *current,
                 vec![],
@@ -556,13 +578,7 @@ fn compile_kernel(
             );
             let text = assert_width(*width);
             *width += 1;
-            *current = b.node(ir::Op::Mint {
-                input: *current,
-                functor: wrap,
-                args: vec![text],
-            });
-            output[0] = Some(assert_width(*width));
-            *width += 1;
+            output[0] = Some(text_const(b, constructors, current, width, text)?);
         }
         Kernel::Str(op) => {
             let kinds = op.args();
@@ -577,14 +593,17 @@ fn compile_kernel(
                     *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
                     return Ok(());
                 };
-                *current = join_constructor(b, *current, *width, wrap, input);
-                let mut column = assert_width(*width + 1);
-                *width += 2;
-                if *kind == StrKind::Int {
-                    *current = join_constructor(b, *current, *width, int, column);
-                    column = assert_width(*width + 1);
+                let column = if *kind == StrKind::Int {
+                    *current = join_constructor(b, *current, *width, wrap, input);
+                    let inner = assert_width(*width + 1);
                     *width += 2;
-                }
+                    *current = join_constructor(b, *current, *width, int, inner);
+                    let column = assert_width(*width + 1);
+                    *width += 2;
+                    column
+                } else {
+                    const_text(b, constructors, current, width, input)?
+                };
                 columns.push(column);
             }
             *current = b.node(ir::Op::Str {
@@ -592,18 +611,16 @@ fn compile_kernel(
                 op,
                 args: columns,
             });
-            if op.out().is_some() {
-                let mut result = assert_width(*width);
+            if op.out() == Some(StrKind::Int) {
+                let result = assert_width(*width);
                 *width += 1;
-                if op.out() == Some(StrKind::Int) {
-                    *current = b.node(ir::Op::Mint {
-                        input: *current,
-                        functor: int,
-                        args: vec![result],
-                    });
-                    result = assert_width(*width);
-                    *width += 1;
-                }
+                *current = b.node(ir::Op::Mint {
+                    input: *current,
+                    functor: int,
+                    args: vec![result],
+                });
+                let result = assert_width(*width);
+                *width += 1;
                 *current = b.node(ir::Op::Mint {
                     input: *current,
                     functor: wrap,
@@ -611,6 +628,10 @@ fn compile_kernel(
                 });
                 output[kinds.len()] = Some(assert_width(*width));
                 *width += 1;
+            } else if op.out().is_some() {
+                let result = assert_width(*width);
+                *width += 1;
+                output[kinds.len()] = Some(text_const(b, constructors, current, width, result)?);
             }
         }
         Kernel::IntAdd => {
@@ -1928,9 +1949,19 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     for (index, term) in &existing_terms {
         let (name, args, raw) = match term {
             Term::Int(n) => ("0:int".to_string(), vec![], Some(*n)),
+            Term::Float(f) => ("0:float".to_string(), vec![], Some(f.0.to_bits() as i64)),
             Term::Bool(value) => ("1:bool".to_string(), vec![], Some(i64::from(*value))),
             Term::Str(sym) => {
+                // `ivm_ir::compare` puts bare text before every constructor;
+                // `2:str` sorts strings after bools and before atoms, as Rust does.
                 texts.push((TermId(*index as u32), u.sym_str(*sym).to_owned()));
+                shapes.push((
+                    TermId(*index as u32),
+                    "2:str".to_string(),
+                    vec![],
+                    None,
+                    Some(texts.len() - 1),
+                ));
                 continue;
             }
             Term::Atom(sym) => (
@@ -1943,17 +1974,18 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
                 children.clone(),
                 None,
             ),
-            Term::Float(_) => return Err(unsupported(u, "float")),
         };
         constructor_keys.insert((name.clone(), args.len(), raw.is_some()));
         if matches!(term, Term::Atom(_)) {
             atom_raws.insert(TermId(*index as u32), raw.unwrap());
         }
-        shapes.push((TermId(*index as u32), name, args, raw));
+        shapes.push((TermId(*index as u32), name, args, raw, None));
     }
     for (name, args, raw) in [
         ("0:int", 0, true),
+        ("0:float", 0, true),
         ("1:bool", 0, true),
+        ("2:str", 1, false),
         ("3:atom", 0, true),
         ("9:1:const", 1, false),
         ("9:1:primitive", 1, false),
@@ -1967,23 +1999,18 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let mut constructors = BTreeMap::new();
     let mut prewarm = BTreeMap::new();
     for (name, width, raw) in constructor_keys {
+        let column = if name == "0:float" {
+            ir::Ty::Real
+        } else if raw {
+            ir::Ty::Int
+        } else {
+            ir::Ty::Id
+        };
         let mut ctor_cols = vec![ir::Ty::Id];
-        ctor_cols.extend((0..width.max(usize::from(raw))).map(|_| {
-            if raw {
-                ir::Ty::Int
-            } else {
-                ir::Ty::Id
-            }
-        }));
+        ctor_cols.extend((0..width.max(usize::from(raw))).map(|_| column));
         let ctor = b.rel(name.clone(), ctor_cols, ir::RelKind::Constructor);
         let mut source_cols = vec![ir::Ty::Int];
-        source_cols.extend((0..width.max(usize::from(raw))).map(|_| {
-            if raw {
-                ir::Ty::Int
-            } else {
-                ir::Ty::Id
-            }
-        }));
+        source_cols.extend((0..width.max(usize::from(raw))).map(|_| column));
         let source = b.rel(
             format!("__ir_prewarm_{}", ctor),
             source_cols.clone(),
@@ -2016,14 +2043,16 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     }
     let terms = shapes
         .into_iter()
-        .map(|(original, name, args, raw)| {
-            let ctor = constructors[&(name, args.len(), raw.is_some())];
+        .map(|(original, name, args, raw, text)| {
+            let width = if text.is_some() { 1 } else { args.len() };
+            let ctor = constructors[&(name, width, raw.is_some())];
             let (source, output) = prewarm[&ctor];
             TermSpec {
                 original,
                 functor: ctor,
                 args,
                 raw,
+                text,
                 source,
                 output,
             }
