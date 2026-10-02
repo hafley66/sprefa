@@ -1,14 +1,19 @@
 //! `(doc.layout ?Doc ?Width ?Text)`: render a Doc sum term through `pretty`.
+//! The `fs.file` sink renders its documents with the same `render`.
 
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::kernel::kernel_ref;
 use crate::_6_eval::{Row, Term, TermId, Universe};
 use crate::_9_runtime::reconcile::{application_values, Cadence, IExecutor};
 use pretty::RcDoc;
+use std::collections::HashMap;
 use std::time::Duration;
 
 pub const RELATION: &str = "doc.layout";
 const MAX_DOC_DEPTH: usize = 256;
+/// Items one `concat` chain may unroll: the left spine a fold of `doc.join`
+/// builds, one level per item.
+const MAX_CONCAT_SPINE: usize = 1 << 20;
 
 pub struct DocLayout {
     relation: TermId,
@@ -17,13 +22,6 @@ pub struct DocLayout {
 impl DocLayout {
     pub fn new(relation: TermId) -> DocLayout {
         DocLayout { relation }
-    }
-
-    fn render(&self, u: &mut Universe, rows: &Store, term: TermId, width: usize) -> Option<String> {
-        let doc = doc_term(u, rows, term, 0)?;
-        let mut bytes = Vec::new();
-        doc.render(width, &mut bytes).ok()?;
-        String::from_utf8(bytes).ok()
     }
 }
 
@@ -38,6 +36,7 @@ impl IExecutor for DocLayout {
 
     fn answer(&mut self, u: &mut Universe, store: &Store, pending: &[TermId]) -> Vec<Row> {
         let mut rows = Vec::with_capacity(pending.len());
+        let variants = store_variants(u, store);
         for &application in pending {
             let Some(values) = application_values(u, application) else {
                 continue;
@@ -51,7 +50,7 @@ impl IExecutor for DocLayout {
             else {
                 continue;
             };
-            let Some(text) = self.render(u, store, *doc, width) else {
+            let Some(text) = render(u, &variants, *doc, width) else {
                 continue;
             };
             let doc = u.compound("ref", vec![*doc]);
@@ -75,9 +74,105 @@ impl IExecutor for DocLayout {
     }
 }
 
+/// Constructor to variant label, read off the `:` rows: `(: Owner Label
+/// ref(Constructor) Index)`. The first row for a constructor names it.
+pub type Variants = HashMap<TermId, String>;
+
+/// The variants of the rows of one store.
+pub fn store_variants(u: &mut Universe, rows: &Store) -> Variants {
+    let colon = kernel_ref(u, ":");
+    let mut variants = Variants::new();
+    let Some(table) = rows.table(colon) else {
+        return variants;
+    };
+    for index in 0..table.len() {
+        let row = table.row(index as u32);
+        if let (Some(label), Some(target)) = (row.get(1), row.get(2)) {
+            insert_variant(u, &mut variants, *label, *target);
+        }
+    }
+    variants
+}
+
+/// The variants of compiler rows `call(ref(kernel(:)), [Owner, Label, Target, Index])`.
+pub fn row_variants(u: &mut Universe, compiler_rows: &[TermId]) -> Variants {
+    let colon = kernel_ref(u, ":");
+    let mut variants = Variants::new();
+    for row in compiler_rows {
+        let Some([rel, args]) = u.args::<2>(*row, "call") else {
+            continue;
+        };
+        if rel != colon {
+            continue;
+        }
+        let args = u.as_list(args).unwrap_or_default();
+        if let [_, label, target, _] = args[..] {
+            insert_variant(u, &mut variants, label, target);
+        }
+    }
+    variants
+}
+
+fn insert_variant(u: &Universe, variants: &mut Variants, label: TermId, target: TermId) {
+    let Some(constructor) = u.unary(target, "ref") else {
+        return;
+    };
+    if variants.contains_key(&constructor) {
+        return;
+    }
+    if let Some(name) = term_name(u, label) {
+        variants.insert(constructor, name.to_owned());
+    }
+}
+
+/// One Doc term laid out at `width`.
+pub fn render(u: &mut Universe, variants: &Variants, term: TermId, width: usize) -> Option<String> {
+    let doc = doc_term(u, variants, term, 0)?;
+    let mut bytes = Vec::new();
+    doc.render(width, &mut bytes).ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// `(variant, arguments)` of one Doc application, `ref`-wrapped or bare.
+fn doc_parts(u: &mut Universe, variants: &Variants, term: TermId) -> Option<(String, Vec<TermId>)> {
+    let term = u.unary(term, "ref").unwrap_or(term);
+    let [constructor, arguments] = u.args::<2>(term, "application")?;
+    let variant = variants.get(&constructor)?.clone();
+    Some((variant, u.as_list(arguments)?))
+}
+
+/// The parts of a `concat` whose first part is a `concat`, and so on down the
+/// left spine, as one list: a fold of `doc.join` nests one level per item.
+fn concat_spine(u: &mut Universe, variants: &Variants, parts: TermId) -> Option<Vec<TermId>> {
+    let mut tails: Vec<Vec<TermId>> = Vec::new();
+    let mut head = tuple_parts(u, parts)?;
+    for _ in 0..MAX_CONCAT_SPINE {
+        let nested = match head.first() {
+            Some(first) => match doc_parts(u, variants, *first) {
+                Some((variant, arguments)) if variant == "concat" && arguments.len() == 1 => {
+                    Some(tuple_parts(u, arguments[0])?)
+                }
+                _ => None,
+            },
+            None => None,
+        };
+        let Some(nested) = nested else {
+            let mut out = head;
+            for tail in tails.into_iter().rev() {
+                out.extend(tail);
+            }
+            return Some(out);
+        };
+        tails.push(head[1..].to_vec());
+        head = nested;
+    }
+    tracing::warn!(target: "dl8::doc_layout", "concat spine limit exceeded");
+    None
+}
+
 fn doc_term(
     u: &mut Universe,
-    rows: &Store,
+    variants: &Variants,
     term: TermId,
     depth: usize,
 ) -> Option<RcDoc<'static, ()>> {
@@ -86,10 +181,7 @@ fn doc_term(
         return None;
     }
     let child_depth = depth + 1;
-    let term = u.unary(term, "ref").unwrap_or(term);
-    let [constructor, arguments] = u.args::<2>(term, "application")?;
-    let variant = variant_name(u, rows, constructor)?;
-    let arguments = u.as_list(arguments)?;
+    let (variant, arguments) = doc_parts(u, variants, term)?;
     match variant.as_str() {
         "text" => {
             let [text] = arguments.as_slice() else {
@@ -104,11 +196,11 @@ fn doc_term(
             let [parts] = arguments.as_slice() else {
                 return None;
             };
-            let parts = tuple_parts(u, *parts)?;
+            let parts = concat_spine(u, variants, *parts)?;
             Some(RcDoc::concat(
                 parts
                     .into_iter()
-                    .map(|part| doc_term(u, rows, part, child_depth))
+                    .map(|part| doc_term(u, variants, part, child_depth))
                     .collect::<Option<Vec<_>>>()?,
             ))
         }
@@ -117,13 +209,13 @@ fn doc_term(
                 return None;
             };
             let indent = isize::try_from(u.as_int(*indent)?).ok()?;
-            Some(doc_term(u, rows, *body, child_depth)?.nest(indent))
+            Some(doc_term(u, variants, *body, child_depth)?.nest(indent))
         }
         "group" => {
             let [body] = arguments.as_slice() else {
                 return None;
             };
-            Some(doc_term(u, rows, *body, child_depth)?.group())
+            Some(doc_term(u, variants, *body, child_depth)?.group())
         }
         "line" if arguments.is_empty() => Some(RcDoc::line()),
         _ => None,
@@ -138,21 +230,6 @@ fn tuple_parts(u: &mut Universe, term: TermId) -> Option<Vec<TermId>> {
     let tuple = u.atom("tuple");
     (u.get(constructor) == u.get(tuple)).then_some(())?;
     u.as_list(items)
-}
-
-fn variant_name(u: &mut Universe, rows: &Store, constructor: TermId) -> Option<String> {
-    let colon = kernel_ref(u, ":");
-    let table = rows.table(colon)?;
-    let target = u.compound("ref", vec![constructor]);
-    (0..table.len()).find_map(|index| {
-        let row = table.row(index as u32);
-        (row.get(2) == Some(&target))
-            .then(|| {
-                row.get(1)
-                    .and_then(|label| term_name(u, *label).map(str::to_owned))
-            })
-            .flatten()
-    })
 }
 
 fn term_name(u: &Universe, mut term: TermId) -> Option<&str> {

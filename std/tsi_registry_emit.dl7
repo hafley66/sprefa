@@ -1,9 +1,9 @@
 ; Renders `registry.rs`, the TSI relation table of hafley_scm
 ; (`crates/hafley_scm/src/read/tsi/registry.rs`), from the `registry`,
 ; `registry_arg`, `registry_note` and `arg_kind` rows of `@std/tsi`.
-; `piece` rows carry one Doc per line, `section_text` a section's lines in
-; key order, and `fs.file` the template chunks and sections in order. Run
-; from the repository root:
+; `piece` rows carry one Doc per line, `section_document` a section's lines
+; in key order, and `fs.file` the template chunks and sections in order, one
+; document the sink renders once. Run from the repository root:
 ;
 ;     dl8 build std/tsi_registry_emit.dl7
 (doc: (import "@std/doc"))
@@ -76,35 +76,40 @@
    (* (name: str)
       (item: any)))
 
-(<- (args_item ?Name (tuple 0 ?Variant))
+(<- (args_item ?Name (tuple 0 (doc.Doc.text ?Variant)))
     (tsi.registry_arg ?Name 0 ?Kind)
     (variant_of ?Kind ?Variant))
 
-(<- (args_item ?Name (tuple ?Position ?Text))
+(<- (args_item ?Name
+       (tuple ?Position
+          (doc.Doc.concat
+             [(doc.Doc.text ", ")
+              (doc.Doc.text ?Variant)])))
     (tsi.registry_arg ?Name ?Position ?Kind)
     (int.ne ?Position 0)
-    (variant_of ?Kind ?Variant)
-    (str.cons ", " ?Variant ?Text))
+    (variant_of ?Kind ?Variant))
 
-(args_text:
+(args_document:
    (* (name: str)
-      (text: str)))
+      (document: doc.Doc)))
 
-(<- (args_text ?Name (fold doc.join "" ?Item))
+(<- (args_document ?Name (fold doc.join "" ?Item))
     (args_item ?Name ?Item))
 
 (role_suffix:
    (* (name: str)
-      (suffix: str)))
+      (suffix: doc.Doc)))
 
-(<- (role_suffix ?Name "")
+(<- (role_suffix ?Name (doc.Doc.text ""))
     (tsi.registry ?Index ?Name ""))
 
-(<- (role_suffix ?Name ?Suffix)
+(<- (role_suffix ?Name
+       (doc.Doc.concat
+          [(doc.Doc.text " // ")
+           (doc.Doc.text ?Role)]))
     (tsi.registry ?Index ?Name ?Role)
     (str.len ?Role ?Length)
-    (int.gt ?Length 0)
-    (str.cons " // " ?Role ?Suffix))
+    (int.gt ?Length 0))
 
 (<- (piece "entries" (tuple ?Index 0 ?Line)
        (doc.Doc.concat
@@ -127,11 +132,11 @@
 (<- (piece "entries" (tuple ?Index 3 0)
        (doc.Doc.concat
           [(doc.Doc.text "        args: &[")
-           (doc.Doc.text ?Args)
+           ?Args
            (doc.Doc.text "],")
-           (doc.Doc.text ?Suffix)]))
+           ?Suffix]))
     (tsi.registry ?Index ?Name ?Role)
-    (args_text ?Name ?Args)
+    (args_document ?Name ?Args)
     (role_suffix ?Name ?Suffix))
 
 (<- (piece "entries" (tuple ?Index 4 0)
@@ -140,15 +145,6 @@
 
 ; Every piece is a line, the newline before it included, except the pieces
 ; of the import list, which share one line.
-(rendered:
-   (* (section: str)
-      (key: any)
-      (text: str)))
-
-(<- (rendered ?Section ?Key ?Text)
-    (piece ?Section ?Key ?Document)
-    (doc.layout ?Document 1000 ?Text))
-
 (inline_section:
    (* (section: str)))
 
@@ -158,20 +154,23 @@
    (* (section: str)
       (item: any)))
 
-(<- (section_item ?Section (tuple ?Key ?Line))
-    (rendered ?Section ?Key ?Text)
-    (not (inline_section ?Section))
-    (str.cons "\n" ?Text ?Line))
+(<- (section_item ?Section
+       (tuple ?Key
+          (doc.Doc.concat
+             [(doc.Doc.text "\n")
+              ?Document])))
+    (piece ?Section ?Key ?Document)
+    (not (inline_section ?Section)))
 
-(<- (section_item ?Section (tuple ?Key ?Text))
-    (rendered ?Section ?Key ?Text)
+(<- (section_item ?Section (tuple ?Key ?Document))
+    (piece ?Section ?Key ?Document)
     (inline_section ?Section))
 
-(section_text:
+(section_document:
    (* (section: str)
-      (text: str)))
+      (document: doc.Doc)))
 
-(<- (section_text ?Section (fold doc.join "" ?Item))
+(<- (section_document ?Section (fold doc.join "" ?Item))
     (section_item ?Section ?Item))
 
 ; The file: template chunks and section slots in `order`.
@@ -282,12 +281,12 @@ pub fn check(name: &str, args: &[Arg]) -> Result<(), String> {
 (file_item:
    (* (item: any)))
 
-(<- (file_item (tuple ?Order ?Text))
+(<- (file_item (tuple ?Order (doc.Doc.text ?Text)))
     (chunk ?Order ?Text))
 
-(<- (file_item (tuple ?Order ?Text))
+(<- (file_item (tuple ?Order ?Document))
     (slot ?Order ?Section)
-    (section_text ?Section ?Text))
+    (section_document ?Section ?Document))
 
 (<- (fs.file "target/tsi/registry.rs" (fold doc.join "" ?Item))
     (file_item ?Item))

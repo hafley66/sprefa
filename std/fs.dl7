@@ -1,5 +1,6 @@
 ; `@std/fs`: files read through git when the root is a repository, off the disk
 ; otherwise. `at` is the tracked tree of one root at one revision.
+(doc: (import "@std/doc"))
 
 (: at
    (* (: root str)
@@ -26,8 +27,9 @@
    (* (: path str)
       (: return str)))
 
-; `file` is a sink: `dl8 build` writes every row's text to its path, relative
-; to `--out`, after the comptime fixpoint settles.
+; `file` is a sink: `dl8 build` renders every row's document once and writes
+; the text to its path, relative to `--out`, after the comptime fixpoint
+; settles.
 (: file
    (* (: path str)
-      (: text str)))
+      (: document doc.Doc)))

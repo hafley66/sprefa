@@ -1,5 +1,5 @@
-; `dl8 build`: lines joined in index order into one file per path. Index 10
-; sorts after 2 because the key is an int.
+; `dl8 build`: line documents joined in index order into one file per path.
+; Index 10 sorts after 2 because the key is an int.
 (doc: (import "@std/doc"))
 (fs: (import "@std/fs"))
 
@@ -17,7 +17,7 @@
    (* (path: str)
       (item: any)))
 
-(<- (line_item ?Path (tuple ?Index ?Text))
+(<- (line_item ?Path (tuple ?Index (doc.Doc.text ?Text)))
     (line ?Path ?Index ?Text))
 
 (<- (fs.file ?Path (fold doc.join "" ?Item))

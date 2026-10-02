@@ -2,6 +2,7 @@
 //! module node, never by the name an importer gives the module.
 
 use crate::_6_eval::{Term, TermId, Universe};
+use crate::_9_runtime::executors::doc_layout::{render, row_variants};
 use std::collections::BTreeMap;
 
 /// The `file` relation of module `@std/fs`, when the program imports it.
@@ -29,8 +30,12 @@ fn text(u: &Universe, term: TermId) -> Option<String> {
     }
 }
 
-/// Every `(fs.file Path Text)` row, by path. Two texts for one path is
-/// `fs_file_conflict(Path)`; a non-string cell is `fs_file_not_text(Row)`.
+/// Line width the sink lays a document out at.
+const FILE_WIDTH: usize = 100;
+
+/// Every `(fs.file Path Document)` row, by path, its document rendered once.
+/// Two texts for one path is `fs_file_conflict(Path)`; a path that is not a
+/// string or a document that does not render is `fs_file_not_doc(Row)`.
 pub fn files(
     u: &mut Universe,
     compiler_rows: &[TermId],
@@ -40,6 +45,7 @@ pub fn files(
     let Some(sink) = file_sink(u, compiler_rows) else {
         return Ok(out);
     };
+    let variants = row_variants(u, compiler_rows);
     for row in compiler_rows {
         let Some([rel, args]) = u.args::<2>(*row, "call") else {
             continue;
@@ -49,11 +55,12 @@ pub fn files(
         }
         let cells = u.as_list(args).unwrap_or_default();
         let parsed = match cells[..] {
-            [path, body] => text(u, path).zip(text(u, body)),
+            [path, document] => text(u, path)
+                .and_then(|path| Some((path, render(u, &variants, document, FILE_WIDTH)?))),
             _ => None,
         };
         let Some((path, body)) = parsed else {
-            diagnostics.push(u.compound("fs_file_not_text", vec![*row]));
+            diagnostics.push(u.compound("fs_file_not_doc", vec![*row]));
             continue;
         };
         match out.get(&path) {
