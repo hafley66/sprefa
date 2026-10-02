@@ -5,7 +5,9 @@ use super::tokens::{
     bool_token, caret_prefix, decoded_escape, dotted_segments, float_token, integer_token,
     term_delimiter, valid_atom, valid_identifier,
 };
+use crate::_6_eval::term::Blob;
 use crate::_6_eval::{TermId, Universe};
+use std::sync::Arc;
 
 /// Offsets, lines and columns count CHARACTERS: v7 reads through
 /// `string_codes/2`. Lines and columns are 1-based, offsets 0-based.
@@ -25,8 +27,16 @@ pub struct Read {
 pub struct Reader<'a> {
     pub u: &'a mut Universe,
     pub path: TermId,
+    /// The source, registered once; names and texts that are a slice of it
+    /// intern as spans.
+    pub source: Arc<str>,
+    pub blob: Blob,
     pub chars: Vec<char>,
     pub at: usize,
+    /// Byte offset of `at` in `source`.
+    pub byte: usize,
+    /// Byte range of the last `take_token`.
+    pub token: (usize, usize),
     pub pos: Pos,
     pub index: u32,
     pub rows: Vec<TermId>,
@@ -37,11 +47,17 @@ pub struct Reader<'a> {
 
 pub fn read(u: &mut Universe, path: &str, text: &str) -> Read {
     let path_atom = u.atom(path);
+    let source: Arc<str> = Arc::from(text);
+    let blob = u.blob(source.clone());
     let mut reader = Reader {
         u,
         path: path_atom,
+        source,
+        blob,
         chars: text.chars().collect(),
         at: 0,
+        byte: 0,
+        token: (0, 0),
         pos: Pos {
             offset: 0,
             line: 1,
@@ -74,6 +90,7 @@ impl Reader<'_> {
     pub fn bump(&mut self) -> char {
         let c = self.chars[self.at];
         self.at += 1;
+        self.byte += c.len_utf8();
         self.pos.offset += 1;
         if c == '\n' {
             self.pos.line += 1;
@@ -165,13 +182,31 @@ impl Reader<'_> {
 
     pub fn take_token(&mut self) -> String {
         let mut out = String::new();
+        let from = self.byte;
         while let Some(c) = self.peek() {
             if term_delimiter(c) {
                 break;
             }
             out.push(self.bump());
         }
+        self.token = (from, self.byte);
         out
+    }
+
+    /// The atom of the last token, a span of the source.
+    fn token_atom(&mut self) -> TermId {
+        let (from, to) = self.token;
+        self.u.atom_span(self.blob, from, to)
+    }
+
+    /// `text`, read from bytes `from..to`: a span when the source holds it
+    /// verbatim, an arena string when escapes changed it.
+    fn text_term(&mut self, text: &str, from: usize, to: usize) -> TermId {
+        if self.source.get(from..to) == Some(text) {
+            self.u.string_span(self.blob, from, to)
+        } else {
+            self.u.string(text)
+        }
     }
 
     pub fn top_forms(&mut self) -> Result<Vec<TermId>, TermId> {
@@ -331,12 +366,13 @@ impl Reader<'_> {
 
     pub fn read_query_term(&mut self, node_id: TermId, start: Pos) -> Result<TermId, TermId> {
         self.bump();
+        let from = self.byte;
         let text = match self.read_query() {
             Ok(text) => text,
             Err((code, at)) => return Err(self.plain_error(node_id, code, at)),
         };
         let end = self.pos;
-        let text = self.u.string(&text);
+        let text = self.text_term(&text, from, self.byte - 1);
         let query = self.u.compound("tree_sitter_query", vec![text]);
         let payload = self.u.compound("literal", vec![query]);
         self.push_row(node_id, start, end);
@@ -371,12 +407,13 @@ impl Reader<'_> {
 
     pub fn read_string_term(&mut self, node_id: TermId, start: Pos) -> Result<TermId, TermId> {
         self.bump();
+        let from = self.byte;
         let text = match self.read_string() {
             Ok(text) => text,
             Err((code, at)) => return Err(self.plain_error(node_id, code, at)),
         };
         let end = self.pos;
-        let text = self.u.string(&text);
+        let text = self.text_term(&text, from, self.byte - 1);
         let payload = self.u.compound("literal", vec![text]);
         self.push_row(node_id, start, end);
         Ok(self.node(node_id, payload))
@@ -417,7 +454,7 @@ impl Reader<'_> {
             });
         }
         let end = self.pos;
-        let name = self.u.atom(&name);
+        let name = self.token_atom();
         let symbol = self.u.compound("symbol", vec![name]);
         let payload = self.u.compound("literal", vec![symbol]);
         self.push_row(node_id, start, end);
@@ -447,7 +484,7 @@ impl Reader<'_> {
             return Ok(self.read_variable_path(top, node_id, start, &segments));
         }
         let identity = self.variable_identity(top, node_id, &name);
-        let name = self.u.atom(&name);
+        let name = self.token_atom();
         let payload = self.u.compound("variable", vec![identity, name]);
         self.push_row(node_id, start, end);
         Ok(self.node(node_id, payload))
@@ -625,7 +662,7 @@ impl Reader<'_> {
             let b = self.u.boolean(token == "true");
             self.u.compound("literal", vec![b])
         } else if valid_atom(&token) {
-            let name = self.u.atom(&token);
+            let name = self.token_atom();
             self.u.compound("atom", vec![name])
         } else {
             return Err(self.named_error(node_id, "invalid_atom", &token, start));

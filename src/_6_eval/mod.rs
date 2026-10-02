@@ -28,4 +28,4 @@ pub mod term;
 
 pub use evaluate::{evaluate, Closure, Trace};
 pub use program::{Arg, Diagnostic, Goal, Polarity, Program, Row, Rule};
-pub use term::{Sym, Term, TermId, Universe};
+pub use term::{Blob, Sym, Term, TermId, Universe};

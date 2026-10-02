@@ -719,7 +719,7 @@ impl IRowStore for SqliteRowStore {
         let mut syms = Vec::with_capacity((to.syms - from.syms) * 2);
         for index in from.syms..to.syms {
             syms.push(Value::Integer(index as i64));
-            syms.push(Value::Text(u.syms[index].clone()));
+            syms.push(Value::Text(u.syms[index].to_owned()));
         }
         self.append(
             &self.table("sym"),
