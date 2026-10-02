@@ -111,44 +111,61 @@
     (str.len ?Role ?Length)
     (int.gt ?Length 0))
 
-(<- (piece "entries" (tuple ?Index 0 ?Line)
-       (doc.Doc.concat
-          [(doc.Doc.text "    // ")
-           (doc.Doc.text ?Note)]))
-    (tsi.registry ?Index ?Name ?Role)
+; A relation's comment lines, each with the newline before it; a relation
+; with none has the empty text.
+(note_item:
+   (* (name: str)
+      (item: any)))
+
+(<- (note_item ?Name
+       (tuple ?Line
+          (doc.Doc.concat
+             [(doc.Doc.text "\n    // ")
+              (doc.Doc.text ?Note)])))
     (tsi.registry_note ?Name ?Line ?Note))
 
-(<- (piece "entries" (tuple ?Index 1 0)
-       (doc.Doc.text "    Relation {"))
-    (tsi.registry ?Index ?Name ?Role))
+(notes_document:
+   (* (name: str)
+      (document: doc.Doc)))
 
-(<- (piece "entries" (tuple ?Index 2 0)
+(<- (notes_document ?Name (fold doc.join "" ?Item))
+    (note_item ?Name ?Item))
+
+(noted:
+   (* (name: str)))
+
+(<- (noted ?Name)
+    (tsi.registry_note ?Name ?Line ?Note))
+
+(<- (notes_document ?Name (doc.Doc.text ""))
+    (tsi.registry ?Index ?Name ?Role)
+    (not (noted ?Name)))
+
+; One piece per relation, its lines with their newlines: the section folds
+; one item per relation, not one per line.
+(<- (piece "entries" ?Index
        (doc.Doc.concat
-          [(doc.Doc.text "        name: \"")
+          [?Notes
+           (doc.Doc.text "\n    Relation {\n        name: \"")
            (doc.Doc.text ?Name)
-           (doc.Doc.text "\",")]))
-    (tsi.registry ?Index ?Name ?Role))
-
-(<- (piece "entries" (tuple ?Index 3 0)
-       (doc.Doc.concat
-          [(doc.Doc.text "        args: &[")
+           (doc.Doc.text "\",\n        args: &[")
            ?Args
            (doc.Doc.text "],")
-           ?Suffix]))
+           ?Suffix
+           (doc.Doc.text "\n    },")]))
     (tsi.registry ?Index ?Name ?Role)
+    (notes_document ?Name ?Notes)
     (args_document ?Name ?Args)
     (role_suffix ?Name ?Suffix))
 
-(<- (piece "entries" (tuple ?Index 4 0)
-       (doc.Doc.text "    },"))
-    (tsi.registry ?Index ?Name ?Role))
-
 ; Every piece is a line, the newline before it included, except the pieces
-; of the import list, which share one line.
+; of the import list, which share one line, and the relation pieces, which
+; carry their own newlines.
 (inline_section:
    (* (section: str)))
 
 (inline_section "use")
+(inline_section "entries")
 
 (section_item:
    (* (section: str)

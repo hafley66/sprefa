@@ -52,6 +52,8 @@ pub struct Syms {
     arena_syms: Vec<u32>,
     slots: Vec<Slot>,
     blobs: Vec<Arc<str>>,
+    /// Blobs by content: a text read again reuses its blob.
+    blob_ids: std::collections::HashMap<Arc<str>, Blob>,
     /// Span `Sym`s by content.
     spans: HashTable<u32>,
     hasher: hashbrown::DefaultHashBuilder,
@@ -64,6 +66,7 @@ impl Default for Syms {
             arena_syms: Vec::new(),
             slots: Vec::new(),
             blobs: Vec::new(),
+            blob_ids: std::collections::HashMap::new(),
             spans: HashTable::new(),
             hasher: hashbrown::DefaultHashBuilder::default(),
         }
@@ -117,8 +120,12 @@ impl Syms {
     }
 
     pub fn blob(&mut self, text: Arc<str>) -> Blob {
+        if let Some(blob) = self.blob_ids.get(&text) {
+            return *blob;
+        }
         let blob = Blob(self.blobs.len() as u32);
-        self.blobs.push(text);
+        self.blobs.push(text.clone());
+        self.blob_ids.insert(text, blob);
         blob
     }
 
