@@ -457,7 +457,7 @@ pub fn term_has_var(cx: &Cx, term: TermId) -> bool {
     false
 }
 
-pub fn term_mentions(cx: &Cx, haystack: TermId, needle: TermId) -> bool {
+pub fn goal_mentions(cx: &Cx, haystack: TermId, needle: TermId) -> bool {
     let mut level = vec![haystack];
     for _ in 0..POSITION_TERM_DEPTH {
         let mut next = Vec::new();
@@ -765,7 +765,7 @@ fn positive_mentions(cx: &Cx, goal: TermId, term: TermId) -> bool {
     let positive = cx.u.functor(goal).is_some_and(|(n, parts)| {
         n == "pending_goal" && cx.u.functor_or_atom(parts[0]).map(|(p, _)| p) == Some("positive")
     });
-    positive && term_mentions(cx, goal, term)
+    positive && goal_mentions(cx, goal, term)
 }
 
 struct Arguments {

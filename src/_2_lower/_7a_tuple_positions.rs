@@ -1,6 +1,6 @@
 use super::cx::Cx;
 use crate::_6_eval::term::TermId;
-use super::execute::{term_has_var, term_mentions};
+use super::execute::{term_has_var, goal_mentions};
 
 /// A tuple built in a rule body and handed to a relation call is output of the
 /// rule: one sibling rule per position writes `(: Tuple k Element k)` from the
@@ -35,7 +35,7 @@ pub fn tuple_position_rules(
         };
         let earlier: Vec<TermId> = goals[..at].to_vec();
         let bound = |cx: &Cx, term: TermId| {
-            !term_has_var(cx, term) || earlier.iter().any(|g| term_mentions(cx, *g, term))
+            !term_has_var(cx, term) || earlier.iter().any(|g| goal_mentions(cx, *g, term))
         };
         if !elements.iter().all(|e| bound(cx, *e)) {
             continue;
@@ -57,7 +57,7 @@ pub fn tuple_position_rules(
                 .unwrap_or_default();
             super::kernel::kernel_relation(None, &label).is_none()
                 && !super::kernel::kernel_variadic(None, &label)
-                && term_mentions(cx, later_parts[1], *whole)
+                && goal_mentions(cx, later_parts[1], *whole)
         });
         let handed_on = handed_to_relation || handed_to_generic(cx, &goals[at + 1..], *whole);
         if !handed_on {
