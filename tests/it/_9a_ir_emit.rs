@@ -30,6 +30,7 @@ function decode(cell, type) {
   if (!term) throw new Error(`unknown term cell ${cell}`);
   if (term.text !== undefined) return { s: term.text };
   if (term.functor === '0:int') return term.args[0];
+  if (term.functor === '2:str') return { s: dictionary[term.args[0]].text };
   if (term.functor === '1:bool') return term.args[0] !== 0;
   if (term.functor === '3:atom') throw new Error(`unknown atom cell ${cell}`);
   const match = /^9:\d+:(.*)$/.exec(term.functor);
