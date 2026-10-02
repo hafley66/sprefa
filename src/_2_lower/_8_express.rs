@@ -1103,7 +1103,15 @@ fn lower_fold_argument(
     let mut parts = Vec::with_capacity(3);
     let mut goals = Vec::new();
     let mut origins = Vec::new();
-    for item in &items[1..] {
+    for (position, item) in items[1..].iter().enumerate() {
+        // A dotted step names a relation, as a dotted goal head does
+        // (`lower_path_call`), never the value a dot walk reads.
+        if position == 0 {
+            if let Some(step) = relation_path(cx, *item, owner) {
+                parts.push(step);
+                continue;
+            }
+        }
         let lowered = lower_expression(cx, *item, owner);
         if let Some(first) = lowered.diagnostics.first() {
             return Err(*first);
@@ -1117,6 +1125,21 @@ fn lower_fold_argument(
     }
     let value = cx.compound("fold", parts);
     Ok((value, goals, origins))
+}
+
+/// `a.b.c` as the relation `name(name(name(Owner, a), b), c)`; `None` for any
+/// node that is not a path of two or more segments.
+fn relation_path(cx: &mut Cx, node: TermId, owner: TermId) -> Option<TermId> {
+    let segments = path_segments(cx.u, node)?;
+    if segments.len() < 2 {
+        return None;
+    }
+    let mut relation = owner;
+    for segment in segments {
+        let name = path_segment_atom(cx.u, segment)?;
+        relation = cx.compound("name", vec![relation, name]);
+    }
+    Some(relation)
 }
 
 /// `:1908`.

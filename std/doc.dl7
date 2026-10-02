@@ -10,3 +10,16 @@
    (* (: doc Doc)
       (: width int)
       (: return str)))
+
+; Ordered join, a fold step: `(fold doc.join "" ?Item)` over items
+; `(tuple Key Text)` appends the texts in key order (term order; ints compare
+; as numbers, tuples position by position). An aggregate body reads stored
+; rows only, so the items are a relation of their own.
+(: join
+   (* (: accumulator str)
+      (: item any)
+      (: next str)))
+
+(<- (join ?Accumulator ?Item ?Next)
+    (tuple ?Key ?Text ?Item)
+    (str.cons ?Accumulator ?Text ?Next))
