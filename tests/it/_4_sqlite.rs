@@ -240,10 +240,13 @@ pub fn reopening_the_db_leaves_the_closure_identical() {
     assert_eq!(products(&db, "0_round_trip"), counted, "Copied and Reading");
 
     let second = evaluate(&program, &db, &source);
-    assert_eq!(
-        second.closure, first.closure,
-        "closure differs on the reloaded run"
-    );
+    // IR engines also print work counters; the reloaded run seeds the stored rows, so its work differs.
+    for field in ["closure", "diagnostics"] {
+        assert_eq!(
+            second.closure[field], first.closure[field],
+            "{field} differs on the reloaded run"
+        );
+    }
     assert_eq!(products(&db, "0_round_trip"), counted, "rows rewritten");
     assert_eq!(inserts(&second), Vec::new(), "the reloaded run wrote rows");
     let _ = std::fs::remove_dir_all(&directory);

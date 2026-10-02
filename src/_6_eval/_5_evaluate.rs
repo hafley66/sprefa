@@ -988,6 +988,12 @@ pub fn evaluate(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) 
     Evaluate::reduce(&mut Store::default(), (u, program), fx)
 }
 
+/// The Rust semi-naive fixpoint regardless of `DL8_ENGINE`: the reference
+/// the engine cross-checks compare against.
+pub fn evaluate_rust(u: &mut Universe, program: &Program, fx: &mut dyn FnMut(Trace)) -> Closure {
+    evaluate_into(&mut Store::default(), u, program, fx)
+}
+
 fn evaluate_into(
     store: &mut Store,
     u: &mut Universe,

@@ -33,17 +33,11 @@ pub fn bundle(u: &Universe, lowered: &Lowered) -> Result<Bundle, String> {
     }
     let mut mapped = HashMap::<TermId, ir::Cell>::new();
     let mut atoms = BTreeMap::new();
-    for &(term, ref text) in &lowered.texts {
-        let cell = interner.mint_text(text);
-        mapped.insert(term, cell);
-        atoms.insert(
-            cell,
-            AtomEntry {
-                original: term.0,
-                printed: term_to_json(u, term),
-            },
-        );
-    }
+    let text_cells: Vec<ir::Cell> = lowered
+        .texts
+        .iter()
+        .map(|(_, text)| interner.mint_text(text))
+        .collect();
 
     let mut specs = lowered.terms.iter().collect::<Vec<_>>();
     specs.sort_by_key(|spec| (spec.source, spec.original.0));
@@ -58,6 +52,8 @@ pub fn bundle(u: &Universe, lowered: &Lowered) -> Result<Bundle, String> {
         let mut args = Vec::new();
         if let Some(raw) = spec.raw {
             args.push(raw);
+        } else if let Some(text) = spec.text {
+            args.push(text_cells[text]);
         } else {
             for child in &spec.args {
                 args.push(*mapped.get(child).ok_or_else(|| {

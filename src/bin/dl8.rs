@@ -725,8 +725,10 @@ fn run_cli(
             ExitCode::from(1)
         };
     }
+    // Without a stdin frontier stream, every engine runs the tick loop below and
+    // prints one closure, as the Rust evaluator does.
     if let Some(backend) = dl8::_6_eval::ir_eval::configured_backend() {
-        if reconciler.has_continuing() || frontiers_path == Some(Path::new("-")) {
+        if frontiers_path == Some(Path::new("-")) {
             let stream = if frontiers_path == Some(Path::new("-")) {
                 let (sender, receiver) = std::sync::mpsc::channel();
                 std::thread::spawn(move || {

@@ -225,32 +225,6 @@ impl Reconciler {
         max_ticks: usize,
         fx: &mut dyn FnMut(Trace),
     ) -> Result<Reconciled, StoreError> {
-        if let Some(backend) = crate::_6_eval::ir_eval::configured_backend() {
-            let mut seeded = program.clone();
-            for (rel, table) in &rows.tables {
-                for id in 0..table.len() as u32 {
-                    seeded.seeds.push(Row {
-                        rel: *rel,
-                        args: table.row(id).to_vec(),
-                    });
-                }
-            }
-            let closure = crate::_6_eval::ir_eval::evaluate_ir_answered(
-                u,
-                &seeded,
-                backend,
-                &mut self.answerer,
-                fx,
-            );
-            for row in &closure.rows {
-                rows.insert(row.rel, row.args.clone().into_boxed_slice());
-            }
-            if let Some(store) = store.as_mut() {
-                let written = persist(&mut **store, u, rows)?;
-                tracing::info!(target: "dl8::store", phase = "commit", rows = written);
-            }
-            return Ok(Reconciled { ticks: 1, closure });
-        }
         let mut closure = evaluate_tick(u, program, rows, &mut store, fx)?;
         let mut ticks = 0;
         while closure.diagnostics.is_empty() && ticks < max_ticks {

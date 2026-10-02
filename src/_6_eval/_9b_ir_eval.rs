@@ -370,15 +370,13 @@ fn decode_terms<E: Engine>(
             }
         }
     }
-    for (_, args) in dictionary
-        .values()
-        .filter(|(name, _)| name.starts_with("9:"))
+    for (&id, (_, args)) in dictionary
+        .iter()
+        .filter(|(_, (name, _))| name == "2:str")
     {
-        for &id in args {
-            if !decoded.contains_key(&id) {
-                if let Some(value) = engine.text(id, host)? {
-                    decoded.insert(id, u.string(&value));
-                }
+        if !decoded.contains_key(&id) {
+            if let Some(value) = engine.text(args[0], host)? {
+                decoded.insert(id, u.string(&value));
             }
         }
     }
@@ -390,6 +388,7 @@ fn decode_terms<E: Engine>(
             }
             let term = match functor.as_str() {
                 "0:int" => Some(u.int(args[0])),
+                "0:float" => Some(u.float(f64::from_bits(args[0] as u64))),
                 "1:bool" => Some(u.boolean(args[0] != 0)),
                 "3:atom" => None,
                 name if name.starts_with("9:") => args
@@ -420,6 +419,7 @@ fn install_terms<E: Engine>(
     roots: &[TermId],
 ) -> Result<(), ivm_engine::EngineError> {
     let mut pending = BTreeSet::new();
+    let mut text_cells = HashMap::new();
     let mut todo = roots.to_vec();
     while let Some(term) = todo.pop() {
         if mapped.contains_key(&term) || !pending.insert(term.0) {
@@ -427,9 +427,7 @@ fn install_terms<E: Engine>(
         }
         match u.get(term) {
             Term::Str(sym) => {
-                let cell = engine.intern_text(u.sym_str(*sym), host)?;
-                mapped.insert(term, cell);
-                pending.remove(&term.0);
+                text_cells.insert(term, engine.intern_text(u.sym_str(*sym), host)?);
             }
             Term::Compound(_, args) => todo.extend(args.iter().copied()),
             _ => {}
@@ -457,6 +455,8 @@ fn install_terms<E: Engine>(
             let value = u.get(*term);
             let (shape, raw, args): ((String, usize, bool), Option<i64>, &[TermId]) = match value {
                 Term::Int(n) => (("0:int".into(), 0, true), Some(*n), &[]),
+                Term::Float(f) => (("0:float".into(), 0, true), Some(f.0.to_bits() as i64), &[]),
+                Term::Str(_) => (("2:str".into(), 1, false), None, &[]),
                 Term::Bool(v) => (("1:bool".into(), 0, true), Some(i64::from(*v)), &[]),
                 Term::Atom(_) => (
                     ("3:atom".into(), 0, true),
@@ -478,7 +478,6 @@ fn install_terms<E: Engine>(
                     None,
                     args,
                 ),
-                Term::Float(_) | Term::Str(_) => continue,
             };
             let Some(&(source, output)) = lowered.installers.get(&shape) else {
                 return Err(ivm_engine::EngineError::new(
@@ -490,6 +489,8 @@ fn install_terms<E: Engine>(
             let mut row = vec![term.0 as i64];
             if let Some(raw) = raw {
                 row.push(raw);
+            } else if let Some(&cell) = text_cells.get(term) {
+                row.push(cell);
             } else {
                 row.extend(args.iter().map(|arg| mapped[arg]));
             }
@@ -544,8 +545,9 @@ fn run_session<E: Engine>(
     let engine = &mut session.engine;
     let mapped = &mut session.mapped;
     let answered = &mut session.answered;
-    for (term, value) in &lowered.texts {
-        mapped.insert(*term, engine.intern_text(value, host)?);
+    let mut text_cells = Vec::with_capacity(lowered.texts.len());
+    for (_, value) in &lowered.texts {
+        text_cells.push(engine.intern_text(value, host)?);
     }
     let mut pending: BTreeSet<usize> = (0..lowered.terms.len())
         .filter(|&index| !mapped.contains_key(&lowered.terms[index].original))
@@ -563,6 +565,8 @@ fn run_session<E: Engine>(
                 let mut row = vec![spec.original.0 as i64];
                 if let Some(raw) = spec.raw {
                     row.push(raw);
+                } else if let Some(text) = spec.text {
+                    row.push(text_cells[text]);
                 } else {
                     row.extend(spec.args.iter().map(|id| mapped[id]));
                 }
