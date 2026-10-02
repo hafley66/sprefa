@@ -331,7 +331,7 @@ fn bound_term(cx: &mut Cx, target: TermId) -> Option<TermId> {
     (!primitive).then(|| cx.compound("ref", vec![inner]))
 }
 
-fn kernel_goal(cx: &mut Cx, owner: TermId, label: &str, arguments: &[TermId]) -> TermId {
+fn kernel_relation_goal(cx: &mut Cx, owner: TermId, label: &str, arguments: &[TermId]) -> TermId {
     let label = cx.atom(label);
     let relation = cx.compound("name", vec![owner, label]);
     let list = cx.u.list(arguments);
@@ -375,9 +375,9 @@ fn bounded_item(
     let instance = cx.compound("var", vec![key]);
     let mut elements = values.clone();
     elements.push(tuple);
-    goals.push(kernel_goal(cx, owner, "tuple", &elements));
+    goals.push(kernel_relation_goal(cx, owner, "tuple", &elements));
     let callable_ref = cx.compound("ref", vec![callable]);
-    goals.push(kernel_goal(cx, owner, "intern", &[callable_ref, tuple, instance]));
+    goals.push(kernel_relation_goal(cx, owner, "intern", &[callable_ref, tuple, instance]));
     let mut next_value = values.iter();
     for (ordinal, bind) in binds.iter().enumerate() {
         let ordinal = cx.int(ordinal as i64);
@@ -391,7 +391,7 @@ fn bounded_item(
             let value = cx.compound("var", vec![key]);
             let index = cx.int(bind.index);
             let index = cx.compound("const", vec![index]);
-            body.push(kernel_goal(cx, owner, ":", &[callable_ref, label, value, index]));
+            body.push(kernel_relation_goal(cx, owner, ":", &[callable_ref, label, value, index]));
             value
         };
         let colon = cx.atom(":");

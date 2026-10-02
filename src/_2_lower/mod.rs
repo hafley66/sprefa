@@ -10,7 +10,7 @@ pub mod cx;
 pub mod declare;
 #[path = "_5_derived.rs"]
 pub mod derived;
-#[path = "_7_execute.rs"]
+#[path = "_7_goals.rs"]
 pub mod execute;
 #[path = "_8_express.rs"]
 pub mod express;
