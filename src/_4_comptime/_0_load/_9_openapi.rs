@@ -720,7 +720,7 @@ pub fn install_openapi_graph(
             continue;
         };
         let label = u.atom(member);
-        let head = u.compound("name", vec![oai, label]);
+        let head = crate::_2_lower::forms::written_name(u, oai, label);
         let argument_list = u.list(&arguments);
         seeds.push(u.compound("call", vec![head, argument_list]));
     }

@@ -257,14 +257,13 @@ pub fn promoted_alias_rules(
         let index = rule_index + offset as i64;
         let bind = cx.compound("derived_bind", vec![m.bind_node_id]);
         let value = cx.compound("var", vec![bind]);
-        let colon = cx.atom(":");
-        let head_relation = cx.compound("name", vec![m.owner, colon]);
+        let head_relation = cx.kernel_ref(None, ":");
         let owner_ref = cx.compound("ref", vec![m.owner]);
         let name_const = cx.compound("const", vec![m.name]);
         let index_const = cx.compound("const", vec![m.index]);
         let head_arguments = cx.u.list(&[owner_ref, name_const, value, index_const]);
         let head = cx.compound("call", vec![head_relation, head_arguments]);
-        let goal_relation = cx.compound("name", vec![m.reference_owner, colon]);
+        let goal_relation = cx.kernel_ref(None, ":");
         let immediate_ref = cx.compound("ref", vec![m.immediate_owner]);
         let reference_const = cx.compound("const", vec![m.reference_name]);
         let immediate_const = cx.compound("const", vec![m.immediate_index]);

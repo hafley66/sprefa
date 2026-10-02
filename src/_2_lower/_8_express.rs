@@ -134,14 +134,9 @@ fn instance_is_sum(cx: &mut Cx, inner: TermId) -> bool {
     cx.reservations.is_sum_target(cx.u, template)
 }
 
-/// `pending_goal(positive, call(name(Scope, ':'), Arguments))`.
-pub fn colon_call_goal(cx: &mut Cx, scope: TermId, arguments: &[TermId; 4]) -> TermId {
-    let colon = cx.atom(":");
-    let relation = cx.compound("name", vec![scope, colon]);
-    let list = cx.u.list(arguments);
-    let call = cx.compound("call", vec![relation, list]);
-    let positive = cx.atom("positive");
-    cx.compound("pending_goal", vec![positive, call])
+/// `pending_goal(positive, call(ref(kernel(':')), Arguments))`.
+pub fn colon_call_goal(cx: &mut Cx, arguments: &[TermId; 4]) -> TermId {
+    cx.kernel_goal(None, ":", arguments)
 }
 
 /// A dotted path in an expression position: one `:` goal per segment after the
@@ -169,7 +164,7 @@ fn lower_path_walk(cx: &mut Cx, node_id: TermId, segments: &[TermId], owner: Ter
         let label = cx.compound("const", vec![name]);
         let next = cx.compound("var", vec![step]);
         let index = cx.compound("var", vec![slot]);
-        goals.push(colon_call_goal(cx, owner, &[value, label, next, index]));
+        goals.push(colon_call_goal(cx, &[value, label, next, index]));
         origins.push(node_id);
         value = next;
     }
@@ -201,7 +196,7 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
                 (found.owner, found.name, found.target, found.kind);
             return lexical_atom_value(cx, row_owner, row_name, target, kind, parsed.id, owner);
         }
-        let value = cx.compound("name", vec![owner, name]);
+        let value = forms::written_name(cx.u, owner, name);
         return Lowering::value(value);
     }
     let Some(items) = forms::form(cx.u, parsed.payload) else {
@@ -210,7 +205,7 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
     };
     if items.is_empty() {
         let empty = cx.atom("()");
-        let value = cx.compound("name", vec![owner, empty]);
+        let value = forms::written_name(cx.u, owner, empty);
         return Lowering::value(value);
     }
     if let Some(head) = forms::form_head_atom(cx.u, &items) {
@@ -219,7 +214,7 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
                 return lower_construction(cx, constructor, parsed.id, &[], owner);
             }
             if let Some((call_owner, label)) = primitive_path_head(cx, node, owner) {
-                let value = cx.compound("name", vec![call_owner, label]);
+                let value = forms::written_name(cx.u, call_owner, label);
                 return Lowering::value(value);
             }
             if let Some(label) = underived_member(cx, &items[1..], owner) {
@@ -310,7 +305,7 @@ fn lexical_atom_value(
         let index = cx.u.functor(target).map(|(_, a)| a[2]).unwrap();
         let lookup = cx.compound("derived_lookup", vec![node_id]);
         let value = cx.compound("var", vec![lookup]);
-        let goal = colon_goal(cx, owner, bind_owner, row_name, value, index);
+        let goal = colon_goal(cx, bind_owner, row_name, value, index);
         return Lowering {
             value,
             goals: vec![goal],
@@ -322,14 +317,13 @@ fn lexical_atom_value(
         let value = cx.compound("ref", vec![inner]);
         return Lowering::value(value);
     }
-    let value = cx.compound("name", vec![owner, row_name]);
+    let value = forms::written_name(cx.u, owner, row_name);
     Lowering::value(value)
 }
 
-/// `pending_goal(positive, call(name(Owner, ':'), [ref(Bind), const(Name), Value, Index]))`.
+/// `pending_goal(positive, call(ref(kernel(':')), [ref(Bind), const(Name), Value, Index]))`.
 pub fn colon_goal(
     cx: &mut Cx,
-    owner: TermId,
     bind_owner: TermId,
     name: TermId,
     value: TermId,
@@ -338,7 +332,7 @@ pub fn colon_goal(
     let bind_ref = cx.compound("ref", vec![bind_owner]);
     let name_const = cx.compound("const", vec![name]);
     let index_const = cx.compound("const", vec![index]);
-    colon_call_goal(cx, owner, &[bind_ref, name_const, value, index_const])
+    colon_call_goal(cx, &[bind_ref, name_const, value, index_const])
 }
 
 /// What a head position resolved to.
@@ -414,7 +408,7 @@ pub fn expression_callable(cx: &mut Cx, name: TermId, owner: TermId) -> Result<A
         return Err(cx.compound("undeclared_relation", vec![name]));
     }
     if PRIMITIVES.contains(&text.as_str()) {
-        let constructor = cx.compound("name", vec![owner, name]);
+        let constructor = forms::written_name(cx.u, owner, name);
         return Ok(Applied::Construction(constructor));
     }
     Err(cx.compound("undeclared_relation", vec![name]))
@@ -452,7 +446,7 @@ pub fn primitive_path_head(cx: &mut Cx, head: TermId, owner: TermId) -> Option<(
         return None;
     }
     kernel::kernel_relation(Some(&primitive_text), &label_text)?;
-    Some((cx.compound("name", vec![owner, primitive]), label))
+    Some((forms::written_name(cx.u, owner, primitive), label))
 }
 
 /// The primitive class a literal belongs to. `_6_partial.rs:239` maps the same
@@ -475,29 +469,6 @@ pub fn not_a_relation(cx: &mut Cx, name: TermId, owner: TermId) -> TermId {
         None => "undeclared_relation",
     };
     cx.compound(reason, vec![name])
-}
-
-/// One kernel goal `pending_goal(positive, call(name(Owner, Label), Args))`;
-/// a typed op calls `name(name(Owner, Primitive), Label)`.
-fn kernel_goal(
-    cx: &mut Cx,
-    owner: TermId,
-    (primitive, label): (Option<&str>, &str),
-    arguments: &[TermId],
-) -> TermId {
-    let owner = match primitive {
-        Some(primitive) => {
-            let primitive = cx.atom(primitive);
-            cx.compound("name", vec![owner, primitive])
-        }
-        None => owner,
-    };
-    let atom = cx.atom(label);
-    let name = cx.compound("name", vec![owner, atom]);
-    let list = cx.u.list(arguments);
-    let call = cx.compound("call", vec![name, list]);
-    let positive = cx.atom("positive");
-    cx.compound("pending_goal", vec![positive, call])
 }
 
 /// A fresh variable for one step of a construction.
@@ -554,15 +525,10 @@ pub fn lower_construction(
     let tuple = construction_var(cx, node_id, 0);
     let mut tuple_arguments = values.clone();
     tuple_arguments.push(tuple);
-    goals.push(kernel_goal(cx, owner, (None, "tuple"), &tuple_arguments));
+    goals.push(cx.kernel_goal(None, "tuple", &tuple_arguments));
     origins.push(node_id);
     let value = construction_var(cx, node_id, 1);
-    goals.push(kernel_goal(
-        cx,
-        owner,
-        (None, "intern"),
-        &[constructor, tuple, value],
-    ));
+    goals.push(cx.kernel_goal(None, "intern", &[constructor, tuple, value]));
     origins.push(node_id);
     Lowering {
         value,
@@ -643,7 +609,7 @@ fn lower_tuple(cx: &mut Cx, node_id: TermId, argument_nodes: &[TermId], owner: T
     let value = cx.compound("var", vec![output_key]);
     let mut arguments = values;
     arguments.push(value);
-    goals.push(kernel_goal(cx, owner, (None, "tuple"), &arguments));
+    goals.push(cx.kernel_goal(None, "tuple", &arguments));
     origins.push(node_id);
     Lowering {
         value,
@@ -970,7 +936,7 @@ fn finish_expression_call_arguments(
     let value = cx.compound("var", vec![expression]);
     let at = (return_index.max(0) as usize).min(arguments.len());
     arguments.insert(at, value);
-    let relation = cx.compound("name", vec![owner, name]);
+    let relation = forms::written_name(cx.u, owner, name);
     let list = cx.u.list(&arguments);
     let call = cx.compound("call", vec![relation, list]);
     let positive = cx.atom("positive");
@@ -1137,7 +1103,7 @@ fn relation_path(cx: &mut Cx, node: TermId, owner: TermId) -> Option<TermId> {
     let mut relation = owner;
     for segment in segments {
         let name = path_segment_atom(cx.u, segment)?;
-        relation = cx.compound("name", vec![relation, name]);
+        relation = forms::written_name(cx.u, relation, name);
     }
     Some(relation)
 }

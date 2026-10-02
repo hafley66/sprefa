@@ -9,7 +9,6 @@ use super::execute::{term_has_var, goal_mentions};
 /// goals is the callee's own construction and writes no positions.
 pub fn tuple_position_rules(
     cx: &mut Cx,
-    owner: TermId,
     goals: &[TermId],
     goal_nodes: &[TermId],
 ) -> Vec<(TermId, Vec<TermId>)> {
@@ -21,10 +20,7 @@ pub fn tuple_position_rules(
         let Some(("call", call)) = cx.u.functor(parts[1]) else {
             continue;
         };
-        let Some(("name", name)) = cx.u.functor(call[0]) else {
-            continue;
-        };
-        if cx.u.functor_or_atom(name[1]).map(|(n, _)| n) != Some("tuple") {
+        if cx.kernel_label(call[0]).as_deref() != Some("tuple") {
             continue;
         }
         let Some(arguments) = cx.u.as_list(call[1]) else {
@@ -47,16 +43,12 @@ pub fn tuple_position_rules(
             let Some(("call", later_call)) = cx.u.functor(later_parts[1]) else {
                 return false;
             };
-            let Some(("name", later_name)) = cx.u.functor(later_call[0]) else {
-                return false;
-            };
-            let label = cx
+            let relation = cx
                 .u
-                .functor_or_atom(later_name[1])
-                .map(|(n, _)| n.to_string())
-                .unwrap_or_default();
-            super::kernel::kernel_relation(None, &label).is_none()
-                && !super::kernel::kernel_variadic(None, &label)
+                .functor(later_call[0])
+                .is_some_and(|(n, a)| (n == "name" && a.len() == 2) || (n == "ref" && a.len() == 1));
+            relation
+                && cx.kernel_label(later_call[0]).is_none()
                 && goal_mentions(cx, later_parts[1], *whole)
         });
         let handed_on = handed_to_relation || handed_to_generic(cx, &goals[at + 1..], *whole);
@@ -66,10 +58,7 @@ pub fn tuple_position_rules(
         for (position, element) in elements.iter().enumerate() {
             let index = cx.int(position as i64);
             let index = cx.compound("const", vec![index]);
-            let colon = cx.atom(":");
-            let relation = cx.compound("name", vec![owner, colon]);
-            let list = cx.u.list(&[*whole, index, *element, index]);
-            let head = cx.compound("call", vec![relation, list]);
+            let head = cx.kernel_call(None, ":", &[*whole, index, *element, index]);
             let body = cx.u.list(&goals[..=at]);
             let rule = cx.compound("rule", vec![head, body]);
             out.push((rule, goal_nodes[..=at.min(goal_nodes.len() - 1)].to_vec()));
@@ -91,8 +80,7 @@ fn handed_to_generic(cx: &mut Cx, later: &[TermId], whole: TermId) -> bool {
             let ("call", call) = cx.u.functor(parts[1])? else {
                 return None;
             };
-            let [_, label] = cx.u.args::<2>(call[0], "name")?;
-            let label = cx.u.functor_or_atom(label)?.0.to_string();
+            let label = cx.kernel_label(call[0])?;
             Some((label, cx.u.as_list(call[1])?))
         })
         .collect();

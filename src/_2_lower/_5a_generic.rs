@@ -75,7 +75,7 @@ fn generic_application(cx: &mut Cx, owner: TermId, payload: TermId, depth: usize
         }
         values.push(lowered.value);
     }
-    let callee = cx.compound("name", vec![owner, head]);
+    let callee = forms::written_name(cx.u, owner, head);
     let list = cx.u.list(&values);
     Some(cx.compound("application", vec![callee, list]))
 }
@@ -206,7 +206,7 @@ pub fn application_item(
     }
     let bounded = bounds(cx, callable);
     if !bounded.is_empty() {
-        return bounded_item(cx, owner, node_id, callable, &binds, &arguments, &bounded, rule_index);
+        return bounded_item(cx, node_id, callable, &binds, &arguments, &bounded, rule_index);
     }
     let plain: Vec<TermId> = arguments
         .iter()
@@ -216,7 +216,6 @@ pub fn application_item(
     let instance = cx.compound("application", vec![callable, plain]);
     let mut out = InstanceRows::default();
     let mut next_argument = arguments.iter();
-    let colon = cx.atom(":");
     for (ordinal, bind) in binds.iter().enumerate() {
         let ordinal_term = cx.int(ordinal as i64);
         let edge_key = cx.compound("edge", vec![instance, bind.label, ordinal_term]);
@@ -239,7 +238,7 @@ pub fn application_item(
         ));
         let key = cx.compound("derived_bind", vec![node_id]);
         let value = cx.compound("var", vec![key]);
-        let relation = cx.compound("name", vec![owner, colon]);
+        let relation = cx.kernel_ref(None, ":");
         let label = cx.compound("const", vec![bind.label]);
         let instance_ref = cx.compound("ref", vec![instance]);
         let ordinal_const = cx.compound("const", vec![ordinal_term]);
@@ -331,21 +330,11 @@ fn bound_term(cx: &mut Cx, target: TermId) -> Option<TermId> {
     (!primitive).then(|| cx.compound("ref", vec![inner]))
 }
 
-fn kernel_relation_goal(cx: &mut Cx, owner: TermId, label: &str, arguments: &[TermId]) -> TermId {
-    let label = cx.atom(label);
-    let relation = cx.compound("name", vec![owner, label]);
-    let list = cx.u.list(arguments);
-    let call = cx.compound("call", vec![relation, list]);
-    let positive = cx.atom("positive");
-    cx.compound("pending_goal", vec![positive, call])
-}
-
 /// A body application with bounded parameters builds by rule: `tuple` and `intern`
 /// behind the `discharged` goals, one rule per instance edge.
 #[allow(clippy::too_many_arguments)]
 fn bounded_item(
     cx: &mut Cx,
-    owner: TermId,
     node_id: TermId,
     callable: TermId,
     binds: &[EigoBind],
@@ -364,7 +353,8 @@ fn bounded_item(
     let empty = cx.u.list(&[]);
     for bound in bounded {
         let argument = arguments[bound.column];
-        let gate = super::execute::bound_gate(cx, node_id, bound, argument);
+        let gate = super::execute::bound_gate(cx, node_id, bound, argument)
+            .map_err(|reason| cx.diagnostic(node_id, reason))?;
         out.rules.push(cx.compound("rule", vec![gate.obligation, empty]));
         goals.push(gate.discharged);
         values[bound.column] = gate.checked;
@@ -375,9 +365,9 @@ fn bounded_item(
     let instance = cx.compound("var", vec![key]);
     let mut elements = values.clone();
     elements.push(tuple);
-    goals.push(kernel_relation_goal(cx, owner, "tuple", &elements));
+    goals.push(cx.kernel_goal(None, "tuple", &elements));
     let callable_ref = cx.compound("ref", vec![callable]);
-    goals.push(kernel_relation_goal(cx, owner, "intern", &[callable_ref, tuple, instance]));
+    goals.push(cx.kernel_goal(None, "intern", &[callable_ref, tuple, instance]));
     let mut next_value = values.iter();
     for (ordinal, bind) in binds.iter().enumerate() {
         let ordinal = cx.int(ordinal as i64);
@@ -391,13 +381,10 @@ fn bounded_item(
             let value = cx.compound("var", vec![key]);
             let index = cx.int(bind.index);
             let index = cx.compound("const", vec![index]);
-            body.push(kernel_relation_goal(cx, owner, ":", &[callable_ref, label, value, index]));
+            body.push(cx.kernel_goal(None, ":", &[callable_ref, label, value, index]));
             value
         };
-        let colon = cx.atom(":");
-        let relation = cx.compound("name", vec![owner, colon]);
-        let list = cx.u.list(&[instance, label, value, ordinal]);
-        let head = cx.compound("call", vec![relation, list]);
+        let head = cx.kernel_call(None, ":", &[instance, label, value, ordinal]);
         let body = cx.u.list(&body);
         out.rules.push(cx.compound("rule", vec![head, body]));
     }

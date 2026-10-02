@@ -195,7 +195,7 @@ pub fn lower_target(
         if items.is_empty() {
             // :774. The empty form is the reference `'()'`.
             let empty = u.atom("()");
-            let term = u.compound("name", vec![parent_owner, empty]);
+            let term = forms::written_name(u, parent_owner, empty);
             return Ok(Target {
                 term,
                 kind: "reference",
@@ -206,7 +206,7 @@ pub fn lower_target(
         return Err(diagnostic(u, node.id, r));
     }
     if let Some(name) = forms::atom_name(u, node.payload) {
-        let term = u.compound("name", vec![parent_owner, name]);
+        let term = forms::written_name(u, parent_owner, name);
         return Ok(Target {
             term,
             kind: "reference",

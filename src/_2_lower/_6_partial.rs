@@ -43,7 +43,20 @@ pub fn partial_bind_rules(
     partial: TermId,
     rule_index: i64,
 ) -> Result<PartialRules, TermId> {
-    match build(cx, owner, &label, bind_node_id, index, partial, rule_index) {
+    let mut resolved = Vec::with_capacity(4);
+    for name in ["Curry", "Literal", "Apply", "PartialCall"] {
+        let callable = cx
+            .prelude_callable(name)
+            .map_err(|reason| cx.diagnostic(bind_node_id, reason))?;
+        resolved.push(callable);
+    }
+    let prelude = PreludeCallables {
+        curry: resolved[0],
+        literal: resolved[1],
+        apply: resolved[2],
+        partial_call: resolved[3],
+    };
+    match build(cx, &prelude, owner, &label, bind_node_id, index, partial, rule_index) {
         Some(rules) => Ok(rules),
         None => {
             let description = label.description();
@@ -56,8 +69,18 @@ pub fn partial_bind_rules(
     }
 }
 
+/// The prelude products a partial application's rows land in.
+struct PreludeCallables {
+    curry: TermId,
+    literal: TermId,
+    apply: TermId,
+    partial_call: TermId,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build(
     cx: &mut Cx,
+    prelude: &PreludeCallables,
     owner: TermId,
     label: &LabelSpec,
     bind_node_id: TermId,
@@ -68,27 +91,28 @@ fn build(
     let (callable_term, arity, return_index, bound_list) = partial_parts(cx, partial)?;
     // :483. target(Id) identifies as Id; kernel(N) identifies as itself.
     let callable = cx.u.unary(callable_term, "target").unwrap_or(callable_term);
-    let curry = product_target(cx, owner, "Curry")?;
-    let literal = product_target(cx, owner, "Literal")?;
+    let (curry, literal) = (prelude.curry, prelude.literal);
     let bound = decode_bound(cx, bound_list);
     let bound_rows = partial_bound_rows(cx, &bound)?;
     let decoded = super::express::decode_callable(cx, callable_term);
     let all = slots::callable_slots(cx, &decoded, arity);
     let input = slots::exclude_slot(&all, Some(return_index));
     let call_owner = cx.compound("call", vec![owner, bind_node_id]);
-    let call_edge_rules = partial_call_edge_rules(cx, owner, call_owner, literal, &input, &bound)?;
+    let call_edge_rules = partial_call_edge_rules(cx, call_owner, literal, &input, &bound)?;
 
     let arguments = cx.u.list(&[callable, bound_rows]);
     let partial_node = cx.compound("application", vec![curry, arguments]);
-    let apply_rule = empty_rule(cx, owner, "Apply", |cx| {
+    let apply = cx.compound("ref", vec![prelude.apply]);
+    let apply_rule = empty_rule(cx, apply, |cx| {
         let call_ref = cx.compound("ref", vec![call_owner]);
         let callable_ref = cx.compound("ref", vec![callable]);
         vec![call_ref, callable_ref]
     });
-    let partial_call_rule = empty_rule(cx, owner, "PartialCall", |cx| {
+    let partial_call = cx.compound("ref", vec![prelude.partial_call]);
+    let partial_call_rule = empty_rule(cx, partial_call, |cx| {
         vec![cx.compound("ref", vec![call_owner])]
     });
-    let return_edge_rule = partial_return_rule(cx, owner, call_owner, partial_node, return_index);
+    let return_edge_rule = partial_return_rule(cx, call_owner, partial_node, return_index);
     let (edge_rule, edge_goal_nodes) = partial_edge_rule(cx, label, owner, partial_node, index);
 
     let mut rules = vec![apply_rule, partial_call_rule];
@@ -124,7 +148,6 @@ fn partial_parts(cx: &Cx, partial: TermId) -> Option<(TermId, i64, i64, TermId)>
 /// `:497`. The Curry node arrives on the call's `return` edge.
 fn partial_return_rule(
     cx: &mut Cx,
-    owner: TermId,
     call_owner: TermId,
     partial_node: TermId,
     return_index: i64,
@@ -137,23 +160,12 @@ fn partial_return_rule(
     let index_const = cx.compound("const", vec![ordinal]);
     colon_rule(
         cx,
-        owner,
         call_ref,
         label_const,
         partial_ref,
         index_const,
         &[],
     )
-}
-
-/// `:415`. `Curry` and `Literal` must resolve to products in this scope.
-fn product_target(cx: &mut Cx, owner: TermId, name: &str) -> Option<TermId> {
-    let atom = cx.atom(name);
-    let found = cx.reservations.scoped(owner, atom)?;
-    let (target, kind) = (found.target, found.kind);
-    let product = cx.atom("product");
-    (kind == product).then_some(())?;
-    cx.u.unary(target, "target")
 }
 
 /// `:486`. A bound value that is neither a reference nor a constant fails.
@@ -175,7 +187,6 @@ fn partial_bound_rows(cx: &mut Cx, bound: &[(i64, TermId)]) -> Option<TermId> {
 /// `:495`. Value rules come before the edge rule they feed.
 fn partial_call_edge_rules(
     cx: &mut Cx,
-    owner: TermId,
     call_owner: TermId,
     literal: TermId,
     input: &[Slot],
@@ -185,7 +196,7 @@ fn partial_call_edge_rules(
     for (index, value) in bound {
         let slot = input.iter().find(|s| s.index == *index)?;
         let label = slot.label?;
-        let (edge_value, mut value_rules) = partial_call_value_rules(cx, owner, literal, *value)?;
+        let (edge_value, mut value_rules) = partial_call_value_rules(cx, literal, *value)?;
         rules.append(&mut value_rules);
         let call_ref = cx.compound("ref", vec![call_owner]);
         let label_const = cx.compound("const", vec![label]);
@@ -193,7 +204,6 @@ fn partial_call_edge_rules(
         let index_const = cx.compound("const", vec![ordinal]);
         rules.push(colon_rule(
             cx,
-            owner,
             call_ref,
             label_const,
             edge_value,
@@ -207,7 +217,6 @@ fn partial_call_edge_rules(
 /// `:512`. A constant is reified as a `Literal` node.
 fn partial_call_value_rules(
     cx: &mut Cx,
-    owner: TermId,
     literal: TermId,
     value: TermId,
 ) -> Option<(TermId, Vec<TermId>)> {
@@ -222,10 +231,12 @@ fn partial_call_value_rules(
     let primitive = compiler_literal_type(cx, inner);
     let arguments = cx.u.list(&[primitive, inner]);
     let literal_node = cx.compound("application", vec![literal, arguments]);
-    let node_rule = empty_rule(cx, owner, "node", |cx| {
+    let node = cx.kernel_ref(None, "node");
+    let node_rule = empty_rule(cx, node, |cx| {
         vec![cx.compound("ref", vec![literal_node])]
     });
-    let literal_rule = empty_rule(cx, owner, "Literal", |cx| {
+    let literal_relation = cx.compound("ref", vec![literal]);
+    let literal_rule = empty_rule(cx, literal_relation, |cx| {
         let node_ref = cx.compound("ref", vec![literal_node]);
         let primitive_ref = cx.compound("ref", vec![primitive]);
         let constant = cx.compound("const", vec![inner]);
@@ -265,7 +276,6 @@ fn partial_edge_rule(
             (
                 colon_rule(
                     cx,
-                    owner,
                     owner_ref,
                     label_const,
                     partial_ref,
@@ -283,7 +293,6 @@ fn partial_edge_rule(
         } => (
             colon_rule(
                 cx,
-                owner,
                 owner_ref,
                 *value,
                 partial_ref,
@@ -297,29 +306,22 @@ fn partial_edge_rule(
 
 fn colon_rule(
     cx: &mut Cx,
-    owner: TermId,
     subject: TermId,
     label: TermId,
     target: TermId,
     index: TermId,
     goals: &[TermId],
 ) -> TermId {
-    let colon = cx.atom(":");
-    let relation = cx.compound("name", vec![owner, colon]);
-    let arguments = cx.u.list(&[subject, label, target, index]);
-    let call = cx.compound("call", vec![relation, arguments]);
+    let call = cx.kernel_call(None, ":", &[subject, label, target, index]);
     let body = cx.u.list(goals);
     cx.compound("rule", vec![call, body])
 }
 
 fn empty_rule(
     cx: &mut Cx,
-    owner: TermId,
-    name: &str,
+    relation: TermId,
     arguments: impl FnOnce(&mut Cx) -> Vec<TermId>,
 ) -> TermId {
-    let atom = cx.atom(name);
-    let relation = cx.compound("name", vec![owner, atom]);
     let arguments = arguments(cx);
     let list = cx.u.list(&arguments);
     let call = cx.compound("call", vec![relation, list]);

@@ -504,7 +504,8 @@ pub fn install_source_fact_graph(
     for term in rows {
         let parts = super::api::parts(u, *term, "source_row", 2)
             .ok_or("source fact row is not source_row/2")?;
-        let head = u.compound("name", vec![owner, parts[0]]);
+        let callable = u.compound("source_relation", vec![parts[0]]);
+        let head = u.compound("ref", vec![callable]);
         seeds.push(u.compound("call", vec![head, parts[1]]));
     }
 
