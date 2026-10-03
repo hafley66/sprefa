@@ -2100,6 +2100,21 @@ fn with_demand_in_strata(
     (out, hidden)
 }
 
+fn collect_arg(arg: &Arg, todo: &mut Vec<TermId>) {
+    for layer in arg.layers() {
+        match layer {
+            Arg::Ground(term) => todo.push(*term),
+            Arg::Fold(fold, _) => {
+                todo.push(fold.step);
+                if let super::program::Seed::Term(seed) = fold.seed {
+                    todo.push(seed);
+                }
+            }
+            Arg::Aggregate(..) | Arg::Var(_) => {}
+        }
+    }
+}
+
 pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic> {
     let mut program = program.clone();
     let intern_rel = kernel_ref(u, "intern");
@@ -2112,20 +2127,6 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let (strata, diagnostics) = stratify(u, &program);
     if let Some(diag) = diagnostics.into_iter().next() {
         return Err(diag);
-    }
-    fn collect_arg(arg: &Arg, todo: &mut Vec<TermId>) {
-        match arg {
-            Arg::Ground(term) => todo.push(*term),
-            Arg::Aggregate(_, subject) => collect_arg(subject, todo),
-            Arg::Fold(fold, subject) => {
-                todo.push(fold.step);
-                if let super::program::Seed::Term(seed) = fold.seed {
-                    todo.push(seed);
-                }
-                collect_arg(subject, todo);
-            }
-            Arg::Var(_) => {}
-        }
     }
     let (program, hidden) = with_demand_in_strata(u, &program, &strata);
     let sum_readbacks = sum_readback_constructors(u, &program, snapshot_rel);

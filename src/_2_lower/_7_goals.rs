@@ -113,7 +113,16 @@ fn lower_seed(
 
 /// `:1936`.
 fn call_contains_var(cx: &Cx, call: TermId) -> bool {
-    fn walk(cx: &Cx, term: TermId) -> bool {
+    let Some(arguments) = cx
+        .u
+        .functor(call)
+        .map(|(_, args)| args[1])
+        .and_then(|list| cx.u.as_list(list))
+    else {
+        return false;
+    };
+    let mut pending: Vec<TermId> = arguments.into_iter().rev().collect();
+    while let Some(term) = pending.pop() {
         if cx
             .u
             .functor(term)
@@ -121,15 +130,11 @@ fn call_contains_var(cx: &Cx, call: TermId) -> bool {
         {
             return true;
         }
-        match cx.u.get(term) {
-            Term::Compound(_, args) => args.iter().any(|a| walk(cx, *a)),
-            _ => false,
+        if let Term::Compound(_, args) = cx.u.get(term) {
+            pending.extend(args.iter().rev());
         }
     }
-    cx.u.functor(call)
-        .map(|(_, args)| args[1])
-        .and_then(|list| cx.u.as_list(list))
-        .is_some_and(|arguments| arguments.iter().any(|a| walk(cx, *a)))
+    false
 }
 
 /// `:1061`. Head goals land after body goals.

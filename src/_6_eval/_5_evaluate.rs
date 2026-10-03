@@ -95,17 +95,17 @@ impl Env {
     }
 
     fn value(&self, a: &Arg) -> Option<TermId> {
-        match a {
+        match a.innermost() {
             Arg::Var(v) => self.vars[v.0 as usize],
             Arg::Ground(t) => Some(*t),
-            Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => self.value(subject),
+            Arg::Aggregate(..) | Arg::Fold(..) => unreachable!("innermost is a variable or term"),
         }
     }
 
     /// Unify one argument with a ground value; returns false and leaves the
     /// trail for the caller to undo on mismatch.
     fn unify(&mut self, a: &Arg, t: TermId) -> bool {
-        match a {
+        match a.innermost() {
             Arg::Var(v) => match self.vars[v.0 as usize] {
                 Some(bound) => bound == t,
                 None => {
@@ -114,7 +114,7 @@ impl Env {
                 }
             },
             Arg::Ground(g) => *g == t,
-            Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => self.unify(subject, t),
+            Arg::Aggregate(..) | Arg::Fold(..) => unreachable!("innermost is a variable or term"),
         }
     }
 }
@@ -163,34 +163,167 @@ struct Eval<'a> {
     cycle_hits: Vec<DemandKey>,
 }
 
+/// One entered goal: its candidate rows, the next to try, and the trail
+/// length to undo to before each try.
+struct Choice {
+    solutions: Vec<Vec<TermId>>,
+    next: usize,
+    checkpoint: usize,
+}
+
+/// One rule body under depth-first search. `entering` enters goal
+/// `choices.len()` next; otherwise the top choice tries its next row.
+struct Body<'r> {
+    rule: &'r Rule,
+    plan: Plan,
+    env: Env,
+    choices: Vec<Choice>,
+    entering: bool,
+    /// Rows of goal `choices.len()` found so far, waiting on a demand above.
+    waiting: Option<Vec<Vec<TermId>>>,
+}
+
+impl<'r> Body<'r> {
+    fn new(rule: &'r Rule, plan: Plan, env: Env) -> Self {
+        Body {
+            rule,
+            plan,
+            env,
+            choices: Vec::new(),
+            entering: true,
+            waiting: None,
+        }
+    }
+}
+
+/// One top-down proof: the rules of `key`'s relation still to run, and the
+/// head rows the finished ones proved.
+struct Demand<'r> {
+    key: DemandKey,
+    rules: Vec<&'r Rule>,
+    next_rule: usize,
+    found: Vec<Vec<TermId>>,
+    base: usize,
+}
+
+enum Frame<'r> {
+    Body(Body<'r>),
+    Demand(Demand<'r>),
+}
+
 impl<'a> Eval<'a> {
-    fn solve(
+    /// Depth-first solutions of `rule`'s body, each to `out`. Bodies and the demands
+    /// their goals open share one explicit stack; a demand returns rows to the body below.
+    fn solve<'r>(
         &mut self,
-        rule: &Rule,
-        i: usize,
+        rule: &'r Rule,
         plan: &Plan,
-        env: &mut Env,
+        env: Env,
         out: &mut dyn FnMut(&mut Universe, &Env),
-    ) {
+    ) where
+        'a: 'r,
+    {
+        let mut stack: Vec<Frame<'r>> = vec![Frame::Body(Body::new(rule, plan.clone(), env))];
+        let mut returned: Option<Vec<Vec<TermId>>> = None;
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Body(mut body) => {
+                    if let Some(mut rows) = body.waiting.take() {
+                        rows.extend(returned.take().expect("the demand's rows"));
+                        let checkpoint = body.env.checkpoint();
+                        body.choices.push(Choice {
+                            solutions: rows,
+                            next: 0,
+                            checkpoint,
+                        });
+                        body.entering = false;
+                        stack.push(Frame::Body(body));
+                    } else if body.entering {
+                        self.enter(body, &mut stack, out);
+                    } else if self.advance(&mut body) {
+                        stack.push(Frame::Body(body));
+                    }
+                }
+                Frame::Demand(mut demand) => match self.next_demand_body(&mut demand) {
+                    Some(body) => {
+                        stack.push(Frame::Demand(demand));
+                        stack.push(Frame::Body(body));
+                    }
+                    None => returned = Some(self.finish_demand(demand)),
+                },
+            }
+        }
+    }
+
+    /// Enters goal `choices.len()`: a full body emits its row, a goal pushes
+    /// its choice, a goal whose rows need a demand opens it above the body.
+    fn enter<'r>(
+        &mut self,
+        mut body: Body<'r>,
+        stack: &mut Vec<Frame<'r>>,
+        out: &mut dyn FnMut(&mut Universe, &Env),
+    ) where
+        'a: 'r,
+    {
+        let i = body.choices.len();
+        let rule = body.rule;
+        body.entering = false;
         if i == rule.body.len() {
-            out(self.u, env);
+            match stack.last_mut() {
+                Some(Frame::Demand(demand)) => demand.found.extend(head_row(&body.env, rule)),
+                _ => out(self.u, &body.env),
+            }
+            stack.push(Frame::Body(body));
             return;
         }
         let goal = &rule.body[i];
         let kernel = Kernel::of(self.u, goal.rel);
-        if goal.polarity == Polarity::Negative {
-            if self.negative_goal_holds(goal, kernel, env) {
-                self.solve(rule, i + 1, plan, env, out);
+        let solutions = if goal.polarity == Polarity::Negative {
+            match self.negative_goal_holds(goal, kernel, &body.env) {
+                true => vec![Vec::new()],
+                false => Vec::new(),
             }
-            return;
-        }
-        for solution in self.positive_solutions(goal, kernel, plan[i], env) {
-            let cp = env.checkpoint();
-            if self.unify_row(goal, &solution, env) {
-                self.solve(rule, i + 1, plan, env, out);
+        } else {
+            let (rows, demand) = self.positive_solutions(goal, kernel, body.plan[i], &body.env);
+            match demand {
+                None => rows,
+                Some(pattern) => match self.start_demand(goal.rel, &pattern, rows) {
+                    Ok(rows) => rows,
+                    Err((rows, demand)) => {
+                        body.waiting = Some(rows);
+                        stack.push(Frame::Body(body));
+                        stack.push(Frame::Demand(demand));
+                        return;
+                    }
+                },
             }
-            env.undo(cp);
-        }
+        };
+        let checkpoint = body.env.checkpoint();
+        body.choices.push(Choice {
+            solutions,
+            next: 0,
+            checkpoint,
+        });
+        stack.push(Frame::Body(body));
+    }
+
+    /// Tries the top choice's next row; an exhausted choice is dropped. False
+    /// once no choice is left.
+    fn advance(&self, body: &mut Body) -> bool {
+        let Some(index) = body.choices.len().checked_sub(1) else {
+            return false;
+        };
+        let rule = body.rule;
+        let goal = &rule.body[index];
+        let choice = &mut body.choices[index];
+        body.env.undo(choice.checkpoint);
+        let Some(row) = choice.solutions.get(choice.next) else {
+            body.choices.pop();
+            return true;
+        };
+        choice.next += 1;
+        body.entering = goal.polarity == Polarity::Negative || self.unify_row(goal, row, &mut body.env);
+        true
     }
 
     /// A negative goal with an unbound argument never holds; v7's `\+` is
@@ -214,8 +347,8 @@ impl<'a> Eval<'a> {
         }
     }
 
-    /// Kernel rows, then stored rows in the goal's plan range, then the
-    /// top-down rows a bound pattern demands.
+    /// Kernel rows, then stored rows in the goal's plan range, and the bound
+    /// pattern whose top-down rows the goal demands.
     #[inline]
     fn positive_solutions(
         &mut self,
@@ -223,7 +356,7 @@ impl<'a> Eval<'a> {
         kernel: Option<Kernel>,
         range: Range,
         env: &Env,
-    ) -> Vec<Vec<TermId>> {
+    ) -> (Vec<Vec<TermId>>, Option<Pattern>) {
         let pattern: Pattern = goal.args.iter().map(|a| env.value(a)).collect();
         let mut solutions: Vec<Vec<TermId>> = Vec::new();
         if let Some(k) = kernel {
@@ -258,11 +391,7 @@ impl<'a> Eval<'a> {
         let demand = kernel.is_none()
             && pattern.iter().any(|t| t.is_some())
             && self.cx.demanded.contains(&goal.rel);
-        if demand {
-            let extra = self.demand(goal.rel, &pattern);
-            solutions.extend(extra);
-        }
-        solutions
+        (solutions, demand.then_some(pattern))
     }
 
     /// `effect(Relation, Application)` on every evaluation of a served goal,
@@ -288,47 +417,64 @@ impl<'a> Eval<'a> {
     /// next firing re-proves it. The cycle target's own entry is complete
     /// because its final pass sees the same partial rows any fresh pass
     /// would, so it stays.
-    fn demand(&mut self, rel: TermId, pattern: &Pattern) -> Vec<Vec<TermId>> {
+    fn start_demand(
+        &mut self,
+        rel: TermId,
+        pattern: &Pattern,
+        mut rows: Vec<Vec<TermId>>,
+    ) -> Result<Vec<Vec<TermId>>, (Vec<Vec<TermId>>, Demand<'a>)> {
         let key = (rel, pattern.clone());
         self.memo.calls += 1;
-        if let Some(rows) = self.memo.proved.get(&key) {
+        if let Some(proved) = self.memo.proved.get(&key) {
             if self.in_progress.contains(&key) {
                 self.cycle_hits.push(key);
             }
-            return rows.clone();
+            rows.extend(proved.iter().cloned());
+            return Ok(rows);
         }
         self.in_progress.insert(key.clone());
         self.memo.proved.insert(key.clone(), Vec::new());
-        let rules: Vec<&Rule> = self.cx.rules_by_rel[&rel].clone();
-        let mut found: Vec<Vec<TermId>> = Vec::new();
-        let base = self.cycle_hits.len();
-        for rule in rules {
+        let demand = Demand {
+            key,
+            rules: self.cx.rules_by_rel[&rel].clone(),
+            next_rule: 0,
+            found: Vec::new(),
+            base: self.cycle_hits.len(),
+        };
+        Err((rows, demand))
+    }
+
+    /// The body of the demand's next rule whose head unifies with its pattern.
+    fn next_demand_body<'r>(&mut self, demand: &mut Demand<'r>) -> Option<Body<'r>> {
+        let pattern = &demand.key.1;
+        for (index, rule) in demand.rules.iter().enumerate().skip(demand.next_rule) {
             if rule.is_aggregate() || rule.head.len() != pattern.len() {
                 continue;
             }
             let mut env = Env::new(rule.vars.len());
-            let mut ok = true;
-            for (a, t) in rule.head.iter().zip(pattern.iter()) {
-                if let Some(t) = t {
-                    if !env.unify(a, *t) {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
-            if !ok {
+            let unified = rule
+                .head
+                .iter()
+                .zip(pattern.iter())
+                .all(|(a, t)| t.is_none_or(|t| env.unify(a, t)));            if !unified {
                 continue;
             }
+            demand.next_rule = index + 1;
             let plan: Plan = rule.body.iter().map(|_| Range::All).collect();
-            let mut rows: Vec<Vec<TermId>> = Vec::new();
-            let mut out = |_u: &mut Universe, env: &Env| {
-                if let Some(row) = head_row(env, rule) {
-                    rows.push(row);
-                }
-            };
-            self.solve(rule, 0, &plan, &mut env, &mut out);
-            found.extend(rows);
+            return Some(Body::new(rule, plan, env));
         }
+        demand.next_rule = demand.rules.len();
+        None
+    }
+
+    /// The demand's rows, memoized unless a re-entrant key cut its proof short.
+    fn finish_demand(&mut self, demand: Demand) -> Vec<Vec<TermId>> {
+        let Demand {
+            key,
+            mut found,
+            base,
+            ..
+        } = demand;
         found.sort_by(|a, b| self.u.cmp_rows(a, b));
         found.dedup();
         let mut hits: Vec<DemandKey> = self.cycle_hits.drain(base..).collect();
@@ -355,6 +501,7 @@ impl<'a> Eval<'a> {
         true
     }
 }
+
 
 /// Sum-variant patterns mark their readback variable during lowering. Only
 /// those constructors read newly minted `intern` rows as snapshots.
@@ -417,10 +564,9 @@ fn head_row(env: &Env, rule: &Rule) -> Option<Vec<TermId>> {
 }
 
 fn arg_vars(arg: &Arg) -> Vec<VarId> {
-    match arg {
+    match arg.innermost() {
         Arg::Var(v) => vec![*v],
-        Arg::Ground(_) => Vec::new(),
-        Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => arg_vars(subject),
+        _ => Vec::new(),
     }
 }
 
@@ -631,7 +777,6 @@ fn fold_step(
     let mut nexts: Vec<TermId> = Vec::new();
     {
         let mut demand_memo = Memo::default();
-        let mut env = Env::new(1);
         let mut eval = Eval {
             u: &mut *u,
             cx,
@@ -647,7 +792,7 @@ fn fold_step(
                 nexts.push(next);
             }
         };
-        eval.solve(&rule, 0, &plan, &mut env, &mut out);
+        eval.solve(&rule, &plan, Env::new(1), &mut out);
     }
     nexts.sort_by(|left, right| u.cmp(*left, *right));
     nexts.dedup();

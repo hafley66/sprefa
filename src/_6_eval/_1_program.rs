@@ -87,6 +87,21 @@ pub enum Arg {
     Fold(Fold, Box<Arg>),
 }
 
+impl Arg {
+    /// This argument, then each aggregate or fold subject inward.
+    pub fn layers(&self) -> impl Iterator<Item = &Arg> {
+        std::iter::successors(Some(self), |arg| match arg {
+            Arg::Aggregate(_, subject) | Arg::Fold(_, subject) => Some(&**subject),
+            Arg::Var(_) | Arg::Ground(_) => None,
+        })
+    }
+
+    /// The variable or ground term under every aggregate and fold.
+    pub fn innermost(&self) -> &Arg {
+        self.layers().last().expect("layers yields self first")
+    }
+}
+
 /// Which fold a head position carries: one of the four builtins, or a fold the
 /// program declared.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

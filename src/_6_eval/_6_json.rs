@@ -10,7 +10,7 @@
 use super::program::{
     AggregateKind, Arg, Diagnostic, Fold, Goal, Order, Polarity, Program, Row, Rule, Seed, VarId,
 };
-use super::term::{Term, TermId, Universe};
+use super::term::{Sym, Term, TermId, Universe};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
 
@@ -25,44 +25,66 @@ fn atom_name(v: &Value) -> Option<String> {
     }
 }
 
+/// Post-order with an explicit stack: lists and compounds intern after their
+/// items, left to right; the first bad item reports.
 pub fn term_from_json(u: &mut Universe, v: &Value) -> Result<TermId, String> {
-    match v {
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(u.int(i))
-            } else if let Some(f) = n.as_f64() {
-                Ok(u.float(f))
-            } else {
-                Err(format!("non-numeric number {n}"))
-            }
-        }
-        Value::Bool(b) => Ok(u.boolean(*b)),
-        Value::Array(items) => {
-            let mut ids = Vec::with_capacity(items.len());
-            for item in items {
-                ids.push(term_from_json(u, item)?);
-            }
-            Ok(u.list(&ids))
-        }
-        Value::Object(m) => {
-            if let Some(a) = m.get("a").and_then(atom_name) {
-                return Ok(u.atom(&a));
-            }
-            if let Some(Value::String(s)) = m.get("s") {
-                return Ok(u.string(s));
-            }
-            if let (Some(Value::String(f)), Some(Value::Array(args))) = (m.get("f"), m.get("args"))
-            {
-                let mut ids = Vec::with_capacity(args.len());
-                for a in args {
-                    ids.push(term_from_json(u, a)?);
-                }
-                return Ok(u.compound(f, ids));
-            }
-            Err(format!("unknown term object {v}"))
-        }
-        _ => Err(format!("unknown term {v}")),
+    enum Step<'v> {
+        Enter(&'v Value),
+        List(usize),
+        Compound(&'v str, usize),
     }
+    let mut steps = vec![Step::Enter(v)];
+    let mut done: Vec<TermId> = Vec::new();
+    while let Some(step) = steps.pop() {
+        let v = match step {
+            Step::Enter(v) => v,
+            Step::List(len) => {
+                let ids = done.split_off(done.len() - len);
+                done.push(u.list(&ids));
+                continue;
+            }
+            Step::Compound(f, len) => {
+                let ids = done.split_off(done.len() - len);
+                done.push(u.compound(f, ids));
+                continue;
+            }
+        };
+        let id = match v {
+            Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    u.int(i)
+                } else if let Some(f) = n.as_f64() {
+                    u.float(f)
+                } else {
+                    return Err(format!("non-numeric number {n}"));
+                }
+            }
+            Value::Bool(b) => u.boolean(*b),
+            Value::Array(items) => {
+                steps.push(Step::List(items.len()));
+                steps.extend(items.iter().rev().map(Step::Enter));
+                continue;
+            }
+            Value::Object(m) => {
+                if let Some(a) = m.get("a").and_then(atom_name) {
+                    u.atom(&a)
+                } else if let Some(Value::String(s)) = m.get("s") {
+                    u.string(s)
+                } else if let (Some(Value::String(f)), Some(Value::Array(args))) =
+                    (m.get("f"), m.get("args"))
+                {
+                    steps.push(Step::Compound(f, args.len()));
+                    steps.extend(args.iter().rev().map(Step::Enter));
+                    continue;
+                } else {
+                    return Err(format!("unknown term object {v}"));
+                }
+            }
+            _ => return Err(format!("unknown term {v}")),
+        };
+        done.push(id);
+    }
+    Ok(done.pop().expect("one term"))
 }
 
 /// An arbitrary document, not the transport encoding above. `serde_json::Value`
@@ -163,51 +185,121 @@ fn walk(
     json: &Json,
     rows: &mut Vec<Row>,
 ) -> TermId {
-    match json {
-        Json::Null => none,
-        Json::Bool(value) => {
-            let value = u.boolean(*value);
-            value_node(u, "bool", value)
-        }
-        Json::Int(value) => {
-            let value = u.int(*value);
-            value_node(u, "int", value)
-        }
-        Json::Float(value) => {
-            let value = u.float(*value);
-            value_node(u, "float", value)
-        }
-        Json::Text(value) => {
-            let value = u.string(value);
-            value_node(u, "str", value)
-        }
-        Json::Array(items) => {
-            let mut cells = Vec::with_capacity(items.len());
-            for (index, item) in items.iter().enumerate() {
-                let label = u.int(index as i64);
-                let child = u.compound("edge", vec![identity, label]);
-                cells.push(walk(u, colon, none, child, item, rows));
-            }
-            let list = u.list(&cells);
-            u.compound("const", vec![list])
-        }
-        Json::Object(members) => {
-            let owner = u.compound("ref", vec![identity]);
-            for (index, (name, value)) in members.iter().enumerate() {
-                let label = u.atom(name);
-                let child = u.compound("edge", vec![identity, label]);
-                let target = walk(u, colon, none, child, value, rows);
-                let name = u.compound("const", vec![label]);
-                let index = u.int(index as i64);
-                let index = u.compound("const", vec![index]);
-                rows.push(Row {
-                    rel: colon,
-                    args: vec![owner, name, target, index],
+    /// An open container; `returned` carries the value of the child it entered last.
+    enum Frame<'j> {
+        Enter(TermId, &'j Json),
+        Array {
+            identity: TermId,
+            items: &'j [Json],
+            cells: Vec<TermId>,
+        },
+        Object {
+            identity: TermId,
+            owner: TermId,
+            members: &'j [(String, Json)],
+            next: usize,
+            label: TermId,
+        },
+    }
+    let mut stack = vec![Frame::Enter(identity, json)];
+    let mut returned: Option<TermId> = None;
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Enter(identity, json) => {
+                returned = Some(match json {
+                    Json::Null => none,
+                    Json::Bool(value) => {
+                        let value = u.boolean(*value);
+                        value_node(u, "bool", value)
+                    }
+                    Json::Int(value) => {
+                        let value = u.int(*value);
+                        value_node(u, "int", value)
+                    }
+                    Json::Float(value) => {
+                        let value = u.float(*value);
+                        value_node(u, "float", value)
+                    }
+                    Json::Text(value) => {
+                        let value = u.string(value);
+                        value_node(u, "str", value)
+                    }
+                    Json::Array(items) => {
+                        stack.push(Frame::Array {
+                            identity,
+                            items,
+                            cells: Vec::with_capacity(items.len()),
+                        });
+                        continue;
+                    }
+                    Json::Object(members) => {
+                        let owner = u.compound("ref", vec![identity]);
+                        stack.push(Frame::Object {
+                            identity,
+                            owner,
+                            members,
+                            next: 0,
+                            label: none,
+                        });
+                        continue;
+                    }
                 });
             }
-            owner
+            Frame::Array {
+                identity,
+                items,
+                mut cells,
+            } => {
+                cells.extend(returned.take());
+                let Some(item) = items.get(cells.len()) else {
+                    let list = u.list(&cells);
+                    returned = Some(u.compound("const", vec![list]));
+                    continue;
+                };
+                let label = u.int(cells.len() as i64);
+                let child = u.compound("edge", vec![identity, label]);
+                stack.push(Frame::Array {
+                    identity,
+                    items,
+                    cells,
+                });
+                stack.push(Frame::Enter(child, item));
+            }
+            Frame::Object {
+                identity,
+                owner,
+                members,
+                mut next,
+                label,
+            } => {
+                if let Some(target) = returned.take() {
+                    let name = u.compound("const", vec![label]);
+                    let index = u.int(next as i64);
+                    let index = u.compound("const", vec![index]);
+                    rows.push(Row {
+                        rel: colon,
+                        args: vec![owner, name, target, index],
+                    });
+                    next += 1;
+                }
+                let Some((name, value)) = members.get(next) else {
+                    returned = Some(owner);
+                    continue;
+                };
+                let label = u.atom(name);
+                let child = u.compound("edge", vec![identity, label]);
+                stack.push(Frame::Object {
+                    identity,
+                    owner,
+                    members,
+                    next,
+                    label,
+                });
+                stack.push(Frame::Enter(child, value));
+            }
         }
     }
+    returned.expect("the root value")
 }
 
 /// One document as `:` rows under `identity`, with the cell its root binds to.
@@ -224,62 +316,107 @@ pub fn rows_from_json(
     (root, rows)
 }
 
+/// Post-order with an explicit stack: proper lists become arrays, compounds
+/// `{"f", "args"}`, items left to right.
 pub fn term_to_json(u: &Universe, id: TermId) -> Value {
-    if let Some(items) = u.as_list(id) {
-        return Value::Array(items.iter().map(|i| term_to_json(u, *i)).collect());
+    enum Step {
+        Enter(TermId),
+        Array(usize),
+        Compound(Sym, usize),
     }
-    match u.get(id) {
-        Term::Int(n) => json!(n),
-        Term::Float(x) => json!(x.0),
-        Term::Bool(b) => json!(b),
-        Term::Atom(s) => json!({ "a": u.sym_str(*s) }),
-        Term::Str(s) => json!({ "s": u.sym_str(*s) }),
-        Term::Compound(s, args) => json!({
-            "f": u.sym_str(*s),
-            "args": args.iter().map(|a| term_to_json(u, *a)).collect::<Vec<_>>()
-        }),
+    let mut steps = vec![Step::Enter(id)];
+    let mut done: Vec<Value> = Vec::new();
+    while let Some(step) = steps.pop() {
+        let id = match step {
+            Step::Enter(id) => id,
+            Step::Array(len) => {
+                let items = done.split_off(done.len() - len);
+                done.push(Value::Array(items));
+                continue;
+            }
+            Step::Compound(s, len) => {
+                let args = done.split_off(done.len() - len);
+                done.push(json!({ "f": u.sym_str(s), "args": args }));
+                continue;
+            }
+        };
+        if let Some(items) = u.as_list(id) {
+            steps.push(Step::Array(items.len()));
+            steps.extend(items.iter().rev().map(|item| Step::Enter(*item)));
+            continue;
+        }
+        done.push(match u.get(id) {
+            Term::Int(n) => json!(n),
+            Term::Float(x) => json!(x.0),
+            Term::Bool(b) => json!(b),
+            Term::Atom(s) => json!({ "a": u.sym_str(*s) }),
+            Term::Str(s) => json!({ "s": u.sym_str(*s) }),
+            Term::Compound(s, args) => {
+                steps.push(Step::Compound(*s, args.len()));
+                steps.extend(args.iter().rev().map(|arg| Step::Enter(*arg)));
+                continue;
+            }
+        });
     }
+    done.pop().expect("one value")
+}
+
+/// One aggregate or fold wrapper around a rule argument, outermost first.
+enum ArgLayer {
+    Aggregate(AggregateKind),
+    Fold(Fold),
 }
 
 fn arg_from_json(u: &mut Universe, v: &Value, vars: &mut Vec<TermId>) -> Result<Arg, String> {
-    if let Value::Object(m) = v {
-        if let Some(identity) = m.get("v") {
-            let id = term_from_json(u, identity)?;
-            let pos = match vars.iter().position(|x| *x == id) {
-                Some(p) => p,
-                None => {
-                    vars.push(id);
-                    vars.len() - 1
-                }
-            };
-            return Ok(Arg::Var(VarId(pos as u32)));
+    let mut layers: Vec<ArgLayer> = Vec::new();
+    let mut pending = vec![v];
+    let mut base = None;
+    while let Some(v) = pending.pop() {
+        if let Value::Object(m) = v {
+            if let Some(identity) = m.get("v") {
+                let id = term_from_json(u, identity)?;
+                let pos = match vars.iter().position(|x| *x == id) {
+                    Some(p) => p,
+                    None => {
+                        vars.push(id);
+                        vars.len() - 1
+                    }
+                };
+                base = Some(Arg::Var(VarId(pos as u32)));
+                continue;
+            }
+            if let Some((aggregation, subject)) = m
+                .iter()
+                .find_map(|(name, subject)| Some((AggregateKind::of(name)?, subject)))
+            {
+                layers.push(ArgLayer::Aggregate(aggregation));
+                pending.push(subject);
+                continue;
+            }
+            if m.get("f").and_then(Value::as_str) == Some("fold") {
+                let args = m
+                    .get("args")
+                    .and_then(Value::as_array)
+                    .ok_or("fold without args")?;
+                let [step, seed, subject] = args.as_slice() else {
+                    return Err(format!("bad fold arity {}", args.len()));
+                };
+                layers.push(ArgLayer::Fold(Fold {
+                    step: term_from_json(u, step)?,
+                    seed: Seed::Term(term_from_json(u, seed)?),
+                    order: Order::TermLt,
+                }));
+                pending.push(subject);
+                continue;
+            }
         }
-        if let Some((aggregation, subject)) = m
-            .iter()
-            .find_map(|(name, subject)| Some((AggregateKind::of(name)?, subject)))
-        {
-            return Ok(Arg::Aggregate(
-                aggregation,
-                Box::new(arg_from_json(u, subject, vars)?),
-            ));
-        }
-        if m.get("f").and_then(Value::as_str) == Some("fold") {
-            let args = m
-                .get("args")
-                .and_then(Value::as_array)
-                .ok_or("fold without args")?;
-            let [step, seed, subject] = args.as_slice() else {
-                return Err(format!("bad fold arity {}", args.len()));
-            };
-            let fold = Fold {
-                step: term_from_json(u, step)?,
-                seed: Seed::Term(term_from_json(u, seed)?),
-                order: Order::TermLt,
-            };
-            return Ok(Arg::Fold(fold, Box::new(arg_from_json(u, subject, vars)?)));
-        }
+        base = Some(Arg::Ground(term_from_json(u, v)?));
     }
-    Ok(Arg::Ground(term_from_json(u, v)?))
+    let base = base.expect("the innermost argument");
+    Ok(layers.into_iter().rev().fold(base, |inner, layer| match layer {
+        ArgLayer::Aggregate(kind) => Arg::Aggregate(kind, Box::new(inner)),
+        ArgLayer::Fold(fold) => Arg::Fold(fold, Box::new(inner)),
+    }))
 }
 
 fn call_parts(v: &Value) -> Result<(&Value, &Vec<Value>), String> {
@@ -303,28 +440,48 @@ enum Transport {
 }
 
 fn arg_to_json(u: &Universe, id: TermId) -> Value {
-    if let Some(identity) = u.unary(id, "var") {
-        return json!({ "v": term_to_json(u, identity) });
+    /// One wrapper around the argument inside it, outermost first.
+    enum Layer<'u> {
+        Aggregate(&'u str),
+        Fold(TermId, TermId),
     }
-    if let Some([kind, subject]) = u.args::<2>(id, "aggregate") {
-        if let Term::Atom(s) = u.get(kind) {
-            let name = u.sym_str(*s);
-            if AggregateKind::of(name).is_some() {
-                return json!({ name: arg_to_json(u, subject) });
+    let mut layers: Vec<Layer> = Vec::new();
+    let mut pending = vec![id];
+    let mut base = None;
+    while let Some(id) = pending.pop() {
+        if let Some(identity) = u.unary(id, "var") {
+            base = Some(json!({ "v": term_to_json(u, identity) }));
+            continue;
+        }
+        if let Some([kind, subject]) = u.args::<2>(id, "aggregate") {
+            if let Term::Atom(s) = u.get(kind) {
+                let name = u.sym_str(*s);
+                if AggregateKind::of(name).is_some() {
+                    layers.push(Layer::Aggregate(name));
+                    pending.push(subject);
+                    continue;
+                }
             }
         }
+        if let Some([step, seed, subject]) = u.args::<3>(id, "fold") {
+            layers.push(Layer::Fold(step, seed));
+            pending.push(subject);
+            continue;
+        }
+        base = Some(term_to_json(u, id));
     }
-    if let Some([step, seed, subject]) = u.args::<3>(id, "fold") {
-        return json!({
+    let base = base.expect("the innermost argument");
+    layers.into_iter().rev().fold(base, |inner, layer| match layer {
+        Layer::Aggregate(name) => json!({ name: inner }),
+        Layer::Fold(step, seed) => json!({
             "f": "fold",
             "args": [
                 term_to_json(u, step),
                 term_to_json(u, seed),
-                arg_to_json(u, subject),
+                inner,
             ],
-        });
-    }
-    term_to_json(u, id)
+        }),
+    })
 }
 
 fn call_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {

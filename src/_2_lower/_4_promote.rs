@@ -143,6 +143,9 @@ fn reservation_edge_index(
     })
 }
 
+/// Reference hops one alias chain takes; `visited` already stops a cycle.
+const ALIAS_CHAIN_LIMIT: usize = 4096;
+
 /// `:193`. Walks the reference chain to its deferred expression.
 fn alias_terminal_deferred(
     u: &mut Universe,
@@ -153,29 +156,34 @@ fn alias_terminal_deferred(
     visited: &mut Vec<(TermId, TermId)>,
 ) -> Option<TermId> {
     let expression = u.atom("expression");
-    if kind == expression {
-        if let Some((n, args)) = u.functor(target) {
-            if n == "deferred_expression" && args.len() == 3 {
-                return Some(args[0]);
+    let reference = u.atom("reference");
+    let (mut target, mut kind) = (target, kind);
+    for _ in 0..ALIAS_CHAIN_LIMIT {
+        if kind == expression {
+            if let Some((n, args)) = u.functor(target) {
+                if n == "deferred_expression" && args.len() == 3 {
+                    return Some(args[0]);
+                }
             }
         }
+        if kind != reference {
+            return None;
+        }
+        let (n, args) = u.functor(target)?;
+        if n != "name" || args.len() != 2 {
+            return None;
+        }
+        let (next_owner, next_name) = (args[0], args[1]);
+        if visited.contains(&(next_owner, next_name)) {
+            return None;
+        }
+        let found = index.scoped(next_owner, next_name)?;
+        let (row_owner, row_target, row_kind) = (found.owner, found.target, found.kind);
+        visited.push((row_owner, next_name));
+        (target, kind) = (row_target, row_kind);
     }
-    let reference = u.atom("reference");
-    if kind != reference {
-        return None;
-    }
-    let (n, args) = u.functor(target)?;
-    if n != "name" || args.len() != 2 {
-        return None;
-    }
-    let (next_owner, next_name) = (args[0], args[1]);
-    if visited.contains(&(next_owner, next_name)) {
-        return None;
-    }
-    let found = index.scoped(next_owner, next_name)?;
-    let (row_owner, row_target, row_kind) = (found.owner, found.target, found.kind);
-    visited.push((row_owner, next_name));
-    alias_terminal_deferred(u, row_target, row_kind, next_name, index, visited)
+    tracing::warn!(limit = ALIAS_CHAIN_LIMIT, "alias_chain_limit_exceeded");
+    None
 }
 
 /// `:217`. A promoted reservation leaves the derived list.
