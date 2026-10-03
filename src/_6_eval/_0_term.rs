@@ -170,7 +170,7 @@ impl std::ops::Index<usize> for Syms {
 
 pub struct Universe {
     pub syms: Syms,
-    pub terms: IndexSet<Term>,
+    pub terms: IndexSet<Term, hashbrown::DefaultHashBuilder>,
     pub nil: Sym,
     pub cons: Sym,
 }
@@ -185,7 +185,7 @@ impl Universe {
     pub fn new() -> Self {
         let mut u = Universe {
             syms: Syms::default(),
-            terms: IndexSet::new(),
+            terms: IndexSet::default(),
             nil: Sym(0),
             cons: Sym(0),
         };
@@ -404,7 +404,13 @@ impl Universe {
                 let head = ax
                     .len()
                     .cmp(&ay.len())
-                    .then_with(|| self.sym_str(*fx).cmp(self.sym_str(*fy)));
+                    .then_with(|| {
+                        if fx == fy {
+                            Ordering::Equal
+                        } else {
+                            self.sym_str(*fx).cmp(self.sym_str(*fy))
+                        }
+                    });
                 if head == Ordering::Equal {
                     return Err((ax, ay));
                 }

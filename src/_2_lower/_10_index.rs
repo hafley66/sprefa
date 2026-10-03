@@ -70,7 +70,7 @@ pub fn edge_parts(u: &Universe, row: TermId) -> Option<Edge> {
 
 #[derive(Default)]
 pub struct Dictionary {
-    pub terms: IndexSet<TermId>,
+    pub terms: IndexSet<TermId, hashbrown::DefaultHashBuilder>,
 }
 
 impl Dictionary {
