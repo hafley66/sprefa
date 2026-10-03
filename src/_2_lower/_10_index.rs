@@ -213,6 +213,7 @@ pub struct EdgeIndex {
     pub by_owner_name: HashMap<(u32, u32), Vec<usize>>,
     pub by_owner_index: HashMap<(u32, i64), Vec<usize>>,
     pub by_target_owner: HashMap<u32, Vec<usize>>,
+    pub by_owner: HashMap<u32, Vec<usize>>,
     /// Distinct ordinals per owner: its arity. The visible list concatenates
     /// the promoted and the imported rows, so an edge can appear twice.
     pub owner_count: HashMap<u32, i64>,
@@ -230,6 +231,7 @@ impl EdgeIndex {
             let owner = index.owners.intern(parts.owner);
             let name = index.names.intern(parts.name);
             let position = index.rows.len();
+            index.by_owner.entry(owner).or_default().push(position);
             index
                 .by_owner_name
                 .entry((owner, name))
@@ -321,14 +323,8 @@ impl EdgeIndex {
         let Some(owner) = self.owners.lookup(owner) else {
             return Vec::new();
         };
-        let mut positions: Vec<usize> = self
-            .rows
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| self.owners.lookup(e.owner) == Some(owner))
-            .map(|(i, _)| i)
-            .collect();
-        positions.sort_unstable();
-        positions.into_iter().map(|i| &self.rows[i]).collect()
+        self.by_owner
+            .get(&owner)
+            .map_or_else(Vec::new, |positions| positions.iter().map(|i| &self.rows[*i]).collect())
     }
 }
