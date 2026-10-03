@@ -65,9 +65,14 @@ impl<E: Engine> EngineSession<E> {
     fn install(
         lowered: &Lowered,
         fingerprint: u64,
+        measured: bool,
     ) -> Result<Self, ivm_engine::EngineError> {
         let census_start = std::time::Instant::now();
-        let engine = E::install(&lowered.ir)?;
+        let engine = if measured {
+            E::install(&lowered.ir)?
+        } else {
+            E::install_unmeasured(&lowered.ir)?
+        };
         tracing::info!(
             target: "dl8::ir",
             install_ns = census_start.elapsed().as_nanos(),
@@ -137,22 +142,25 @@ fn install_session<E: Engine + 'static>(
     u: &mut Universe,
     lowered: &Lowered,
     fingerprint: u64,
+    measured: bool,
 ) -> Result<Box<dyn Session>, Diagnostic> {
-    let session = EngineSession::<E>::install(lowered, fingerprint)
+    let session = EngineSession::<E>::install(lowered, fingerprint, measured)
         .map_err(|error| diagnostic(u, "engine", error))?;
     Ok(Box::new(session))
 }
 
-/// The one place a backend type is named.
+/// The one place a backend type is named. `measured`: the caller reads per-operator
+/// counters (`take_counters` after `dl8 eval`).
 fn open_session(
     u: &mut Universe,
     backend: Backend,
     lowered: &Lowered,
     fingerprint: u64,
+    measured: bool,
 ) -> Result<Box<dyn Session>, Diagnostic> {
     match backend {
-        Backend::Dd => install_session::<ivm_dd::Dd>(u, lowered, fingerprint),
-        Backend::Sqlite => install_session::<ivm_sqlite::Sqlite>(u, lowered, fingerprint),
+        Backend::Dd => install_session::<ivm_dd::Dd>(u, lowered, fingerprint, measured),
+        Backend::Sqlite => install_session::<ivm_sqlite::Sqlite>(u, lowered, fingerprint, measured),
     }
 }
 
@@ -212,7 +220,7 @@ impl IrSession {
             .as_ref()
             .is_none_or(|session| !session.matches(&lowered, fingerprint))
         {
-            self.session = match open_session(u, backend, &lowered, fingerprint) {
+            self.session = match open_session(u, backend, &lowered, fingerprint, false) {
                 Ok(session) => Some(session),
                 Err(diag) => {
                     return Closure {
@@ -1147,7 +1155,7 @@ fn run_fresh(
 ) -> Result<(Closure, Vec<FrontierResult>), Diagnostic> {
     let lowered = ir_lower::lower(u, program)?;
     let fingerprint = structural_fingerprint(&lowered.ir);
-    let mut session = open_session(u, backend, &lowered, fingerprint)?;
+    let mut session = open_session(u, backend, &lowered, fingerprint, true)?;
     match session.run(u, &lowered, answerer, frontiers, public_names, live, fx) {
         Ok((closure, results, counters)) => {
             LAST_COUNTERS.with(|last| last.set(Some(counters)));
