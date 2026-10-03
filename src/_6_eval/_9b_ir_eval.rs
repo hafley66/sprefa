@@ -310,6 +310,7 @@ fn snapshot_closure<E: Engine>(
     rows.dedup();
     let mut diagnostics = Vec::new();
     if let Some(program) = &lowered.fold_program {
+        let mut folds = Vec::with_capacity(lowered.declared_folds.len());
         for spec in &lowered.declared_folds {
             let mut groups: BTreeMap<Vec<Cell>, Vec<(Cell, TermId)>> = BTreeMap::new();
             for (cells, weight) in engine.snapshot(spec.ranked)? {
@@ -342,14 +343,16 @@ fn snapshot_closure<E: Engine>(
                     values.into_iter().map(|(_, value)| value).collect()
                 })
                 .collect();
-            let groups: Vec<&[TermId]> = values.iter().map(Vec::as_slice).collect();
-            // One row store for every group of the fold.
-            for result in
-                super::evaluate::fold_generic_row_groups(u, program, &rows, &spec.fold, &groups)
-            {
-                if let Err(diagnostic) = result {
-                    diagnostics.push(diagnostic);
-                }
+            folds.push((&spec.fold, values));
+        }
+        let folds: Vec<_> = folds
+            .iter()
+            .map(|(fold, values)| (*fold, values.iter().map(Vec::as_slice).collect()))
+            .collect();
+        // One row store for every group of every declared fold.
+        for result in super::evaluate::fold_generic_row_groups(u, program, &rows, &folds) {
+            if let Err(diagnostic) = result {
+                diagnostics.push(diagnostic);
             }
         }
     }
@@ -406,50 +409,55 @@ fn decode_terms<E: Engine>(
     mapped: &HashMap<TermId, Cell>,
 ) -> Result<HashMap<Cell, TermId>, ivm_engine::EngineError> {
     let mut decoded: HashMap<Cell, TermId> = mapped.iter().map(|(&term, &id)| (id, term)).collect();
-    let mut dictionary = BTreeMap::<Cell, (String, Vec<Cell>)>::new();
-    for rel in lowered
+    // `(id, constructor name, args)` of every interned term not decoded yet, ascending id.
+    let mut pending: Vec<(Cell, &str, Vec<Cell>)> = Vec::new();
+    let constructors: Vec<&ir::Relation> = lowered
         .ir
         .rels
         .iter()
         .filter(|rel| rel.kind == ir::RelKind::Constructor)
-    {
-        for (row, weight) in engine.intern_snapshot(rel.id)? {
-            if weight > 0 {
-                dictionary.insert(row[0], (rel.name.clone(), row[1..].to_vec()));
+        .collect();
+    let ids: Vec<ir::RelId> = constructors.iter().map(|rel| rel.id).collect();
+    for (rel, rows) in constructors.iter().zip(engine.intern_snapshots(&ids)?) {
+        for (mut row, weight) in rows {
+            if weight > 0 && !decoded.contains_key(&row[0]) {
+                let id = row.remove(0);
+                pending.push((id, rel.name.as_str(), row));
             }
         }
     }
-    for (&id, (_, args)) in dictionary.iter().filter(|(_, (name, _))| name == "2:str") {
-        if !decoded.contains_key(&id) {
-            if let Some(value) = engine.text(args[0])? {
-                decoded.insert(id, u.string(&value));
-            }
+    pending.sort_unstable_by_key(|(id, ..)| *id);
+    pending.dedup_by_key(|(id, ..)| *id);
+    for (id, _, args) in pending.iter().filter(|(_, name, _)| *name == "2:str") {
+        if let Some(value) = engine.text(args[0])? {
+            decoded.insert(*id, u.string(&value));
         }
     }
-    for _ in 0..dictionary.len().min(TERM_BUDGET) + 1 {
-        let mut changed = false;
-        for (&id, (functor, args)) in &dictionary {
-            if decoded.contains_key(&id) {
-                continue;
-            }
-            let term = match functor.as_str() {
+    pending.retain(|(id, name, _)| !decoded.contains_key(id) && *name != "3:atom");
+    // A term's arguments are interned before it, so one ascending pass decodes most terms.
+    for _ in 0..pending.len().min(TERM_BUDGET) + 1 {
+        let before = pending.len();
+        pending.retain(|(id, functor, args)| {
+            let term = match *functor {
                 "0:int" => Some(u.int(args[0])),
                 "0:float" => Some(u.float(f64::from_bits(args[0] as u64))),
                 "1:bool" => Some(u.boolean(args[0] != 0)),
-                "3:atom" => None,
                 name if name.starts_with("9:") => args
                     .iter()
                     .map(|arg| decoded.get(arg).copied())
                     .collect::<Option<Vec<_>>>()
                     .map(|items| u.compound(name.splitn(3, ':').nth(2).unwrap(), items)),
-                _ => None,
+                _ => return false,
             };
-            if let Some(term) = term {
-                decoded.insert(id, term);
-                changed = true;
+            match term {
+                Some(term) => {
+                    decoded.insert(*id, term);
+                    false
+                }
+                None => true,
             }
-        }
-        if !changed {
+        });
+        if pending.len() == before {
             break;
         }
     }

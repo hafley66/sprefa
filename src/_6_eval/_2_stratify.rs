@@ -58,6 +58,63 @@ fn sorted_rels(u: &Universe, set: &HashSet<TermId>) -> Vec<TermId> {
     v
 }
 
+/// Tarjan's strongly connected components, numbered in completion order: every
+/// component a relation reads completes before the relation's own.
+fn components(edges: &[Vec<(usize, u32)>]) -> Vec<usize> {
+    const UNVISITED: usize = usize::MAX;
+    let n = edges.len();
+    let mut index = vec![UNVISITED; n];
+    let mut low = vec![0; n];
+    let mut on_stack = vec![false; n];
+    let mut component = vec![UNVISITED; n];
+    let mut stack = Vec::new();
+    let mut next_index = 0;
+    let mut next_component = 0;
+    // `(node, next edge to visit)`, one frame per node on the current path.
+    let mut path: Vec<(usize, usize)> = Vec::new();
+    for root in 0..n {
+        if index[root] != UNVISITED {
+            continue;
+        }
+        index[root] = next_index;
+        low[root] = next_index;
+        next_index += 1;
+        stack.push(root);
+        on_stack[root] = true;
+        path.push((root, 0));
+        while let Some((node, edge)) = path.pop() {
+            if let Some(&(body, _)) = edges[node].get(edge) {
+                path.push((node, edge + 1));
+                if index[body] == UNVISITED {
+                    index[body] = next_index;
+                    low[body] = next_index;
+                    next_index += 1;
+                    stack.push(body);
+                    on_stack[body] = true;
+                    path.push((body, 0));
+                } else if on_stack[body] {
+                    low[node] = low[node].min(index[body]);
+                }
+                continue;
+            }
+            if let Some(&(parent, _)) = path.last() {
+                low[parent] = low[parent].min(low[node]);
+            }
+            if low[node] == index[node] {
+                while let Some(member) = stack.pop() {
+                    on_stack[member] = false;
+                    component[member] = next_component;
+                    if member == node {
+                        break;
+                    }
+                }
+                next_component += 1;
+            }
+        }
+    }
+    component
+}
+
 pub fn stratify(u: &mut Universe, program: &Program) -> (Strata, Vec<Diagnostic>) {
     let deps = dependencies(&program.rules);
     let mut relations: HashSet<TermId> = HashSet::new();
@@ -68,55 +125,33 @@ pub fn stratify(u: &mut Universe, program: &Program) -> (Strata, Vec<Diagnostic>
         }
     }
     let relations = sorted_rels(u, &relations);
-
-    // transitive closure over the dependency graph
-    let mut reach: HashMap<TermId, HashSet<TermId>> = HashMap::new();
-    for r in &relations {
-        reach.insert(*r, HashSet::new());
-    }
-    for d in &deps {
-        reach.get_mut(&d.head).unwrap().insert(d.body);
-    }
-    loop {
-        let mut changed = false;
-        for r in &relations {
-            let current: Vec<TermId> = reach[r].iter().copied().collect();
-            let mut add = Vec::new();
-            for n in &current {
-                for m in &reach[n] {
-                    if !reach[r].contains(m) {
-                        add.push(*m);
-                    }
-                }
-            }
-            if !add.is_empty() {
-                changed = true;
-                reach.get_mut(r).unwrap().extend(add);
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-
-    let mut strict: Vec<&Dependency> = deps
+    let position: HashMap<TermId, usize> = relations
         .iter()
-        .filter(|d| d.gap == 1 && reach[&d.body].contains(&d.head))
+        .enumerate()
+        .map(|(index, rel)| (*rel, index))
         .collect();
-    strict.sort_by(|a, b| u.cmp(a.head, b.head).then_with(|| u.cmp(a.body, b.body)));
-    strict.dedup_by(|a, b| a.head == b.head && a.body == b.body && a.aggregate == b.aggregate);
+    let mut edges: Vec<Vec<(usize, u32)>> = vec![Vec::new(); relations.len()];
+    for d in &deps {
+        edges[position[&d.head]].push((position[&d.body], d.gap));
+    }
+    let component = components(&edges);
 
+    // A gap-one read inside one component lies on a cycle.
+    let strict: Vec<&Dependency> = deps
+        .iter()
+        .filter(|d| d.gap == 1 && component[position[&d.head]] == component[position[&d.body]])
+        .collect();
     if !strict.is_empty() {
-        let mut cycle: HashSet<TermId> = HashSet::new();
-        for d in &strict {
-            for r in &relations {
-                let mutual =
-                    *r == d.head || (reach[&d.head].contains(r) && reach[r].contains(&d.head));
-                if mutual {
-                    cycle.insert(*r);
-                }
-            }
-        }
+        let cyclic: HashSet<usize> = strict
+            .iter()
+            .map(|d| component[position[&d.head]])
+            .collect();
+        let cycle: HashSet<TermId> = relations
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| cyclic.contains(&component[*index]))
+            .map(|(_, rel)| *rel)
+            .collect();
         let cycle = sorted_rels(u, &cycle);
         let name = if strict.iter().any(|d| d.aggregate) {
             "aggregate_dependency_cycle"
@@ -134,27 +169,29 @@ pub fn stratify(u: &mut Universe, program: &Program) -> (Strata, Vec<Diagnostic>
         );
     }
 
-    let mut levels: HashMap<TermId, u32> = relations.iter().map(|r| (*r, 0)).collect();
-    loop {
-        let mut changed = false;
-        for r in &relations {
-            let mut next = levels[r];
-            for d in deps.iter().filter(|d| d.head == *r) {
-                next = next.max(levels[&d.body] + d.gap);
-            }
-            if next != levels[r] {
-                levels.insert(*r, next);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
+    // Edges inside a component have gap zero: one pass in completion order is
+    // the least fixpoint of `level(head) >= level(body) + gap`.
+    let mut members: Vec<Vec<usize>> = vec![Vec::new(); relations.len()];
+    for (index, c) in component.iter().enumerate() {
+        members[*c].push(index);
+    }
+    let mut levels = vec![0u32; relations.len()];
+    for (c, group) in members.iter().enumerate() {
+        let level = group
+            .iter()
+            .flat_map(|head| edges[*head].iter())
+            .filter(|(body, _)| component[*body] != c)
+            .map(|(body, gap)| levels[*body] + gap)
+            .max()
+            .unwrap_or(0);
+        for index in group {
+            levels[*index] = level;
         }
     }
     let derived: HashSet<TermId> = program.rules.iter().map(|r| r.rel).collect();
     let mut out = Strata::default();
     for r in derived {
-        let l = levels[&r];
+        let l = levels[position[&r]];
         out.levels.insert(r, l);
         out.max_level = out.max_level.max(l);
     }

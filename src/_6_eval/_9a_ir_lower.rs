@@ -2134,7 +2134,9 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     if let Some(diag) = diagnostics.into_iter().next() {
         return Err(diag);
     }
-    let mut needed = BTreeSet::new();
+    // Term indices reachable from the program, marked in `seen`; sorted before each read.
+    let mut needed: Vec<u32> = Vec::new();
+    let mut seen = vec![false; u.terms.len()];
     let mut todo = vec![none, empty, tuple, intern_rel, effect_rel, snapshot_rel];
     todo.extend(program.served.iter().copied());
     for seed in &program.seeds {
@@ -2154,12 +2156,19 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         }
     }
     while let Some(term) = todo.pop() {
-        if needed.insert(term.0) {
+        let index = term.0 as usize;
+        if index >= seen.len() {
+            seen.resize(index + 1, false);
+        }
+        if !seen[index] {
+            seen[index] = true;
+            needed.push(term.0);
             if let Term::Compound(_, args) = u.get(term) {
                 todo.extend(args.iter().copied());
             }
         }
     }
+    needed.sort_unstable();
     let dynamic_lists = program.rules.iter().any(|rule| {
         rule.body.iter().any(|goal| {
             Kernel::of(u, goal.rel) == Some(Kernel::Intern)
@@ -2184,12 +2193,19 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     }
     todo.extend(plain_list_pairs.iter().map(|(_, plain)| *plain));
     while let Some(term) = todo.pop() {
-        if needed.insert(term.0) {
+        let index = term.0 as usize;
+        if index >= seen.len() {
+            seen.resize(index + 1, false);
+        }
+        if !seen[index] {
+            seen[index] = true;
+            needed.push(term.0);
             if let Term::Compound(_, args) = u.get(term) {
                 todo.extend(args.iter().copied());
             }
         }
     }
+    needed.sort_unstable();
     let bad_list_terms: Vec<TermId> = needed
         .iter()
         .copied()
