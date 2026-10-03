@@ -139,16 +139,90 @@ pub fn colon_call_goal(cx: &mut Cx, arguments: &[TermId; 4]) -> TermId {
     cx.kernel_goal(None, ":", arguments)
 }
 
+/// One expression lowering on the explicit stack: a node not yet started, or a
+/// lowering waiting on the sub-expression above it.
+enum ExprFrame {
+    Enter {
+        node: TermId,
+        owner: TermId,
+    },
+    /// A dotted path in an expression position, its head lowering above.
+    PathWalk {
+        node_id: TermId,
+        segments: Vec<TermId>,
+    },
+    /// `:1458`. An operator position that is itself an expression.
+    Operator {
+        head: TermId,
+        node_id: TermId,
+        arguments: Vec<TermId>,
+        owner: TermId,
+    },
+    Construction(Construction),
+    Normalize(Normalize),
+}
+
+enum ExprOutcome {
+    Done(Lowering),
+    /// Lower `node` under `owner`, then resume the frame with its lowering.
+    Await(ExprFrame, TermId, TermId),
+    /// Resume the frame with nothing returned.
+    Again(ExprFrame),
+}
+
+/// Runs `frame` and every lowering it nests; each finished lowering returns
+/// to the frame below it.
+fn run_expression(cx: &mut Cx, frame: ExprFrame) -> Lowering {
+    let mut stack = vec![frame];
+    let mut returned: Option<Lowering> = None;
+    while let Some(frame) = stack.pop() {
+        let outcome = match frame {
+            ExprFrame::Enter { node, owner } => expression_start(cx, node, owner),
+            ExprFrame::PathWalk { node_id, segments } => {
+                let head = returned.take().expect("the path head's lowering");
+                path_walk_finish(cx, node_id, &segments, head)
+            }
+            ExprFrame::Operator {
+                head,
+                node_id,
+                arguments,
+                owner,
+            } => {
+                let operator = returned.take().expect("the operator's lowering");
+                apply_expression_operator(cx, operator, head, node_id, &arguments, owner)
+            }
+            ExprFrame::Construction(construction) => construction.resume(cx, returned.take()),
+            ExprFrame::Normalize(normalize) => normalize.resume(cx, returned.take()),
+        };
+        match outcome {
+            ExprOutcome::Done(lowering) => returned = Some(lowering),
+            ExprOutcome::Await(then, node, owner) => {
+                stack.push(then);
+                stack.push(ExprFrame::Enter { node, owner });
+            }
+            ExprOutcome::Again(frame) => stack.push(frame),
+        }
+    }
+    returned.expect("the outermost lowering")
+}
+
 /// A dotted path in an expression position: one `:` goal per segment after the
 /// first, the value of the last segment the value of the form.
-fn lower_path_walk(cx: &mut Cx, node_id: TermId, segments: &[TermId], owner: TermId) -> Lowering {
+fn lower_path_walk(cx: &mut Cx, node_id: TermId, segments: &[TermId], owner: TermId) -> ExprOutcome {
     if segments.len() < 2 {
         let reason = cx.plain(node_id, "invalid_path");
-        return none(cx, vec![reason]);
+        return ExprOutcome::Done(none(cx, vec![reason]));
     }
-    let head = lower_expression(cx, segments[0], owner);
+    let frame = ExprFrame::PathWalk {
+        node_id,
+        segments: segments.to_vec(),
+    };
+    ExprOutcome::Await(frame, segments[0], owner)
+}
+
+fn path_walk_finish(cx: &mut Cx, node_id: TermId, segments: &[TermId], head: Lowering) -> ExprOutcome {
     if let Some(reason) = head.diagnostics.first() {
-        return none(cx, vec![*reason]);
+        return ExprOutcome::Done(none(cx, vec![*reason]));
     }
     let mut value = head.value;
     let mut goals = head.goals;
@@ -156,7 +230,7 @@ fn lower_path_walk(cx: &mut Cx, node_id: TermId, segments: &[TermId], owner: Ter
     for (ordinal, segment) in segments[1..].iter().enumerate() {
         let Some(name) = path_segment_atom(cx.u, *segment) else {
             let reason = cx.plain(node_id, "invalid_path");
-            return none(cx, vec![reason]);
+            return ExprOutcome::Done(none(cx, vec![reason]));
         };
         let ordinal = cx.int(ordinal as i64);
         let step = cx.compound("path_value", vec![node_id, ordinal]);
@@ -168,59 +242,66 @@ fn lower_path_walk(cx: &mut Cx, node_id: TermId, segments: &[TermId], owner: Ter
         origins.push(node_id);
         value = next;
     }
-    Lowering {
+    ExprOutcome::Done(Lowering {
         value,
         goals,
         origins,
         diagnostics: vec![],
-    }
+    })
 }
 
-/// `:1433`. Eight clauses in source order.
+/// `:1433`. Eight clauses in source order; an explicit stack holds the
+/// sub-expressions a form nests.
 pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
+    run_expression(cx, ExprFrame::Enter { node, owner })
+}
+
+fn expression_start(cx: &mut Cx, node: TermId, owner: TermId) -> ExprOutcome {
     let Some(parsed) = forms::node(cx.u, node) else {
         let reason = cx.plain(node, "unresolved_expression_form");
-        return none(cx, vec![reason]);
+        return ExprOutcome::Done(none(cx, vec![reason]));
     };
     if let Some((identity, _)) = forms::variable(cx.u, parsed.payload) {
         let value = cx.compound("var", vec![identity]);
-        return Lowering::value(value);
+        return ExprOutcome::Done(Lowering::value(value));
     }
     if let Some(literal) = forms::literal_value(cx.u, parsed.payload) {
         let value = cx.compound("const", vec![literal]);
-        return Lowering::value(value);
+        return ExprOutcome::Done(Lowering::value(value));
     }
     if let Some(name) = forms::atom_name(cx.u, parsed.payload) {
         if let Some(found) = cx.reservations.scoped(owner, name) {
             let (row_owner, row_name, target, kind) =
                 (found.owner, found.name, found.target, found.kind);
-            return lexical_atom_value(cx, row_owner, row_name, target, kind, parsed.id, owner);
+            return ExprOutcome::Done(lexical_atom_value(
+                cx, row_owner, row_name, target, kind, parsed.id, owner,
+            ));
         }
         let value = forms::written_name(cx.u, owner, name);
-        return Lowering::value(value);
+        return ExprOutcome::Done(Lowering::value(value));
     }
     let Some(items) = forms::form(cx.u, parsed.payload) else {
         let reason = cx.plain(parsed.id, "unresolved_expression_form");
-        return none(cx, vec![reason]);
+        return ExprOutcome::Done(none(cx, vec![reason]));
     };
     if items.is_empty() {
         let empty = cx.atom("()");
         let value = forms::written_name(cx.u, owner, empty);
-        return Lowering::value(value);
+        return ExprOutcome::Done(Lowering::value(value));
     }
     if let Some(head) = forms::form_head_atom(cx.u, &items) {
         if is_path_head(cx.u, head) {
             if let Some(constructor) = sum_path_constructor(cx, node, owner) {
-                return lower_construction(cx, constructor, parsed.id, &[], owner);
+                return construction(Constructed::By(constructor), parsed.id, &[], owner);
             }
             if let Some((call_owner, label)) = primitive_path_head(cx, node, owner) {
                 let value = forms::written_name(cx.u, call_owner, label);
-                return Lowering::value(value);
+                return ExprOutcome::Done(Lowering::value(value));
             }
             if let Some(label) = underived_member(cx, &items[1..], owner) {
                 let reason = cx.compound("undeclared_relation", vec![label]);
                 let diagnostic = cx.diagnostic(parsed.id, reason);
-                return none(cx, vec![diagnostic]);
+                return ExprOutcome::Done(none(cx, vec![diagnostic]));
             }
             return lower_path_walk(cx, parsed.id, &items[1..], owner);
         }
@@ -229,7 +310,7 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
             .functor_or_atom(head)
             .is_some_and(|(text, _)| text == "tuple")
         {
-            return lower_tuple(cx, parsed.id, &items[1..], owner);
+            return construction(Constructed::Tuple, parsed.id, &items[1..], owner);
         }
         return match expression_callable(cx, head, owner) {
             Ok(Applied::Relation(callable, arity, key_sets)) => lower_expression_call(
@@ -244,14 +325,14 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
                 owner,
             ),
             Ok(Applied::Construction(constructor)) => {
-                lower_construction(cx, constructor, parsed.id, &items[1..], owner)
+                construction(Constructed::By(constructor), parsed.id, &items[1..], owner)
             }
             Ok(Applied::Generic(callable)) => {
                 lower_generic_value(cx, callable, head, parsed.id, &items[1..], owner)
             }
             Err(reason) => {
                 let diagnostic = cx.diagnostic(parsed.id, reason);
-                none(cx, vec![diagnostic])
+                ExprOutcome::Done(none(cx, vec![diagnostic]))
             }
         };
     }
@@ -271,21 +352,26 @@ pub fn lower_expression(cx: &mut Cx, node: TermId, owner: TermId) -> Lowering {
             Ok(Applied::Construction(_) | Applied::Generic(_)) => {
                 let reason = not_a_relation(cx, label, call_owner);
                 let diagnostic = cx.diagnostic(parsed.id, reason);
-                none(cx, vec![diagnostic])
+                ExprOutcome::Done(none(cx, vec![diagnostic]))
             }
             Err(reason) => {
                 let diagnostic = cx.diagnostic(parsed.id, reason);
-                none(cx, vec![diagnostic])
+                ExprOutcome::Done(none(cx, vec![diagnostic]))
             }
         };
     }
     if let Some(constructor) = sum_path_constructor(cx, items[0], owner) {
-        return lower_construction(cx, constructor, parsed.id, &items[1..], owner);
+        return construction(Constructed::By(constructor), parsed.id, &items[1..], owner);
     }
-    // :1458. An operator position that is itself an expression.
-    let operator = lower_expression(cx, items[0], owner);
-    apply_expression_operator(cx, operator, items[0], parsed.id, &items[1..], owner)
+    let frame = ExprFrame::Operator {
+        head: items[0],
+        node_id: parsed.id,
+        arguments: items[1..].to_vec(),
+        owner,
+    };
+    ExprOutcome::Await(frame, items[0], owner)
 }
+
 
 /// `:1472`.
 fn lexical_atom_value(
@@ -478,6 +564,73 @@ fn construction_var(cx: &mut Cx, node_id: TermId, ordinal: i64) -> TermId {
     cx.compound("var", vec![key])
 }
 
+/// What a construction interns: a constructor's instance, or the anonymous
+/// product `tuple`.
+#[derive(Clone, Copy)]
+enum Constructed {
+    By(TermId),
+    Tuple,
+}
+
+/// A construction part way through its arguments, each lowered in order.
+struct Construction {
+    kind: Constructed,
+    node_id: TermId,
+    arguments: Vec<TermId>,
+    next: usize,
+    owner: TermId,
+    goals: Vec<TermId>,
+    origins: Vec<TermId>,
+    values: Vec<TermId>,
+}
+
+fn construction(kind: Constructed, node_id: TermId, arguments: &[TermId], owner: TermId) -> ExprOutcome {
+    ExprOutcome::Again(ExprFrame::Construction(Construction {
+        kind,
+        node_id,
+        arguments: arguments.to_vec(),
+        next: 0,
+        owner,
+        goals: Vec::new(),
+        origins: Vec::new(),
+        values: Vec::with_capacity(arguments.len()),
+    }))
+}
+
+impl Construction {
+    fn resume(mut self, cx: &mut Cx, returned: Option<Lowering>) -> ExprOutcome {
+        if let Some(lowered) = returned {
+            if let Some(first) = lowered.diagnostics.first() {
+                return ExprOutcome::Done(none(cx, vec![*first]));
+            }
+            // A half-applied argument has no term the argument list can hold.
+            if is_partial(cx, lowered.value) {
+                let constructor = match self.kind {
+                    Constructed::By(constructor) => constructor,
+                    Constructed::Tuple => cx.atom("tuple"),
+                };
+                let reason = cx.compound("partial_construction_argument", vec![constructor]);
+                let diagnostic = cx.diagnostic(self.node_id, reason);
+                return ExprOutcome::Done(none(cx, vec![diagnostic]));
+            }
+            self.goals.extend(lowered.goals);
+            self.origins.extend(lowered.origins);
+            self.values.push(lowered.value);
+        }
+        if let Some(&node) = self.arguments.get(self.next) {
+            self.next += 1;
+            let owner = self.owner;
+            return ExprOutcome::Await(ExprFrame::Construction(self), node, owner);
+        }
+        ExprOutcome::Done(match self.kind {
+            Constructed::By(constructor) => {
+                finish_construction(cx, constructor, self.node_id, self.goals, self.origins, self.values)
+            }
+            Constructed::Tuple => finish_tuple(cx, self.node_id, self.goals, self.origins, self.values),
+        })
+    }
+}
+
 /// `(<Type> <Argument>...)` where the head names a node with no rows. The
 /// arguments are one `tuple` goal feeding `intern`.
 pub fn lower_construction(
@@ -487,24 +640,22 @@ pub fn lower_construction(
     argument_nodes: &[TermId],
     owner: TermId,
 ) -> Lowering {
-    let mut goals = Vec::new();
-    let mut origins = Vec::new();
-    let mut values = Vec::with_capacity(argument_nodes.len());
-    for node in argument_nodes {
-        let lowered = lower_expression(cx, *node, owner);
-        if let Some(first) = lowered.diagnostics.first() {
-            return none(cx, vec![*first]);
-        }
-        // A half-applied argument has no term the argument list can hold.
-        if is_partial(cx, lowered.value) {
-            let reason = cx.compound("partial_construction_argument", vec![constructor]);
-            let diagnostic = cx.diagnostic(node_id, reason);
-            return none(cx, vec![diagnostic]);
-        }
-        goals.extend(lowered.goals);
-        origins.extend(lowered.origins);
-        values.push(lowered.value);
-    }
+    let ExprOutcome::Again(frame) =
+        construction(Constructed::By(constructor), node_id, argument_nodes, owner)
+    else {
+        unreachable!("a construction starts as a frame")
+    };
+    run_expression(cx, frame)
+}
+
+fn finish_construction(
+    cx: &mut Cx,
+    constructor: TermId,
+    node_id: TermId,
+    mut goals: Vec<TermId>,
+    mut origins: Vec<TermId>,
+    values: Vec<TermId>,
+) -> Lowering {
     let ground = cx.ground_values
         && goals.is_empty()
         && cx.u.functor(constructor).is_some_and(|(n, _)| n == "ref")
@@ -548,12 +699,12 @@ fn lower_generic_value(
     node_id: TermId,
     argument_nodes: &[TermId],
     owner: TermId,
-) -> Lowering {
+) -> ExprOutcome {
     if cx.ground_values || super::generic::eigo(cx, callable).is_some() {
         let shape = cx.atom("generic_application");
         let reason = cx.compound("not_built_yet", vec![shape]);
         let diagnostic = cx.diagnostic(node_id, reason);
-        return none(cx, vec![diagnostic]);
+        return ExprOutcome::Done(none(cx, vec![diagnostic]));
     }
     let columns = cx.edges.arity(callable) - 1;
     if argument_nodes.len() as i64 != columns {
@@ -561,33 +712,21 @@ fn lower_generic_value(
         let observed = cx.int(argument_nodes.len() as i64);
         let reason = cx.compound("expression_arity_mismatch", vec![name, expected, observed]);
         let diagnostic = cx.diagnostic(node_id, reason);
-        return none(cx, vec![diagnostic]);
+        return ExprOutcome::Done(none(cx, vec![diagnostic]));
     }
     let constructor = cx.compound("ref", vec![callable]);
-    lower_construction(cx, constructor, node_id, argument_nodes, owner)
+    construction(Constructed::By(constructor), node_id, argument_nodes, owner)
 }
 
 /// `(tuple Element...)`, the expansion of `[a b c]`: the anonymous product of
 /// that arity, one `:` edge per element, labels are positions.
-fn lower_tuple(cx: &mut Cx, node_id: TermId, argument_nodes: &[TermId], owner: TermId) -> Lowering {
-    let mut goals = Vec::new();
-    let mut origins = Vec::new();
-    let mut values = Vec::with_capacity(argument_nodes.len());
-    for node in argument_nodes {
-        let lowered = lower_expression(cx, *node, owner);
-        if let Some(first) = lowered.diagnostics.first() {
-            return none(cx, vec![*first]);
-        }
-        if is_partial(cx, lowered.value) {
-            let constructor = cx.atom("tuple");
-            let reason = cx.compound("partial_construction_argument", vec![constructor]);
-            let diagnostic = cx.diagnostic(node_id, reason);
-            return none(cx, vec![diagnostic]);
-        }
-        goals.extend(lowered.goals);
-        origins.extend(lowered.origins);
-        values.push(lowered.value);
-    }
+fn finish_tuple(
+    cx: &mut Cx,
+    node_id: TermId,
+    mut goals: Vec<TermId>,
+    mut origins: Vec<TermId>,
+    values: Vec<TermId>,
+) -> Lowering {
     let ground = cx.ground_values
         && goals.is_empty()
         && values.iter().all(|v| {
@@ -618,6 +757,7 @@ fn lower_tuple(cx: &mut Cx, node_id: TermId, argument_nodes: &[TermId], owner: T
         diagnostics: vec![],
     }
 }
+
 
 fn key_sets_term(cx: &mut Cx, key_sets: &[Vec<u32>]) -> TermId {
     let rows: Vec<TermId> = key_sets
@@ -689,27 +829,24 @@ fn lower_expression_call(
     argument_nodes: &[TermId],
     call_owner: TermId,
     owner: TermId,
-) -> Lowering {
+) -> ExprOutcome {
     let return_index = match expression_return_position(cx, &callable, node_id) {
         Ok(index) => index,
-        Err(diagnostic) => return none(cx, vec![diagnostic]),
+        Err(diagnostic) => return ExprOutcome::Done(none(cx, vec![diagnostic])),
     };
     let all = slots::callable_slots(cx, &callable, arity);
     let input = slots::exclude_slot(&all, Some(return_index));
-    let normalized =
-        normalize_expression_arguments(cx, name, node_id, &input, &[], argument_nodes, owner);
-    finish_expression_bindings(
-        cx,
-        &callable,
+    let binding = Binding {
+        callable,
         arity,
         key_sets,
         return_index,
         name,
         node_id,
-        &input,
-        normalized,
+        input,
         call_owner,
-    )
+    };
+    normalize_expression_arguments(cx, binding, &[], argument_nodes, owner, Vec::new(), Vec::new())
 }
 
 struct Normalized {
@@ -719,67 +856,122 @@ struct Normalized {
     diagnostics: Vec<TermId>,
 }
 
-/// `:1744`.
-fn normalize_expression_arguments(
-    cx: &mut Cx,
+/// The call a normalized argument list finishes: `finish_expression_bindings`'
+/// other arguments.
+struct Binding {
+    callable: Callable,
+    arity: i64,
+    key_sets: TermId,
+    return_index: i64,
     name: TermId,
     node_id: TermId,
-    input: &[Slot],
+    input: Vec<Slot>,
+    call_owner: TermId,
+}
+
+impl Binding {
+    fn finish(self, cx: &mut Cx, normalized: Normalized) -> ExprOutcome {
+        ExprOutcome::Done(finish_expression_bindings(
+            cx,
+            &self.callable,
+            self.arity,
+            self.key_sets,
+            self.return_index,
+            self.name,
+            self.node_id,
+            &self.input,
+            normalized,
+            self.call_owner,
+        ))
+    }
+}
+
+/// `:1744`. Goals and origins start from `goals` and `origins`, the operator's
+/// when the head is itself an expression.
+fn normalize_expression_arguments(
+    cx: &mut Cx,
+    binding: Binding,
     existing: &[(i64, TermId)],
     argument_nodes: &[TermId],
     owner: TermId,
-) -> Normalized {
-    let classified = match slots::classify(cx, argument_nodes, input) {
+    goals: Vec<TermId>,
+    origins: Vec<TermId>,
+) -> ExprOutcome {
+    let failed = |cx: &mut Cx, binding: Binding, goals, origins, diagnostic| {
+        binding.finish(
+            cx,
+            Normalized {
+                bound: vec![],
+                goals,
+                origins,
+                diagnostics: vec![diagnostic],
+            },
+        )
+    };
+    let classified = match slots::classify(cx, argument_nodes, &binding.input) {
         Ok(classified) => classified,
         Err(reason) => {
-            let diagnostic = cx.diagnostic(node_id, reason);
-            return Normalized {
-                bound: vec![],
-                goals: vec![],
-                origins: vec![],
-                diagnostics: vec![diagnostic],
-            };
+            let diagnostic = cx.diagnostic(binding.node_id, reason);
+            return failed(cx, binding, goals, origins, diagnostic);
         }
     };
     let reserved: Vec<i64> = existing.iter().map(|(i, _)| *i).collect();
-    let assigned = match slots::assign(cx, &classified, input, &reserved) {
+    let assigned = match slots::assign(cx, &classified, &binding.input, &reserved) {
         Ok(assigned) => assigned,
         Err(reason) => {
             let reason = expression_argument_reason(
                 cx,
                 reason,
-                name,
-                input.len(),
+                binding.name,
+                binding.input.len(),
                 existing.len() + argument_nodes.len(),
             );
-            let diagnostic = cx.diagnostic(node_id, reason);
-            return Normalized {
-                bound: vec![],
-                goals: vec![],
-                origins: vec![],
-                diagnostics: vec![diagnostic],
-            };
+            let diagnostic = cx.diagnostic(binding.node_id, reason);
+            return failed(cx, binding, goals, origins, diagnostic);
         }
     };
-    let mut bound = existing.to_vec();
-    let mut goals = Vec::new();
-    let mut origins = Vec::new();
-    let mut diagnostics = Vec::new();
-    for item in &assigned {
-        let lowered = lower_expression(cx, item.node, owner);
-        bound.push((item.index, lowered.value));
-        goals.extend(lowered.goals);
-        origins.extend(lowered.origins);
-        diagnostics.extend(lowered.diagnostics);
-    }
-    sort_bound(cx, &mut bound);
-    Normalized {
-        bound,
-        goals,
-        origins,
-        diagnostics,
+    ExprOutcome::Again(ExprFrame::Normalize(Normalize {
+        binding,
+        assigned,
+        next: 0,
+        owner,
+        normalized: Normalized {
+            bound: existing.to_vec(),
+            goals,
+            origins,
+            diagnostics: Vec::new(),
+        },
+    }))
+}
+
+/// Assigned arguments part way through lowering, in assignment order.
+struct Normalize {
+    binding: Binding,
+    assigned: Vec<slots::Assigned>,
+    next: usize,
+    owner: TermId,
+    normalized: Normalized,
+}
+
+impl Normalize {
+    fn resume(mut self, cx: &mut Cx, returned: Option<Lowering>) -> ExprOutcome {
+        if let Some(lowered) = returned {
+            let index = self.assigned[self.next - 1].index;
+            self.normalized.bound.push((index, lowered.value));
+            self.normalized.goals.extend(lowered.goals);
+            self.normalized.origins.extend(lowered.origins);
+            self.normalized.diagnostics.extend(lowered.diagnostics);
+        }
+        if let Some(item) = self.assigned.get(self.next) {
+            let (node, owner) = (item.node, self.owner);
+            self.next += 1;
+            return ExprOutcome::Await(ExprFrame::Normalize(self), node, owner);
+        }
+        sort_bound(cx, &mut self.normalized.bound);
+        self.binding.finish(cx, self.normalized)
     }
 }
+
 
 /// `sort/2` over `bound(Index, Value)`: standard order, duplicates removed.
 fn sort_bound(cx: &Cx, bound: &mut Vec<(i64, TermId)>) {
@@ -958,9 +1150,9 @@ fn apply_expression_operator(
     node_id: TermId,
     argument_nodes: &[TermId],
     owner: TermId,
-) -> Lowering {
+) -> ExprOutcome {
     if let Some(first) = operator.diagnostics.first() {
-        return none(cx, vec![*first]);
+        return ExprOutcome::Done(none(cx, vec![*first]));
     }
     if !is_partial(cx, operator.value) {
         // A dotted operator whose edge a bind has not derived yet reads as an unknown relation.
@@ -970,11 +1162,11 @@ fn apply_expression_operator(
         if let Some(label) = unknown {
             let reason = cx.compound("undeclared_relation", vec![label]);
             let diagnostic = cx.diagnostic(node_id, reason);
-            return none(cx, vec![diagnostic]);
+            return ExprOutcome::Done(none(cx, vec![diagnostic]));
         }
         let reason = cx.compound("expression_operator_not_callable", vec![operator.value]);
         let diagnostic = cx.diagnostic(node_id, reason);
-        return none(cx, vec![diagnostic]);
+        return ExprOutcome::Done(none(cx, vec![diagnostic]));
     }
     let (descriptor, bound_list) = {
         let (_, args) = cx.u.functor(operator.value).unwrap();
@@ -990,27 +1182,27 @@ fn apply_expression_operator(
     let existing = decode_bound(cx, bound_list);
     let all = slots::callable_slots(cx, &callable, arity);
     let input = slots::exclude_slot(&all, Some(return_index));
-    let mut normalized =
-        normalize_expression_arguments(cx, name, node_id, &input, &existing, argument_nodes, owner);
-    let mut goals = operator.goals;
-    goals.append(&mut normalized.goals);
-    normalized.goals = goals;
-    let mut origins = operator.origins;
-    origins.append(&mut normalized.origins);
-    normalized.origins = origins;
-    finish_expression_bindings(
-        cx,
-        &callable,
+    let binding = Binding {
+        callable,
         arity,
         key_sets,
         return_index,
         name,
         node_id,
-        &input,
-        normalized,
+        input,
         call_owner,
+    };
+    normalize_expression_arguments(
+        cx,
+        binding,
+        &existing,
+        argument_nodes,
+        owner,
+        operator.goals,
+        operator.origins,
     )
 }
+
 
 pub fn decode_callable(cx: &Cx, term: TermId) -> Callable {
     if let Some(owner) = cx.u.unary(term, "target") {

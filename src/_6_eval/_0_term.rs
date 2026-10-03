@@ -6,6 +6,7 @@ use hashbrown::HashTable;
 use indexmap::IndexSet;
 use lasso::{Key, Rodeo, Spur};
 use ordered_float::OrderedFloat;
+use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::BuildHasher;
@@ -343,10 +344,33 @@ impl Universe {
     /// a tie; Bool is `false` then `true`. Compounds compare by arity, then
     /// name, then arguments left to right.
     pub fn cmp(&self, a: TermId, b: TermId) -> Ordering {
-        if a == b {
-            return Ordering::Equal;
+        let (ax, ay) = match self.cmp_head(a, b) {
+            Ok(order) => return order,
+            Err(args) => args,
+        };
+        // Argument lists still to compare, innermost on top; the first unequal pair decides.
+        let mut pending: SmallVec<[(&[TermId], &[TermId]); 8]> = smallvec![(ax, ay)];
+        while let Some((xs, ys)) = pending.pop() {
+            let (Some((x, xs_rest)), Some((y, ys_rest))) = (xs.split_first(), ys.split_first()) else {
+                continue;
+            };
+            pending.push((xs_rest, ys_rest));
+            match self.cmp_head(*x, *y) {
+                Ok(Ordering::Equal) => {}
+                Ok(order) => return order,
+                Err(args) => pending.push(args),
+            }
         }
-        match (self.get(a), self.get(b)) {
+        Ordering::Equal
+    }
+
+    /// The order of `a` and `b` decided without reading arguments, or the two
+    /// argument lists of compounds whose arity and name tie.
+    fn cmp_head(&self, a: TermId, b: TermId) -> Result<Ordering, (&[TermId], &[TermId])> {
+        if a == b {
+            return Ok(Ordering::Equal);
+        }
+        Ok(match (self.get(a), self.get(b)) {
             (Term::Int(x), Term::Int(y)) => x.cmp(y),
             (Term::Float(x), Term::Float(y)) => x.cmp(y),
             (Term::Int(x), Term::Float(y)) => OrderedFloat(*x as f64).cmp(y).then(Ordering::Less),
@@ -372,20 +396,17 @@ impl Universe {
             }
             (Term::Atom(_), _) => Ordering::Less,
             (_, Term::Atom(_)) => Ordering::Greater,
-            (Term::Compound(fx, ax), Term::Compound(fy, ay)) => ax
-                .len()
-                .cmp(&ay.len())
-                .then_with(|| self.sym_str(*fx).cmp(self.sym_str(*fy)))
-                .then_with(|| {
-                    for (x, y) in ax.iter().zip(ay.iter()) {
-                        let o = self.cmp(*x, *y);
-                        if o != Ordering::Equal {
-                            return o;
-                        }
-                    }
-                    Ordering::Equal
-                }),
-        }
+            (Term::Compound(fx, ax), Term::Compound(fy, ay)) => {
+                let head = ax
+                    .len()
+                    .cmp(&ay.len())
+                    .then_with(|| self.sym_str(*fx).cmp(self.sym_str(*fy)));
+                if head == Ordering::Equal {
+                    return Err((ax, ay));
+                }
+                head
+            }
+        })
     }
 
     pub fn cmp_rows(&self, a: &[TermId], b: &[TermId]) -> Ordering {

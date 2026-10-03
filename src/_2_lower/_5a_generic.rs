@@ -37,9 +37,18 @@ pub fn is_generic_callable(cx: &mut Cx, callable: TermId) -> bool {
         .is_some_and(|inner| cx.u.functor(inner).is_some_and(|(name, _)| name == "owner"))
 }
 
-/// `application(Callee, Args)` for a form that applies a generic product;
-/// an argument that is itself such a form becomes a nested application.
-fn generic_application(cx: &mut Cx, owner: TermId, payload: TermId, depth: usize) -> Option<TermId> {
+/// One generic application under construction: its head, its argument items,
+/// and the values of the items before `next`.
+struct ApplicationFrame {
+    head: TermId,
+    items: Vec<TermId>,
+    next: usize,
+    values: Vec<TermId>,
+}
+
+/// The checks `payload` passes before its arguments are read; `None` when it
+/// is not a generic application or nests `APPLICATION_DEPTH` deep.
+fn application_frame(cx: &mut Cx, owner: TermId, payload: TermId, depth: usize) -> Option<ApplicationFrame> {
     if depth >= APPLICATION_DEPTH {
         return None;
     }
@@ -62,22 +71,56 @@ fn generic_application(cx: &mut Cx, owner: TermId, payload: TermId, depth: usize
     if items.len() as i64 != cx.edges.arity(callable) {
         return None;
     }
-    let mut values = Vec::with_capacity(items.len() - 1);
-    for item in &items[1..] {
-        let payload = forms::node(cx.u, *item).map(|inner| inner.payload);
-        if let Some(nested) = payload.and_then(|payload| generic_application(cx, owner, payload, depth + 1)) {
-            values.push(nested);
+    Some(ApplicationFrame {
+        head,
+        values: Vec::with_capacity(items.len() - 1),
+        items: items[1..].to_vec(),
+        next: 0,
+    })
+}
+
+/// An argument that is not a nested application: its plain value, `None`
+/// when it needs goals or reports a diagnostic.
+fn argument_value(cx: &mut Cx, item: TermId, owner: TermId) -> Option<TermId> {
+    let lowered = lower_expression(cx, item, owner);
+    (lowered.diagnostics.is_empty() && lowered.goals.is_empty()).then_some(lowered.value)
+}
+
+/// `application(Callee, Args)`; a nested generic form is one more stack frame,
+/// and a nested form that fails lowers as a plain expression.
+fn generic_application(cx: &mut Cx, owner: TermId, payload: TermId, depth: usize) -> Option<TermId> {
+    let mut stack = vec![application_frame(cx, owner, payload, depth)?];
+    // The result of the frame that closed last, read by the frame below it.
+    let mut returned: Option<Option<TermId>> = None;
+    while let Some(mut frame) = stack.pop() {
+        let value = if let Some(nested) = returned.take() {
+            let item = frame.items[frame.next];
+            nested.or_else(|| argument_value(cx, item, owner))
+        } else if let Some(&item) = frame.items.get(frame.next) {
+            let payload = forms::node(cx.u, item).map(|inner| inner.payload);
+            let nested_depth = depth + stack.len() + 1;
+            if let Some(nested) = payload.and_then(|payload| application_frame(cx, owner, payload, nested_depth)) {
+                stack.push(frame);
+                stack.push(nested);
+                continue;
+            }
+            argument_value(cx, item, owner)
+        } else {
+            let callee = forms::written_name(cx.u, owner, frame.head);
+            let list = cx.u.list(&frame.values);
+            returned = Some(Some(cx.compound("application", vec![callee, list])));
             continue;
+        };
+        match value {
+            Some(value) => {
+                frame.values.push(value);
+                frame.next += 1;
+                stack.push(frame);
+            }
+            None => returned = Some(None),
         }
-        let lowered = lower_expression(cx, *item, owner);
-        if !lowered.diagnostics.is_empty() || !lowered.goals.is_empty() {
-            return None;
-        }
-        values.push(lowered.value);
     }
-    let callee = forms::written_name(cx.u, owner, head);
-    let list = cx.u.list(&values);
-    Some(cx.compound("application", vec![callee, list]))
+    returned.flatten()
 }
 
 /// One bind of an eigo product other than `return`: a parameter when its

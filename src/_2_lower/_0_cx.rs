@@ -136,19 +136,31 @@ impl Cx<'_> {
         })
     }
     /// `:661`. Structural rewrite of every occurrence of `from`.
+    /// Explicit stack; compounds are rebuilt post-order, left to right.
     pub fn replace(&mut self, from: TermId, to: TermId, term: TermId) -> TermId {
-        if term == from {
-            return to;
+        enum Step {
+            Enter(TermId),
+            Build(String, usize),
         }
-        let Some((name, args)) = self.u.functor(term) else {
-            return term;
-        };
-        let name = name.to_string();
-        let args = args.to_vec();
-        let replaced: Vec<TermId> = args
-            .into_iter()
-            .map(|arg| self.replace(from, to, arg))
-            .collect();
-        self.u.compound(&name, replaced)
+        let mut steps = vec![Step::Enter(term)];
+        let mut done: Vec<TermId> = Vec::new();
+        while let Some(step) = steps.pop() {
+            match step {
+                Step::Enter(term) if term == from => done.push(to),
+                Step::Enter(term) => match self.u.functor(term) {
+                    None => done.push(term),
+                    Some((name, args)) => {
+                        let (name, args) = (name.to_string(), args.to_vec());
+                        steps.push(Step::Build(name, args.len()));
+                        steps.extend(args.into_iter().rev().map(Step::Enter));
+                    }
+                },
+                Step::Build(name, arity) => {
+                    let replaced = done.split_off(done.len() - arity);
+                    done.push(self.u.compound(&name, replaced));
+                }
+            }
+        }
+        done.pop().expect("one rebuilt term")
     }
 }

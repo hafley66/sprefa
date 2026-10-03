@@ -170,56 +170,85 @@ fn concat_spine(u: &mut Universe, variants: &Variants, parts: TermId) -> Option<
     None
 }
 
+/// Post-order with an explicit stack; any part that does not render fails the
+/// whole document at once.
 fn doc_term(
     u: &mut Universe,
     variants: &Variants,
     term: TermId,
     depth: usize,
 ) -> Option<RcDoc<'static, ()>> {
-    if depth >= MAX_DOC_DEPTH {
-        tracing::warn!(target: "dl8::doc_layout", "document depth limit exceeded");
-        return None;
+    enum Step {
+        Enter(TermId, usize),
+        Concat(usize),
+        Nest(isize),
+        Group,
     }
-    let child_depth = depth + 1;
-    let (variant, arguments) = doc_parts(u, variants, term)?;
-    match variant.as_str() {
-        "text" => {
-            let [text] = arguments.as_slice() else {
-                return None;
-            };
-            let Term::Str(value) = u.get(*text) else {
-                return None;
-            };
-            Some(RcDoc::text(u.sym_str(*value).to_owned()))
+    let mut steps = vec![Step::Enter(term, depth)];
+    let mut done: Vec<RcDoc<'static, ()>> = Vec::new();
+    while let Some(step) = steps.pop() {
+        let (term, depth) = match step {
+            Step::Enter(term, depth) => (term, depth),
+            Step::Concat(len) => {
+                let parts = done.split_off(done.len() - len);
+                done.push(RcDoc::concat(parts));
+                continue;
+            }
+            Step::Nest(indent) => {
+                let body = done.pop()?;
+                done.push(body.nest(indent));
+                continue;
+            }
+            Step::Group => {
+                let body = done.pop()?;
+                done.push(body.group());
+                continue;
+            }
+        };
+        if depth >= MAX_DOC_DEPTH {
+            tracing::warn!(target: "dl8::doc_layout", "document depth limit exceeded");
+            return None;
         }
-        "concat" => {
-            let [parts] = arguments.as_slice() else {
-                return None;
-            };
-            let parts = concat_spine(u, variants, *parts)?;
-            Some(RcDoc::concat(
-                parts
-                    .into_iter()
-                    .map(|part| doc_term(u, variants, part, child_depth))
-                    .collect::<Option<Vec<_>>>()?,
-            ))
+        let child_depth = depth + 1;
+        let (variant, arguments) = doc_parts(u, variants, term)?;
+        match variant.as_str() {
+            "text" => {
+                let [text] = arguments.as_slice() else {
+                    return None;
+                };
+                let Term::Str(value) = u.get(*text) else {
+                    return None;
+                };
+                done.push(RcDoc::text(u.sym_str(*value).to_owned()));
+            }
+            "concat" => {
+                let [parts] = arguments.as_slice() else {
+                    return None;
+                };
+                let parts = concat_spine(u, variants, *parts)?;
+                steps.push(Step::Concat(parts.len()));
+                steps.extend(parts.into_iter().rev().map(|part| Step::Enter(part, child_depth)));
+            }
+            "nest" => {
+                let [indent, body] = arguments.as_slice() else {
+                    return None;
+                };
+                let indent = isize::try_from(u.as_int(*indent)?).ok()?;
+                steps.push(Step::Nest(indent));
+                steps.push(Step::Enter(*body, child_depth));
+            }
+            "group" => {
+                let [body] = arguments.as_slice() else {
+                    return None;
+                };
+                steps.push(Step::Group);
+                steps.push(Step::Enter(*body, child_depth));
+            }
+            "line" if arguments.is_empty() => done.push(RcDoc::line()),
+            _ => return None,
         }
-        "nest" => {
-            let [indent, body] = arguments.as_slice() else {
-                return None;
-            };
-            let indent = isize::try_from(u.as_int(*indent)?).ok()?;
-            Some(doc_term(u, variants, *body, child_depth)?.nest(indent))
-        }
-        "group" => {
-            let [body] = arguments.as_slice() else {
-                return None;
-            };
-            Some(doc_term(u, variants, *body, child_depth)?.group())
-        }
-        "line" if arguments.is_empty() => Some(RcDoc::line()),
-        _ => None,
     }
+    done.pop()
 }
 
 /// `application(tuple, Items)`, `ref`-wrapped or bare: the positional
