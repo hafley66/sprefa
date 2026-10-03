@@ -20,7 +20,23 @@ Cost of four: every boundary translates. Measured in this repo: `decode_terms` a
 batching, still nonzero); `Engine::intern_terms` / `intern_text` round trips on every comptime
 round; the lab exported the same facts three times (SQLite, DuckDB, Parquet).
 
-## Shape
+## Decision (user, 2026-10-03)
+
+"ast-grep and tree sitter and biome all have mastered string interning; we will be absolutely zero
+not making our own; we will pick one." No bespoke interner or arena. Prior art:
+
+| tool | text | trees / terms |
+|---|---|---|
+| tree-sitter / ast-grep | no interning; node text = byte range into the source; kinds = grammar symbol ids (u16) | spans only |
+| Biome `biome_rowan` | `TokenText` | `NodeCache` interns green tokens and nodes, recursive hashing, structural sharing |
+| rust-analyzer `ra_ap_intern` | `Symbol` | `Interned<T>` for any Hash+Eq, global Arc-based, GC; 0.0.356 (2026-10-01); small deps |
+
+Picks: source text = spans (done in dl8); in-memory text + terms = one library, `ra_ap_intern`
+(Symbol + Interned<Term>) or `lasso` (dense u32 keys, already in dl8), decided by the spike;
+persisted ids = xxh3-64 content hash written only at the storage boundary (a hash function, not an
+interner). The shape below is superseded where it says to write arenas: use the picked library.
+
+## Shape (pre-decision draft)
 
 One small crate (working name `hafley-core`, published on local kellnr, no engine, no SQLite):
 
@@ -68,9 +84,10 @@ measure), but ids crossing any boundary are the u64 content ids, so no translati
 
 ## Steps (one fresh agent each, sequential)
 
-1. Spike: measure dense u32 vs u64 content ids in ivm-dd arrangements and the dl8 `Universe` on
-   the c15 and registry builds (time, RSS). Decides whether engines keep dense ids internally.
-2. Crate: `Id`, `TextArena`, `TermArena`, `RowBlock`; published on kellnr; tests only.
+1. Spike: `lasso` (dense u32) vs `ra_ap_intern` (Symbol / Interned<Term>, pointer handles) in the
+   dl8 `Universe` and ivm-ir/ivm-dd interner on the c15 and registry builds (time, RSS, compile
+   time). Picks the one library.
+2. Thin crate: re-exports the picked library, `RowBlock`, the xxh3 persisted id; kellnr; tests only.
 3. dl8 + ivm-ir share one `TermArena` (delete `decode_terms` / `intern_snapshots` round trips).
 4. Store adapters: SQLite + Parquet readers/writers; dl8 import of external tables through them
    (unblocks the recursion lab's arm S).
