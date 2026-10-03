@@ -709,8 +709,7 @@ pub(super) fn fold_generic_row_groups(
     u: &mut Universe,
     program: &Program,
     rows: &[Row],
-    fold: &Fold,
-    groups: &[&[TermId]],
+    folds: &[(&Fold, Vec<&[TermId]>)],
 ) -> Vec<Result<TermId, Diagnostic>> {
     let mut store = Store::default();
     for row in rows {
@@ -742,9 +741,10 @@ pub(super) fn fold_generic_row_groups(
         effects,
         sum_readbacks: &sum_readbacks,
     };
-    groups
+    folds
         .iter()
-        .map(|values| fold_generic(u, cx, fold, values))
+        .flat_map(|(fold, groups)| groups.iter().map(move |values| (*fold, *values)))
+        .map(|(fold, values)| fold_generic(u, cx, fold, values))
         .collect()
 }
 
