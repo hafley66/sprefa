@@ -118,8 +118,6 @@ const UNBUDGETED: &[(&str, &str)] = &[
     ("src/_5_reify/_4_emit.rs", "loop {"),
     ("src/_5_reify/_7_sqlite.rs", "while !components.is_empty() {"),
     ("src/_6_eval/_0_term.rs", "loop {"),
-    ("src/_6_eval/_2_stratify.rs", "loop {"),
-    ("src/_6_eval/_2_stratify.rs", "loop {"),
     ("src/_6_eval/_5_evaluate.rs", "while self.trail.len() > to {"),
     ("src/_6_eval/_5_evaluate.rs", "loop {"),
     ("src/_9_runtime/_2_reconcile.rs", "while closure.diagnostics.is_empty() && ticks < max_ticks {"),
