@@ -6,7 +6,7 @@ use hashbrown::HashTable;
 use indexmap::IndexSet;
 use lasso::{Key, Rodeo, Spur};
 use ordered_float::OrderedFloat;
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::BuildHasher;
@@ -349,16 +349,19 @@ impl Universe {
             Err(args) => args,
         };
         // Argument lists still to compare, innermost on top; the first unequal pair decides.
-        let mut pending: SmallVec<[(&[TermId], &[TermId]); 8]> = smallvec![(ax, ay)];
-        while let Some((xs, ys)) = pending.pop() {
-            let (Some((x, xs_rest)), Some((y, ys_rest))) = (xs.split_first(), ys.split_first()) else {
-                continue;
-            };
-            pending.push((xs_rest, ys_rest));
-            match self.cmp_head(*x, *y) {
-                Ok(Ordering::Equal) => {}
-                Ok(order) => return order,
-                Err(args) => pending.push(args),
+        let mut pending: SmallVec<[(&[TermId], &[TermId]); 8]> = SmallVec::new();
+        let mut current = Some((ax, ay));
+        while let Some((xs, ys)) = current.take().or_else(|| pending.pop()) {
+            for (index, (x, y)) in xs.iter().zip(ys).enumerate() {
+                match self.cmp_head(*x, *y) {
+                    Ok(Ordering::Equal) => {}
+                    Ok(order) => return order,
+                    Err(args) => {
+                        pending.push((&xs[index + 1..], &ys[index + 1..]));
+                        current = Some(args);
+                        break;
+                    }
+                }
             }
         }
         Ordering::Equal
@@ -366,6 +369,7 @@ impl Universe {
 
     /// The order of `a` and `b` decided without reading arguments, or the two
     /// argument lists of compounds whose arity and name tie.
+    #[inline]
     fn cmp_head(&self, a: TermId, b: TermId) -> Result<Ordering, (&[TermId], &[TermId])> {
         if a == b {
             return Ok(Ordering::Equal);
