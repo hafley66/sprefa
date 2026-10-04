@@ -120,7 +120,9 @@ fn expand_rows(
     let mut origin: Vec<TermId> = Vec::new();
     let mut ir_session = crate::_6_eval::ir_eval::IrSession::configured();
 
+    let unit_start = std::time::Instant::now();
     for wave in 0..WAVE_LIMIT {
+        let wave_start = std::time::Instant::now();
         program.seeds = macro_program.program.seeds.clone();
         program
             .seeds
@@ -137,6 +139,14 @@ fn expand_rows(
                 .collect();
             return (Vec::new(), Vec::new(), terms);
         }
+        tracing::info!(
+            target: "dl8::macrotime",
+            wave,
+            seeds = program.seeds.len(),
+            closure = closure.rows.len(),
+            evaluate_us = wave_start.elapsed().as_micros() as u64,
+            "macrotime wave"
+        );
         fx(Wave::Evaluated {
             wave,
             seeds: program.seeds.len(),
@@ -153,6 +163,13 @@ fn expand_rows(
             return (Vec::new(), Vec::new(), reported_diagnostics(u, &reported));
         }
         if claims.is_empty() {
+            tracing::info!(
+                target: "dl8::macrotime",
+                waves = wave + 1,
+                rows = graph.rows.len(),
+                unit_us = unit_start.elapsed().as_micros() as u64,
+                "macrotime unit"
+            );
             sort_terms(u, &mut origin);
             fx(Wave::Settled {
                 wave,

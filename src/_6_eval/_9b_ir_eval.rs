@@ -308,6 +308,7 @@ fn snapshot_closure<E: Engine>(
             .then_with(|| u.cmp_rows(&a.args, &b.args))
     });
     rows.dedup();
+    tracing::info!(target: "dl8::ir", rows = rows.len(), "ir snapshot");
     let mut diagnostics = Vec::new();
     if let Some(program) = &lowered.fold_program {
         let mut folds = Vec::with_capacity(lowered.declared_folds.len());
@@ -418,7 +419,13 @@ fn decode_terms<E: Engine>(
         .filter(|rel| rel.kind == ir::RelKind::Constructor)
         .collect();
     let ids: Vec<ir::RelId> = constructors.iter().map(|rel| rel.id).collect();
-    for (rel, rows) in constructors.iter().zip(engine.intern_snapshots(&ids)?) {
+    let snapshots = engine.intern_snapshots(&ids)?;
+    tracing::info!(
+        target: "dl8::ir",
+        rows = snapshots.iter().map(Vec::len).sum::<usize>(),
+        "ir intern read"
+    );
+    for (rel, rows) in constructors.iter().zip(snapshots) {
         for (mut row, weight) in rows {
             if weight > 0 && !decoded.contains_key(&row[0]) {
                 let id = row.remove(0);
@@ -680,7 +687,9 @@ fn run_session<E: Engine>(
     };
     session.last_seeds = current_seeds;
     session.initialized = true;
+    let sent = frontier.len();
     let mut delta = settle(engine, frontier)?;
+    tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir settle");
     let request_relations: HashMap<_, _> = lowered
         .served
         .iter()
