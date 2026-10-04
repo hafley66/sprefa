@@ -81,6 +81,30 @@ struct EngineSession<E: Engine> {
     structure: ir::Program,
 }
 
+/// Joins that read no constructor relation (a constructor join is a decode, never arranged),
+/// and the column count of their inputs: what the engines arrange.
+fn arranged_join_inputs(program: &ir::Program) -> (usize, usize) {
+    let mut memo = Vec::new();
+    let mut joins = 0;
+    let mut cols = 0;
+    for op in &program.nodes {
+        let ir::Op::Join { inputs, .. } = op else { continue };
+        let constructor = inputs.iter().any(|input| {
+            matches!(program.nodes.get(*input as usize), Some(ir::Op::Get(rel))
+                if program.rel(*rel).is_some_and(|rel| rel.kind == ir::RelKind::Constructor))
+        });
+        if constructor {
+            continue;
+        }
+        joins += 1;
+        cols += inputs
+            .iter()
+            .map(|input| program.node_types_memo(*input, &mut memo).map_or(0, |types| types.len()))
+            .sum::<usize>();
+    }
+    (joins, cols)
+}
+
 impl<E: Engine> EngineSession<E> {
     fn install(
         lowered: &Lowered,
@@ -93,10 +117,14 @@ impl<E: Engine> EngineSession<E> {
         } else {
             E::install_unmeasured(&lowered.ir)?
         };
+        let (joins, join_input_cols) = arranged_join_inputs(&lowered.ir);
         tracing::info!(
             target: "dl8::ir",
             install_ns = census_start.elapsed().as_nanos(),
             engine = std::any::type_name::<E>(),
+            nodes = lowered.ir.nodes.len(),
+            joins,
+            join_input_cols,
             "ir install"
         );
         Ok(Self {
