@@ -95,6 +95,9 @@ struct Builder {
     next_rel: ir::RelId,
     constructor_gets: HashMap<ir::RelId, ir::NodeId>,
     ground_maps: HashMap<(ir::RelId, TermId), ir::NodeId>,
+    /// A relation read through one column projection: every goal that keeps the same columns
+    /// reads one node, so the engines share its arrangement.
+    narrowed_gets: HashMap<(ir::RelId, Vec<ir::ColId>), ir::NodeId>,
     intern_nodes: Vec<ir::NodeId>,
     intern_relation: Option<ir::RelId>,
     intern_readback: bool,
@@ -135,6 +138,7 @@ impl Builder {
             next_rel: 0,
             constructor_gets: HashMap::new(),
             ground_maps: HashMap::new(),
+            narrowed_gets: HashMap::new(),
             intern_nodes: Vec::new(),
             intern_relation: None,
             intern_readback: false,
@@ -1224,6 +1228,72 @@ fn compile_fold_step_rule(
     Ok((current, next))
 }
 
+/// `later[i]`: the variables of the goals after goal `i` and of the head. A column holding any
+/// other variable is dead once goal `i` has run.
+fn later_vars(rule: &Rule) -> Vec<HashSet<u32>> {
+    let mut later = vec![HashSet::new(); rule.body.len()];
+    let mut live: HashSet<u32> = rule.head.iter().filter_map(|arg| var(arg.innermost())).collect();
+    for (index, goal) in rule.body.iter().enumerate().rev() {
+        later[index] = live.clone();
+        live.extend(goal.args.iter().filter_map(|arg| var(arg.innermost())));
+    }
+    later
+}
+
+/// Projects `current` onto the columns of the `live` variables, plus the element columns of a
+/// tuple a kept column holds (`Builder::built_tuples`), and renumbers `bound` and
+/// `built_tuples`. One column stays when none is live: an empty `project` keeps every column.
+fn keep_live(
+    b: &mut Builder,
+    current: &mut ir::NodeId,
+    width: &mut usize,
+    bound: &mut HashMap<u32, ir::ColId>,
+    live: &HashSet<u32>,
+) {
+    let mut keep: BTreeSet<ir::ColId> = bound
+        .iter()
+        .filter(|(v, _)| live.contains(v))
+        .map(|(_, col)| *col)
+        .collect();
+    // A tuple's element may itself be a built tuple: repeat until no column joins `keep`.
+    // Bounded by the tuple count: each pass that changes `keep` adds at least one tuple.
+    for _ in 0..=b.built_tuples.len() {
+        let before = keep.len();
+        for (whole, elements) in &b.built_tuples {
+            if keep.contains(whole) {
+                keep.extend(elements.iter().copied());
+            }
+        }
+        if keep.len() == before {
+            break;
+        }
+    }
+    if keep.is_empty() {
+        keep.insert(0);
+    }
+    if keep.len() == *width {
+        return;
+    }
+    let project: Vec<ir::ColId> = keep.into_iter().collect();
+    let at = |col: ir::ColId| project.binary_search(&col).ok().map(assert_width);
+    bound.retain(|_, col| match at(*col) {
+        Some(moved) => {
+            *col = moved;
+            true
+        }
+        None => false,
+    });
+    b.built_tuples = std::mem::take(&mut b.built_tuples)
+        .into_iter()
+        .filter_map(|(whole, elements)| {
+            let elements = elements.into_iter().map(at).collect::<Option<Vec<_>>>()?;
+            Some((at(whole)?, elements))
+        })
+        .collect();
+    *width = project.len();
+    *current = b.mfp(*current, vec![], vec![], project);
+}
+
 fn compile_rule(
     b: &mut Builder,
     u: &Universe,
@@ -1244,7 +1314,9 @@ fn compile_rule(
     let mut current = b.get(unit);
     let mut width = 1usize;
     let mut bound: HashMap<u32, ir::ColId> = HashMap::new();
+    let later = later_vars(rule);
     for (goal_index, goal) in rule.body.iter().enumerate() {
+        let live = &later[goal_index];
         if served.contains(&goal.rel) {
             served_effect(
                 b,
@@ -1277,12 +1349,12 @@ fn compile_rule(
                 empty,
                 tuple,
             )?;
+            keep_live(b, &mut current, &mut width, &mut bound, live);
             continue;
         }
         let rel = *relations
             .get(&(goal.rel.0, goal.args.len()))
             .ok_or("unresolved relation")?;
-        let mut right = b.get(rel);
         let mut equivalences = Vec::new();
         let mut repeated = Vec::new();
         let mut first_here: HashMap<u32, ir::ColId> = HashMap::new();
@@ -1303,10 +1375,11 @@ fn compile_rule(
                 return Err("goal aggregate or fold");
             }
         }
-        if !repeated.is_empty() {
-            right = b.mfp(right, repeated, vec![], vec![]);
-        }
         if goal.polarity == Polarity::Negative {
+            let mut right = b.get(rel);
+            if !repeated.is_empty() {
+                right = b.mfp(right, std::mem::take(&mut repeated), vec![], vec![]);
+            }
             // Negative arguments must already be bound. A ground term has a
             // one-row map source and joins the right before the antijoin.
             // Unbound here: no rows, in the head's arity.
@@ -1358,7 +1431,63 @@ fn compile_rule(
                 lk,
                 rk,
             });
+            keep_live(b, &mut current, &mut width, &mut bound, live);
             continue;
+        }
+        // The right input keeps its join keys, its ground positions, and the first position of
+        // each new variable still live after this goal; a repeated position is filtered first.
+        let mut kept: Vec<ir::ColId> = Vec::new();
+        for (position, arg) in goal.args.iter().enumerate() {
+            let position = assert_width(position);
+            let keep = match var(arg) {
+                Some(v) => {
+                    bound.contains_key(&v)
+                        || (first_here.get(&v) == Some(&position) && live.contains(&v))
+                }
+                None => true,
+            };
+            if keep {
+                kept.push(position);
+            }
+        }
+        if kept.is_empty() && !goal.args.is_empty() {
+            kept.push(0);
+        }
+        let narrowed = kept.len() < goal.args.len();
+        let right = if !repeated.is_empty() {
+            let right = b.get(rel);
+            b.mfp(
+                right,
+                repeated,
+                vec![],
+                if narrowed { kept.clone() } else { vec![] },
+            )
+        } else if narrowed {
+            match b.narrowed_gets.get(&(rel, kept.clone())) {
+                Some(&node) => node,
+                None => {
+                    let right = b.get(rel);
+                    let node = b.mfp(right, vec![], vec![], kept.clone());
+                    b.narrowed_gets.insert((rel, kept.clone()), node);
+                    node
+                }
+            }
+        } else {
+            b.get(rel)
+        };
+        let at = |position: ir::ColId| -> Option<ir::ColId> {
+            if narrowed {
+                kept.iter().position(|kept| *kept == position).map(assert_width)
+            } else {
+                Some(position)
+            }
+        };
+        for class in &mut equivalences {
+            for (side, col) in class.iter_mut() {
+                if *side == 1 {
+                    *col = at(*col).ok_or("join key projected away")?;
+                }
+            }
         }
         if goal_index == 0 {
             // The first positive atom supplies the row. No bound column can
@@ -1372,24 +1501,24 @@ fn compile_rule(
                 equivalences,
             });
         }
-        let total = width + goal.args.len().max(1);
+        let total = width + if narrowed { kept.len() } else { goal.args.len().max(1) };
+        let mut grown = total;
         for (position, original) in &grounds {
             let mapped = mapped_ground(b, term_map, *original);
+            let position = at(*position).ok_or("ground position projected away")?;
             current = b.node(ir::Op::Join {
                 inputs: vec![current, mapped],
-                equivalences: vec![vec![(0, assert_width(width + *position as usize)), (1, 1)]],
+                equivalences: vec![vec![(0, assert_width(width + position as usize)), (1, 1)]],
             });
-            current = b.mfp(
-                current,
-                vec![],
-                vec![],
-                (0..total).map(assert_width).collect(),
-            );
+            grown += 2;
         }
         for (v, position) in first_here {
-            bound.insert(v, assert_width(width + position as usize));
+            if let Some(position) = at(position) {
+                bound.insert(v, assert_width(width + position as usize));
+            }
         }
-        width = total;
+        width = grown;
+        keep_live(b, &mut current, &mut width, &mut bound, live);
     }
     if rule.is_aggregate() {
         if rule.aggregate_args() != 1 {
