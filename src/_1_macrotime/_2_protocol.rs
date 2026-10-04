@@ -6,6 +6,7 @@
 use super::_0_rows::{
     args_of, atom_of_text, is_atom_named, macrotime_diagnostic, sort_terms, text_of_atom, Graph,
 };
+use crate::_6_eval::ir_eval::SignedRow;
 use crate::_6_eval::{Arg, Polarity, Program, Row, Rule, TermId, Universe};
 use std::collections::{HashMap, HashSet};
 
@@ -60,6 +61,11 @@ impl Protocol {
         ];
         roots.extend(self.diagnostic);
         roots
+    }
+
+    /// The relations `Available` keeps.
+    pub fn reads(&self, rel: TermId) -> bool {
+        self.inputs().contains(&rel) || rel == self.claim || Some(rel) == self.diagnostic
     }
 }
 
@@ -443,24 +449,22 @@ pub fn untagged_rows(u: &Universe, rows: &[&Row], tags: &[&str]) -> Vec<Vec<Term
         .collect()
 }
 
-/// `macro_results/6`: the syntax rows the closure derived, the claims on nodes
-/// that are still active, and the ordered expansion edges of those claims.
+/// `macro_results/6`: the claims on active nodes and the ordered expansion
+/// edges of those claims, read from `Available::results`.
 pub fn macro_results(
     u: &mut Universe,
     p: &Protocol,
-    closure: &[Row],
+    available: &Available,
     active: &HashSet<TermId>,
 ) -> MacroResults {
     let mut by_rel: Rows = HashMap::new();
-    for row in closure {
+    for row in &available.results {
         by_rel.entry(row.rel).or_default().push(row);
     }
-    let available = available_rows(u, p, &by_rel);
     let (claims, invocations) = active_claims(u, p, &by_rel, active);
     let outputs = expansion_outputs(u, p, &by_rel, &invocations);
     let reported = reported_rows(u, p, &by_rel, active);
     MacroResults {
-        available,
         claims,
         outputs,
         reported,
@@ -468,7 +472,6 @@ pub fn macro_results(
 }
 
 pub struct MacroResults {
-    pub available: Vec<TermId>,
     pub claims: Vec<Claim>,
     pub outputs: Vec<Output>,
     /// `syntax_diagnostic(Node, Payload)` on active nodes, sorted, payload
@@ -502,75 +505,187 @@ fn reported_rows(
         .collect()
 }
 
-/// The nodes any syntax relation gives a shape to; a `node` or `item` row about
-/// anything else is not part of the rewritten graph.
-pub fn syntax_identities(u: &Universe, p: &Protocol, by_rel: &Rows) -> HashSet<TermId> {
-    let mut out = HashSet::new();
-    for (rel, arity) in [(p.form, 1), (p.atom, 2), (p.literal, 2), (p.variable, 3)] {
-        for row in rows_of(by_rel, rel) {
-            if row.args.len() == arity {
-                if let Some(node) = u.unary(row.args[0], "ref") {
-                    out.insert(node);
-                }
-            }
-        }
-    }
-    out
+/// What one closure row of a protocol relation is to the expander.
+enum Read {
+    /// an untagged syntax graph row
+    Syntax(TermId),
+    /// a claim, expansion edge or diagnostic row, kept tagged
+    Result,
+    Ignored,
 }
 
-/// `:` at `macro_results/6`: the derived syntax graph, untagged and sorted.
-pub fn available_rows(u: &mut Universe, p: &Protocol, by_rel: &Rows) -> Vec<TermId> {
-    let identities = syntax_identities(u, p, by_rel);
-    let mut out: Vec<TermId> = Vec::new();
-    for (rel, name, tags, text_tail) in [
-        (p.form, "syntax_form", &["ref"][..], false),
-        (p.atom, "syntax_atom", &["ref", "const"][..], true),
-        (p.literal, "syntax_literal", &["ref", "const"][..], false),
-        (
-            p.variable,
-            "syntax_variable",
-            &["ref", "ref", "const"][..],
-            true,
-        ),
-        (
-            p.source,
-            "source",
-            &[
-                "ref", "const", "const", "const", "const", "const", "const", "const",
-            ][..],
-            false,
-        ),
-    ] {
-        for mut cells in untagged_rows(u, rows_of(by_rel, rel), tags) {
-            if text_tail {
-                let text = cells.pop().unwrap();
-                cells.push(atom_of_text(u, text));
+/// The closure as the expander reads it, kept in step with each delta.
+/// `node` and `item` rows in `graph` are unfiltered; `identity` filters them.
+#[derive(Default)]
+pub struct Available {
+    /// tagged protocol row to its summed engine weight
+    weights: HashMap<Row, i64>,
+    /// untagged row to the number of present tagged rows that give it
+    counts: HashMap<TermId, i64>,
+    /// node to the number of present form, atom, literal and variable rows
+    /// whose first argument names it
+    identities: HashMap<TermId, i64>,
+    /// present claim, expansion edge and diagnostic rows
+    pub results: HashSet<Row>,
+    pub graph: Graph,
+    /// present untagged rows the expanded graph does not hold
+    pub extra: HashSet<TermId>,
+}
+
+impl Available {
+    /// Fold one settle's signed rows in; `expanded` is the graph the seeds
+    /// came from. Returns the rows read.
+    pub fn apply(
+        &mut self,
+        u: &mut Universe,
+        p: &Protocol,
+        rows: &[SignedRow],
+        expanded: &Graph,
+    ) -> usize {
+        let mut read = 0;
+        let mut touched: HashMap<TermId, bool> = HashMap::new();
+        for change in rows {
+            let row = &change.row;
+            if !p.reads(row.rel) {
+                continue;
             }
-            out.push(u.compound(name, cells));
+            read += 1;
+            let weight = self.weights.entry(row.clone()).or_default();
+            let before = *weight > 0;
+            *weight += change.weight;
+            let after = *weight > 0;
+            if *weight == 0 {
+                self.weights.remove(row);
+            }
+            if before == after {
+                continue;
+            }
+            let sign = if after { 1 } else { -1 };
+            if let Some(node) = identity_of(u, p, row) {
+                let count = self.identities.entry(node).or_default();
+                *count += sign;
+                if *count == 0 {
+                    self.identities.remove(&node);
+                }
+            }
+            match read_row(u, p, row) {
+                Read::Syntax(term) => {
+                    let count = self.counts.entry(term).or_default();
+                    touched.entry(term).or_insert(*count > 0);
+                    *count += sign;
+                    if *count == 0 {
+                        self.counts.remove(&term);
+                    }
+                }
+                Read::Result => {
+                    if after {
+                        self.results.insert(row.clone());
+                    } else {
+                        self.results.remove(row);
+                    }
+                }
+                Read::Ignored => {}
+            }
+        }
+        let mut removed = Vec::new();
+        let mut added = Vec::new();
+        for (term, before) in touched {
+            let after = self.counts.contains_key(&term);
+            if before == after {
+                continue;
+            }
+            if after {
+                added.push(term);
+                if !expanded.set.contains(&term) {
+                    self.extra.insert(term);
+                }
+            } else {
+                removed.push(term);
+                self.extra.remove(&term);
+            }
+        }
+        self.graph.apply(u, &removed, &added);
+        read
+    }
+
+    /// The expanded graph moved; keep `extra` its complement in `graph`.
+    pub fn expanded_moved(&mut self, removed: &[TermId], added: &[TermId]) {
+        for row in added {
+            self.extra.remove(row);
+        }
+        for row in removed {
+            if self.graph.set.contains(row) {
+                self.extra.insert(*row);
+            }
         }
     }
-    for cells in untagged_rows(u, rows_of(by_rel, p.node), &["ref"]) {
-        if identities.contains(&cells[0]) {
-            out.push(u.compound("node", cells));
-        }
+
+    /// `syntax_identities`: the node has a form, atom, literal or variable row.
+    pub fn identity(&self, node: TermId) -> bool {
+        self.identities.contains_key(&node)
     }
-    for row in rows_of(by_rel, p.colon) {
-        if row.args.len() != 4 || !is_const_atom(u, row.args[1], "item") {
-            continue;
+}
+
+fn identity_of(u: &Universe, p: &Protocol, row: &Row) -> Option<TermId> {
+    [(p.form, 1), (p.atom, 2), (p.literal, 2), (p.variable, 3)]
+        .iter()
+        .any(|&(rel, arity)| row.rel == rel && row.args.len() == arity)
+        .then(|| u.unary(row.args[0], "ref"))
+        .flatten()
+}
+
+/// One row of `available_rows`: each argument unwrapped from its tag, a
+/// trailing text turned into an atom.
+fn read_row(u: &mut Universe, p: &Protocol, row: &Row) -> Read {
+    if row.rel == p.claim || Some(row.rel) == p.diagnostic {
+        return Read::Result;
+    }
+    if row.rel == p.colon {
+        if row.args.len() != 4 {
+            return Read::Ignored;
+        }
+        if is_const_atom(u, row.args[1], "expansion") {
+            return Read::Result;
+        }
+        if !is_const_atom(u, row.args[1], "item") {
+            return Read::Ignored;
         }
         let owner = u.unary(row.args[0], "ref");
         let target = u.unary(row.args[2], "ref");
         let ordinal = u.unary(row.args[3], "const");
-        if let (Some(owner), Some(target), Some(ordinal)) = (owner, target, ordinal) {
-            if identities.contains(&owner) && identities.contains(&target) {
-                let item = p.item;
-                let reference = wrap_ref(u, target);
-                out.push(u.compound(":", vec![owner, item, reference, ordinal]));
-            }
-        }
+        let (Some(owner), Some(target), Some(ordinal)) = (owner, target, ordinal) else {
+            return Read::Ignored;
+        };
+        let item = p.item;
+        let reference = wrap_ref(u, target);
+        return Read::Syntax(u.compound(":", vec![owner, item, reference, ordinal]));
     }
-    sort_terms(u, &mut out);
-    out
+    const SOURCE: &[&str] = &[
+        "ref", "const", "const", "const", "const", "const", "const", "const",
+    ];
+    let (name, tags, text_tail): (&str, &[&str], bool) = if row.rel == p.form {
+        ("syntax_form", &["ref"], false)
+    } else if row.rel == p.atom {
+        ("syntax_atom", &["ref", "const"], true)
+    } else if row.rel == p.literal {
+        ("syntax_literal", &["ref", "const"], false)
+    } else if row.rel == p.variable {
+        ("syntax_variable", &["ref", "ref", "const"], true)
+    } else if row.rel == p.source {
+        ("source", SOURCE, false)
+    } else if row.rel == p.node {
+        ("node", &["ref"], false)
+    } else {
+        return Read::Ignored;
+    };
+    let Some(mut cells) = untagged_rows(u, &[row], tags).pop() else {
+        return Read::Ignored;
+    };
+    if text_tail {
+        let text = cells.pop().unwrap();
+        cells.push(atom_of_text(u, text));
+    }
+    Read::Syntax(u.compound(name, cells))
 }
 
 /// The claims landing on nodes the rewriter has not already consumed, with the
