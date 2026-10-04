@@ -1,18 +1,21 @@
 //! Port of `v7/src/1_libtime/0b_syntax_rewriter.pl`. One wave: walk the active
 //! frontier in ordinal order, replace each claimed node by its ordered
 //! expansion outputs, rebuild the child edges of every form above them, then
-//! keep only what the new frontier still reaches.
+//! keep only what the new frontier still reaches. The wave is returned as the
+//! rows it removes from and adds to the graph.
 
 use super::_0_rows::{
-    anchor, args_of, dense_ordinals, is_atom_named, macrotime_diagnostic, ordinal_list, sort_terms,
-    Anchor, Graph,
+    anchor, args_of, dense_ordinals, macrotime_diagnostic, ordinal_list, sort_terms, Anchor, Graph,
 };
-use super::_2_protocol::{Claim, Output};
+use super::_2_protocol::{Available, Claim, Output};
 use crate::_6_eval::{TermId, Universe};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct Rewrite {
-    pub rows: Vec<TermId>,
+    pub removed: Vec<TermId>,
+    pub added: Vec<TermId>,
+    /// the nodes the new frontier reaches
+    pub active: HashSet<TermId>,
     pub origin: Vec<TermId>,
     pub diagnostics: Vec<TermId>,
 }
@@ -32,7 +35,7 @@ struct Pass<'a> {
 pub fn rewrite_active_graph(
     u: &mut Universe,
     g: &Graph,
-    available: &Graph,
+    available: &Available,
     claims: &[Claim],
     outputs: &[Output],
     wave: i64,
@@ -58,7 +61,7 @@ pub fn rewrite_active_graph(
         let mut pass = Pass {
             u: &mut *u,
             g,
-            available,
+            available: &available.graph,
             claims: by_node,
             outputs: by_invocation,
             wave: wave_term,
@@ -74,15 +77,19 @@ pub fn rewrite_active_graph(
     };
     if !diagnostics.is_empty() {
         return Rewrite {
-            rows: Vec::new(),
+            removed: Vec::new(),
+            added: Vec::new(),
+            active: HashSet::new(),
             origin: Vec::new(),
             diagnostics,
         };
     }
     sort_terms(u, &mut origin);
-    let rows = apply_rewrite(u, g, available, &new_roots, &overrides);
+    let (removed, added, active) = apply_rewrite(u, g, available, &new_roots, &overrides);
     Rewrite {
-        rows,
+        removed,
+        added,
+        active,
         origin,
         diagnostics: Vec::new(),
     }
@@ -168,63 +175,99 @@ impl Pass<'_> {
     }
 }
 
-/// `apply_rewrite/5`: merge in what the closure derived, drop the old frontier
-/// and every overridden child edge, write the new ones, then prune to the
-/// nodes the new frontier reaches.
+/// `apply_rewrite/5`: the graph plus what the closure derived, without the
+/// old frontier and the overridden child edges, with the new ones, pruned to
+/// what the new frontier reaches; returned as rows removed and added.
 fn apply_rewrite(
     u: &mut Universe,
     g: &Graph,
-    available: &Graph,
+    available: &Available,
     roots: &[TermId],
     overrides: &[(TermId, Vec<TermId>)],
-) -> Vec<TermId> {
-    let mut all: Vec<TermId> = g.rows.clone();
-    all.extend_from_slice(&available.rows);
-    sort_terms(u, &mut all);
-    let owners: std::collections::HashSet<TermId> =
-        overrides.iter().map(|(owner, _)| *owner).collect();
-    let mut candidates: Vec<TermId> = all
-        .into_iter()
-        .filter(|row| {
-            if args_of(u, *row, "syntax_frontier", 2).is_some() {
-                return false;
+) -> (Vec<TermId>, Vec<TermId>, HashSet<TermId>) {
+    let a = &available.graph;
+    let mut owners: HashMap<TermId, &[TermId]> = HashMap::new();
+    for (owner, children) in overrides {
+        owners.entry(*owner).or_insert(children);
+    }
+    // A derived `node` or `item` row counts only on nodes with a syntax row.
+    let derived_item =
+        |owner: TermId, target: TermId| available.identity(owner) && available.identity(target);
+    let mut active: HashSet<TermId> = HashSet::new();
+    let mut queue: Vec<TermId> = roots.to_vec();
+    while let Some(node) = queue.pop() {
+        if !active.insert(node) {
+            continue;
+        }
+        if let Some(children) = owners.get(&node) {
+            queue.extend(children.iter().filter(|c| !active.contains(c)));
+            continue;
+        }
+        for (_, child) in g.items.get(&node).into_iter().flatten() {
+            if !active.contains(child) {
+                queue.push(*child);
             }
-            match args_of(u, *row, ":", 4) {
-                Some(args) if is_atom_named(u, args[1], "item") => !owners.contains(&args[0]),
-                _ => true,
+        }
+        for (_, child) in a.items.get(&node).into_iter().flatten() {
+            if !active.contains(child) && derived_item(node, *child) {
+                queue.push(*child);
             }
-        })
-        .collect();
-    for (index, root) in roots.iter().enumerate() {
-        let ordinal = u.int(index as i64);
-        let row = u.compound("syntax_frontier", vec![ordinal, *root]);
-        candidates.push(row);
+        }
     }
     let item = u.atom("item");
-    for (owner, children) in overrides {
+    let mut frontier: HashSet<TermId> = HashSet::new();
+    for (index, root) in roots.iter().enumerate() {
+        let ordinal = u.int(index as i64);
+        frontier.insert(u.compound("syntax_frontier", vec![ordinal, *root]));
+    }
+    let mut edges: HashSet<TermId> = HashSet::new();
+    for (owner, children) in &owners {
+        if !active.contains(owner) {
+            continue;
+        }
         for (index, child) in children.iter().enumerate() {
             let target = u.compound("ref", vec![*child]);
             let ordinal = u.int(index as i64);
-            let row = u.compound(":", vec![*owner, item, target, ordinal]);
-            candidates.push(row);
+            edges.insert(u.compound(":", vec![*owner, item, target, ordinal]));
         }
     }
-    sort_terms(u, &mut candidates);
-    let next = Graph::build(u, candidates);
-    let reachable = next.active_nodes();
-    let mut rows: Vec<TermId> = next
+    let removed: Vec<TermId> = g
         .rows
         .iter()
         .copied()
-        .filter(|row| match anchor(u, *row) {
-            Anchor::Frontier => true,
-            Anchor::One(node) => reachable.contains(&node),
-            Anchor::Item(owner, target) => {
-                reachable.contains(&owner) && reachable.contains(&target)
-            }
-            Anchor::Never => false,
+        .filter(|row| {
+            let kept = match anchor(u, *row) {
+                Anchor::Frontier => frontier.contains(row),
+                Anchor::One(node) => active.contains(&node),
+                Anchor::Item(owner, _) if owners.contains_key(&owner) => edges.contains(row),
+                Anchor::Item(owner, target) => active.contains(&owner) && active.contains(&target),
+                Anchor::Never => false,
+            };
+            !kept
         })
         .collect();
-    sort_terms(u, &mut rows);
-    rows
+    let mut added: Vec<TermId> = frontier
+        .into_iter()
+        .chain(edges)
+        .filter(|row| !g.set.contains(row))
+        .collect();
+    for &row in &available.extra {
+        let kept = match anchor(u, row) {
+            Anchor::One(node) => {
+                active.contains(&node)
+                    && (args_of(u, row, "node", 1).is_none() || available.identity(node))
+            }
+            Anchor::Item(owner, target) => {
+                !owners.contains_key(&owner)
+                    && active.contains(&owner)
+                    && active.contains(&target)
+                    && derived_item(owner, target)
+            }
+            Anchor::Frontier | Anchor::Never => false,
+        };
+        if kept {
+            added.push(row);
+        }
+    }
+    (removed, added, active)
 }

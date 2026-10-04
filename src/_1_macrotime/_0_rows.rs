@@ -122,6 +122,10 @@ pub fn anchor(u: &Universe, row: TermId) -> Anchor {
 #[derive(Default)]
 pub struct Graph {
     pub rows: Vec<TermId>,
+    /// `rows` as a set
+    pub set: HashSet<TermId>,
+    /// order-independent hash of `rows`: the wrapping sum of `row_hash`
+    pub hash: u64,
     /// `syntax_frontier(Ordinal, Node)` in row order
     pub frontier: Vec<(TermId, TermId)>,
     /// owner to `(ordinal, target)` for label `item`, in row order
@@ -143,43 +147,119 @@ impl Graph {
         };
         for i in 0..g.rows.len() {
             let row = g.rows[i];
-            let (name, args) = match u.functor(row) {
-                Some((n, a)) => (n.to_string(), a.to_vec()),
-                None => continue,
-            };
-            match (name.as_str(), args.len()) {
-                ("node", 1) => {
-                    g.nodes.insert(args[0]);
-                }
-                ("syntax_form", 1) => {
-                    g.forms.insert(args[0]);
-                    let payload = u.atom("form");
-                    g.payloads.entry(args[0]).or_default().push(payload);
-                }
-                ("syntax_atom", 2) => {
-                    let payload = u.compound("atom", vec![args[1]]);
-                    g.payloads.entry(args[0]).or_default().push(payload);
-                    g.names.entry(args[0]).or_insert(args[1]);
-                }
-                ("syntax_literal", 2) => {
-                    let payload = u.compound("literal", vec![args[1]]);
-                    g.payloads.entry(args[0]).or_default().push(payload);
-                }
-                ("syntax_variable", 3) => {
-                    let payload = u.compound("variable", vec![args[1], args[2]]);
-                    g.payloads.entry(args[0]).or_default().push(payload);
-                }
-                ("syntax_frontier", 2) => g.frontier.push((args[0], args[1])),
-                ("source", 8) => g.sources.entry(args[0]).or_default().push(row),
-                (":", 4) if is_atom_named(u, args[1], "item") => {
-                    if let Some(target) = u.unary(args[2], "ref") {
-                        g.items.entry(args[0]).or_default().push((args[3], target));
-                    }
-                }
-                _ => {}
+            if g.set.insert(row) {
+                g.hash = g.hash.wrapping_add(row_hash(row));
             }
+            g.index(u, row, Edit::Append);
         }
         g
+    }
+
+    /// Remove `removed` and add `added`, keeping every index in the order a
+    /// sorted row set would give it. `rows` is left unsorted.
+    pub fn apply(&mut self, u: &mut Universe, removed: &[TermId], added: &[TermId]) {
+        let gone: HashSet<TermId> = removed
+            .iter()
+            .copied()
+            .filter(|row| self.set.remove(row))
+            .collect();
+        if !gone.is_empty() {
+            self.rows.retain(|row| !gone.contains(row));
+        }
+        for &row in &gone {
+            self.hash = self.hash.wrapping_sub(row_hash(row));
+            self.index(u, row, Edit::Remove);
+        }
+        for &row in added {
+            if self.set.insert(row) {
+                self.rows.push(row);
+                self.hash = self.hash.wrapping_add(row_hash(row));
+                self.index(u, row, Edit::Insert);
+            }
+        }
+    }
+
+    fn index(&mut self, u: &mut Universe, row: TermId, edit: Edit) {
+        let (name, args) = match u.functor(row) {
+            Some((n, a)) => (n.to_string(), a.to_vec()),
+            None => return,
+        };
+        let payload = match (name.as_str(), args.len()) {
+            ("node", 1) => {
+                if let Edit::Remove = edit {
+                    self.nodes.remove(&args[0]);
+                } else {
+                    self.nodes.insert(args[0]);
+                }
+                return;
+            }
+            ("syntax_form", 1) => {
+                if let Edit::Remove = edit {
+                    self.forms.remove(&args[0]);
+                } else {
+                    self.forms.insert(args[0]);
+                }
+                u.atom("form")
+            }
+            ("syntax_atom", 2) => u.compound("atom", vec![args[1]]),
+            ("syntax_literal", 2) => u.compound("literal", vec![args[1]]),
+            ("syntax_variable", 3) => u.compound("variable", vec![args[1], args[2]]),
+            ("syntax_frontier", 2) => {
+                edit_ordered(&mut self.frontier, (args[0], args[1]), edit, |a, b| {
+                    u.cmp(a.0, b.0).then_with(|| u.cmp(a.1, b.1))
+                });
+                return;
+            }
+            ("source", 8) => {
+                let sources = self.sources.entry(args[0]).or_default();
+                edit_ordered(sources, row, edit, |a, b| u.cmp(*a, *b));
+                if sources.is_empty() {
+                    self.sources.remove(&args[0]);
+                }
+                return;
+            }
+            (":", 4) if is_atom_named(u, args[1], "item") => {
+                if let Some(target) = u.unary(args[2], "ref") {
+                    // Row order of one owner's item rows: target, then ordinal.
+                    let items = self.items.entry(args[0]).or_default();
+                    edit_ordered(items, (args[3], target), edit, |a, b| {
+                        u.cmp(a.1, b.1).then_with(|| u.cmp(a.0, b.0))
+                    });
+                    if items.is_empty() {
+                        self.items.remove(&args[0]);
+                    }
+                }
+                return;
+            }
+            _ => return,
+        };
+        let node = args[0];
+        // Payload order is row order: `form` before `atom/1` before
+        // `literal/1` before `variable/2`, as their rows sort.
+        let payloads = self.payloads.entry(node).or_default();
+        edit_ordered(payloads, payload, edit, |a, b| u.cmp(*a, *b));
+        if payloads.is_empty() {
+            self.payloads.remove(&node);
+        }
+        if name != "syntax_atom" {
+            return;
+        }
+        let first = self.payloads.get(&node).and_then(|payloads| {
+            payloads
+                .iter()
+                .find_map(|payload| u.unary(*payload, "atom"))
+        });
+        match (edit, first) {
+            (Edit::Append, _) => {
+                self.names.entry(node).or_insert(args[1]);
+            }
+            (_, Some(name)) => {
+                self.names.insert(node, name);
+            }
+            (_, None) => {
+                self.names.remove(&node);
+            }
+        }
     }
 
     /// `keysort/2` is stable, so ties keep the row order the sorted row set
@@ -220,6 +300,45 @@ impl Graph {
         }
         seen
     }
+}
+
+#[derive(Clone, Copy)]
+enum Edit {
+    /// `build`: rows arrive in sorted order
+    Append,
+    Insert,
+    Remove,
+}
+
+fn edit_ordered<T: PartialEq>(
+    items: &mut Vec<T>,
+    value: T,
+    edit: Edit,
+    cmp: impl Fn(&T, &T) -> std::cmp::Ordering,
+) {
+    match edit {
+        Edit::Append => items.push(value),
+        Edit::Insert => {
+            let at = items
+                .binary_search_by(|probe| cmp(probe, &value))
+                .unwrap_or_else(|at| at);
+            items.insert(at, value);
+        }
+        Edit::Remove => {
+            if let Some(at) = items.iter().position(|item| *item == value) {
+                items.remove(at);
+            }
+        }
+    }
+}
+
+/// One row's share of `Graph::hash`; term ids are hash-consed, so equal rows
+/// share an id. splitmix64 finalizer.
+pub fn row_hash(row: TermId) -> u64 {
+    let mut z = u64::from(row.0).wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 /// `numlist(0, Count - 1, Expected)` compared against the ordinals a keysort

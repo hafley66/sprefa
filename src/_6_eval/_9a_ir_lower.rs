@@ -61,6 +61,10 @@ pub struct Lowered {
     pub unit: ir::RelId,
     pub visible: Vec<(ir::RelId, TermId, usize)>,
     pub internal_seeds: Vec<(ir::RelId, Vec<TermId>)>,
+    /// `__ir_plain_list_seeds` and `__ir_bad_lists`: where a `const` term
+    /// installed after lowering sends its `internal_seeds` row.
+    pub plain_source: ir::RelId,
+    pub bad_lists: ir::RelId,
     pub served: Vec<ServedSpec>,
     pub sources: BTreeMap<(u32, usize), ir::RelId>,
     pub installers: BTreeMap<(String, usize, bool), (ir::RelId, ir::RelId)>,
@@ -2899,6 +2903,8 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
                     .map(|term| (bad_lists, vec![term])),
             )
             .collect(),
+        plain_source,
+        bad_lists,
         served,
         sources,
         installers,

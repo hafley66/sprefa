@@ -39,6 +39,24 @@ pub struct SignedRow {
     pub weight: i64,
 }
 
+/// What one `prepare` or `apply` settled: the signed changes of every
+/// visible relation, decoded to terms.
+pub struct Applied {
+    pub rows: Vec<SignedRow>,
+    pub diagnostics: Vec<Diagnostic>,
+    /// Source rows the settle was given.
+    pub sent: usize,
+    /// Interned rows read to decode cells the session had not seen.
+    pub intern_read: usize,
+}
+
+pub enum ApplyError {
+    /// The prepared IR has no source or constructor for a changed row; the
+    /// caller prepares again from its whole row set.
+    Unprepared(&'static str),
+    Failed(Diagnostic),
+}
+
 pub struct NamedDelta {
     pub relation: String,
     pub args: Vec<TermId>,
@@ -56,6 +74,8 @@ struct EngineSession<E: Engine> {
     mapped: HashMap<TermId, Cell>,
     answered: HashMap<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>,
     last_seeds: BTreeSet<(ir::RelId, Vec<Cell>)>,
+    /// Cells decoded so far; `apply` decodes only what this misses.
+    decoded: HashMap<Cell, TermId>,
     initialized: bool,
     fingerprint: u64,
     structure: ir::Program,
@@ -84,6 +104,7 @@ impl<E: Engine> EngineSession<E> {
             mapped: HashMap::new(),
             answered: HashMap::new(),
             last_seeds: BTreeSet::new(),
+            decoded: HashMap::new(),
             initialized: false,
             fingerprint,
             structure: lowered.ir.clone(),
@@ -93,7 +114,6 @@ impl<E: Engine> EngineSession<E> {
 
 type RunResult =
     Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError>;
-
 
 trait Session {
     fn matches(&self, lowered: &Lowered, fingerprint: u64) -> bool;
@@ -108,6 +128,17 @@ trait Session {
         live: Option<&mut LiveRun<'_>>,
         fx: &mut dyn FnMut(Trace),
     ) -> RunResult;
+    fn start(
+        &mut self,
+        u: &mut Universe,
+        lowered: &Lowered,
+    ) -> Result<Applied, ivm_engine::EngineError>;
+    fn apply(
+        &mut self,
+        u: &mut Universe,
+        lowered: &Lowered,
+        changes: &[SignedRow],
+    ) -> Result<Applied, ApplyError>;
 }
 
 impl<E: Engine> Session for EngineSession<E> {
@@ -135,6 +166,23 @@ impl<E: Engine> Session for EngineSession<E> {
             live,
             fx,
         )
+    }
+
+    fn start(
+        &mut self,
+        u: &mut Universe,
+        lowered: &Lowered,
+    ) -> Result<Applied, ivm_engine::EngineError> {
+        start_session(u, lowered, self)
+    }
+
+    fn apply(
+        &mut self,
+        u: &mut Universe,
+        lowered: &Lowered,
+        changes: &[SignedRow],
+    ) -> Result<Applied, ApplyError> {
+        apply_session(u, lowered, self, changes)
     }
 }
 
@@ -167,6 +215,8 @@ fn open_session(
 pub struct IrSession {
     backend: Result<Backend, String>,
     session: Option<Box<dyn Session>>,
+    /// The program `prepare` lowered and installed; `apply` feeds it.
+    prepared: Option<Lowered>,
 }
 
 impl IrSession {
@@ -174,6 +224,7 @@ impl IrSession {
         Self {
             backend: Ok(backend),
             session: None,
+            prepared: None,
         }
     }
 
@@ -183,7 +234,45 @@ impl IrSession {
         Self {
             backend: configured_backend(),
             session: None,
+            prepared: None,
         }
+    }
+
+    /// Lower and install `program` once, settle its seeds, and keep both for
+    /// `apply`.
+    pub fn prepare(&mut self, u: &mut Universe, program: &Program) -> Result<Applied, Diagnostic> {
+        self.session = None;
+        self.prepared = None;
+        let backend = match &self.backend {
+            Ok(backend) => *backend,
+            Err(message) => return Err(unknown_engine(u, message)),
+        };
+        let lowered = ir_lower::lower(u, program)?;
+        let fingerprint = structural_fingerprint(&lowered.ir);
+        let mut session = open_session(u, backend, &lowered, fingerprint, false)?;
+        let applied = session
+            .start(u, &lowered)
+            .map_err(|error| diagnostic(u, "engine", error))?;
+        self.session = Some(session);
+        self.prepared = Some(lowered);
+        Ok(applied)
+    }
+
+    /// Settle signed seed rows on the prepared program.
+    pub fn apply(
+        &mut self,
+        u: &mut Universe,
+        changes: &[SignedRow],
+    ) -> Result<Applied, ApplyError> {
+        let (Some(session), Some(lowered)) = (self.session.as_mut(), self.prepared.as_ref()) else {
+            return Err(ApplyError::Unprepared("no prepared program"));
+        };
+        let result = session.apply(u, lowered, changes);
+        if let Err(ApplyError::Failed(_)) = &result {
+            self.session = None;
+            self.prepared = None;
+        }
+        result
     }
 
     pub fn evaluate(
@@ -196,6 +285,7 @@ impl IrSession {
         LAST_COUNTERS.with(|counters| counters.set(None));
         LAST_ANSWERS.with(|rows| rows.borrow_mut().clear());
         LAST_REQUESTS.with(|count| count.set(0));
+        self.prepared = None;
         let backend = match &self.backend {
             Ok(backend) => *backend,
             Err(message) => {
@@ -308,6 +398,7 @@ fn snapshot_closure<E: Engine>(
             .then_with(|| u.cmp_rows(&a.args, &b.args))
     });
     rows.dedup();
+    tracing::info!(target: "dl8::ir", rows = rows.len(), "ir snapshot");
     let mut diagnostics = Vec::new();
     if let Some(program) = &lowered.fold_program {
         let mut folds = Vec::with_capacity(lowered.declared_folds.len());
@@ -408,6 +499,16 @@ fn decode_terms<E: Engine>(
     engine: &E,
     mapped: &HashMap<TermId, Cell>,
 ) -> Result<HashMap<Cell, TermId>, ivm_engine::EngineError> {
+    decode_terms_counted(u, lowered, engine, mapped).map(|(decoded, _)| decoded)
+}
+
+/// `decode_terms` and the number of interned rows it read.
+fn decode_terms_counted<E: Engine>(
+    u: &mut Universe,
+    lowered: &Lowered,
+    engine: &E,
+    mapped: &HashMap<TermId, Cell>,
+) -> Result<(HashMap<Cell, TermId>, usize), ivm_engine::EngineError> {
     let mut decoded: HashMap<Cell, TermId> = mapped.iter().map(|(&term, &id)| (id, term)).collect();
     // `(id, constructor name, args)` of every interned term not decoded yet, ascending id.
     let mut pending: Vec<(Cell, &str, Vec<Cell>)> = Vec::new();
@@ -418,7 +519,10 @@ fn decode_terms<E: Engine>(
         .filter(|rel| rel.kind == ir::RelKind::Constructor)
         .collect();
     let ids: Vec<ir::RelId> = constructors.iter().map(|rel| rel.id).collect();
-    for (rel, rows) in constructors.iter().zip(engine.intern_snapshots(&ids)?) {
+    let snapshots = engine.intern_snapshots(&ids)?;
+    let read = snapshots.iter().map(Vec::len).sum::<usize>();
+    tracing::info!(target: "dl8::ir", rows = read, "ir intern read");
+    for (rel, rows) in constructors.iter().zip(snapshots) {
         for (mut row, weight) in rows {
             if weight > 0 && !decoded.contains_key(&row[0]) {
                 let id = row.remove(0);
@@ -461,7 +565,7 @@ fn decode_terms<E: Engine>(
             break;
         }
     }
-    Ok(decoded)
+    Ok((decoded, read))
 }
 
 fn install_terms<E: Engine>(
@@ -564,19 +668,14 @@ fn install_terms<E: Engine>(
     }
 }
 
-fn run_session<E: Engine>(
-    u: &mut Universe,
+/// Intern every term the lowered program names and list its whole seed
+/// frontier: unit, term map, seeds and internal seeds, sorted and deduplicated.
+fn bootstrap_changes<E: Engine>(
     lowered: &Lowered,
     session: &mut EngineSession<E>,
-    mut answerer: Option<&mut Answerer>,
-    frontiers: &[Vec<SignedRow>],
-    public_names: Option<&HashMap<TermId, String>>,
-    mut live: Option<&mut LiveRun<'_>>,
-    fx: &mut dyn FnMut(Trace),
-) -> Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError> {
+) -> Result<Vec<ir::SourceChange>, ivm_engine::EngineError> {
     let engine = &mut session.engine;
     let mapped = &mut session.mapped;
-    let answered = &mut session.answered;
     let mut text_cells = Vec::with_capacity(lowered.texts.len());
     for (_, value) in &lowered.texts {
         text_cells.push(engine.intern_text(value)?);
@@ -654,6 +753,283 @@ fn run_session<E: Engine>(
     }
     changes.sort_by(|a, b| (a.rel, &a.row).cmp(&(b.rel, &b.row)));
     changes.dedup_by(|a, b| a.rel == b.rel && a.row == b.row);
+    Ok(changes)
+}
+
+/// The first settle of a prepared program: its whole seed frontier.
+fn start_session<E: Engine>(
+    u: &mut Universe,
+    lowered: &Lowered,
+    session: &mut EngineSession<E>,
+) -> Result<Applied, ivm_engine::EngineError> {
+    let changes = bootstrap_changes(lowered, session)?;
+    session.last_seeds = changes
+        .iter()
+        .map(|change| (change.rel, change.row.clone()))
+        .collect();
+    session.initialized = true;
+    let sent = changes.len();
+    let delta = settle(&mut session.engine, changes)?;
+    tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir settle");
+    let (rows, intern_read) = decode_delta(u, lowered, session, &delta)?;
+    let diagnostics = fold_diagnostics(u, lowered, session)?;
+    Ok(Applied {
+        rows,
+        diagnostics,
+        sent,
+        intern_read,
+    })
+}
+
+/// Declared folds run over the whole closure (`snapshot_closure`); a program
+/// without them reads nothing back.
+fn fold_diagnostics<E: Engine>(
+    u: &mut Universe,
+    lowered: &Lowered,
+    session: &EngineSession<E>,
+) -> Result<Vec<Diagnostic>, ivm_engine::EngineError> {
+    if lowered.fold_program.is_none() {
+        return Ok(Vec::new());
+    }
+    Ok(snapshot_closure(u, lowered, &session.engine, &session.mapped)?.diagnostics)
+}
+
+/// The visible relation changes of `delta` as terms. Cells the session has
+/// not decoded yet cost one read of the interned terms.
+fn decode_delta<E: Engine>(
+    u: &mut Universe,
+    lowered: &Lowered,
+    session: &mut EngineSession<E>,
+    delta: &ir::Delta,
+) -> Result<(Vec<SignedRow>, usize), ivm_engine::EngineError> {
+    let visible: HashMap<ir::RelId, (TermId, usize)> = lowered
+        .visible
+        .iter()
+        .map(|&(rel, original, arity)| (rel, (original, arity)))
+        .collect();
+    let missing = delta.changes.iter().any(|(rel, row, _)| {
+        visible.get(rel).is_some_and(|&(_, arity)| {
+            row[..arity]
+                .iter()
+                .any(|cell| !session.decoded.contains_key(cell))
+        })
+    });
+    let mut intern_read = 0;
+    if missing {
+        let (decoded, read) = decode_terms_counted(u, lowered, &session.engine, &session.mapped)?;
+        session.decoded.extend(decoded);
+        intern_read = read;
+    }
+    let mut rows = Vec::new();
+    for (rel, cells, weight) in &delta.changes {
+        let Some(&(original, arity)) = visible.get(rel) else {
+            continue;
+        };
+        let mut args = Vec::with_capacity(arity);
+        for &cell in &cells[..arity] {
+            let term = if let Some(&term) = session.decoded.get(&cell) {
+                term
+            } else if let Some(value) = session.engine.text(cell)? {
+                let term = u.string(&value);
+                session.decoded.insert(cell, term);
+                term
+            } else {
+                return Err(ivm_engine::EngineError::new(
+                    ivm_engine::Stage::Snapshot,
+                    Some(*rel),
+                    ivm_engine::ErrorKind::Unsupported("undecodable term id"),
+                ));
+            };
+            args.push(term);
+        }
+        rows.push(SignedRow {
+            row: Row {
+                rel: original,
+                args,
+            },
+            weight: *weight,
+        });
+    }
+    Ok((rows, intern_read))
+}
+
+/// The constructor key `install_terms` uses for one term.
+fn shape_of(u: &Universe, term: TermId) -> (String, usize, bool) {
+    match u.get(term) {
+        Term::Int(_) => ("0:int".into(), 0, true),
+        Term::Float(_) => ("0:float".into(), 0, true),
+        Term::Str(_) => ("2:str".into(), 1, false),
+        Term::Bool(_) => ("1:bool".into(), 0, true),
+        Term::Atom(_) => ("3:atom".into(), 0, true),
+        Term::Compound(sym, args) => (
+            format!("9:{}:{}", args.len(), u.sym_str(*sym)),
+            args.len(),
+            false,
+        ),
+    }
+}
+
+/// Install the terms of `roots` the session has not mapped yet and return
+/// them. A shape the prepared IR has no constructor for is `Unprepared`.
+fn install_fresh<E: Engine>(
+    u: &mut Universe,
+    lowered: &Lowered,
+    session: &mut EngineSession<E>,
+    roots: &[TermId],
+) -> Result<Vec<TermId>, ApplyError> {
+    let mut fresh = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut todo = roots.to_vec();
+    while let Some(term) = todo.pop() {
+        if session.mapped.contains_key(&term) || !seen.insert(term) {
+            continue;
+        }
+        if !lowered.constructors.contains_key(&shape_of(u, term)) {
+            return Err(ApplyError::Unprepared("term constructor"));
+        }
+        fresh.push(term);
+        if let Term::Compound(_, args) = u.get(term) {
+            todo.extend(args.iter().copied());
+        }
+    }
+    install_terms(u, lowered, &mut session.engine, &mut session.mapped, &fresh)
+        .map_err(|error| ApplyError::Failed(diagnostic(u, "engine", error)))?;
+    for &term in &fresh {
+        session.decoded.insert(session.mapped[&term], term);
+    }
+    Ok(fresh)
+}
+
+/// One settle of signed seed rows. A term new to the session is installed
+/// with the term-map and list rows `ir_lower::lower` seeds for its terms.
+fn apply_session<E: Engine>(
+    u: &mut Universe,
+    lowered: &Lowered,
+    session: &mut EngineSession<E>,
+    changes: &[SignedRow],
+) -> Result<Applied, ApplyError> {
+    let failed = |u: &mut Universe, error| ApplyError::Failed(diagnostic(u, "engine", error));
+    let mut sources = Vec::with_capacity(changes.len());
+    for change in changes {
+        let Some(&source) = lowered
+            .sources
+            .get(&(change.row.rel.0, change.row.args.len()))
+        else {
+            return Err(ApplyError::Unprepared("seed relation"));
+        };
+        sources.push(source);
+    }
+    let roots: Vec<TermId> = changes
+        .iter()
+        .flat_map(|change| change.row.args.iter().copied())
+        .collect();
+    let mut fresh = install_fresh(u, lowered, session, &roots)?;
+    let mut plain_items = Vec::new();
+    let mut bad_lists = Vec::new();
+    for &term in &fresh {
+        let Some(payload) = u.unary(term, "const") else {
+            continue;
+        };
+        match u.as_list(payload) {
+            Some(list) => {
+                if let Some(plain) = list
+                    .iter()
+                    .map(|id| super::kernel::semantic(u, *id))
+                    .collect::<Option<Vec<_>>>()
+                {
+                    plain_items.push((term, plain));
+                }
+            }
+            None => bad_lists.push(term),
+        }
+    }
+    let plain_pairs: Vec<(TermId, TermId)> = plain_items
+        .into_iter()
+        .map(|(tagged, plain)| (tagged, u.list(&plain)))
+        .collect();
+    let plains: Vec<TermId> = plain_pairs.iter().map(|(_, plain)| *plain).collect();
+    fresh.extend(install_fresh(u, lowered, session, &plains)?);
+    let mut frontier = Vec::with_capacity(changes.len() + fresh.len());
+    for &term in &fresh {
+        frontier.push(ir::SourceChange {
+            rel: lowered.term_map,
+            row: vec![term.0 as i64, session.mapped[&term]],
+            w: 1,
+        });
+    }
+    for (tagged, plain) in &plain_pairs {
+        frontier.push(ir::SourceChange {
+            rel: lowered.plain_source,
+            row: vec![session.mapped[tagged], session.mapped[plain]],
+            w: 1,
+        });
+    }
+    for term in &bad_lists {
+        frontier.push(ir::SourceChange {
+            rel: lowered.bad_lists,
+            row: vec![session.mapped[term]],
+            w: 1,
+        });
+    }
+    for (change, source) in changes.iter().zip(sources) {
+        let row = if change.row.args.is_empty() {
+            vec![1]
+        } else {
+            change
+                .row
+                .args
+                .iter()
+                .map(|term| session.mapped[term])
+                .collect()
+        };
+        frontier.push(ir::SourceChange {
+            rel: source,
+            row,
+            w: change.weight,
+        });
+    }
+    frontier.sort_by(|a, b| (a.rel, &a.row).cmp(&(b.rel, &b.row)));
+    let mut consolidated: Vec<ir::SourceChange> = Vec::with_capacity(frontier.len());
+    for change in frontier {
+        match consolidated.last_mut() {
+            Some(last) if last.rel == change.rel && last.row == change.row => last.w += change.w,
+            _ => consolidated.push(change),
+        }
+    }
+    consolidated.retain(|change| change.w != 0);
+    for change in &consolidated {
+        let key = (change.rel, change.row.clone());
+        if change.w > 0 {
+            session.last_seeds.insert(key);
+        } else {
+            session.last_seeds.remove(&key);
+        }
+    }
+    let sent = consolidated.len();
+    let delta = settle(&mut session.engine, consolidated).map_err(|error| failed(u, error))?;
+    tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir apply");
+    let (rows, intern_read) =
+        decode_delta(u, lowered, session, &delta).map_err(|error| failed(u, error))?;
+    let diagnostics = fold_diagnostics(u, lowered, session).map_err(|error| failed(u, error))?;
+    Ok(Applied {
+        rows,
+        diagnostics,
+        sent,
+        intern_read,
+    })
+}
+
+fn run_session<E: Engine>(
+    u: &mut Universe,
+    lowered: &Lowered,
+    session: &mut EngineSession<E>,
+    mut answerer: Option<&mut Answerer>,
+    frontiers: &[Vec<SignedRow>],
+    public_names: Option<&HashMap<TermId, String>>,
+    mut live: Option<&mut LiveRun<'_>>,
+    fx: &mut dyn FnMut(Trace),
+) -> Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError> {
+    let changes = bootstrap_changes(lowered, session)?;
     let current_seeds: BTreeSet<_> = changes
         .iter()
         .map(|change| (change.rel, change.row.clone()))
@@ -680,7 +1056,12 @@ fn run_session<E: Engine>(
     };
     session.last_seeds = current_seeds;
     session.initialized = true;
+    let engine = &mut session.engine;
+    let mapped = &mut session.mapped;
+    let answered = &mut session.answered;
+    let sent = frontier.len();
     let mut delta = settle(engine, frontier)?;
+    tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir settle");
     let request_relations: HashMap<_, _> = lowered
         .served
         .iter()
