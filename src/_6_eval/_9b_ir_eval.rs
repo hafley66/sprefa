@@ -123,6 +123,7 @@ impl<E: Engine> EngineSession<E> {
         fingerprint: u64,
         measured: bool,
     ) -> Result<Self, ivm_engine::EngineError> {
+        dump_ir(&lowered.ir, fingerprint);
         let census_start = std::time::Instant::now();
         let engine = if measured {
             E::install(&lowered.ir)?
@@ -467,6 +468,22 @@ impl IrSession {
                 }
             }
         }
+    }
+}
+
+/// `DL8_IR_DUMP=<dir>`: every installed IR as `<dir>/<pid>_<seq>_<fingerprint>.json`, in install
+/// order. The `ivm-sqlite` install benchmark reads these.
+fn dump_ir(program: &ir::Program, fingerprint: u64) {
+    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let Some(dir) = std::env::var_os("DL8_IR_DUMP") else { return };
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = std::path::Path::new(&dir).join(format!("{}_{seq}_{fingerprint:016x}.json", std::process::id()));
+    let written = serde_json::to_vec(program)
+        .map_err(|e| e.to_string())
+        .and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()));
+    match written {
+        Ok(()) => tracing::info!(target: "dl8::ir", path = %path.display(), "ir dump"),
+        Err(error) => tracing::warn!(target: "dl8::ir", path = %path.display(), %error, "ir dump failed"),
     }
 }
 
