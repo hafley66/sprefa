@@ -147,3 +147,53 @@ fn tsi_registry_matches_hafley_scm() {
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// The ir:sqlite work counts (`ivm_sqlite::work` events, summed per phase) of
+/// the registry build: a change in the work SQLite does shows up here as a
+/// count change.
+#[test]
+fn tsi_registry_sqlite_work_counts() {
+    let directory = scratch("registry-work");
+    let built = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .current_dir(root())
+        .arg("build")
+        .arg(root().join("std/tsi_registry_emit.dl7"))
+        .arg("--out")
+        .arg(&directory)
+        .env("DL8_ENGINE", "ir:sqlite")
+        .env("RUST_LOG", "ivm_sqlite::work=info")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let mut phases: std::collections::BTreeMap<String, Vec<(String, u64)>> = Default::default();
+    for line in String::from_utf8_lossy(&built.stderr).lines() {
+        let Some((_, fields)) = line.split_once("ivm_sqlite::work: sqlite work ") else { continue };
+        let mut fields = fields.split(' ').filter_map(|field| field.split_once('='));
+        let phase = fields.next().unwrap().1.trim_matches('"').to_owned();
+        let sums = phases.entry(phase).or_default();
+        for (i, (name, value)) in fields.enumerate() {
+            if sums.len() <= i {
+                sums.push((name.to_owned(), 0));
+            }
+            sums[i].1 += value.parse::<u64>().unwrap();
+        }
+    }
+    let got = phases
+        .iter()
+        .map(|(phase, sums)| {
+            let fields = sums.iter().map(|(name, value)| format!("{name}={value}")).collect::<Vec<_>>();
+            format!("{phase}: {}", fields.join(" "))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        got,
+        concat!(
+            "between: creates=0 schema_rows_parsed=0 prepared=144 prepared_bytes=8851 unfolded_bytes=8851 executions=52533 zero_row_executions=16718 vm_steps=1889805 fullscan_steps=25338 sorts=0 autoindexes=0 reprepares=3 rows_returned=63503 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=0 written_term=16398\n",
+            "install: creates=4963 schema_rows_parsed=620094 prepared=5290 prepared_bytes=1697524 unfolded_bytes=1697524 executions=5290 zero_row_executions=58 vm_steps=148531 fullscan_steps=138 sorts=358 autoindexes=0 reprepares=0 rows_returned=170 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=28 written_term=137\n",
+            "settle: creates=0 schema_rows_parsed=0 prepared=6289 prepared_bytes=3859473 unfolded_bytes=4104701 executions=77488 zero_row_executions=8285 vm_steps=55063391 fullscan_steps=4687090 sorts=19133 autoindexes=23363 reprepares=0 rows_returned=51878 written_d=240214 written_i=108610 written_x=0 written_scratch=136901 written_source=23381 written_catalog=11 written_term=6030"
+        )
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}
