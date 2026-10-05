@@ -1469,6 +1469,7 @@ fn ir_sqlite_comptime_objects_for_the_prelude() {
         .arg("compile")
         .arg(root.join("fixtures/generic/2_variable_goal.dl7"))
         .env("DL8_ENGINE", "ir:sqlite")
+        .env("DL8_RULES", "compile")
         .env("RUST_LOG", "info")
         .output()
         .unwrap();

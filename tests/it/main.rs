@@ -22,3 +22,9 @@ mod _9i_kernel_names;
 mod _9j_no_recursion;
 mod _9k_next;
 mod _9l_macrotime_waves;
+mod _9l_rule_counts;
+
+/// `DL8_RULES` as the binary reads it: unset is `compile`. Work-count pins differ by mode.
+fn rules_interpreted() -> bool {
+    std::env::var("DL8_RULES").as_deref() == Ok("interpret")
+}

@@ -180,6 +180,7 @@ fn main() -> ExitCode {
     let _ = hafley_observe::init(config);
     let exit = match dl8::_6_eval::ir_eval::configured_backend()
         .and(dl8::_1_macrotime::init_macrotime_mode().map(|_| ()))
+        .and(dl8::_6_eval::rule_interp::init_rules_mode().map(|_| ()))
     {
         Ok(_) => run(cli.command),
         Err(error) => {

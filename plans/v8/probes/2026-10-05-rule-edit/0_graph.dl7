@@ -1,0 +1,20 @@
+(: edge
+   (* (: from int)
+      (: to int)))
+
+(edge 1 2)
+(edge 2 3)
+(edge 3 4)
+(edge 4 5)
+(edge 5 6)
+(edge 6 7)
+(edge 7 8)
+(edge 8 9)
+(edge 10 11)
+(edge 11 12)
+
+(: blocked
+   (* (: node int)))
+
+(blocked 4)
+(blocked 11)

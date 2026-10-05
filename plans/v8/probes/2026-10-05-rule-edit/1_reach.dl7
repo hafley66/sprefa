@@ -1,0 +1,20 @@
+(graph: (import "./0_graph.dl7"))
+
+(: reach
+   (* (: from int)
+      (: to int)))
+
+(<- (reach ?A ?B)
+    (graph.edge ?A ?B))
+
+(<- (reach ?A ?C)
+    (reach ?A ?B)
+    (graph.edge ?B ?C))
+
+(: open_reach
+   (* (: from int)
+      (: to int)))
+
+(<- (open_reach ?A ?B)
+    (reach ?A ?B)
+    (not (graph.blocked ?B)))

@@ -160,6 +160,7 @@ fn registry_sqlite_work(mode: &str) -> String {
         .arg(&directory)
         .env("DL8_ENGINE", "ir:sqlite")
         .env("DL8_MACROTIME", mode)
+        .env("DL8_RULES", "compile")
         .env("RUST_LOG", "ivm_sqlite::work=info")
         .env("NO_COLOR", "1")
         .output()

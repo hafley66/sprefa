@@ -247,7 +247,7 @@ pub(super) fn check_fs_watch_edits_retract_requests_and_increment_only_dependent
         );
         assert_eq!(
             counter(&edited, "rows_written") - counter(&requested, "rows_written"),
-            2,
+            if super::rules_interpreted() { 3 } else { 2 },
             "{engine}: edit writes"
         );
 

@@ -1087,7 +1087,7 @@ fn rung_9_ir_reuses_one_comptime_install() {
                 .lines()
                 .filter(|line| line.contains("comptime") && line.contains("ir install"))
                 .count(),
-            1,
+            if super::rules_interpreted() { 2 } else { 1 },
             "{engine}: installs"
         );
     }

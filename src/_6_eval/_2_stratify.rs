@@ -60,7 +60,7 @@ fn sorted_rels(u: &Universe, set: &HashSet<TermId>) -> Vec<TermId> {
 
 /// Tarjan's strongly connected components, numbered in completion order: every
 /// component a relation reads completes before the relation's own.
-fn components(edges: &[Vec<(usize, u32)>]) -> Vec<usize> {
+pub(crate) fn components(edges: &[Vec<(usize, u32)>]) -> Vec<usize> {
     const UNVISITED: usize = usize::MAX;
     let n = edges.len();
     let mut index = vec![UNVISITED; n];

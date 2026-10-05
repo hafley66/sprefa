@@ -120,6 +120,7 @@ const UNBUDGETED: &[(&str, &str)] = &[
     ("src/_6_eval/_0_term.rs", "loop {"),
     ("src/_6_eval/_5_evaluate.rs", "while self.trail.len() > to {"),
     ("src/_6_eval/_5_evaluate.rs", "loop {"),
+    ("src/_6_eval/_9b_ir_eval.rs", "while event_settles < live.max_settles {"),
     ("src/_9_runtime/_2_reconcile.rs", "while closure.diagnostics.is_empty() && ticks < max_ticks {"),
     ("src/_9_runtime/_3_executors/timer.rs", "loop {"),
 ];
