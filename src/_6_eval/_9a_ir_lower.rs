@@ -90,6 +90,7 @@ pub struct ServedSpec {
     pub arity: usize,
 }
 
+#[derive(Clone)]
 struct Builder {
     ir: ir::Program,
     next_rel: ir::RelId,
@@ -98,6 +99,15 @@ struct Builder {
     /// A relation read through one column projection: every goal that keeps the same columns
     /// reads one node, so the engines share its arrangement.
     narrowed_gets: HashMap<(ir::RelId, Vec<ir::ColId>), ir::NodeId>,
+    /// `(relation, join key positions)` to the union of the positions its positive readers
+    /// keep. A recording pass over every rule fills it; the lowering pass narrows each reader
+    /// to its group's union, so readers that join a relation on one key read one node and the
+    /// engines build one arrangement. The join's projection drops the columns a reader does
+    /// not keep.
+    narrow_unions: HashMap<(ir::RelId, Vec<ir::ColId>), BTreeSet<ir::ColId>>,
+    /// The recording pass: `compile_rule` adds each reader's kept positions to
+    /// `narrow_unions` and narrows to them alone.
+    narrow_record: bool,
     intern_nodes: Vec<ir::NodeId>,
     intern_relation: Option<ir::RelId>,
     intern_readback: bool,
@@ -139,6 +149,8 @@ impl Builder {
             constructor_gets: HashMap::new(),
             ground_maps: HashMap::new(),
             narrowed_gets: HashMap::new(),
+            narrow_unions: HashMap::new(),
+            narrow_record: false,
             intern_nodes: Vec::new(),
             intern_relation: None,
             intern_readback: false,
@@ -1453,6 +1465,64 @@ fn compile_rule(
         if kept.is_empty() && !goal.args.is_empty() {
             kept.push(0);
         }
+        // One shared narrowing per (relation, join key positions): the union of what every
+        // reader in the group keeps (`Builder::narrow_unions`). A later goal's key is its bound
+        // positions. The first goal is the left input of its first ground term's join, or else
+        // of the second goal's join: keyed on that ground position, on the positions whose
+        // variable a positive relation second goal reads, or on none (a kernel's cross join with
+        // its ground rows). It joins that group so the left arrangement is the shared one.
+        let joins_next = |next: &Goal| {
+            next.polarity == Polarity::Positive
+                && (Kernel::of(u, next.rel).is_none() || rule.is_aggregate())
+        };
+        let group_keys: Option<Vec<ir::ColId>> = if !repeated.is_empty() {
+            None
+        } else if goal_index > 0 {
+            Some(
+                goal.args
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, arg)| var(arg).is_some_and(|v| bound.contains_key(&v)))
+                    .map(|(position, _)| assert_width(position))
+                    .collect(),
+            )
+        } else if let Some((position, _)) = grounds.first() {
+            // The first ground term's cross join keys the read on that position.
+            Some(vec![*position])
+        } else {
+            let read: HashSet<u32> = rule
+                .body
+                .get(1)
+                .filter(|next| joins_next(next))
+                .map(|next| next.args.iter().filter_map(var).collect())
+                .unwrap_or_default();
+            let mut keys: Vec<ir::ColId> = first_here
+                .iter()
+                .filter(|(v, _)| read.contains(v))
+                .map(|(_, position)| *position)
+                .collect();
+            keys.sort_unstable();
+            Some(keys)
+        };
+        let shared_first = goal_index == 0 && grounds.is_empty() && group_keys.is_some();
+        if let Some(keys) = group_keys {
+            let group = (rel, keys);
+            if b.narrow_record {
+                b.narrow_unions
+                    .entry(group)
+                    .or_default()
+                    .extend(kept.iter().copied());
+            } else {
+                let union = b
+                    .narrow_unions
+                    .get(&group)
+                    .ok_or("reader missing from the narrowing pass")?;
+                if !kept.iter().all(|position| union.contains(position)) {
+                    return Err("narrowing union misses a kept column");
+                }
+                kept = union.iter().copied().collect();
+            }
+        }
         let narrowed = kept.len() < goal.args.len();
         let right = if !repeated.is_empty() {
             let right = b.get(rel);
@@ -1518,7 +1588,11 @@ fn compile_rule(
             }
         }
         width = grown;
-        keep_live(b, &mut current, &mut width, &mut bound, live);
+        // A shared first read stays whole into the second goal's join, whose projection drops
+        // its dead columns.
+        if !shared_first {
+            keep_live(b, &mut current, &mut width, &mut bound, live);
+        }
     }
     if rule.is_aggregate() {
         if rule.aggregate_args() != 1 {
@@ -2622,6 +2696,32 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let mut effect_dependencies = BTreeSet::new();
     let mut snapshot_dependencies = BTreeSet::new();
     let mut fold_auxiliaries: BTreeMap<RelationKey, Vec<FoldAux>> = BTreeMap::new();
+    // Recording pass: the same rules into a scratch builder, collecting each relation's
+    // narrowing union per join key (`Builder::narrow_unions`). Errors surface in the real pass.
+    {
+        let mut scratch = b.clone();
+        scratch.narrow_record = true;
+        for rule in &program.rules {
+            scratch.intern_relation = Some(request_rels[strata.level(rule.rel) as usize]);
+            let _ = compile_rule(
+                &mut scratch,
+                u,
+                rule,
+                &relations,
+                &constructors,
+                semantic,
+                plain_lists,
+                term_map,
+                unit,
+                &program.served,
+                none,
+                empty,
+                tuple,
+                &program.rules,
+            );
+        }
+        b.narrow_unions = scratch.narrow_unions;
+    }
     for rule in &program.rules {
         let level = strata.level(rule.rel);
         b.intern_relation = Some(request_rels[level as usize]);
