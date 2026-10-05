@@ -23,7 +23,9 @@ pub mod _7_slice;
 pub use _0_rows::Graph;
 pub use _1_reify::reify;
 pub use _2_protocol::{MacroProgram, Protocol};
-pub use _4_expand::{expand, Wave, WAVE_LIMIT};
+pub use _4_expand::{expand, MacroSession, Wave, WAVE_LIMIT};
 pub use _5_materialize::materialize;
-pub use _6_cli::{cli, expansion_json, macro_program_from_json, run, Expansion};
+pub use _6_cli::{
+    case_syntax, cli, expansion_json, macro_program_from_json, run, run_case, Expansion,
+};
 pub use _7_slice::slice_macro_program;

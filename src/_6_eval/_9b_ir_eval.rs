@@ -34,6 +34,7 @@ pub enum Backend {
     Sqlite,
 }
 
+#[derive(Clone)]
 pub struct SignedRow {
     pub row: Row,
     pub weight: i64,
@@ -245,6 +246,8 @@ pub struct IrSession {
     session: Option<Box<dyn Session>>,
     /// The program `prepare` lowered and installed; `apply` feeds it.
     prepared: Option<Lowered>,
+    /// `structural_fingerprint` of the prepared IR.
+    fingerprint: Option<u64>,
 }
 
 impl IrSession {
@@ -253,6 +256,7 @@ impl IrSession {
             backend: Ok(backend),
             session: None,
             prepared: None,
+            fingerprint: None,
         }
     }
 
@@ -263,19 +267,26 @@ impl IrSession {
             backend: configured_backend(),
             session: None,
             prepared: None,
+            fingerprint: None,
         }
     }
 
-    /// Lower and install `program` once, settle its seeds, and keep both for
-    /// `apply`.
-    pub fn prepare(&mut self, u: &mut Universe, program: &Program) -> Result<Applied, Diagnostic> {
+    /// Lower `program` with the `declared` sources and shapes, install it once,
+    /// settle its own seeds, and keep both for `apply`.
+    pub fn prepare(
+        &mut self,
+        u: &mut Universe,
+        program: &Program,
+        declared: &ir_lower::Declared,
+    ) -> Result<Applied, Diagnostic> {
         self.session = None;
         self.prepared = None;
+        self.fingerprint = None;
         let backend = match &self.backend {
             Ok(backend) => *backend,
             Err(message) => return Err(unknown_engine(u, message)),
         };
-        let lowered = ir_lower::lower(u, program)?;
+        let lowered = ir_lower::lower_declared(u, program, declared)?;
         let fingerprint = structural_fingerprint(&lowered.ir);
         let mut session = open_session(u, backend, &lowered, fingerprint, false)?;
         let applied = session
@@ -283,7 +294,20 @@ impl IrSession {
             .map_err(|error| diagnostic(u, "engine", error))?;
         self.session = Some(session);
         self.prepared = Some(lowered);
+        self.fingerprint = Some(fingerprint);
         Ok(applied)
+    }
+
+    /// The fingerprint of the IR `prepare` installed; `None` before it or after a failed apply.
+    pub fn fingerprint(&self) -> Option<u64> {
+        self.fingerprint
+    }
+
+    /// The prepared IR has a constructor for `shape` (`shape_of`).
+    pub fn declares(&self, shape: &(String, usize, bool)) -> bool {
+        self.prepared
+            .as_ref()
+            .is_some_and(|lowered| lowered.constructors.contains_key(shape))
     }
 
     /// Settle signed seed rows on the prepared program.
@@ -299,6 +323,7 @@ impl IrSession {
         if let Err(ApplyError::Failed(_)) = &result {
             self.session = None;
             self.prepared = None;
+            self.fingerprint = None;
         }
         result
     }
@@ -314,6 +339,7 @@ impl IrSession {
         LAST_ANSWERS.with(|rows| rows.borrow_mut().clear());
         LAST_REQUESTS.with(|count| count.set(0));
         self.prepared = None;
+        self.fingerprint = None;
         let backend = match &self.backend {
             Ok(backend) => *backend,
             Err(message) => {
@@ -882,7 +908,7 @@ fn decode_delta<E: Engine>(
 }
 
 /// The constructor key `install_terms` uses for one term.
-fn shape_of(u: &Universe, term: TermId) -> (String, usize, bool) {
+pub fn shape_of(u: &Universe, term: TermId) -> (String, usize, bool) {
     match u.get(term) {
         Term::Int(_) => ("0:int".into(), 0, true),
         Term::Float(_) => ("0:float".into(), 0, true),

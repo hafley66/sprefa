@@ -5,7 +5,7 @@
 use super::_0_rows::{rows_of_terms, terms_of_rows};
 use super::_1_reify::reify_terms;
 use super::_2_protocol::MacroProgram;
-use super::_4_expand::{expand_terms, Wave};
+use super::_4_expand::{expand_terms, MacroSession, Wave};
 use super::_5_materialize::materialize_terms;
 use crate::_6_eval::json::{program_from_json, term_from_json, term_to_json};
 use crate::_6_eval::{Row, TermId, Universe};
@@ -32,6 +32,7 @@ pub fn run(
     forms: &[TermId],
     source_rows: &[TermId],
     macro_program: &MacroProgram,
+    session: &mut MacroSession,
     fx: &mut dyn FnMut(Wave),
 ) -> Expansion {
     let (syntax, reify_diagnostics) = reify_terms(u, forms, source_rows);
@@ -46,7 +47,8 @@ pub fn run(
             materialize_diagnostics: Vec::new(),
         };
     }
-    let (expanded, origin, diagnostics) = expand_terms(u, syntax.clone(), macro_program, fx);
+    let (expanded, origin, diagnostics) =
+        expand_terms(u, syntax.clone(), macro_program, session, fx);
     if !diagnostics.is_empty() {
         return Expansion {
             syntax_rows: rows_of_terms(u, &syntax),
@@ -124,7 +126,7 @@ pub fn expansion_json(u: &mut Universe, e: &Expansion) -> Value {
 
 /// A case's forms and source rows: frozen JSON terms, or `source` text read
 /// and reader-expanded under `path`, the way `dl8 compile` reads a unit.
-fn case_syntax(
+pub fn case_syntax(
     u: &mut Universe,
     case: &Map<String, Value>,
 ) -> Result<(Vec<TermId>, Vec<TermId>), String> {
@@ -169,6 +171,21 @@ fn case_macro_program(u: &mut Universe, case: &Map<String, Value>) -> Result<Mac
     }
 }
 
+/// One case's input object expanded on `session`, as `dl8 expand` prints it,
+/// with the expansion's diagnostics. `Err` is a case that cannot be read.
+pub fn run_case(
+    u: &mut Universe,
+    case: &Map<String, Value>,
+    session: &mut MacroSession,
+    fx: &mut dyn FnMut(Wave),
+) -> Result<(Value, bool), (&'static str, String)> {
+    let (forms, source_rows) = case_syntax(u, case).map_err(|e| ("forms", e))?;
+    let macro_program = case_macro_program(u, case).map_err(|e| ("macro_program", e))?;
+    let expansion = run(u, &forms, &source_rows, &macro_program, session, fx);
+    let clean = expansion.diagnostics.is_empty() && expansion.materialize_diagnostics.is_empty();
+    Ok((expansion_json(u, &expansion), clean))
+}
+
 /// `input` is a JSON case, or a `.dl7` file expanded through the bundled
 /// library under its own path.
 pub fn cli(input: &Path, trace: bool) -> ExitCode {
@@ -201,29 +218,21 @@ pub fn cli(input: &Path, trace: bool) -> ExitCode {
         }
     };
     let mut u = Universe::new();
-    let (forms, source_rows) = match case_syntax(&mut u, &case) {
-        Ok(syntax) => syntax,
-        Err(e) => {
-            tracing::error!(phase = "macrotime", error = %e, field = "forms");
-            return ExitCode::from(2);
-        }
-    };
-    let macro_program = match case_macro_program(&mut u, &case) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!(phase = "macrotime", error = %e, field = "macro_program");
-            return ExitCode::from(2);
-        }
-    };
+    let mut session = MacroSession::configured();
     let mut sink = |w: Wave| {
         if trace {
             tracing::debug!(target: "dl8::trace", wave = ?w);
         }
     };
-    let expansion = run(&mut u, &forms, &source_rows, &macro_program, &mut sink);
-    let out = expansion_json(&mut u, &expansion);
+    let (out, clean) = match run_case(&mut u, &case, &mut session, &mut sink) {
+        Ok(result) => result,
+        Err((field, e)) => {
+            tracing::error!(phase = "macrotime", error = %e, field);
+            return ExitCode::from(2);
+        }
+    };
     println!("{}", serde_json::to_string(&out).unwrap());
-    if expansion.diagnostics.is_empty() && expansion.materialize_diagnostics.is_empty() {
+    if clean {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
