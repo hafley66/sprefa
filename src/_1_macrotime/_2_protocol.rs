@@ -382,6 +382,36 @@ pub fn seed_shape(
     })
 }
 
+/// The relation and arity of every graph row shape `seed_shape` maps: the
+/// sources the macro IR declares, so a unit's rows reach it through `apply`.
+pub fn seed_relations(p: &Protocol) -> Vec<(TermId, usize)> {
+    [
+        ("node", 1),
+        (":", 4),
+        ("syntax_frontier", 2),
+        ("syntax_form", 1),
+        ("syntax_atom", 2),
+        ("syntax_literal", 2),
+        ("syntax_variable", 3),
+        ("source", 8),
+    ]
+    .iter()
+    .filter_map(|&(name, arity)| seed_shape(p, name, arity).map(|(rel, _)| (rel, arity)))
+    .collect()
+}
+
+/// Compound shapes the reader writes into graph rows: node ids (`reader_node`,
+/// `src/_0_read/_2_reader.rs`; `expansion_node`, `src/_0_read/_4_expand.rs`), variable
+/// identities, and the `tree_sitter_query` and `symbol` literal payloads. The macro IR declares
+/// a constructor for each, so a unit's terms install without lowering again.
+pub const READER_SHAPES: [(&str, usize); 5] = [
+    ("reader_node", 2),
+    ("expansion_node", 4),
+    ("variable", 2),
+    ("tree_sitter_query", 1),
+    ("symbol", 1),
+];
+
 /// `raw` passes an already-tagged argument through; `text` interns the atom's
 /// text before tagging it.
 pub fn seed_cell(u: &mut Universe, tag: &str, arg: TermId) -> TermId {

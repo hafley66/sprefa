@@ -155,6 +155,111 @@ fn every_macrotime_case_matches_v7() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+const MACROTIME_KEYS: [&str; 7] = [
+    "syntax_rows",
+    "expanded_rows",
+    "origin_rows",
+    "diagnostics",
+    "forms",
+    "source_rows",
+    "materialize_diagnostics",
+];
+
+fn case_input(
+    path: &Path,
+) -> (
+    serde_json::Map<String, serde_json::Value>,
+    serde_json::Value,
+) {
+    let text = std::fs::read_to_string(path).unwrap();
+    let case: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let input = case["input"].as_object().unwrap().clone();
+    (input, case["expected"].clone())
+}
+
+// Every macrotime case in one universe on one macrotime session, in file order: each unit
+// enters and leaves the one installed engine, and each still prints v7's expansion.
+#[test]
+fn macrotime_cases_share_one_engine() {
+    let mut u = dl8::_6_eval::Universe::new();
+    let mut session = dl8::_1_macrotime::MacroSession::configured();
+    let mut failures = Vec::new();
+    let mut fingerprints = std::collections::BTreeSet::new();
+    let cases = cases();
+    for path in &cases {
+        let (input, want) = case_input(path);
+        let (got, _) =
+            dl8::_1_macrotime::run_case(&mut u, &input, &mut session, &mut |_| {}).unwrap();
+        fingerprints.extend(session.ir.fingerprint());
+        for key in MACROTIME_KEYS {
+            if got[key] != want[key] {
+                failures.push(format!(
+                    "{}: {key} differs: {}",
+                    path.display(),
+                    first_difference(&want[key], &got[key])
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert_eq!(
+        (session.prepares, session.reprepares, fingerprints.len()),
+        (1, 0, 1),
+        "{} cases",
+        cases.len()
+    );
+}
+
+// c15 with its node ids renamed `reader_nodf(Path, N)`: a compound shape the session does not
+// declare. The unit's first apply returns `Unprepared`, the session logs `macrotime reprepare`,
+// declares the graph's shapes, installs again, and the expansion equals the declared run.
+#[test]
+fn macrotime_reprepares_for_an_undeclared_shape() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("oracle/macrotime/15_standard_plus_1.json");
+    let (input, want) = case_input(&path);
+    let mut u = dl8::_6_eval::Universe::new();
+    let (forms, source_rows) = dl8::_1_macrotime::case_syntax(&mut u, &input).unwrap();
+    let terms = |terms: &[dl8::_6_eval::TermId]| {
+        serde_json::Value::Array(
+            terms
+                .iter()
+                .map(|t| dl8::_6_eval::json::term_to_json(&u, *t))
+                .collect(),
+        )
+    };
+    let renamed = serde_json::json!({ "forms": terms(&forms), "source_rows": terms(&source_rows) })
+        .to_string()
+        .replace("\"f\":\"reader_node\"", "\"f\":\"reader_nodf\"");
+    assert!(renamed.contains("reader_nodf"));
+    let renamed: serde_json::Value = serde_json::from_str(&renamed).unwrap();
+    let renamed = renamed.as_object().unwrap();
+    let run = |declare: bool| {
+        let mut u = dl8::_6_eval::Universe::new();
+        let mut session = dl8::_1_macrotime::MacroSession::configured();
+        if declare {
+            session
+                .declared
+                .shapes
+                .insert(("9:2:reader_nodf".into(), 2, false));
+        }
+        let (got, _) =
+            dl8::_1_macrotime::run_case(&mut u, renamed, &mut session, &mut |_| {}).unwrap();
+        (got, session.prepares, session.reprepares)
+    };
+    let (declared, declared_prepares, declared_reprepares) = run(true);
+    let (reprepared, prepares, reprepares) = run(false);
+    assert_eq!((declared_prepares, declared_reprepares), (1, 0));
+    assert_eq!((prepares, reprepares), (2, 1));
+    assert_eq!(declared, reprepared);
+    let back: serde_json::Value =
+        serde_json::from_str(&reprepared.to_string().replace("reader_nodf", "reader_node"))
+            .unwrap();
+    for key in MACROTIME_KEYS {
+        assert_eq!(back[key], want[key], "{key}");
+    }
+}
+
 fn count(value: &serde_json::Value) -> usize {
     value.as_array().map_or(0, |a| a.len())
 }

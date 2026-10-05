@@ -116,14 +116,14 @@ pub enum Polarity {
     Negative,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Goal {
     pub polarity: Polarity,
     pub rel: TermId,
     pub args: Vec<Arg>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Rule {
     pub rel: TermId,
     pub head: Vec<Arg>,

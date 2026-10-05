@@ -1,20 +1,23 @@
 //! Port of `v7/src/1_libtime/1_syntax_expander.pl` `expand_syntax/5`. The
-//! macro program is installed once per expansion; each wave settles the rows
-//! the previous rewrite removed and added, then rewrites every claimed node.
-//! The loop ends when a wave claims nothing, repeats a row set (by hash), or
-//! reaches the wave limit.
+//! macro program is installed once per `MacroSession`; a unit enters as its
+//! graph rows, each wave settles the rows the previous rewrite removed and
+//! added, then rewrites every claimed node, and the unit's rows leave when it
+//! is done. The loop ends when a wave claims nothing, repeats a row set (by
+//! hash), or reaches the wave limit.
 
 use super::_0_rows::{
     macrotime_diagnostic, row_hash, rows_of_terms, sort_terms, terms_of_rows, Graph,
 };
 use super::_2_protocol::{
-    macro_dispatch, macro_protocol, macro_results, macro_rules, syntax_seeds, Available, Dispatch,
-    MacroProgram, MacroResults, Protocol,
+    macro_dispatch, macro_protocol, macro_results, macro_rules, seed_relations, syntax_seeds,
+    Available, Dispatch, MacroProgram, MacroResults, Protocol, READER_SHAPES,
 };
 use super::_3_rewrite::{reported_diagnostics, rewrite_active_graph};
-use crate::_6_eval::ir_eval::{Applied, ApplyError, IrSession, SignedRow};
-use crate::_6_eval::{Diagnostic, Program, Row, TermId, Universe};
+use crate::_6_eval::ir_eval::{shape_of, Applied, ApplyError, IrSession, SignedRow};
+use crate::_6_eval::ir_lower::Declared;
+use crate::_6_eval::{Diagnostic, Program, Row, Term, TermId, Universe};
 use crate::_7_effect::{reduce_then_apply, Slice};
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 
 pub const WAVE_LIMIT: i64 = 64;
@@ -48,10 +51,11 @@ pub fn expand(
     u: &mut Universe,
     rows: &[Row],
     macro_program: &MacroProgram,
+    session: &mut MacroSession,
     fx: &mut dyn FnMut(Wave),
 ) -> (Vec<Row>, Vec<Row>, Vec<TermId>) {
     let terms = terms_of_rows(u, rows);
-    let (expanded, origin, diagnostics) = expand_terms(u, terms, macro_program, fx);
+    let (expanded, origin, diagnostics) = expand_terms(u, terms, macro_program, session, fx);
     (
         rows_of_terms(u, &expanded),
         rows_of_terms(u, &origin),
@@ -64,16 +68,16 @@ pub struct Expand<'a>(PhantomData<&'a ()>);
 
 impl<'a> Slice for Expand<'a> {
     type State = Vec<TermId>;
-    type Event = (&'a mut Universe, &'a MacroProgram);
+    type Event = (&'a mut Universe, &'a MacroProgram, &'a mut MacroSession);
     type Output = (Vec<TermId>, Vec<TermId>, Vec<TermId>);
     type Effect = Wave;
 
     fn reduce(
         st: &mut Vec<TermId>,
-        (u, macro_program): Self::Event,
+        (u, macro_program, session): Self::Event,
         fx: &mut dyn FnMut(Wave),
     ) -> Self::Output {
-        expand_rows(u, std::mem::take(st), macro_program, fx)
+        expand_rows(u, std::mem::take(st), macro_program, session, fx)
     }
 }
 
@@ -81,19 +85,250 @@ pub fn expand_terms(
     u: &mut Universe,
     rows: Vec<TermId>,
     macro_program: &MacroProgram,
+    session: &mut MacroSession,
     fx: &mut dyn FnMut(Wave),
 ) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
     let mut state = rows;
     let mut waves = Vec::new();
-    reduce_then_apply::<Expand>(&mut state, (u, macro_program), &mut waves, |_, wave| {
-        fx(wave)
-    })
+    reduce_then_apply::<Expand>(
+        &mut state,
+        (u, macro_program, session),
+        &mut waves,
+        |_, wave| fx(wave),
+    )
+}
+
+/// The macrotime engine of one build: the macro rule cone lowered and
+/// installed once, every unit a frontier on it. Units must not see each
+/// other's rows, so a unit's seed rows leave in the first settle of the next
+/// unit. Rows hold `Universe` term ids, so one session serves one universe.
+pub struct MacroSession {
+    pub ir: IrSession,
+    /// The rule cone and macro seeds `ir` was prepared with.
+    pub program: Option<Program>,
+    /// The seed relations and term shapes the prepared IR declares.
+    pub declared: Declared,
+    /// What the macro program settled to before any unit entered: every
+    /// unit's `Available` starts from it.
+    pub base: Vec<SignedRow>,
+    /// Seed rows of the last unit, still in the engine; the next unit's first
+    /// settle retracts them.
+    pub resident: Vec<Row>,
+    /// Protocol rows the engine holds above `base`: the sum of every delta
+    /// since `base`.
+    pub net: HashMap<Row, i64>,
+    /// Installs: the first prepare, a changed program, a reprepare.
+    pub prepares: usize,
+    /// Prepares forced by a row or term the prepared IR has no source or
+    /// constructor for (`macrotime reprepare`).
+    pub reprepares: usize,
+}
+
+impl MacroSession {
+    /// The `DL8_ENGINE` backend, declaring a constructor per `READER_SHAPES`.
+    pub fn configured() -> Self {
+        Self {
+            ir: IrSession::configured(),
+            program: None,
+            declared: Declared {
+                sources: Vec::new(),
+                shapes: READER_SHAPES
+                    .iter()
+                    .map(|&(name, arity)| (format!("9:{arity}:{name}"), arity, false))
+                    .collect(),
+            },
+            base: Vec::new(),
+            resident: Vec::new(),
+            net: HashMap::new(),
+            prepares: 0,
+            reprepares: 0,
+        }
+    }
+
+    /// Lower and install `program` with the declared sources and shapes and
+    /// settle its own seeds into `base`.
+    fn prepare(&mut self, u: &mut Universe, program: &Program) -> Result<(), Vec<TermId>> {
+        self.program = None;
+        self.base.clear();
+        self.resident.clear();
+        self.net.clear();
+        let applied = self
+            .ir
+            .prepare(u, program, &self.declared)
+            .map_err(|diagnostic| diagnostic_terms(u, &[diagnostic]))?;
+        if !applied.diagnostics.is_empty() {
+            return Err(diagnostic_terms(u, &applied.diagnostics));
+        }
+        self.base = applied.rows;
+        self.program = Some(program.clone());
+        self.prepares += 1;
+        tracing::info!(
+            target: "dl8::macrotime",
+            fingerprint = self.ir.fingerprint(),
+            base = self.base.len(),
+            shapes = self.declared.shapes.len(),
+            "macrotime prepare"
+        );
+        Ok(())
+    }
+
+    /// One settle; its protocol rows fold into `net`.
+    fn settle(
+        &mut self,
+        u: &mut Universe,
+        protocol: &Protocol,
+        changes: &[SignedRow],
+    ) -> Result<Applied, ApplyError> {
+        let applied = self.ir.apply(u, changes)?;
+        for change in &applied.rows {
+            if !protocol.reads(change.row.rel) {
+                continue;
+            }
+            let weight = self.net.entry(change.row.clone()).or_default();
+            *weight += change.weight;
+            if *weight == 0 {
+                self.net.remove(&change.row);
+            }
+        }
+        Ok(applied)
+    }
+
+    /// The unit's graph rows enter at weight +1, the last unit's rows leave
+    /// at -1, in one settle. The returned rows are `net`: with `base` folded
+    /// into `available` first, the unit reads exactly its own closure. The
+    /// session prepares first when it holds no program or a different rule
+    /// cone.
+    fn enter(
+        &mut self,
+        u: &mut Universe,
+        protocol: &Protocol,
+        program: &Program,
+        graph: &Graph,
+        available: &mut Available,
+    ) -> Result<Applied, Vec<TermId>> {
+        let sources = seed_relations(protocol);
+        let prepared = self
+            .program
+            .as_ref()
+            .is_some_and(|p| p.rules == program.rules && p.seeds == program.seeds)
+            && self.declared.sources == sources;
+        if !prepared {
+            self.declared.sources = sources;
+            self.prepare(u, program)?;
+        }
+        let mut changes: Vec<SignedRow> = self
+            .resident
+            .iter()
+            .map(|row| SignedRow {
+                row: row.clone(),
+                weight: -1,
+            })
+            .collect();
+        let retracted = changes.len();
+        changes.extend(signed_seeds(u, protocol, &graph.rows, 1));
+        match self.settle(u, protocol, &changes) {
+            Ok(applied) => {
+                self.resident.clear();
+                tracing::info!(target: "dl8::macrotime", retracted, "macrotime enter");
+                *available = self.available(u, protocol, graph);
+                Ok(Applied {
+                    rows: self
+                        .net
+                        .iter()
+                        .map(|(row, weight)| SignedRow {
+                            row: row.clone(),
+                            weight: *weight,
+                        })
+                        .collect(),
+                    ..applied
+                })
+            }
+            Err(ApplyError::Unprepared(reason)) => {
+                tracing::info!(target: "dl8::macrotime", wave = 0, reason, "macrotime reprepare");
+                self.reprepare(u, protocol, program, graph, available)
+            }
+            Err(ApplyError::Failed(diagnostic)) => {
+                self.program = None;
+                Err(diagnostic_terms(u, &[diagnostic]))
+            }
+        }
+    }
+
+    /// `base` folded into a fresh `Available` for the graph `expanded`.
+    fn available(&self, u: &mut Universe, protocol: &Protocol, expanded: &Graph) -> Available {
+        let mut available = Available::default();
+        available.apply(u, protocol, &self.base, expanded);
+        available
+    }
+
+    /// The prepared IR lacks a source or constructor for a row of `graph`:
+    /// declare every compound shape the graph's seeds hold, prepare again and
+    /// enter the whole graph.
+    fn reprepare(
+        &mut self,
+        u: &mut Universe,
+        protocol: &Protocol,
+        program: &Program,
+        graph: &Graph,
+        available: &mut Available,
+    ) -> Result<Applied, Vec<TermId>> {
+        self.reprepares += 1;
+        let seeds = syntax_seeds(u, protocol, &graph.rows);
+        let mut todo: Vec<TermId> = seeds
+            .iter()
+            .flat_map(|row| row.args.iter().copied())
+            .collect();
+        let mut walked = HashSet::new();
+        let mut added = Vec::new();
+        while let Some(term) = todo.pop() {
+            if !walked.insert(term) {
+                continue;
+            }
+            if let Term::Compound(_, args) = u.get(term) {
+                todo.extend(args.iter().copied());
+                let shape = shape_of(u, term);
+                if !self.ir.declares(&shape) && self.declared.shapes.insert(shape.clone()) {
+                    added.push(shape.0);
+                }
+            }
+        }
+        tracing::info!(target: "dl8::macrotime", added = ?added, "macrotime declared shapes");
+        self.prepare(u, program)?;
+        *available = self.available(u, protocol, graph);
+        let changes: Vec<SignedRow> = seeds
+            .into_iter()
+            .map(|row| SignedRow { row, weight: 1 })
+            .collect();
+        match self.settle(u, protocol, &changes) {
+            Ok(applied) => Ok(applied),
+            Err(ApplyError::Unprepared(reason)) => {
+                self.program = None;
+                let reason = u.string(reason);
+                let payload = u.compound("unprepared_after_reprepare", vec![reason]);
+                let none = u.atom("none");
+                Err(vec![macrotime_diagnostic(u, none, payload)])
+            }
+            Err(ApplyError::Failed(diagnostic)) => {
+                self.program = None;
+                Err(diagnostic_terms(u, &[diagnostic]))
+            }
+        }
+    }
+
+    /// The unit is done: the engine holds its graph's seed rows until the
+    /// next unit's first settle retracts them.
+    fn leave(&mut self, u: &mut Universe, protocol: &Protocol, graph: &Graph) {
+        if self.program.is_some() {
+            self.resident = syntax_seeds(u, protocol, &graph.rows);
+        }
+    }
 }
 
 fn expand_rows(
     u: &mut Universe,
     rows: Vec<TermId>,
     macro_program: &MacroProgram,
+    session: &mut MacroSession,
     fx: &mut dyn FnMut(Wave),
 ) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
     let (protocol, diagnostics) = macro_protocol(u, macro_program);
@@ -114,31 +349,37 @@ fn expand_rows(
 
     let selected = macro_rules(u, &protocol, &macro_program.program.rules);
     // The rule cone is fixed for the whole expansion; only the seeds move.
-    let mut program = Program {
+    let program = Program {
         rules: selected
             .iter()
             .map(|i| macro_program.program.rules[*i].clone())
             .collect(),
-        seeds: Vec::new(),
+        seeds: macro_program.program.seeds.clone(),
         ..Program::default()
     };
+    let expanded = expand_graph(u, &mut graph, &protocol, &program, session, fx);
+    session.leave(u, &protocol, &graph);
+    expanded
+}
+
+/// The waves of one unit on `session`; `graph` ends as the rows the engine holds.
+fn expand_graph(
+    u: &mut Universe,
+    graph: &mut Graph,
+    protocol: &Protocol,
+    program: &Program,
+    session: &mut MacroSession,
+    fx: &mut dyn FnMut(Wave),
+) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
     let none = u.atom("none");
     let mut seen: Vec<u64> = vec![graph.hash];
     let mut origin: Vec<TermId> = Vec::new();
-    let mut ir_session = IrSession::configured();
     let mut available = Available::default();
     let mut active = graph.active_nodes();
 
     let unit_start = std::time::Instant::now();
     let mut evaluate_start = std::time::Instant::now();
-    let mut settled = prepare(
-        u,
-        &mut ir_session,
-        &mut program,
-        macro_program,
-        &protocol,
-        &graph,
-    );
+    let mut settled = session.enter(u, protocol, program, graph, &mut available);
     for wave in 0..WAVE_LIMIT {
         let applied = match settled {
             Ok(applied) if applied.diagnostics.is_empty() => applied,
@@ -151,7 +392,7 @@ fn expand_rows(
             }
             Err(diagnostics) => return (Vec::new(), Vec::new(), diagnostics),
         };
-        let read = available.apply(u, &protocol, &applied.rows, &graph);
+        let read = available.apply(u, protocol, &applied.rows, graph);
         tracing::info!(
             target: "dl8::macrotime",
             wave,
@@ -172,7 +413,7 @@ fn expand_rows(
             claims,
             outputs,
             reported,
-        } = macro_results(u, &protocol, &available, &active);
+        } = macro_results(u, protocol, &available, &active);
         if !reported.is_empty() {
             return (Vec::new(), Vec::new(), reported_diagnostics(u, &reported));
         }
@@ -182,6 +423,9 @@ fn expand_rows(
                 waves = wave + 1,
                 rows = graph.rows.len(),
                 unit_us = unit_start.elapsed().as_micros() as u64,
+                fingerprint = session.ir.fingerprint(),
+                prepares = session.prepares,
+                reprepares = session.reprepares,
                 "macrotime unit"
             );
             sort_terms(u, &mut origin);
@@ -189,11 +433,11 @@ fn expand_rows(
                 wave,
                 rows: graph.rows.len(),
             });
-            let mut rows = graph.rows;
+            let mut rows = graph.rows.clone();
             sort_terms(u, &mut rows);
             return (rows, origin, Vec::new());
         }
-        let rewrite = rewrite_active_graph(u, &graph, &available, &claims, &outputs, wave);
+        let rewrite = rewrite_active_graph(u, graph, &available, &claims, &outputs, wave);
         if !rewrite.diagnostics.is_empty() {
             return (Vec::new(), Vec::new(), rewrite.diagnostics);
         }
@@ -221,46 +465,25 @@ fn expand_rows(
         origin.extend(rewrite.origin);
         seen.push(hash);
         active = rewrite.active;
-        let mut changes = signed_seeds(u, &protocol, &rewrite.removed, -1);
-        changes.extend(signed_seeds(u, &protocol, &rewrite.added, 1));
+        let mut changes = signed_seeds(u, protocol, &rewrite.removed, -1);
+        changes.extend(signed_seeds(u, protocol, &rewrite.added, 1));
         evaluate_start = std::time::Instant::now();
-        settled = match ir_session.apply(u, &changes) {
+        settled = match session.settle(u, protocol, &changes) {
             Ok(applied) => Ok(applied),
             Err(ApplyError::Unprepared(reason)) => {
                 tracing::info!(target: "dl8::macrotime", wave, reason, "macrotime reprepare");
-                available = Available::default();
-                prepare(
-                    u,
-                    &mut ir_session,
-                    &mut program,
-                    macro_program,
-                    &protocol,
-                    &graph,
-                )
+                session.reprepare(u, protocol, program, graph, &mut available)
             }
-            Err(ApplyError::Failed(diagnostic)) => Err(diagnostic_terms(u, &[diagnostic])),
+            Err(ApplyError::Failed(diagnostic)) => {
+                session.program = None;
+                Err(diagnostic_terms(u, &[diagnostic]))
+            }
         };
     }
     let limit = u.int(WAVE_LIMIT);
     let payload = u.compound("expansion_round_limit", vec![limit]);
     let d = macrotime_diagnostic(u, none, payload);
     (Vec::new(), Vec::new(), vec![d])
-}
-
-/// Install the rule cone with the macro seeds and every seed row of `graph`.
-fn prepare(
-    u: &mut Universe,
-    ir_session: &mut IrSession,
-    program: &mut Program,
-    macro_program: &MacroProgram,
-    protocol: &Protocol,
-    graph: &Graph,
-) -> Result<Applied, Vec<TermId>> {
-    program.seeds = macro_program.program.seeds.clone();
-    program.seeds.extend(syntax_seeds(u, protocol, &graph.rows));
-    ir_session
-        .prepare(u, program)
-        .map_err(|diagnostic| diagnostic_terms(u, &[diagnostic]))
 }
 
 fn signed_seeds(u: &mut Universe, p: &Protocol, rows: &[TermId], weight: i64) -> Vec<SignedRow> {

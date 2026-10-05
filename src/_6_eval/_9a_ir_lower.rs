@@ -2322,7 +2322,26 @@ fn collect_arg(arg: &Arg, todo: &mut Vec<TermId>) {
     }
 }
 
+/// Relations and term shapes the IR carries beyond what the program's rules and seeds name:
+/// rows and terms the caller sends later through `IrSession::apply`, never through lowering.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub struct Declared {
+    /// `(relation, arity)` of every relation the caller seeds.
+    pub sources: Vec<(TermId, usize)>,
+    /// Constructor shapes `(name, arity, raw)`, keyed as `Lowered::constructors`.
+    pub shapes: BTreeSet<(String, usize, bool)>,
+}
+
 pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic> {
+    lower_declared(u, program, &Declared::default())
+}
+
+/// `lower` with a source per declared relation and a constructor per declared shape.
+pub fn lower_declared(
+    u: &mut Universe,
+    program: &Program,
+    declared: &Declared,
+) -> Result<Lowered, Diagnostic> {
     let mut program = program.clone();
     let intern_rel = kernel_ref(u, "intern");
     let effect_rel = kernel_ref(u, "effect");
@@ -2350,6 +2369,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
         todo.push(seed.rel);
         todo.extend(seed.args.iter().copied());
     }
+    todo.extend(declared.sources.iter().map(|(rel, _)| *rel));
     for rule in &program.rules {
         todo.push(rule.rel);
         for arg in &rule.head {
@@ -2505,6 +2525,7 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     ] {
         constructor_keys.insert((name.to_string(), args, raw));
     }
+    constructor_keys.extend(declared.shapes.iter().cloned());
     let mut constructors = BTreeMap::new();
     let mut prewarm = BTreeMap::new();
     for (name, width, raw) in constructor_keys {
@@ -2645,6 +2666,9 @@ pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic>
     let mut keys = BTreeSet::new();
     for seed in &program.seeds {
         keys.insert((seed.rel.0, seed.args.len()));
+    }
+    for (rel, width) in &declared.sources {
+        keys.insert((rel.0, *width));
     }
     for rule in &program.rules {
         keys.insert((rule.rel.0, rule.head.len()));

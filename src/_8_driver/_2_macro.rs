@@ -6,7 +6,7 @@ use super::_1_unit::macrotime_unit;
 use super::_3_units::compile_units;
 use super::Stop;
 use crate::_1_macrotime::_1_reify::reify_terms;
-use crate::_1_macrotime::_4_expand::expand_terms;
+use crate::_1_macrotime::_4_expand::{expand_terms, MacroSession};
 use crate::_1_macrotime::_5_materialize::materialize_terms;
 use crate::_1_macrotime::_7_slice::slice_macro_program;
 use crate::_1_macrotime::{MacroProgram, Wave};
@@ -33,7 +33,7 @@ pub fn standard_macro_program(
     Ok(slice_macro_program(u, &compiled.runtime))
 }
 
-/// `:456`. One unit at a time, diagnostics concatenated.
+/// `:456`. One unit at a time on one macrotime session, diagnostics concatenated.
 pub fn expand_units_with_macros(
     u: &mut Universe,
     units: &[TermId],
@@ -42,8 +42,10 @@ pub fn expand_units_with_macros(
 ) -> (Vec<TermId>, Vec<TermId>) {
     let mut expanded = Vec::with_capacity(units.len());
     let mut diagnostics = Vec::new();
+    let mut session = MacroSession::configured();
     for unit in units {
-        let (one, unit_diagnostics) = expand_unit_with_macros(u, *unit, macro_program, fx);
+        let (one, unit_diagnostics) =
+            expand_unit_with_macros(u, *unit, macro_program, &mut session, fx);
         match one {
             Some(one) => expanded.push(one),
             None => return (Vec::new(), unit_diagnostics),
@@ -58,6 +60,7 @@ pub fn expand_unit_with_macros(
     u: &mut Universe,
     unit: TermId,
     macro_program: &MacroProgram,
+    session: &mut MacroSession,
     fx: &mut dyn FnMut(Wave),
 ) -> (Option<TermId>, Vec<TermId>) {
     let Some(args) = u.args::<5>(unit, "dl7_unit") else {
@@ -76,7 +79,8 @@ pub fn expand_unit_with_macros(
     if !reify_diagnostics.is_empty() {
         return (None, reify_diagnostics);
     }
-    let (rows, macro_origin, macro_diagnostics) = expand_terms(u, syntax, macro_program, fx);
+    let (rows, macro_origin, macro_diagnostics) =
+        expand_terms(u, syntax, macro_program, session, fx);
     // :515. No diagnostic and no rewrite: the unit is its own expansion.
     if macro_diagnostics.is_empty() && macro_origin.is_empty() {
         return (Some(unit), Vec::new());
