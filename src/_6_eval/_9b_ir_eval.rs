@@ -270,7 +270,7 @@ fn install_session<E: Engine + 'static>(
     measured: bool,
 ) -> Result<Box<dyn Session>, Diagnostic> {
     let session = EngineSession::<E>::install(lowered, fingerprint, measured)
-        .map_err(|error| diagnostic(u, "engine", error))?;
+        .map_err(|error| engine_diagnostic(u, error))?;
     Ok(Box::new(session))
 }
 
@@ -339,7 +339,7 @@ impl IrSession {
         let mut session = open_session(u, backend, &lowered, fingerprint, false)?;
         let applied = session
             .start(u, &lowered)
-            .map_err(|error| diagnostic(u, "engine", error))?;
+            .map_err(|error| engine_diagnostic(u, error))?;
         self.session = Some(session);
         self.prepared = Some(lowered);
         self.fingerprint = Some(fingerprint);
@@ -368,7 +368,7 @@ impl IrSession {
         let Some(session) = self.session.as_mut() else {
             return Err(diagnostic(u, "engine", "mark without a prepared program"));
         };
-        session.mark().map_err(|error| diagnostic(u, "engine", error))
+        session.mark().map_err(|error| engine_diagnostic(u, error))
     }
 
     /// Return the prepared engine to its last `mark`. A failed rewind drops the session.
@@ -376,7 +376,7 @@ impl IrSession {
         let Some(session) = self.session.as_mut() else {
             return Err(diagnostic(u, "engine", "rewind without a prepared program"));
         };
-        let result = session.rewind().map_err(|error| diagnostic(u, "engine", error));
+        let result = session.rewind().map_err(|error| engine_diagnostic(u, error));
         if result.is_err() {
             self.session = None;
             self.prepared = None;
@@ -463,7 +463,7 @@ impl IrSession {
                 self.session = None;
                 Closure {
                     rows: vec![],
-                    diagnostics: vec![diagnostic(u, "engine", error)],
+                    diagnostics: vec![engine_diagnostic(u, error)],
                 }
             }
         }
@@ -612,6 +612,21 @@ fn diagnostic(u: &mut Universe, name: &str, detail: impl std::fmt::Display) -> D
     Diagnostic {
         phase: "ir_eval",
         payload: u.compound("ir_engine_error", vec![name, detail]),
+    }
+}
+
+/// An engine error as a diagnostic. A wave LetRec still changing at its limit is
+/// `wave_limit(Limit)`.
+fn engine_diagnostic(u: &mut Universe, error: ivm_engine::EngineError) -> Diagnostic {
+    match error.kind {
+        ivm_engine::ErrorKind::LetRecLimit(limit) => {
+            let limit = u.int(i64::from(limit));
+            Diagnostic {
+                phase: "ir_eval",
+                payload: u.compound("wave_limit", vec![limit]),
+            }
+        }
+        _ => diagnostic(u, "engine", error),
     }
 }
 
@@ -1022,7 +1037,7 @@ fn install_fresh<E: Engine>(
         }
     }
     install_terms(u, lowered, &mut session.engine, &mut session.mapped, &fresh)
-        .map_err(|error| ApplyError::Failed(diagnostic(u, "engine", error)))?;
+        .map_err(|error| ApplyError::Failed(engine_diagnostic(u, error)))?;
     for &term in &fresh {
         session.decoded.insert(session.mapped[&term], term);
     }
@@ -1037,7 +1052,7 @@ fn apply_session<E: Engine>(
     session: &mut EngineSession<E>,
     changes: &[SignedRow],
 ) -> Result<Applied, ApplyError> {
-    let failed = |u: &mut Universe, error| ApplyError::Failed(diagnostic(u, "engine", error));
+    let failed = |u: &mut Universe, error| ApplyError::Failed(engine_diagnostic(u, error));
     let mut sources = Vec::with_capacity(changes.len());
     for change in changes {
         let Some(&source) = lowered
@@ -1679,7 +1694,7 @@ fn run_fresh(
             LAST_COUNTERS.with(|last| last.set(Some(counters)));
             Ok((closure, results))
         }
-        Err(error) => Err(diagnostic(u, "engine", error)),
+        Err(error) => Err(engine_diagnostic(u, error)),
     }
 }
 

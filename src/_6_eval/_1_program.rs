@@ -164,6 +164,23 @@ impl Rule {
     }
 }
 
+/// `next(R)`: the relation a `(next (R ...))` head derives at the following
+/// time step. `R` when `relation` is one.
+pub fn next_inner(u: &Universe, relation: TermId) -> Option<TermId> {
+    u.unary(relation, "next")
+}
+
+/// `call(R, Args)` for a `call(next(R), Args)` head; any other call unchanged.
+pub fn without_next(u: &mut Universe, call: TermId) -> TermId {
+    match u.args::<2>(call, "call") {
+        Some([relation, args]) => match next_inner(u, relation) {
+            Some(inner) => u.compound("call", vec![inner, args]),
+            None => call,
+        },
+        None => call,
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Row {
     pub rel: TermId,

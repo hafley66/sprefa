@@ -1,0 +1,19 @@
+; A relation derived recursively inside one wave: `reach` walks the wave's
+; graph. The wave lowering inlines each in-wave relation into the `next`
+; bodies, and a recursive one has no inline form: not built yet.
+
+(: graph_item (* (: owner int) (: child int)))
+(: reach (* (: node int)))
+
+(graph_item 0 1)
+(graph_item 1 2)
+
+(<- (reach 0))
+
+(<- (reach ?Child)
+    (reach ?Owner)
+    (graph_item ?Owner ?Child))
+
+(<- (next (graph_item ?Owner ?Child))
+    (graph_item ?Owner ?Child)
+    (reach ?Owner))

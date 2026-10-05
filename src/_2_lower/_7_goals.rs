@@ -137,14 +137,33 @@ fn call_contains_var(cx: &Cx, call: TermId) -> bool {
     false
 }
 
-/// `:1061`. Head goals land after body goals.
+/// `(next (R ...))`: the call `(R ...)` when `head` wraps one in `next`.
+fn next_head(cx: &Cx, head: TermId) -> Option<TermId> {
+    let parsed = forms::node(cx.u, head)?;
+    let items = forms::form(cx.u, parsed.payload)?;
+    let [_, inner] = items[..] else { return None };
+    let name = forms::form_head_atom(cx.u, &items)?;
+    let is_next = cx.u.functor_or_atom(name).is_some_and(|(n, _)| n == "next");
+    let inner_form = forms::node(cx.u, inner).and_then(|n| forms::form(cx.u, n.payload)).is_some();
+    (is_next && inner_form).then_some(inner)
+}
+
+/// `:1061`. Head goals land after body goals. A `(next (R ...))` head is the
+/// call `call(next(R), Args)`: the rule derives `R` at the following time step.
 fn lower_rule(
     cx: &mut Cx,
     rule: &forms::RuleForm,
     owner: TermId,
     rule_index: i64,
 ) -> Result<(TermId, Vec<TermId>, Vec<(TermId, Vec<TermId>)>), TermId> {
-    let head = lower_call(cx, rule.head, owner, true)?;
+    let next = next_head(cx, rule.head);
+    let mut head = lower_call(cx, next.unwrap_or(rule.head), owner, true)?;
+    if next.is_some() {
+        if let Some([relation, args]) = cx.u.args::<2>(head.call, "call") {
+            let relation = cx.compound("next", vec![relation]);
+            head.call = cx.compound("call", vec![relation, args]);
+        }
+    }
     let mut goals = Vec::new();
     let mut goal_nodes = Vec::new();
     for node in &rule.body {

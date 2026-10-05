@@ -80,6 +80,17 @@ pub fn emit_sqlite(
     names: &HashMap<String, TermId>,
     prefix: &str,
 ) -> Result<SqliteArtifact, Stop> {
+    // A `next` head has no SQL view shape: the wave loop is not built for this emitter.
+    if program.rules.iter().any(|rule| crate::_6_eval::program::next_inner(u, rule.rel).is_some()) {
+        let next = u.atom("next");
+        return Ok(SqliteArtifact {
+            views: vec![],
+            diagnostics: vec![Diagnostic {
+                phase: "emit",
+                payload: u.compound("unsupported_construct", vec![next]),
+            }],
+        });
+    }
     let (strata, stratify_diagnostics) = stratify(u, program);
     if !stratify_diagnostics.is_empty() {
         return Ok(SqliteArtifact {

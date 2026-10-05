@@ -1,0 +1,10 @@
+; A counter with no bound never repeats a wave: the wave LetRec stops at the
+; wave limit and reports `wave_limit`.
+
+(: cur_wave (* (: wave int)))
+
+(cur_wave 0)
+
+(<- (next (cur_wave ?Next))
+    (cur_wave ?Wave)
+    (int.add ?Wave 1 ?Next))
