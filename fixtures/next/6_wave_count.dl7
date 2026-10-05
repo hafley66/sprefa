@@ -1,0 +1,17 @@
+; Aggregation inside one wave, read by a `next` rule: each wave adds the item
+; numbered by the pile's size while the pile holds fewer than three items.
+
+(: pile (* (: item int)))
+(: pile_size (* (: size int)))
+
+(pile 0)
+
+(<- (pile_size (count ?Item))
+    (pile ?Item))
+
+(<- (next (pile ?Item))
+    (pile ?Item))
+
+(<- (next (pile ?Size))
+    (pile_size ?Size)
+    (int.lt ?Size 3))

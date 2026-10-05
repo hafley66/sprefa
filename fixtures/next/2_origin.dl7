@@ -1,0 +1,52 @@
+; Example 3 of the page 3 proposal: origin rows accumulate across waves. Each
+; wave records the claims it rewrote with the wave number from the counter of
+; example 2; the first `next` rule carries every earlier origin row forward.
+
+(: graph_item (* (: owner int) (: child int) (: ordinal int)))
+(: expand (* (: macro int) (: out int)))
+(: rewrite_hit (* (: node int) (: macro int)))
+(: rewrite_node (* (: node int)))
+(: rewrite_pending (* (: wave int)))
+(: cur_wave (* (: wave int)))
+(: origin_claim (* (: node int) (: macro int) (: wave int)))
+
+(graph_item 0 1 0)
+(graph_item 0 2 1)
+(expand 1 10)
+(expand 10 20)
+(cur_wave 0)
+
+(<- (rewrite_hit ?Child ?Out)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (expand ?Child ?Out))
+
+(<- (rewrite_node ?Node)
+    (rewrite_hit ?Node ?Macro))
+
+(<- (rewrite_pending ?Wave)
+    (cur_wave ?Wave)
+    (rewrite_hit ?Node ?Macro))
+
+(<- (next (graph_item ?Owner ?Child ?Ordinal))
+    (graph_item ?Owner ?Child ?Ordinal)
+    (not (rewrite_node ?Child)))
+
+(<- (next (graph_item ?Owner ?Out ?Ordinal))
+    (graph_item ?Owner ?Child ?Ordinal)
+    (rewrite_hit ?Child ?Out))
+
+(<- (next (cur_wave ?Next))
+    (cur_wave ?Wave)
+    (rewrite_pending ?Wave)
+    (int.add ?Wave 1 ?Next))
+
+(<- (next (cur_wave ?Wave))
+    (cur_wave ?Wave)
+    (not (rewrite_pending ?Wave)))
+
+(<- (next (origin_claim ?Node ?Macro ?Wave))
+    (origin_claim ?Node ?Macro ?Wave))
+
+(<- (next (origin_claim ?Node ?Macro ?Wave))
+    (rewrite_hit ?Node ?Macro)
+    (cur_wave ?Wave))

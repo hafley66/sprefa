@@ -101,7 +101,8 @@ fn rule_diagnostic(
     let Some(body) = u.as_list(body_term) else {
         return Err(Stop::Fail("rule body list expected"));
     };
-    let mut out = call_diagnostics(u, head, arities);
+    let plain_head = crate::_6_eval::program::without_next(u, head);
+    let mut out = call_diagnostics(u, plain_head, arities);
     out.extend(goal_diagnostics(u, &body, arities));
     // `head_variables/2` and `check_goal_sequence_failures/7` both fail on the
     // shapes that produce `invalid_generated_polarity`, `invalid_generated_goal`

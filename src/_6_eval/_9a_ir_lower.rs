@@ -2,7 +2,7 @@
 use super::evaluate::{needs_bound_head, sum_readback_constructors};
 use super::kernel::{kernel_ref, linear, IntCmp, Kernel};
 use super::program::{
-    AggregateKind, Arg, Diagnostic, Fold, Folding, Goal, Polarity, Program, Row, Rule,
+    next_inner, AggregateKind, Arg, Diagnostic, Fold, Folding, Goal, Polarity, Program, Row, Rule,
 };
 use super::stratify::stratify;
 use super::term::{Term, TermId, Universe};
@@ -13,6 +13,170 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 const COMPONENT_BUDGET: usize = 4096;
 
 type RelationKey = (u32, usize);
+
+/// Body evaluations a wave LetRec may change a relation in: wave 0 (the seeds) and the waves
+/// after it, one per evaluation. The macrotime wave loop's bound.
+const WAVE_LIMIT: u32 = crate::_1_macrotime::WAVE_LIMIT as u32;
+
+/// The relation a rule's head derives, and whether the head is `(next ...)`.
+fn rule_key(u: &Universe, rule: &Rule) -> (RelationKey, bool) {
+    match next_inner(u, rule.rel) {
+        Some(inner) => ((inner.0, rule.head.len()), true),
+        None => ((rule.rel.0, rule.head.len()), false),
+    }
+}
+
+/// A program with `next` heads. `wave`: the relations a `next` head derives; each holds its
+/// seed rows at wave 0 and exactly what its `next` rules derive at wave W at wave W + 1.
+/// `cone`: relations ordinary rules derive from a wave relation, in dependency order; inside
+/// the wave LetRec each is inlined into the bodies that read it, so it is evaluated against
+/// the same wave's rows. `reads`: every other relation those rules read.
+struct Waves {
+    wave: BTreeSet<RelationKey>,
+    cone: Vec<RelationKey>,
+    reads: BTreeSet<RelationKey>,
+}
+
+/// `Err` names the construct the wave lowering does not build.
+fn waves(u: &Universe, rules: &[Rule], keys: &BTreeSet<RelationKey>) -> Result<Option<Waves>, &'static str> {
+    let wave: BTreeSet<RelationKey> = rules
+        .iter()
+        .map(|rule| rule_key(u, rule))
+        .filter_map(|(key, next)| next.then_some(key))
+        .collect();
+    if wave.is_empty() {
+        return Ok(None);
+    }
+    let goal_keys = |rule: &Rule| -> Vec<RelationKey> {
+        rule.body.iter().map(|goal| (goal.rel.0, goal.args.len())).filter(|key| keys.contains(key)).collect()
+    };
+    let ordinary: Vec<&Rule> = rules.iter().filter(|rule| !rule_key(u, rule).1).collect();
+    if ordinary.iter().any(|rule| wave.contains(&rule_key(u, rule).0)) {
+        return Err("next relation with an ordinary rule");
+    }
+    let mut cone: BTreeSet<RelationKey> = BTreeSet::new();
+    // Each pass adds at least one relation or stops.
+    for _ in 0..=ordinary.len() {
+        let before = cone.len();
+        for rule in &ordinary {
+            if goal_keys(rule).iter().any(|key| wave.contains(key) || cone.contains(key)) {
+                cone.insert(rule_key(u, rule).0);
+            }
+        }
+        if cone.len() == before {
+            break;
+        }
+    }
+    // Dependency order over the cone; a relation left over lies on a cycle inside one wave.
+    let mut needs: BTreeMap<RelationKey, BTreeSet<RelationKey>> = cone.iter().map(|key| (*key, BTreeSet::new())).collect();
+    for rule in &ordinary {
+        let head = rule_key(u, rule).0;
+        if let Some(set) = needs.get_mut(&head) {
+            set.extend(goal_keys(rule).into_iter().filter(|key| cone.contains(key)));
+        }
+    }
+    let mut order = Vec::with_capacity(cone.len());
+    for _ in 0..=cone.len() {
+        let ready: Vec<RelationKey> = needs.iter().filter(|(_, set)| set.is_empty()).map(|(key, _)| *key).collect();
+        if ready.is_empty() {
+            break;
+        }
+        for key in ready {
+            needs.remove(&key);
+            for set in needs.values_mut() {
+                set.remove(&key);
+            }
+            order.push(key);
+        }
+    }
+    if !needs.is_empty() {
+        return Err("recursion inside one wave");
+    }
+    let reads = rules
+        .iter()
+        .filter(|rule| {
+            let (key, next) = rule_key(u, rule);
+            next || cone.contains(&key)
+        })
+        .flat_map(goal_keys)
+        .filter(|key| !wave.contains(key) && !cone.contains(key))
+        .collect();
+    Ok(Some(Waves { wave, cone: order, reads }))
+}
+
+/// The inputs of one IR node, in operator order.
+fn op_inputs(op: &ir::Op) -> Vec<ir::NodeId> {
+    match op {
+        ir::Op::Get(_) => Vec::new(),
+        ir::Op::Mint { input, .. } | ir::Op::StrCons { input, .. } | ir::Op::Str { input, .. }
+        | ir::Op::Mfp { input, .. } | ir::Op::Negate(input) | ir::Op::Threshold(input)
+        | ir::Op::Delay(input) | ir::Op::Reduce { input, .. } | ir::Op::TopK { input, .. }
+        | ir::Op::Window { input, .. } => vec![*input],
+        ir::Op::Union(inputs) | ir::Op::Join { inputs, .. } => inputs.clone(),
+        ir::Op::Antijoin { l, r, .. } => vec![*l, *r],
+    }
+}
+
+/// `op` with each input `n` replaced by `map(n)`.
+fn op_with_inputs(op: &ir::Op, map: impl Fn(ir::NodeId) -> ir::NodeId) -> ir::Op {
+    let mut op = op.clone();
+    match &mut op {
+        ir::Op::Get(_) => {}
+        ir::Op::Mint { input, .. } | ir::Op::StrCons { input, .. } | ir::Op::Str { input, .. }
+        | ir::Op::Mfp { input, .. } | ir::Op::Negate(input) | ir::Op::Threshold(input)
+        | ir::Op::Delay(input) | ir::Op::Reduce { input, .. } | ir::Op::TopK { input, .. }
+        | ir::Op::Window { input, .. } => *input = map(*input),
+        ir::Op::Union(inputs) | ir::Op::Join { inputs, .. } => inputs.iter_mut().for_each(|n| *n = map(*n)),
+        ir::Op::Antijoin { l, r, .. } => {
+            *l = map(*l);
+            *r = map(*r);
+        }
+    }
+    op
+}
+
+/// `root` with every `Get` of a relation in `values` replaced by its value node: the nodes
+/// that reach such a `Get` are copied, the rest are shared. Post-order with an explicit
+/// stack; `memo` carries copies across calls. `Err` when `root` reads a cone relation in
+/// `cone` that has no value yet.
+fn substitute(
+    b: &mut Builder,
+    root: ir::NodeId,
+    values: &HashMap<ir::RelId, ir::NodeId>,
+    cone: &HashSet<ir::RelId>,
+    memo: &mut HashMap<ir::NodeId, ir::NodeId>,
+) -> Result<ir::NodeId, &'static str> {
+    let mut stack = vec![(root, false)];
+    while let Some((node, expanded)) = stack.pop() {
+        if memo.contains_key(&node) {
+            continue;
+        }
+        let op = b.ir.nodes[node as usize].clone();
+        if let ir::Op::Get(rel) = op {
+            let value = match values.get(&rel) {
+                Some(value) => *value,
+                None if cone.contains(&rel) => return Err("cone relation read before its value"),
+                None => node,
+            };
+            memo.insert(node, value);
+            continue;
+        }
+        let inputs = op_inputs(&op);
+        if !expanded {
+            stack.push((node, true));
+            stack.extend(inputs.iter().filter(|n| !memo.contains_key(n)).map(|n| (*n, false)));
+            continue;
+        }
+        let copy = if inputs.iter().all(|n| memo[n] == *n) {
+            node
+        } else {
+            let op = op_with_inputs(&op, |n| memo[&n]);
+            b.node(op)
+        };
+        memo.insert(node, copy);
+    }
+    Ok(memo[&root])
+}
 
 fn reachable(
     start: RelationKey,
@@ -2332,6 +2496,66 @@ pub struct Declared {
     pub shapes: BTreeSet<(String, usize, bool)>,
 }
 
+/// One LetRec for every wave relation, one round per wave, `limit` the wave limit. Its
+/// variables are `__ir_wave_started`, empty in round 1 and one row after, and each wave
+/// relation `R`, whose body is `R`'s seed rows while nothing has started and the union of
+/// its `next` rule bodies after. A cone relation a `next` body reads is inlined as its own
+/// value over the same round's variables.
+#[allow(clippy::too_many_arguments)]
+fn lower_waves(
+    b: &mut Builder,
+    waves: &Waves,
+    relations: &BTreeMap<RelationKey, ir::RelId>,
+    sources: &BTreeMap<RelationKey, ir::RelId>,
+    bodies: &BTreeMap<RelationKey, Vec<ir::NodeId>>,
+    next_bodies: &mut BTreeMap<RelationKey, Vec<ir::NodeId>>,
+    term_map: ir::RelId,
+    none: TermId,
+) -> Result<(), &'static str> {
+    let started = b.rel("__ir_wave_started".into(), vec![ir::Ty::Id], ir::RelKind::Derived);
+    let mapped = mapped_ground(b, term_map, none);
+    let started_body = b.mfp(mapped, vec![], vec![], vec![1]);
+    let cone: HashSet<ir::RelId> = waves.cone.iter().map(|key| relations[key]).collect();
+    let mut values: HashMap<ir::RelId, ir::NodeId> = HashMap::new();
+    let mut memo: HashMap<ir::NodeId, ir::NodeId> = HashMap::new();
+    for key in &waves.cone {
+        let mut parts = vec![b.get(sources[key])];
+        for body in bodies.get(key).into_iter().flatten() {
+            parts.push(substitute(b, *body, &values, &cone, &mut memo)?);
+        }
+        let union = b.node(ir::Op::Union(parts));
+        let value = b.node(ir::Op::Threshold(union));
+        values.insert(relations[key], value);
+    }
+    let started_rows = b.get(started);
+    let mut ids = vec![started];
+    let mut rec_bodies = vec![started_body];
+    for key in &waves.wave {
+        let width = key.1.max(1);
+        let seeds = b.get(sources[key]);
+        let first = b.node(ir::Op::Antijoin { l: seeds, r: started_rows, lk: vec![], rk: vec![] });
+        let mut parts = Vec::new();
+        for body in next_bodies.remove(key).unwrap_or_default() {
+            parts.push(substitute(b, body, &values, &cone, &mut memo)?);
+        }
+        let next = match parts[..] {
+            [one] => one,
+            [] => return Err("wave relation without a next rule"),
+            _ => b.node(ir::Op::Union(parts)),
+        };
+        let joined = b.node(ir::Op::Join { inputs: vec![next, started_rows], equivalences: vec![] });
+        let later = b.mfp(joined, vec![], vec![], (0..width).map(assert_width).collect());
+        ids.push(relations[key]);
+        rec_bodies.push(b.node(ir::Op::Union(vec![first, later])));
+    }
+    b.ir.strata.push(ir::Stratum::LetRec(ir::LetRec {
+        ids,
+        bodies: rec_bodies,
+        limit: Some(WAVE_LIMIT),
+    }));
+    Ok(())
+}
+
 pub fn lower(u: &mut Universe, program: &Program) -> Result<Lowered, Diagnostic> {
     lower_declared(u, program, &Declared::default())
 }
@@ -2624,7 +2848,7 @@ pub fn lower_declared(
         keys.insert((rel.0, *width));
     }
     for rule in &program.rules {
-        keys.insert((rule.rel.0, rule.head.len()));
+        keys.insert(rule_key(u, rule).0);
         for goal in &rule.body {
             if Kernel::of(u, goal.rel).is_none()
                 || (rule.is_aggregate() && goal.polarity == Polarity::Positive)
@@ -2673,6 +2897,8 @@ pub fn lower_declared(
     let mut effect_dependencies = BTreeSet::new();
     let mut snapshot_dependencies = BTreeSet::new();
     let mut fold_auxiliaries: BTreeMap<RelationKey, Vec<FoldAux>> = BTreeMap::new();
+    let waves = waves(u, &program.rules, &keys).map_err(|name| unsupported(u, name))?;
+    let mut next_bodies: BTreeMap<RelationKey, Vec<ir::NodeId>> = BTreeMap::new();
     // Recording pass: the same rules into a scratch builder, collecting each relation's
     // narrowing union per join key (`Builder::narrow_unions`). Errors surface in the real pass.
     {
@@ -2728,6 +2954,7 @@ pub fn lower_declared(
             &program.rules,
         )
         .map_err(|name| unsupported(u, name))?;
+        let interned = b.intern_nodes.len() > requests_before || b.intern_readback_count > readbacks_before;
         if b.intern_nodes.len() > requests_before {
             let constructs_readback = rule.body.iter().any(|goal| {
                 Kernel::of(u, goal.rel) == Some(Kernel::Intern)
@@ -2780,7 +3007,24 @@ pub fn lower_declared(
                 }
             }
         }
-        let head_key = (rule.rel.0, rule.head.len());
+        let (head_key, next) = rule_key(u, rule);
+        if let Some(waves) = &waves {
+            if next || waves.cone.contains(&head_key) {
+                if interned {
+                    return Err(unsupported(u, "intern readback in a wave rule"));
+                }
+                if body.fold_aux.is_some() {
+                    return Err(unsupported(u, "declared fold in a wave rule"));
+                }
+                if rule.body.iter().any(|goal| program.served.contains(&goal.rel)) {
+                    return Err(unsupported(u, "served relation in a wave rule"));
+                }
+            }
+        }
+        if next {
+            next_bodies.entry(head_key).or_default().push(body.body);
+            continue;
+        }
         if let Some(aux) = body.fold_aux {
             fold_auxiliaries.entry(head_key).or_default().push(aux);
         }
@@ -2965,13 +3209,25 @@ pub fn lower_declared(
             }
         }
     }
+    // The wave relations lower once every relation their rules read outside the wave is
+    // lowered; until then no wave relation is ready or a component.
+    let mut wave_pending: BTreeSet<RelationKey> = waves.as_ref().map(|w| w.wave.clone()).unwrap_or_default();
     for _ in 0..COMPONENT_BUDGET {
         if pending.is_empty() {
             break;
         }
+        if let Some(w) = waves.as_ref().filter(|w| !wave_pending.is_empty() && w.reads.iter().all(|key| !pending.contains(key))) {
+            lower_waves(&mut b, w, &relations, &sources, &bodies, &mut next_bodies, term_map, none)
+                .map_err(|name| unsupported(u, name))?;
+            for key in std::mem::take(&mut wave_pending) {
+                pending.remove(&key);
+            }
+            continue;
+        }
         let ready: Vec<_> = pending
             .iter()
             .copied()
+            .filter(|key| !wave_pending.contains(key))
             .filter(|key| {
                 edges
                     .get(key)
@@ -2982,7 +3238,7 @@ pub fn lower_declared(
             .collect();
         if ready.is_empty() {
             let mut component = None;
-            for &candidate in &pending {
+            for &candidate in pending.iter().filter(|key| !wave_pending.contains(key)) {
                 let forward =
                     reachable(candidate, &pending, &edges).map_err(|name| unsupported(u, name))?;
                 let backward = reachable(candidate, &pending, &reverse)

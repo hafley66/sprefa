@@ -475,7 +475,22 @@ pub fn resolve_rules(
             return Err(Stop::Fail("rule body list expected"));
         };
         let node = origins.rule_origin(rule_index);
-        let head_result = resolve_call(u, cx, head)?;
+        // A `next` head resolves its inner relation and keeps the wrapper.
+        let next = u.args::<2>(head, "call").and_then(|[relation, args]| Some((u.unary(relation, "next")?, args)));
+        let head_result = match next {
+            Some((inner, args)) => {
+                let inner_call = u.compound("call", vec![inner, args]);
+                match resolve_call(u, cx, inner_call)? {
+                    CallResult::Ok { term, args } => {
+                        let [relation, list] = u.args::<2>(term, "call").ok_or(Stop::Fail("call/2 expected"))?;
+                        let relation = u.compound("next", vec![relation]);
+                        CallResult::Ok { term: u.compound("call", vec![relation, list]), args }
+                    }
+                    error => error,
+                }
+            }
+            None => resolve_call(u, cx, head)?,
+        };
         let (goals, goal_diagnostics) = resolve_goals(u, cx, &body, rule_index, origins)?;
         match (&head_result, &goals) {
             (CallResult::Ok { term, .. }, Some(goals)) => {

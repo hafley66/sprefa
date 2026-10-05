@@ -1,0 +1,16 @@
+; Negation inside one wave stays a strict dependency cycle: `blocked` negates
+; itself in the same wave. Only a read that goes through `next` is
+; temporally stratified.
+
+(: cur_wave (* (: wave int)))
+(: blocked (* (: wave int)))
+
+(cur_wave 0)
+
+(<- (blocked ?Wave)
+    (cur_wave ?Wave)
+    (not (blocked ?Wave)))
+
+(<- (next (cur_wave ?Wave))
+    (cur_wave ?Wave)
+    (not (blocked ?Wave)))

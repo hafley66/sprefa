@@ -1,0 +1,27 @@
+; Example 2 of the page 3 proposal: the wave number as data. `cur_wave` is a
+; wave relation: wave 0 holds its seed row, wave W+1 holds exactly what its
+; `next` rules derive at wave W. `rewrite_pending` is evaluated inside each
+; wave. The second `next` rule holds the counter once nothing is pending, so
+; the waves reach a fixed point; it negates `rewrite_pending`, which reads
+; `cur_wave` in the same wave: legal, because the negation goes through `next`.
+
+(: cur_wave (* (: wave int)))
+(: bound (* (: wave int)))
+(: rewrite_pending (* (: wave int)))
+
+(cur_wave 0)
+(bound 3)
+
+(<- (rewrite_pending ?Wave)
+    (cur_wave ?Wave)
+    (bound ?Bound)
+    (int.lt ?Wave ?Bound))
+
+(<- (next (cur_wave ?Next))
+    (cur_wave ?Wave)
+    (rewrite_pending ?Wave)
+    (int.add ?Wave 1 ?Next))
+
+(<- (next (cur_wave ?Wave))
+    (cur_wave ?Wave)
+    (not (rewrite_pending ?Wave)))
