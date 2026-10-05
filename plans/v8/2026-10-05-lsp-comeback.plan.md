@@ -1,6 +1,8 @@
 # Plan: LSP comes back as dl8 hosted executors (backlog, one at a time)
 
 User, 2026-10-05. Ideas captured in order given; each becomes its own lane later.
+Order: this session finishes the core (comptime, macrotime, IVM, TypeSpec features); everything
+here starts after that.
 The v5-and-earlier LSP inventory is in flight; its tables get appended here.
 
 ## Goal
@@ -20,6 +22,7 @@ affected (files, repos, call sites)" efficiently, and the LSP serves those answe
 | 5 | Executor API declared in TypeSpec; generate std `*.dl7` decls, Rust stub + dispatch, wire types | ryi `schema/cli/ops.tsp` -> `2_gen.mjs` -> `server_auto.rs` | removes relation-name string dispatch in `_3_executors/mod.rs` |
 | 6 | External executors over a generic protocol | `fetch_json`; ABI cost table `book/src/hosting/2_adding_boop.md`; PRs #765, #766 | candidate table first (OpenAPI+SSE, JSON-RPC stdio, MCP, wasm/WIT); no bespoke |
 | 7 | Host-or-client shape for every tool (LSP, rust-analyzer, ryi): build feature selects full in-process vs client-only; when a daemon runs, connect, never embed | ryi plan: trait Ryi + DaemonClient / SpawnClient / InProc(feature) | same shape for the LSP server |
+| 9 | Each executor runs on its own thread; the engine core is executor-agnostic | executors polled from the tick loop (`_2_reconcile.rs` `poll_signed` time slices) | depends on the IVM core work first |
 | 8 | Rename executor trait vocabulary (`Cadence`, `Once`, `Continuing`, `armed`, `poll`, `poll_signed`, `answer`, `cancel`) | names rejected by user | later, with `ryi rename` |
 
 ## Prior code
