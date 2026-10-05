@@ -601,11 +601,11 @@ fn snapshot_closure<E: Engine>(
     Ok(Closure { rows, diagnostics })
 }
 
-/// `DL8_ENGINE`: unset is `ir:sqlite`.
+/// `DL8_ENGINE`: unset is `ir:dd`.
 pub fn configured_backend() -> Result<Backend, String> {
     match std::env::var("DL8_ENGINE").as_deref() {
-        Err(std::env::VarError::NotPresent) | Ok("ir:sqlite") => Ok(Backend::Sqlite),
-        Ok("ir:dd") => Ok(Backend::Dd),
+        Err(std::env::VarError::NotPresent) | Ok("ir:dd") => Ok(Backend::Dd),
+        Ok("ir:sqlite") => Ok(Backend::Sqlite),
         Ok(other) => Err(format!(
             "unknown DL8_ENGINE {other:?}; expected ir:dd or ir:sqlite"
         )),
