@@ -10,7 +10,7 @@ use super::_5_materialize::materialize_terms;
 use crate::_6_eval::json::{program_from_json, term_from_json, term_to_json};
 use crate::_6_eval::{Row, TermId, Universe};
 use crate::_8_driver::_1_unit::text_unit;
-use crate::_8_driver::_2_macro::standard_macro_program;
+use crate::_8_driver::_2_macro::standard_macro_program_with;
 use serde_json::{json, Map, Value};
 use std::path::Path;
 use std::process::ExitCode;
@@ -156,12 +156,13 @@ pub fn case_syntax(
 }
 
 /// The case's frozen macro program, or the bundled `macrotime/*.dl7` library
-/// when the case names none.
+/// plus the case's `macros` text when the case names none.
 fn case_macro_program(u: &mut Universe, case: &Map<String, Value>) -> Result<MacroProgram, String> {
     if let Some(frozen) = case.get("macro_program") {
         return macro_program_from_json(u, frozen);
     }
-    match standard_macro_program(u, &mut |_| {}) {
+    let extra = case.get("macros").and_then(|m| m.as_str()).unwrap_or("");
+    match standard_macro_program_with(u, extra, &mut |_| {}) {
         Ok((Some(program), diagnostics)) if diagnostics.is_empty() => Ok(program),
         Ok((_, diagnostics)) => {
             let d: Vec<Value> = diagnostics.iter().map(|d| term_to_json(u, *d)).collect();

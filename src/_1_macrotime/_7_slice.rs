@@ -2,6 +2,7 @@
 //! `v7/src/1_libtime/0a_syntax_macro_program.pl:38-85`.
 
 use super::_2_protocol::{macro_protocol, macro_rules, MacroProgram};
+use super::_8_waves::{macrotime_mode, wave_protocol, wave_rules, MacrotimeMode};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::Checked;
 use crate::_4_comptime::rounds::round_program;
@@ -26,7 +27,18 @@ pub fn slice_macro_program(
     let Ok(program) = round_program(u, &checked.rules, &checked.seeds) else {
         return (None, diagnostics);
     };
-    let selected = macro_rules(u, &protocol, &program.rules);
+    let waves = match macrotime_mode() {
+        MacrotimeMode::Rust => None,
+        MacrotimeMode::Engine => match wave_protocol(u, &whole) {
+            (Some(waves), _) => Some(waves),
+            (None, diagnostics) => return (None, diagnostics),
+        },
+    };
+    let selected = match &waves {
+        None => macro_rules(u, &protocol, &program.rules),
+        Some(waves) => wave_rules(u, &protocol, waves, &program.rules),
+    };
+    let wave_relations = waves.as_ref().map(|w| w.relations()).unwrap_or_default();
 
     let ids: HashSet<TermId> = [
         protocol.frontier,
@@ -39,6 +51,7 @@ pub fn slice_macro_program(
     ]
     .iter()
     .chain(&protocol.diagnostic)
+    .chain(&wave_relations)
     .filter_map(|r| u.unary(*r, "ref"))
     .collect();
 

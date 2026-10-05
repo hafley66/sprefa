@@ -148,12 +148,10 @@ fn tsi_registry_matches_hafley_scm() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
-/// The ir:sqlite work counts (`ivm_sqlite::work` events, summed per phase) of
-/// the registry build: a change in the work SQLite does shows up here as a
-/// count change.
-#[test]
-fn tsi_registry_sqlite_work_counts() {
-    let directory = scratch("registry-work");
+/// The ir:sqlite work counts (`ivm_sqlite::work` events, summed per phase) of the registry
+/// build under one `DL8_MACROTIME` mode.
+fn registry_sqlite_work(mode: &str) -> String {
+    let directory = scratch(&format!("registry-work-{mode}"));
     let built = Command::new(env!("CARGO_BIN_EXE_dl8"))
         .current_dir(root())
         .arg("build")
@@ -161,6 +159,7 @@ fn tsi_registry_sqlite_work_counts() {
         .arg("--out")
         .arg(&directory)
         .env("DL8_ENGINE", "ir:sqlite")
+        .env("DL8_MACROTIME", mode)
         .env("RUST_LOG", "ivm_sqlite::work=info")
         .env("NO_COLOR", "1")
         .output()
@@ -187,13 +186,27 @@ fn tsi_registry_sqlite_work_counts() {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    std::fs::remove_dir_all(directory).unwrap();
+    got
+}
+
+/// A change in the work SQLite does shows up here as a count change, per macrotime mode.
+#[test]
+fn tsi_registry_sqlite_work_counts() {
     assert_eq!(
-        got,
+        registry_sqlite_work("rust"),
         concat!(
             "between: creates=0 schema_rows_parsed=0 prepared=229 prepared_bytes=70527 unfolded_bytes=70527 executions=20823 zero_row_executions=16718 vm_steps=1108210 fullscan_steps=25338 sorts=0 autoindexes=0 reprepares=3 rows_returned=47599 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=0 written_term=32796\n",
             "install: creates=4963 schema_rows_parsed=620094 prepared=5290 prepared_bytes=1697524 unfolded_bytes=1697524 executions=5290 zero_row_executions=58 vm_steps=148531 fullscan_steps=138 sorts=358 autoindexes=0 reprepares=0 rows_returned=170 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=28 written_term=138\n",
             "settle: creates=0 schema_rows_parsed=0 prepared=5694 prepared_bytes=3734868 unfolded_bytes=3987655 executions=57781 zero_row_executions=3409 vm_steps=40959483 fullscan_steps=2481233 sorts=15963 autoindexes=23363 reprepares=0 rows_returned=57918 written_d=221502 written_i=108610 written_x=0 written_scratch=95433 written_source=23381 written_catalog=11 written_term=6030",
         )
     );
-    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(
+        registry_sqlite_work("engine"),
+        concat!(
+            "between: creates=0 schema_rows_parsed=0 prepared=236 prepared_bytes=83527 unfolded_bytes=83527 executions=22355 zero_row_executions=18290 vm_steps=1196766 fullscan_steps=27299 sorts=0 autoindexes=0 reprepares=3 rows_returned=50552 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=0 written_term=35698\n",
+            "install: creates=11199 schema_rows_parsed=2478066 prepared=11538 prepared_bytes=3239371 unfolded_bytes=3239371 executions=11538 zero_row_executions=60 vm_steps=326821 fullscan_steps=142 sorts=786 autoindexes=0 reprepares=0 rows_returned=176 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=30 written_term=142\n",
+            "settle: creates=0 schema_rows_parsed=0 prepared=14451 prepared_bytes=9272635 unfolded_bytes=9562150 executions=91282 zero_row_executions=27480 vm_steps=181886939 fullscan_steps=7064819 sorts=76557 autoindexes=100881 reprepares=0 rows_returned=84323 written_d=763858 written_i=398945 written_x=0 written_scratch=184528 written_source=25020 written_catalog=10 written_term=6030",
+        )
+    );
 }

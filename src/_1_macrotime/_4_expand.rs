@@ -13,6 +13,7 @@ use super::_2_protocol::{
     Available, Dispatch, MacroProgram, MacroResults, Protocol, READER_SHAPES,
 };
 use super::_3_rewrite::{reported_diagnostics, rewrite_active_graph};
+use super::_8_waves::{expand_rows_engine, macrotime_mode, MacrotimeMode};
 use crate::_6_eval::ir_eval::{shape_of, Applied, ApplyError, IrSession, SignedRow};
 use crate::_6_eval::ir_lower::Declared;
 use crate::_6_eval::{Diagnostic, Program, Row, Term, TermId, Universe};
@@ -157,7 +158,7 @@ impl MacroSession {
     /// Lower and install `program` with the declared sources and shapes,
     /// settle its own seeds into `base`, and mark the engine there when it
     /// rewinds.
-    fn prepare(&mut self, u: &mut Universe, program: &Program) -> Result<(), Vec<TermId>> {
+    pub(crate) fn prepare(&mut self, u: &mut Universe, program: &Program) -> Result<(), Vec<TermId>> {
         self.program = None;
         self.base.clear();
         self.resident.clear();
@@ -361,6 +362,9 @@ fn expand_rows(
     session: &mut MacroSession,
     fx: &mut dyn FnMut(Wave),
 ) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
+    if macrotime_mode() == MacrotimeMode::Engine {
+        return expand_rows_engine(u, rows, macro_program, session, fx);
+    }
     let (protocol, diagnostics) = macro_protocol(u, macro_program);
     let protocol = match protocol {
         Some(p) => p,
@@ -523,7 +527,7 @@ fn signed_seeds(u: &mut Universe, p: &Protocol, rows: &[TermId], weight: i64) ->
         .collect()
 }
 
-fn diagnostic_terms(u: &mut Universe, diagnostics: &[Diagnostic]) -> Vec<TermId> {
+pub(crate) fn diagnostic_terms(u: &mut Universe, diagnostics: &[Diagnostic]) -> Vec<TermId> {
     let none = u.atom("none");
     diagnostics
         .iter()
