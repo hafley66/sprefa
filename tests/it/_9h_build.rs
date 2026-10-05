@@ -191,8 +191,8 @@ fn tsi_registry_sqlite_work_counts() {
         got,
         concat!(
             "between: creates=0 schema_rows_parsed=0 prepared=229 prepared_bytes=70527 unfolded_bytes=70527 executions=20823 zero_row_executions=16718 vm_steps=1108210 fullscan_steps=25338 sorts=0 autoindexes=0 reprepares=3 rows_returned=47599 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=0 written_term=32796\n",
-            "install: creates=4963 schema_rows_parsed=620094 prepared=5290 prepared_bytes=1697524 unfolded_bytes=1697524 executions=5290 zero_row_executions=58 vm_steps=148531 fullscan_steps=138 sorts=358 autoindexes=0 reprepares=0 rows_returned=170 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=28 written_term=138\n",
-            "settle: creates=0 schema_rows_parsed=0 prepared=5694 prepared_bytes=3734868 unfolded_bytes=3987655 executions=57781 zero_row_executions=3409 vm_steps=40959483 fullscan_steps=2481233 sorts=15963 autoindexes=23363 reprepares=0 rows_returned=57918 written_d=221502 written_i=108610 written_x=0 written_scratch=95433 written_source=23381 written_catalog=11 written_term=6030",
+            "install: creates=4963 schema_rows_parsed=106435 prepared=5411 prepared_bytes=1705656 unfolded_bytes=1705656 executions=5411 zero_row_executions=58 vm_steps=149691 fullscan_steps=138 sorts=358 autoindexes=0 reprepares=0 rows_returned=170 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=28 written_term=138\n",
+            "settle: creates=0 schema_rows_parsed=0 prepared=5694 prepared_bytes=3734868 unfolded_bytes=3987655 executions=57781 zero_row_executions=3409 vm_steps=40949771 fullscan_steps=2481233 sorts=15963 autoindexes=23363 reprepares=0 rows_returned=57918 written_d=221502 written_i=108610 written_x=0 written_scratch=95433 written_source=23381 written_catalog=11 written_term=6030",
         )
     );
     std::fs::remove_dir_all(directory).unwrap();

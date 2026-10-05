@@ -101,7 +101,7 @@ Gate result: `work_grows_linear_or_slower` fails at
 `sqlite_master`; creates grow linearly and each shard's `sqlite_master` grows linearly, so the
 product is quadratic. Every other gated count (install creates, install/settle prepared_bytes,
 settle vm_steps, settle written, dd rows_written / delta_rows / rounds) is Linear or Constant at
-both sizes. The test is left red on this count, as the brief specifies.
+both sizes. The test was left red on this count in the first commit; the next section makes it Linear.
 
 ## Overlap with parallel lanes
 
@@ -114,3 +114,85 @@ both sizes. The test is left red on this count, as the brief specifies.
 - hafley-rs `sqlite-ext --test 2_load_plugins`: 3 failures, `cannot update the lock file
   crates/sqlite-ext/tests/fixtures/Cargo.lock because --locked was passed` (fixture lock last
   touched 2026-09-27; this lane changes no Cargo.toml in hafley-rs).
+
+## Install schema_rows_parsed made Linear (coordinator follow-up)
+
+Cause: SQLite reparses after every CREATE by scanning the target schema's `sqlite_master`; with 8
+fixed shard schemas each shard holds objects/8, so the reparse total is quadratic in objects.
+Family probe after install (rows of `sqlite_master` per schema): `main` 22 at every n; each of
+the 8 shards 7 / 27 / 105 / 417 at n = 4 / 16 / 64 / 256.
+
+Arms measured (work counts, family n -> 4n, registry pins):
+
+| arm | n=4 install schema_rows_parsed | 16 -> 64 class | settle vm_steps vs before | kept |
+|---|---|---|---|---|
+| before: 8 shards, round-robin | 405 | Quadratic (3084 -> 44190) | - | - |
+| fill shards to 32 objects, then open the next | 976 | Linear | not measured | no (small programs parse 2.4x) |
+| at least 8 shards, ceil(objects / 32) shards, round-robin | 405 | Linear (3084 -> 14142) | n=64: +148; registry: +2004 (+0.005 %); a statement over tables in more schemas runs one more `Transaction` op per schema | no |
+| at least 8 shards, ceil(objects / 32) shards, consecutive tables per shard | 424 | Linear (3110 -> 13650) | n=64: -6407; registry: -9712 (-0.02 %) | yes |
+| A3 node-keyed shared tables (no DDL per node) | not built | | | rewrites every settle statement in `3_nodes.rs` |
+
+Kept: `catalog.rs` counts the shardable objects of the install first, opens
+`min(SHARDS, max(MIN_SHARDS = 8, ceil(objects / SHARD_OBJECTS = 32)))` shard schemas, and places
+consecutive tables in the same shard (indexes follow their table). `1_image.rs::install_shards`
+attaches exactly the shards the DDL fills (before: `4_engine.rs` attached 8 up front).
+`SHARDS` = 125, lowered at install to the connection's `SQLITE_LIMIT_ATTACHED`.
+
+Ceiling: SQLite's compile-time `SQLITE_MAX_ATTACHED` (default 10, at most 125). Both
+`sqlite_ivm/.cargo/config.toml` and sprefa `.cargo/config.toml` set
+`LIBSQLITE3_FLAGS = "SQLITE_MAX_ATTACHED=125"` for the bundled build. Linear up to
+125 x 32 = 4000 shard objects; above that per-shard objects grow again and the reparse total is
+quadratic (/125). A SQLite built without the flag (default 10, or a host loading the extension)
+gets 10 shards: Linear up to 320 shard objects. Registry comptime: 2953 CREATEs.
+
+### Family counts (`15_work_growth`, n = 4 / 16 / 64 / 256; before = 8 round-robin shards)
+
+| count | before n=4 | before 16 | before 64 | after n=4 | after 16 | after 64 | after 256 | after class 64 -> 256 |
+|---|---|---|---|---|---|---|---|---|
+| install creates | 71 | 228 | 852 | 71 | 228 | 852 | 3348 | Linear |
+| install schema_rows_parsed | 405 | 3084 | 44190 | 424 | 3110 | 13650 | 55987 | Linear |
+| install prepared | 93 | 250 | 874 | 93 | 250 | 893 | 3467 | Linear |
+| install vm_steps | 2430 | 6838 | 24358 | 2414 | 6822 | 24532 | 95388 | Linear |
+| install rows written | 5 | 5 | 5 | 5 | 5 | 5 | 5 | Constant |
+| settle prepared | 108 | 375 | 1431 | 108 | 375 | 1431 | 5655 | Linear |
+| settle vm_steps | 101079 | 395149 | 1576423 | 100754 | 393549 | 1570016 | 6276404 | Linear |
+| settle rows written | 2505 | 9961 | 39721 | 2505 | 9961 | 39721 | 158761 | Linear |
+
+`15_work_growth` now checks n = 4, 16 and 64 against 4n and passes; every gated count is Linear
+or Constant on both engines (dd counts unchanged).
+
+### Registry and census totals
+
+Registry (`tsi_registry_sqlite_work_counts`, pins updated; `between` unchanged):
+
+| count | before | after |
+|---|---|---|
+| install creates | 4963 | 4963 |
+| install schema_rows_parsed | 620094 | 106435 (-82.8 %) |
+| install prepared | 5290 | 5411 (+121 ATTACH) |
+| install vm_steps | 148531 | 149691 (+0.8 %) |
+| install rows written | 166 | 166 |
+| settle prepared | 5694 | 5694 |
+| settle vm_steps | 40959483 | 40949771 (-0.02 %) |
+| settle rows written | 454967 | 454967 |
+
+`13_work_counts` registry corpora, install schema_rows_parsed before -> after: macro_library
+58028 -> 19688, macrotime 59499 -> 20606, registry_comptime 502567 -> 66141, c15 348026 -> 65534;
+empty settles equal except c15 vm_steps 404 -> 400. `14_nested_letrec` settles vm_steps
+43831 -> 43486 and 50167 -> 49729.
+
+Census: every `.dl7` under `fixtures/ examples/ book/src/probes/ std/` (132 files), `dl8 compile`,
+ir:sqlite, `RUST_LOG=ivm_sqlite::work=info`, sums over the 112 that exit 0 with both binaries
+(the same 112):
+
+| count | before | after |
+|---|---|---|
+| install creates | 388293 | 388293 |
+| install schema_rows_parsed | 27172309 | 8746794 (-67.8 %) |
+| install prepared | 424524 | 432880 (+2.0 %, ATTACH) |
+| install vm_steps | 11880441 | 11958529 (+0.7 %) |
+| install rows written | 18402 | 18402 |
+| settle prepared | 199950 | 199950 |
+| settle vm_steps | 936009605 | 935778269 (-0.02 %) |
+| settle rows written | 10089998 | 10089998 |
+| between (all five) | equal | equal |
