@@ -1,7 +1,7 @@
 //! `(next (R ...))` heads through the public compiler on every evaluation engine:
 //! the three page 3 examples (plans/v8/2026-10-05-macrotime-rewrite-rules.findings.md),
-//! an aggregate inside one wave, negation inside one wave, recursion inside one wave, and the
-//! wave limit.
+//! an aggregate inside one wave, negation inside one wave, recursion inside one wave (the page 3
+//! walk, reach and slot_start shapes), and the wave limit.
 
 use serde_json::{json, Value};
 use std::path::Path;
@@ -149,13 +149,49 @@ fn negation_inside_one_wave_is_a_strict_cycle() {
 }
 
 #[test]
-fn recursion_inside_one_wave_is_not_built() {
-    assert_eq!(
-        diagnostics("4_wave_recursion"),
-        vec![
-            json!(["ir:sqlite", ["ir_lower", "unsupported_construct", "recursion inside one wave"]]),
-            json!(["ir:dd", ["ir_lower", "unsupported_construct", "recursion inside one wave"]]),
-        ]
+fn recursion_inside_one_wave() {
+    run(
+        "4_wave_recursion",
+        json!({
+            "graph_item": [[0, 1], [1, 2]],
+            "reach": [[0], [1], [2]],
+        }),
+    );
+}
+
+#[test]
+fn walk_inside_one_wave() {
+    run(
+        "7_wave_walk",
+        json!({
+            "graph_item": [[0, 1, 0], [1, 2, 0], [1, 6, 1], [3, 4, 0], [9, 5, 0]],
+            "walk": [[0], [1], [2], [6]],
+            "hit": [],
+        }),
+    );
+}
+
+#[test]
+fn reach_inside_one_wave() {
+    run(
+        "8_wave_reach",
+        json!({
+            "graph_item": [[0, 1], [1, 5], [1, 7]],
+            "reach": [[0], [1], [5], [7]],
+            "below": [],
+        }),
+    );
+}
+
+#[test]
+fn slot_start_inside_one_wave() {
+    run(
+        "9_wave_slot",
+        json!({
+            "item": [[0, 0, 3], [0, 1, 2], [0, 2, 2]],
+            "slot_start": [[0, 0, 0], [0, 1, 3], [0, 2, 5]],
+            "growing": [],
+        }),
     );
 }
 

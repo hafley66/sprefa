@@ -26,14 +26,11 @@ fn rule_key(u: &Universe, rule: &Rule) -> (RelationKey, bool) {
     }
 }
 
-/// A program with `next` heads. `wave`: the relations a `next` head derives; each holds its
-/// seed rows at wave 0 and exactly what its `next` rules derive at wave W at wave W + 1.
-/// `cone`: relations ordinary rules derive from a wave relation, in dependency order; inside
-/// the wave LetRec each is inlined into the bodies that read it, so it is evaluated against
-/// the same wave's rows. `reads`: every other relation those rules read.
+/// `wave`: relations a `next` head derives (wave 0 = seeds). `cone`: relations derived from them,
+/// as (component, recursive) in dependency order. `reads`: every other relation those rules read.
 struct Waves {
     wave: BTreeSet<RelationKey>,
-    cone: Vec<RelationKey>,
+    cone: Vec<(Vec<RelationKey>, bool)>,
     reads: BTreeSet<RelationKey>,
 }
 
@@ -67,7 +64,6 @@ fn waves(u: &Universe, rules: &[Rule], keys: &BTreeSet<RelationKey>) -> Result<O
             break;
         }
     }
-    // Dependency order over the cone; a relation left over lies on a cycle inside one wave.
     let mut needs: BTreeMap<RelationKey, BTreeSet<RelationKey>> = cone.iter().map(|key| (*key, BTreeSet::new())).collect();
     for rule in &ordinary {
         let head = rule_key(u, rule).0;
@@ -75,22 +71,52 @@ fn waves(u: &Universe, rules: &[Rule], keys: &BTreeSet<RelationKey>) -> Result<O
             set.extend(goal_keys(rule).into_iter().filter(|key| cone.contains(key)));
         }
     }
-    let mut order = Vec::with_capacity(cone.len());
-    for _ in 0..=cone.len() {
-        let ready: Vec<RelationKey> = needs.iter().filter(|(_, set)| set.is_empty()).map(|(key, _)| *key).collect();
+    // Components: relations that reach each other through `needs`. A component is recursive
+    // when its relation reaches itself.
+    let reaches: BTreeMap<RelationKey, BTreeSet<RelationKey>> = cone
+        .iter()
+        .map(|start| (*start, reachable(*start, &cone, &needs).map(|mut set| { set.remove(start); set })))
+        .map(|(start, set)| set.map(|set| (start, set)))
+        .collect::<Result<_, _>>()?;
+    let self_reaching = |key: &RelationKey| needs[key].iter().any(|dep| dep == key || reaches[dep].contains(key));
+    let mut components: Vec<(Vec<RelationKey>, bool)> = Vec::new();
+    let mut component_of: BTreeMap<RelationKey, usize> = BTreeMap::new();
+    for key in &cone {
+        if component_of.contains_key(key) {
+            continue;
+        }
+        let members: Vec<RelationKey> = cone
+            .iter()
+            .filter(|other| *other == key || (reaches[key].contains(*other) && reaches[*other].contains(key)))
+            .copied()
+            .collect();
+        for member in &members {
+            component_of.insert(*member, components.len());
+        }
+        components.push((members, self_reaching(key)));
+    }
+    // Dependency order over the components.
+    let mut waiting: BTreeMap<usize, BTreeSet<usize>> = (0..components.len()).map(|at| (at, BTreeSet::new())).collect();
+    for (key, set) in &needs {
+        let at = component_of[key];
+        waiting.get_mut(&at).unwrap().extend(set.iter().map(|dep| component_of[dep]).filter(|dep| *dep != at));
+    }
+    let mut order = Vec::with_capacity(components.len());
+    for _ in 0..=components.len() {
+        let ready: Vec<usize> = waiting.iter().filter(|(_, set)| set.is_empty()).map(|(at, _)| *at).collect();
         if ready.is_empty() {
             break;
         }
-        for key in ready {
-            needs.remove(&key);
-            for set in needs.values_mut() {
-                set.remove(&key);
+        for at in ready {
+            waiting.remove(&at);
+            for set in waiting.values_mut() {
+                set.remove(&at);
             }
-            order.push(key);
+            order.push(components[at].clone());
         }
     }
-    if !needs.is_empty() {
-        return Err("recursion inside one wave");
+    if !waiting.is_empty() {
+        return Err("component ordering inside one wave");
     }
     let reads = rules
         .iter()
@@ -2500,7 +2526,8 @@ pub struct Declared {
 /// variables are `__ir_wave_started`, empty in round 1 and one row after, and each wave
 /// relation `R`, whose body is `R`'s seed rows while nothing has started and the union of
 /// its `next` rule bodies after. A cone relation a `next` body reads is inlined as its own
-/// value over the same round's variables.
+/// value over the same round's variables; a recursive cone component is a LetRec nested in
+/// the wave LetRec, over fresh relations, so it runs to its fixed point inside every wave.
 #[allow(clippy::too_many_arguments)]
 fn lower_waves(
     b: &mut Builder,
@@ -2515,17 +2542,40 @@ fn lower_waves(
     let started = b.rel("__ir_wave_started".into(), vec![ir::Ty::Id], ir::RelKind::Derived);
     let mapped = mapped_ground(b, term_map, none);
     let started_body = b.mfp(mapped, vec![], vec![], vec![1]);
-    let cone: HashSet<ir::RelId> = waves.cone.iter().map(|key| relations[key]).collect();
+    let cone: HashSet<ir::RelId> = waves.cone.iter().flat_map(|(members, _)| members).map(|key| relations[key]).collect();
     let mut values: HashMap<ir::RelId, ir::NodeId> = HashMap::new();
     let mut memo: HashMap<ir::NodeId, ir::NodeId> = HashMap::new();
-    for key in &waves.cone {
-        let mut parts = vec![b.get(sources[key])];
-        for body in bodies.get(key).into_iter().flatten() {
-            parts.push(substitute(b, *body, &values, &cone, &mut memo)?);
+    let mut nested = Vec::new();
+    for (members, recursive) in &waves.cone {
+        if !recursive {
+            let key = &members[0];
+            let mut parts = vec![b.get(sources[key])];
+            for body in bodies.get(key).into_iter().flatten() {
+                parts.push(substitute(b, *body, &values, &cone, &mut memo)?);
+            }
+            let union = b.node(ir::Op::Union(parts));
+            let value = b.node(ir::Op::Threshold(union));
+            values.insert(relations[key], value);
+            continue;
         }
-        let union = b.node(ir::Op::Union(parts));
-        let value = b.node(ir::Op::Threshold(union));
-        values.insert(relations[key], value);
+        let mut ids = Vec::with_capacity(members.len());
+        for key in members {
+            let relation = relations[key];
+            let cols = b.ir.rels.iter().find(|rel| rel.id == relation).map(|rel| rel.cols.clone()).unwrap_or_default();
+            let id = b.rel(format!("__ir_wave_rec_{relation}"), cols, ir::RelKind::Derived);
+            let get = b.get(id);
+            values.insert(relation, get);
+            ids.push(id);
+        }
+        let mut rec_bodies = Vec::with_capacity(members.len());
+        for key in members {
+            let mut parts = vec![b.get(sources[key])];
+            for body in bodies.get(key).into_iter().flatten() {
+                parts.push(substitute(b, *body, &values, &cone, &mut memo)?);
+            }
+            rec_bodies.push(b.node(ir::Op::Union(parts)));
+        }
+        nested.push(ir::LetRec { ids, bodies: rec_bodies, limit: None, nested: Vec::new() });
     }
     let started_rows = b.get(started);
     let mut ids = vec![started];
@@ -2552,6 +2602,7 @@ fn lower_waves(
         ids,
         bodies: rec_bodies,
         limit: Some(WAVE_LIMIT),
+        nested,
     }));
     Ok(())
 }
@@ -3009,7 +3060,7 @@ pub fn lower_declared(
         }
         let (head_key, next) = rule_key(u, rule);
         if let Some(waves) = &waves {
-            if next || waves.cone.contains(&head_key) {
+            if next || waves.cone.iter().any(|(members, _)| members.contains(&head_key)) {
                 if interned {
                     return Err(unsupported(u, "intern readback in a wave rule"));
                 }
@@ -3086,6 +3137,7 @@ pub fn lower_declared(
                 ids: vec![plain_inner, plain_lists],
                 bodies: vec![inner_body, plain_body],
                 limit: None,
+                nested: Vec::new(),
             }),
         );
     }
@@ -3269,6 +3321,7 @@ pub fn lower_declared(
                 ids,
                 bodies: rec_bodies,
                 limit: None,
+                nested: Vec::new(),
             }));
             for key in component {
                 pending.remove(&key);
@@ -3287,6 +3340,7 @@ pub fn lower_declared(
                         ids: vec![aux.accumulator],
                         bodies: vec![aux.accumulator_body],
                         limit: None,
+                        nested: Vec::new(),
                     }));
                 }
             }

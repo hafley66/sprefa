@@ -1,0 +1,40 @@
+; The page 3 slot_start shape: a running sum by successor recursion inside one
+; wave. Each wave grows a slot by one while its end stays below its bound; a
+; grown slot moves the start of every slot after it.
+
+(: item (* (: owner int) (: ordinal int) (: size int)))
+(: grow (* (: owner int) (: ordinal int) (: bound int)))
+(: slot_start (* (: owner int) (: ordinal int) (: start int)))
+(: growing (* (: owner int) (: ordinal int)))
+
+(item 0 0 1)
+(item 0 1 2)
+(item 0 2 1)
+(grow 0 0 3)
+(grow 0 2 6)
+
+(<- (slot_start ?Owner 0 0)
+    (item ?Owner 0 ?Size))
+
+(<- (slot_start ?Owner ?Next ?NextStart)
+    (slot_start ?Owner ?Ordinal ?Start)
+    (item ?Owner ?Ordinal ?Size)
+    (int.add ?Ordinal 1 ?Next)
+    (item ?Owner ?Next ?NextSize)
+    (int.add ?Start ?Size ?NextStart))
+
+(<- (growing ?Owner ?Ordinal)
+    (slot_start ?Owner ?Ordinal ?Start)
+    (item ?Owner ?Ordinal ?Size)
+    (grow ?Owner ?Ordinal ?Bound)
+    (int.add ?Start ?Size ?End)
+    (int.lt ?End ?Bound))
+
+(<- (next (item ?Owner ?Ordinal ?Size))
+    (item ?Owner ?Ordinal ?Size)
+    (not (growing ?Owner ?Ordinal)))
+
+(<- (next (item ?Owner ?Ordinal ?Bigger))
+    (item ?Owner ?Ordinal ?Size)
+    (growing ?Owner ?Ordinal)
+    (int.add ?Size 1 ?Bigger))

@@ -1,0 +1,51 @@
+; The page 3 reach shape: two recursive components inside one wave, the second
+; negating the first. `below` is the graph under a macro node; `reach` walks
+; from the root around it. The next wave keeps the reached edges outside
+; `below` and replaces each macro node by its output: 2 becomes 6, then 6
+; becomes 7, and the subtree under 2 is gone.
+
+(: graph_item (* (: owner int) (: child int)))
+(: root (* (: node int)))
+(: macro (* (: node int) (: out int)))
+(: macro_node (* (: node int)))
+(: below (* (: node int)))
+(: reach (* (: node int)))
+
+(graph_item 0 1)
+(graph_item 1 2)
+(graph_item 2 3)
+(graph_item 3 4)
+(graph_item 1 5)
+(root 0)
+(macro 2 6)
+(macro 6 7)
+
+(<- (macro_node ?Node)
+    (macro ?Node ?Out))
+
+(<- (below ?Child)
+    (graph_item ?Macro ?Child)
+    (macro_node ?Macro))
+
+(<- (below ?Child)
+    (below ?Owner)
+    (graph_item ?Owner ?Child))
+
+(<- (reach ?Node)
+    (root ?Node))
+
+(<- (reach ?Child)
+    (reach ?Owner)
+    (graph_item ?Owner ?Child)
+    (not (below ?Child)))
+
+(<- (next (graph_item ?Owner ?Child))
+    (graph_item ?Owner ?Child)
+    (reach ?Owner)
+    (not (below ?Child))
+    (not (macro_node ?Child)))
+
+(<- (next (graph_item ?Owner ?Out))
+    (graph_item ?Owner ?Macro)
+    (reach ?Owner)
+    (macro ?Macro ?Out))

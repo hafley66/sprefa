@@ -1,0 +1,48 @@
+; The page 3 walk shape: each wave walks the graph from the frontier through
+; unclaimed nodes (recursion inside one wave), and replaces every claimed node
+; the walk reaches by its claim's output. 3 becomes 7 in the first rewrite and
+; 7 becomes 6 in the second; 5 hangs under 9, which the walk never reaches.
+
+(: graph_item (* (: owner int) (: child int) (: ordinal int)))
+(: frontier (* (: node int)))
+(: claim (* (: node int) (: out int)))
+(: claimed (* (: node int)))
+(: walk (* (: node int)))
+(: hit (* (: node int) (: out int)))
+(: hit_node (* (: node int)))
+
+(graph_item 0 1 0)
+(graph_item 1 2 0)
+(graph_item 1 3 1)
+(graph_item 3 4 0)
+(graph_item 9 5 0)
+(frontier 0)
+(claim 3 7)
+(claim 5 8)
+(claim 7 6)
+
+(<- (claimed ?Node)
+    (claim ?Node ?Out))
+
+(<- (walk ?Node)
+    (frontier ?Node))
+
+(<- (walk ?Child)
+    (walk ?Owner)
+    (not (claimed ?Owner))
+    (graph_item ?Owner ?Child ?Ordinal))
+
+(<- (hit ?Node ?Out)
+    (walk ?Node)
+    (claim ?Node ?Out))
+
+(<- (hit_node ?Node)
+    (hit ?Node ?Out))
+
+(<- (next (graph_item ?Owner ?Child ?Ordinal))
+    (graph_item ?Owner ?Child ?Ordinal)
+    (not (hit_node ?Child)))
+
+(<- (next (graph_item ?Owner ?Out ?Ordinal))
+    (graph_item ?Owner ?Child ?Ordinal)
+    (hit ?Child ?Out))
