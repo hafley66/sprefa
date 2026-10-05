@@ -2605,54 +2605,7 @@ pub fn lower_declared(
             constructors[&("9:1:const".to_string(), 1, false)],
         ],
     ));
-    if dynamic_lists {
-        // `plain_inner` maps an untagged list cell to its plain twin. The
-        // recursion walks cons cells, so a list built at run time needs no
-        // `const` wrapper on any of its tails.
-        let plain_inner = b.rel(
-            "__ir_plain_inner".into(),
-            vec![ir::Ty::Id, ir::Ty::Id],
-            ir::RelKind::Derived,
-        );
-        let wrap = constructors[&("9:1:const".to_string(), 1, false)];
-        let cons = constructors[&("9:2:[|]".to_string(), 2, false)];
-        let seed_lists = b.get(plain_source);
-        let seeded = join_constructor(&mut b, seed_lists, 2, wrap, 0);
-        let seeded = b.mfp(seeded, vec![], vec![], vec![3, 1]);
-        let empty_row = mapped_ground(&mut b, term_map, empty);
-        let empty_pair = b.mfp(empty_row, vec![], vec![], vec![1, 1]);
-        let mut pairs = b.get(plain_inner);
-        let cons_rows = b.get_constructor(cons);
-        pairs = b.node(ir::Op::Join {
-            inputs: vec![pairs, cons_rows],
-            equivalences: vec![vec![(0, 0), (1, 2)]],
-        });
-        let cell = 2;
-        let head = 3;
-        pairs = join_constructor(&mut b, pairs, 5, semantic, head);
-        let plain_head = 6;
-        pairs = b.node(ir::Op::Mint {
-            input: pairs,
-            functor: cons,
-            args: vec![plain_head, 1],
-        });
-        pairs = b.mfp(pairs, vec![], vec![], vec![cell, 7]);
-        let inner_body = b.node(ir::Op::Union(vec![seeded, empty_pair, pairs]));
-        let seed_lists = b.get(plain_source);
-        let mut wrapped = b.get(plain_inner);
-        let wraps = b.get_constructor(wrap);
-        wrapped = b.node(ir::Op::Join {
-            inputs: vec![wrapped, wraps],
-            equivalences: vec![vec![(0, 0), (1, 1)]],
-        });
-        wrapped = b.mfp(wrapped, vec![], vec![], vec![2, 1]);
-        let plain_body = b.node(ir::Op::Union(vec![seed_lists, wrapped]));
-        b.ir.strata.push(ir::Stratum::LetRec(ir::LetRec {
-            ids: vec![plain_inner, plain_lists],
-            bodies: vec![inner_body, plain_body],
-            limit: None,
-        }));
-    } else if program.rules.iter().any(|rule| {
+    if !dynamic_lists && program.rules.iter().any(|rule| {
         rule.body
             .iter()
             .any(|goal| Kernel::of(u, goal.rel) == Some(Kernel::Intern))
@@ -2832,6 +2785,65 @@ pub fn lower_declared(
             fold_auxiliaries.entry(head_key).or_default().push(aux);
         }
         bodies.entry(head_key).or_default().push(body.body);
+    }
+    // `plain_inner` maps an untagged list cell to its plain twin. The
+    // recursion walks cons cells, so a list built at run time needs no
+    // `const` wrapper on any of its tails. It reads `9:2:[|]` by tail and
+    // `9:1:const` by argument: a constructor row enters only after the epoch
+    // or pass that minted it, so each settle that mints a list or a plain
+    // twin runs one more epoch. Built only when a rule reads `plain_lists`.
+    if dynamic_lists
+        && b.ir
+            .nodes
+            .iter()
+            .any(|node| matches!(node, ir::Op::Get(id) if *id == plain_lists))
+    {
+        let plain_inner = b.rel(
+            "__ir_plain_inner".into(),
+            vec![ir::Ty::Id, ir::Ty::Id],
+            ir::RelKind::Derived,
+        );
+        let wrap = constructors[&("9:1:const".to_string(), 1, false)];
+        let cons = constructors[&("9:2:[|]".to_string(), 2, false)];
+        let seed_lists = b.get(plain_source);
+        let seeded = join_constructor(&mut b, seed_lists, 2, wrap, 0);
+        let seeded = b.mfp(seeded, vec![], vec![], vec![3, 1]);
+        let empty_row = mapped_ground(&mut b, term_map, empty);
+        let empty_pair = b.mfp(empty_row, vec![], vec![], vec![1, 1]);
+        let mut pairs = b.get(plain_inner);
+        let cons_rows = b.get_constructor(cons);
+        pairs = b.node(ir::Op::Join {
+            inputs: vec![pairs, cons_rows],
+            equivalences: vec![vec![(0, 0), (1, 2)]],
+        });
+        let cell = 2;
+        let head = 3;
+        pairs = join_constructor(&mut b, pairs, 5, semantic, head);
+        let plain_head = 6;
+        pairs = b.node(ir::Op::Mint {
+            input: pairs,
+            functor: cons,
+            args: vec![plain_head, 1],
+        });
+        pairs = b.mfp(pairs, vec![], vec![], vec![cell, 7]);
+        let inner_body = b.node(ir::Op::Union(vec![seeded, empty_pair, pairs]));
+        let seed_lists = b.get(plain_source);
+        let mut wrapped = b.get(plain_inner);
+        let wraps = b.get_constructor(wrap);
+        wrapped = b.node(ir::Op::Join {
+            inputs: vec![wrapped, wraps],
+            equivalences: vec![vec![(0, 0), (1, 1)]],
+        });
+        wrapped = b.mfp(wrapped, vec![], vec![], vec![2, 1]);
+        let plain_body = b.node(ir::Op::Union(vec![seed_lists, wrapped]));
+        b.ir.strata.insert(
+            semantic_stratum,
+            ir::Stratum::LetRec(ir::LetRec {
+                ids: vec![plain_inner, plain_lists],
+                bodies: vec![inner_body, plain_body],
+                limit: None,
+            }),
+        );
     }
     if b.ir
         .nodes
