@@ -80,6 +80,17 @@ struct EngineSession<E: Engine> {
     initialized: bool,
     fingerprint: u64,
     structure: ir::Program,
+    /// The session caches at the engine's last `mark`; `rewind` restores them with the engine,
+    /// since cells interned after the mark are freed and reissued.
+    marked: Option<Marked>,
+}
+
+struct Marked {
+    mapped: HashMap<TermId, Cell>,
+    answered: HashMap<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>,
+    last_seeds: BTreeSet<(ir::RelId, Vec<Cell>)>,
+    decoded: HashMap<Cell, TermId>,
+    initialized: bool,
 }
 
 /// Joins that read no constructor relation (a constructor join is a decode, never arranged),
@@ -137,6 +148,7 @@ impl<E: Engine> EngineSession<E> {
             initialized: false,
             fingerprint,
             structure: lowered.ir.clone(),
+            marked: None,
         })
     }
 }
@@ -168,6 +180,9 @@ trait Session {
         lowered: &Lowered,
         changes: &[SignedRow],
     ) -> Result<Applied, ApplyError>;
+    fn rewinds(&self) -> bool;
+    fn mark(&mut self) -> Result<(), ivm_engine::EngineError>;
+    fn rewind(&mut self) -> Result<(), ivm_engine::EngineError>;
 }
 
 impl<E: Engine> Session for EngineSession<E> {
@@ -212,6 +227,39 @@ impl<E: Engine> Session for EngineSession<E> {
         changes: &[SignedRow],
     ) -> Result<Applied, ApplyError> {
         apply_session(u, lowered, self, changes)
+    }
+
+    fn rewinds(&self) -> bool {
+        self.engine.rewinds()
+    }
+
+    fn mark(&mut self) -> Result<(), ivm_engine::EngineError> {
+        self.engine.mark()?;
+        self.marked = Some(Marked {
+            mapped: self.mapped.clone(),
+            answered: self.answered.clone(),
+            last_seeds: self.last_seeds.clone(),
+            decoded: self.decoded.clone(),
+            initialized: self.initialized,
+        });
+        Ok(())
+    }
+
+    fn rewind(&mut self) -> Result<(), ivm_engine::EngineError> {
+        let Some(marked) = self.marked.as_ref() else {
+            return Err(ivm_engine::EngineError::new(
+                ivm_engine::Stage::Settle,
+                None,
+                ivm_engine::ErrorKind::Unsupported("rewind without mark"),
+            ));
+        };
+        self.engine.rewind()?;
+        self.mapped.clone_from(&marked.mapped);
+        self.answered.clone_from(&marked.answered);
+        self.last_seeds.clone_from(&marked.last_seeds);
+        self.decoded.clone_from(&marked.decoded);
+        self.initialized = marked.initialized;
+        Ok(())
     }
 }
 
@@ -308,6 +356,33 @@ impl IrSession {
         self.prepared
             .as_ref()
             .is_some_and(|lowered| lowered.constructors.contains_key(shape))
+    }
+
+    /// The prepared engine can `mark` and `rewind`.
+    pub fn rewinds(&self) -> bool {
+        self.session.as_ref().is_some_and(|session| session.rewinds())
+    }
+
+    /// Record the prepared engine's state for `rewind`.
+    pub fn mark(&mut self, u: &mut Universe) -> Result<(), Diagnostic> {
+        let Some(session) = self.session.as_mut() else {
+            return Err(diagnostic(u, "engine", "mark without a prepared program"));
+        };
+        session.mark().map_err(|error| diagnostic(u, "engine", error))
+    }
+
+    /// Return the prepared engine to its last `mark`. A failed rewind drops the session.
+    pub fn rewind(&mut self, u: &mut Universe) -> Result<(), Diagnostic> {
+        let Some(session) = self.session.as_mut() else {
+            return Err(diagnostic(u, "engine", "rewind without a prepared program"));
+        };
+        let result = session.rewind().map_err(|error| diagnostic(u, "engine", error));
+        if result.is_err() {
+            self.session = None;
+            self.prepared = None;
+            self.fingerprint = None;
+        }
+        result
     }
 
     /// Settle signed seed rows on the prepared program.
