@@ -3,6 +3,7 @@ use super::evaluate::Store;
 use super::evaluate::{Closure, Trace};
 use super::ir_lower::{self, Lowered};
 use super::program::{Diagnostic, Program, Row};
+use super::rule_interp::{self, RulesMode};
 use super::term::{Term, TermId, Universe};
 use crate::_9_runtime::Answerer;
 use ivm_engine::Engine;
@@ -293,6 +294,8 @@ fn open_session(
 pub struct IrSession {
     backend: Result<Backend, String>,
     session: Option<Box<dyn Session>>,
+    /// The rule interpreter installed for `evaluate` in `RulesMode::Interpret`.
+    interp: Option<Box<dyn InterpRun>>,
     /// The program `prepare` lowered and installed; `apply` feeds it.
     prepared: Option<Lowered>,
     /// `structural_fingerprint` of the prepared IR.
@@ -304,6 +307,7 @@ impl IrSession {
         Self {
             backend: Ok(backend),
             session: None,
+            interp: None,
             prepared: None,
             fingerprint: None,
         }
@@ -315,6 +319,7 @@ impl IrSession {
         Self {
             backend: configured_backend(),
             session: None,
+            interp: None,
             prepared: None,
             fingerprint: None,
         }
@@ -425,6 +430,84 @@ impl IrSession {
                 }
             }
         };
+        match placement(u, program) {
+            Placement::Compiled => self.evaluate_compiled(u, program, backend, answerer, fx),
+            Placement::Interpreted(plan) => {
+                let seeds = program.seeds.clone();
+                self.evaluate_interpreted(u, backend, &plan, &seeds)
+            }
+            Placement::Split(compiled, plan, feeds) => {
+                let closure = self.evaluate_compiled(u, &compiled, backend, answerer, fx);
+                if !closure.diagnostics.is_empty() {
+                    return closure;
+                }
+                let counters = LAST_COUNTERS.with(|last| last.take());
+                let interpreted =
+                    self.evaluate_interpreted(u, backend, &plan, &feed(&closure, &feeds));
+                if !interpreted.diagnostics.is_empty() {
+                    return interpreted;
+                }
+                let both = LAST_COUNTERS
+                    .with(|last| last.take())
+                    .map(|i| add_counters(counters.unwrap_or_default(), i));
+                LAST_COUNTERS.with(|last| last.set(both));
+                merge(u, closure, interpreted)
+            }
+        }
+    }
+
+    fn evaluate_interpreted(
+        &mut self,
+        u: &mut Universe,
+        backend: Backend,
+        plan: &rule_interp::Plan,
+        seeds: &[Row],
+    ) -> Closure {
+        let wanted = rule_interp::bucket(plan.levels());
+        if self
+            .interp
+            .as_ref()
+            .is_none_or(|interp| interp.bucket() < wanted)
+        {
+            tracing::info!(
+                target: "dl8::rules",
+                bucket = wanted,
+                previous = self.interp.as_ref().map_or(0, |interp| interp.bucket()),
+                "rules interpreter install"
+            );
+            self.interp = match open_interp(u, backend, wanted, false) {
+                Ok(interp) => Some(interp),
+                Err(diag) => {
+                    return Closure {
+                        rows: vec![],
+                        diagnostics: vec![diag],
+                    }
+                }
+            };
+        }
+        match self.interp.as_mut().unwrap().settle_rows(u, plan, seeds) {
+            Ok((closure, counters)) => {
+                LAST_COUNTERS.with(|last| last.set(Some(counters)));
+                closure
+            }
+            Err(error) => {
+                self.interp = None;
+                Closure {
+                    rows: vec![],
+                    diagnostics: vec![engine_diagnostic(u, error)],
+                }
+            }
+        }
+    }
+
+    fn evaluate_compiled(
+        &mut self,
+        u: &mut Universe,
+        program: &Program,
+        backend: Backend,
+        answerer: Option<&mut Answerer>,
+        fx: &mut dyn FnMut(Trace),
+    ) -> Closure {
         let lowered = match ir_lower::lower(u, program) {
             Ok(lowered) => lowered,
             Err(diag) => {
@@ -1703,6 +1786,37 @@ fn run_fresh(
     live: Option<&mut LiveRun<'_>>,
     fx: &mut dyn FnMut(Trace),
 ) -> Result<(Closure, Vec<FrontierResult>), Diagnostic> {
+    let program = match placement(u, program) {
+        Placement::Compiled => program,
+        Placement::Interpreted(plan) => {
+            let mut interp = open_interp(u, backend, rule_interp::bucket(plan.levels()), true)?;
+            return run_interpreted(
+                u,
+                interp.as_mut(),
+                &plan,
+                &program.seeds,
+                answerer,
+                frontiers,
+                live,
+                fx,
+            )
+            .map_err(|error| engine_diagnostic(u, error));
+        }
+        Placement::Split(compiled, plan, feeds) => {
+            return run_split(
+                u,
+                backend,
+                &compiled,
+                &plan,
+                &feeds,
+                answerer,
+                frontiers,
+                public_names,
+                live,
+                fx,
+            );
+        }
+    };
     let lowered = ir_lower::lower(u, program)?;
     let fingerprint = structural_fingerprint(&lowered.ir);
     let mut session = open_session(u, backend, &lowered, fingerprint, true)?;
@@ -1804,5 +1918,419 @@ fn evaluate_ir_with_answerer(
             rows: vec![],
             diagnostics: vec![diagnostic],
         },
+    }
+}
+
+/// Where `DL8_RULES` and `rule_interp::split` put one program's rules.
+enum Placement {
+    Compiled,
+    /// Every rule interpreted and no relation served: the interpreter alone on the seeds.
+    Interpreted(rule_interp::Plan),
+    /// The compiled rules first, then the interpreted rules over the compiled rows of `feeds`.
+    Split(
+        Program,
+        rule_interp::Plan,
+        std::collections::HashSet<(u32, usize)>,
+    ),
+}
+
+fn placement(u: &mut Universe, program: &Program) -> Placement {
+    if rule_interp::rules_mode() != RulesMode::Interpret {
+        return Placement::Compiled;
+    }
+    let split = rule_interp::split(u, program).and_then(|split| {
+        let plan = rule_interp::plan(u, &split.interpreted)?;
+        Ok((split, plan))
+    });
+    match split {
+        Ok((split, plan)) => {
+            tracing::info!(
+                target: "dl8::rules",
+                mode = "interpret",
+                rules = program.rules.len(),
+                interpreted = plan.rule_count(),
+                compiled = split.compiled.rules.len(),
+                levels = plan.levels(),
+                reasons = ?split.reasons,
+                "rules mode"
+            );
+            if split.compiled.rules.is_empty() && program.served.is_empty() {
+                Placement::Interpreted(plan)
+            } else {
+                Placement::Split(split.compiled, plan, split.feeds)
+            }
+        }
+        Err(reason) => {
+            tracing::info!(
+                target: "dl8::rules",
+                mode = "compile",
+                rules = program.rules.len(),
+                %reason,
+                "rules mode"
+            );
+            Placement::Compiled
+        }
+    }
+}
+
+/// The rows of `closure` the interpreted rules read or head.
+fn feed(closure: &Closure, feeds: &std::collections::HashSet<(u32, usize)>) -> Vec<Row> {
+    closure
+        .rows
+        .iter()
+        .filter(|row| feeds.contains(&(row.rel.0, row.args.len())))
+        .cloned()
+        .collect()
+}
+
+/// The compiled closure with the interpreted rows, sorted as `snapshot_closure` sorts.
+fn merge(u: &Universe, compiled: Closure, interpreted: Closure) -> Closure {
+    let mut rows = compiled.rows;
+    rows.extend(interpreted.rows);
+    rows.sort_by(|a, b| {
+        u.cmp(a.rel, b.rel)
+            .then_with(|| u.cmp_rows(&a.args, &b.args))
+    });
+    rows.dedup();
+    Closure {
+        rows,
+        diagnostics: compiled.diagnostics,
+    }
+}
+
+fn add_counters(a: ivm_engine::Counters, b: ivm_engine::Counters) -> ivm_engine::Counters {
+    let sum = |x: Option<u64>, y: Option<u64>| match (x, y) {
+        (None, None) => None,
+        (x, y) => Some(x.unwrap_or(0) + y.unwrap_or(0)),
+    };
+    ivm_engine::Counters {
+        rows_written: a.rows_written + b.rows_written,
+        delta_rows: ivm_engine::DeltaRows {
+            filter: sum(a.delta_rows.filter, b.delta_rows.filter),
+            join: sum(a.delta_rows.join, b.delta_rows.join),
+            antijoin: sum(a.delta_rows.antijoin, b.delta_rows.antijoin),
+            reduce: sum(a.delta_rows.reduce, b.delta_rows.reduce),
+            topk: sum(a.delta_rows.topk, b.delta_rows.topk),
+            window: sum(a.delta_rows.window, b.delta_rows.window),
+            mint: sum(a.delta_rows.mint, b.delta_rows.mint),
+        },
+        rounds: sum(a.rounds, b.rounds),
+        interned: sum(a.interned, b.interned),
+        statements: sum(a.statements, b.statements),
+    }
+}
+
+/// The interpreter alone: the seeds, then each frontier, then each live settle.
+#[allow(clippy::too_many_arguments)]
+fn run_interpreted(
+    u: &mut Universe,
+    interp: &mut dyn InterpRun,
+    plan: &rule_interp::Plan,
+    seeds: &[Row],
+    mut answerer: Option<&mut Answerer>,
+    frontiers: &[Vec<SignedRow>],
+    mut live: Option<&mut LiveRun<'_>>,
+    fx: &mut dyn FnMut(Trace),
+) -> Result<(Closure, Vec<FrontierResult>), ivm_engine::EngineError> {
+    interp.settle_rows(u, plan, seeds)?;
+    let mut frontier_results = Vec::with_capacity(frontiers.len());
+    for frontier in frontiers {
+        interp.change(plan, frontier, "frontier relation is not a source")?;
+        frontier_results.push(FrontierResult {
+            closure: interp.closure(u)?,
+            deltas: Vec::new(),
+            counters: interp.counters(),
+        });
+    }
+    if let Some(live) = live.as_deref_mut() {
+        let closure = interp.closure(u)?;
+        (live.on_settle)(u, &closure, &[], &interp.counters());
+        let mut event_settles = 0;
+        while event_settles < live.max_settles {
+            let Some(frontier) = (live.poll)(
+                answerer.as_deref_mut().unwrap(),
+                u,
+                Duration::from_millis(50),
+            ) else {
+                break;
+            };
+            if frontier.is_empty() {
+                continue;
+            }
+            event_settles += 1;
+            interp.change(plan, &frontier, "live relation is not a source")?;
+            let closure = interp.closure(u)?;
+            (live.on_settle)(u, &closure, &[], &interp.counters());
+        }
+    }
+    LAST_REQUESTS.with(|count| count.set(0));
+    LAST_COUNTERS.with(|last| last.set(Some(interp.counters())));
+    let closure = interp.closure(u)?;
+    fx(Trace::Closure {
+        rows: closure.rows.len(),
+    });
+    Ok((closure, frontier_results))
+}
+
+/// The compiled rules on one fresh engine, then the interpreted rules on another over each
+/// compiled closure: the run's, each frontier's (after a leading empty frontier for the start),
+/// and each live settle's.
+#[allow(clippy::too_many_arguments)]
+fn run_split(
+    u: &mut Universe,
+    backend: Backend,
+    compiled: &Program,
+    plan: &rule_interp::Plan,
+    feeds: &std::collections::HashSet<(u32, usize)>,
+    answerer: Option<&mut Answerer>,
+    frontiers: &[Vec<SignedRow>],
+    public_names: Option<&HashMap<TermId, String>>,
+    live: Option<&mut LiveRun<'_>>,
+    fx: &mut dyn FnMut(Trace),
+) -> Result<(Closure, Vec<FrontierResult>), Diagnostic> {
+    let mut interp = open_interp(u, backend, rule_interp::bucket(plan.levels()), true)?;
+    let lowered = ir_lower::lower(u, compiled)?;
+    let fingerprint = structural_fingerprint(&lowered.ir);
+    let mut session = open_session(u, backend, &lowered, fingerprint, true)?;
+    let mut failure: Option<ivm_engine::EngineError> = None;
+    let live_run = live.is_some();
+    let result = match live {
+        Some(LiveRun {
+            max_settles,
+            poll,
+            on_settle,
+        }) => {
+            let user = on_settle;
+            let interp = interp.as_mut();
+            let failure = &mut failure;
+            let mut wrapped = |u: &Universe,
+                               closure: &Closure,
+                               deltas: &[NamedDelta],
+                               counters: &ivm_engine::Counters| {
+                if failure.is_some() {
+                    return;
+                }
+                if !closure.diagnostics.is_empty() {
+                    (user)(u, closure, deltas, counters);
+                    return;
+                }
+                match interp.settle_rows(u, plan, &feed(closure, feeds)) {
+                    Ok((rows, interp_counters)) => {
+                        let merged = merge(u, closure.clone(), rows);
+                        (user)(
+                            u,
+                            &merged,
+                            deltas,
+                            &add_counters(*counters, interp_counters),
+                        );
+                    }
+                    Err(error) => *failure = Some(error),
+                }
+            };
+            let mut run = LiveRun {
+                max_settles: *max_settles,
+                poll: &mut **poll,
+                on_settle: &mut wrapped,
+            };
+            session.run(u, &lowered, answerer, &[], public_names, Some(&mut run), fx)
+        }
+        None => {
+            let mut all = Vec::with_capacity(frontiers.len() + 1);
+            all.push(Vec::new());
+            all.extend(frontiers.iter().cloned());
+            session.run(u, &lowered, answerer, &all, public_names, None, fx)
+        }
+    };
+    let (closure, results, counters) = result.map_err(|error| engine_diagnostic(u, error))?;
+    if let Some(error) = failure {
+        return Err(engine_diagnostic(u, error));
+    }
+    if !closure.diagnostics.is_empty() {
+        LAST_COUNTERS.with(|last| last.set(Some(counters)));
+        return Ok((
+            closure,
+            results.into_iter().skip(usize::from(!live_run)).collect(),
+        ));
+    }
+    let mut frontier_results = Vec::with_capacity(frontiers.len());
+    for (index, result) in results.into_iter().enumerate() {
+        let (rows, interp_counters) = interp
+            .settle_rows(u, plan, &feed(&result.closure, feeds))
+            .map_err(|error| engine_diagnostic(u, error))?;
+        if index == 0 {
+            continue;
+        }
+        frontier_results.push(FrontierResult {
+            closure: if result.closure.diagnostics.is_empty() {
+                merge(u, result.closure, rows)
+            } else {
+                result.closure
+            },
+            deltas: result.deltas,
+            counters: add_counters(result.counters, interp_counters),
+        });
+    }
+    let (rows, interp_counters) = interp
+        .settle_rows(u, plan, &feed(&closure, feeds))
+        .map_err(|error| engine_diagnostic(u, error))?;
+    LAST_COUNTERS.with(|last| last.set(Some(add_counters(counters, interp_counters))));
+    Ok((merge(u, closure, rows), frontier_results))
+}
+
+/// The rule interpreter on one engine: the installed program, the dictionary ids Rust interned,
+/// and the source rows the engine holds.
+struct InterpEngine<E: Engine> {
+    engine: E,
+    shape: rule_interp::Shape,
+    interner: rule_interp::Interner,
+    installed: BTreeSet<(ir::RelId, Vec<Cell>)>,
+}
+
+trait InterpRun {
+    fn bucket(&self) -> u32;
+    /// Settles the source rows of `plan` and `seeds` in place of the rows installed before.
+    fn settle_rows(
+        &mut self,
+        u: &Universe,
+        plan: &rule_interp::Plan,
+        seeds: &[Row],
+    ) -> Result<(Closure, ivm_engine::Counters), ivm_engine::EngineError>;
+    /// Settles signed seed changes.
+    fn change(
+        &mut self,
+        plan: &rule_interp::Plan,
+        rows: &[SignedRow],
+        what: &'static str,
+    ) -> Result<(), ivm_engine::EngineError>;
+    fn closure(&self, u: &Universe) -> Result<Closure, ivm_engine::EngineError>;
+    fn counters(&self) -> ivm_engine::Counters;
+}
+
+fn open_interp(
+    u: &mut Universe,
+    backend: Backend,
+    bucket: u32,
+    measured: bool,
+) -> Result<Box<dyn InterpRun>, Diagnostic> {
+    fn install<E: Engine + 'static>(
+        bucket: u32,
+        measured: bool,
+    ) -> Result<Box<dyn InterpRun>, ivm_engine::EngineError> {
+        let shape = rule_interp::shape(bucket);
+        let fingerprint = structural_fingerprint(&shape.ir);
+        dump_ir(&shape.ir, fingerprint);
+        let engine = if measured {
+            E::install(&shape.ir)?
+        } else {
+            E::install_unmeasured(&shape.ir)?
+        };
+        let (joins, join_input_cols) = arranged_join_inputs(&shape.ir);
+        tracing::info!(
+            target: "dl8::ir",
+            engine = std::any::type_name::<E>(),
+            nodes = shape.ir.nodes.len(),
+            joins,
+            join_input_cols,
+            "ir install"
+        );
+        Ok(Box::new(InterpEngine {
+            engine,
+            shape,
+            interner: rule_interp::Interner::default(),
+            installed: BTreeSet::new(),
+        }))
+    }
+    match backend {
+        Backend::Dd => install::<ivm_dd::Dd>(bucket, measured),
+        Backend::Sqlite => install::<ivm_sqlite::Sqlite>(bucket, measured),
+    }
+    .map_err(|error| engine_diagnostic(u, error))
+}
+
+impl<E: Engine> InterpRun for InterpEngine<E> {
+    fn bucket(&self) -> u32 {
+        self.shape.bucket
+    }
+
+    fn settle_rows(
+        &mut self,
+        u: &Universe,
+        plan: &rule_interp::Plan,
+        seeds: &[Row],
+    ) -> Result<(Closure, ivm_engine::Counters), ivm_engine::EngineError> {
+        let wanted = self
+            .interner
+            .rows(&mut self.engine, &self.shape, plan, seeds)?;
+        let changes = rule_interp::diff(&self.installed, &wanted);
+        self.installed = wanted;
+        let sent = changes.len();
+        let delta = settle(&mut self.engine, changes)?;
+        tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir settle");
+        Ok((self.closure(u)?, self.engine.counters()))
+    }
+
+    fn change(
+        &mut self,
+        plan: &rule_interp::Plan,
+        rows: &[SignedRow],
+        what: &'static str,
+    ) -> Result<(), ivm_engine::EngineError> {
+        let mut changes: Vec<ir::SourceChange> = Vec::with_capacity(rows.len());
+        for change in rows {
+            if !plan
+                .keys
+                .contains(&(change.row.rel.0, change.row.args.len()))
+            {
+                return Err(ivm_engine::EngineError::new(
+                    ivm_engine::Stage::Settle,
+                    None,
+                    ivm_engine::ErrorKind::Unsupported(what),
+                ));
+            }
+            let (rel, row) = self
+                .interner
+                .seed_row(&mut self.engine, &self.shape, &change.row)?;
+            changes.push(ir::SourceChange {
+                rel,
+                row,
+                w: change.weight,
+            });
+        }
+        changes.sort_by(|a, b| (a.rel, &a.row).cmp(&(b.rel, &b.row)));
+        let mut consolidated: Vec<ir::SourceChange> = Vec::with_capacity(changes.len());
+        for change in changes {
+            match consolidated.last_mut() {
+                Some(last) if last.rel == change.rel && last.row == change.row => {
+                    last.w += change.w
+                }
+                _ => consolidated.push(change),
+            }
+        }
+        consolidated.retain(|change| change.w != 0);
+        for change in &consolidated {
+            let key = (change.rel, change.row.clone());
+            if change.w > 0 {
+                self.installed.insert(key);
+            } else {
+                self.installed.remove(&key);
+            }
+        }
+        let sent = consolidated.len();
+        let delta = settle(&mut self.engine, consolidated)?;
+        tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir apply");
+        Ok(())
+    }
+
+    fn closure(&self, u: &Universe) -> Result<Closure, ivm_engine::EngineError> {
+        let rows = rule_interp::decode_facts(u, &self.engine, &self.shape)?;
+        tracing::info!(target: "dl8::ir", rows = rows.len(), "ir snapshot");
+        Ok(Closure {
+            rows,
+            diagnostics: Vec::new(),
+        })
+    }
+
+    fn counters(&self) -> ivm_engine::Counters {
+        self.engine.counters()
     }
 }
