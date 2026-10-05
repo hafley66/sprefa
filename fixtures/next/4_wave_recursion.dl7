@@ -1,6 +1,6 @@
 ; A relation derived recursively inside one wave: `reach` walks the wave's
-; graph. The wave lowering inlines each in-wave relation into the `next`
-; bodies, and a recursive one has no inline form: not built yet.
+; graph. The wave lowering evaluates the recursive component as a LetRec
+; nested in the wave LetRec, so it runs to its fixed point in every wave.
 
 (: graph_item (* (: owner int) (: child int)))
 (: reach (* (: node int)))
