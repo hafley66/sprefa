@@ -7,3 +7,6 @@ jobs = 3
 
 [env]
 RUST_TEST_THREADS = "4"
+# Bundled SQLite's attached-schema ceiling (default 10, at most 125): ivm-sqlite's
+# `Engine::install` opens one shard schema per `SHARD_OBJECTS` node objects, up to `SHARDS`.
+LIBSQLITE3_FLAGS = "SQLITE_MAX_ATTACHED=125"
