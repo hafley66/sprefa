@@ -84,3 +84,23 @@ No LSP code. Crosswalk `plans/v8/2026-09-26-crosswalk.md:44` R32 missing; `:184-
 v1 notify 100 ms; v3 notify_debouncer_mini + gitignore; v4 git_watch domains, Watchman (branch);
 v5 daemon per-root notify + `.git` watch, quiet 120 ms / max 600 ms (`v5/src/daemon/shell/watch.rs`),
 `watchgate.rs`, HEAD poll example. v8: `fs.watch` 100 ms debounce, `git.refs`.
+
+## Inventory v1-v3 (read-only agent, 2026-10-05)
+
+A1 = `~/projects/sprefa-archive-20260428`, A3 = `~/projects/sprefa-archive-20260701/v3`.
+Corrections: v1 source exists (`A1/crates/sprf-lsp/src/`, main.rs 2317 lines); v3 caps are
+`A3/crates/server/src/backend.rs:259-279`; `_i_lsp_invalidate_kernel.sh` runs a deleted binary;
+the VS Code extension (`~/projects/sprefa/editors/vscode`) is gone from disk, known only from chat logs.
+
+| version | server | sync / update | features | tests |
+|---|---|---|---|---|
+| v1 | tower-lsp stdio `sprf-lsp` | FULL; every keystroke reanalyzes unsaved buffers, no debounce; cache by (URI, version), 100 entries | completion (tags, rule names, scoped `$captures`, files via rg/find, folders, repos, git branches/tags, textEdit ranges); hover (capture values from SQLite, fs matches as `file://` links); same-file definition; diagnostics coded by element (`file-pattern`, `json-path`, ...) | `A1/tests/e2e/test_lsp.py` (real stdio; hover tests assert nothing); unit tests in main.rs, context.rs (12), db.rs, hover.rs, state.rs |
+| v2 | tower-lsp stdio + WS `/lsp` + stdio->WS proxy | FULL; every keystroke full pipeline run over `BufferOverlay` on git blobs | operator-owned hover (op, capture grouped by file/rev, cross-ref, match + non-matches); partial-evaluation completion (splice wildcard at cursor, run, harvest witnesses); diagnostics deduped with xN, HINT demotion; UTF-16 positions | `A1/v2/tests/lsp_smoke.rs`, `doc_session.rs` (17), `hover_render.rs` |
+| v3 | `sprefa-server --lsp-stdio` + WS | didChange: overlay + reparse + cheap diags, switchMap-style cancel per op slot; didOpen/didSave: drain every pipe over every seed; generation counter; fs watcher 200 ms evicts `OpCache` (no republish) | enriched hover runs pipe prefix (cursor tables, config banner, pipe position); `lsp[severity]` op publishes diagnostics onto target files with related info, stale targets cleared; `sprf/no-output`, `sprf/write-pending`; 2 s showMessage warning; completion of ops + upstream captures | `A3/tests/smoke/_f`, `_i`, `_k`; backend.rs unit tests incl. 4 insta hover snapshots; session.rs; ops/lsp.rs |
+
+### In v1-v3, absent from v5
+
+Completion (all three); live didChange over unsaved-buffer overlays (v5 sync NONE); hover that
+runs the pipeline; rule-authored diagnostics on non-source target files (`lsp[severity]`);
+runtime choke / write-pending diagnostics; per-request cancellation; watcher-driven cache
+eviction; diagnostic collapsing; LSP over WebSocket into a shared daemon; `file://` links in hover.
