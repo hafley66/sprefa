@@ -100,8 +100,10 @@ pub fn expand_terms(
 
 /// The macrotime engine of one build: the macro rule cone lowered and
 /// installed once, every unit a frontier on it. Units must not see each
-/// other's rows, so a unit's seed rows leave in the first settle of the next
-/// unit. Rows hold `Universe` term ids, so one session serves one universe.
+/// other's rows: on an engine that rewinds, the next unit first returns the
+/// engine to its mark after `base`; on one that does not, a unit's seed rows
+/// leave in the first settle of the next unit. Rows hold `Universe` term ids,
+/// so one session serves one universe.
 pub struct MacroSession {
     pub ir: IrSession,
     /// The rule cone and macro seeds `ir` was prepared with.
@@ -111,9 +113,14 @@ pub struct MacroSession {
     /// What the macro program settled to before any unit entered: every
     /// unit's `Available` starts from it.
     pub base: Vec<SignedRow>,
-    /// Seed rows of the last unit, still in the engine; the next unit's first
-    /// settle retracts them.
+    /// Seed rows of the last unit, still in the engine; on an engine that
+    /// does not rewind, the next unit's first settle retracts them.
     pub resident: Vec<Row>,
+    /// The engine rewinds (`IrSession::rewinds`): `prepare` marks it after
+    /// `base` and every unit after the first enters on a rewound engine.
+    pub rewinds: bool,
+    /// A unit settled since the mark.
+    pub dirty: bool,
     /// Protocol rows the engine holds above `base`: the sum of every delta
     /// since `base`.
     pub net: HashMap<Row, i64>,
@@ -139,25 +146,35 @@ impl MacroSession {
             },
             base: Vec::new(),
             resident: Vec::new(),
+            rewinds: false,
+            dirty: false,
             net: HashMap::new(),
             prepares: 0,
             reprepares: 0,
         }
     }
 
-    /// Lower and install `program` with the declared sources and shapes and
-    /// settle its own seeds into `base`.
+    /// Lower and install `program` with the declared sources and shapes,
+    /// settle its own seeds into `base`, and mark the engine there when it
+    /// rewinds.
     fn prepare(&mut self, u: &mut Universe, program: &Program) -> Result<(), Vec<TermId>> {
         self.program = None;
         self.base.clear();
         self.resident.clear();
         self.net.clear();
+        self.dirty = false;
         let applied = self
             .ir
             .prepare(u, program, &self.declared)
             .map_err(|diagnostic| diagnostic_terms(u, &[diagnostic]))?;
         if !applied.diagnostics.is_empty() {
             return Err(diagnostic_terms(u, &applied.diagnostics));
+        }
+        self.rewinds = self.ir.rewinds();
+        if self.rewinds {
+            self.ir
+                .mark(u)
+                .map_err(|diagnostic| diagnostic_terms(u, &[diagnostic]))?;
         }
         self.base = applied.rows;
         self.program = Some(program.clone());
@@ -167,6 +184,7 @@ impl MacroSession {
             fingerprint = self.ir.fingerprint(),
             base = self.base.len(),
             shapes = self.declared.shapes.len(),
+            retire = if self.rewinds { "rewind" } else { "retract" },
             "macrotime prepare"
         );
         Ok(())
@@ -193,11 +211,12 @@ impl MacroSession {
         Ok(applied)
     }
 
-    /// The unit's graph rows enter at weight +1, the last unit's rows leave
-    /// at -1, in one settle. The returned rows are `net`: with `base` folded
-    /// into `available` first, the unit reads exactly its own closure. The
-    /// session prepares first when it holds no program or a different rule
-    /// cone.
+    /// The unit's graph rows enter at weight +1. The last unit's rows leave
+    /// first: a rewinding engine returns to its mark and `net` empties; any
+    /// other engine retracts them at -1 in the same settle. The returned rows
+    /// are `net`: with `base` folded into `available` first, the unit reads
+    /// exactly its own closure. The session prepares first when it holds no
+    /// program or a different rule cone.
     fn enter(
         &mut self,
         u: &mut Universe,
@@ -216,6 +235,16 @@ impl MacroSession {
             self.declared.sources = sources;
             self.prepare(u, program)?;
         }
+        let rewound = self.rewinds && self.dirty;
+        if rewound {
+            if let Err(diagnostic) = self.ir.rewind(u) {
+                self.program = None;
+                return Err(diagnostic_terms(u, &[diagnostic]));
+            }
+            self.net.clear();
+            self.dirty = false;
+        }
+        self.dirty = true;
         let mut changes: Vec<SignedRow> = self
             .resident
             .iter()
@@ -229,7 +258,7 @@ impl MacroSession {
         match self.settle(u, protocol, &changes) {
             Ok(applied) => {
                 self.resident.clear();
-                tracing::info!(target: "dl8::macrotime", retracted, "macrotime enter");
+                tracing::info!(target: "dl8::macrotime", retracted, rewound, "macrotime enter");
                 *available = self.available(u, protocol, graph);
                 Ok(Applied {
                     rows: self
@@ -294,6 +323,7 @@ impl MacroSession {
         }
         tracing::info!(target: "dl8::macrotime", added = ?added, "macrotime declared shapes");
         self.prepare(u, program)?;
+        self.dirty = true;
         *available = self.available(u, protocol, graph);
         let changes: Vec<SignedRow> = seeds
             .into_iter()
@@ -316,9 +346,9 @@ impl MacroSession {
     }
 
     /// The unit is done: the engine holds its graph's seed rows until the
-    /// next unit's first settle retracts them.
+    /// next unit rewinds the engine or its first settle retracts them.
     fn leave(&mut self, u: &mut Universe, protocol: &Protocol, graph: &Graph) {
-        if self.program.is_some() {
+        if self.program.is_some() && !self.rewinds {
             self.resident = syntax_seeds(u, protocol, &graph.rows);
         }
     }
