@@ -1,0 +1,1247 @@
+; The macrotime wave loop as one `next` program (`DL8_MACROTIME=engine`). The
+; expander enters a unit's syntax graph as the wave-0 rows of the `graph_*`
+; wave relations and reads the settled result once. Each wave the macros run
+; over the graph (the bridges below copy it into the protocol relations), the
+; rules below derive the rows the graph loses (`removed_*`) and gains
+; (`added_*`), and the `next` rules carry the graph to the following wave.
+; A wave that claims nothing, or stops on a diagnostic, or repeats an earlier
+; graph, changes no wave relation, so the waves reach their fixed point there.
+; The wave LetRec's limit is the wave limit: a 65th changing wave fails the
+; settle, which the expander reports as `expansion_round_limit(64)`.
+;
+; Port of `v7/src/1_libtime/0b_syntax_rewriter.pl`: walk the active frontier,
+; replace each claimed node by its ordered expansion outputs, give every form
+; above them new child edges, keep what the new frontier reaches. Only the
+; region a wave rewrites is derived: the walk follows the ancestors of claimed
+; nodes, removal looks at the subtrees of replaced nodes.
+;
+; TypeScript-shaped row signatures (NodeId and Relation as in 0_standard.dl7):
+;
+; type CurWave = Relation<readonly [wave: number]>
+; type GraphItem = Relation<readonly [owner: NodeId, child: NodeId, ordinal: number]>
+; type Replaced = Relation<readonly [node: NodeId, output: NodeId, ordinal: number]>
+; type Slot = Relation<readonly [owner: NodeId, ordinal: number, size: number]>
+; type WaveHistItem = Relation<readonly [
+;   wave: number, owner: NodeId, child: NodeId, ordinal: number,
+; ]>
+
+; Wave relations: the wave number, the graph, the graph of every earlier
+; rewriting wave, and the origin rows of every rewrite.
+(: cur_wave
+   (* (: wave int)))
+
+(cur_wave 0)
+
+(: graph_node
+   (* (: node type)))
+
+(: graph_item
+   (* (: owner type)
+      (: child type)
+      (: ordinal int)))
+
+(: graph_frontier
+   (* (: ordinal int)
+      (: node type)))
+
+(: graph_form
+   (* (: node type)))
+
+(: graph_atom
+   (* (: node type)
+      (: name str)))
+
+(: graph_literal
+   (* (: node type)
+      (: value any)))
+
+(: graph_variable
+   (* (: node type)
+      (: variable type)
+      (: name str)))
+
+(: graph_source
+   (* (: node type)
+      (: path any)
+      (: start_offset int)
+      (: end_offset int)
+      (: start_line int)
+      (: start_column int)
+      (: end_line int)
+      (: end_column int)))
+
+(: wave_hist_wave (* (: wave int)))
+(: wave_hist_node (* (: wave int) (: node type)))
+(: wave_hist_item (* (: wave int) (: owner type) (: child type) (: ordinal int)))
+(: wave_hist_frontier (* (: wave int) (: ordinal int) (: node type)))
+(: wave_hist_form (* (: wave int) (: node type)))
+(: wave_hist_atom (* (: wave int) (: node type) (: name str)))
+(: wave_hist_literal (* (: wave int) (: node type) (: value any)))
+(: wave_hist_variable (* (: wave int) (: node type) (: variable type) (: name str)))
+(: wave_hist_source (* (: wave int) (: node type) (: path any) (: start_offset int) (: end_offset int) (: start_line int) (: start_column int) (: end_line int) (: end_column int)))
+(: expansion_claim (* (: invocation type) (: macro str) (: wave int)))
+(: expansion_output (* (: invocation type) (: macro str) (: wave int) (: output type) (: ordinal int)))
+
+(<- (node ?Node)
+    (graph_node ?Node))
+
+(<- (: ?Owner item ?Child ?Ordinal)
+    (graph_item ?Owner ?Child ?Ordinal))
+
+(<- (syntax_form ?Node)
+    (graph_form ?Node))
+
+(<- (syntax_atom ?Node ?Name)
+    (graph_atom ?Node ?Name))
+
+(<- (syntax_literal ?Node ?Value)
+    (graph_literal ?Node ?Value))
+
+(<- (syntax_variable ?Node ?Variable ?Name)
+    (graph_variable ?Node ?Variable ?Name))
+
+(<- (syntax_source ?Node ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (graph_source ?Node ?Path ?StartOffset ?EndOffset
+                  ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+; In-wave relations. The gates carry the wave number; nothing else does.
+(: rewrite_subject (* (: node type)))
+(: rewrite_up (* (: node type) (: ancestor type)))
+(: rewrite_active (* (: node type)))
+(: rewrite_claim (* (: invocation type) (: macro str)))
+(: rewrite_claimed (* (: invocation type)))
+(: rewrite_reported (* (: node type) (: payload str)))
+(: rewrite_pending (* (: wave int)))
+(: rewrite_extra_node (* (: node type)))
+(: rewrite_extra_item (* (: owner type) (: child type) (: ordinal int)))
+(: rewrite_extra_form (* (: node type)))
+(: rewrite_extra_atom (* (: node type) (: name str)))
+(: rewrite_extra_literal (* (: node type) (: value any)))
+(: rewrite_extra_variable (* (: node type) (: variable type) (: name str)))
+(: rewrite_extra_source (* (: node type) (: path any) (: start_offset int) (: end_offset int) (: start_line int) (: start_column int) (: end_line int) (: end_column int)))
+(: rewrite_path (* (: node type)))
+(: rewrite_walk (* (: node type)))
+(: rewrite_owner (* (: owner type)))
+(: rewrite_hit (* (: invocation type) (: macro str)))
+(: rewrite_hit_node (* (: invocation type)))
+(: rewrite_dirty (* (: owner type)))
+(: rewrite_frontier_dirty (* (: wave int)))
+(: rewrite_macro_count (* (: invocation type) (: count int)))
+(: rewrite_conflict (* (: invocation type) (: macro str)))
+(: rewrite_single (* (: invocation type)))
+(: replaced (* (: invocation type) (: output type) (: ordinal int)))
+(: rewrite_output_count (* (: invocation type) (: count int)))
+(: rewrite_has_output (* (: invocation type)))
+(: rewrite_ordinal_count (* (: invocation type) (: ordinal int) (: count int)))
+(: rewrite_dense_output (* (: invocation type) (: output type) (: ordinal int)))
+(: rewrite_non_dense (* (: invocation type)))
+(: rewrite_identity_query (* (: node type)))
+(: rewrite_identity (* (: node type)))
+(: rewrite_unknown (* (: invocation type) (: output type)))
+(: rewrite_slotted (* (: node type)))
+(: rewrite_size (* (: node type) (: size int)))
+(: rewrite_becomes (* (: node type) (: output type) (: ordinal int)))
+(: slot (* (: owner type) (: ordinal int) (: size int)))
+(: slot_start (* (: owner type) (: ordinal int) (: start int)))
+(: rewrite_child_count (* (: owner type) (: count int)))
+(: rewrite_child_at (* (: owner type) (: ordinal int) (: count int)))
+(: rewrite_dense_child (* (: owner type) (: child type) (: ordinal int)))
+(: rewrite_non_dense_children (* (: owner type)))
+(: root_slot (* (: ordinal int) (: size int)))
+(: root_start (* (: ordinal int) (: start int)))
+(: rewrite_root_count (* (: count int)))
+(: rewrite_root_at (* (: ordinal int) (: count int)))
+(: rewrite_dense_root (* (: ordinal int) (: node type)))
+(: rewrite_non_dense_frontier (* (: wave int)))
+(: new_item (* (: owner type) (: child type) (: ordinal int)))
+(: new_frontier (* (: ordinal int) (: node type)))
+(: rewrite_candidate (* (: node type)))
+(: reach (* (: node type)))
+(: rewrite_gone (* (: node type)))
+(: rewrite_touch (* (: node type)))
+(: rewrite_reached (* (: node type)))
+(: rewrite_added_extra_item (* (: owner type) (: child type) (: ordinal int)))
+(: rewrite_grown (* (: owner type)))
+(: rewrite_post_item (* (: owner type) (: child type) (: ordinal int)))
+(: rewrite_post_count (* (: owner type) (: count int)))
+(: rewrite_post_at (* (: owner type) (: ordinal int) (: count int)))
+(: rewrite_dense_post (* (: owner type) (: child type) (: ordinal int)))
+(: rewrite_missing_node (* (: node type)))
+(: removed_node (* (: node type)))
+(: removed_item (* (: owner type) (: child type) (: ordinal int)))
+(: removed_frontier (* (: ordinal int) (: node type)))
+(: removed_form (* (: node type)))
+(: removed_atom (* (: node type) (: name str)))
+(: removed_literal (* (: node type) (: value any)))
+(: removed_variable (* (: node type) (: variable type) (: name str)))
+(: removed_source (* (: node type) (: path any) (: start_offset int) (: end_offset int) (: start_line int) (: start_column int) (: end_line int) (: end_column int)))
+(: added_node (* (: node type)))
+(: added_item (* (: owner type) (: child type) (: ordinal int)))
+(: added_frontier (* (: ordinal int) (: node type)))
+(: added_form (* (: node type)))
+(: added_atom (* (: node type) (: name str)))
+(: added_literal (* (: node type) (: value any)))
+(: added_variable (* (: node type) (: variable type) (: name str)))
+(: added_source (* (: node type) (: path any) (: start_offset int) (: end_offset int) (: start_line int) (: start_column int) (: end_line int) (: end_column int)))
+(: rewrite_stop (* (: wave int)))
+(: rewrite_ready (* (: wave int)))
+(: rewrite_cycle (* (: wave int)))
+(: rewrite_apply (* (: wave int)))
+(: wave_post_node (* (: node type)))
+(: wave_post_item (* (: owner type) (: child type) (: ordinal int)))
+(: wave_post_frontier (* (: ordinal int) (: node type)))
+(: wave_post_form (* (: node type)))
+(: wave_post_atom (* (: node type) (: name str)))
+(: wave_post_literal (* (: node type) (: value any)))
+(: wave_post_variable (* (: node type) (: variable type) (: name str)))
+(: wave_post_source (* (: node type) (: path any) (: start_offset int) (: end_offset int) (: start_line int) (: start_column int) (: end_line int) (: end_column int)))
+(: wave_state_wave (* (: wave int)))
+(: wave_state_node (* (: wave int) (: node type)))
+(: wave_state_item (* (: wave int) (: owner type) (: child type) (: ordinal int)))
+(: wave_state_frontier (* (: wave int) (: ordinal int) (: node type)))
+(: wave_state_form (* (: wave int) (: node type)))
+(: wave_state_atom (* (: wave int) (: node type) (: name str)))
+(: wave_state_literal (* (: wave int) (: node type) (: value any)))
+(: wave_state_variable (* (: wave int) (: node type) (: variable type) (: name str)))
+(: wave_state_source (* (: wave int) (: node type) (: path any) (: start_offset int) (: end_offset int) (: start_line int) (: start_column int) (: end_line int) (: end_column int)))
+(: wave_differ (* (: wave int)))
+
+; A claim or reported diagnostic counts only on a node the frontier reaches
+; over item edges: one of its graph ancestors is a frontier node.
+(<- (rewrite_subject ?Node)
+    (syntax_claim ?Node ?Macro))
+
+(<- (rewrite_subject ?Node)
+    (syntax_diagnostic ?Node ?Payload))
+
+(<- (rewrite_up ?Node ?Node)
+    (rewrite_subject ?Node))
+
+(<- (rewrite_up ?Node ?Owner)
+    (rewrite_up ?Node ?Child)
+    (graph_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_active ?Node)
+    (rewrite_up ?Node ?Root)
+    (graph_frontier ?Ordinal ?Root))
+
+(<- (rewrite_claim ?Node ?Macro)
+    (rewrite_active ?Node)
+    (syntax_claim ?Node ?Macro))
+
+(<- (rewrite_claimed ?Node)
+    (rewrite_claim ?Node ?Macro))
+
+(<- (rewrite_reported ?Node ?Payload)
+    (rewrite_active ?Node)
+    (syntax_diagnostic ?Node ?Payload))
+
+; Everything below runs only in a wave that rewrites.
+(<- (rewrite_pending ?W)
+    (cur_wave ?W)
+    (rewrite_claim ?Node ?Macro))
+
+; Rows the macros derive that the graph does not hold.
+(<- (rewrite_extra_node ?Node)
+    (rewrite_pending ?W)
+    (node ?Node)
+    (not (graph_node ?Node)))
+
+(<- (rewrite_extra_item ?Owner ?Child ?Ordinal)
+    (rewrite_pending ?W)
+    (: ?Owner item ?Child ?Ordinal)
+    (not (graph_item ?Owner ?Child ?Ordinal)))
+
+(<- (rewrite_extra_form ?Node)
+    (rewrite_pending ?W)
+    (syntax_form ?Node)
+    (not (graph_form ?Node)))
+
+(<- (rewrite_extra_atom ?Node ?Name)
+    (rewrite_pending ?W)
+    (syntax_atom ?Node ?Name)
+    (not (graph_atom ?Node ?Name)))
+
+(<- (rewrite_extra_literal ?Node ?Value)
+    (rewrite_pending ?W)
+    (syntax_literal ?Node ?Value)
+    (not (graph_literal ?Node ?Value)))
+
+(<- (rewrite_extra_variable ?Node ?Variable ?Name)
+    (rewrite_pending ?W)
+    (syntax_variable ?Node ?Variable ?Name)
+    (not (graph_variable ?Node ?Variable ?Name)))
+
+(<- (rewrite_extra_source ?Node ?Path ?StartOffset ?EndOffset
+                          ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (rewrite_pending ?W)
+    (syntax_source ?Node ?Path ?StartOffset ?EndOffset
+                   ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (not (graph_source ?Node ?Path ?StartOffset ?EndOffset
+                       ?StartLine ?StartColumn ?EndLine ?EndColumn)))
+
+; The walk goes from the frontier through the children of every unclaimed
+; form; a claimed node is replaced whole. It is derived only on the path set:
+; claimed nodes, graph owners of derived edges, and their ancestors through
+; unclaimed forms. A node of the path set is walked iff the walk reaches it.
+(<- (rewrite_path ?Node)
+    (rewrite_claimed ?Node))
+
+(<- (rewrite_path ?Owner)
+    (rewrite_extra_item ?Owner ?Child ?Ordinal)
+    (graph_node ?Owner))
+
+(<- (rewrite_path ?Owner)
+    (rewrite_path ?Child)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (graph_form ?Owner)
+    (not (rewrite_claimed ?Owner)))
+
+(<- (rewrite_walk ?Node)
+    (rewrite_pending ?W)
+    (graph_frontier ?Ordinal ?Node)
+    (rewrite_path ?Node))
+
+(<- (rewrite_walk ?Child)
+    (rewrite_walk ?Owner)
+    (graph_form ?Owner)
+    (not (rewrite_claimed ?Owner))
+    (graph_item ?Owner ?Child ?Ordinal)
+    (rewrite_path ?Child))
+
+; A walked unclaimed form has its child edges rebuilt; only a dirty one, with
+; a replaced child, changes.
+(<- (rewrite_owner ?Owner)
+    (rewrite_walk ?Owner)
+    (graph_form ?Owner)
+    (not (rewrite_claimed ?Owner)))
+
+(<- (rewrite_hit ?Node ?Macro)
+    (rewrite_walk ?Node)
+    (rewrite_claim ?Node ?Macro))
+
+(<- (rewrite_hit_node ?Node)
+    (rewrite_hit ?Node ?Macro))
+
+(<- (rewrite_dirty ?Owner)
+    (rewrite_owner ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (rewrite_hit_node ?Child))
+
+(<- (rewrite_frontier_dirty ?W)
+    (cur_wave ?W)
+    (graph_frontier ?Ordinal ?Node)
+    (rewrite_hit_node ?Node))
+
+(<- (rewrite_macro_count ?Node (count ?Macro))
+    (rewrite_hit ?Node ?Macro))
+
+(<- (rewrite_conflict ?Node ?Macro)
+    (rewrite_hit ?Node ?Macro)
+    (rewrite_macro_count ?Node ?Count)
+    (int.lt 1 ?Count))
+
+(<- (rewrite_single ?Node)
+    (rewrite_macro_count ?Node 1))
+
+(<- (replaced ?Node ?Output ?Ordinal)
+    (rewrite_hit ?Node ?Macro)
+    (: ?Node expansion ?Output ?Ordinal))
+
+; Dense: the ordinals of one invocation's outputs are 0 .. count - 1, each once.
+(<- (rewrite_output_count ?Node (count ?Output))
+    (replaced ?Node ?Output ?Ordinal))
+
+(<- (rewrite_has_output ?Node)
+    (replaced ?Node ?Output ?Ordinal))
+
+(<- (rewrite_ordinal_count ?Node ?Ordinal (count ?Output))
+    (replaced ?Node ?Output ?Ordinal))
+
+(<- (rewrite_dense_output ?Node ?Output ?Ordinal)
+    (replaced ?Node ?Output ?Ordinal)
+    (rewrite_output_count ?Node ?Count)
+    (int.le 0 ?Ordinal)
+    (int.lt ?Ordinal ?Count)
+    (rewrite_ordinal_count ?Node ?Ordinal 1))
+
+(<- (rewrite_non_dense ?Node)
+    (rewrite_single ?Node)
+    (replaced ?Node ?Output ?Ordinal)
+    (not (rewrite_dense_output ?Node ?Output ?Ordinal)))
+
+; `syntax_identities`, asked only of the nodes the rules below test.
+(<- (rewrite_identity_query ?Output)
+    (replaced ?Node ?Output ?Ordinal))
+
+(<- (rewrite_identity_query ?Node)
+    (reach ?Node)
+    (not (graph_node ?Node)))
+
+(<- (rewrite_identity_query ?Child)
+    (reach ?Node)
+    (not (graph_node ?Node))
+    (: ?Node item ?Child ?Ordinal))
+
+(<- (rewrite_identity_query ?Owner)
+    (rewrite_extra_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_identity_query ?Child)
+    (rewrite_extra_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_identity_query ?Node)
+    (rewrite_extra_node ?Node))
+
+(<- (rewrite_identity ?Node)
+    (rewrite_identity_query ?Node)
+    (syntax_form ?Node))
+
+(<- (rewrite_identity ?Node)
+    (rewrite_identity_query ?Node)
+    (syntax_atom ?Node ?Name))
+
+(<- (rewrite_identity ?Node)
+    (rewrite_identity_query ?Node)
+    (syntax_literal ?Node ?Value))
+
+(<- (rewrite_identity ?Node)
+    (rewrite_identity_query ?Node)
+    (syntax_variable ?Node ?Variable ?Name))
+
+(<- (rewrite_unknown ?Node ?Output)
+    (rewrite_single ?Node)
+    (replaced ?Node ?Output ?Ordinal)
+    (not (rewrite_identity ?Output)))
+
+; What each child of a dirty form, and each root of a dirty frontier, becomes:
+; itself, or its outputs in ordinal order.
+(<- (rewrite_slotted ?Child)
+    (rewrite_dirty ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_slotted ?Node)
+    (rewrite_frontier_dirty ?W)
+    (graph_frontier ?Ordinal ?Node))
+
+(<- (rewrite_size ?Node 1)
+    (rewrite_slotted ?Node)
+    (not (rewrite_claimed ?Node)))
+
+(<- (rewrite_size ?Node ?Count)
+    (rewrite_slotted ?Node)
+    (rewrite_single ?Node)
+    (rewrite_output_count ?Node ?Count))
+
+(<- (rewrite_size ?Node 0)
+    (rewrite_slotted ?Node)
+    (rewrite_single ?Node)
+    (not (rewrite_has_output ?Node)))
+
+(<- (rewrite_becomes ?Node ?Node 0)
+    (rewrite_slotted ?Node)
+    (not (rewrite_claimed ?Node)))
+
+(<- (rewrite_becomes ?Node ?Output ?Ordinal)
+    (rewrite_slotted ?Node)
+    (rewrite_single ?Node)
+    (replaced ?Node ?Output ?Ordinal))
+
+; Flat ordinals: a child's slot is the number of nodes it becomes, its start
+; the sum of the slots before it, its outputs land at start + output ordinal.
+(<- (slot ?Owner ?Ordinal ?Size)
+    (rewrite_dirty ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (rewrite_size ?Child ?Size))
+
+(<- (slot_start ?Owner 0 0)
+    (slot ?Owner 0 ?Size))
+
+(<- (slot_start ?Owner ?Next ?NextStart)
+    (slot_start ?Owner ?Ordinal ?Start)
+    (slot ?Owner ?Ordinal ?Size)
+    (int.add ?Ordinal 1 ?Next)
+    (slot ?Owner ?Next ?NextSize)
+    (int.add ?Start ?Size ?NextStart))
+
+; The running sum needs a dirty form's child ordinals to be 0 .. n - 1.
+(<- (rewrite_child_count ?Owner (count ?Child))
+    (rewrite_dirty ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_child_at ?Owner ?Ordinal (count ?Child))
+    (rewrite_dirty ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_dense_child ?Owner ?Child ?Ordinal)
+    (rewrite_dirty ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (rewrite_child_count ?Owner ?Count)
+    (int.le 0 ?Ordinal)
+    (int.lt ?Ordinal ?Count)
+    (rewrite_child_at ?Owner ?Ordinal 1))
+
+(<- (rewrite_non_dense_children ?Owner)
+    (rewrite_dirty ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (not (rewrite_dense_child ?Owner ?Child ?Ordinal)))
+
+(<- (new_item ?Owner ?Output ?Position)
+    (rewrite_dirty ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (slot_start ?Owner ?Ordinal ?Start)
+    (rewrite_becomes ?Child ?Output ?OutputOrdinal)
+    (int.add ?Start ?OutputOrdinal ?Position))
+
+; The frontier is rebuilt the same way when a root is replaced.
+(<- (root_slot ?Ordinal ?Size)
+    (rewrite_frontier_dirty ?W)
+    (graph_frontier ?Ordinal ?Node)
+    (rewrite_size ?Node ?Size))
+
+(<- (root_start 0 0)
+    (root_slot 0 ?Size))
+
+(<- (root_start ?Next ?NextStart)
+    (root_start ?Ordinal ?Start)
+    (root_slot ?Ordinal ?Size)
+    (int.add ?Ordinal 1 ?Next)
+    (root_slot ?Next ?NextSize)
+    (int.add ?Start ?Size ?NextStart))
+
+(<- (rewrite_root_count (count ?Node))
+    (rewrite_frontier_dirty ?W)
+    (graph_frontier ?Ordinal ?Node))
+
+(<- (rewrite_root_at ?Ordinal (count ?Node))
+    (rewrite_frontier_dirty ?W)
+    (graph_frontier ?Ordinal ?Node))
+
+(<- (rewrite_dense_root ?Ordinal ?Node)
+    (rewrite_frontier_dirty ?W)
+    (graph_frontier ?Ordinal ?Node)
+    (rewrite_root_count ?Count)
+    (int.le 0 ?Ordinal)
+    (int.lt ?Ordinal ?Count)
+    (rewrite_root_at ?Ordinal 1))
+
+(<- (rewrite_non_dense_frontier ?W)
+    (rewrite_frontier_dirty ?W)
+    (graph_frontier ?Ordinal ?Node)
+    (not (rewrite_dense_root ?Ordinal ?Node)))
+
+(<- (new_frontier ?Position ?Output)
+    (rewrite_frontier_dirty ?W)
+    (graph_frontier ?Ordinal ?Node)
+    (root_start ?Ordinal ?Start)
+    (rewrite_becomes ?Node ?Output ?OutputOrdinal)
+    (int.add ?Start ?OutputOrdinal ?Position))
+
+; Candidates: the graph below the replaced nodes. A graph node outside them
+; stays reached; a candidate or a node the macros derived is reached when the
+; new frontier reaches it over rebuilt edges, the graph's edges of a form
+; that was not rebuilt, and derived edges between nodes with a syntax row.
+(<- (rewrite_candidate ?Node)
+    (rewrite_hit_node ?Node))
+
+(<- (rewrite_candidate ?Child)
+    (rewrite_candidate ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal))
+
+(<- (reach ?Node)
+    (new_frontier ?Position ?Node)
+    (rewrite_candidate ?Node))
+
+(<- (reach ?Node)
+    (new_frontier ?Position ?Node)
+    (not (graph_node ?Node)))
+
+(<- (reach ?Node)
+    (rewrite_pending ?W)
+    (not (rewrite_frontier_dirty ?W))
+    (graph_frontier ?Ordinal ?Node)
+    (rewrite_candidate ?Node))
+
+(<- (reach ?Child)
+    (new_item ?Owner ?Child ?Position)
+    (rewrite_candidate ?Child))
+
+(<- (reach ?Child)
+    (new_item ?Owner ?Child ?Position)
+    (not (graph_node ?Child)))
+
+(<- (reach ?Child)
+    (rewrite_candidate ?Child)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (not (rewrite_candidate ?Owner))
+    (not (rewrite_dirty ?Owner)))
+
+(<- (reach ?Child)
+    (reach ?Owner)
+    (not (rewrite_dirty ?Owner))
+    (graph_item ?Owner ?Child ?Ordinal)
+    (rewrite_candidate ?Child))
+
+(<- (reach ?Child)
+    (reach ?Owner)
+    (not (graph_node ?Owner))
+    (: ?Owner item ?Child ?Ordinal)
+    (rewrite_identity ?Owner)
+    (rewrite_identity ?Child)
+    (rewrite_candidate ?Child))
+
+(<- (reach ?Child)
+    (reach ?Owner)
+    (not (graph_node ?Owner))
+    (: ?Owner item ?Child ?Ordinal)
+    (rewrite_identity ?Owner)
+    (rewrite_identity ?Child)
+    (not (graph_node ?Child)))
+
+(<- (reach ?Child)
+    (rewrite_extra_item ?Owner ?Child ?Ordinal)
+    (graph_node ?Owner)
+    (not (rewrite_owner ?Owner))
+    (not (rewrite_candidate ?Owner))
+    (rewrite_identity ?Owner)
+    (rewrite_identity ?Child)
+    (rewrite_candidate ?Child))
+
+(<- (reach ?Child)
+    (rewrite_extra_item ?Owner ?Child ?Ordinal)
+    (graph_node ?Owner)
+    (not (rewrite_owner ?Owner))
+    (not (rewrite_candidate ?Owner))
+    (rewrite_identity ?Owner)
+    (rewrite_identity ?Child)
+    (not (graph_node ?Child)))
+
+(<- (reach ?Child)
+    (rewrite_extra_item ?Owner ?Child ?Ordinal)
+    (graph_node ?Owner)
+    (reach ?Owner)
+    (not (rewrite_owner ?Owner))
+    (rewrite_identity ?Owner)
+    (rewrite_identity ?Child)
+    (rewrite_candidate ?Child))
+
+(<- (reach ?Child)
+    (rewrite_extra_item ?Owner ?Child ?Ordinal)
+    (graph_node ?Owner)
+    (reach ?Owner)
+    (not (rewrite_owner ?Owner))
+    (rewrite_identity ?Owner)
+    (rewrite_identity ?Child)
+    (not (graph_node ?Child)))
+
+(<- (rewrite_gone ?Node)
+    (rewrite_candidate ?Node)
+    (not (reach ?Node)))
+
+; A derived row is kept when its node is reached.
+(<- (rewrite_touch ?Node)
+    (rewrite_extra_node ?Node))
+
+(<- (rewrite_touch ?Owner)
+    (rewrite_extra_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_touch ?Child)
+    (rewrite_extra_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_touch ?Node)
+    (rewrite_extra_form ?Node))
+
+(<- (rewrite_touch ?Node)
+    (rewrite_extra_atom ?Node ?Name))
+
+(<- (rewrite_touch ?Node)
+    (rewrite_extra_literal ?Node ?Value))
+
+(<- (rewrite_touch ?Node)
+    (rewrite_extra_variable ?Node ?Variable ?Name))
+
+(<- (rewrite_touch ?Node)
+    (rewrite_extra_source ?Node ?Path ?StartOffset ?EndOffset
+                          ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (rewrite_reached ?Node)
+    (rewrite_touch ?Node)
+    (graph_node ?Node)
+    (not (rewrite_gone ?Node)))
+
+(<- (rewrite_reached ?Node)
+    (rewrite_touch ?Node)
+    (not (graph_node ?Node))
+    (reach ?Node))
+
+; A reached node the macros derived must carry a `node` row.
+(<- (rewrite_missing_node ?Node)
+    (reach ?Node)
+    (not (graph_node ?Node))
+    (not (node ?Node)))
+
+; Removed: graph rows the new graph does not keep.
+(<- (removed_frontier ?Ordinal ?Node)
+    (rewrite_frontier_dirty ?W)
+    (graph_frontier ?Ordinal ?Node)
+    (not (new_frontier ?Ordinal ?Node)))
+
+(<- (removed_node ?Node)
+    (rewrite_gone ?Node)
+    (graph_node ?Node))
+
+(<- (removed_form ?Node)
+    (rewrite_gone ?Node)
+    (graph_form ?Node))
+
+(<- (removed_atom ?Node ?Name)
+    (rewrite_gone ?Node)
+    (graph_atom ?Node ?Name))
+
+(<- (removed_literal ?Node ?Value)
+    (rewrite_gone ?Node)
+    (graph_literal ?Node ?Value))
+
+(<- (removed_variable ?Node ?Variable ?Name)
+    (rewrite_gone ?Node)
+    (graph_variable ?Node ?Variable ?Name))
+
+(<- (removed_source ?Node ?Path ?StartOffset ?EndOffset
+                    ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (rewrite_gone ?Node)
+    (graph_source ?Node ?Path ?StartOffset ?EndOffset
+                  ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (removed_item ?Owner ?Child ?Ordinal)
+    (rewrite_dirty ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (not (new_item ?Owner ?Child ?Ordinal)))
+
+(<- (removed_item ?Owner ?Child ?Ordinal)
+    (rewrite_gone ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (not (rewrite_dirty ?Owner)))
+
+(<- (removed_item ?Owner ?Child ?Ordinal)
+    (rewrite_gone ?Child)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (not (rewrite_dirty ?Owner)))
+
+; Added: the new frontier and edges, and derived rows on reached nodes.
+(<- (added_frontier ?Position ?Node)
+    (new_frontier ?Position ?Node)
+    (not (graph_frontier ?Position ?Node)))
+
+(<- (added_item ?Owner ?Child ?Position)
+    (new_item ?Owner ?Child ?Position)
+    (not (graph_item ?Owner ?Child ?Position)))
+
+(<- (rewrite_added_extra_item ?Owner ?Child ?Ordinal)
+    (rewrite_extra_item ?Owner ?Child ?Ordinal)
+    (rewrite_reached ?Owner)
+    (rewrite_reached ?Child)
+    (not (rewrite_owner ?Owner))
+    (rewrite_identity ?Owner)
+    (rewrite_identity ?Child))
+
+(<- (added_item ?Owner ?Child ?Ordinal)
+    (rewrite_added_extra_item ?Owner ?Child ?Ordinal))
+
+(<- (added_node ?Node)
+    (rewrite_extra_node ?Node)
+    (rewrite_reached ?Node)
+    (rewrite_identity ?Node))
+
+(<- (added_form ?Node)
+    (rewrite_extra_form ?Node)
+    (rewrite_reached ?Node))
+
+(<- (added_atom ?Node ?Name)
+    (rewrite_extra_atom ?Node ?Name)
+    (rewrite_reached ?Node))
+
+(<- (added_literal ?Node ?Value)
+    (rewrite_extra_literal ?Node ?Value)
+    (rewrite_reached ?Node))
+
+(<- (added_variable ?Node ?Variable ?Name)
+    (rewrite_extra_variable ?Node ?Variable ?Name)
+    (rewrite_reached ?Node))
+
+(<- (added_source ?Node ?Path ?StartOffset ?EndOffset
+                  ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (rewrite_extra_source ?Node ?Path ?StartOffset ?EndOffset
+                          ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (rewrite_reached ?Node))
+
+; Every graph form's child ordinals stay 0 .. n - 1: a form that gains derived
+; edges is checked with the edges it keeps.
+(<- (rewrite_grown ?Owner)
+    (rewrite_added_extra_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_post_item ?Owner ?Child ?Ordinal)
+    (rewrite_added_extra_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_post_item ?Owner ?Child ?Ordinal)
+    (rewrite_grown ?Owner)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (not (removed_item ?Owner ?Child ?Ordinal)))
+
+(<- (rewrite_post_count ?Owner (count ?Child))
+    (rewrite_post_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_post_at ?Owner ?Ordinal (count ?Child))
+    (rewrite_post_item ?Owner ?Child ?Ordinal))
+
+(<- (rewrite_dense_post ?Owner ?Child ?Ordinal)
+    (rewrite_post_item ?Owner ?Child ?Ordinal)
+    (rewrite_post_count ?Owner ?Count)
+    (int.le 0 ?Ordinal)
+    (int.lt ?Ordinal ?Count)
+    (rewrite_post_at ?Owner ?Ordinal 1))
+
+(<- (rewrite_non_dense_children ?Owner)
+    (rewrite_post_item ?Owner ?Child ?Ordinal)
+    (not (rewrite_dense_post ?Owner ?Child ?Ordinal)))
+
+; A diagnostic stops the waves: the graph is not rewritten, and the expander
+; reports the diagnostic rows of the last wave.
+(<- (rewrite_stop ?W)
+    (cur_wave ?W)
+    (rewrite_reported ?Node ?Payload))
+
+(<- (rewrite_stop ?W)
+    (cur_wave ?W)
+    (rewrite_conflict ?Node ?Macro))
+
+(<- (rewrite_stop ?W)
+    (cur_wave ?W)
+    (rewrite_non_dense ?Node))
+
+(<- (rewrite_stop ?W)
+    (cur_wave ?W)
+    (rewrite_unknown ?Node ?Output))
+
+(<- (rewrite_stop ?W)
+    (cur_wave ?W)
+    (rewrite_non_dense_children ?Owner))
+
+(<- (rewrite_stop ?W)
+    (cur_wave ?W)
+    (rewrite_missing_node ?Node))
+
+(<- (rewrite_stop ?W)
+    (rewrite_non_dense_frontier ?W))
+
+(<- (rewrite_ready ?W)
+    (rewrite_pending ?W)
+    (not (rewrite_stop ?W)))
+
+; The graph after this wave's rewrite.
+(<- (wave_post_node ?Node)
+    (rewrite_ready ?W)
+    (graph_node ?Node)
+    (not (removed_node ?Node)))
+
+(<- (wave_post_node ?Node)
+    (rewrite_ready ?W)
+    (added_node ?Node))
+
+(<- (wave_post_item ?Owner ?Child ?Ordinal)
+    (rewrite_ready ?W)
+    (graph_item ?Owner ?Child ?Ordinal)
+    (not (removed_item ?Owner ?Child ?Ordinal)))
+
+(<- (wave_post_item ?Owner ?Child ?Ordinal)
+    (rewrite_ready ?W)
+    (added_item ?Owner ?Child ?Ordinal))
+
+(<- (wave_post_frontier ?Ordinal ?Node)
+    (rewrite_ready ?W)
+    (graph_frontier ?Ordinal ?Node)
+    (not (removed_frontier ?Ordinal ?Node)))
+
+(<- (wave_post_frontier ?Ordinal ?Node)
+    (rewrite_ready ?W)
+    (added_frontier ?Ordinal ?Node))
+
+(<- (wave_post_form ?Node)
+    (rewrite_ready ?W)
+    (graph_form ?Node)
+    (not (removed_form ?Node)))
+
+(<- (wave_post_form ?Node)
+    (rewrite_ready ?W)
+    (added_form ?Node))
+
+(<- (wave_post_atom ?Node ?Name)
+    (rewrite_ready ?W)
+    (graph_atom ?Node ?Name)
+    (not (removed_atom ?Node ?Name)))
+
+(<- (wave_post_atom ?Node ?Name)
+    (rewrite_ready ?W)
+    (added_atom ?Node ?Name))
+
+(<- (wave_post_literal ?Node ?Value)
+    (rewrite_ready ?W)
+    (graph_literal ?Node ?Value)
+    (not (removed_literal ?Node ?Value)))
+
+(<- (wave_post_literal ?Node ?Value)
+    (rewrite_ready ?W)
+    (added_literal ?Node ?Value))
+
+(<- (wave_post_variable ?Node ?Variable ?Name)
+    (rewrite_ready ?W)
+    (graph_variable ?Node ?Variable ?Name)
+    (not (removed_variable ?Node ?Variable ?Name)))
+
+(<- (wave_post_variable ?Node ?Variable ?Name)
+    (rewrite_ready ?W)
+    (added_variable ?Node ?Variable ?Name))
+
+(<- (wave_post_source ?Node ?Path ?StartOffset ?EndOffset
+                      ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (rewrite_ready ?W)
+    (graph_source ?Node ?Path ?StartOffset ?EndOffset
+                  ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (not (removed_source ?Node ?Path ?StartOffset ?EndOffset
+                         ?StartLine ?StartColumn ?EndLine ?EndColumn)))
+
+(<- (wave_post_source ?Node ?Path ?StartOffset ?EndOffset
+                      ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (rewrite_ready ?W)
+    (added_source ?Node ?Path ?StartOffset ?EndOffset
+                  ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+; `expansion_cycle`: the rewritten graph equals the graph of this wave or of
+; an earlier rewriting wave. `wave_state_*` is every such graph by wave.
+(<- (wave_state_wave ?V)
+    (wave_hist_wave ?V))
+
+(<- (wave_state_wave ?W)
+    (rewrite_ready ?W))
+
+(<- (wave_state_node ?V ?Node)
+    (wave_hist_node ?V ?Node))
+
+(<- (wave_state_node ?W ?Node)
+    (rewrite_ready ?W)
+    (graph_node ?Node))
+
+(<- (wave_state_item ?V ?Owner ?Child ?Ordinal)
+    (wave_hist_item ?V ?Owner ?Child ?Ordinal))
+
+(<- (wave_state_item ?W ?Owner ?Child ?Ordinal)
+    (rewrite_ready ?W)
+    (graph_item ?Owner ?Child ?Ordinal))
+
+(<- (wave_state_frontier ?V ?Ordinal ?Node)
+    (wave_hist_frontier ?V ?Ordinal ?Node))
+
+(<- (wave_state_frontier ?W ?Ordinal ?Node)
+    (rewrite_ready ?W)
+    (graph_frontier ?Ordinal ?Node))
+
+(<- (wave_state_form ?V ?Node)
+    (wave_hist_form ?V ?Node))
+
+(<- (wave_state_form ?W ?Node)
+    (rewrite_ready ?W)
+    (graph_form ?Node))
+
+(<- (wave_state_atom ?V ?Node ?Name)
+    (wave_hist_atom ?V ?Node ?Name))
+
+(<- (wave_state_atom ?W ?Node ?Name)
+    (rewrite_ready ?W)
+    (graph_atom ?Node ?Name))
+
+(<- (wave_state_literal ?V ?Node ?Value)
+    (wave_hist_literal ?V ?Node ?Value))
+
+(<- (wave_state_literal ?W ?Node ?Value)
+    (rewrite_ready ?W)
+    (graph_literal ?Node ?Value))
+
+(<- (wave_state_variable ?V ?Node ?Variable ?Name)
+    (wave_hist_variable ?V ?Node ?Variable ?Name))
+
+(<- (wave_state_variable ?W ?Node ?Variable ?Name)
+    (rewrite_ready ?W)
+    (graph_variable ?Node ?Variable ?Name))
+
+(<- (wave_state_source ?V ?Node ?Path ?StartOffset ?EndOffset
+                       ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (wave_hist_source ?V ?Node ?Path ?StartOffset ?EndOffset
+                      ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (wave_state_source ?W ?Node ?Path ?StartOffset ?EndOffset
+                       ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (rewrite_ready ?W)
+    (graph_source ?Node ?Path ?StartOffset ?EndOffset
+                  ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+; A state differs from the rewritten graph when either holds a row the
+; other does not.
+(<- (wave_differ ?V)
+    (rewrite_ready ?W)
+    (wave_state_node ?V ?Node)
+    (not (wave_post_node ?Node)))
+
+(<- (wave_differ ?V)
+    (wave_state_wave ?V)
+    (wave_post_node ?Node)
+    (not (wave_state_node ?V ?Node)))
+
+(<- (wave_differ ?V)
+    (rewrite_ready ?W)
+    (wave_state_item ?V ?Owner ?Child ?Ordinal)
+    (not (wave_post_item ?Owner ?Child ?Ordinal)))
+
+(<- (wave_differ ?V)
+    (wave_state_wave ?V)
+    (wave_post_item ?Owner ?Child ?Ordinal)
+    (not (wave_state_item ?V ?Owner ?Child ?Ordinal)))
+
+(<- (wave_differ ?V)
+    (rewrite_ready ?W)
+    (wave_state_frontier ?V ?Ordinal ?Node)
+    (not (wave_post_frontier ?Ordinal ?Node)))
+
+(<- (wave_differ ?V)
+    (wave_state_wave ?V)
+    (wave_post_frontier ?Ordinal ?Node)
+    (not (wave_state_frontier ?V ?Ordinal ?Node)))
+
+(<- (wave_differ ?V)
+    (rewrite_ready ?W)
+    (wave_state_form ?V ?Node)
+    (not (wave_post_form ?Node)))
+
+(<- (wave_differ ?V)
+    (wave_state_wave ?V)
+    (wave_post_form ?Node)
+    (not (wave_state_form ?V ?Node)))
+
+(<- (wave_differ ?V)
+    (rewrite_ready ?W)
+    (wave_state_atom ?V ?Node ?Name)
+    (not (wave_post_atom ?Node ?Name)))
+
+(<- (wave_differ ?V)
+    (wave_state_wave ?V)
+    (wave_post_atom ?Node ?Name)
+    (not (wave_state_atom ?V ?Node ?Name)))
+
+(<- (wave_differ ?V)
+    (rewrite_ready ?W)
+    (wave_state_literal ?V ?Node ?Value)
+    (not (wave_post_literal ?Node ?Value)))
+
+(<- (wave_differ ?V)
+    (wave_state_wave ?V)
+    (wave_post_literal ?Node ?Value)
+    (not (wave_state_literal ?V ?Node ?Value)))
+
+(<- (wave_differ ?V)
+    (rewrite_ready ?W)
+    (wave_state_variable ?V ?Node ?Variable ?Name)
+    (not (wave_post_variable ?Node ?Variable ?Name)))
+
+(<- (wave_differ ?V)
+    (wave_state_wave ?V)
+    (wave_post_variable ?Node ?Variable ?Name)
+    (not (wave_state_variable ?V ?Node ?Variable ?Name)))
+
+(<- (wave_differ ?V)
+    (rewrite_ready ?W)
+    (wave_state_source ?V ?Node ?Path ?StartOffset ?EndOffset
+                       ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (not (wave_post_source ?Node ?Path ?StartOffset ?EndOffset
+                           ?StartLine ?StartColumn ?EndLine ?EndColumn)))
+
+(<- (wave_differ ?V)
+    (wave_state_wave ?V)
+    (wave_post_source ?Node ?Path ?StartOffset ?EndOffset
+                      ?StartLine ?StartColumn ?EndLine ?EndColumn)
+    (not (wave_state_source ?V ?Node ?Path ?StartOffset ?EndOffset
+                            ?StartLine ?StartColumn ?EndLine ?EndColumn)))
+
+(<- (rewrite_cycle ?W)
+    (rewrite_ready ?W)
+    (wave_state_wave ?V)
+    (not (wave_differ ?V)))
+
+(<- (rewrite_apply ?W)
+    (rewrite_ready ?W)
+    (not (rewrite_cycle ?W)))
+
+; The next wave: the rewritten graph when this wave applies, else this one.
+(<- (next (cur_wave ?Next))
+    (rewrite_apply ?W)
+    (int.add ?W 1 ?Next))
+
+(<- (next (cur_wave ?W))
+    (cur_wave ?W)
+    (not (rewrite_apply ?W)))
+
+(<- (next (graph_node ?Node))
+    (rewrite_apply ?W)
+    (wave_post_node ?Node))
+
+(<- (next (graph_node ?Node))
+    (cur_wave ?W)
+    (not (rewrite_apply ?W))
+    (graph_node ?Node))
+
+(<- (next (graph_item ?Owner ?Child ?Ordinal))
+    (rewrite_apply ?W)
+    (wave_post_item ?Owner ?Child ?Ordinal))
+
+(<- (next (graph_item ?Owner ?Child ?Ordinal))
+    (cur_wave ?W)
+    (not (rewrite_apply ?W))
+    (graph_item ?Owner ?Child ?Ordinal))
+
+(<- (next (graph_frontier ?Ordinal ?Node))
+    (rewrite_apply ?W)
+    (wave_post_frontier ?Ordinal ?Node))
+
+(<- (next (graph_frontier ?Ordinal ?Node))
+    (cur_wave ?W)
+    (not (rewrite_apply ?W))
+    (graph_frontier ?Ordinal ?Node))
+
+(<- (next (graph_form ?Node))
+    (rewrite_apply ?W)
+    (wave_post_form ?Node))
+
+(<- (next (graph_form ?Node))
+    (cur_wave ?W)
+    (not (rewrite_apply ?W))
+    (graph_form ?Node))
+
+(<- (next (graph_atom ?Node ?Name))
+    (rewrite_apply ?W)
+    (wave_post_atom ?Node ?Name))
+
+(<- (next (graph_atom ?Node ?Name))
+    (cur_wave ?W)
+    (not (rewrite_apply ?W))
+    (graph_atom ?Node ?Name))
+
+(<- (next (graph_literal ?Node ?Value))
+    (rewrite_apply ?W)
+    (wave_post_literal ?Node ?Value))
+
+(<- (next (graph_literal ?Node ?Value))
+    (cur_wave ?W)
+    (not (rewrite_apply ?W))
+    (graph_literal ?Node ?Value))
+
+(<- (next (graph_variable ?Node ?Variable ?Name))
+    (rewrite_apply ?W)
+    (wave_post_variable ?Node ?Variable ?Name))
+
+(<- (next (graph_variable ?Node ?Variable ?Name))
+    (cur_wave ?W)
+    (not (rewrite_apply ?W))
+    (graph_variable ?Node ?Variable ?Name))
+
+(<- (next (graph_source ?Node ?Path ?StartOffset ?EndOffset
+                        ?StartLine ?StartColumn ?EndLine ?EndColumn))
+    (rewrite_apply ?W)
+    (wave_post_source ?Node ?Path ?StartOffset ?EndOffset
+                      ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (next (graph_source ?Node ?Path ?StartOffset ?EndOffset
+                        ?StartLine ?StartColumn ?EndLine ?EndColumn))
+    (cur_wave ?W)
+    (not (rewrite_apply ?W))
+    (graph_source ?Node ?Path ?StartOffset ?EndOffset
+                  ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+; History: the graph of every wave that applied a rewrite.
+(<- (next (wave_hist_wave ?V))
+    (wave_hist_wave ?V))
+
+(<- (next (wave_hist_wave ?W))
+    (rewrite_apply ?W))
+
+(<- (next (wave_hist_node ?V ?Node))
+    (wave_hist_node ?V ?Node))
+
+(<- (next (wave_hist_node ?W ?Node))
+    (rewrite_apply ?W)
+    (graph_node ?Node))
+
+(<- (next (wave_hist_item ?V ?Owner ?Child ?Ordinal))
+    (wave_hist_item ?V ?Owner ?Child ?Ordinal))
+
+(<- (next (wave_hist_item ?W ?Owner ?Child ?Ordinal))
+    (rewrite_apply ?W)
+    (graph_item ?Owner ?Child ?Ordinal))
+
+(<- (next (wave_hist_frontier ?V ?Ordinal ?Node))
+    (wave_hist_frontier ?V ?Ordinal ?Node))
+
+(<- (next (wave_hist_frontier ?W ?Ordinal ?Node))
+    (rewrite_apply ?W)
+    (graph_frontier ?Ordinal ?Node))
+
+(<- (next (wave_hist_form ?V ?Node))
+    (wave_hist_form ?V ?Node))
+
+(<- (next (wave_hist_form ?W ?Node))
+    (rewrite_apply ?W)
+    (graph_form ?Node))
+
+(<- (next (wave_hist_atom ?V ?Node ?Name))
+    (wave_hist_atom ?V ?Node ?Name))
+
+(<- (next (wave_hist_atom ?W ?Node ?Name))
+    (rewrite_apply ?W)
+    (graph_atom ?Node ?Name))
+
+(<- (next (wave_hist_literal ?V ?Node ?Value))
+    (wave_hist_literal ?V ?Node ?Value))
+
+(<- (next (wave_hist_literal ?W ?Node ?Value))
+    (rewrite_apply ?W)
+    (graph_literal ?Node ?Value))
+
+(<- (next (wave_hist_variable ?V ?Node ?Variable ?Name))
+    (wave_hist_variable ?V ?Node ?Variable ?Name))
+
+(<- (next (wave_hist_variable ?W ?Node ?Variable ?Name))
+    (rewrite_apply ?W)
+    (graph_variable ?Node ?Variable ?Name))
+
+(<- (next (wave_hist_source ?V ?Node ?Path ?StartOffset ?EndOffset
+                            ?StartLine ?StartColumn ?EndLine ?EndColumn))
+    (wave_hist_source ?V ?Node ?Path ?StartOffset ?EndOffset
+                      ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+(<- (next (wave_hist_source ?W ?Node ?Path ?StartOffset ?EndOffset
+                            ?StartLine ?StartColumn ?EndLine ?EndColumn))
+    (rewrite_apply ?W)
+    (graph_source ?Node ?Path ?StartOffset ?EndOffset
+                  ?StartLine ?StartColumn ?EndLine ?EndColumn))
+
+; Origin rows accumulate across waves.
+(<- (next (expansion_claim ?Node ?Macro ?V))
+    (expansion_claim ?Node ?Macro ?V))
+
+(<- (next (expansion_claim ?Node ?Macro ?W))
+    (rewrite_apply ?W)
+    (rewrite_hit ?Node ?Macro))
+
+(<- (next (expansion_output ?Node ?Macro ?V ?Output ?Ordinal))
+    (expansion_output ?Node ?Macro ?V ?Output ?Ordinal))
+
+(<- (next (expansion_output ?Node ?Macro ?W ?Output ?Ordinal))
+    (rewrite_apply ?W)
+    (rewrite_hit ?Node ?Macro)
+    (replaced ?Node ?Output ?Ordinal))

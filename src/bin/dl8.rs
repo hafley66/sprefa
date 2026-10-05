@@ -178,7 +178,9 @@ fn main() -> ExitCode {
             ansi,
         });
     let _ = hafley_observe::init(config);
-    let exit = match dl8::_6_eval::ir_eval::configured_backend() {
+    let exit = match dl8::_6_eval::ir_eval::configured_backend()
+        .and(dl8::_1_macrotime::init_macrotime_mode().map(|_| ()))
+    {
         Ok(_) => run(cli.command),
         Err(error) => {
             tracing::error!(phase = "engine", error = %error);

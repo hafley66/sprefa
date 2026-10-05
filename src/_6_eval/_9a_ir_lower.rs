@@ -2950,6 +2950,7 @@ pub fn lower_declared(
     let mut fold_auxiliaries: BTreeMap<RelationKey, Vec<FoldAux>> = BTreeMap::new();
     let waves = waves(u, &program.rules, &keys).map_err(|name| unsupported(u, name))?;
     let mut next_bodies: BTreeMap<RelationKey, Vec<ir::NodeId>> = BTreeMap::new();
+    let mut wave_constructs = false;
     // Recording pass: the same rules into a scratch builder, collecting each relation's
     // narrowing union per join key (`Builder::narrow_unions`). Errors surface in the real pass.
     {
@@ -3005,12 +3006,14 @@ pub fn lower_declared(
             &program.rules,
         )
         .map_err(|name| unsupported(u, name))?;
-        let interned = b.intern_nodes.len() > requests_before || b.intern_readback_count > readbacks_before;
-        if b.intern_nodes.len() > requests_before {
-            let constructs_readback = rule.body.iter().any(|goal| {
+        let constructs = b.intern_nodes.len() > requests_before;
+        let reads_back = b.intern_readback_count > readbacks_before;
+        let constructs_readback = constructs
+            && rule.body.iter().any(|goal| {
                 Kernel::of(u, goal.rel) == Some(Kernel::Intern)
                     && matches!(goal.args.first(), Some(Arg::Ground(ctor)) if sum_readbacks.contains(ctor))
             });
+        if constructs {
             if constructs_readback {
                 for request in b.intern_nodes[requests_before..].to_vec() {
                     for constructor in &sum_readbacks {
@@ -3061,9 +3064,13 @@ pub fn lower_declared(
         let (head_key, next) = rule_key(u, rule);
         if let Some(waves) = &waves {
             if next || waves.cone.iter().any(|(members, _)| members.contains(&head_key)) {
-                if interned {
+                if reads_back {
                     return Err(unsupported(u, "intern readback in a wave rule"));
                 }
+                if constructs_readback {
+                    return Err(unsupported(u, "intern snapshot in a wave rule"));
+                }
+                wave_constructs |= constructs;
                 if body.fold_aux.is_some() {
                     return Err(unsupported(u, "declared fold in a wave rule"));
                 }
@@ -3173,6 +3180,10 @@ pub fn lower_declared(
         let last = *request_rels.last().unwrap();
         b.ir.outputs.push(last);
         visible.push((last, intern_rel, 3));
+    }
+    // A readback anywhere waits on per-level request relations a wave body cannot feed.
+    if wave_constructs && b.intern_readback {
+        return Err(unsupported(u, "intern construction in a wave rule beside an intern readback"));
     }
     let effect_key = (effect_rel.0, 2);
     let internal_effect = relations.get(&effect_key).copied();

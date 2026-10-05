@@ -79,7 +79,7 @@ fn tagged(u: &mut Universe, tag: &str, inner: TermId) -> TermId {
 
 /// `resolve_protocol_relation/6`: the one relation of this arity a protocol
 /// edge of this name points at.
-fn resolve(
+pub fn resolve(
     u: &mut Universe,
     mp: &MacroProgram,
     name: &str,

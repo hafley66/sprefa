@@ -1,0 +1,7 @@
+{
+ "input": {
+  "path": "cycle.dl7",
+  "source": "(outer (same) 1)\n",
+  "macros": "(: same_form\n   (* (: form type)))\n\n(<- (same_form ?Form)\n    (syntax_form ?Form)\n    (: ?Form item ?Head 0)\n    (syntax_atom ?Head \"same\"))\n\n(<- (syntax_claim ?Form \"same\")\n    (same_form ?Form))\n\n(<- (: ?Form expansion ?Form 0)\n    (same_form ?Form))\n"
+ }
+}

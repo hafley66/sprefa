@@ -19,6 +19,8 @@ pub mod _5_materialize;
 pub mod _6_cli;
 #[path = "_7_slice.rs"]
 pub mod _7_slice;
+#[path = "_8_waves.rs"]
+pub mod _8_waves;
 
 pub use _0_rows::Graph;
 pub use _1_reify::reify;
@@ -29,3 +31,4 @@ pub use _6_cli::{
     case_syntax, cli, expansion_json, macro_program_from_json, run, run_case, Expansion,
 };
 pub use _7_slice::slice_macro_program;
+pub use _8_waves::{init_macrotime_mode, macrotime_mode, MacrotimeMode};

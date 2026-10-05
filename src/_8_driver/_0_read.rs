@@ -22,6 +22,9 @@ pub const MACROTIME: [&str; 3] = [
     include_str!("../../macrotime/2_list.dl7"),
 ];
 
+/// The wave loop as rules, appended to `MACROTIME` under `DL8_MACROTIME=engine`.
+pub const WAVES: &str = include_str!("../../macrotime/3_waves.dl7");
+
 /// `std/*.dl7`, bundled in the binary like the prelude. The first field is the
 /// tail of `@std/<name>`.
 pub const STD: [(&str, &str); 6] = [
@@ -52,7 +55,14 @@ pub fn prelude_text() -> String {
 }
 
 pub fn macrotime_text() -> String {
-    join(&MACROTIME)
+    match crate::_1_macrotime::macrotime_mode() {
+        crate::_1_macrotime::MacrotimeMode::Rust => join(&MACROTIME),
+        crate::_1_macrotime::MacrotimeMode::Engine => {
+            let mut texts = MACROTIME.to_vec();
+            texts.push(WAVES);
+            join(&texts)
+        }
+    }
 }
 
 /// `absolute_file_name/3` then `read_file_to_string/3`.

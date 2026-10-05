@@ -19,7 +19,21 @@ pub fn standard_macro_program(
     u: &mut Universe,
     fx: &mut dyn FnMut(Round),
 ) -> Result<(Option<MacroProgram>, Vec<TermId>), Stop> {
-    let unit = macrotime_unit(u, &macrotime_text())?;
+    standard_macro_program_with(u, "", fx)
+}
+
+/// The bundled library with `extra` macro text appended.
+pub fn standard_macro_program_with(
+    u: &mut Universe,
+    extra: &str,
+    fx: &mut dyn FnMut(Round),
+) -> Result<(Option<MacroProgram>, Vec<TermId>), Stop> {
+    let mut text = macrotime_text();
+    if !extra.is_empty() {
+        text.push('\n');
+        text.push_str(extra);
+    }
+    let unit = macrotime_unit(u, &text)?;
     if !unit.diagnostics.is_empty() {
         return Ok((None, unit.diagnostics));
     }
