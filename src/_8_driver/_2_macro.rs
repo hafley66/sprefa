@@ -3,7 +3,9 @@
 
 use super::_0_read::macrotime_text;
 use super::_1_unit::macrotime_unit;
-use super::_3_units::compile_units_attached;
+use super::_3_units::compile_units_attached_checked;
+use crate::_1_macrotime::_4_expand::macro_cone;
+use crate::_3_check::Checked;
 use super::Stop;
 use crate::_1_macrotime::_1_reify::reify_terms;
 use crate::_1_macrotime::_4_expand::{expand_terms, MacroSession};
@@ -41,13 +43,18 @@ pub fn standard_macro_program_with(
     if !unit.diagnostics.is_empty() {
         return Ok((None, unit.diagnostics));
     }
-    // The library's comptime rounds lower with the cone's declarations and leave their session
-    // in `pool`; the macrotime session adopts it for the cone (one install for both).
-    let pool: SharedPool = Rc::new(RefCell::new(Pool {
-        library: Some(MacroSession::library_declared()),
-        ..Pool::default()
-    }));
-    let compiled = compile_units_attached(u, &[unit.unit], Some(Attach::Pool(pool.clone())), fx);
+    // The library's comptime rounds lower with the cone's declarations (its protocol's source
+    // relations, read off the checked library) and leave their session in `pool`; the macrotime
+    // session adopts it for the cone (one install for both).
+    let pool: SharedPool = Rc::new(RefCell::new(Pool::default()));
+    let mut cone_declared = |u: &mut Universe, checked: &Checked| {
+        let library = match slice_macro_program(u, checked) {
+            (Some(expected), _) => macro_cone(u, &expected).map(|(_, declared)| declared),
+            (None, _) => None,
+        };
+        pool.borrow_mut().library = library;
+    };
+    let compiled = compile_units_attached_checked(u, &[unit.unit], Some(Attach::Pool(pool.clone())), &mut cone_declared, fx);
     pool.borrow_mut().library = None;
     let (compiled, diagnostics) = compiled?;
     let Some(compiled) = compiled else {

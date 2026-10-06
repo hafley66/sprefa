@@ -170,12 +170,6 @@ impl MacroSession {
         }
     }
 
-    /// The declarations the macro library's comptime rounds lower with (`Pool::library`): no
-    /// sources beyond the program's own relations, a constructor per `READER_SHAPES`, unsealed.
-    pub fn library_declared() -> Declared {
-        Self::configured().declared
-    }
-
     /// The `DL8_ENGINE` backend, declaring a constructor per `READER_SHAPES`.
     pub fn configured() -> Self {
         Self {
