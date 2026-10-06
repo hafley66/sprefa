@@ -3,9 +3,7 @@
 
 use super::_0_read::macrotime_text;
 use super::_1_unit::macrotime_unit;
-use super::_3_units::compile_units_attached_checked;
-use crate::_1_macrotime::_4_expand::macro_cone;
-use crate::_3_check::Checked;
+use super::_3_units::compile_units;
 use super::Stop;
 use crate::_1_macrotime::_1_reify::reify_terms;
 use crate::_1_macrotime::_4_expand::{expand_terms, MacroSession};
@@ -13,11 +11,7 @@ use crate::_1_macrotime::_5_materialize::materialize_terms;
 use crate::_1_macrotime::_7_slice::slice_macro_program;
 use crate::_1_macrotime::{MacroProgram, Wave};
 use crate::_4_comptime::Round;
-use crate::_6_eval::ir_eval::{Pool, SharedPool};
-use crate::_6_eval::one_engine::Attach;
 use crate::_6_eval::term::{TermId, Universe};
-use std::cell::RefCell;
-use std::rc::Rc;
 
 /// `:416`. The macro library compiles through the ordinary compiler, then is
 /// trimmed to the claim and output rule cone.
@@ -43,28 +37,14 @@ pub fn standard_macro_program_with(
     if !unit.diagnostics.is_empty() {
         return Ok((None, unit.diagnostics));
     }
-    // The library's comptime rounds lower with the cone's declarations (its protocol's source
-    // relations, read off the checked library) and leave their session in `pool`; the macrotime
-    // session adopts it for the cone (one install for both).
-    let pool: SharedPool = Rc::new(RefCell::new(Pool::default()));
-    let mut cone_declared = |u: &mut Universe, checked: &Checked| {
-        let library = match slice_macro_program(u, checked) {
-            (Some(expected), _) => macro_cone(u, &expected).map(|(_, declared)| declared),
-            (None, _) => None,
-        };
-        pool.borrow_mut().library = library;
-    };
-    let compiled = compile_units_attached_checked(u, &[unit.unit], Some(Attach::Pool(pool.clone())), &mut cone_declared, fx);
-    pool.borrow_mut().library = None;
-    let (compiled, diagnostics) = compiled?;
+    let (compiled, diagnostics) = compile_units(u, &[unit.unit], fx)?;
     let Some(compiled) = compiled else {
         return Ok((None, diagnostics));
     };
     if !diagnostics.is_empty() {
         return Ok((None, diagnostics));
     }
-    let (program, diagnostics) = slice_macro_program(u, &compiled.runtime);
-    Ok((program.map(|program| MacroProgram { pool: Some(pool), ..program }), diagnostics))
+    Ok(slice_macro_program(u, &compiled.runtime))
 }
 
 /// `:456`. One unit at a time on one macrotime session, diagnostics concatenated.
@@ -74,7 +54,7 @@ pub fn expand_units_with_macros(
     macro_program: &MacroProgram,
     fx: &mut dyn FnMut(Wave),
 ) -> (Vec<TermId>, Vec<TermId>) {
-    let mut session = MacroSession::for_program(macro_program);
+    let mut session = MacroSession::configured();
     expand_units_on(u, units, macro_program, &mut session, fx)
 }
 

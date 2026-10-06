@@ -97,7 +97,6 @@ pub fn macro_program_from_json(u: &mut Universe, value: &Value) -> Result<MacroP
         edges,
         relations,
         program,
-        pool: None,
     })
 }
 
