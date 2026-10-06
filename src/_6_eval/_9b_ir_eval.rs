@@ -77,8 +77,8 @@ pub struct FrontierResult {
 struct Core<E: Engine> {
     engine: E,
     mapped: HashMap<TermId, Cell>,
-    /// Cells decoded so far; `apply` decodes only what this misses.
-    decoded: HashMap<Cell, TermId>,
+    /// Cells decoded so far, kept for the engine's life; every decode extends it.
+    decoded: Decoded,
     /// Constructors declared after install (`Engine::declare_constructors`), by shape.
     dynamic: BTreeMap<(String, usize, bool), ir::RelId>,
 }
@@ -103,12 +103,23 @@ struct EngineSession<E: Engine> {
     marked: Option<Marked>,
 }
 
+/// The engine's cells decoded to terms. Every `mapped` entry is here; `decode_terms` adds the
+/// interned rows it reads.
+#[derive(Clone, Default)]
+struct Decoded {
+    cells: HashMap<Cell, TermId>,
+    /// Per constructor relation: every row whose id is at or below this one is decoded or never
+    /// decodes from its row (an atom, an unknown functor); `decode_terms` skips those rows.
+    /// Dictionary ids are append-only per engine; `rewind` restores this with `cells`.
+    through: HashMap<ir::RelId, Cell>,
+}
+
 struct Marked {
     mapped: HashMap<TermId, Cell>,
     known: HashSet<TermId>,
     answered: HashMap<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>,
     last_seeds: BTreeSet<(ir::RelId, Vec<Cell>)>,
-    decoded: HashMap<Cell, TermId>,
+    decoded: Decoded,
     initialized: bool,
 }
 
@@ -206,7 +217,7 @@ impl<E: Engine> Core<E> {
         Rc::new(RefCell::new(Self {
             engine,
             mapped: HashMap::new(),
-            decoded: HashMap::new(),
+            decoded: Decoded::default(),
             dynamic: BTreeMap::new(),
         }))
     }
@@ -308,8 +319,9 @@ impl<E: Engine> Session for EngineSession<E> {
     fn snapshot(&mut self, u: &mut Universe, lowered: &Lowered) -> Result<Closure, ivm_engine::EngineError> {
         let local = self.local(lowered);
         let result = {
-            let core = self.core.borrow();
-            snapshot_closure(u, local.as_ref().unwrap_or(lowered), &core.engine, &core.mapped)
+            let mut core = self.core.borrow_mut();
+            let core = &mut *core;
+            snapshot_closure(u, local.as_ref().unwrap_or(lowered), &core.engine, &mut core.decoded)
         };
         self.restore(local);
         result
@@ -338,7 +350,7 @@ impl<E: Engine> Session for EngineSession<E> {
             let lowered = local.as_ref().unwrap_or(lowered);
             let mut core = self.core.borrow_mut();
             decode_delta(u, lowered, &mut core, delta).and_then(|(rows, intern_read)| {
-                let diagnostics = fold_diagnostics(u, lowered, &core)?;
+                let diagnostics = fold_diagnostics(u, lowered, &mut core)?;
                 Ok(Applied { rows, diagnostics, sent, intern_read })
             })
         };
@@ -1001,9 +1013,10 @@ fn snapshot_closure<E: Engine>(
     u: &mut Universe,
     lowered: &Lowered,
     engine: &E,
-    mapped: &HashMap<TermId, Cell>,
+    decoded: &mut Decoded,
 ) -> Result<Closure, ivm_engine::EngineError> {
-    let mut decoded = decode_terms(u, lowered, engine, mapped)?;
+    decode_terms(u, lowered, engine, decoded)?;
+    let decoded = &mut decoded.cells;
     let mut rows = Vec::new();
     for &(rel, original, arity) in &lowered.visible {
         for (cells, weight) in engine.snapshot(rel)? {
@@ -1148,25 +1161,19 @@ fn settle<E: Engine>(
     engine.settle(ir::Frontier { changes })
 }
 
+/// Decode the interned rows of `lowered`'s constructors into `decoded` and return the number of
+/// rows read. Rows at or below a relation's `Decoded::through` are skipped, and so are rows
+/// already decoded.
 fn decode_terms<E: Engine>(
     u: &mut Universe,
     lowered: &Lowered,
     engine: &E,
-    mapped: &HashMap<TermId, Cell>,
-) -> Result<HashMap<Cell, TermId>, ivm_engine::EngineError> {
-    decode_terms_counted(u, lowered, engine, mapped).map(|(decoded, _)| decoded)
-}
-
-/// `decode_terms` and the number of interned rows it read.
-fn decode_terms_counted<E: Engine>(
-    u: &mut Universe,
-    lowered: &Lowered,
-    engine: &E,
-    mapped: &HashMap<TermId, Cell>,
-) -> Result<(HashMap<Cell, TermId>, usize), ivm_engine::EngineError> {
-    let mut decoded: HashMap<Cell, TermId> = mapped.iter().map(|(&term, &id)| (id, term)).collect();
-    // `(id, constructor name, args)` of every interned term not decoded yet, ascending id.
-    let mut pending: Vec<(Cell, &str, Vec<Cell>)> = Vec::new();
+    decoded: &mut Decoded,
+) -> Result<usize, ivm_engine::EngineError> {
+    let Decoded { cells: decoded, through } = decoded;
+    // `(id, constructor relation, constructor name, args)` of every interned term not decoded
+    // yet, ascending id.
+    let mut pending: Vec<(Cell, ir::RelId, &str, Vec<Cell>)> = Vec::new();
     let constructors: Vec<&ir::Relation> = lowered
         .ir
         .rels
@@ -1177,26 +1184,34 @@ fn decode_terms_counted<E: Engine>(
     let snapshots = engine.intern_snapshots(&ids)?;
     let read = snapshots.iter().map(Vec::len).sum::<usize>();
     tracing::info!(target: "dl8::ir", rows = read, "ir intern read");
+    // The highest id each relation's rows reached; `through` moves there unless a row stays pending.
+    let mut highest: HashMap<ir::RelId, Cell> = HashMap::new();
     for (rel, rows) in constructors.iter().zip(snapshots) {
+        let floor = through.get(&rel.id).copied().unwrap_or(Cell::MIN);
         for (mut row, weight) in rows {
+            if row[0] <= floor {
+                continue;
+            }
+            let top = highest.entry(rel.id).or_insert(floor);
+            *top = (*top).max(row[0]);
             if weight > 0 && !decoded.contains_key(&row[0]) {
                 let id = row.remove(0);
-                pending.push((id, rel.name.as_str(), row));
+                pending.push((id, rel.id, rel.name.as_str(), row));
             }
         }
     }
     pending.sort_unstable_by_key(|(id, ..)| *id);
     pending.dedup_by_key(|(id, ..)| *id);
-    for (id, _, args) in pending.iter().filter(|(_, name, _)| *name == "2:str") {
+    for (id, _, _, args) in pending.iter().filter(|(_, _, name, _)| *name == "2:str") {
         if let Some(value) = engine.text(args[0])? {
             decoded.insert(*id, u.string(&value));
         }
     }
-    pending.retain(|(id, name, _)| !decoded.contains_key(id) && *name != "3:atom");
+    pending.retain(|(id, _, name, _)| !decoded.contains_key(id) && *name != "3:atom");
     // A term's arguments are interned before it, so one ascending pass decodes most terms.
     for _ in 0..pending.len().min(TERM_BUDGET) + 1 {
         let before = pending.len();
-        pending.retain(|(id, functor, args)| {
+        pending.retain(|(id, _, functor, args)| {
             let term = match *functor {
                 "0:int" => Some(u.int(args[0])),
                 "0:float" => Some(u.float(f64::from_bits(args[0] as u64))),
@@ -1220,7 +1235,16 @@ fn decode_terms_counted<E: Engine>(
             break;
         }
     }
-    Ok((decoded, read))
+    // A row still pending (its arguments did not decode) holds its relation's mark below it.
+    for (id, rel, ..) in &pending {
+        let top = highest.entry(*rel).or_insert(Cell::MIN);
+        *top = (*top).min(*id - 1);
+    }
+    for (rel, top) in highest {
+        let mark = through.entry(rel).or_insert(Cell::MIN);
+        *mark = (*mark).max(top);
+    }
+    Ok(read)
 }
 
 fn install_terms<E: Engine>(
@@ -1228,6 +1252,7 @@ fn install_terms<E: Engine>(
     lowered: &Lowered,
     engine: &mut E,
     mapped: &mut HashMap<TermId, Cell>,
+    decoded: &mut Decoded,
     dynamic: &BTreeMap<(String, usize, bool), ir::RelId>,
     roots: &[TermId],
 ) -> Result<(), ivm_engine::EngineError> {
@@ -1310,6 +1335,7 @@ fn install_terms<E: Engine>(
         let cells = engine.intern_terms(&terms)?;
         for (term, cell) in ready.into_iter().zip(cells) {
             mapped.insert(term, cell);
+            decoded.cells.insert(cell, term);
             pending.remove(&term.0);
         }
     }
@@ -1335,6 +1361,7 @@ fn bootstrap_changes<E: Engine>(
 ) -> Result<Vec<ir::SourceChange>, ivm_engine::EngineError> {
     let engine = &mut core.engine;
     let mapped = &mut core.mapped;
+    let decoded = &mut core.decoded.cells;
     let mut text_cells = Vec::with_capacity(lowered.texts.len());
     for (_, value) in &lowered.texts {
         text_cells.push(engine.intern_text(value)?);
@@ -1369,6 +1396,7 @@ fn bootstrap_changes<E: Engine>(
         let cells = engine.intern_terms(&terms)?;
         for (index, cell) in ready.into_iter().zip(cells) {
             mapped.insert(lowered.terms[index].original, cell);
+            decoded.insert(cell, lowered.terms[index].original);
             pending.remove(&index);
         }
     }
@@ -1452,7 +1480,7 @@ fn start_session<E: Engine>(
     let delta = settle(&mut core.engine, changes)?;
     tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir settle");
     let (rows, intern_read) = decode_delta(u, lowered, &mut core, &delta)?;
-    let diagnostics = fold_diagnostics(u, lowered, &core)?;
+    let diagnostics = fold_diagnostics(u, lowered, &mut core)?;
     Ok(Applied {
         rows,
         diagnostics,
@@ -1466,12 +1494,12 @@ fn start_session<E: Engine>(
 fn fold_diagnostics<E: Engine>(
     u: &mut Universe,
     lowered: &Lowered,
-    core: &Core<E>,
+    core: &mut Core<E>,
 ) -> Result<Vec<Diagnostic>, ivm_engine::EngineError> {
     if lowered.fold_program.is_none() {
         return Ok(Vec::new());
     }
-    Ok(snapshot_closure(u, lowered, &core.engine, &core.mapped)?.diagnostics)
+    Ok(snapshot_closure(u, lowered, &core.engine, &mut core.decoded)?.diagnostics)
 }
 
 /// The visible relation changes of `delta` as terms. Cells the session has
@@ -1491,14 +1519,12 @@ fn decode_delta<E: Engine>(
         visible.get(rel).is_some_and(|&(_, arity)| {
             row[..arity]
                 .iter()
-                .any(|cell| !session.decoded.contains_key(cell))
+                .any(|cell| !session.decoded.cells.contains_key(cell))
         })
     });
     let mut intern_read = 0;
     if missing {
-        let (decoded, read) = decode_terms_counted(u, lowered, &session.engine, &session.mapped)?;
-        session.decoded.extend(decoded);
-        intern_read = read;
+        intern_read = decode_terms(u, lowered, &session.engine, &mut session.decoded)?;
     }
     let mut rows = Vec::new();
     for (rel, cells, weight) in &delta.changes {
@@ -1507,11 +1533,11 @@ fn decode_delta<E: Engine>(
         };
         let mut args = Vec::with_capacity(arity);
         for &cell in &cells[..arity] {
-            let term = if let Some(&term) = session.decoded.get(&cell) {
+            let term = if let Some(&term) = session.decoded.cells.get(&cell) {
                 term
             } else if let Some(value) = session.engine.text(cell)? {
                 let term = u.string(&value);
-                session.decoded.insert(cell, term);
+                session.decoded.cells.insert(cell, term);
                 term
             } else {
                 return Err(ivm_engine::EngineError::new(
@@ -1598,10 +1624,10 @@ fn install_fresh<E: Engine>(
         core.dynamic.extend(missing.into_iter().zip(ids));
     }
     let core = &mut *core;
-    install_terms(u, lowered, &mut core.engine, &mut core.mapped, &core.dynamic, &fresh)
+    install_terms(u, lowered, &mut core.engine, &mut core.mapped, &mut core.decoded, &core.dynamic, &fresh)
         .map_err(|error| ApplyError::Failed(engine_diagnostic(u, error)))?;
     for &term in &fresh {
-        core.decoded.insert(core.mapped[&term], term);
+        core.decoded.cells.insert(core.mapped[&term], term);
         session.known.insert(term);
     }
     Ok(fresh)
@@ -1731,7 +1757,7 @@ fn apply_session<E: Engine>(
     tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir apply");
     let (rows, intern_read) =
         decode_delta(u, lowered, &mut core, &delta).map_err(|error| failed(u, error))?;
-    let diagnostics = fold_diagnostics(u, lowered, &core).map_err(|error| failed(u, error))?;
+    let diagnostics = fold_diagnostics(u, lowered, &mut core).map_err(|error| failed(u, error))?;
     Ok(Applied {
         rows,
         diagnostics,
@@ -1789,7 +1815,7 @@ fn run_session<E: Engine>(
         engine,
         mapped,
         dynamic,
-        ..
+        decoded,
     } = &mut *core_ref;
     let answered = &mut session.answered;
     let sent = frontier.len();
@@ -1802,7 +1828,7 @@ fn run_session<E: Engine>(
         .collect();
     let mut request_count = 0;
     while answerer.is_some() {
-        let decoded = decode_terms(u, lowered, engine, mapped)?;
+        decode_terms(u, lowered, engine, decoded)?;
         let mut store = Store::default();
         for &(rel, original, arity) in &lowered.visible {
             for (row, weight) in engine.snapshot(rel)? {
@@ -1811,7 +1837,7 @@ fn run_session<E: Engine>(
                 }
                 let args = row[..arity]
                     .iter()
-                    .filter_map(|cell| decoded.get(cell).copied())
+                    .filter_map(|cell| decoded.cells.get(cell).copied())
                     .collect::<Vec<_>>();
                 if args.len() == arity {
                     store.insert(original, args.into_boxed_slice());
@@ -1830,7 +1856,7 @@ fn run_session<E: Engine>(
             .collect();
         let mut answers = Vec::new();
         for (relation, row, weight) in request_changes {
-            let Some(&application) = row.last().and_then(|cell| decoded.get(cell)) else {
+            let Some(&application) = row.last().and_then(|cell| decoded.cells.get(cell)) else {
                 continue;
             };
             let key = (relation, application);
@@ -1862,7 +1888,7 @@ fn run_session<E: Engine>(
             .iter()
             .flat_map(|(_, _, rows)| rows.iter().flat_map(|answer| answer.args.iter().copied()))
             .collect();
-        install_terms(u, lowered, engine, mapped, dynamic, &answer_terms)?;
+        install_terms(u, lowered, engine, mapped, decoded, dynamic, &answer_terms)?;
         for (key, _, rows) in answers {
             let mut recorded = Vec::new();
             for answer in rows {
@@ -1898,7 +1924,7 @@ fn run_session<E: Engine>(
             .iter()
             .flat_map(|change| change.row.args.iter().copied())
             .collect();
-        install_terms(u, lowered, engine, mapped, dynamic, &terms)?;
+        install_terms(u, lowered, engine, mapped, decoded, dynamic, &terms)?;
         let mut source_changes = Vec::with_capacity(frontier.len());
         for change in frontier {
             let Some(&source) = lowered
@@ -1921,8 +1947,8 @@ fn run_session<E: Engine>(
         let mut receipts = Vec::new();
         let mut stable = false;
         for _ in 0..TERM_BUDGET {
-            let decoded = decode_terms(u, lowered, engine, mapped)?;
-            let store_closure = snapshot_closure(u, lowered, engine, mapped)?;
+            decode_terms(u, lowered, engine, decoded)?;
+            let store_closure = snapshot_closure(u, lowered, engine, decoded)?;
             let mut store = Store::default();
             for row in &store_closure.rows {
                 store.insert(row.rel, row.args.clone().into_boxed_slice());
@@ -1939,7 +1965,7 @@ fn run_session<E: Engine>(
             let mut next = Vec::new();
             let mut answers = Vec::new();
             for (relation, row, weight) in request_changes {
-                let Some(&application) = row.last().and_then(|cell| decoded.get(cell)) else {
+                let Some(&application) = row.last().and_then(|cell| decoded.cells.get(cell)) else {
                     continue;
                 };
                 receipts.push(NamedDelta {
@@ -1993,7 +2019,7 @@ fn run_session<E: Engine>(
                 .iter()
                 .flat_map(|(_, _, rows)| rows.iter().flat_map(|answer| answer.args.iter().copied()))
                 .collect();
-            install_terms(u, lowered, engine, mapped, dynamic, &answer_terms)?;
+            install_terms(u, lowered, engine, mapped, decoded, dynamic, &answer_terms)?;
             for (key, relation, rows) in answers {
                 let mut recorded = Vec::new();
                 for answer in rows {
@@ -2036,14 +2062,14 @@ fn run_session<E: Engine>(
             ));
         }
         frontier_results.push(FrontierResult {
-            closure: snapshot_closure(u, lowered, engine, mapped)?,
+            closure: snapshot_closure(u, lowered, engine, decoded)?,
             deltas: receipts,
             counters: engine.counters(),
         });
     }
 
     if let Some(live) = live.as_deref_mut() {
-        let closure = snapshot_closure(u, lowered, engine, mapped)?;
+        let closure = snapshot_closure(u, lowered, engine, decoded)?;
         let counters = engine.counters();
         (live.on_settle)(u, &closure, &[], &counters);
 
@@ -2065,7 +2091,7 @@ fn run_session<E: Engine>(
                 .iter()
                 .flat_map(|change| change.row.args.iter().copied())
                 .collect();
-            install_terms(u, lowered, engine, mapped, dynamic, &terms)?;
+            install_terms(u, lowered, engine, mapped, decoded, dynamic, &terms)?;
             let mut source_changes = Vec::with_capacity(frontier.len());
             let mut receipts = Vec::new();
             for change in frontier {
@@ -2127,8 +2153,8 @@ fn run_session<E: Engine>(
             let mut delta = settle(engine, source_changes)?;
             let mut stable = false;
             for _ in 0..TERM_BUDGET {
-                let decoded = decode_terms(u, lowered, engine, mapped)?;
-                let store_closure = snapshot_closure(u, lowered, engine, mapped)?;
+                decode_terms(u, lowered, engine, decoded)?;
+                let store_closure = snapshot_closure(u, lowered, engine, decoded)?;
                 let mut store = Store::default();
                 for row in &store_closure.rows {
                     store.insert(row.rel, row.args.clone().into_boxed_slice());
@@ -2145,7 +2171,7 @@ fn run_session<E: Engine>(
                 let mut next = Vec::new();
                 let mut answers = Vec::new();
                 for (relation, row, weight) in request_changes {
-                    let Some(&application) = row.last().and_then(|cell| decoded.get(cell)) else {
+                    let Some(&application) = row.last().and_then(|cell| decoded.cells.get(cell)) else {
                         continue;
                     };
                     receipts.push(NamedDelta {
@@ -2201,7 +2227,7 @@ fn run_session<E: Engine>(
                         rows.iter().flat_map(|answer| answer.args.iter().copied())
                     })
                     .collect();
-                install_terms(u, lowered, engine, mapped, dynamic, &answer_terms)?;
+                install_terms(u, lowered, engine, mapped, decoded, dynamic, &answer_terms)?;
                 for (key, relation, rows) in answers {
                     let mut recorded = Vec::new();
                     for answer in rows {
@@ -2243,7 +2269,7 @@ fn run_session<E: Engine>(
                     ivm_engine::ErrorKind::Unsupported("live effect frontier budget"),
                 ));
             }
-            let closure = snapshot_closure(u, lowered, engine, mapped)?;
+            let closure = snapshot_closure(u, lowered, engine, decoded)?;
             let counters = engine.counters();
             (live.on_settle)(u, &closure, &receipts, &counters);
         }
@@ -2256,7 +2282,7 @@ fn run_session<E: Engine>(
     }
     let counters = engine.counters();
 
-    let closure = snapshot_closure(u, lowered, engine, mapped)?;
+    let closure = snapshot_closure(u, lowered, engine, decoded)?;
     fx(Trace::Closure {
         rows: closure.rows.len(),
     });
