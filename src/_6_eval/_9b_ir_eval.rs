@@ -81,6 +81,18 @@ struct Core<E: Engine> {
     decoded: Decoded,
     /// Constructors declared after install (`Engine::declare_constructors`), by shape.
     dynamic: BTreeMap<(String, usize, bool), ir::RelId>,
+    /// Settles of the engine so far, by any session on it (`settle_kept`).
+    settles: u64,
+}
+
+/// Output rows of one session's engine, kept from the deltas of that session's settles, with the
+/// terms of their cells once a snapshot decoded them. Valid while `at` equals the core's settle
+/// count: a settle by another part of a composed install, or a rewind, leaves it stale, and the
+/// next snapshot reads the engine's visible relations whole.
+#[derive(Default)]
+struct Kept {
+    rows: HashMap<(ir::RelId, Vec<Cell>), (i64, Option<Vec<TermId>>)>,
+    at: Option<u64>,
 }
 
 struct EngineSession<E: Engine> {
@@ -93,6 +105,8 @@ struct EngineSession<E: Engine> {
     local_ir: Option<ir::Program>,
     /// Terms whose term-map rows this program holds.
     known: HashSet<TermId>,
+    /// The visible closure, kept from this session's settle deltas.
+    kept: Kept,
     answered: HashMap<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>,
     last_seeds: BTreeSet<(ir::RelId, Vec<Cell>)>,
     initialized: bool,
@@ -185,6 +199,7 @@ impl<E: Engine> EngineSession<E> {
             relocation,
             local_ir,
             known: HashSet::new(),
+            kept: Kept::default(),
             answered: HashMap::new(),
             last_seeds: BTreeSet::new(),
             initialized: false,
@@ -219,6 +234,7 @@ impl<E: Engine> Core<E> {
             mapped: HashMap::new(),
             decoded: Decoded::default(),
             dynamic: BTreeMap::new(),
+            settles: 0,
         }))
     }
 }
@@ -321,7 +337,7 @@ impl<E: Engine> Session for EngineSession<E> {
         let result = {
             let mut core = self.core.borrow_mut();
             let core = &mut *core;
-            snapshot_closure(u, local.as_ref().unwrap_or(lowered), &core.engine, &mut core.decoded)
+            snapshot_closure(u, local.as_ref().unwrap_or(lowered), &core.engine, &mut core.decoded, &mut self.kept, core.settles)
         };
         self.restore(local);
         result
@@ -339,7 +355,9 @@ impl<E: Engine> Session for EngineSession<E> {
 
     fn settle_raw(&mut self, changes: Vec<ir::SourceChange>) -> Result<ir::Delta, ivm_engine::EngineError> {
         let sent = changes.len();
-        let delta = settle(&mut self.core.borrow_mut().engine, changes)?;
+        let mut core = self.core.borrow_mut();
+        let core = &mut *core;
+        let delta = settle_kept(&mut core.engine, &mut core.settles, &mut self.kept, changes)?;
         tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir settle");
         Ok(delta)
     }
@@ -350,7 +368,7 @@ impl<E: Engine> Session for EngineSession<E> {
             let lowered = local.as_ref().unwrap_or(lowered);
             let mut core = self.core.borrow_mut();
             decode_delta(u, lowered, &mut core, delta).and_then(|(rows, intern_read)| {
-                let diagnostics = fold_diagnostics(u, lowered, &mut core)?;
+                let diagnostics = fold_diagnostics(u, lowered, &mut core, &mut self.kept)?;
                 Ok(Applied { rows, diagnostics, sent, intern_read })
             })
         };
@@ -386,6 +404,8 @@ impl<E: Engine> Session for EngineSession<E> {
             ));
         };
         let mut core = self.core.borrow_mut();
+        // The engine returns to the mark; the kept closure is stale until the next snapshot.
+        self.kept.at = None;
         core.engine.rewind()?;
         core.mapped.clone_from(&marked.mapped);
         self.known.clone_from(&marked.known);
@@ -1009,20 +1029,50 @@ struct LiveRun<'a> {
     on_settle: &'a mut dyn FnMut(&Universe, &Closure, &[NamedDelta], &ivm_engine::Counters),
 }
 
+/// The visible closure of `lowered`, from `kept` when its deltas reach the engine's `settles`,
+/// else read whole into `kept`; only rows `kept` has not decoded yet are decoded.
 fn snapshot_closure<E: Engine>(
     u: &mut Universe,
     lowered: &Lowered,
     engine: &E,
     decoded: &mut Decoded,
+    kept: &mut Kept,
+    settles: u64,
 ) -> Result<Closure, ivm_engine::EngineError> {
-    decode_terms(u, lowered, engine, decoded)?;
+    if kept.at != Some(settles) {
+        kept.rows.clear();
+        for &(rel, _, _) in &lowered.visible {
+            for (cells, weight) in engine.snapshot(rel)? {
+                kept.rows.insert((rel, cells), (weight, None));
+            }
+        }
+        kept.at = Some(settles);
+    }
+    let visible: HashMap<ir::RelId, (TermId, usize)> = lowered
+        .visible
+        .iter()
+        .map(|&(rel, original, arity)| (rel, (original, arity)))
+        .collect();
+    let missing = kept.rows.iter().any(|((rel, cells), (weight, terms))| {
+        *weight > 0
+            && terms.is_none()
+            && visible.get(rel).is_some_and(|&(_, arity)| {
+                cells[..arity].iter().any(|cell| !decoded.cells.contains_key(cell))
+            })
+    });
+    if missing {
+        decode_terms(u, lowered, engine, decoded)?;
+    }
     let decoded = &mut decoded.cells;
     let mut rows = Vec::new();
-    for &(rel, original, arity) in &lowered.visible {
-        for (cells, weight) in engine.snapshot(rel)? {
-            if weight <= 0 {
-                continue;
-            }
+    for ((rel, cells), (weight, terms)) in kept.rows.iter_mut() {
+        if *weight <= 0 {
+            continue;
+        }
+        let Some(&(original, arity)) = visible.get(rel) else {
+            continue;
+        };
+        if terms.is_none() {
             let mut args = Vec::with_capacity(arity);
             for &cell in &cells[..arity] {
                 let term = if let Some(&term) = decoded.get(&cell) {
@@ -1034,17 +1084,18 @@ fn snapshot_closure<E: Engine>(
                 } else {
                     return Err(ivm_engine::EngineError::new(
                         ivm_engine::Stage::Snapshot,
-                        Some(rel),
+                        Some(*rel),
                         ivm_engine::ErrorKind::Unsupported("undecodable term id"),
                     ));
                 };
                 args.push(term);
             }
-            rows.push(Row {
-                rel: original,
-                args,
-            });
+            *terms = Some(args);
         }
+        rows.push(Row {
+            rel: original,
+            args: terms.clone().unwrap_or_default(),
+        });
     }
     rows.sort_by(|a, b| {
         u.cmp(a.rel, b.rel)
@@ -1159,6 +1210,31 @@ fn settle<E: Engine>(
     changes: Vec<ir::SourceChange>,
 ) -> Result<ir::Delta, ivm_engine::EngineError> {
     engine.settle(ir::Frontier { changes })
+}
+
+/// One settle of a session's engine: `settles` counts it, and its delta folds into `kept` when
+/// `kept` held every earlier settle.
+fn settle_kept<E: Engine>(
+    engine: &mut E,
+    settles: &mut u64,
+    kept: &mut Kept,
+    changes: Vec<ir::SourceChange>,
+) -> Result<ir::Delta, ivm_engine::EngineError> {
+    let before = *settles;
+    *settles += 1;
+    let delta = engine.settle(ir::Frontier { changes })?;
+    if kept.at == Some(before) {
+        for (rel, row, weight) in &delta.changes {
+            let key = (*rel, row.clone());
+            let total = kept.rows.entry(key).or_insert((0, None));
+            total.0 += weight;
+            if total.0 == 0 {
+                kept.rows.remove(&(*rel, row.clone()));
+            }
+        }
+        kept.at = Some(*settles);
+    }
+    Ok(delta)
 }
 
 /// Decode the interned rows of `lowered`'s constructors into `decoded` and return the number of
@@ -1477,10 +1553,11 @@ fn start_session<E: Engine>(
     session.initialized = true;
     let sent = changes.len();
     let mut core = session.core.borrow_mut();
-    let delta = settle(&mut core.engine, changes)?;
+    let core = &mut *core;
+    let delta = settle_kept(&mut core.engine, &mut core.settles, &mut session.kept, changes)?;
     tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir settle");
-    let (rows, intern_read) = decode_delta(u, lowered, &mut core, &delta)?;
-    let diagnostics = fold_diagnostics(u, lowered, &mut core)?;
+    let (rows, intern_read) = decode_delta(u, lowered, core, &delta)?;
+    let diagnostics = fold_diagnostics(u, lowered, core, &mut session.kept)?;
     Ok(Applied {
         rows,
         diagnostics,
@@ -1495,11 +1572,12 @@ fn fold_diagnostics<E: Engine>(
     u: &mut Universe,
     lowered: &Lowered,
     core: &mut Core<E>,
+    kept: &mut Kept,
 ) -> Result<Vec<Diagnostic>, ivm_engine::EngineError> {
     if lowered.fold_program.is_none() {
         return Ok(Vec::new());
     }
-    Ok(snapshot_closure(u, lowered, &core.engine, &mut core.decoded)?.diagnostics)
+    Ok(snapshot_closure(u, lowered, &core.engine, &mut core.decoded, kept, core.settles)?.diagnostics)
 }
 
 /// The visible relation changes of `delta` as terms. Cells the session has
@@ -1753,11 +1831,13 @@ fn apply_session<E: Engine>(
         }
     }
     let sent = consolidated.len();
-    let delta = settle(&mut core.engine, consolidated).map_err(|error| failed(u, error))?;
+    let core = &mut *core;
+    let delta = settle_kept(&mut core.engine, &mut core.settles, &mut session.kept, consolidated)
+        .map_err(|error| failed(u, error))?;
     tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir apply");
     let (rows, intern_read) =
-        decode_delta(u, lowered, &mut core, &delta).map_err(|error| failed(u, error))?;
-    let diagnostics = fold_diagnostics(u, lowered, &mut core).map_err(|error| failed(u, error))?;
+        decode_delta(u, lowered, core, &delta).map_err(|error| failed(u, error))?;
+    let diagnostics = fold_diagnostics(u, lowered, core, &mut session.kept).map_err(|error| failed(u, error))?;
     Ok(Applied {
         rows,
         diagnostics,
@@ -1816,10 +1896,12 @@ fn run_session<E: Engine>(
         mapped,
         dynamic,
         decoded,
+        settles,
     } = &mut *core_ref;
     let answered = &mut session.answered;
+    let kept = &mut session.kept;
     let sent = frontier.len();
-    let mut delta = settle(engine, frontier)?;
+    let mut delta = settle_kept(engine, settles, kept, frontier)?;
     tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir settle");
     let request_relations: HashMap<_, _> = lowered
         .served
@@ -1916,7 +1998,7 @@ fn run_session<E: Engine>(
         if next.is_empty() {
             break;
         }
-        delta = settle(engine, next)?;
+        delta = settle_kept(engine, settles, kept, next)?;
     }
     let mut frontier_results = Vec::with_capacity(frontiers.len());
     for frontier in frontiers {
@@ -1943,12 +2025,12 @@ fn run_session<E: Engine>(
                 w: change.weight,
             });
         }
-        let mut delta = settle(engine, source_changes)?;
+        let mut delta = settle_kept(engine, settles, kept, source_changes)?;
         let mut receipts = Vec::new();
         let mut stable = false;
         for _ in 0..TERM_BUDGET {
             decode_terms(u, lowered, engine, decoded)?;
-            let store_closure = snapshot_closure(u, lowered, engine, decoded)?;
+            let store_closure = snapshot_closure(u, lowered, engine, decoded, kept, *settles)?;
             let mut store = Store::default();
             for row in &store_closure.rows {
                 store.insert(row.rel, row.args.clone().into_boxed_slice());
@@ -2052,7 +2134,7 @@ fn run_session<E: Engine>(
                 stable = true;
                 break;
             }
-            delta = settle(engine, next)?;
+            delta = settle_kept(engine, settles, kept, next)?;
         }
         if !stable {
             return Err(ivm_engine::EngineError::new(
@@ -2062,14 +2144,14 @@ fn run_session<E: Engine>(
             ));
         }
         frontier_results.push(FrontierResult {
-            closure: snapshot_closure(u, lowered, engine, decoded)?,
+            closure: snapshot_closure(u, lowered, engine, decoded, kept, *settles)?,
             deltas: receipts,
             counters: engine.counters(),
         });
     }
 
     if let Some(live) = live.as_deref_mut() {
-        let closure = snapshot_closure(u, lowered, engine, decoded)?;
+        let closure = snapshot_closure(u, lowered, engine, decoded, kept, *settles)?;
         let counters = engine.counters();
         (live.on_settle)(u, &closure, &[], &counters);
 
@@ -2150,11 +2232,11 @@ fn run_session<E: Engine>(
                 });
             }
 
-            let mut delta = settle(engine, source_changes)?;
+            let mut delta = settle_kept(engine, settles, kept, source_changes)?;
             let mut stable = false;
             for _ in 0..TERM_BUDGET {
                 decode_terms(u, lowered, engine, decoded)?;
-                let store_closure = snapshot_closure(u, lowered, engine, decoded)?;
+                let store_closure = snapshot_closure(u, lowered, engine, decoded, kept, *settles)?;
                 let mut store = Store::default();
                 for row in &store_closure.rows {
                     store.insert(row.rel, row.args.clone().into_boxed_slice());
@@ -2260,7 +2342,7 @@ fn run_session<E: Engine>(
                     stable = true;
                     break;
                 }
-                delta = settle(engine, next)?;
+                delta = settle_kept(engine, settles, kept, next)?;
             }
             if !stable {
                 return Err(ivm_engine::EngineError::new(
@@ -2269,7 +2351,7 @@ fn run_session<E: Engine>(
                     ivm_engine::ErrorKind::Unsupported("live effect frontier budget"),
                 ));
             }
-            let closure = snapshot_closure(u, lowered, engine, decoded)?;
+            let closure = snapshot_closure(u, lowered, engine, decoded, kept, *settles)?;
             let counters = engine.counters();
             (live.on_settle)(u, &closure, &receipts, &counters);
         }
@@ -2282,7 +2364,7 @@ fn run_session<E: Engine>(
     }
     let counters = engine.counters();
 
-    let closure = snapshot_closure(u, lowered, engine, decoded)?;
+    let closure = snapshot_closure(u, lowered, engine, decoded, kept, *settles)?;
     fx(Trace::Closure {
         rows: closure.rows.len(),
     });
