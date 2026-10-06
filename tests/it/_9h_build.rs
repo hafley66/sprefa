@@ -198,17 +198,17 @@ fn tsi_registry_sqlite_work_counts() {
     assert_eq!(
         registry_sqlite_work("rust"),
         concat!(
-            "between: creates=0 schema_rows_parsed=0 prepared=229 prepared_bytes=70527 unfolded_bytes=70527 executions=20823 zero_row_executions=16718 vm_steps=1108210 fullscan_steps=25338 sorts=0 autoindexes=0 reprepares=3 rows_returned=47599 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=0 written_term=32796\n",
-            "install: creates=4796 schema_rows_parsed=103265 prepared=5240 prepared_bytes=1634360 unfolded_bytes=1634360 executions=5240 zero_row_executions=58 vm_steps=144984 fullscan_steps=138 sorts=325 autoindexes=0 reprepares=0 rows_returned=170 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=28 written_term=138\n",
-            "settle: creates=0 schema_rows_parsed=0 prepared=5592 prepared_bytes=3624624 unfolded_bytes=3840894 executions=56977 zero_row_executions=3208 vm_steps=38428846 fullscan_steps=2394597 sorts=14945 autoindexes=18743 reprepares=0 rows_returned=57675 written_d=215622 written_i=102300 written_x=0 written_scratch=95433 written_source=23381 written_catalog=11 written_term=6030",
+            "between: creates=0 schema_rows_parsed=0 prepared=202 prepared_bytes=67442 unfolded_bytes=67442 executions=20714 zero_row_executions=16425 vm_steps=1096396 fullscan_steps=25338 sorts=0 autoindexes=0 reprepares=24 rows_returned=47838 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=0 written_term=32210\n",
+            "install: creates=2936 schema_rows_parsed=71952 prepared=3454 prepared_bytes=1066008 unfolded_bytes=1066008 executions=4731 zero_row_executions=353 vm_steps=114125 fullscan_steps=138 sorts=169 autoindexes=0 reprepares=3 rows_returned=751 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=28 written_term=722\n",
+            "settle: creates=0 schema_rows_parsed=0 prepared=3143 prepared_bytes=2188755 unfolded_bytes=2203751 executions=52068 zero_row_executions=1774 vm_steps=25375656 fullscan_steps=662994 sorts=12132 autoindexes=18743 reprepares=0 rows_returned=56785 written_d=145170 written_i=88703 written_x=0 written_scratch=95433 written_source=23381 written_catalog=11 written_term=6030",
         )
     );
     assert_eq!(
         registry_sqlite_work("engine"),
         concat!(
-            "between: creates=0 schema_rows_parsed=0 prepared=236 prepared_bytes=83527 unfolded_bytes=83527 executions=22355 zero_row_executions=18290 vm_steps=1196766 fullscan_steps=27299 sorts=0 autoindexes=0 reprepares=3 rows_returned=50552 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=0 written_term=35698\n",
-            "install: creates=10732 schema_rows_parsed=241268 prepared=11366 prepared_bytes=3086885 unfolded_bytes=3086885 executions=11366 zero_row_executions=60 vm_steps=316622 fullscan_steps=142 sorts=719 autoindexes=0 reprepares=0 rows_returned=176 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=30 written_term=142\n",
-            "settle: creates=0 schema_rows_parsed=0 prepared=13948 prepared_bytes=8903944 unfolded_bytes=9162061 executions=88980 zero_row_executions=26192 vm_steps=172597228 fullscan_steps=6824026 sorts=71886 autoindexes=79740 reprepares=0 rows_returned=83941 written_d=751486 written_i=386025 written_x=0 written_scratch=184528 written_source=25020 written_catalog=10 written_term=6030",
+            "between: creates=0 schema_rows_parsed=0 prepared=208 prepared_bytes=79783 unfolded_bytes=79783 executions=22244 zero_row_executions=17993 vm_steps=1184816 fullscan_steps=27299 sorts=0 autoindexes=0 reprepares=24 rows_returned=50794 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=0 written_term=35104\n",
+            "install: creates=7784 schema_rows_parsed=190190 prepared=8462 prepared_bytes=2261407 unfolded_bytes=2261407 executions=9755 zero_row_executions=359 vm_steps=255275 fullscan_steps=142 sorts=361 autoindexes=0 reprepares=3 rows_returned=765 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=30 written_term=734\n",
+            "settle: creates=0 schema_rows_parsed=0 prepared=9892 prepared_bytes=6875729 unfolded_bytes=6779036 executions=78696 zero_row_executions=20932 vm_steps=151749700 fullscan_steps=4190728 sorts=66698 autoindexes=79740 reprepares=0 rows_returned=82875 written_d=651184 written_i=356741 written_x=0 written_scratch=184528 written_source=25020 written_catalog=10 written_term=6030",
         )
     );
 }

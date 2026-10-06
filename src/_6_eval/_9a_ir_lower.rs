@@ -204,6 +204,155 @@ fn substitute(
     Ok(memo[&root])
 }
 
+/// `expr` with every `Col(c)` replaced by `col(c)`: post-order over an explicit stack.
+fn with_cols(expr: &ir::Expr, col: &dyn Fn(ir::ColId) -> ir::Expr) -> ir::Expr {
+    enum Step<'e> {
+        Enter(&'e ir::Expr),
+        Build(ir::Func, usize),
+    }
+    let mut steps = vec![Step::Enter(expr)];
+    let mut done: Vec<ir::Expr> = Vec::new();
+    while let Some(step) = steps.pop() {
+        match step {
+            Step::Enter(ir::Expr::Col(c)) => done.push(col(*c)),
+            Step::Enter(ir::Expr::Call(func, args)) => {
+                steps.push(Step::Build(*func, args.len()));
+                steps.extend(args.iter().rev().map(Step::Enter));
+            }
+            Step::Enter(other) => done.push(other.clone()),
+            Step::Build(func, arity) => {
+                let args = done.split_off(done.len() - arity);
+                done.push(ir::Expr::Call(func, args));
+            }
+        }
+    }
+    done.pop().expect("one expression")
+}
+
+/// Readers of each node: every input reference and every stratum body (a LetRec's nested bodies
+/// included).
+fn node_readers(p: &ir::Program) -> Vec<usize> {
+    let mut readers = vec![0usize; p.nodes.len()];
+    for op in &p.nodes {
+        for input in op_inputs(op) {
+            readers[input as usize] += 1;
+        }
+    }
+    for stratum in &p.strata {
+        match stratum {
+            ir::Stratum::Let { body, .. } => readers[*body as usize] += 1,
+            ir::Stratum::LetRec(rec) => {
+                for body in rec.bodies.iter().chain(rec.nested.iter().flat_map(|inner| &inner.bodies)) {
+                    readers[*body as usize] += 1;
+                }
+            }
+        }
+    }
+    readers
+}
+
+/// `outer` over `inner` as one Mfp over `inner`'s input, whose width is `width`. The inner maps
+/// are inlined where the outer filter reads them: a filter runs before every map.
+fn compose_mfps(
+    width: usize,
+    inner: (&[ir::Expr], &[ir::Expr], &[ir::ColId]),
+    outer: (&[ir::Expr], &[ir::Expr], &[ir::ColId]),
+) -> (Vec<ir::Expr>, Vec<ir::Expr>, Vec<ir::ColId>) {
+    let (inner_filter, inner_map, inner_project) = inner;
+    let (outer_filter, outer_map, outer_project) = outer;
+    let mut inlined: Vec<ir::Expr> = Vec::with_capacity(inner_map.len());
+    for expr in inner_map {
+        let expr = with_cols(expr, &|c| {
+            if (c as usize) < width { ir::Expr::Col(c) } else { inlined[c as usize - width].clone() }
+        });
+        inlined.push(expr);
+    }
+    let inner_out: Vec<ir::ColId> = if inner_project.is_empty() {
+        (0..width + inner_map.len()).map(assert_width).collect()
+    } else {
+        inner_project.to_vec()
+    };
+    let at_inner = |c: ir::ColId| -> ir::Expr {
+        if (c as usize) < width { ir::Expr::Col(c) } else { inlined[c as usize - width].clone() }
+    };
+    let mut filter = inner_filter.to_vec();
+    filter.extend(outer_filter.iter().map(|expr| with_cols(expr, &|i| at_inner(inner_out[i as usize]))));
+    let base = width + inner_map.len();
+    let fused_col = |i: ir::ColId| -> ir::ColId {
+        match inner_out.get(i as usize) {
+            Some(col) => *col,
+            None => assert_width(base + i as usize - inner_out.len()),
+        }
+    };
+    let mut map = inner_map.to_vec();
+    map.extend(outer_map.iter().map(|expr| with_cols(expr, &|i| ir::Expr::Col(fused_col(i)))));
+    let mut project: Vec<ir::ColId> = if outer_project.is_empty() {
+        (0..inner_out.len() + outer_map.len()).map(|i| fused_col(assert_width(i))).collect()
+    } else {
+        outer_project.iter().map(|i| fused_col(*i)).collect()
+    };
+    if project.iter().copied().eq((0..base + outer_map.len()).map(assert_width)) {
+        project.clear();
+    }
+    (filter, map, project)
+}
+
+/// Each Mfp whose input is an Mfp no other node or stratum reads becomes one Mfp over that
+/// Mfp's input; the absorbed Mfp leaves the program and node ids are renumbered. Inputs precede
+/// their readers, so one ascending pass folds a chain of Mfps into its last one.
+fn fuse_mfps(p: &mut ir::Program) {
+    let mut readers = node_readers(p);
+    let mut types: Vec<Option<Option<Vec<ir::Ty>>>> = Vec::new();
+    let mut absorbed = vec![false; p.nodes.len()];
+    for id in 0..p.nodes.len() {
+        let ir::Op::Mfp { input, filter, map, project } = &p.nodes[id] else { continue };
+        let inner_id = *input as usize;
+        if readers[inner_id] != 1 {
+            continue;
+        }
+        let ir::Op::Mfp { input: source, filter: inner_filter, map: inner_map, project: inner_project } = &p.nodes[inner_id] else {
+            continue;
+        };
+        let Some(width) = p.node_types_memo(*source, &mut types).map(|cols| cols.len()) else { continue };
+        let source = *source;
+        let (filter, map, project) = compose_mfps(
+            width,
+            (inner_filter, inner_map, inner_project),
+            (filter, map, project),
+        );
+        p.nodes[id] = ir::Op::Mfp { input: source, filter, map, project };
+        absorbed[inner_id] = true;
+        readers[inner_id] = 0;
+    }
+    if !absorbed.contains(&true) {
+        return;
+    }
+    let mut renumber = vec![0 as ir::NodeId; p.nodes.len()];
+    let mut next = 0;
+    for (id, gone) in absorbed.iter().enumerate() {
+        if !gone {
+            renumber[id] = next;
+            next += 1;
+        }
+    }
+    let nodes = std::mem::take(&mut p.nodes);
+    p.nodes = nodes
+        .iter()
+        .enumerate()
+        .filter(|(id, _)| !absorbed[*id])
+        .map(|(_, op)| op_with_inputs(op, |n| renumber[n as usize]))
+        .collect();
+    for stratum in &mut p.strata {
+        match stratum {
+            ir::Stratum::Let { body, .. } => *body = renumber[*body as usize],
+            ir::Stratum::LetRec(rec) => {
+                let nested = rec.nested.iter_mut().flat_map(|inner| inner.bodies.iter_mut());
+                rec.bodies.iter_mut().chain(nested).for_each(|body| *body = renumber[*body as usize]);
+            }
+        }
+    }
+}
+
 fn reachable(
     start: RelationKey,
     pending: &BTreeSet<RelationKey>,
@@ -265,6 +414,8 @@ pub struct Lowered {
     pub dynamic_atom_base: i64,
     pub fold_program: Option<Program>,
     pub declared_folds: Vec<DeclaredFoldSpec>,
+    /// The term of each `ir.terms` entry.
+    pub literals: Vec<TermId>,
 }
 
 #[derive(Clone)]
@@ -287,7 +438,6 @@ struct Builder {
     ir: ir::Program,
     next_rel: ir::RelId,
     constructor_gets: HashMap<ir::RelId, ir::NodeId>,
-    ground_maps: HashMap<(ir::RelId, TermId), ir::NodeId>,
     /// A relation read through one column projection: every goal that keeps the same columns
     /// reads one node, so the engines share its arrangement.
     narrowed_gets: HashMap<(ir::RelId, Vec<ir::ColId>), ir::NodeId>,
@@ -317,6 +467,15 @@ struct Builder {
     /// Every op denotes a function of its operator and its inputs' collections (a `Mint` of a
     /// functor and columns, a `Get` of a relation with one binder), so equal ops are one collection.
     consed: HashMap<String, ir::NodeId>,
+    /// Every term the program names, by its `TermId`: the source of `ir.terms` entries.
+    term_specs: HashMap<TermId, TermSpec>,
+    /// `ir.terms` index per term already in the table.
+    literals: HashMap<TermId, u32>,
+    /// The term of each `ir.terms` entry.
+    literal_terms: Vec<TermId>,
+    /// `Lowered::texts`, by `TermSpec::text`; `ir.texts` holds only the texts the term table names,
+    /// so the IR of a program does not change with the strings its seeds carry.
+    spec_texts: Vec<String>,
 }
 
 struct FoldAux {
@@ -336,6 +495,7 @@ impl Builder {
         Self {
             ir: ir::Program {
                 texts: Vec::new(),
+                terms: Vec::new(),
                 rels: Vec::new(),
                 nodes: Vec::new(),
                 strata: Vec::new(),
@@ -343,7 +503,6 @@ impl Builder {
             },
             next_rel: 0,
             constructor_gets: HashMap::new(),
-            ground_maps: HashMap::new(),
             narrowed_gets: HashMap::new(),
             narrow_unions: HashMap::new(),
             narrow_record: false,
@@ -357,6 +516,10 @@ impl Builder {
             declared_folds: Vec::new(),
             semantic: None,
             consed: HashMap::new(),
+            term_specs: HashMap::new(),
+            literals: HashMap::new(),
+            literal_terms: Vec::new(),
+            spec_texts: Vec::new(),
         }
     }
     fn rel(&mut self, name: String, cols: Vec<ir::Ty>, kind: ir::RelKind) -> ir::RelId {
@@ -397,6 +560,46 @@ impl Builder {
         let id = self.get(rel);
         self.constructor_gets.insert(rel, id);
         id
+    }
+    /// The `ir.terms` index of `term`, its argument terms entered first. Post-order over an
+    /// explicit stack. `Err`: a term outside the lowered term specs.
+    fn literal(&mut self, term: TermId) -> Result<u32, &'static str> {
+        let mut stack = vec![(term, false)];
+        while let Some((at, expanded)) = stack.pop() {
+            if self.literals.contains_key(&at) {
+                continue;
+            }
+            let spec = self.term_specs.get(&at).ok_or("ground term outside the term table")?;
+            if !expanded {
+                stack.push((at, true));
+                stack.extend(spec.args.iter().filter(|arg| !self.literals.contains_key(arg)).map(|arg| (*arg, false)));
+                continue;
+            }
+            let args = if let Some(raw) = spec.raw {
+                vec![ir::TermArg::Raw(raw)]
+            } else if let Some(text) = spec.text {
+                let value = self.spec_texts.get(text).ok_or("term text outside the text table")?;
+                let index = match self.ir.texts.iter().position(|known| known == value) {
+                    Some(index) => index,
+                    None => {
+                        self.ir.texts.push(value.clone());
+                        self.ir.texts.len() - 1
+                    }
+                };
+                vec![ir::TermArg::Text(index as u32)]
+            } else {
+                spec.args
+                    .iter()
+                    .map(|arg| self.literals.get(arg).map(|index| ir::TermArg::Term(*index)))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or("term argument outside the term table")?
+            };
+            let index = self.ir.terms.len() as u32;
+            self.ir.terms.push(ir::TermLit { functor: spec.functor, args });
+            self.literals.insert(at, index);
+            self.literal_terms.push(at);
+        }
+        Ok(self.literals[&term])
     }
     fn mfp(
         &mut self,
@@ -443,22 +646,31 @@ fn assert_width(width: usize) -> ir::ColId {
     ir::ColId::try_from(width).expect("IR column width exceeds u16")
 }
 
-fn mapped_ground(b: &mut Builder, map_rel: ir::RelId, original: TermId) -> ir::NodeId {
-    if let Some(&node) = b.ground_maps.get(&(map_rel, original)) {
-        return node;
+/// `input` extended by a ground term's two columns, its `TermId` and its cell (an IR literal,
+/// interned at install). `key`: the input column that must hold the term; none appends it to every
+/// row.
+fn join_ground(
+    b: &mut Builder,
+    input: ir::NodeId,
+    key: Option<ir::ColId>,
+    original: TermId,
+) -> Result<ir::NodeId, &'static str> {
+    let cell = ir::Expr::Term(b.literal(original)?);
+    let filter = key
+        .map(|col| vec![ir::Expr::Call(ir::Func::Eq, vec![ir::Expr::Col(col), cell.clone()])])
+        .unwrap_or_default();
+    Ok(b.mfp(input, filter, vec![ir::Expr::Lit(original.0 as i64), cell], vec![]))
+}
+
+/// One row holding the cell of each of `terms`, read off the unit relation.
+fn ground_row(b: &mut Builder, unit: ir::RelId, terms: &[TermId]) -> Result<ir::NodeId, &'static str> {
+    let unit_rows = b.get(unit);
+    let mut map = Vec::with_capacity(terms.len());
+    for term in terms {
+        map.push(ir::Expr::Term(b.literal(*term)?));
     }
-    let source = b.get(map_rel);
-    let node = b.mfp(
-        source,
-        vec![ir::Expr::Call(
-            ir::Func::Eq,
-            vec![ir::Expr::Col(0), ir::Expr::Lit(original.0 as i64)],
-        )],
-        vec![],
-        vec![],
-    );
-    b.ground_maps.insert((map_rel, original), node);
-    node
+    let project = (1..=terms.len()).map(assert_width).collect();
+    Ok(b.mfp(unit_rows, vec![], map, project))
 }
 
 fn constructor(
@@ -563,7 +775,6 @@ fn served_effect(
     bound: &HashMap<u32, ir::ColId>,
     constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
     semantic: ir::RelId,
-    term_map: ir::RelId,
     none: TermId,
     empty: TermId,
     tuple: TermId,
@@ -575,11 +786,7 @@ fn served_effect(
         let term = match arg {
             Arg::Var(v) => bound.get(&v.0).copied(),
             Arg::Ground(id) => {
-                let mapped = mapped_ground(b, term_map, *id);
-                node = b.node(ir::Op::Join {
-                    inputs: vec![node, mapped],
-                    equivalences: vec![],
-                });
+                node = join_ground(b, node, None, *id)?;
                 let col = assert_width(size + 1);
                 size += 2;
                 Some(col)
@@ -588,18 +795,10 @@ fn served_effect(
         };
         values.push(term);
     }
-    let missing = mapped_ground(b, term_map, none);
-    node = b.node(ir::Op::Join {
-        inputs: vec![node, missing],
-        equivalences: vec![],
-    });
+    node = join_ground(b, node, None, none)?;
     let missing_col = assert_width(size + 1);
     size += 2;
-    let empty_row = mapped_ground(b, term_map, empty);
-    node = b.node(ir::Op::Join {
-        inputs: vec![node, empty_row],
-        equivalences: vec![],
-    });
+    node = join_ground(b, node, None, empty)?;
     let mut list = assert_width(size + 1);
     let mut plain_list = list;
     size += 2;
@@ -626,11 +825,7 @@ fn served_effect(
     }
     let wrap = constructor(constructors, "9:1:ref", 1, false)?;
     let application = constructor(constructors, "9:2:application", 2, false)?;
-    let tuple_atom = mapped_ground(b, term_map, tuple);
-    node = b.node(ir::Op::Join {
-        inputs: vec![node, tuple_atom],
-        equivalences: vec![],
-    });
+    node = join_ground(b, node, None, tuple)?;
     let tuple_col = assert_width(size + 1);
     size += 2;
     node = b.node(ir::Op::Mint {
@@ -647,11 +842,7 @@ fn served_effect(
     });
     let arguments = assert_width(size);
     size += 1;
-    let relation = mapped_ground(b, term_map, goal.rel);
-    node = b.node(ir::Op::Join {
-        inputs: vec![node, relation],
-        equivalences: vec![],
-    });
+    node = join_ground(b, node, None, goal.rel)?;
     let rel = assert_width(size + 1);
     size += 2;
     let ref_ctor = constructor(constructors, "9:1:ref", 1, false)?;
@@ -687,7 +878,6 @@ fn compile_kernel(
     constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
     semantic: ir::RelId,
     plain_lists: ir::RelId,
-    term_map: ir::RelId,
     current: &mut ir::NodeId,
     width: &mut usize,
     bound: &mut HashMap<u32, ir::ColId>,
@@ -699,11 +889,7 @@ fn compile_kernel(
         match arg {
             Arg::Var(v) => inputs.push(bound.get(&v.0).copied()),
             Arg::Ground(id) => {
-                let mapped = mapped_ground(b, term_map, *id);
-                *current = b.node(ir::Op::Join {
-                    inputs: vec![*current, mapped],
-                    equivalences: vec![],
-                });
+                *current = join_ground(b, *current, None, *id)?;
                 inputs.push(Some(assert_width(*width + 1)));
                 *width += 2;
             }
@@ -975,11 +1161,7 @@ fn compile_kernel(
                 let constructor_col = assert_width(*width + 1);
                 let mut list = assert_width(*width + 2);
                 *width += 3;
-                let tuple_atom = mapped_ground(b, term_map, tuple);
-                *current = b.node(ir::Op::Join {
-                    inputs: vec![*current, tuple_atom],
-                    equivalences: vec![],
-                });
+                *current = join_ground(b, *current, None, tuple)?;
                 let tuple_col = assert_width(*width + 1);
                 *width += 2;
                 *current = b.mfp(
@@ -1000,11 +1182,7 @@ fn compile_kernel(
                     }
                 }
                 // Exactly `value_at` elements: the list ends after the last one.
-                let empty_row = mapped_ground(b, term_map, empty);
-                *current = b.node(ir::Op::Join {
-                    inputs: vec![*current, empty_row],
-                    equivalences: vec![],
-                });
+                *current = join_ground(b, *current, None, empty)?;
                 let end = assert_width(*width + 1);
                 *width += 2;
                 *current = b.mfp(*current, vec![equal_columns(list, end)], vec![], vec![]);
@@ -1018,11 +1196,7 @@ fn compile_kernel(
                     plain.push(element);
                 }
                 let elements = plain.clone();
-                let empty_row = mapped_ground(b, term_map, empty);
-                *current = b.node(ir::Op::Join {
-                    inputs: vec![*current, empty_row],
-                    equivalences: vec![],
-                });
+                *current = join_ground(b, *current, None, empty)?;
                 let mut list = assert_width(*width + 1);
                 *width += 2;
                 for element in plain.into_iter().rev() {
@@ -1034,11 +1208,7 @@ fn compile_kernel(
                     list = assert_width(*width);
                     *width += 1;
                 }
-                let tuple_atom = mapped_ground(b, term_map, tuple);
-                *current = b.node(ir::Op::Join {
-                    inputs: vec![*current, tuple_atom],
-                    equivalences: vec![],
-                });
+                *current = join_ground(b, *current, None, tuple)?;
                 let tuple_col = assert_width(*width + 1);
                 *width += 2;
                 *current = b.node(ir::Op::Mint {
@@ -1080,11 +1250,7 @@ fn compile_kernel(
                     plain.push(assert_width(*width + 1));
                     *width += 2;
                 }
-                let empty_row = mapped_ground(b, term_map, empty);
-                *current = b.node(ir::Op::Join {
-                    inputs: vec![*current, empty_row],
-                    equivalences: vec![],
-                });
+                *current = join_ground(b, *current, None, empty)?;
                 let mut list = assert_width(*width + 1);
                 *width += 2;
                 for element in plain.into_iter().rev() {
@@ -1103,16 +1269,12 @@ fn compile_kernel(
                 let mut listed_columns = kept.clone();
                 listed_columns.push(assert_width(*width + 1));
                 let listed = b.mfp(listed, vec![], vec![], listed_columns);
-                let tuple_ctor = mapped_ground(b, term_map, tuple);
                 let mut vector = join_constructor(b, *current, *width, ref_ctor, arguments);
                 let application = assert_width(*width + 1);
                 vector = join_constructor(b, vector, *width + 2, app_ctor, application);
                 let vector_constructor = assert_width(*width + 3);
                 let vector_list = assert_width(*width + 4);
-                vector = b.node(ir::Op::Join {
-                    inputs: vec![vector, tuple_ctor],
-                    equivalences: vec![],
-                });
+                vector = join_ground(b, vector, None, tuple)?;
                 let tuple_col = assert_width(*width + 6);
                 vector = b.mfp(
                     vector,
@@ -1318,7 +1480,6 @@ fn fold_step_antijoin(
     current: ir::NodeId,
     bound: &HashMap<u32, ir::ColId>,
     relations: &BTreeMap<(u32, usize), ir::RelId>,
-    term_map: ir::RelId,
 ) -> Result<ir::NodeId, &'static str> {
     let mut right = b.get(
         *relations
@@ -1335,11 +1496,7 @@ fn fold_step_antijoin(
                 rk.push(position);
             }
             Arg::Ground(id) => {
-                let mapped = mapped_ground(b, term_map, *id);
-                right = b.node(ir::Op::Join {
-                    inputs: vec![right, mapped],
-                    equivalences: vec![vec![(0, position), (1, 1)]],
-                });
+                right = join_ground(b, right, Some(position), *id)?;
             }
             _ => return Err("fold step aggregate"),
         }
@@ -1366,7 +1523,6 @@ fn compile_fold_step_rule(
     constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
     semantic: ir::RelId,
     plain_lists: ir::RelId,
-    term_map: ir::RelId,
     empty: TermId,
     tuple: TermId,
 ) -> Result<(ir::NodeId, ir::ColId), &'static str> {
@@ -1380,7 +1536,6 @@ fn compile_fold_step_rule(
                 constructors,
                 semantic,
                 plain_lists,
-                term_map,
                 &mut current,
                 &mut width,
                 &mut bound,
@@ -1390,7 +1545,7 @@ fn compile_fold_step_rule(
             continue;
         }
         if goal.polarity == Polarity::Negative {
-            current = fold_step_antijoin(b, goal, current, &bound, relations, term_map)?;
+            current = fold_step_antijoin(b, goal, current, &bound, relations)?;
             continue;
         }
         let right = b.get(
@@ -1413,11 +1568,7 @@ fn compile_fold_step_rule(
                     }
                 }
                 Arg::Ground(id) => {
-                    let mapped = mapped_ground(b, term_map, *id);
-                    current = b.node(ir::Op::Join {
-                        inputs: vec![current, mapped],
-                        equivalences: vec![],
-                    });
+                    current = join_ground(b, current, None, *id)?;
                     let ground_col = assert_width(width + 1);
                     width += 2;
                     equivalences.push(vec![(0, ground_col), (1, position)]);
@@ -1437,11 +1588,7 @@ fn compile_fold_step_rule(
     let next = match rule.head.get(2) {
         Some(Arg::Var(v)) => *bound.get(&v.0).ok_or("unbound fold step output")?,
         Some(Arg::Ground(id)) => {
-            let mapped = mapped_ground(b, term_map, *id);
-            current = b.node(ir::Op::Join {
-                inputs: vec![current, mapped],
-                equivalences: vec![],
-            });
+            current = join_ground(b, current, None, *id)?;
             assert_width(width + 1)
         }
         _ => return Err("fold step output"),
@@ -1523,7 +1670,6 @@ fn compile_rule(
     constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
     semantic: ir::RelId,
     plain_lists: ir::RelId,
-    term_map: ir::RelId,
     unit: ir::RelId,
     served: &std::collections::HashSet<TermId>,
     none: TermId,
@@ -1547,7 +1693,6 @@ fn compile_rule(
                 &bound,
                 constructors,
                 semantic,
-                term_map,
                 none,
                 empty,
                 tuple,
@@ -1563,7 +1708,6 @@ fn compile_rule(
                 constructors,
                 semantic,
                 plain_lists,
-                term_map,
                 &mut current,
                 &mut width,
                 &mut bound,
@@ -1622,11 +1766,7 @@ fn compile_rule(
                 let mut filtered = right;
                 let mut size = goal.args.len().max(1);
                 for (position, original) in &grounds {
-                    let mapped = mapped_ground(b, term_map, *original);
-                    filtered = b.node(ir::Op::Join {
-                        inputs: vec![filtered, mapped],
-                        equivalences: vec![vec![(0, *position), (1, 1)]],
-                    });
+                    filtered = join_ground(b, filtered, Some(*position), *original)?;
                     filtered = b.mfp(
                         filtered,
                         vec![],
@@ -1783,12 +1923,8 @@ fn compile_rule(
         let total = width + if narrowed { kept.len() } else { goal.args.len().max(1) };
         let mut grown = total;
         for (position, original) in &grounds {
-            let mapped = mapped_ground(b, term_map, *original);
             let position = at(*position).ok_or("ground position projected away")?;
-            current = b.node(ir::Op::Join {
-                inputs: vec![current, mapped],
-                equivalences: vec![vec![(0, assert_width(width + position as usize)), (1, 1)]],
-            });
+            current = join_ground(b, current, Some(assert_width(width + position as usize)), *original)?;
             grown += 2;
         }
         for (v, position) in first_here {
@@ -1811,11 +1947,7 @@ fn compile_rule(
         let subject = match subject {
             Arg::Var(v) => *bound.get(&v.0).ok_or("unbound aggregate subject")?,
             Arg::Ground(id) => {
-                let mapped = mapped_ground(b, term_map, *id);
-                current = b.node(ir::Op::Join {
-                    inputs: vec![current, mapped],
-                    equivalences: vec![],
-                });
+                current = join_ground(b, current, None, *id)?;
                 let col = assert_width(width + 1);
                 width += 2;
                 col
@@ -1830,11 +1962,7 @@ fn compile_rule(
             match arg {
                 Arg::Var(v) => keys.push(*bound.get(&v.0).ok_or("unbound aggregate key")?),
                 Arg::Ground(id) => {
-                    let mapped = mapped_ground(b, term_map, *id);
-                    current = b.node(ir::Op::Join {
-                        inputs: vec![current, mapped],
-                        equivalences: vec![],
-                    });
+                    current = join_ground(b, current, None, *id)?;
                     keys.push(assert_width(width + 1));
                     width += 2;
                 }
@@ -1968,11 +2096,7 @@ fn compile_rule(
                         key: (0..key_count).map(assert_width).collect(),
                         aggs: vec![ir::Agg::Count],
                     });
-                    let seed_row = mapped_ground(b, term_map, seed);
-                    let seeded = b.node(ir::Op::Join {
-                        inputs: vec![groups, seed_row],
-                        equivalences: vec![],
-                    });
+                    let seeded = join_ground(b, groups, None, seed)?;
                     let seeded = b.mfp(
                         seeded,
                         vec![],
@@ -2058,11 +2182,7 @@ fn compile_rule(
                 key: (0..key_count).map(assert_width).collect(),
                 aggs: vec![ir::Agg::Count],
             });
-            let seed_row = mapped_ground(b, term_map, seed);
-            let seeded = b.node(ir::Op::Join {
-                inputs: vec![groups, seed_row],
-                equivalences: vec![],
-            });
+            let seeded = join_ground(b, groups, None, seed)?;
             let seeded = b.mfp(
                 seeded,
                 vec![],
@@ -2124,11 +2244,7 @@ fn compile_rule(
                             }
                         }
                         Arg::Ground(term) => {
-                            let mapped = mapped_ground(b, term_map, *term);
-                            prepared = b.node(ir::Op::Join {
-                                inputs: vec![prepared, mapped],
-                                equivalences: vec![vec![(0, column), (1, 1)]],
-                            });
+                            prepared = join_ground(b, prepared, Some(column), *term)?;
                             step_width += 2;
                         }
                         _ => return Err("fold step head aggregate"),
@@ -2145,7 +2261,6 @@ fn compile_rule(
                     constructors,
                     semantic,
                     plain_lists,
-                    term_map,
                     empty,
                     tuple,
                 )?;
@@ -2324,11 +2439,7 @@ fn compile_rule(
             };
             head_cols.push(col);
         } else if let Some(id) = ground(arg) {
-            let mapped = mapped_ground(b, term_map, id);
-            current = b.node(ir::Op::Join {
-                inputs: vec![current, mapped],
-                equivalences: vec![],
-            });
+            current = join_ground(b, current, None, id)?;
             head_cols.push(assert_width(width + 1));
             width += 2;
         } else {
@@ -2555,12 +2666,11 @@ fn lower_waves(
     sources: &BTreeMap<RelationKey, ir::RelId>,
     bodies: &BTreeMap<RelationKey, Vec<ir::NodeId>>,
     next_bodies: &mut BTreeMap<RelationKey, Vec<ir::NodeId>>,
-    term_map: ir::RelId,
+    unit: ir::RelId,
     none: TermId,
 ) -> Result<(), &'static str> {
     let started = b.rel("__ir_wave_started".into(), vec![ir::Ty::Id], ir::RelKind::Derived);
-    let mapped = mapped_ground(b, term_map, none);
-    let started_body = b.mfp(mapped, vec![], vec![], vec![1]);
+    let started_body = ground_row(b, unit, &[none])?;
     let cone: HashSet<ir::RelId> = waves.cone.iter().flat_map(|(members, _)| members).map(|key| relations[key]).collect();
     let mut values: HashMap<ir::RelId, ir::NodeId> = HashMap::new();
     let mut memo: HashMap<ir::NodeId, ir::NodeId> = HashMap::new();
@@ -2865,7 +2975,7 @@ pub fn lower_declared(
         constructors.insert((name, width, raw), ctor);
         prewarm.insert(ctor, (source, output));
     }
-    let terms = shapes
+    let terms: Vec<TermSpec> = shapes
         .into_iter()
         .map(|(original, name, args, raw, text)| {
             let width = if text.is_some() { 1 } else { args.len() };
@@ -2882,6 +2992,8 @@ pub fn lower_declared(
             }
         })
         .collect();
+    b.term_specs = terms.iter().map(|spec: &TermSpec| (spec.original, spec.clone())).collect();
+    b.spec_texts = texts.iter().map(|(_, text)| text.clone()).collect();
     let installers = constructors
         .iter()
         .map(|(shape, ctor)| (shape.clone(), prewarm[ctor]))
@@ -2985,7 +3097,6 @@ pub fn lower_declared(
                 &constructors,
                 semantic,
                 plain_lists,
-                term_map,
                 unit,
                 &program.served,
                 none,
@@ -3016,7 +3127,6 @@ pub fn lower_declared(
             &constructors,
             semantic,
             plain_lists,
-            term_map,
             unit,
             &program.served,
             none,
@@ -3036,11 +3146,8 @@ pub fn lower_declared(
             if constructs_readback {
                 for request in b.intern_nodes[requests_before..].to_vec() {
                     for constructor in &sum_readbacks {
-                        let mapped = mapped_ground(&mut b, term_map, *constructor);
-                        let joined = b.node(ir::Op::Join {
-                            inputs: vec![request, mapped],
-                            equivalences: vec![vec![(0, 0), (1, 1)]],
-                        });
+                        let joined = join_ground(&mut b, request, Some(0), *constructor)
+                            .map_err(|name| unsupported(u, name))?;
                         let snapshot = b.mfp(joined, vec![], vec![], vec![0, 1, 2]);
                         b.snapshot_nodes.push(snapshot);
                         for goal in &rule.body {
@@ -3129,8 +3236,8 @@ pub fn lower_declared(
         let seed_lists = b.get(plain_source);
         let seeded = join_constructor(&mut b, seed_lists, 2, wrap, 0);
         let seeded = b.mfp(seeded, vec![], vec![], vec![3, 1]);
-        let empty_row = mapped_ground(&mut b, term_map, empty);
-        let empty_pair = b.mfp(empty_row, vec![], vec![], vec![1, 1]);
+        let empty_cell = ground_row(&mut b, unit, &[empty]).map_err(|name| unsupported(u, name))?;
+        let empty_pair = b.mfp(empty_cell, vec![], vec![], vec![0, 0]);
         let mut pairs = b.get(plain_inner);
         let cons_rows = b.get_constructor(cons);
         pairs = b.node(ir::Op::Join {
@@ -3299,7 +3406,7 @@ pub fn lower_declared(
             break;
         }
         if let Some(w) = waves.as_ref().filter(|w| !wave_pending.is_empty() && w.reads.iter().all(|key| !pending.contains(key))) {
-            lower_waves(&mut b, w, &relations, &sources, &bodies, &mut next_bodies, term_map, none)
+            lower_waves(&mut b, w, &relations, &sources, &bodies, &mut next_bodies, unit, none)
                 .map_err(|name| unsupported(u, name))?;
             for key in std::mem::take(&mut wave_pending) {
                 pending.remove(&key);
@@ -3420,11 +3527,7 @@ pub fn lower_declared(
         );
         let body = if let Some(effect) = internal_effect {
             let effects = b.get(effect);
-            let mapped = mapped_ground(&mut b, term_map, relation);
-            let joined = b.node(ir::Op::Join {
-                inputs: vec![effects, mapped],
-                equivalences: vec![vec![(0, 0), (1, 1)]],
-            });
+            let joined = join_ground(&mut b, effects, Some(0), relation).map_err(|name| unsupported(u, name))?;
             b.mfp(joined, vec![], vec![], vec![0, 1])
         } else {
             b.node(ir::Op::Union(nodes))
@@ -3485,6 +3588,7 @@ pub fn lower_declared(
     let body = b.node(ir::Op::Union(touch));
     b.ir.strata.push(ir::Stratum::Let { id: sentinel, body });
     b.ir.outputs.insert(0, sentinel);
+    fuse_mfps(&mut b.ir);
     let fold_program = (!b.declared_folds.is_empty()).then(|| program.clone());
     let seeds = program
         .seeds
@@ -3518,5 +3622,6 @@ pub fn lower_declared(
         dynamic_atom_base,
         fold_program,
         declared_folds: b.declared_folds,
+        literals: b.literal_terms,
     })
 }

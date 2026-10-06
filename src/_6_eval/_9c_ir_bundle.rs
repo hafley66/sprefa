@@ -137,10 +137,49 @@ pub fn bundle(u: &Universe, lowered: &Lowered) -> Result<Bundle, String> {
     }
     changes.sort_by(|a, b| (a.rel, &a.row).cmp(&(b.rel, &b.row)));
     changes.dedup_by(|a, b| a.rel == b.rel && a.row == b.row);
+    // The generated runtime has no term table: each term literal becomes its reserved cell.
+    let cells = lowered
+        .literals
+        .iter()
+        .map(|term| mapped.get(term).copied().ok_or_else(|| format!("literal term {} missing", term.0)))
+        .collect::<Result<Vec<_>, _>>()?;
+    for op in &mut program.nodes {
+        if let ir::Op::Mfp { filter, map, .. } = op {
+            for expr in filter.iter_mut().chain(map.iter_mut()) {
+                *expr = with_literal_cells(expr, &cells);
+            }
+        }
+    }
+    program.terms.clear();
     Ok(Bundle {
         texts: program.texts.clone(),
         program,
         frontier0: ir::Frontier { changes },
         atoms,
     })
+}
+
+/// `expr` with each `Term(i)` replaced by `Lit(cells[i])`: post-order over an explicit stack.
+fn with_literal_cells(expr: &ir::Expr, cells: &[ir::Cell]) -> ir::Expr {
+    enum Step<'e> {
+        Enter(&'e ir::Expr),
+        Build(ir::Func, usize),
+    }
+    let mut steps = vec![Step::Enter(expr)];
+    let mut done: Vec<ir::Expr> = Vec::new();
+    while let Some(step) = steps.pop() {
+        match step {
+            Step::Enter(ir::Expr::Term(index)) => done.push(ir::Expr::Lit(cells[*index as usize])),
+            Step::Enter(ir::Expr::Call(func, args)) => {
+                steps.push(Step::Build(*func, args.len()));
+                steps.extend(args.iter().rev().map(Step::Enter));
+            }
+            Step::Enter(other) => done.push(other.clone()),
+            Step::Build(func, arity) => {
+                let args = done.split_off(done.len() - arity);
+                done.push(ir::Expr::Call(func, args));
+            }
+        }
+    }
+    done.pop().expect("one expression")
 }

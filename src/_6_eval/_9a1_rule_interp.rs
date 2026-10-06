@@ -575,6 +575,7 @@ pub fn shape(bucket: u32) -> Shape {
     let mut b = B {
         p: ir::Program {
             texts: vec![],
+            terms: vec![],
             rels: vec![],
             nodes: vec![],
             strata: vec![],

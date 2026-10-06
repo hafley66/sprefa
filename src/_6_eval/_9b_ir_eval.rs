@@ -817,6 +817,9 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>) -> Lowered 
     for relation in &mut ir.rels {
         relation.id = rel(relation.id);
     }
+    for term in &mut ir.terms {
+        term.functor = rel(term.functor);
+    }
     Lowered {
         ir,
         terms: lowered
@@ -872,6 +875,7 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>) -> Lowered 
                 ..spec.clone()
             })
             .collect(),
+        literals: lowered.literals.clone(),
     }
 }
 
