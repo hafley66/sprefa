@@ -2680,6 +2680,11 @@ pub struct Declared {
     pub sources: Vec<(TermId, usize)>,
     /// Constructor shapes `(name, arity, raw)`, keyed as `Lowered::constructors`.
     pub shapes: BTreeSet<(String, usize, bool)>,
+    /// Rows reach the program only as its own seeds and its served relations' answers (a comptime
+    /// round: the next round's frozen rows are that round's seeds). A sealed program without a
+    /// served relation gives no seed source to a relation a rule heads and no seed names. Unsealed,
+    /// every relation keeps one: runtime frontiers and `IrSession::apply` may send rows to any.
+    pub sealed: bool,
 }
 
 /// One LetRec for every wave relation, one round per wave, `limit` the wave limit. Its
@@ -3069,22 +3074,56 @@ pub fn lower_declared(
             }
         }
     }
+    let waves = waves(u, &program.rules, &keys).map_err(|name| unsupported(u, name))?;
+    // In a sealed program without a served relation (`Declared::sealed`), a relation gets a seed
+    // source unless an ordinary rule heads it and no row can reach it from outside: none of the
+    // program's seeds, the caller's declared sources, the snapshot rows a later comptime round
+    // freezes (`edge_snapshot`, `intern_snapshot`), or a wave or wave-cone relation's seeds.
+    // Executor answers may write any relation, so a served relation keeps every source.
+    let headed: BTreeSet<RelationKey> = program
+        .rules
+        .iter()
+        .map(|rule| rule_key(u, rule))
+        .filter(|(_, next)| !next)
+        .map(|(key, _)| key)
+        .collect();
+    let mut external: BTreeSet<RelationKey> = program
+        .seeds
+        .iter()
+        .map(|seed| (seed.rel.0, seed.args.len()))
+        .chain(declared.sources.iter().map(|(rel, width)| (rel.0, *width)))
+        .collect();
+    if let Some(waves) = &waves {
+        external.extend(waves.wave.iter().copied());
+        external.extend(waves.cone.iter().flat_map(|(members, _)| members.iter().copied()));
+    }
+    let frozen = [kernel_ref(u, "edge_snapshot"), snapshot_rel];
+    let open = !declared.sealed || !program.served.is_empty();
+    let seeded = |key: &RelationKey| {
+        open
+            || !headed.contains(key)
+            || external.contains(key)
+            || program.served.contains(&TermId(key.0))
+            || frozen.contains(&TermId(key.0))
+    };
     let mut relations = BTreeMap::new();
     let mut sources = BTreeMap::new();
     let mut visible = Vec::new();
     for (rel, width) in keys.iter().copied() {
         let cols = vec![ir::Ty::Id; width.max(1)];
-        let source = b.rel(
-            if program.served.contains(&TermId(rel)) {
-                format!("{}.answer", u.display(TermId(rel)))
-            } else {
-                format!("__ir_seed_n{rel}_a{width}")
-            },
-            cols.clone(),
-            ir::RelKind::Source,
-        );
+        if seeded(&(rel, width)) {
+            let source = b.rel(
+                if program.served.contains(&TermId(rel)) {
+                    format!("{}.answer", u.display(TermId(rel)))
+                } else {
+                    format!("__ir_seed_n{rel}_a{width}")
+                },
+                cols.clone(),
+                ir::RelKind::Source,
+            );
+            sources.insert((rel, width), source);
+        }
         let output = b.rel(format!("__ir_n{rel}_a{width}"), cols, ir::RelKind::Derived);
-        sources.insert((rel, width), source);
         relations.insert((rel, width), output);
         if !hidden.contains(&TermId(rel)) {
             visible.push((output, TermId(rel), width));
@@ -3109,7 +3148,6 @@ pub fn lower_declared(
     let mut effect_dependencies = BTreeSet::new();
     let mut snapshot_dependencies = BTreeSet::new();
     let mut fold_auxiliaries: BTreeMap<RelationKey, Vec<FoldAux>> = BTreeMap::new();
-    let waves = waves(u, &program.rules, &keys).map_err(|name| unsupported(u, name))?;
     let mut next_bodies: BTreeMap<RelationKey, Vec<ir::NodeId>> = BTreeMap::new();
     let mut wave_constructs = false;
     // Recording pass: the same rules into a scratch builder, collecting each relation's
@@ -3481,10 +3519,14 @@ pub fn lower_declared(
             let ids: Vec<_> = component.iter().map(|key| relations[key]).collect();
             let mut rec_bodies = Vec::new();
             for key in &component {
-                let mut parts = vec![b.get(sources[key])];
+                let mut parts: Vec<ir::NodeId> = sources.get(key).map(|source| b.get(*source)).into_iter().collect();
                 parts.extend(bodies.remove(key).unwrap_or_default());
-                let union = b.node(ir::Op::Union(parts));
-                rec_bodies.push(union);
+                let body = match parts[..] {
+                    [] => return Err(unsupported(u, "relation without a seed source or a rule body")),
+                    [one] => one,
+                    _ => b.node(ir::Op::Union(parts)),
+                };
+                rec_bodies.push(body);
             }
             b.ir.strata.push(ir::Stratum::LetRec(ir::LetRec {
                 ids,
@@ -3513,15 +3555,19 @@ pub fn lower_declared(
                     }));
                 }
             }
-            let mut parts = vec![b.get(sources[&key])];
+            let source = sources.get(&key).map(|source| b.get(*source));
+            let mut parts: Vec<ir::NodeId> = source.into_iter().collect();
             parts.extend(bodies.remove(&key).unwrap_or_default());
             // A source alone is distinct: both hosts reject duplicate inserts
             // and emit one row per live source key. No rule adds another row.
-            let body = if parts.len() == 1 {
-                parts[0]
-            } else {
-                let union = b.node(ir::Op::Union(parts));
-                b.node(ir::Op::Threshold(union))
+            let body = match parts[..] {
+                [] => return Err(unsupported(u, "relation without a seed source or a rule body")),
+                [one] if source.is_some() => one,
+                [one] => b.node(ir::Op::Threshold(one)),
+                _ => {
+                    let union = b.node(ir::Op::Union(parts));
+                    b.node(ir::Op::Threshold(union))
+                }
             };
             b.ir.strata.push(ir::Stratum::Let {
                 id: relations[&key],

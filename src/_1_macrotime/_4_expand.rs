@@ -173,6 +173,7 @@ impl MacroSession {
                     .iter()
                     .map(|&(name, arity)| (format!("9:{arity}:{name}"), arity, false))
                     .collect(),
+                sealed: false,
             },
             base: Vec::new(),
             resident: Vec::new(),

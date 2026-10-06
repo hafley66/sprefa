@@ -763,7 +763,9 @@ impl IrSession {
         answerer: Option<&mut Answerer>,
         fx: &mut dyn FnMut(Trace),
     ) -> Closure {
-        let lowered = match ir_lower::lower(u, program) {
+        // A comptime round: rows enter only as the program's seeds and its answers.
+        let sealed = ir_lower::Declared { sealed: true, ..ir_lower::Declared::default() };
+        let lowered = match ir_lower::lower_declared(u, program, &sealed) {
             Ok(lowered) => lowered,
             Err(diag) => {
                 return Closure {
