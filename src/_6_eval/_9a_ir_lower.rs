@@ -459,8 +459,11 @@ struct Builder {
     /// not keep.
     narrow_unions: HashMap<(ir::RelId, Vec<ir::ColId>), BTreeSet<ir::ColId>>,
     /// The recording pass: `compile_rule` adds each reader's kept positions to
-    /// `narrow_unions` and narrows to them alone.
+    /// `narrow_unions` and narrows to them alone. It builds no node: `node` hands out fresh ids
+    /// past `ir.nodes` (counted in `recorded`) and keeps no op, since the pass reads only
+    /// `narrow_unions` back.
     narrow_record: bool,
+    recorded: usize,
     intern_nodes: Vec<ir::NodeId>,
     intern_relation: Option<ir::RelId>,
     intern_readback: bool,
@@ -517,6 +520,7 @@ impl Builder {
             narrowed_gets: HashMap::new(),
             narrow_unions: HashMap::new(),
             narrow_record: false,
+            recorded: 0,
             intern_nodes: Vec::new(),
             intern_relation: None,
             intern_readback: false,
@@ -545,6 +549,11 @@ impl Builder {
         id
     }
     fn node(&mut self, op: ir::Op) -> ir::NodeId {
+        if self.narrow_record {
+            let id = (self.ir.nodes.len() + self.recorded) as ir::NodeId;
+            self.recorded += 1;
+            return id;
+        }
         let key = match &op {
             ir::Op::Union(inputs) => {
                 let mut sorted = inputs.clone();
