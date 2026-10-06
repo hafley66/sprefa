@@ -19,7 +19,7 @@ type RelationKey = (u32, usize);
 const WAVE_LIMIT: u32 = crate::_1_macrotime::WAVE_LIMIT as u32;
 
 /// The relation a rule's head derives, and whether the head is `(next ...)`.
-fn rule_key(u: &Universe, rule: &Rule) -> (RelationKey, bool) {
+pub(crate) fn rule_key(u: &Universe, rule: &Rule) -> (RelationKey, bool) {
     match next_inner(u, rule.rel) {
         Some(inner) => ((inner.0, rule.head.len()), true),
         None => ((rule.rel.0, rule.head.len()), false),
@@ -242,6 +242,7 @@ pub struct TermSpec {
     pub output: ir::RelId,
 }
 
+#[derive(Clone)]
 pub struct Lowered {
     pub ir: ir::Program,
     pub terms: Vec<TermSpec>,
@@ -273,6 +274,7 @@ pub struct DeclaredFoldSpec {
     pub fold: Fold,
 }
 
+#[derive(Clone)]
 pub struct ServedSpec {
     pub relation: TermId,
     pub request: ir::RelId,

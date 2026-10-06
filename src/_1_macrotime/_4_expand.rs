@@ -132,7 +132,36 @@ pub struct MacroSession {
     pub reprepares: usize,
 }
 
+/// The rule cone and declared relations and shapes a session prepares for `macro_program`
+/// under the configured macrotime mode; `None` when the program has no protocol.
+pub fn macro_cone(u: &mut Universe, macro_program: &MacroProgram) -> Option<(Program, Declared)> {
+    let protocol = macro_protocol(u, macro_program).0?;
+    let mut declared = MacroSession::configured().declared;
+    let selected = if macrotime_mode() == MacrotimeMode::Engine {
+        let wp = super::_8_waves::wave_protocol(u, macro_program).0?;
+        declared.sources = wp.sources();
+        super::_8_waves::wave_rules(u, &protocol, &wp, &macro_program.program.rules)
+    } else {
+        declared.sources = seed_relations(&protocol);
+        macro_rules(u, &protocol, &macro_program.program.rules)
+    };
+    let program = Program {
+        rules: selected
+            .iter()
+            .map(|i| macro_program.program.rules[*i].clone())
+            .collect(),
+        seeds: macro_program.program.seeds.clone(),
+        ..Program::default()
+    };
+    Some((program, declared))
+}
+
 impl MacroSession {
+    /// A session on `ir`: one-engine mode hands it the process engine's pool.
+    pub fn with_ir(ir: IrSession) -> Self {
+        Self { ir, ..Self::configured() }
+    }
+
     /// The `DL8_ENGINE` backend, declaring a constructor per `READER_SHAPES`.
     pub fn configured() -> Self {
         Self {

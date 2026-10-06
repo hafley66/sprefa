@@ -132,6 +132,7 @@ pub fn expand_source_compiler(
         generated.relations.clone(),
         generated.rules.clone(),
     );
+    st.ir_session = sources.ir_session();
     let input = RoundInput {
         u: &mut *u,
         authored_rules: &checked.rules,

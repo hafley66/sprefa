@@ -54,12 +54,23 @@ pub fn expand_units_with_macros(
     macro_program: &MacroProgram,
     fx: &mut dyn FnMut(Wave),
 ) -> (Vec<TermId>, Vec<TermId>) {
+    let mut session = MacroSession::configured();
+    expand_units_on(u, units, macro_program, &mut session, fx)
+}
+
+/// `expand_units_with_macros` on a session the caller keeps.
+pub fn expand_units_on(
+    u: &mut Universe,
+    units: &[TermId],
+    macro_program: &MacroProgram,
+    session: &mut MacroSession,
+    fx: &mut dyn FnMut(Wave),
+) -> (Vec<TermId>, Vec<TermId>) {
     let mut expanded = Vec::with_capacity(units.len());
     let mut diagnostics = Vec::new();
-    let mut session = MacroSession::configured();
     for unit in units {
         let (one, unit_diagnostics) =
-            expand_unit_with_macros(u, *unit, macro_program, &mut session, fx);
+            expand_unit_with_macros(u, *unit, macro_program, session, fx);
         match one {
             Some(one) => expanded.push(one),
             None => return (Vec::new(), unit_diagnostics),

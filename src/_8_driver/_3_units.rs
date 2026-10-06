@@ -10,6 +10,7 @@ use crate::_3_check::check_datalog;
 use crate::_4_comptime::api::derived_bind_slots;
 use crate::_4_comptime::sources::{source_unit_module_owners, Live};
 use crate::_4_comptime::{evaluate_checked, Compiled, Round};
+use crate::_6_eval::one_engine::Attach;
 use crate::_6_eval::term::{TermId, Universe};
 
 /// `:545`. Bootstrap lowering defers calls to relations the fixpoint will mint.
@@ -18,11 +19,21 @@ pub fn compile_units(
     units: &[TermId],
     fx: &mut dyn FnMut(Round),
 ) -> Result<(Option<Compiled>, Vec<TermId>), Stop> {
+    compile_units_attached(u, units, None, fx)
+}
+
+/// `compile_units` whose round loops evaluate on sessions attached to `one`.
+pub fn compile_units_attached(
+    u: &mut Universe,
+    units: &[TermId],
+    one: Option<Attach>,
+    fx: &mut dyn FnMut(Round),
+) -> Result<(Option<Compiled>, Vec<TermId>), Stop> {
     let lowered = lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, None, &[])?;
     if !lowered.diagnostics.is_empty() {
         return Ok((None, lowered.diagnostics));
     }
-    compile_after_unit_lower(u, units, None, lowered, fx)
+    compile_after_unit_lower(u, units, None, lowered, one, fx)
 }
 
 /// `:559`. The TSI environment is visible while the source units lower.
@@ -54,7 +65,7 @@ pub fn compile_project_units(
         origins,
         diagnostics: Vec::new(),
     };
-    compile_after_unit_lower(u, units, Some(project), lowered, fx)
+    compile_after_unit_lower(u, units, Some(project), lowered, None, fx)
 }
 
 /// `:686` through `:716`: merge, check, then the comptime fixpoint.
@@ -63,6 +74,7 @@ pub fn compile_after_unit_lower(
     units: &[TermId],
     project: Option<Project>,
     lowered: Units,
+    one: Option<Attach>,
     fx: &mut dyn FnMut(Round),
 ) -> Result<(Option<Compiled>, Vec<TermId>), Stop> {
     let (basement, origins) = merge_module_basements(u, &lowered.basements, &lowered.origins);
@@ -83,6 +95,7 @@ pub fn compile_after_unit_lower(
         units: units.to_vec(),
         project,
         imports: Vec::new(),
+        one,
     };
     Ok(evaluate_checked(u, &checked, &mut sources, fx)?)
 }

@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 /// The sliced `checked_datalog(root_graph(_, Edges), datalog_program(...))`
 /// term, split at the JSON boundary.
+#[derive(Clone)]
 pub struct MacroProgram {
     pub edges: Vec<TermId>,
     pub relations: Vec<TermId>,
