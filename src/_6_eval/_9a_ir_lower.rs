@@ -706,20 +706,16 @@ fn join_constructor(
     relation: ir::RelId,
     id: ir::ColId,
 ) -> ir::NodeId {
-    if let Some((semantic, wrappers)) = b.semantic {
+    if let Some((semantic, _)) = b.semantic {
         if relation == semantic {
-            // A wrapper read per constructor: each join is a decode of a constructor's id.
-            let parts = wrappers
-                .map(|wrapper| {
-                    let ctor = b.get_constructor(wrapper);
-                    b.node(ir::Op::Join {
-                        inputs: vec![input, ctor],
-                        equivalences: vec![vec![(0, id), (1, 0)]],
-                        project: vec![],
-                    })
-                })
-                .to_vec();
-            return b.node(ir::Op::Union(parts));
+            // One join on `__ir_semantic`, the Union of the `ref` and `const` constructors: their
+            // ids are disjoint, so each id finds its one wrapper row.
+            let wrapped = b.get(semantic);
+            return b.node(ir::Op::Join {
+                inputs: vec![input, wrapped],
+                equivalences: vec![vec![(0, id), (1, 0)]],
+                project: vec![],
+            });
         }
     }
     let ctor = b.get_constructor(relation);
