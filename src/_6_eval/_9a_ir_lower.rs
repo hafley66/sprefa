@@ -3562,32 +3562,6 @@ pub fn lower_declared(
         b.ir.outputs.push(snapshot_output);
         visible.push((snapshot_output, snapshot_rel, 3));
     }
-    // The SQLite host adapter resolves source columns through its first
-    // output plan. Include every source in that plan.
-    let sources_in_ir: Vec<_> =
-        b.ir.rels
-            .iter()
-            .filter(|rel| rel.kind == ir::RelKind::Source)
-            .map(|rel| (rel.id, rel.cols.len()))
-            .collect();
-    let mut touch = Vec::new();
-    for (source, width) in sources_in_ir {
-        let get = b.get(source);
-        touch.push(b.mfp(
-            get,
-            vec![],
-            vec![ir::Expr::Lit(1)],
-            vec![assert_width(width)],
-        ));
-    }
-    let sentinel = b.rel(
-        "__ir_all_sources".into(),
-        vec![ir::Ty::Int],
-        ir::RelKind::Derived,
-    );
-    let body = b.node(ir::Op::Union(touch));
-    b.ir.strata.push(ir::Stratum::Let { id: sentinel, body });
-    b.ir.outputs.insert(0, sentinel);
     fuse_mfps(&mut b.ir);
     let fold_program = (!b.declared_folds.is_empty()).then(|| program.clone());
     let seeds = program
