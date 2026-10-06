@@ -2,10 +2,9 @@
 //! `2_compiler.pl:1173-1206`, `:1384-1467` and `:1505-1517`.
 
 use super::api::{
-    colon_call_parts, colon_rows, diagnostic, intern_rows, is_kernel_ref, strip_intern_rows,
-    strip_snapshot_rows, Generated,
+    colon_call_parts, diagnostic, is_kernel_ref, kernel_call_args, strip_intern_rows, Generated,
 };
-use super::assemble::{assemble_generated_program, Assembled};
+use super::assemble::{assemble_indexed, Assembled, Edit, Indexed};
 use super::call::call_rules;
 use super::finish::{derived_bind_diagnostics, unmet_bound_diagnostics, validate_functional_rows};
 use crate::_3_check::api::prolog_sort;
@@ -20,7 +19,7 @@ use crate::_6_eval::{evaluate, Trace};
 use crate::_7_effect::Slice;
 use crate::_9_runtime::executors::once_executors;
 use crate::_9_runtime::Answerer;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 
 /// `debug_round_decision/2` at `:1376` prints exactly these three.
@@ -83,6 +82,67 @@ pub struct RoundState {
     pub checked: Option<(Vec<TermId>, Vec<TermId>, Resolved)>,
     /// The last round's rule list and its conversion to evaluator rules, reused while equal.
     pub converted: Option<(Vec<TermId>, Vec<Rule>)>,
+    /// The last round's closure and what the per-row filters made of it.
+    pub closure_index: ClosureIndex,
+}
+
+/// The previous round's evaluated closure and its per-row filters: the snapshot rows
+/// `strip_snapshot_rows` drops, the `colon_rows` edges, the `intern_rows` requests (each also
+/// sorted) and the `assemble_generated_program` index. A round folds in only the rows that
+/// entered or left the closure (`fold_closure`).
+#[derive(Default)]
+pub struct ClosureIndex {
+    rows: HashSet<TermId>,
+    snapshots: HashSet<TermId>,
+    edges: HashSet<TermId>,
+    requests: HashSet<TermId>,
+    sorted_edges: Vec<TermId>,
+    sorted_requests: Vec<TermId>,
+    assembled: Indexed,
+}
+
+/// One round's change of the evaluated closure `raw` folded into `index`: the closure without
+/// its snapshot rows (`strip_snapshot_rows`, list order), its edges (`colon_rows`) and its intern
+/// requests (`intern_rows`). Each filter is per row, so a row that stayed keeps its place.
+fn fold_closure(u: &mut Universe, index: &mut ClosureIndex, raw: &[TermId]) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
+    let current: HashSet<TermId> = raw.iter().copied().collect();
+    let left: Vec<TermId> = index.rows.difference(&current).copied().collect();
+    let entered: Vec<TermId> = current.difference(&index.rows).copied().collect();
+    let (mut edges_moved, mut requests_moved) = (false, false);
+    for row in left {
+        if index.snapshots.remove(&row) {
+            continue;
+        }
+        edges_moved |= index.edges.remove(&row);
+        requests_moved |= index.requests.remove(&row);
+        index.assembled.edit(u, row, Edit::Remove);
+    }
+    for row in entered {
+        if kernel_call_args(u, row, "edge_snapshot").is_some()
+            || kernel_call_args(u, row, "intern_snapshot").is_some()
+        {
+            index.snapshots.insert(row);
+            continue;
+        }
+        if kernel_call_args(u, row, ":").is_some() {
+            index.edges.insert(row);
+            edges_moved = true;
+        }
+        if kernel_call_args(u, row, "intern").is_some() {
+            index.requests.insert(row);
+            requests_moved = true;
+        }
+        index.assembled.edit(u, row, Edit::Add);
+    }
+    index.rows = current;
+    if edges_moved {
+        index.sorted_edges = prolog_sort(u, index.edges.iter().copied().collect());
+    }
+    if requests_moved {
+        index.sorted_requests = prolog_sort(u, index.requests.iter().copied().collect());
+    }
+    let closure = raw.iter().copied().filter(|row| !index.snapshots.contains(row)).collect();
+    (closure, index.sorted_edges.clone(), index.sorted_requests.clone())
 }
 
 pub struct RoundOutcome {
@@ -135,6 +195,7 @@ impl RoundState {
             round: 1,
             checked: None,
             converted: None,
+            closure_index: ClosureIndex::default(),
         }
     }
 }
@@ -196,6 +257,7 @@ pub fn stable_outcome(
 /// One round's merged program, resolved and evaluated.
 pub struct Pass {
     pub resolved: Resolved,
+    /// The evaluated closure, snapshot rows included.
     pub closure: Vec<TermId>,
     pub rules: usize,
     pub seeds: usize,
@@ -267,7 +329,7 @@ pub fn round_closure(
     }
     Ok(Ok(Pass {
         resolved,
-        closure: strip_snapshot_rows(u, &closure),
+        closure,
         rules: rules.len(),
         seeds: seeds.len(),
         ir_answers: ir_answered.then(crate::_6_eval::ir_eval::take_answers),
@@ -311,7 +373,8 @@ impl<'a> Slice for Rounds<'a> {
                 Ok(pass) => pass,
                 Err(outcome) => return Ok(outcome),
             };
-            let (resolved, closure) = (pass.resolved, pass.closure);
+            let resolved = pass.resolved;
+            let (closure, next_edges, next_requests) = fold_closure(u, &mut st.closure_index, &pass.closure);
             fx(Round::Evaluate {
                 outer,
                 round: st.round,
@@ -343,9 +406,7 @@ impl<'a> Slice for Rounds<'a> {
             }
             let answered = answered.map_or(0, |(_, rows)| rows);
 
-            let next_edges = colon_rows(u, &closure);
-            let next_requests = intern_rows(u, &closure);
-            let mut assembled = assemble_generated_program(u, &closure, base_relations);
+            let mut assembled = assemble_indexed(u, &mut st.closure_index.assembled, base_relations);
             fx(Round::Assemble {
                 outer,
                 round: st.round,
