@@ -3063,6 +3063,35 @@ pub fn lower_declared(
             || program.served.contains(&TermId(key.0))
             || frozen.contains(&TermId(key.0))
     };
+    // Relations whose one rule derives each row once: no aggregate, a head of variables only,
+    // every variable of its positive relation goals in the head (no projection drops one), and no
+    // `intern` goal (its listed and vector branches are a Union). Inputs are sets and the other
+    // kernels are functions of their inputs, so the rule body holds no row twice.
+    let mut rule_counts: BTreeMap<RelationKey, usize> = BTreeMap::new();
+    for rule in &program.rules {
+        *rule_counts.entry(rule_key(u, rule).0).or_default() += 1;
+    }
+    let distinct: BTreeSet<RelationKey> = program
+        .rules
+        .iter()
+        .filter(|rule| {
+            let (key, next) = rule_key(u, rule);
+            if next || rule_counts[&key] != 1 || rule.is_aggregate() || rule.head.is_empty() {
+                return false;
+            }
+            let Some(head) = rule.head.iter().map(var).collect::<Option<HashSet<u32>>>() else {
+                return false;
+            };
+            rule.body.iter().all(|goal| match Kernel::of(u, goal.rel) {
+                Some(kernel) => kernel != Kernel::Intern,
+                None => {
+                    goal.polarity == Polarity::Negative
+                        || goal.args.iter().all(|arg| var(arg).is_none_or(|v| head.contains(&v)))
+                }
+            })
+        })
+        .map(|rule| rule_key(u, rule).0)
+        .collect();
     let mut relations = BTreeMap::new();
     let mut sources = BTreeMap::new();
     let mut visible = Vec::new();
@@ -3519,7 +3548,7 @@ pub fn lower_declared(
             // and emit one row per live source key. No rule adds another row.
             let body = match parts[..] {
                 [] => return Err(unsupported(u, "relation without a seed source or a rule body")),
-                [one] if source.is_some() => one,
+                [one] if source.is_some() || distinct.contains(&key) => one,
                 [one] => b.node(ir::Op::Threshold(one)),
                 _ => {
                     let union = b.node(ir::Op::Union(parts));
