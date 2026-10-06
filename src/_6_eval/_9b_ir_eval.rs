@@ -419,16 +419,50 @@ type Slot = Rc<RefCell<Box<dyn Session>>>;
 pub struct Part {
     pub name: String,
     session: Slot,
-    lowered: Lowered,
+    lowered: Rc<Lowered>,
     fingerprint: u64,
     applied: Applied,
+    /// The lowering inputs of `lowered`: `prepare` adopts the part by them without lowering again.
+    inputs: (Program, ir_lower::Declared),
+}
+
+/// A program lowered for the pool, waiting for the next install, with its lowering inputs.
+pub struct Pending {
+    pub name: String,
+    pub lowered: Lowered,
+    pub inputs: (Program, ir_lower::Declared),
+}
+
+impl Pending {
+    /// `program` lowered with `declared` (`ir_lower::lower_declared`) as the pool part `name`.
+    pub fn lower(
+        u: &mut Universe,
+        name: &str,
+        program: &Program,
+        declared: &ir_lower::Declared,
+    ) -> Result<Self, Diagnostic> {
+        Ok(Self {
+            name: name.to_string(),
+            lowered: ir_lower::lower_declared(u, program, declared)?,
+            inputs: (program.clone(), declared.clone()),
+        })
+    }
+}
+
+/// `lower_declared` is a function of (program, declared, universe term ids): equal inputs in one
+/// universe lower to one IR.
+fn same_inputs(inputs: &(Program, ir_lower::Declared), program: &Program, declared: &ir_lower::Declared) -> bool {
+    inputs.1 == *declared
+        && inputs.0.rules == program.rules
+        && inputs.0.seeds == program.seeds
+        && inputs.0.served == program.served
 }
 
 /// Programs to install beside the next program an attached `IrSession` installs, and the parts
 /// earlier installs left.
 #[derive(Default)]
 pub struct Pool {
-    pub pending: Vec<(String, Lowered)>,
+    pub pending: Vec<Pending>,
     pub parts: Vec<Part>,
 }
 
@@ -489,8 +523,8 @@ pub struct IrSession {
     stdlib: Option<Rc<RefCell<super::one_engine::Stdlib>>>,
     /// The rule interpreter installed for `evaluate` in `RulesMode::Interpret`.
     interp: Option<Box<dyn InterpRun>>,
-    /// The program `prepare` lowered and installed; `apply` feeds it.
-    prepared: Option<Lowered>,
+    /// The program `prepare` lowered (or adopted from a pool part) and installed; `apply` feeds it.
+    prepared: Option<Rc<Lowered>>,
     /// `structural_fingerprint` of the prepared IR.
     fingerprint: Option<u64>,
 }
@@ -558,26 +592,28 @@ impl IrSession {
             return Ok((Rc::new(RefCell::new(open_session(u, backend, lowered, fingerprint, false)?)), None));
         }
         let pending = std::mem::take(&mut pool.pending);
-        let fingerprints: Vec<u64> = pending.iter().map(|(_, part)| structural_fingerprint(&part.ir)).collect();
+        let fingerprints: Vec<u64> = pending.iter().map(|part| structural_fingerprint(&part.lowered.ir)).collect();
         let mut parts: Vec<(&str, &Lowered, u64)> = vec![("p0.", lowered, fingerprint)];
-        parts.extend(pending.iter().zip(&fingerprints).map(|((name, lowered), fingerprint)| (name.as_str(), lowered, *fingerprint)));
+        parts.extend(pending.iter().zip(&fingerprints).map(|(part, fingerprint)| (part.name.as_str(), &part.lowered, *fingerprint)));
         let slots = open_composed(u, backend, &parts)?;
         let failed = |u: &mut Universe, error| engine_diagnostic(u, error);
         let mut changes = Vec::new();
-        for (slot, (_, part)) in slots[1..].iter().zip(&pending) {
-            changes.extend(slot.borrow_mut().bootstrap(part).map_err(|e| failed(u, e))?);
+        for (slot, part) in slots[1..].iter().zip(&pending) {
+            changes.extend(slot.borrow_mut().bootstrap(&part.lowered).map_err(|e| failed(u, e))?);
         }
         let sent = changes.len();
         let delta = slots[1].borrow_mut().settle_raw(changes).map_err(|e| failed(u, e))?;
-        for ((slot, (name, part)), fingerprint) in slots[1..].iter().zip(pending).zip(fingerprints) {
+        for ((slot, part), fingerprint) in slots[1..].iter().zip(pending).zip(fingerprints) {
+            let Pending { name, lowered: part, inputs } = part;
             let applied = slot.borrow_mut().decode(u, &part, &delta, sent).map_err(|e| failed(u, e))?;
             tracing::info!(target: "dl8::one", part = %name, nodes = part.ir.nodes.len(), rows = applied.rows.len(), "one engine part");
             pool.parts.push(Part {
                 name,
                 session: slot.clone(),
                 fingerprint,
-                lowered: part,
+                lowered: Rc::new(part),
                 applied,
+                inputs,
             });
         }
         Ok((slots[0].clone(), None))
@@ -607,6 +643,21 @@ impl IrSession {
             Ok(backend) => *backend,
             Err(message) => return Err(unknown_engine(u, message)),
         };
+        // A pool part lowered from these inputs is adopted with its pooled lowering.
+        let pooled = self.pool.as_ref().and_then(|pool| {
+            pool.borrow()
+                .parts
+                .iter()
+                .find(|part| same_inputs(&part.inputs, program, declared))
+                .map(|part| (part.lowered.clone(), part.fingerprint, part.session.clone(), part.applied.clone(), part.name.clone()))
+        });
+        if let Some((lowered, fingerprint, session, applied, name)) = pooled {
+            tracing::info!(target: "dl8::one", part = %name, "one engine adopt by lowering inputs");
+            self.session = Some(session);
+            self.prepared = Some(lowered);
+            self.fingerprint = Some(fingerprint);
+            return Ok(applied);
+        }
         let lowered = ir_lower::lower_declared(u, program, declared)?;
         let fingerprint = structural_fingerprint(&lowered.ir);
         let (session, adopted) = self.open(u, backend, &lowered, fingerprint)?;
@@ -618,7 +669,7 @@ impl IrSession {
             }
         };
         self.session = Some(session);
-        self.prepared = Some(lowered);
+        self.prepared = Some(Rc::new(lowered));
         self.fingerprint = Some(fingerprint);
         Ok(applied)
     }

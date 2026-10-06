@@ -15,8 +15,8 @@ use crate::_3_check::{check_datalog, Checked};
 use crate::_4_comptime::api::{colon_rows, graph_seeds, intern_rows, source_application_edges};
 use crate::_4_comptime::rounds::{compiler_round_seeds, round_program};
 use crate::_4_comptime::Round;
-use crate::_6_eval::ir_eval::{IrSession, Pool, SharedPool};
-use crate::_6_eval::ir_lower::{lower_declared, Declared};
+use crate::_6_eval::ir_eval::{IrSession, Pending, Pool, SharedPool};
+use crate::_6_eval::ir_lower::Declared;
 use crate::_6_eval::one_engine::{Attach, Stdlib};
 use crate::_6_eval::term::{TermId, Universe};
 use std::cell::RefCell;
@@ -126,12 +126,12 @@ pub fn one_macro_program(
         Ok(program) => program,
         Err(diagnostics) => return Ok((None, diagnostics)),
     };
-    let lowered_stdlib = lower_declared(u, &stdlib, &Declared::default()).map_err(|d| Stop::Load(format!("one engine stdlib lowering {}", u.display(d.payload))))?;
+    let lowered_stdlib = Pending::lower(u, "p3.", &stdlib, &Declared::default()).map_err(|d| Stop::Load(format!("one engine stdlib lowering {}", u.display(d.payload))))?;
     let mut pending = Vec::new();
     if let Some((cone, declared)) = macro_cone(u, &expected) {
-        pending.push(("p2.".to_string(), lower_declared(u, &cone, &declared).map_err(|d| Stop::Load(format!("one engine macro cone lowering {}", u.display(d.payload))))?));
+        pending.push(Pending::lower(u, "p2.", &cone, &declared).map_err(|d| Stop::Load(format!("one engine macro cone lowering {}", u.display(d.payload))))?);
     }
-    pending.push(("p3.".to_string(), lowered_stdlib));
+    pending.push(lowered_stdlib);
     one.pool.borrow_mut().pending = pending;
     let (compiled, diagnostics) =
         compile_units_attached(u, &[unit.unit], Some(Attach::Pool(one.pool.clone())), fx)?;
