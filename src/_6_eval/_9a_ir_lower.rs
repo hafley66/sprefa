@@ -1696,7 +1696,14 @@ fn compile_rule(
     all_rules: &[Rule],
 ) -> Result<CompiledRule, &'static str> {
     b.built_tuples.clear();
-    let mut current = b.get(unit);
+    // A positive relation read first supplies the first row itself (`current = right` below,
+    // before anything reads `current`); every other first goal starts from the unit row.
+    let reads_first = rule.body.first().is_some_and(|goal| {
+        goal.polarity == Polarity::Positive
+            && !served.contains(&goal.rel)
+            && (Kernel::of(u, goal.rel).is_none() || rule.is_aggregate())
+    });
+    let mut current = if reads_first { ir::NodeId::MAX } else { b.get(unit) };
     let mut width = 1usize;
     let mut bound: HashMap<u32, ir::ColId> = HashMap::new();
     let later = later_vars(rule);
