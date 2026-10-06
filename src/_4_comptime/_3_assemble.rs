@@ -5,6 +5,7 @@ use super::api::{diagnostic, is_kernel_ref};
 use crate::_3_check::api::{prolog_sort, return_key_sets};
 use crate::_6_eval::term::{Term, TermId, Universe};
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 
 /// `body/4` read as `(GoalIndex, Some((Polarity, Application)))`; `None` when
 /// the row's polarity or application is not the shape `:198` matches.
@@ -58,7 +59,16 @@ pub fn assemble_generated_program(
     rows: &[TermId],
     base_relations: &[TermId],
 ) -> Assembled {
-    let cx = index(u, rows);
+    let mut indexed = Indexed::default();
+    for row in rows {
+        indexed.edit(u, *row, Edit::Add);
+    }
+    assemble_indexed(u, &mut indexed, base_relations)
+}
+
+/// `assemble_generated_program` over rows already in `indexed`.
+pub fn assemble_indexed(u: &mut Universe, indexed: &mut Indexed, base_relations: &[TermId]) -> Assembled {
+    let cx = indexed.cx(u);
     let (relations0, definition_diagnostics) = assemble_definitions(u, &cx);
     let collision_diagnostics = collision_diagnostics(u, &relations0, base_relations);
 
@@ -119,41 +129,84 @@ pub struct Scratch {
     pub fragment_ids: Vec<TermId>,
 }
 
-pub fn index(u: &mut Universe, rows: &[TermId]) -> Cx {
-    let mut cx = Cx::default();
-    let mut scratch = Scratch::default();
-    for row in rows {
-        index_row(u, &mut cx, &mut scratch, *row);
-    }
-    for apply in scratch.named.get("Apply").into_iter().flatten() {
-        for args in scratch.by_rel.get(apply).into_iter().flatten() {
-            if args.len() != 2 {
-                continue;
-            }
-            if let (Some(application), Some(callable)) = (ref_of(u, args[0]), ref_of(u, args[1])) {
-                cx.apply.entry(application).or_default().push(callable);
+/// A row entering or leaving an `Indexed`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Edit {
+    Add,
+    Remove,
+}
+
+/// `value` into or out of the multiset `values` (one occurrence). Every reader of the buckets
+/// sorts and deduplicates (`sorted_unique`), so bucket order carries nothing.
+fn edit_vec<V: PartialEq>(values: &mut Vec<V>, value: V, edit: Edit) {
+    match edit {
+        Edit::Add => values.push(value),
+        Edit::Remove => {
+            if let Some(at) = values.iter().position(|known| *known == value) {
+                values.swap_remove(at);
             }
         }
     }
-    cx.variables = variable_nodes(u, &scratch.named, &scratch.by_rel);
-    cx.literals = literal_nodes(u, &scratch.named, &scratch.by_rel);
-    cx.def_ids = sorted_unique(u, scratch.def_ids);
-    cx.head_ids = sorted_unique(u, scratch.head_ids);
-    cx.fragment_ids = sorted_unique(u, scratch.fragment_ids);
-    cx
 }
 
-/// `:352`. One compiler row into whichever bucket its kernel relation names.
-pub fn index_row(u: &mut Universe, cx: &mut Cx, scratch: &mut Scratch, row: TermId) {
+fn edit_map<K: Hash + Eq, V: PartialEq>(map: &mut HashMap<K, Vec<V>>, key: K, value: V, edit: Edit) {
+    match edit {
+        Edit::Add => map.entry(key).or_default().push(value),
+        Edit::Remove => {
+            if let Some(values) = map.get_mut(&key) {
+                edit_vec(values, value, Edit::Remove);
+                if values.is_empty() {
+                    map.remove(&key);
+                }
+            }
+        }
+    }
+}
+
+/// `index` kept across rounds: rows enter and leave one at a time (`edit`) and `cx` derives
+/// the joined families from the buckets.
+#[derive(Default)]
+pub struct Indexed {
+    cx: Cx,
+    scratch: Scratch,
+}
+
+impl Indexed {
+    pub fn edit(&mut self, u: &mut Universe, row: TermId, edit: Edit) {
+        index_row(u, &mut self.cx, &mut self.scratch, row, edit);
+    }
+
+    /// The index of the rows in `self`.
+    pub fn cx(&mut self, u: &mut Universe) -> &Cx {
+        let Self { cx, scratch } = self;
+        cx.apply.clear();
+        for apply in scratch.named.get("Apply").into_iter().flatten() {
+            for args in scratch.by_rel.get(apply).into_iter().flatten() {
+                if args.len() != 2 {
+                    continue;
+                }
+                if let (Some(application), Some(callable)) = (ref_of(u, args[0]), ref_of(u, args[1])) {
+                    cx.apply.entry(application).or_default().push(callable);
+                }
+            }
+        }
+        cx.variables = variable_nodes(u, &scratch.named, &scratch.by_rel);
+        cx.literals = literal_nodes(u, &scratch.named, &scratch.by_rel);
+        cx.def_ids = sorted_unique(u, scratch.def_ids.clone());
+        cx.head_ids = sorted_unique(u, scratch.head_ids.clone());
+        cx.fragment_ids = sorted_unique(u, scratch.fragment_ids.clone());
+        cx
+    }
+}
+
+/// `:352`. One compiler row into (or out of) whichever bucket its kernel relation names.
+pub fn index_row(u: &mut Universe, cx: &mut Cx, scratch: &mut Scratch, row: TermId, edit: Edit) {
     let Some((rel, args)) = call_parts(u, row) else {
         return;
     };
     if is_kernel_ref(u, rel, ":") && args.len() == 4 {
         if let Some(owner) = ref_of(u, args[0]) {
-            cx.colon_by_owner
-                .entry(owner)
-                .or_default()
-                .push([args[1], args[2], args[3]]);
+            edit_map(&mut cx.colon_by_owner, owner, [args[1], args[2], args[3]], edit);
         }
         if let (Some(name), Some(target), Some(_)) = (
             const_of(u, args[1]).and_then(|n| atom_text(u, n)),
@@ -161,46 +214,46 @@ pub fn index_row(u: &mut Universe, cx: &mut Cx, scratch: &mut Scratch, row: Term
             const_of(u, args[3]),
         ) {
             if ref_of(u, args[0]).is_some() {
-                scratch.named.entry(name).or_default().push(target);
+                edit_map(&mut scratch.named, name, target, edit);
             }
         }
         return;
     }
     if is_kernel_ref(u, rel, "def") && args.len() == 2 {
         if let Some(id) = ref_of(u, args[0]) {
-            scratch.def_ids.push(id);
+            edit_vec(&mut scratch.def_ids, id, edit);
             if let Some(arity) = const_of(u, args[1]) {
-                cx.def_arities.entry(id).or_default().push(arity);
+                edit_map(&mut cx.def_arities, id, arity, edit);
             }
         }
         return;
     }
     if is_kernel_ref(u, rel, "head") && args.len() == 2 {
         if let Some(id) = ref_of(u, args[0]) {
-            scratch.head_ids.push(id);
+            edit_vec(&mut scratch.head_ids, id, edit);
             if let Some(application) = ref_of(u, args[1]) {
-                cx.head_apps.entry(id).or_default().push(application);
+                edit_map(&mut cx.head_apps, id, application, edit);
             }
         }
         return;
     }
     if is_kernel_ref(u, rel, "body") {
         if let Some(id) = args.first().and_then(|a| ref_of(u, *a)) {
-            scratch.fragment_ids.push(id);
+            edit_vec(&mut scratch.fragment_ids, id, edit);
             if args.len() == 4 {
                 if let Some(goal) = const_of(u, args[1]) {
                     let header = match (const_of(u, args[2]), ref_of(u, args[3])) {
                         (Some(polarity), Some(application)) => Some((polarity, application)),
                         _ => None,
                     };
-                    cx.body_by_rule.entry(id).or_default().push((goal, header));
+                    edit_map(&mut cx.body_by_rule, id, (goal, header), edit);
                 }
             }
         }
         return;
     }
     if let Some(id) = ref_of(u, rel) {
-        scratch.by_rel.entry(id).or_default().push(args);
+        edit_map(&mut scratch.by_rel, id, args, edit);
     }
 }
 
