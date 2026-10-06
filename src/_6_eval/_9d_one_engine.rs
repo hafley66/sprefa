@@ -15,8 +15,8 @@ static MODE: OnceLock<Result<bool, String>> = OnceLock::new();
 
 fn read_mode() -> Result<bool, String> {
     match std::env::var("DL8_ONE_ENGINE").as_deref() {
-        Err(std::env::VarError::NotPresent) | Ok("0") => Ok(false),
-        Ok("1") => Ok(true),
+        Ok("0") => Ok(false),
+        Err(std::env::VarError::NotPresent) | Ok("1") => Ok(true),
         Ok(other) => Err(format!("unknown DL8_ONE_ENGINE {other:?}; expected 0 or 1")),
         Err(error) => Err(format!("DL8_ONE_ENGINE {error}; expected 0 or 1")),
     }
@@ -29,7 +29,7 @@ pub fn init_one_engine_mode() -> Result<bool, String> {
 }
 
 pub fn one_engine() -> bool {
-    init_one_engine_mode().unwrap_or(false)
+    init_one_engine_mode().unwrap_or(true)
 }
 
 type Key = (u32, usize);
