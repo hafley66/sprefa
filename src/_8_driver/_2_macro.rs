@@ -3,7 +3,7 @@
 
 use super::_0_read::macrotime_text;
 use super::_1_unit::macrotime_unit;
-use super::_3_units::compile_units;
+use super::_3_units::compile_units_attached;
 use super::Stop;
 use crate::_1_macrotime::_1_reify::reify_terms;
 use crate::_1_macrotime::_4_expand::{expand_terms, MacroSession};
@@ -11,7 +11,11 @@ use crate::_1_macrotime::_5_materialize::materialize_terms;
 use crate::_1_macrotime::_7_slice::slice_macro_program;
 use crate::_1_macrotime::{MacroProgram, Wave};
 use crate::_4_comptime::Round;
+use crate::_6_eval::ir_eval::{Pool, SharedPool};
+use crate::_6_eval::one_engine::Attach;
 use crate::_6_eval::term::{TermId, Universe};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// `:416`. The macro library compiles through the ordinary compiler, then is
 /// trimmed to the claim and output rule cone.
@@ -37,14 +41,23 @@ pub fn standard_macro_program_with(
     if !unit.diagnostics.is_empty() {
         return Ok((None, unit.diagnostics));
     }
-    let (compiled, diagnostics) = compile_units(u, &[unit.unit], fx)?;
+    // The library's comptime rounds lower with the cone's declarations and leave their session
+    // in `pool`; the macrotime session adopts it for the cone (one install for both).
+    let pool: SharedPool = Rc::new(RefCell::new(Pool {
+        library: Some(MacroSession::library_declared()),
+        ..Pool::default()
+    }));
+    let compiled = compile_units_attached(u, &[unit.unit], Some(Attach::Pool(pool.clone())), fx);
+    pool.borrow_mut().library = None;
+    let (compiled, diagnostics) = compiled?;
     let Some(compiled) = compiled else {
         return Ok((None, diagnostics));
     };
     if !diagnostics.is_empty() {
         return Ok((None, diagnostics));
     }
-    Ok(slice_macro_program(u, &compiled.runtime))
+    let (program, diagnostics) = slice_macro_program(u, &compiled.runtime);
+    Ok((program.map(|program| MacroProgram { pool: Some(pool), ..program }), diagnostics))
 }
 
 /// `:456`. One unit at a time on one macrotime session, diagnostics concatenated.
@@ -54,7 +67,7 @@ pub fn expand_units_with_macros(
     macro_program: &MacroProgram,
     fx: &mut dyn FnMut(Wave),
 ) -> (Vec<TermId>, Vec<TermId>) {
-    let mut session = MacroSession::configured();
+    let mut session = MacroSession::for_program(macro_program);
     expand_units_on(u, units, macro_program, &mut session, fx)
 }
 

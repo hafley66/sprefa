@@ -17,6 +17,9 @@ pub struct MacroProgram {
     pub edges: Vec<TermId>,
     pub relations: Vec<TermId>,
     pub program: Program,
+    /// The pool the library's comptime session was left in (`Pool::library`): a macrotime
+    /// session on it adopts that install for the rule cone. `None`: the cone installs alone.
+    pub pool: Option<crate::_6_eval::ir_eval::SharedPool>,
 }
 
 pub struct Protocol {

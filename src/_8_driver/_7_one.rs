@@ -127,14 +127,17 @@ pub fn one_macro_program(
         Err(diagnostics) => return Ok((None, diagnostics)),
     };
     let lowered_stdlib = Pending::lower(u, "p3.", &stdlib, &Declared::default()).map_err(|d| Stop::Load(format!("one engine stdlib lowering {}", u.display(d.payload))))?;
-    let mut pending = Vec::new();
-    if let Some((cone, declared)) = macro_cone(u, &expected) {
-        pending.push(Pending::lower(u, "p2.", &cone, &declared).map_err(|d| Stop::Load(format!("one engine macro cone lowering {}", u.display(d.payload))))?);
+    // The macro library's comptime rounds lower with the cone's declarations and leave their
+    // part for the macrotime session's `prepare` (`Pool::library`): the cone is no part of its own.
+    let library = macro_cone(u, &expected).map(|(_, declared)| declared);
+    {
+        let mut pool = one.pool.borrow_mut();
+        pool.pending = vec![lowered_stdlib];
+        pool.library = library;
     }
-    pending.push(lowered_stdlib);
-    one.pool.borrow_mut().pending = pending;
-    let (compiled, diagnostics) =
-        compile_units_attached(u, &[unit.unit], Some(Attach::Pool(one.pool.clone())), fx)?;
+    let compiled = compile_units_attached(u, &[unit.unit], Some(Attach::Pool(one.pool.clone())), fx);
+    one.pool.borrow_mut().library = None;
+    let (compiled, diagnostics) = compiled?;
     let Some(compiled) = compiled else {
         return Ok((None, diagnostics));
     };

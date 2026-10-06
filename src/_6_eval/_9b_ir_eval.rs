@@ -454,6 +454,10 @@ pub struct Part {
     applied: Applied,
     /// The lowering inputs of `lowered`: `prepare` adopts the part by them without lowering again.
     inputs: (Program, ir_lower::Declared),
+    /// The macro library's comptime session (`Pool::library`): its engine holds the library
+    /// round's seeds, so the `prepare` that adopts it settles the difference to its own seeds
+    /// and reads the whole closure. Adopted once.
+    reseed: bool,
 }
 
 /// A program lowered for the pool, waiting for the next install, with its lowering inputs.
@@ -488,12 +492,69 @@ fn same_inputs(inputs: &(Program, ir_lower::Declared), program: &Program, declar
         && inputs.0.served == program.served
 }
 
+/// A library part (`Part::reseed`) serves `program` lowered with `declared`: the same rules,
+/// served relations and shapes, unsealed, and every relation `program` seeds or `declared` names
+/// is one the part's lowering keyed (`declared` already holds all of those), so both lowerings
+/// key the same relations and give one IR.
+fn library_inputs(part: &Part, program: &Program, declared: &ir_lower::Declared) -> bool {
+    let (library, library_declared) = &part.inputs;
+    let keyed = |key: (u32, usize)| part.lowered.sources.contains_key(&key);
+    !declared.sealed
+        && !library_declared.sealed
+        && library_declared.shapes == declared.shapes
+        && library.rules == program.rules
+        && library.served == program.served
+        && program.seeds.iter().all(|seed| keyed((seed.rel.0, seed.args.len())))
+        && declared.sources.iter().all(|(rel, width)| keyed((rel.0, *width)))
+}
+
+/// The library part's lowering with `program`'s seeds (the rest of `Lowered` is a function of the
+/// IR inputs `library_inputs` compared).
+fn reseeded(lowered: &Lowered, program: &Program) -> Lowered {
+    Lowered {
+        seeds: program
+            .seeds
+            .iter()
+            .map(|row| (lowered.sources[&(row.rel.0, row.args.len())], row.clone()))
+            .collect(),
+        fold_program: lowered.fold_program.as_ref().map(|_| program.clone()),
+        ..lowered.clone()
+    }
+}
+
+/// An adopted library part's engine holds the library round's seeds: one settle of the signed
+/// difference to `lowered`'s seeds, then the whole visible closure is the prepared base.
+fn reseed(u: &mut Universe, session: &Slot, lowered: &Lowered) -> Result<Applied, Diagnostic> {
+    let run = session.borrow_mut().run(u, lowered, None, &[], None, None, &mut |_| {});
+    let (closure, _, _) = run.map_err(|error| engine_diagnostic(u, error))?;
+    Ok(Applied {
+        rows: closure.rows.into_iter().map(|row| SignedRow { row, weight: 1 }).collect(),
+        diagnostics: closure.diagnostics,
+        sent: 0,
+        intern_read: 0,
+    })
+}
+
+/// How `IrSession::open` found its session.
+enum Adopted {
+    /// A fresh or composed install: the caller settles the program's seeds.
+    No,
+    /// A pool part bootstrapped with the program's seeds: its rows.
+    Applied(Applied),
+    /// A pool part holding another seed set of the same IR (`Part::reseed`).
+    Reseed,
+}
+
 /// Programs to install beside the next program an attached `IrSession` installs, and the parts
 /// earlier installs left.
 #[derive(Default)]
 pub struct Pool {
     pub pending: Vec<Pending>,
     pub parts: Vec<Part>,
+    /// The macro library's comptime rounds lower unsealed with these declared sources and
+    /// shapes, and leave their session as a `reseed` part for the macrotime cone's `prepare`:
+    /// one install serves the library round and the cone.
+    pub library: Option<ir_lower::Declared>,
 }
 
 pub type SharedPool = Rc<RefCell<Pool>>;
@@ -603,22 +664,27 @@ impl IrSession {
         backend: Backend,
         lowered: &Lowered,
         fingerprint: u64,
-    ) -> Result<(Slot, Option<Applied>), Diagnostic> {
+    ) -> Result<(Slot, Adopted), Diagnostic> {
         let Some(pool) = self.pool.clone() else {
-            return Ok((Rc::new(RefCell::new(open_session(u, backend, lowered, fingerprint, false)?)), None));
+            return Ok((Rc::new(RefCell::new(open_session(u, backend, lowered, fingerprint, false)?)), Adopted::No));
         };
         let mut pool = pool.borrow_mut();
-        if let Some(part) = pool
+        if let Some(at) = pool
             .parts
             .iter()
-            .find(|part| part.fingerprint == fingerprint && part.lowered.ir == lowered.ir)
+            .position(|part| part.fingerprint == fingerprint && part.lowered.ir == lowered.ir)
         {
-            tracing::info!(target: "dl8::one", part = %part.name, "one engine adopt");
-            return Ok((part.session.clone(), Some(part.applied.clone())));
+            let part = &pool.parts[at];
+            tracing::info!(target: "dl8::one", part = %part.name, reseed = part.reseed, "one engine adopt");
+            if part.reseed {
+                let part = pool.parts.remove(at);
+                return Ok((part.session, Adopted::Reseed));
+            }
+            return Ok((part.session.clone(), Adopted::Applied(part.applied.clone())));
         }
         if pool.pending.is_empty() {
             tracing::info!(target: "dl8::one", nodes = lowered.ir.nodes.len(), "one engine separate install");
-            return Ok((Rc::new(RefCell::new(open_session(u, backend, lowered, fingerprint, false)?)), None));
+            return Ok((Rc::new(RefCell::new(open_session(u, backend, lowered, fingerprint, false)?)), Adopted::No));
         }
         let pending = std::mem::take(&mut pool.pending);
         let mut parts: Vec<(&str, &Lowered)> = vec![("p0.", lowered)];
@@ -643,9 +709,10 @@ impl IrSession {
                 lowered: Rc::new(part),
                 applied,
                 inputs,
+                reseed: false,
             });
         }
-        Ok((slots[0].clone(), None))
+        Ok((slots[0].clone(), Adopted::No))
     }
 
     /// The prepared program's whole closure.
@@ -672,30 +739,65 @@ impl IrSession {
             Ok(backend) => *backend,
             Err(message) => return Err(unknown_engine(u, message)),
         };
-        // A pool part lowered from these inputs is adopted with its pooled lowering.
-        let pooled = self.pool.as_ref().and_then(|pool| {
+        // A library part (`Pool::library`) declares every relation its round lowered: the same
+        // declarations here give its IR when the rules are the library's. Applied before any
+        // inputs comparison.
+        let library_keys: Vec<(TermId, usize)> = self.pool.as_ref().map_or_else(Vec::new, |pool| {
             pool.borrow()
                 .parts
                 .iter()
-                .find(|part| same_inputs(&part.inputs, program, declared))
-                .map(|part| (part.lowered.clone(), part.fingerprint, part.session.clone(), part.applied.clone(), part.name.clone()))
+                .filter(|part| part.reseed)
+                .flat_map(|part| part.lowered.sources.keys().map(|(rel, width)| (TermId(*rel), *width)))
+                .collect()
+        });
+        let mut widened = declared.clone();
+        for key in library_keys {
+            if !widened.sources.contains(&key) {
+                widened.sources.push(key);
+            }
+        }
+        // A pool part lowered from these inputs is adopted with its pooled lowering; a library part
+        // whose inputs give the same IR is adopted with this program's seeds and reseeded.
+        let pooled = self.pool.as_ref().and_then(|pool| {
+            let mut pool = pool.borrow_mut();
+            let at = pool.parts.iter().position(|part| {
+                if part.reseed {
+                    library_inputs(part, program, &widened)
+                } else {
+                    same_inputs(&part.inputs, program, declared)
+                }
+            })?;
+            if pool.parts[at].reseed {
+                let part = pool.parts.remove(at);
+                let lowered = reseeded(&part.lowered, program);
+                return Some((Rc::new(lowered), part.fingerprint, part.session, None, part.name));
+            }
+            let part = &pool.parts[at];
+            Some((part.lowered.clone(), part.fingerprint, part.session.clone(), Some(part.applied.clone()), part.name.clone()))
         });
         if let Some((lowered, fingerprint, session, applied, name)) = pooled {
-            tracing::info!(target: "dl8::one", part = %name, "one engine adopt by lowering inputs");
+            tracing::info!(target: "dl8::one", part = %name, reseed = applied.is_none(), "one engine adopt by lowering inputs");
+            let applied = match applied {
+                Some(applied) => applied,
+                None => reseed(u, &session, &lowered)?,
+            };
             self.session = Some(session);
             self.prepared = Some(lowered);
             self.fingerprint = Some(fingerprint);
             return Ok(applied);
         }
-        let lowered = ir_lower::lower_declared(u, program, declared)?;
+        let lowered = ir_lower::lower_declared(u, program, &widened)?;
         let fingerprint = structural_fingerprint(&lowered.ir);
         let (session, adopted) = self.open(u, backend, &lowered, fingerprint)?;
         let applied = match adopted {
-            Some(applied) => applied,
-            None => {
+            Adopted::Applied(applied) => applied,
+            Adopted::No => {
                 let started = session.borrow_mut().start(u, &lowered);
                 started.map_err(|error| engine_diagnostic(u, error))?
             }
+            // The engine holds the library round's seeds: one settle of the signed difference to
+            // this program's seeds, then the whole visible closure is the prepared base.
+            Adopted::Reseed => reseed(u, &session, &lowered)?,
         };
         self.session = Some(session);
         self.prepared = Some(Rc::new(lowered));
@@ -875,9 +977,13 @@ impl IrSession {
         answerer: Option<&mut Answerer>,
         fx: &mut dyn FnMut(Trace),
     ) -> Closure {
-        // A comptime round: rows enter only as the program's seeds and its answers.
-        let sealed = ir_lower::Declared { sealed: true, ..ir_lower::Declared::default() };
-        let lowered = match ir_lower::lower_declared(u, program, &sealed) {
+        // A comptime round: rows enter only as the program's seeds and its answers. The macro
+        // library's rounds (`Pool::library`) lower unsealed with the cone's declarations.
+        let library = self.pool.as_ref().and_then(|pool| pool.borrow().library.clone());
+        let declared = library
+            .clone()
+            .unwrap_or_else(|| ir_lower::Declared { sealed: true, ..ir_lower::Declared::default() });
+        let lowered = match ir_lower::lower_declared(u, program, &declared) {
             Ok(lowered) => lowered,
             Err(diag) => {
                 return Closure {
@@ -913,6 +1019,24 @@ impl IrSession {
         match result {
             Ok((closure, _, counters)) => {
                 LAST_COUNTERS.with(|last| last.set(Some(counters)));
+                // The macro library's session stays for the cone's `prepare`, the latest round's
+                // in place of an earlier one. A served relation's answers are no seeds: such a
+                // program leaves none.
+                if let (Some(pool), Some(_)) = (self.pool.as_ref(), library.as_ref()) {
+                    let mut pool = pool.borrow_mut();
+                    pool.parts.retain(|part| !part.reseed);
+                    if lowered.served.is_empty() {
+                        pool.parts.push(Part {
+                            name: "library".to_string(),
+                            session: self.session.clone().expect("the session that ran"),
+                            fingerprint: structural_fingerprint(&lowered.ir),
+                            lowered: Rc::new(lowered),
+                            applied: Applied { rows: Vec::new(), diagnostics: Vec::new(), sent: 0, intern_read: 0 },
+                            inputs: (program.clone(), declared),
+                            reseed: true,
+                        });
+                    }
+                }
                 closure
             }
             Err(error) => {
