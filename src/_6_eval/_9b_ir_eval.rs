@@ -763,7 +763,9 @@ impl IrSession {
         answerer: Option<&mut Answerer>,
         fx: &mut dyn FnMut(Trace),
     ) -> Closure {
-        let lowered = match ir_lower::lower(u, program) {
+        // A comptime round: rows enter only as the program's seeds and its answers.
+        let sealed = ir_lower::Declared { sealed: true, ..ir_lower::Declared::default() };
+        let lowered = match ir_lower::lower_declared(u, program, &sealed) {
             Ok(lowered) => lowered,
             Err(diag) => {
                 return Closure {
@@ -817,6 +819,9 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>) -> Lowered 
     for relation in &mut ir.rels {
         relation.id = rel(relation.id);
     }
+    for term in &mut ir.terms {
+        term.functor = rel(term.functor);
+    }
     Lowered {
         ir,
         terms: lowered
@@ -824,8 +829,6 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>) -> Lowered 
             .iter()
             .map(|spec| ir_lower::TermSpec {
                 functor: rel(spec.functor),
-                source: rel(spec.source),
-                output: rel(spec.output),
                 ..spec.clone()
             })
             .collect(),
@@ -855,11 +858,6 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>) -> Lowered 
             })
             .collect(),
         sources: lowered.sources.iter().map(|(key, id)| (*key, rel(*id))).collect(),
-        installers: lowered
-            .installers
-            .iter()
-            .map(|(key, (a, b))| (key.clone(), (rel(*a), rel(*b))))
-            .collect(),
         constructors: lowered.constructors.iter().map(|(key, id)| (key.clone(), rel(*id))).collect(),
         atom_raws: lowered.atom_raws.clone(),
         dynamic_atom_base: lowered.dynamic_atom_base,
@@ -872,6 +870,7 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>) -> Lowered 
                 ..spec.clone()
             })
             .collect(),
+        literals: lowered.literals.clone(),
     }
 }
 

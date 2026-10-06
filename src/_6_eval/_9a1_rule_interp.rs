@@ -438,6 +438,7 @@ impl B {
                 .iter()
                 .map(|(a, b)| vec![(0, *a as ir::ColId), (1, *b as ir::ColId)])
                 .collect(),
+            project: vec![],
         })
     }
     /// The constructor row whose id is column `at`, appended: `id, args...`.
@@ -575,6 +576,7 @@ pub fn shape(bucket: u32) -> Shape {
     let mut b = B {
         p: ir::Program {
             texts: vec![],
+            terms: vec![],
             rels: vec![],
             nodes: vec![],
             strata: vec![],

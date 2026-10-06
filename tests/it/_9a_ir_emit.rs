@@ -1,6 +1,6 @@
 //! Portable IR bundle through the public CLI and the installed RxJS runtime.
 
-use dl8::_6_eval::ir_bundle::Bundle;
+use dl8::_6_eval::ir_bundle::{self, Bundle};
 use dl8::_6_eval::ir_lower;
 use dl8::_6_eval::json::program_from_json;
 use dl8::_6_eval::Universe;
@@ -105,8 +105,9 @@ fn emitted_rxjs_matches_ir_dd_for_three_ladder_programs() {
             String::from_utf8_lossy(&emitted_json.stderr)
         );
         let bundle: Bundle = serde_json::from_slice(&emitted_json.stdout).unwrap();
-        let mut expected_program = lowered.ir;
-        expected_program.texts = lowered.texts.iter().map(|(_, text)| text.clone()).collect();
+        let expected_program = ir_bundle::bundle(&universe, &lowered)
+            .unwrap_or_else(|error| panic!("{stem}: bundle {error}"))
+            .program;
         assert_eq!(bundle.program, expected_program, "{stem}: IR program");
         assert_eq!(bundle.texts, bundle.program.texts, "{stem}: text table");
         assert!(!bundle.frontier0.changes.is_empty(), "{stem}: frontier0");
