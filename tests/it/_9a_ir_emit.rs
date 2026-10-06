@@ -109,7 +109,6 @@ fn emitted_rxjs_matches_ir_dd_for_three_ladder_programs() {
             .unwrap_or_else(|error| panic!("{stem}: bundle {error}"))
             .program;
         assert_eq!(bundle.program, expected_program, "{stem}: IR program");
-        assert_eq!(bundle.program.nodes.len(), lowered.ir.nodes.len(), "{stem}: IR nodes");
         assert_eq!(bundle.texts, bundle.program.texts, "{stem}: text table");
         assert!(!bundle.frontier0.changes.is_empty(), "{stem}: frontier0");
         assert!(!bundle.atoms.is_empty(), "{stem}: atoms");

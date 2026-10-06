@@ -401,8 +401,6 @@ pub struct TermSpec {
     pub raw: Option<ir::Cell>,
     /// Index into `Lowered::texts`: the one argument of a `2:str` term is that text's cell.
     pub text: Option<usize>,
-    pub source: ir::RelId,
-    pub output: ir::RelId,
 }
 
 #[derive(Clone)]
@@ -421,7 +419,6 @@ pub struct Lowered {
     pub bad_lists: ir::RelId,
     pub served: Vec<ServedSpec>,
     pub sources: BTreeMap<(u32, usize), ir::RelId>,
-    pub installers: BTreeMap<(String, usize, bool), (ir::RelId, ir::RelId)>,
     /// Constructor relation per term shape `(name, arity, raw)`.
     pub constructors: BTreeMap<(String, usize, bool), ir::RelId>,
     pub atom_raws: HashMap<TermId, i64>,
@@ -2961,8 +2958,9 @@ pub fn lower_declared(
         constructor_keys.insert((name.to_string(), args, raw));
     }
     constructor_keys.extend(declared.shapes.iter().cloned());
+    // Terms are interned through `Engine::intern_terms` (`bootstrap_changes`), never by an
+    // operator: a constructor is a relation no node needs to mint into at install.
     let mut constructors = BTreeMap::new();
-    let mut prewarm = BTreeMap::new();
     for (name, width, raw) in constructor_keys {
         let column = if name == "0:float" {
             ir::Ty::Real
@@ -2974,61 +2972,24 @@ pub fn lower_declared(
         let mut ctor_cols = vec![ir::Ty::Id];
         ctor_cols.extend((0..width.max(usize::from(raw))).map(|_| column));
         let ctor = b.rel(name.clone(), ctor_cols, ir::RelKind::Constructor);
-        let mut source_cols = vec![ir::Ty::Int];
-        source_cols.extend((0..width.max(usize::from(raw))).map(|_| column));
-        let source = b.rel(
-            format!("__ir_prewarm_{}", ctor),
-            source_cols.clone(),
-            ir::RelKind::Source,
-        );
-        let output = b.rel(
-            format!("__ir_prewarm_out_{}", ctor),
-            {
-                let mut cols = source_cols;
-                cols.push(ir::Ty::Id);
-                cols
-            },
-            ir::RelKind::Derived,
-        );
-        let get = b.get(source);
-        let mint = b.node(ir::Op::Mint {
-            input: get,
-            functor: ctor,
-            args: (1..=width.max(usize::from(raw)))
-                .map(assert_width)
-                .collect(),
-        });
-        b.ir.strata.push(ir::Stratum::Let {
-            id: output,
-            body: mint,
-        });
-        b.ir.outputs.push(output);
         constructors.insert((name, width, raw), ctor);
-        prewarm.insert(ctor, (source, output));
     }
     let terms: Vec<TermSpec> = shapes
         .into_iter()
         .map(|(original, name, args, raw, text)| {
             let width = if text.is_some() { 1 } else { args.len() };
             let ctor = constructors[&(name, width, raw.is_some())];
-            let (source, output) = prewarm[&ctor];
             TermSpec {
                 original,
                 functor: ctor,
                 args,
                 raw,
                 text,
-                source,
-                output,
             }
         })
         .collect();
     b.term_specs = terms.iter().map(|spec: &TermSpec| (spec.original, spec.clone())).collect();
     b.spec_texts = texts.iter().map(|(_, text)| text.clone()).collect();
-    let installers = constructors
-        .iter()
-        .map(|(shape, ctor)| (shape.clone(), prewarm[ctor]))
-        .collect();
     let semantic = b.rel(
         "__ir_semantic".into(),
         vec![ir::Ty::Id, ir::Ty::Id],
@@ -3664,7 +3625,6 @@ pub fn lower_declared(
         bad_lists,
         served,
         sources,
-        installers,
         constructors,
         atom_raws,
         dynamic_atom_base,

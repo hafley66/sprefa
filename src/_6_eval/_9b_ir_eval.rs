@@ -829,8 +829,6 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>) -> Lowered 
             .iter()
             .map(|spec| ir_lower::TermSpec {
                 functor: rel(spec.functor),
-                source: rel(spec.source),
-                output: rel(spec.output),
                 ..spec.clone()
             })
             .collect(),
@@ -860,11 +858,6 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>) -> Lowered 
             })
             .collect(),
         sources: lowered.sources.iter().map(|(key, id)| (*key, rel(*id))).collect(),
-        installers: lowered
-            .installers
-            .iter()
-            .map(|(key, (a, b))| (key.clone(), (rel(*a), rel(*b))))
-            .collect(),
         constructors: lowered.constructors.iter().map(|(key, id)| (key.clone(), rel(*id))).collect(),
         atom_raws: lowered.atom_raws.clone(),
         dynamic_atom_base: lowered.dynamic_atom_base,
