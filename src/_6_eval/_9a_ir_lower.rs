@@ -313,6 +313,10 @@ struct Builder {
     /// tagged element columns. An `intern` over one builds the plain list from
     /// the elements and never waits on `__ir_plain_lists` for a fresh tuple.
     built_tuples: HashMap<ir::ColId, Vec<ir::ColId>>,
+    /// One node per structurally equal op: the op (a `Union` with its inputs sorted) to its node.
+    /// Every op denotes a function of its operator and its inputs' collections (a `Mint` of a
+    /// functor and columns, a `Get` of a relation with one binder), so equal ops are one collection.
+    consed: HashMap<String, ir::NodeId>,
 }
 
 struct FoldAux {
@@ -352,6 +356,7 @@ impl Builder {
             built_tuples: HashMap::new(),
             declared_folds: Vec::new(),
             semantic: None,
+            consed: HashMap::new(),
         }
     }
     fn rel(&mut self, name: String, cols: Vec<ir::Ty>, kind: ir::RelKind) -> ir::RelId {
@@ -366,8 +371,20 @@ impl Builder {
         id
     }
     fn node(&mut self, op: ir::Op) -> ir::NodeId {
+        let key = match &op {
+            ir::Op::Union(inputs) => {
+                let mut sorted = inputs.clone();
+                sorted.sort_unstable();
+                format!("{:?}", ir::Op::Union(sorted))
+            }
+            op => format!("{op:?}"),
+        };
+        if let Some(&id) = self.consed.get(&key) {
+            return id;
+        }
         let id = self.ir.nodes.len() as ir::NodeId;
         self.ir.nodes.push(op);
+        self.consed.insert(key, id);
         id
     }
     fn get(&mut self, rel: ir::RelId) -> ir::NodeId {
