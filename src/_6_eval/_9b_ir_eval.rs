@@ -34,6 +34,8 @@ pub fn take_answers() -> (usize, Vec<Row>) {
 pub enum Backend {
     Dd,
     Sqlite,
+    #[cfg(feature = "duckdb")]
+    DuckDb,
 }
 
 #[derive(Clone)]
@@ -438,6 +440,8 @@ fn open_session(
     match backend {
         Backend::Dd => install_session::<ivm_dd::Dd>(u, lowered, fingerprint, measured),
         Backend::Sqlite => install_session::<ivm_sqlite::Sqlite>(u, lowered, fingerprint, measured),
+        #[cfg(feature = "duckdb")]
+        Backend::DuckDb => install_session::<ivm_duckdb::DuckDb>(u, lowered, fingerprint, measured),
     }
 }
 
@@ -600,6 +604,8 @@ fn open_composed(
     match backend {
         Backend::Dd => install_composed::<ivm_dd::Dd>(u, &composed, parts),
         Backend::Sqlite => install_composed::<ivm_sqlite::Sqlite>(u, &composed, parts),
+        #[cfg(feature = "duckdb")]
+        Backend::DuckDb => install_composed::<ivm_duckdb::DuckDb>(u, &composed, parts),
     }
 }
 
@@ -1287,10 +1293,19 @@ pub fn configured_backend() -> Result<Backend, String> {
     match std::env::var("DL8_ENGINE").as_deref() {
         Err(std::env::VarError::NotPresent) | Ok("ir:dd") => Ok(Backend::Dd),
         Ok("ir:sqlite") => Ok(Backend::Sqlite),
+        #[cfg(feature = "duckdb")]
+        Ok("ir:duckdb") => Ok(Backend::DuckDb),
+        #[cfg(not(feature = "duckdb"))]
+        Ok("ir:duckdb") => Err(
+            "DL8_ENGINE \"ir:duckdb\" needs the `duckdb` cargo feature; this dl8 build lacks it (rebuild with --features duckdb)"
+                .into(),
+        ),
         Ok(other) => Err(format!(
-            "unknown DL8_ENGINE {other:?}; expected ir:dd or ir:sqlite"
+            "unknown DL8_ENGINE {other:?}; expected ir:dd, ir:sqlite, or ir:duckdb"
         )),
-        Err(error) => Err(format!("DL8_ENGINE {error}; expected ir:dd or ir:sqlite")),
+        Err(error) => Err(format!(
+            "DL8_ENGINE {error}; expected ir:dd, ir:sqlite, or ir:duckdb"
+        )),
     }
 }
 
@@ -3035,6 +3050,8 @@ fn open_interp(
     match backend {
         Backend::Dd => install::<ivm_dd::Dd>(bucket, measured),
         Backend::Sqlite => install::<ivm_sqlite::Sqlite>(bucket, measured),
+        #[cfg(feature = "duckdb")]
+        Backend::DuckDb => install::<ivm_duckdb::DuckDb>(bucket, measured),
     }
     .map_err(|error| engine_diagnostic(u, error))
 }

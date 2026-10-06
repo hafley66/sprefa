@@ -404,6 +404,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
  "ivm-dd",
+ "ivm-duckdb",
  "ivm-engine",
  "ivm-ir",
  "ivm-rxjs",
@@ -1007,6 +1008,17 @@ dependencies = [
  "ivm-engine",
  "ivm-ir",
  "timely",
+ "tracing",
+]
+
+[[package]]
+name = "ivm-duckdb"
+version = "0.1.0"
+dependencies = [
+ "ivm-engine",
+ "ivm-ir",
+ "serde_json",
+ "tempfile",
  "tracing",
 ]
 
