@@ -297,10 +297,11 @@ fn compose_mfps(
     (filter, map, project)
 }
 
-/// Each Mfp whose input is an Mfp no other node or stratum reads becomes one Mfp over that
-/// Mfp's input; the absorbed Mfp leaves the program and node ids are renumbered. Inputs precede
-/// their readers, so one ascending pass folds a chain of Mfps into its last one.
-fn fuse_mfps(p: &mut ir::Program) {
+/// An Mfp whose input no other node or stratum reads absorbs that input: a projection with no
+/// filter or map over a Join becomes the Join's `project`; an Mfp over an Mfp becomes one Mfp
+/// over the inner Mfp's input. The absorbed node leaves the program and node ids are renumbered.
+/// Inputs precede their readers, so one ascending pass folds a chain into its last node.
+fn fuse_projections(p: &mut ir::Program) {
     let mut readers = node_readers(p);
     let mut types: Vec<Option<Option<Vec<ir::Ty>>>> = Vec::new();
     let mut absorbed = vec![false; p.nodes.len()];
@@ -308,6 +309,19 @@ fn fuse_mfps(p: &mut ir::Program) {
         let ir::Op::Mfp { input, filter, map, project } = &p.nodes[id] else { continue };
         let inner_id = *input as usize;
         if readers[inner_id] != 1 {
+            continue;
+        }
+        if let ir::Op::Join { inputs, equivalences, project: inner_project } = &p.nodes[inner_id] {
+            if !filter.is_empty() || !map.is_empty() || project.is_empty() {
+                continue;
+            }
+            let project = project
+                .iter()
+                .map(|col| if inner_project.is_empty() { *col } else { inner_project[*col as usize] })
+                .collect();
+            p.nodes[id] = ir::Op::Join { inputs: inputs.clone(), equivalences: equivalences.clone(), project };
+            absorbed[inner_id] = true;
+            readers[inner_id] = 0;
             continue;
         }
         let ir::Op::Mfp { input: source, filter: inner_filter, map: inner_map, project: inner_project } = &p.nodes[inner_id] else {
@@ -701,6 +715,7 @@ fn join_constructor(
                     b.node(ir::Op::Join {
                         inputs: vec![input, ctor],
                         equivalences: vec![vec![(0, id), (1, 0)]],
+                        project: vec![],
                     })
                 })
                 .to_vec();
@@ -711,6 +726,7 @@ fn join_constructor(
     b.node(ir::Op::Join {
         inputs: vec![input, ctor],
         equivalences: vec![vec![(0, id), (1, 0)]],
+        project: vec![],
     })
 }
 
@@ -913,6 +929,7 @@ fn compile_kernel(
         *current = b.node(ir::Op::Join {
             inputs: vec![*current, right],
             equivalences,
+    project: vec![],
         });
         for (index, arg) in goal.args.iter().enumerate() {
             if let (Arg::Var(v), None) = (arg, inputs[index]) {
@@ -1579,6 +1596,7 @@ fn compile_fold_step_rule(
         current = b.node(ir::Op::Join {
             inputs: vec![current, right],
             equivalences,
+    project: vec![],
         });
         for (variable, position) in first_here {
             bound.insert(variable, assert_width(width + position as usize));
@@ -1918,6 +1936,7 @@ fn compile_rule(
             current = b.node(ir::Op::Join {
                 inputs: vec![current, right],
                 equivalences,
+    project: vec![],
             });
         }
         let total = width + if narrowed { kept.len() } else { goal.args.len().max(1) };
@@ -2218,6 +2237,7 @@ fn compile_rule(
                 let step_input = b.node(ir::Op::Join {
                     inputs: vec![acc_with_next_rank, ranked_rows],
                     equivalences,
+    project: vec![],
                 });
                 let mut step_width = key_count * 2 + 5;
                 let accumulator_col = assert_width(key_count + 1);
@@ -2301,6 +2321,7 @@ fn compile_rule(
                 let step_input = b.node(ir::Op::Join {
                     inputs: vec![acc_with_next_rank, ranked_rows],
                     equivalences: rank_equivalences,
+                    project: vec![],
                 });
                 let step_rows = b.get(step_relation);
                 let accumulator_col = assert_width(key_count + 1);
@@ -2311,6 +2332,7 @@ fn compile_rule(
                         vec![(0, accumulator_col), (1, 0)],
                         vec![(0, subject_col), (1, 1)],
                     ],
+                    project: vec![],
                 });
                 recursive_parts.push(
                     b.mfp(
@@ -2344,6 +2366,7 @@ fn compile_rule(
             let final_rows = b.node(ir::Op::Join {
                 inputs: vec![max_rank, final_acc],
                 equivalences,
+    project: vec![],
             });
             let result = assert_width(key_count * 2 + 2);
             let mut projected = Vec::new();
@@ -2722,7 +2745,7 @@ fn lower_waves(
             [] => return Err("wave relation without a next rule"),
             _ => b.node(ir::Op::Union(parts)),
         };
-        let joined = b.node(ir::Op::Join { inputs: vec![next, started_rows], equivalences: vec![] });
+        let joined = b.node(ir::Op::Join { inputs: vec![next, started_rows], equivalences: vec![], project: vec![] });
         let later = b.mfp(joined, vec![], vec![], (0..width).map(assert_width).collect());
         ids.push(relations[key]);
         rec_bodies.push(b.node(ir::Op::Union(vec![first, later])));
@@ -3243,6 +3266,7 @@ pub fn lower_declared(
         pairs = b.node(ir::Op::Join {
             inputs: vec![pairs, cons_rows],
             equivalences: vec![vec![(0, 0), (1, 2)]],
+            project: vec![],
         });
         let cell = 2;
         let head = 3;
@@ -3261,6 +3285,7 @@ pub fn lower_declared(
         wrapped = b.node(ir::Op::Join {
             inputs: vec![wrapped, wraps],
             equivalences: vec![vec![(0, 0), (1, 1)]],
+            project: vec![],
         });
         wrapped = b.mfp(wrapped, vec![], vec![], vec![2, 1]);
         let plain_body = b.node(ir::Op::Union(vec![seed_lists, wrapped]));
@@ -3562,7 +3587,7 @@ pub fn lower_declared(
         b.ir.outputs.push(snapshot_output);
         visible.push((snapshot_output, snapshot_rel, 3));
     }
-    fuse_mfps(&mut b.ir);
+    fuse_projections(&mut b.ir);
     let fold_program = (!b.declared_folds.is_empty()).then(|| program.clone());
     let seeds = program
         .seeds
