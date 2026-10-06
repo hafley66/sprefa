@@ -142,7 +142,7 @@ impl<E: Engine> EngineSession<E> {
         fingerprint: u64,
         measured: bool,
     ) -> Result<Self, ivm_engine::EngineError> {
-        dump_ir(&lowered.ir, fingerprint);
+        dump_ir(&lowered.ir, || fingerprint);
         let census_start = std::time::Instant::now();
         let engine = if measured {
             E::install(&lowered.ir)?
@@ -437,9 +437,9 @@ pub type SharedPool = Rc<RefCell<Pool>>;
 fn install_composed<E: Engine + 'static>(
     u: &mut Universe,
     composed: &ir::Composed,
-    parts: &[(&str, &Lowered)],
+    parts: &[(&str, &Lowered, u64)],
 ) -> Result<Vec<Slot>, Diagnostic> {
-    dump_ir(&composed.program, structural_fingerprint(&composed.program));
+    dump_ir(&composed.program, || structural_fingerprint(&composed.program));
     let census_start = std::time::Instant::now();
     let engine = E::install_unmeasured(&composed.program).map_err(|error| engine_diagnostic(u, error))?;
     let (joins, join_input_cols) = arranged_join_inputs(&composed.program);
@@ -457,25 +457,21 @@ fn install_composed<E: Engine + 'static>(
     Ok(parts
         .iter()
         .zip(&composed.rels)
-        .map(|((_, lowered), map)| {
-            let session = EngineSession::on(
-                core.clone(),
-                Some(Rc::new(map.clone())),
-                lowered,
-                structural_fingerprint(&lowered.ir),
-            );
+        .map(|((_, lowered, fingerprint), map)| {
+            let session = EngineSession::on(core.clone(), Some(Rc::new(map.clone())), lowered, *fingerprint);
             Rc::new(RefCell::new(Box::new(session) as Box<dyn Session>))
         })
         .collect())
 }
 
-/// `parts` composed into one program and installed once; one session per part.
+/// `parts` (name, lowered, `structural_fingerprint` of its IR) composed into one program and
+/// installed once; one session per part.
 fn open_composed(
     u: &mut Universe,
     backend: Backend,
-    parts: &[(&str, &Lowered)],
+    parts: &[(&str, &Lowered, u64)],
 ) -> Result<Vec<Slot>, Diagnostic> {
-    let programs: Vec<(&str, &ir::Program)> = parts.iter().map(|(name, lowered)| (*name, &lowered.ir)).collect();
+    let programs: Vec<(&str, &ir::Program)> = parts.iter().map(|(name, lowered, _)| (*name, &lowered.ir)).collect();
     let composed = ir::compose(&programs).map_err(|error| diagnostic(u, "engine", error))?;
     match backend {
         Backend::Dd => install_composed::<ivm_dd::Dd>(u, &composed, parts),
@@ -562,8 +558,9 @@ impl IrSession {
             return Ok((Rc::new(RefCell::new(open_session(u, backend, lowered, fingerprint, false)?)), None));
         }
         let pending = std::mem::take(&mut pool.pending);
-        let mut parts: Vec<(&str, &Lowered)> = vec![("p0.", lowered)];
-        parts.extend(pending.iter().map(|(name, lowered)| (name.as_str(), lowered)));
+        let fingerprints: Vec<u64> = pending.iter().map(|(_, part)| structural_fingerprint(&part.ir)).collect();
+        let mut parts: Vec<(&str, &Lowered, u64)> = vec![("p0.", lowered, fingerprint)];
+        parts.extend(pending.iter().zip(&fingerprints).map(|((name, lowered), fingerprint)| (name.as_str(), lowered, *fingerprint)));
         let slots = open_composed(u, backend, &parts)?;
         let failed = |u: &mut Universe, error| engine_diagnostic(u, error);
         let mut changes = Vec::new();
@@ -572,13 +569,13 @@ impl IrSession {
         }
         let sent = changes.len();
         let delta = slots[1].borrow_mut().settle_raw(changes).map_err(|e| failed(u, e))?;
-        for (slot, (name, part)) in slots[1..].iter().zip(pending) {
+        for ((slot, (name, part)), fingerprint) in slots[1..].iter().zip(pending).zip(fingerprints) {
             let applied = slot.borrow_mut().decode(u, &part, &delta, sent).map_err(|e| failed(u, e))?;
             tracing::info!(target: "dl8::one", part = %name, nodes = part.ir.nodes.len(), rows = applied.rows.len(), "one engine part");
             pool.parts.push(Part {
                 name,
                 session: slot.clone(),
-                fingerprint: structural_fingerprint(&part.ir),
+                fingerprint,
                 lowered: part,
                 applied,
             });
@@ -917,9 +914,11 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>, ir: ir::Pro
 
 /// `DL8_IR_DUMP=<dir>`: every installed IR as `<dir>/<pid>_<seq>_<fingerprint>.json`, in install
 /// order. The `ivm-sqlite` install benchmark reads these.
-fn dump_ir(program: &ir::Program, fingerprint: u64) {
+/// `fingerprint` runs only when the dump is on.
+fn dump_ir(program: &ir::Program, fingerprint: impl FnOnce() -> u64) {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let Some(dir) = std::env::var_os("DL8_IR_DUMP") else { return };
+    let fingerprint = fingerprint();
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let path = std::path::Path::new(&dir).join(format!("{}_{seq}_{fingerprint:016x}.json", std::process::id()));
     let written = serde_json::to_vec(program)
@@ -2672,8 +2671,7 @@ fn open_interp(
         measured: bool,
     ) -> Result<Box<dyn InterpRun>, ivm_engine::EngineError> {
         let shape = rule_interp::shape(bucket);
-        let fingerprint = structural_fingerprint(&shape.ir);
-        dump_ir(&shape.ir, fingerprint);
+        dump_ir(&shape.ir, || structural_fingerprint(&shape.ir));
         let engine = if measured {
             E::install(&shape.ir)?
         } else {
