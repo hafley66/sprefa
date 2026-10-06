@@ -367,6 +367,116 @@ fn fuse_projections(p: &mut ir::Program) {
     }
 }
 
+/// A `Let` whose body node is an earlier `Let`'s body is that relation: every `Get` of it reads
+/// the earlier relation, and nodes equal after that rewrite are one node. Its own stratum stays,
+/// over the shared body, so every id `Lowered` names still has its collection. Repeated until no
+/// `Let` joins an earlier one (a demand copy per stratum level reads the copies of the levels
+/// below it); nodes no stratum reaches are dropped and the rest renumbered in order. Needs inputs
+/// before their readers, as `Builder::node` makes them; a program without that is left alone.
+fn share_equal_lets(p: &mut ir::Program) {
+    if p.nodes.iter().enumerate().any(|(id, op)| op_inputs(op).iter().any(|input| *input as usize >= id)) {
+        return;
+    }
+    let mut aliased: HashSet<ir::RelId> = HashSet::new();
+    let mut changed = false;
+    for _ in 0..=p.strata.len() {
+        let mut first: HashMap<ir::NodeId, ir::RelId> = HashMap::new();
+        let mut alias: HashMap<ir::RelId, ir::RelId> = HashMap::new();
+        for stratum in &p.strata {
+            let ir::Stratum::Let { id, body } = stratum else { continue };
+            match first.get(body) {
+                Some(earlier) if !aliased.contains(id) => {
+                    alias.insert(*id, *earlier);
+                }
+                Some(_) => {}
+                None => {
+                    first.insert(*body, *id);
+                }
+            }
+        }
+        if alias.is_empty() {
+            break;
+        }
+        changed = true;
+        aliased.extend(alias.keys().copied());
+        let mut consed: HashMap<ir::Op, ir::NodeId> = HashMap::new();
+        let mut renumber: Vec<ir::NodeId> = Vec::with_capacity(p.nodes.len());
+        let mut nodes: Vec<ir::Op> = Vec::with_capacity(p.nodes.len());
+        for op in &p.nodes {
+            let mut op = op_with_inputs(op, |n| renumber[n as usize]);
+            if let ir::Op::Get(rel) = &mut op {
+                if let Some(canonical) = alias.get(rel) {
+                    *rel = *canonical;
+                }
+            }
+            let key = match &op {
+                ir::Op::Union(inputs) => {
+                    let mut sorted = inputs.clone();
+                    sorted.sort_unstable();
+                    ir::Op::Union(sorted)
+                }
+                op => op.clone(),
+            };
+            let id = *consed.entry(key).or_insert_with(|| {
+                nodes.push(op);
+                (nodes.len() - 1) as ir::NodeId
+            });
+            renumber.push(id);
+        }
+        p.nodes = nodes;
+        for stratum in &mut p.strata {
+            match stratum {
+                ir::Stratum::Let { body, .. } => *body = renumber[*body as usize],
+                ir::Stratum::LetRec(rec) => {
+                    let nested = rec.nested.iter_mut().flat_map(|inner| inner.bodies.iter_mut());
+                    rec.bodies.iter_mut().chain(nested).for_each(|body| *body = renumber[*body as usize]);
+                }
+            }
+        }
+    }
+    if !changed {
+        return;
+    }
+    let mut reached = vec![false; p.nodes.len()];
+    let mut walk: Vec<ir::NodeId> = Vec::new();
+    for stratum in &p.strata {
+        match stratum {
+            ir::Stratum::Let { body, .. } => walk.push(*body),
+            ir::Stratum::LetRec(rec) => walk.extend(rec.bodies.iter().chain(rec.nested.iter().flat_map(|inner| &inner.bodies)).copied()),
+        }
+    }
+    while let Some(id) = walk.pop() {
+        if std::mem::replace(&mut reached[id as usize], true) {
+            continue;
+        }
+        walk.extend(op_inputs(&p.nodes[id as usize]));
+    }
+    let mut renumber = vec![0 as ir::NodeId; p.nodes.len()];
+    let mut next = 0;
+    for (id, kept) in reached.iter().enumerate() {
+        if *kept {
+            renumber[id] = next;
+            next += 1;
+        }
+    }
+    let nodes = std::mem::take(&mut p.nodes);
+    p.nodes = nodes
+        .iter()
+        .enumerate()
+        .filter(|(id, _)| reached[*id])
+        .map(|(_, op)| op_with_inputs(op, |n| renumber[n as usize]))
+        .collect();
+    for stratum in &mut p.strata {
+        match stratum {
+            ir::Stratum::Let { body, .. } => *body = renumber[*body as usize],
+            ir::Stratum::LetRec(rec) => {
+                let nested = rec.nested.iter_mut().flat_map(|inner| inner.bodies.iter_mut());
+                rec.bodies.iter_mut().chain(nested).for_each(|body| *body = renumber[*body as usize]);
+            }
+        }
+    }
+}
+
 fn reachable(
     start: RelationKey,
     pending: &BTreeSet<RelationKey>,
@@ -3635,6 +3745,7 @@ pub fn lower_declared(
         b.ir.outputs.push(snapshot_output);
         visible.push((snapshot_output, snapshot_rel, 3));
     }
+    share_equal_lets(&mut b.ir);
     fuse_projections(&mut b.ir);
     let fold_program = (!b.declared_folds.is_empty()).then(|| program.clone());
     let seeds = program
