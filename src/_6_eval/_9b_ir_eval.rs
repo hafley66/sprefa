@@ -87,6 +87,10 @@ struct EngineSession<E: Engine> {
     core: Rc<RefCell<Core<E>>>,
     /// A part of a composed install: its relation ids to the engine's (`ivm_ir::compose`).
     relocation: Option<Rc<BTreeMap<ir::RelId, ir::RelId>>>,
+    /// A part's IR in engine relation ids, relocated once in `on`: the relocation map and the
+    /// part's IR are fixed for the session's life. `local` lends it to one call, `restore` takes
+    /// it back.
+    local_ir: Option<ir::Program>,
     /// Terms whose term-map rows this program holds.
     known: HashSet<TermId>,
     answered: HashMap<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>,
@@ -164,9 +168,11 @@ impl<E: Engine> EngineSession<E> {
         lowered: &Lowered,
         fingerprint: u64,
     ) -> Self {
+        let local_ir = relocation.as_ref().map(|map| relocate_ir(&lowered.ir, map));
         Self {
             core,
             relocation,
+            local_ir,
             known: HashSet::new(),
             answered: HashMap::new(),
             last_seeds: BTreeSet::new(),
@@ -177,9 +183,21 @@ impl<E: Engine> EngineSession<E> {
         }
     }
 
-    /// `lowered` in this session's engine relation ids.
-    fn local(&self, lowered: &Lowered) -> Option<Lowered> {
-        self.relocation.as_ref().map(|map| relocate(lowered, map))
+    /// `lowered` in this session's engine relation ids, over the IR relocated in `on`; the caller
+    /// hands it back through `restore`.
+    fn local(&mut self, lowered: &Lowered) -> Option<Lowered> {
+        let map = self.relocation.clone()?;
+        let ir = self
+            .local_ir
+            .take()
+            .expect("a part session holds its relocated IR between calls");
+        Some(relocate(lowered, &map, ir))
+    }
+
+    fn restore(&mut self, local: Option<Lowered>) {
+        if let Some(local) = local {
+            self.local_ir = Some(local.ir);
+        }
     }
 }
 
@@ -250,7 +268,7 @@ impl<E: Engine> Session for EngineSession<E> {
         fx: &mut dyn FnMut(Trace),
     ) -> RunResult {
         let local = self.local(lowered);
-        run_session(
+        let result = run_session(
             u,
             local.as_ref().unwrap_or(lowered),
             self,
@@ -259,7 +277,9 @@ impl<E: Engine> Session for EngineSession<E> {
             public_names,
             live,
             fx,
-        )
+        );
+        self.restore(local);
+        result
     }
 
     fn start(
@@ -268,7 +288,9 @@ impl<E: Engine> Session for EngineSession<E> {
         lowered: &Lowered,
     ) -> Result<Applied, ivm_engine::EngineError> {
         let local = self.local(lowered);
-        start_session(u, local.as_ref().unwrap_or(lowered), self)
+        let result = start_session(u, local.as_ref().unwrap_or(lowered), self);
+        self.restore(local);
+        result
     }
 
     fn apply(
@@ -278,18 +300,26 @@ impl<E: Engine> Session for EngineSession<E> {
         changes: &[SignedRow],
     ) -> Result<Applied, ApplyError> {
         let local = self.local(lowered);
-        apply_session(u, local.as_ref().unwrap_or(lowered), self, changes)
+        let result = apply_session(u, local.as_ref().unwrap_or(lowered), self, changes);
+        self.restore(local);
+        result
     }
 
     fn snapshot(&mut self, u: &mut Universe, lowered: &Lowered) -> Result<Closure, ivm_engine::EngineError> {
         let local = self.local(lowered);
-        let core = self.core.borrow();
-        snapshot_closure(u, local.as_ref().unwrap_or(lowered), &core.engine, &core.mapped)
+        let result = {
+            let core = self.core.borrow();
+            snapshot_closure(u, local.as_ref().unwrap_or(lowered), &core.engine, &core.mapped)
+        };
+        self.restore(local);
+        result
     }
 
     fn bootstrap(&mut self, lowered: &Lowered) -> Result<Vec<ir::SourceChange>, ivm_engine::EngineError> {
         let local = self.local(lowered);
-        let changes = bootstrap_changes(local.as_ref().unwrap_or(lowered), &mut self.core.borrow_mut(), Some(&mut self.known))?;
+        let changes = bootstrap_changes(local.as_ref().unwrap_or(lowered), &mut self.core.borrow_mut(), Some(&mut self.known));
+        self.restore(local);
+        let changes = changes?;
         self.last_seeds = changes.iter().map(|change| (change.rel, change.row.clone())).collect();
         self.initialized = true;
         Ok(changes)
@@ -304,11 +334,16 @@ impl<E: Engine> Session for EngineSession<E> {
 
     fn decode(&mut self, u: &mut Universe, lowered: &Lowered, delta: &ir::Delta, sent: usize) -> Result<Applied, ivm_engine::EngineError> {
         let local = self.local(lowered);
-        let lowered = local.as_ref().unwrap_or(lowered);
-        let mut core = self.core.borrow_mut();
-        let (rows, intern_read) = decode_delta(u, lowered, &mut core, delta)?;
-        let diagnostics = fold_diagnostics(u, lowered, &core)?;
-        Ok(Applied { rows, diagnostics, sent, intern_read })
+        let result = {
+            let lowered = local.as_ref().unwrap_or(lowered);
+            let mut core = self.core.borrow_mut();
+            decode_delta(u, lowered, &mut core, delta).and_then(|(rows, intern_read)| {
+                let diagnostics = fold_diagnostics(u, lowered, &core)?;
+                Ok(Applied { rows, diagnostics, sent, intern_read })
+            })
+        };
+        self.restore(local);
+        result
     }
 
     /// A part of a composed install never rewinds: a rewind would return every part.
@@ -812,16 +847,22 @@ impl IrSession {
     }
 }
 
-/// `lowered` with every relation id through `map`: a part of a composed install.
-fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>) -> Lowered {
-    let rel = |id: ir::RelId| map[&id];
-    let mut ir = lowered.ir.clone();
+/// `program` with every relation id through `map`: a part of a composed install.
+fn relocate_ir(program: &ir::Program, map: &BTreeMap<ir::RelId, ir::RelId>) -> ir::Program {
+    let mut ir = program.clone();
     for relation in &mut ir.rels {
-        relation.id = rel(relation.id);
+        relation.id = map[&relation.id];
     }
     for term in &mut ir.terms {
-        term.functor = rel(term.functor);
+        term.functor = map[&term.functor];
     }
+    ir
+}
+
+/// `lowered` with every relation id through `map`, over `ir`, its IR already relocated
+/// (`relocate_ir`): a part of a composed install.
+fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>, ir: ir::Program) -> Lowered {
+    let rel = |id: ir::RelId| map[&id];
     Lowered {
         ir,
         terms: lowered
