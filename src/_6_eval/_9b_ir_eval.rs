@@ -110,7 +110,6 @@ struct EngineSession<E: Engine> {
     answered: HashMap<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>,
     last_seeds: BTreeSet<(ir::RelId, Vec<Cell>)>,
     initialized: bool,
-    fingerprint: u64,
     structure: ir::Program,
     /// The session caches at the engine's last `mark`; `rewind` restores them with the engine,
     /// since cells interned after the mark are freed and reissued.
@@ -184,14 +183,13 @@ impl<E: Engine> EngineSession<E> {
             join_input_cols,
             "ir install"
         );
-        Ok(Self::on(Core::new(engine), None, lowered, fingerprint))
+        Ok(Self::on(Core::new(engine), None, lowered))
     }
 
     fn on(
         core: Rc<RefCell<Core<E>>>,
         relocation: Option<Rc<BTreeMap<ir::RelId, ir::RelId>>>,
         lowered: &Lowered,
-        fingerprint: u64,
     ) -> Self {
         let local_ir = relocation.as_ref().map(|map| relocate_ir(&lowered.ir, map));
         Self {
@@ -203,7 +201,6 @@ impl<E: Engine> EngineSession<E> {
             answered: HashMap::new(),
             last_seeds: BTreeSet::new(),
             initialized: false,
-            fingerprint,
             structure: lowered.ir.clone(),
             marked: None,
         }
@@ -243,7 +240,8 @@ type RunResult =
     Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError>;
 
 trait Session {
-    fn matches(&self, lowered: &Lowered, fingerprint: u64) -> bool;
+    /// The session's IR equals `lowered`'s.
+    fn matches(&self, lowered: &Lowered) -> bool;
     #[allow(clippy::too_many_arguments)]
     fn run(
         &mut self,
@@ -280,8 +278,8 @@ trait Session {
 }
 
 impl<E: Engine> Session for EngineSession<E> {
-    fn matches(&self, lowered: &Lowered, fingerprint: u64) -> bool {
-        self.fingerprint == fingerprint && self.structure == lowered.ir
+    fn matches(&self, lowered: &Lowered) -> bool {
+        self.structure == lowered.ir
     }
 
     fn run(
@@ -503,7 +501,7 @@ pub type SharedPool = Rc<RefCell<Pool>>;
 fn install_composed<E: Engine + 'static>(
     u: &mut Universe,
     composed: &ir::Composed,
-    parts: &[(&str, &Lowered, u64)],
+    parts: &[(&str, &Lowered)],
 ) -> Result<Vec<Slot>, Diagnostic> {
     dump_ir(&composed.program, || structural_fingerprint(&composed.program));
     let census_start = std::time::Instant::now();
@@ -523,21 +521,20 @@ fn install_composed<E: Engine + 'static>(
     Ok(parts
         .iter()
         .zip(&composed.rels)
-        .map(|((_, lowered, fingerprint), map)| {
-            let session = EngineSession::on(core.clone(), Some(Rc::new(map.clone())), lowered, *fingerprint);
+        .map(|((_, lowered), map)| {
+            let session = EngineSession::on(core.clone(), Some(Rc::new(map.clone())), lowered);
             Rc::new(RefCell::new(Box::new(session) as Box<dyn Session>))
         })
         .collect())
 }
 
-/// `parts` (name, lowered, `structural_fingerprint` of its IR) composed into one program and
-/// installed once; one session per part.
+/// `parts` composed into one program and installed once; one session per part.
 fn open_composed(
     u: &mut Universe,
     backend: Backend,
-    parts: &[(&str, &Lowered, u64)],
+    parts: &[(&str, &Lowered)],
 ) -> Result<Vec<Slot>, Diagnostic> {
-    let programs: Vec<(&str, &ir::Program)> = parts.iter().map(|(name, lowered, _)| (*name, &lowered.ir)).collect();
+    let programs: Vec<(&str, &ir::Program)> = parts.iter().map(|(name, lowered)| (*name, &lowered.ir)).collect();
     let composed = ir::compose(&programs).map_err(|error| diagnostic(u, "engine", error))?;
     match backend {
         Backend::Dd => install_composed::<ivm_dd::Dd>(u, &composed, parts),
@@ -624,9 +621,8 @@ impl IrSession {
             return Ok((Rc::new(RefCell::new(open_session(u, backend, lowered, fingerprint, false)?)), None));
         }
         let pending = std::mem::take(&mut pool.pending);
-        let fingerprints: Vec<u64> = pending.iter().map(|part| structural_fingerprint(&part.lowered.ir)).collect();
-        let mut parts: Vec<(&str, &Lowered, u64)> = vec![("p0.", lowered, fingerprint)];
-        parts.extend(pending.iter().zip(&fingerprints).map(|(part, fingerprint)| (part.name.as_str(), &part.lowered, *fingerprint)));
+        let mut parts: Vec<(&str, &Lowered)> = vec![("p0.", lowered)];
+        parts.extend(pending.iter().map(|part| (part.name.as_str(), &part.lowered)));
         let slots = open_composed(u, backend, &parts)?;
         let failed = |u: &mut Universe, error| engine_diagnostic(u, error);
         let mut changes = Vec::new();
@@ -635,8 +631,9 @@ impl IrSession {
         }
         let sent = changes.len();
         let delta = slots[1].borrow_mut().settle_raw(changes).map_err(|e| failed(u, e))?;
-        for ((slot, part), fingerprint) in slots[1..].iter().zip(pending).zip(fingerprints) {
+        for (slot, part) in slots[1..].iter().zip(pending) {
             let Pending { name, lowered: part, inputs } = part;
+            let fingerprint = structural_fingerprint(&part.ir);
             let applied = slot.borrow_mut().decode(u, &part, &delta, sent).map_err(|e| failed(u, e))?;
             tracing::info!(target: "dl8::one", part = %name, nodes = part.ir.nodes.len(), rows = applied.rows.len(), "one engine part");
             pool.parts.push(Part {
@@ -889,12 +886,14 @@ impl IrSession {
                 }
             }
         };
-        let fingerprint = structural_fingerprint(&lowered.ir);
+        // A later comptime round lowering the same IR reuses the session: compared by equality,
+        // fingerprinted only to open another.
         if self
             .session
             .as_ref()
-            .is_none_or(|session| !session.borrow().matches(&lowered, fingerprint))
+            .is_none_or(|session| !session.borrow().matches(&lowered))
         {
+            let fingerprint = structural_fingerprint(&lowered.ir);
             self.session = match self.open(u, backend, &lowered, fingerprint) {
                 Ok((session, _)) => Some(session),
                 Err(diag) => {

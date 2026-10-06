@@ -79,6 +79,10 @@ pub struct RoundState {
     pub answerer: Option<Answerer>,
     pub ir_session: Option<crate::_6_eval::ir_eval::IrSession>,
     pub round: i64,
+    /// The last round's check of (relations, rules), reused while both lists are equal.
+    pub checked: Option<(Vec<TermId>, Vec<TermId>, Resolved)>,
+    /// The last round's rule list and its conversion to evaluator rules, reused while equal.
+    pub converted: Option<(Vec<TermId>, Vec<Rule>)>,
 }
 
 pub struct RoundOutcome {
@@ -129,6 +133,8 @@ impl RoundState {
             answerer: None,
             ir_session: None,
             round: 1,
+            checked: None,
+            converted: None,
         }
     }
 }
@@ -196,6 +202,14 @@ pub struct Pass {
     pub ir_answers: Option<(usize, Vec<Row>)>,
 }
 
+fn copy_resolved(resolved: &Resolved) -> Resolved {
+    Resolved {
+        depends: resolved.depends.clone(),
+        strata: resolved.strata.clone(),
+        diagnostics: resolved.diagnostics.clone(),
+    }
+}
+
 /// `:1203`. `Err` carries the outcome that ends the fixpoint before anything
 /// is assembled.
 pub fn round_closure(
@@ -207,7 +221,19 @@ pub fn round_closure(
 ) -> Result<Result<Pass, RoundOutcome>, Stop> {
     let relations = merged_sorted(u, base_relations, &st.frozen_generated_relations);
     let rules = merged_sorted(u, authored_rules, &st.frozen_generated_rules);
-    let resolved = check_resolved_rules(u, &relations, &rules)?;
+    // `check_resolved_rules` is a function of the two lists.
+    let resolved = match &st.checked {
+        Some((checked_relations, checked_rules, resolved))
+            if *checked_relations == relations && *checked_rules == rules =>
+        {
+            copy_resolved(resolved)
+        }
+        _ => {
+            let resolved = check_resolved_rules(u, &relations, &rules)?;
+            st.checked = Some((relations.clone(), rules.clone(), copy_resolved(&resolved)));
+            resolved
+        }
+    };
     let seeds = compiler_round_seeds(
         u,
         base_seeds,
@@ -234,6 +260,7 @@ pub fn round_closure(
         &served,
         st.answerer.as_mut(),
         st.ir_session.as_mut(),
+        &mut st.converted,
     )?;
     if !evaluation_diagnostics.is_empty() {
         return Ok(Err(RoundOutcome::failed(evaluation_diagnostics)));
@@ -494,9 +521,10 @@ pub fn evaluate_round(
     seeds: &[TermId],
     served: &[TermId],
 ) -> Result<(Vec<TermId>, Vec<TermId>), Stop> {
-    evaluate_round_answered(u, rules, seeds, served, None, None)
+    evaluate_round_answered(u, rules, seeds, served, None, None, &mut None)
 }
 
+/// `converted`: the previous round's rule list and its conversion, reused when `rules` equals it.
 fn evaluate_round_answered(
     u: &mut Universe,
     rules: &[TermId],
@@ -504,8 +532,20 @@ fn evaluate_round_answered(
     served: &[TermId],
     answerer: Option<&mut Answerer>,
     ir_session: Option<&mut crate::_6_eval::ir_eval::IrSession>,
+    converted: &mut Option<(Vec<TermId>, Vec<Rule>)>,
 ) -> Result<(Vec<TermId>, Vec<TermId>), Stop> {
-    let mut program = round_program(u, rules, seeds)?;
+    let mut program = match converted {
+        Some((terms, converted_rules)) if terms.as_slice() == rules => Program {
+            rules: converted_rules.clone(),
+            ..Program::default()
+        },
+        _ => {
+            let program = round_program(u, rules, &[])?;
+            *converted = Some((rules.to_vec(), program.rules.clone()));
+            program
+        }
+    };
+    program.seeds = round_program(u, &[], seeds)?.seeds;
     program.served.extend(served.iter().copied());
     let closure = match ir_session {
         Some(session) => session.evaluate(u, &program, answerer, &mut |_: Trace| {}),
