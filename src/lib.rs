@@ -24,7 +24,8 @@ use _6_eval::term::{TermId, Universe};
 use _7_effect::Slice;
 use _8_driver::_0_read::{prelude_text, program_text};
 use _8_driver::_1_unit::{file_unit, prelude_unit, Unit};
-use _8_driver::_2_macro::{expand_units_with_macros, standard_macro_program};
+use _8_driver::_2_macro::{expand_units_on, expand_units_with_macros, standard_macro_program};
+use _8_driver::_7_one::{one_macro_program, OneEngine};
 use _8_driver::_4_project::{
     install_graphs, load_dl7_project, load_openapi_documents, load_tsi_streams,
     project_expression_environment, Loaded, Project,
@@ -115,6 +116,7 @@ fn phase<T>(
 /// stops the pipe, so the phase line always names the units it saw.
 fn macro_phase(
     u: &mut Universe,
+    one: Option<&mut OneEngine>,
     units: &[TermId],
     fx: &mut dyn FnMut(Event),
 ) -> Result<Result<Vec<TermId>, Vec<TermId>>, Stop> {
@@ -122,7 +124,7 @@ fn macro_phase(
     let span = tracing::info_span!("phase", name = "macrotime");
     let result = {
         let _entered = span.enter();
-        expanded_units(u, units, fx)
+        expanded_units(u, one, units, fx)
     };
     let (rows, diagnostics) = match &result {
         Ok(Ok(expanded)) => (expanded.len(), 0),
@@ -133,8 +135,31 @@ fn macro_phase(
     result
 }
 
-/// `:112`. Prelude, macro library, program, then the units chain.
+/// `:112`. Prelude, macro library, program, then the units chain. `DL8_ONE_ENGINE=1`: on a
+/// fresh process engine.
 pub fn compile(u: &mut Universe, path: &Path, fx: &mut dyn FnMut(Event)) -> Result<Compile, Stop> {
+    if _6_eval::one_engine::one_engine() {
+        return compile_in(u, &mut OneEngine::new(), path, fx);
+    }
+    compile_with(u, None, path, fx)
+}
+
+/// `compile` on the process engine `one`, which a later program may reuse.
+pub fn compile_in(
+    u: &mut Universe,
+    one: &mut OneEngine,
+    path: &Path,
+    fx: &mut dyn FnMut(Event),
+) -> Result<Compile, Stop> {
+    compile_with(u, Some(one), path, fx)
+}
+
+fn compile_with(
+    u: &mut Universe,
+    mut one: Option<&mut OneEngine>,
+    path: &Path,
+    fx: &mut dyn FnMut(Event),
+) -> Result<Compile, Stop> {
     let (prelude, program) = phase(
         "read",
         || {
@@ -159,13 +184,14 @@ pub fn compile(u: &mut Universe, path: &Path, fx: &mut dyn FnMut(Event)) -> Resu
     }
     let mut sources = roots;
     sources.extend(imported.units.iter().copied());
-    let expanded = match macro_phase(u, &sources, fx)? {
+    let expanded = match macro_phase(u, one.as_deref_mut(), &sources, fx)? {
         Ok(expanded) => expanded,
         Err(diagnostics) => return Ok(stopped(u, diagnostics)),
     };
     let mut units = vec![prelude.unit];
     units.extend(expanded);
-    finish_compile(u, &units, None, &imported.rows, fx)
+    let attach = one.and_then(|one| one.attach());
+    finish_compile(u, &units, None, &imported.rows, attach, fx)
 }
 
 /// The one base every ordinary import path resolves against.
@@ -180,6 +206,32 @@ type ProjectRead = (Unit, Loaded, Vec<TermId>, Imported, Vec<TermId>);
 /// never the imported ones: only a project unit has a path under the root.
 pub fn compile_project(
     u: &mut Universe,
+    root: &Path,
+    paths: &[&Path],
+    streams: &[&Path],
+    fx: &mut dyn FnMut(Event),
+) -> Result<Compile, Stop> {
+    if _6_eval::one_engine::one_engine() {
+        return compile_project_in(u, &mut OneEngine::new(), root, paths, streams, fx);
+    }
+    compile_project_with(u, None, root, paths, streams, fx)
+}
+
+/// `compile_project` on the process engine `one`.
+pub fn compile_project_in(
+    u: &mut Universe,
+    one: &mut OneEngine,
+    root: &Path,
+    paths: &[&Path],
+    streams: &[&Path],
+    fx: &mut dyn FnMut(Event),
+) -> Result<Compile, Stop> {
+    compile_project_with(u, Some(one), root, paths, streams, fx)
+}
+
+fn compile_project_with(
+    u: &mut Universe,
+    mut one: Option<&mut OneEngine>,
     root: &Path,
     paths: &[&Path],
     streams: &[&Path],
@@ -212,7 +264,7 @@ pub fn compile_project(
     let project_count = loaded.units.len();
     let mut sources = loaded.units.clone();
     sources.extend(imported.units.iter().copied());
-    let expanded = match macro_phase(u, &sources, fx)? {
+    let expanded = match macro_phase(u, one.as_deref_mut(), &sources, fx)? {
         Ok(expanded) => expanded,
         Err(diagnostics) => return Ok(stopped(u, diagnostics)),
     };
@@ -228,7 +280,8 @@ pub fn compile_project(
     };
     let mut units = vec![prelude.unit];
     units.extend(expanded);
-    finish_compile(u, &units, Some(project), &imported.rows, fx)
+    let attach = one.and_then(|one| one.attach());
+    finish_compile(u, &units, Some(project), &imported.rows, attach, fx)
 }
 
 /// The lower, check and comptime phases with their own span and event each.
@@ -237,6 +290,7 @@ fn finish_compile(
     units: &[TermId],
     mut project: Option<Project>,
     imports: &[TermId],
+    one: Option<_6_eval::one_engine::Attach>,
     fx: &mut dyn FnMut(Event),
 ) -> Result<Compile, Stop> {
     let lowered = phase(
@@ -274,6 +328,7 @@ fn finish_compile(
         units: units.to_vec(),
         project,
         imports: imports.to_vec(),
+        one,
     };
     let (compiled, diagnostics) = phase(
         "comptime",
@@ -350,9 +405,23 @@ fn lower_units(
 /// `:387`. The macro library compiles once, then rewrites every source unit.
 fn expanded_units(
     u: &mut Universe,
+    one: Option<&mut OneEngine>,
     units: &[TermId],
     fx: &mut dyn FnMut(Event),
 ) -> Result<Result<Vec<TermId>, Vec<TermId>>, Stop> {
+    if let Some(one) = one {
+        let (macro_program, diagnostics) = one_macro_program(u, one, &mut |r| fx(Event::Round(r)))?;
+        let Some(macro_program) = macro_program else {
+            return Ok(Err(diagnostics));
+        };
+        let session = one.macro_session.get_or_insert_with(_1_macrotime::MacroSession::configured);
+        let (expanded, diagnostics) =
+            expand_units_on(u, units, &macro_program, session, &mut |w| fx(Event::Wave(w)));
+        if !diagnostics.is_empty() {
+            return Ok(Err(diagnostics));
+        }
+        return Ok(Ok(expanded));
+    }
     let (macro_program, diagnostics) = standard_macro_program(u, &mut |r| fx(Event::Round(r)))?;
     let Some(macro_program) = macro_program else {
         return Ok(Err(diagnostics));

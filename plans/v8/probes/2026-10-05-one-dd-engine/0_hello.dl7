@@ -1,0 +1,4 @@
+; hello world: one relation, one fact
+(: Greeting (* (: text str)))
+
+(Greeting "hello world")

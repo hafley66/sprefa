@@ -41,6 +41,11 @@ pub trait Sources {
         compiler_facts: &[TermId],
         generated_relations: &[TermId],
     ) -> Result<(Option<Checked>, Vec<TermId>), Stop>;
+
+    /// The session a round loop evaluates on; `None`: a fresh configured one.
+    fn ir_session(&mut self) -> Option<crate::_6_eval::ir_eval::IrSession> {
+        None
+    }
 }
 
 /// `:718`. `None` is v7's `Compiled = []`.
@@ -61,6 +66,7 @@ pub fn evaluate_checked(
     let initial_requests = intern_rows(u, &base_seeds);
 
     let mut st = RoundState::seeded(initial_edges, initial_requests, Vec::new(), Vec::new());
+    st.ir_session = sources.ir_session();
     let input = RoundInput {
         u: &mut *u,
         authored_rules: &checked.rules,

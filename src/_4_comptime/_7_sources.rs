@@ -19,9 +19,15 @@ pub struct Live {
     /// `import(ImporterOrigin, Name, ImportedOrigin)`, the same rows the first
     /// lowering saw: a refreeze rebinds every imported module node.
     pub imports: Vec<TermId>,
+    /// One-engine mode: what every round loop's session attaches to.
+    pub one: Option<crate::_6_eval::one_engine::Attach>,
 }
 
 impl Sources for Live {
+    fn ir_session(&mut self) -> Option<crate::_6_eval::ir_eval::IrSession> {
+        self.one.as_ref().map(|one| one.session())
+    }
+
     fn refreeze(
         &mut self,
         u: &mut Universe,
