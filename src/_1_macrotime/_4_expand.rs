@@ -162,14 +162,6 @@ impl MacroSession {
         Self { ir, ..Self::configured() }
     }
 
-    /// `configured`, on the pool `macro_program`'s library session was left in, if any.
-    pub fn for_program(macro_program: &MacroProgram) -> Self {
-        match &macro_program.pool {
-            Some(pool) => Self::with_ir(IrSession::configured().with_pool(pool.clone())),
-            None => Self::configured(),
-        }
-    }
-
     /// The `DL8_ENGINE` backend, declaring a constructor per `READER_SHAPES`.
     pub fn configured() -> Self {
         Self {

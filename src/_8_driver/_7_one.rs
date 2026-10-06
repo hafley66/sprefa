@@ -127,17 +127,14 @@ pub fn one_macro_program(
         Err(diagnostics) => return Ok((None, diagnostics)),
     };
     let lowered_stdlib = Pending::lower(u, "p3.", &stdlib, &Declared::default()).map_err(|d| Stop::Load(format!("one engine stdlib lowering {}", u.display(d.payload))))?;
-    // The macro library's comptime rounds lower with the cone's declarations and leave their
-    // part for the macrotime session's `prepare` (`Pool::library`): the cone is no part of its own.
-    let library = macro_cone(u, &expected).map(|(_, declared)| declared);
-    {
-        let mut pool = one.pool.borrow_mut();
-        pool.pending = vec![lowered_stdlib];
-        pool.library = library;
+    let mut pending = Vec::new();
+    if let Some((cone, declared)) = macro_cone(u, &expected) {
+        pending.push(Pending::lower(u, "p2.", &cone, &declared).map_err(|d| Stop::Load(format!("one engine macro cone lowering {}", u.display(d.payload))))?);
     }
-    let compiled = compile_units_attached(u, &[unit.unit], Some(Attach::Pool(one.pool.clone())), fx);
-    one.pool.borrow_mut().library = None;
-    let (compiled, diagnostics) = compiled?;
+    pending.push(lowered_stdlib);
+    one.pool.borrow_mut().pending = pending;
+    let (compiled, diagnostics) =
+        compile_units_attached(u, &[unit.unit], Some(Attach::Pool(one.pool.clone())), fx)?;
     let Some(compiled) = compiled else {
         return Ok((None, diagnostics));
     };
@@ -150,12 +147,12 @@ pub fn one_macro_program(
     if !diagnostics.is_empty() {
         return Ok((None, diagnostics));
     }
-    // The compiled program: its rule order is the library round's, so the cone the macrotime
-    // session prepares from it adopts the library part (`Pool::library`).
-    if rule_set(&sliced) != rule_set(&expected) {
+    let program = if rule_set(&sliced) == rule_set(&expected) {
+        expected
+    } else {
         tracing::info!(target: "dl8::one", "one engine macro mismatch");
-    }
-    let program = sliced;
+        sliced
+    };
     if !one.pool.borrow().pending.is_empty() {
         tracing::info!(target: "dl8::one", "one engine pool never installed");
         one.pool.borrow_mut().pending.clear();

@@ -6,7 +6,7 @@ use super::Stop;
 use crate::_2_lower::api::Lowered;
 use crate::_2_lower::cx::CallPolicy;
 use crate::_2_lower::units::{lower_compiler_units, merge_module_basements, Units};
-use crate::_3_check::{check_datalog, Checked};
+use crate::_3_check::check_datalog;
 use crate::_4_comptime::api::derived_bind_slots;
 use crate::_4_comptime::sources::{source_unit_module_owners, Live};
 use crate::_4_comptime::{evaluate_checked, Compiled, Round};
@@ -34,22 +34,6 @@ pub fn compile_units_attached(
         return Ok((None, lowered.diagnostics));
     }
     compile_after_unit_lower(u, units, None, lowered, one, fx)
-}
-
-/// `compile_units_attached` that hands the checked program to `checked` before its round loops
-/// evaluate.
-pub fn compile_units_attached_checked(
-    u: &mut Universe,
-    units: &[TermId],
-    one: Option<Attach>,
-    checked: &mut dyn FnMut(&mut Universe, &Checked),
-    fx: &mut dyn FnMut(Round),
-) -> Result<(Option<Compiled>, Vec<TermId>), Stop> {
-    let lowered = lower_compiler_units(u, CallPolicy::DeferUnknownCalls, units, None, &[])?;
-    if !lowered.diagnostics.is_empty() {
-        return Ok((None, lowered.diagnostics));
-    }
-    compile_after_unit_lower_checked(u, units, None, lowered, one, checked, fx)
 }
 
 /// `:559`. The TSI environment is visible while the source units lower.
@@ -93,20 +77,6 @@ pub fn compile_after_unit_lower(
     one: Option<Attach>,
     fx: &mut dyn FnMut(Round),
 ) -> Result<(Option<Compiled>, Vec<TermId>), Stop> {
-    compile_after_unit_lower_checked(u, units, project, lowered, one, &mut |_, _| {}, fx)
-}
-
-/// `compile_after_unit_lower` that hands the checked program to `on_checked` before its round
-/// loops evaluate.
-fn compile_after_unit_lower_checked(
-    u: &mut Universe,
-    units: &[TermId],
-    project: Option<Project>,
-    lowered: Units,
-    one: Option<Attach>,
-    on_checked: &mut dyn FnMut(&mut Universe, &Checked),
-    fx: &mut dyn FnMut(Round),
-) -> Result<(Option<Compiled>, Vec<TermId>), Stop> {
     let (basement, origins) = merge_module_basements(u, &lowered.basements, &lowered.origins);
     let merged = Lowered {
         program: Some(basement),
@@ -120,7 +90,6 @@ fn compile_after_unit_lower_checked(
     if !diagnostics.is_empty() {
         return Ok((None, diagnostics));
     }
-    on_checked(u, &checked);
     let mut sources = Live {
         derived_bind_slots: derived_bind_slots(u, &checked.rules),
         units: units.to_vec(),

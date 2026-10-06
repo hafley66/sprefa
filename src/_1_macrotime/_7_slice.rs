@@ -19,7 +19,6 @@ pub fn slice_macro_program(
         edges: checked.edges.clone(),
         relations: checked.relations.clone(),
         program: Program::default(),
-        pool: None,
     };
     let (protocol, diagnostics) = macro_protocol(u, &whole);
     let Some(protocol) = protocol else {
@@ -114,7 +113,6 @@ pub fn slice_macro_program(
                 seeds,
                 ..Program::default()
             },
-            pool: None,
         }),
         Vec::new(),
     )
