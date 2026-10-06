@@ -1435,6 +1435,125 @@ fn bootstrap_changes<E: Engine>(
     core: &mut Core<E>,
     known: Option<&mut HashSet<TermId>>,
 ) -> Result<Vec<ir::SourceChange>, ivm_engine::EngineError> {
+    intern_lowered(lowered, core)?;
+    let mapped = &core.mapped;
+    let mut changes = seed_rows(lowered, mapped);
+    match known {
+        Some(known) => {
+            known.extend(lowered.terms.iter().map(|spec| spec.original));
+            for original in known.iter() {
+                changes.push(ir::SourceChange {
+                    rel: lowered.term_map,
+                    row: vec![original.0 as i64, mapped[original]],
+                    w: 1,
+                });
+            }
+        }
+        None => {
+            for (&original, &id) in mapped.iter() {
+                changes.push(ir::SourceChange {
+                    rel: lowered.term_map,
+                    row: vec![original.0 as i64, id],
+                    w: 1,
+                });
+            }
+        }
+    }
+    changes.sort_by(|a, b| (a.rel, &a.row).cmp(&(b.rel, &b.row)));
+    changes.dedup_by(|a, b| a.rel == b.rel && a.row == b.row);
+    Ok(changes)
+}
+
+/// The seed frontier rows besides the term map: unit, seeds and internal seeds, in `mapped` cells.
+fn seed_rows(lowered: &Lowered, mapped: &HashMap<TermId, Cell>) -> Vec<ir::SourceChange> {
+    let mut changes = vec![ir::SourceChange {
+        rel: lowered.unit,
+        row: vec![1],
+        w: 1,
+    }];
+    for (rel, row) in &lowered.seeds {
+        let args = if row.args.is_empty() {
+            vec![1]
+        } else {
+            row.args.iter().map(|id| mapped[id]).collect()
+        };
+        changes.push(ir::SourceChange {
+            rel: *rel,
+            row: args,
+            w: 1,
+        });
+    }
+    for (rel, terms) in &lowered.internal_seeds {
+        changes.push(ir::SourceChange {
+            rel: *rel,
+            row: terms.iter().map(|id| mapped[id]).collect(),
+            w: 1,
+        });
+    }
+    changes
+}
+
+/// The seed frontier of a session that settled before, against `last_seeds`: retract the
+/// non-term-map rows the program no longer seeds, add the seed rows it newly seeds and the
+/// term-map rows of terms new to `known`. Term-map rows only grow: `known` holds the terms whose
+/// rows `last_seeds` has, so no term-map row is listed again. `last_seeds` and `known` come back
+/// updated. `own`: a part of a composed install, whose term-map rows are its own terms only.
+fn reseed_changes<E: Engine>(
+    lowered: &Lowered,
+    core: &mut Core<E>,
+    own: bool,
+    known: &mut HashSet<TermId>,
+    last_seeds: &mut BTreeSet<(ir::RelId, Vec<Cell>)>,
+) -> Result<Vec<ir::SourceChange>, ivm_engine::EngineError> {
+    intern_lowered(lowered, core)?;
+    let mapped = &core.mapped;
+    let seeds: BTreeSet<(ir::RelId, Vec<Cell>)> = seed_rows(lowered, mapped)
+        .into_iter()
+        .map(|change| (change.rel, change.row))
+        .collect();
+    let fresh: Vec<TermId> = if own {
+        lowered.terms.iter().map(|spec| spec.original).filter(|term| known.insert(*term)).collect()
+    } else {
+        let fresh: Vec<TermId> = mapped.keys().copied().filter(|term| !known.contains(term)).collect();
+        known.extend(fresh.iter().copied());
+        fresh
+    };
+    let term_map = lowered.term_map;
+    let below = last_seeds.range(..(term_map, Vec::new()));
+    let above = term_map
+        .checked_add(1)
+        .map(|next| last_seeds.range((next, Vec::new())..));
+    let retracted: Vec<(ir::RelId, Vec<Cell>)> = below
+        .chain(above.into_iter().flatten())
+        .filter(|row| !seeds.contains(*row))
+        .cloned()
+        .collect();
+    let mut added: Vec<(ir::RelId, Vec<Cell>)> = seeds
+        .into_iter()
+        .filter(|row| !last_seeds.contains(row))
+        .collect();
+    added.extend(
+        fresh
+            .iter()
+            .map(|term| (term_map, vec![term.0 as i64, mapped[term]]))
+            .filter(|row| !last_seeds.contains(row)),
+    );
+    added.sort();
+    added.dedup();
+    let mut changes = Vec::with_capacity(retracted.len() + added.len());
+    for row in retracted {
+        last_seeds.remove(&row);
+        changes.push(ir::SourceChange { rel: row.0, row: row.1, w: -1 });
+    }
+    for row in added {
+        last_seeds.insert(row.clone());
+        changes.push(ir::SourceChange { rel: row.0, row: row.1, w: 1 });
+    }
+    Ok(changes)
+}
+
+/// Intern every term `lowered` names that the engine has not mapped.
+fn intern_lowered<E: Engine>(lowered: &Lowered, core: &mut Core<E>) -> Result<(), ivm_engine::EngineError> {
     let engine = &mut core.engine;
     let mapped = &mut core.mapped;
     let decoded = &mut core.decoded.cells;
@@ -1483,54 +1602,7 @@ fn bootstrap_changes<E: Engine>(
             ivm_engine::ErrorKind::Unsupported("term bootstrap budget or cycle"),
         ));
     }
-    let mut changes = vec![ir::SourceChange {
-        rel: lowered.unit,
-        row: vec![1],
-        w: 1,
-    }];
-    match known {
-        Some(known) => {
-            known.extend(lowered.terms.iter().map(|spec| spec.original));
-            for original in known.iter() {
-                changes.push(ir::SourceChange {
-                    rel: lowered.term_map,
-                    row: vec![original.0 as i64, mapped[original]],
-                    w: 1,
-                });
-            }
-        }
-        None => {
-            for (&original, &id) in mapped.iter() {
-                changes.push(ir::SourceChange {
-                    rel: lowered.term_map,
-                    row: vec![original.0 as i64, id],
-                    w: 1,
-                });
-            }
-        }
-    }
-    for (rel, row) in &lowered.seeds {
-        let args = if row.args.is_empty() {
-            vec![1]
-        } else {
-            row.args.iter().map(|id| mapped[id]).collect()
-        };
-        changes.push(ir::SourceChange {
-            rel: *rel,
-            row: args,
-            w: 1,
-        });
-    }
-    for (rel, terms) in &lowered.internal_seeds {
-        changes.push(ir::SourceChange {
-            rel: *rel,
-            row: terms.iter().map(|id| mapped[id]).collect(),
-            w: 1,
-        });
-    }
-    changes.sort_by(|a, b| (a.rel, &a.row).cmp(&(b.rel, &b.row)));
-    changes.dedup_by(|a, b| a.rel == b.rel && a.row == b.row);
-    Ok(changes)
+    Ok(())
 }
 
 /// The first settle of a prepared program: its whole seed frontier.
@@ -1858,38 +1930,23 @@ fn run_session<E: Engine>(
 ) -> Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError> {
     let core_rc = session.core.clone();
     let mut core_ref = core_rc.borrow_mut();
-    let changes = if session.relocation.is_some() {
-        bootstrap_changes(lowered, &mut core_ref, Some(&mut session.known))?
-    } else {
-        let changes = bootstrap_changes(lowered, &mut core_ref, None)?;
-        session.known = core_ref.mapped.keys().copied().collect();
-        changes
-    };
-    let current_seeds: BTreeSet<_> = changes
-        .iter()
-        .map(|change| (change.rel, change.row.clone()))
-        .collect();
     let frontier = if session.initialized {
-        let mut diff = Vec::new();
-        for (rel, row) in session.last_seeds.difference(&current_seeds) {
-            diff.push(ir::SourceChange {
-                rel: *rel,
-                row: row.clone(),
-                w: -1,
-            });
-        }
-        for (rel, row) in current_seeds.difference(&session.last_seeds) {
-            diff.push(ir::SourceChange {
-                rel: *rel,
-                row: row.clone(),
-                w: 1,
-            });
-        }
-        diff
+        let own = session.relocation.is_some();
+        reseed_changes(lowered, &mut core_ref, own, &mut session.known, &mut session.last_seeds)?
     } else {
+        let changes = if session.relocation.is_some() {
+            bootstrap_changes(lowered, &mut core_ref, Some(&mut session.known))?
+        } else {
+            let changes = bootstrap_changes(lowered, &mut core_ref, None)?;
+            session.known = core_ref.mapped.keys().copied().collect();
+            changes
+        };
+        session.last_seeds = changes
+            .iter()
+            .map(|change| (change.rel, change.row.clone()))
+            .collect();
         changes
     };
-    session.last_seeds = current_seeds;
     session.initialized = true;
     let Core {
         engine,
