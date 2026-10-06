@@ -150,12 +150,12 @@ pub fn one_macro_program(
     if !diagnostics.is_empty() {
         return Ok((None, diagnostics));
     }
-    let program = if rule_set(&sliced) == rule_set(&expected) {
-        expected
-    } else {
+    // The compiled program: its rule order is the library round's, so the cone the macrotime
+    // session prepares from it adopts the library part (`Pool::library`).
+    if rule_set(&sliced) != rule_set(&expected) {
         tracing::info!(target: "dl8::one", "one engine macro mismatch");
-        sliced
-    };
+    }
+    let program = sliced;
     if !one.pool.borrow().pending.is_empty() {
         tracing::info!(target: "dl8::one", "one engine pool never installed");
         one.pool.borrow_mut().pending.clear();
