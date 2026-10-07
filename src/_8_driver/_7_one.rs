@@ -11,7 +11,7 @@ use crate::_2_lower::api::Lowered as LoweredUnits;
 use crate::_2_lower::cx::CallPolicy;
 use crate::_2_lower::units::{lower_compiler_units, merge_module_basements};
 use crate::_3_check::api::prolog_sort;
-use crate::_3_check::{check_datalog, Checked};
+use crate::_3_check::Checked;
 use crate::_4_comptime::api::{colon_rows, graph_seeds, intern_rows, source_application_edges};
 use crate::_4_comptime::rounds::{compiler_round_seeds, round_program};
 use crate::_4_comptime::Round;
@@ -29,6 +29,9 @@ pub struct OneEngine {
     pub macro_program: Option<MacroProgram>,
     pub macro_session: Option<MacroSession>,
     pub stdlib: Option<Rc<RefCell<Stdlib>>>,
+    /// The A1 lower and check keeps, one per process engine.
+    pub lower: crate::_2_lower::keep::LowerKeep,
+    pub check: crate::_3_check::keep::CheckKeep,
 }
 
 impl OneEngine {
@@ -46,8 +49,19 @@ impl OneEngine {
 }
 
 /// `unit` lowered and checked alone, or its diagnostics.
-fn checked_alone(u: &mut Universe, unit: TermId) -> Result<Result<Checked, Vec<TermId>>, Stop> {
-    let lowered = lower_compiler_units(u, CallPolicy::DeferUnknownCalls, &[unit], None, &[])?;
+fn checked_alone(
+    u: &mut Universe,
+    keep: crate::_4_comptime::sources::Keep,
+    unit: TermId,
+) -> Result<Result<Checked, Vec<TermId>>, Stop> {
+    let lowered = lower_compiler_units(
+        u,
+        CallPolicy::DeferUnknownCalls,
+        &[unit],
+        None,
+        &[],
+        Some(keep.lower),
+    )?;
     if !lowered.diagnostics.is_empty() {
         return Ok(Err(lowered.diagnostics));
     }
@@ -57,7 +71,8 @@ fn checked_alone(u: &mut Universe, unit: TermId) -> Result<Result<Checked, Vec<T
         origins,
         diagnostics: Vec::new(),
     };
-    let (checked, diagnostics) = check_datalog(u, &merged)?;
+    let (checked, diagnostics) =
+        crate::_3_check::keep::check_units(u, Some(keep.check), &merged, None)?;
     match checked {
         Some(checked) if diagnostics.is_empty() => Ok(Ok(checked)),
         _ => Ok(Err(diagnostics)),
@@ -77,12 +92,15 @@ fn rule_set(program: &MacroProgram) -> (Vec<String>, Vec<String>, Vec<TermId>, V
 }
 
 /// The stdlib program: the prelude's checked rules with its round-1 seeds.
-fn stdlib_program(u: &mut Universe) -> Result<Result<crate::_6_eval::Program, Vec<TermId>>, Stop> {
+fn stdlib_program(
+    u: &mut Universe,
+    keep: crate::_4_comptime::sources::Keep,
+) -> Result<Result<crate::_6_eval::Program, Vec<TermId>>, Stop> {
     let prelude = prelude_unit(u, &prelude_text())?;
     if !prelude.diagnostics.is_empty() {
         return Ok(Err(prelude.diagnostics));
     }
-    let checked = match checked_alone(u, prelude.unit)? {
+    let checked = match checked_alone(u, keep, prelude.unit)? {
         Ok(checked) => checked,
         Err(diagnostics) => return Ok(Err(diagnostics)),
     };
@@ -112,7 +130,11 @@ pub fn one_macro_program(
     if !unit.diagnostics.is_empty() {
         return Ok((None, unit.diagnostics));
     }
-    let checked = match checked_alone(u, unit.unit)? {
+    let keep = crate::_4_comptime::sources::Keep {
+        lower: &one.lower,
+        check: &one.check,
+    };
+    let checked = match checked_alone(u, keep, unit.unit)? {
         Ok(checked) => checked,
         Err(diagnostics) => return Ok((None, diagnostics)),
     };
@@ -122,7 +144,7 @@ pub fn one_macro_program(
     if !diagnostics.is_empty() {
         return Ok((None, diagnostics));
     }
-    let stdlib = match stdlib_program(u)? {
+    let stdlib = match stdlib_program(u, keep)? {
         Ok(program) => program,
         Err(diagnostics) => return Ok((None, diagnostics)),
     };
@@ -133,8 +155,13 @@ pub fn one_macro_program(
     }
     pending.push(lowered_stdlib);
     one.pool.borrow_mut().pending = pending;
-    let (compiled, diagnostics) =
-        compile_units_attached(u, &[unit.unit], Some(Attach::Pool(one.pool.clone())), fx)?;
+    let (compiled, diagnostics) = compile_units_attached(
+        u,
+        &[unit.unit],
+        Some(Attach::Pool(one.pool.clone())),
+        Some(keep),
+        fx,
+    )?;
     let Some(compiled) = compiled else {
         return Ok((None, diagnostics));
     };

@@ -14,6 +14,7 @@ fn named_return(u: &Universe, name: TermId) -> bool {
     matches!(u.get(name), Term::Atom(s) if u.sym_str(*s) == "return")
 }
 
+#[derive(Clone)]
 pub struct CheckerGraph {
     /// Source-list order. `assertz/1` keeps duplicates in this order, so the
     /// first matching row reproduces `memberchk/2`.
@@ -48,42 +49,45 @@ impl CheckerGraph {
             owner_return_indices: HashMap::new(),
             owner_slots: HashMap::new(),
         };
+        let mut parts = Vec::with_capacity(edge_rows.len());
         for row in edge_rows {
-            let parts = edge_parts(u, *row)?;
-            let position = graph.edges.len();
-            graph
-                .forward
-                .entry((parts.owner, parts.name))
-                .or_insert(position);
-            graph.by_owner.entry(parts.owner).or_default().push(position);
-            if let Some(target) = u.unary(parts.target, "target") {
-                graph.parent.entry(target).or_insert(parts.owner);
-            }
-            *graph.owner_edge_count.entry(parts.owner).or_insert(0) += 1;
-            graph
-                .owner_slots
-                .entry(parts.owner)
-                .or_default()
-                .insert(parts.index);
-            if named_return(u, parts.name) {
-                graph
-                    .owner_return_indices
-                    .entry(parts.owner)
-                    .or_default()
-                    .push(parts.index);
-            }
-            graph.edges.push(parts);
+            parts.push(edge_parts(u, *row)?);
         }
-        for indices in graph.owner_return_indices.values_mut() {
+        graph.ingest(u, parts.into_iter());
+        graph.add_modules(u, nodes);
+        Some(graph)
+    }
+
+    /// Ingest lowers already-parsed edge parts; a delta keeps the source order
+    /// the merged basement carries.
+    pub fn ingest(&mut self, u: &Universe, parts: impl Iterator<Item = Edge>) {
+        for part in parts {
+            let position = self.edges.len();
+            self.forward.entry((part.owner, part.name)).or_insert(position);
+            self.by_owner.entry(part.owner).or_default().push(position);
+            if let Some(target) = u.unary(part.target, "target") {
+                self.parent.entry(target).or_insert(part.owner);
+            }
+            *self.owner_edge_count.entry(part.owner).or_insert(0) += 1;
+            self.owner_slots.entry(part.owner).or_default().insert(part.index);
+            if named_return(u, part.name) {
+                self.owner_return_indices.entry(part.owner).or_default().push(part.index);
+            }
+            self.edges.push(part);
+        }
+        for indices in self.owner_return_indices.values_mut() {
             indices.sort_unstable();
             indices.dedup();
         }
+    }
+
+    /// `install_module_nodes/4`.
+    pub fn add_modules(&mut self, u: &Universe, nodes: &[TermId]) {
         for node in nodes {
             if let Some(owner) = u.unary(*node, "module") {
-                graph.modules.insert(owner);
+                self.modules.insert(owner);
             }
         }
-        Some(graph)
     }
 
     /// `0_graph_lookup.pl:91`.

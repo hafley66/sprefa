@@ -7,12 +7,18 @@ use crate::_2_lower::api::Lowered;
 use crate::_2_lower::cx::CallPolicy;
 use crate::_2_lower::units::{lower_compiler_units, merge_module_basements};
 use crate::_3_check::api::prolog_sort;
-use crate::_3_check::{check_datalog, Checked, Stop};
+use crate::_3_check::{Checked, Stop};
 use crate::_6_eval::term::{TermId, Universe};
 use crate::_8_driver::_4_project::{install_graphs, project_expression_environment, Project};
 
+/// The two one-engine keeps of one `OneEngine`, passed down the driver paths.
+#[derive(Copy, Clone)]
+pub struct Keep<'a> {
+    pub lower: &'a crate::_2_lower::keep::LowerKeep,
+    pub check: &'a crate::_3_check::keep::CheckKeep,
+}
 /// `compile_context(Units, ProjectContext, DerivedBindSlots)` at `:931`.
-pub struct Live {
+pub struct Live<'a> {
     pub units: Vec<TermId>,
     pub project: Option<Project>,
     pub derived_bind_slots: Vec<TermId>,
@@ -21,9 +27,11 @@ pub struct Live {
     pub imports: Vec<TermId>,
     /// One-engine mode: what every round loop's session attaches to.
     pub one: Option<crate::_6_eval::one_engine::Attach>,
+    /// The A1 keeps; `None` runs every lower and check from scratch.
+    pub keep: Option<Keep<'a>>,
 }
 
-impl Sources for Live {
+impl<'a> Sources for Live<'a> {
     fn ir_session(&mut self) -> Option<crate::_6_eval::ir_eval::IrSession> {
         self.one.as_ref().map(|one| one.session())
     }
@@ -52,9 +60,15 @@ impl Sources for Live {
             .map(|(_, args)| args[0])
             .and_then(|list| u.as_list(list))
             .unwrap_or_default();
-        let lowered =
-            lower_compiler_units(u, policy, &self.units, Some(environment), &self.imports)
-                .map_err(|_| Stop::Fail("lowering reached an unported construct"))?;
+        let lowered = lower_compiler_units(
+            u,
+            policy,
+            &self.units,
+            Some(environment),
+            &self.imports,
+            self.keep.map(|keep| keep.lower),
+        )
+        .map_err(|_| Stop::Fail("lowering reached an unported construct"))?;
         if !lowered.diagnostics.is_empty() {
             return Ok((None, lowered.diagnostics));
         }
@@ -64,6 +78,12 @@ impl Sources for Live {
         if !diagnostics.is_empty() {
             return Ok((None, diagnostics));
         }
+        let prelude = u.atom("prelude");
+        let exporter = self
+            .units
+            .iter()
+            .any(|unit| matches!(u.functor(*unit), Some(("dl7_unit", args)) if args[0] == prelude))
+            .then(|| (basements[0], origins[0]));
         let (basement, origins) = merge_module_basements(u, &basements, &origins);
         let basement = add_generated_relations(u, basement, generated_relations);
         let lowered = Lowered {
@@ -71,7 +91,7 @@ impl Sources for Live {
             origins,
             diagnostics: Vec::new(),
         };
-        check_datalog(u, &lowered)
+        crate::_3_check::keep::check_units(u, self.keep.map(|keep| keep.check), &lowered, exporter)
     }
 }
 

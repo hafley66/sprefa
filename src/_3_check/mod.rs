@@ -12,6 +12,8 @@ pub mod bind;
 pub mod graph;
 #[path = "_8_json.rs"]
 pub mod json;
+#[path = "_9_keep.rs"]
+pub mod keep;
 #[path = "_5_kernel.rs"]
 pub mod kernel;
 #[path = "_4_mode.rs"]

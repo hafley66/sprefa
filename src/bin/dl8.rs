@@ -81,6 +81,9 @@ enum Command {
         /// Write nothing; exit 1 when a file differs from its row.
         #[arg(long)]
         check: bool,
+        /// Print every wave and round to stderr.
+        #[arg(long)]
+        trace: bool,
     },
     /// Lower a `dl8 compile` output to one target and print the artifact as JSON.
     #[command(long_about = "Lower a `dl8 compile` output to one target and print the artifact")]
@@ -155,6 +158,7 @@ fn trace_requested(command: &Command) -> bool {
     match command {
         Command::Expand { trace, .. }
         | Command::Compile { trace, .. }
+        | Command::Build { trace, .. }
         | Command::Eval { trace, .. }
         | Command::Run { trace, .. } => *trace,
         _ => false,
@@ -215,6 +219,7 @@ fn run(command: Command) -> ExitCode {
             tsi,
             out,
             check,
+            ..
         } => build_cli(&file, project.as_deref(), &tsi, &out, check),
         Command::Emit { target, program } => emit_cli(target, &program),
         Command::Eval {

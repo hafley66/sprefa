@@ -6,6 +6,7 @@ use super::graph::{CheckerGraph, OriginArena};
 use super::instance::instance_rows;
 use super::kernel::primitive_name;
 use super::mode::{call_parts, goal_failures, head_safety, head_variables};
+use crate::_2_lower::index::Edge;
 use crate::_2_lower::kernel::{kernel_relation, kernel_variadic};
 use crate::_6_eval::program::AggregateKind;
 use crate::_6_eval::term::{Term, TermId, Universe};
@@ -299,15 +300,14 @@ pub fn resolve_edges(
     u: &mut Universe,
     cx: &Cx,
     origins: &OriginArena,
+    parts: &[Edge],
+    built: &mut HashSet<TermId>,
 ) -> (Vec<TermId>, Vec<TermId>, Vec<TermId>) {
     let check = u.atom("check");
     let mut edges = Vec::new();
-    let mut built = HashSet::new();
     let mut minted = Vec::new();
     let mut diagnostics = Vec::new();
-    let rows: Vec<(TermId, TermId, TermId, i64)> = cx
-        .graph
-        .edges
+    let rows: Vec<(TermId, TermId, TermId, i64)> = parts
         .iter()
         .map(|e| (e.owner, e.name, e.target, e.index))
         .collect();
@@ -340,7 +340,7 @@ pub fn resolve_edges(
         if u.functor(target)
             .is_some_and(|(n, a)| n == "application" && a.len() == 2)
         {
-            match instance_rows(u, cx, owner, name, index, target, &mut built, &mut minted) {
+            match instance_rows(u, cx, owner, name, index, target, built, &mut minted) {
                 Ok(rows) => edges.extend(rows),
                 Err(reason) => {
                     diagnostics.push(u.compound("diagnostic", vec![check, node, reason]))
@@ -363,19 +363,22 @@ pub fn resolve_edges(
     (edges, minted, diagnostics)
 }
 
-/// `:727`.
+/// `:727`. The resolved seeds and their value mints come back apart: the
+/// delta path concatenates both groups in order, the single pass appends the
+/// mints of the whole list.
 pub fn resolve_seeds(
     u: &mut Universe,
     cx: &Cx,
     seeds: &[TermId],
     origins: &OriginArena,
-) -> Result<(Vec<TermId>, Vec<TermId>), Stop> {
+    seed_offset: i64,
+) -> Result<(Vec<TermId>, Vec<TermId>, Vec<TermId>), Stop> {
     let check = u.atom("check");
     let mut resolved = Vec::with_capacity(seeds.len());
     let mut diagnostics = Vec::new();
     let mut minted = Vec::new();
     for (index, seed) in seeds.iter().enumerate() {
-        let node = origins.seed_origin(index as i64);
+        let node = origins.seed_origin(seed_offset + index as i64);
         match resolve_call(u, cx, *seed)? {
             CallResult::Ok { term, args } => {
                 if args.iter().any(|a| u.unary(*a, "var").is_some()) {
@@ -395,8 +398,7 @@ pub fn resolve_seeds(
             }
         }
     }
-    resolved.extend(minted);
-    Ok((resolved, diagnostics))
+    Ok((resolved, minted, diagnostics))
 }
 
 /// Nesting of value constructions inside one fact argument.
@@ -458,12 +460,13 @@ pub fn resolve_rules(
     cx: &Cx,
     rules: &[TermId],
     origins: &OriginArena,
+    rule_offset: i64,
 ) -> Result<(Vec<TermId>, Vec<TermId>), Stop> {
     let check = u.atom("check");
     let mut resolved = Vec::with_capacity(rules.len());
     let mut diagnostics = Vec::new();
     for (index, rule) in rules.iter().enumerate() {
-        let rule_index = index as i64;
+        let rule_index = rule_offset + index as i64;
         let Some(("rule", parts)) = u.functor(*rule) else {
             return Err(Stop::Fail("rule/2 expected"));
         };

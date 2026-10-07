@@ -15,7 +15,6 @@ pub mod _9_runtime;
 use _2_lower::api::Lowered;
 use _2_lower::cx::CallPolicy;
 use _2_lower::units::{lower_compiler_units, merge_module_basements, Units};
-use _3_check::check_datalog;
 use _4_comptime::api::derived_bind_slots;
 use _4_comptime::evaluate_checked;
 use _4_comptime::sources::{source_unit_module_owners, Live};
@@ -190,8 +189,12 @@ fn compile_with(
     };
     let mut units = vec![prelude.unit];
     units.extend(expanded);
-    let attach = one.and_then(|one| one.attach());
-    finish_compile(u, &units, None, &imported.rows, attach, fx)
+    let attach = one.as_deref().and_then(|one| one.attach());
+    let keep = one.as_deref().map(|one| _4_comptime::sources::Keep {
+        lower: &one.lower,
+        check: &one.check,
+    });
+    finish_compile(u, &units, None, &imported.rows, attach, keep, fx)
 }
 
 /// The one base every ordinary import path resolves against.
@@ -280,8 +283,12 @@ fn compile_project_with(
     };
     let mut units = vec![prelude.unit];
     units.extend(expanded);
-    let attach = one.and_then(|one| one.attach());
-    finish_compile(u, &units, Some(project), &imported.rows, attach, fx)
+    let attach = one.as_deref().and_then(|one| one.attach());
+    let keep = one.as_deref().map(|one| _4_comptime::sources::Keep {
+        lower: &one.lower,
+        check: &one.check,
+    });
+    finish_compile(u, &units, Some(project), &imported.rows, attach, keep, fx)
 }
 
 /// The lower, check and comptime phases with their own span and event each.
@@ -291,16 +298,22 @@ fn finish_compile(
     mut project: Option<Project>,
     imports: &[TermId],
     one: Option<_6_eval::one_engine::Attach>,
+    keep: Option<_4_comptime::sources::Keep>,
     fx: &mut dyn FnMut(Event),
 ) -> Result<Compile, Stop> {
     let lowered = phase(
         "lower",
-        || lower_units(u, units, project.as_mut(), imports),
+        || lower_units(u, units, project.as_mut(), imports, keep),
         |lowered: &Units| (lowered.basements.len(), lowered.diagnostics.len()),
     )?;
     if !lowered.diagnostics.is_empty() {
         return Ok(stopped(u, lowered.diagnostics));
     }
+    let prelude = u.atom("prelude");
+    let exporter = units
+        .iter()
+        .any(|unit| matches!(u.functor(*unit), Some(("dl7_unit", args)) if args[0] == prelude))
+        .then(|| (lowered.basements[0], lowered.origins[0]));
 
     let (basement, origins) = merge_module_basements(u, &lowered.basements, &lowered.origins);
     let merged = Lowered {
@@ -310,7 +323,10 @@ fn finish_compile(
     };
     let (checked, diagnostics) = phase(
         "check",
-        || check_datalog(u, &merged).map_err(Stop::from),
+        || {
+            _3_check::keep::check_units(u, keep.map(|keep| keep.check), &merged, exporter)
+                .map_err(Stop::from)
+        },
         |(checked, diagnostics)| {
             let rows = checked.as_ref().map(|c| c.rules.len()).unwrap_or(0);
             (rows, diagnostics.len())
@@ -329,6 +345,7 @@ fn finish_compile(
         project,
         imports: imports.to_vec(),
         one,
+        keep,
     };
     let (compiled, diagnostics) = phase(
         "comptime",
@@ -354,6 +371,7 @@ fn lower_units(
     units: &[TermId],
     project: Option<&mut Project>,
     imports: &[TermId],
+    keep: Option<_4_comptime::sources::Keep>,
 ) -> Result<Units, Stop> {
     let environment = project.as_deref().map(|project| {
         let owners = source_unit_module_owners(u, units);
@@ -365,6 +383,7 @@ fn lower_units(
         units,
         environment,
         imports,
+        keep.map(|keep| keep.lower),
     )?;
     let Some(project) = project else {
         return Ok(lowered);
