@@ -5,7 +5,10 @@
 //! failure, where no response arrived; the message stands in `?ResponseBody`
 //! with an empty `?ContentType`.
 
-use super::{body_bytes, body_cell, classify_body, handle, media_type, message, HttpBody};
+use super::{
+    body_bytes, body_cell, body_of_term, classify_body, handle, media_type, message, text_of,
+    HttpBody,
+};
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::{Row, Term, TermId, Universe};
 use crate::_9_runtime::reconcile::{application_values, Cadence, IService};
@@ -60,15 +63,6 @@ impl HttpFetch {
     }
 }
 
-/// The bound text at one application position; `None` when unbound or not a
-/// string.
-fn text(u: &Universe, term: Option<TermId>) -> Option<String> {
-    let Term::Str(sym) = u.get(term?) else {
-        return None;
-    };
-    Some(u.sym_str(*sym).to_string())
-}
-
 /// `(name, value)` per `"name: value"` list item; unbound headers send none.
 fn header_list(u: &Universe, term: Option<TermId>) -> Vec<(String, String)> {
     let Some(items) = term.and_then(|term| u.as_list(term)) else {
@@ -77,24 +71,10 @@ fn header_list(u: &Universe, term: Option<TermId>) -> Vec<(String, String)> {
     items
         .into_iter()
         .filter_map(|item| {
-            let Term::Str(sym) = u.get(item) else {
-                return None;
-            };
-            let (name, value) = u.sym_str(*sym).split_once(':')?;
+            let (name, value) = text_of(u, item)?.split_once(':')?;
             Some((name.trim().to_string(), value.trim().to_string()))
         })
         .collect()
-}
-
-/// A string column value that names a stored blob is the blob.
-fn body_term(u: &Universe, term: Option<TermId>) -> HttpBody {
-    match text(u, term) {
-        Some(value) => match super::blob_bytes(&value) {
-            Some(_) => HttpBody::Blob(value),
-            None => HttpBody::Text(value),
-        },
-        None => HttpBody::Text(String::new()),
-    }
 }
 
 impl IService for HttpFetch {
@@ -112,12 +92,16 @@ impl IService for HttpFetch {
                 continue;
             };
             let at = |index: usize| values.get(index).copied().flatten();
-            let Some(url) = text(u, at(1)) else {
+            let Some(url) = at(1).and_then(|term| text_of(u, term)) else {
                 continue;
             };
-            let method = text(u, at(0)).unwrap_or_else(|| "GET".to_string());
+            let method = at(0)
+                .and_then(|term| text_of(u, term))
+                .unwrap_or_else(|| "GET".to_string());
             let headers = header_list(u, at(2));
-            let request_body = body_term(u, at(3));
+            let request_body = at(3)
+                .map(|term| body_of_term(u, term))
+                .unwrap_or(HttpBody::Text(String::new()));
             let request_bytes = body_bytes(&request_body);
             let echo = Finished {
                 method: method.clone(),

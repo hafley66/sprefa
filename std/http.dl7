@@ -34,3 +34,28 @@
     (fetch "GET" ?Url ?Headers ?RequestBody ?Status ?Type ?Message)
     (int.to_str ?Status ?Code)
     (not (str.starts_with ?Code "2")))
+
+; `serve` keeps one HTTP listener per row. Every inbound request becomes a
+; `request` row; the program answers with a `response` row keyed by the same
+; id, which the runtime hands to the waiting connection. A response that has
+; not landed ten seconds after the request is a 504 the connection writes
+; itself, and the request row is retracted.
+(: serve
+   (* (: port int)))
+
+(: request
+   (* (: id int)
+      (: method str)
+      (: path str)
+      (: query str)
+      (: body str)))
+
+(: response
+   (* (: id int)
+      (: status int)
+      (: content_type str)
+      (: body str)))
+
+(: serve_error
+   (* (: port int)
+      (: message str)))

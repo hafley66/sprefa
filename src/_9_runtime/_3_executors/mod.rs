@@ -18,6 +18,8 @@ pub mod git_refs;
 pub mod timer;
 #[path = "http_fetch.rs"]
 pub mod http_fetch;
+#[path = "http_serve.rs"]
+pub mod http_serve;
 
 use super::reconcile::{application_values, IService};
 use crate::_6_eval::kernel::kernel_ref;
@@ -27,8 +29,8 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 pub use doc_layout::DocLayout;
-pub use extract::Extract;
 pub use http_fetch::HttpFetch;
+pub use http_serve::HttpServe;
 pub use fs_at::FsAt;
 pub use fs_json::FsJson;
 pub use fs_watch::FsWatch;
@@ -45,6 +47,25 @@ pub(crate) fn text_at(u: &Universe, application: TermId, index: usize) -> Option
     match u.get(value) {
         Term::Str(sym) => Some((value, u.sym_str(*sym).to_string())),
         _ => None,
+    }
+}
+
+/// The text of a string term.
+pub(crate) fn text_of(u: &Universe, term: TermId) -> Option<String> {
+    let Term::Str(sym) = u.get(term) else {
+        return None;
+    };
+    Some(u.sym_str(*sym).to_string())
+}
+
+/// A string column value that names a stored blob is the blob.
+pub(crate) fn body_of_term(u: &Universe, term: TermId) -> HttpBody {
+    match text_of(u, term) {
+        Some(value) => match blob_bytes(&value) {
+            Some(_) => HttpBody::Blob(value),
+            None => HttpBody::Text(value),
+        },
+        None => HttpBody::Text(String::new()),
     }
 }
 
@@ -214,6 +235,29 @@ fn executors_for_mode(
                 Some(rel) => executors.push(Box::new(HttpFetch::new(*rel))),
                 None => missing(u, "served_relation_unknown", name),
             },
+            http_serve::RELATION => {
+                match (
+                    names.get(http_serve::RELATION),
+                    names.get(http_serve::REQUEST),
+                    names.get(http_serve::RESPONSE),
+                    names.get(http_serve::ERROR),
+                ) {
+                    (Some(rel), Some(request), Some(response), Some(error)) => executors
+                        .push(Box::new(HttpServe::new(
+                            *rel, *request, *response, *error,
+                        ))),
+                    (None, _, _, _) => missing(u, "served_relation_unknown", name),
+                    (_, None, _, _) => {
+                        missing(u, "executor_relation_unknown", http_serve::REQUEST)
+                    }
+                    (_, _, None, _) => {
+                        missing(u, "executor_relation_unknown", http_serve::RESPONSE)
+                    }
+                    (_, _, _, None) => {
+                        missing(u, "executor_relation_unknown", http_serve::ERROR)
+                    }
+                }
+            }
             fs_json::RELATION => {
                 match (
                     names.get(fs_json::RELATION),
@@ -265,10 +309,11 @@ fn executors_for_mode(
 }
 
 /// Every relation name `executors_for` builds an executor for.
-pub const ROSTER: [&str; 9] = [
+pub const ROSTER: [&str; 10] = [
     doc_layout::RELATION,
     timer::RELATION,
     http_fetch::RELATION,
+    http_serve::RELATION,
     fs_json::RELATION,
     fs_watch::RELATION,
     git_refs::RELATION,
