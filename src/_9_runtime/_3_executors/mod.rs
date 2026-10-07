@@ -4,6 +4,8 @@
 pub mod doc_layout;
 #[path = "extract.rs"]
 pub mod extract;
+#[path = "fetch_json.rs"]
+pub mod fetch_json;
 #[path = "fs_at.rs"]
 pub mod fs_at;
 #[path = "fs_json.rs"]
@@ -30,6 +32,7 @@ use std::sync::LazyLock;
 
 pub use doc_layout::DocLayout;
 pub use extract::Extract;
+pub use fetch_json::FetchJson;
 pub use fs_at::FsAt;
 pub use fs_json::FsJson;
 pub use fs_watch::FsWatch;
@@ -233,6 +236,11 @@ fn executors_for_mode(
                 Some(rel) => executors.push(Box::new(DocLayout::new(*rel))),
                 None => missing(u, "served_relation_unknown", name),
             },
+            fetch_json::RELATION => match (names.get(fetch_json::RELATION), names.get(fetch_json::ERROR)) {
+                (Some(rel), Some(error)) => executors.push(Box::new(FetchJson::new(*rel, *error))),
+                (None, _) => missing(u, "served_relation_unknown", name),
+                (_, None) => missing(u, "executor_relation_unknown", fetch_json::ERROR),
+            },
             http_fetch::RELATION => match names.get(http_fetch::RELATION) {
                 Some(rel) => executors.push(Box::new(HttpFetch::new(*rel))),
                 None => missing(u, "served_relation_unknown", name),
@@ -306,9 +314,10 @@ fn executors_for_mode(
 }
 
 /// Every relation name `executors_for` builds an executor for.
-pub const ROSTER: [&str; 10] = [
+pub const ROSTER: [&str; 11] = [
     doc_layout::RELATION,
     timer::RELATION,
+    fetch_json::RELATION,
     http_fetch::RELATION,
     http_serve::RELATION,
     fs_json::RELATION,

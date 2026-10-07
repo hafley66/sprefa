@@ -33,6 +33,7 @@ soopy = { path = "sqlite_ivm/hafley-rs/crates/soopy" }
 tracing = "0.1"
 tree-sitter = "0.27"
 reqwest = "0.12"
+ureq = "3.4"
 bytes = "1"
 blake3 = "1"
 parking_lot = "0.12"
