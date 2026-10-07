@@ -742,8 +742,16 @@ fn run_cli(
             ExitCode::from(1)
         };
     }
+    // A served `lsp.stdin` owns the process stdin, so its run takes the live
+    // loop with no frontier stream and the executor drains stdin itself.
+    let stdin_owned = serve
+        .iter()
+        .any(|name| name == dl8::_9_runtime::executors::lsp_stdin::RELATION);
+    if stdin_owned && frontiers_path == Some(Path::new("-")) {
+        return fail(&"--frontiers - reads the stdin that lsp.stdin owns");
+    }
     // Without a stdin frontier stream, the tick loop below prints one closure.
-    if frontiers_path == Some(Path::new("-")) {
+    if stdin_owned || frontiers_path == Some(Path::new("-")) {
         let backend = match dl8::_6_eval::ir_eval::configured_backend() {
             Ok(backend) => backend,
             Err(e) => return fail(&e),

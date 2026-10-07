@@ -1,0 +1,15 @@
+; `@std/lsp`: the editor seam. `stdin` is the served relation; a goal on
+; `(lsp.stdin 1)` arms the reader. tiny-serve writes one JSON line per
+; signed row, `{"rel":"lsp.buffer","sign":1,"args":[...]}` to add and the
+; same line with sign -1 to retract. Every `lsp.buffer` line lands as a
+; signed row on `buffer`; lines naming another relation are warned and
+; skipped.
+
+(: buffer
+   (* (: uri str)
+      (: version int)
+      (: path str)
+      (: bytes int)))
+
+(: stdin
+   (* (: on int)))

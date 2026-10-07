@@ -1,0 +1,15 @@
+; One live buffer. A goal on `(lsp.stdin 1)` arms the stdin reader; every
+; signed `lsp.buffer` line lands on the buffer product and `Open` reads the
+; buffers that are present, so a retract of version 3 leaves only version 4.
+(lsp: (import "@std/lsp"))
+
+(: Armed (* (: on int)))
+
+(<- (Armed 1)
+    (lsp.stdin 1))
+
+(: Open (* (: uri str)
+           (: version int)))
+
+(<- (Open ?Uri ?Version)
+    (lsp.buffer ?Uri ?Version ?Path ?Bytes))

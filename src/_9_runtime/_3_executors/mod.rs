@@ -20,6 +20,8 @@ pub mod git_refs;
 pub mod http_fetch;
 #[path = "http_serve.rs"]
 pub mod http_serve;
+#[path = "lsp_stdin.rs"]
+pub mod lsp_stdin;
 #[path = "timer.rs"]
 pub mod timer;
 
@@ -40,6 +42,7 @@ pub use git_history::GitHistory;
 pub use git_refs::GitRefs;
 pub use http_fetch::HttpFetch;
 pub use http_serve::HttpServe;
+pub use lsp_stdin::LspStdin;
 pub use timer::Timer;
 
 /// The bound text value at `index` of an application, with its term.
@@ -236,7 +239,10 @@ fn executors_for_mode(
                 Some(rel) => executors.push(Box::new(DocLayout::new(*rel))),
                 None => missing(u, "served_relation_unknown", name),
             },
-            fetch_json::RELATION => match (names.get(fetch_json::RELATION), names.get(fetch_json::ERROR)) {
+            fetch_json::RELATION => match (
+                names.get(fetch_json::RELATION),
+                names.get(fetch_json::ERROR),
+            ) {
                 (Some(rel), Some(error)) => executors.push(Box::new(FetchJson::new(*rel, *error))),
                 (None, _) => missing(u, "served_relation_unknown", name),
                 (_, None) => missing(u, "executor_relation_unknown", fetch_json::ERROR),
@@ -279,6 +285,13 @@ fn executors_for_mode(
                     (_, _, None) => missing(u, "executor_relation_unknown", fs_json::NONE),
                 }
             }
+            lsp_stdin::RELATION => match names.get(lsp_stdin::BUFFER) {
+                Some(buffer) => match names.get(lsp_stdin::RELATION) {
+                    Some(rel) => executors.push(Box::new(LspStdin::new(*rel, *buffer))),
+                    None => missing(u, "served_relation_unknown", name),
+                },
+                None => missing(u, "executor_relation_unknown", lsp_stdin::BUFFER),
+            },
             fs_watch::RELATION => match names.get(fs_watch::RELATION) {
                 Some(rel) => executors.push(Box::new(FsWatch::new(*rel))),
                 None => missing(u, "served_relation_unknown", name),
@@ -314,7 +327,7 @@ fn executors_for_mode(
 }
 
 /// Every relation name `executors_for` builds an executor for.
-pub const ROSTER: [&str; 11] = [
+pub const ROSTER: [&str; 12] = [
     doc_layout::RELATION,
     timer::RELATION,
     fetch_json::RELATION,
@@ -322,6 +335,7 @@ pub const ROSTER: [&str; 11] = [
     http_serve::RELATION,
     fs_json::RELATION,
     fs_watch::RELATION,
+    lsp_stdin::RELATION,
     git_refs::RELATION,
     git_history::RELATION,
     fs_at::RELATION,
