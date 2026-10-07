@@ -55,6 +55,13 @@ pub trait IService {
 /// How long one idle wait lasts before the loop polls the next armed executor.
 const IDLE_SLICE: Duration = Duration::from_millis(50);
 
+/// The settle loop waits this long between drains before rechecking.
+const SETTLE_SLICE: Duration = Duration::from_millis(50);
+
+/// The settle loop's overall cap. Every request already caps at its own
+/// 10-second timeout; this guards a task that never signals at all.
+const SETTLE_BUDGET: Duration = Duration::from_secs(30);
+
 pub struct Reconciled {
     pub ticks: usize,
     pub closure: Closure,
@@ -68,7 +75,10 @@ pub struct Answerer {
     /// `(Relation, Application)` pairs already handed out. The comptime store is
     /// rebuilt every round, so an index into the effect table cannot be kept.
     seen: HashSet<(TermId, TermId)>,
+    /// Completed-task signals from the shared runtime; `wait` blocks on it.
+    wake: std::sync::mpsc::Receiver<()>,
 }
+
 impl Answerer {
     /// One executor per served name. A served name with no executor, or one
     /// the program does not declare, is a diagnostic.
@@ -103,6 +113,7 @@ impl Answerer {
             executors: bound,
             effect: kernel_ref(u, "effect"),
             seen: HashSet::new(),
+            wake: super::executors::take_wake(),
         })
     }
 
@@ -119,6 +130,7 @@ impl Answerer {
         }
         self.answer_requests(u, rows, requests)
     }
+
     /// Hands signed-IR request additions to services. Request removals are
     /// handled by the IR host because it owns the answer rows for each key.
     pub fn answer_requests(
@@ -147,8 +159,50 @@ impl Answerer {
                 service.call(u, rows, &applications);
             }
         }
-        let answers = self.drain(u);
+        // Every service sees the store once per handout: `http.serve` hands
+        // matching `http.response` rows to their connection tasks here.
+        for (_, service) in &mut self.executors {
+            service.call(u, rows, &[]);
+        }
+        let mut answers = self.settle(u);
+        answers.extend(self.drain(u));
         (answers, asked)
+    }
+
+    /// Waits for the Once services' tasks while their answers keep landing.
+    fn settle(&mut self, u: &mut Universe) -> Vec<Row> {
+        let mut answers = Vec::new();
+        let deadline = std::time::Instant::now() + SETTLE_BUDGET;
+        while self.in_flight() > 0 && std::time::Instant::now() < deadline {
+            match self.wake.recv_timeout(SETTLE_SLICE) {
+                Ok(()) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            answers.extend(self.drain(u));
+        }
+        if self.in_flight() > 0 {
+            tracing::warn!(
+                target: "dl8::reconcile",
+                in_flight = self.in_flight(),
+                "settle budget expired with work in flight"
+            );
+        }
+        answers
+    }
+
+    /// Tasks started by `call` and not yet drained.
+    pub fn in_flight(&self) -> usize {
+        self.executors
+            .iter()
+            .map(|(_, service)| service.in_flight())
+            .sum()
+    }
+
+    /// Blocks up to `timeout` for one runtime completion: the tick loop's
+    /// bounded wait instead of a spin while work is in flight.
+    pub fn wait(&self, timeout: Duration) {
+        let _ = self.wake.recv_timeout(timeout);
     }
 
     /// Rows every service has finished, drained without blocking.
@@ -160,19 +214,25 @@ impl Answerer {
         rows
     }
 
-    pub fn cancel_request(&mut self, u: &Universe, relation: TermId, application: TermId) {
-        self.seen.remove(&(relation, application));
-        if let Some((_, executor)) = self.executors.iter_mut().find(|(rel, _)| *rel == relation) {
-            executor.cancel(u, application);
-        }
-    }
-
-    /// Signed rows from the Continuing services' clocks. The caller applies
-    /// all returned changes in one frontier.
+    /// Signed rows from the Continuing services' clocks: one bounded wait on
+    /// the runtime's completion signal, then a drain. The caller applies all
+    /// returned changes in one frontier.
     pub fn poll_signed(
         &mut self,
         u: &mut Universe,
-        _timeout: Duration,
+        timeout: Duration,
+    ) -> Vec<crate::_6_eval::ir_eval::SignedRow> {
+        let mut changes = self.poll_continuing(u);
+        if !changes.is_empty() {
+            return changes;
+        }
+        let _ = self.wake.recv_timeout(timeout);
+        self.poll_continuing(u)
+    }
+
+    fn poll_continuing(
+        &mut self,
+        u: &mut Universe,
     ) -> Vec<crate::_6_eval::ir_eval::SignedRow> {
         let mut changes = Vec::new();
         for (_, service) in &mut self.executors {
@@ -243,6 +303,9 @@ impl Reconciler {
             let (mut answers, _) = self.answerer.answer(u, rows);
             answers.extend(self.poll(u));
             if answers.is_empty() && self.armed() {
+                // One bounded wait for the next runtime completion instead
+                // of spinning while work is in flight.
+                self.answerer.wait(IDLE_SLICE);
                 answers = self.poll(u);
             }
             let mut new = 0;

@@ -72,6 +72,7 @@ fn tick_forever(periods: Receiver<u64>, fire: Sender<u64>) {
                 if fire.send(*period).is_err() {
                     return;
                 }
+                super::wake();
                 *at = now + Duration::from_millis(*period);
             }
         }

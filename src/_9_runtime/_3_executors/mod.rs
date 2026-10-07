@@ -22,7 +22,9 @@ pub mod timer;
 use super::reconcile::{application_values, IService};
 use crate::_6_eval::kernel::kernel_ref;
 use crate::_6_eval::{Diagnostic, Term, TermId, Universe};
+use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 pub use doc_layout::DocLayout;
 pub use extract::Extract;
@@ -49,6 +51,50 @@ pub(crate) fn text_at(u: &Universe, application: TermId, index: usize) -> Option
 /// Every soopy error flattened with its causes.
 pub(crate) fn message(error: impl std::fmt::Display) -> String {
     format!("{error:#}")
+}
+
+/// The one multi-thread tokio runtime per process. `call` spawns its tasks
+/// here; tasks hold only plain data and signal `wake` when a result has
+/// landed on their service's channel.
+static RUNTIME: LazyLock<Runtime> = LazyLock::new(Runtime::new);
+
+struct Runtime {
+    tokio: tokio::runtime::Runtime,
+    /// The signal tasks send. `take_wake` mints a fresh pair per answering
+    /// loop, so a task of a dropped loop signals a channel its receiver no
+    /// longer reads.
+    wake: Mutex<std::sync::mpsc::Sender<()>>,
+}
+
+impl Runtime {
+    fn new() -> Runtime {
+        Runtime {
+            tokio: tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime"),
+            wake: Mutex::new(std::sync::mpsc::channel().0),
+        }
+    }
+}
+
+/// The shared runtime's spawn handle.
+pub fn handle() -> &'static tokio::runtime::Handle {
+    &RUNTIME.tokio
+}
+
+/// Tasks call this once a result is on their service's channel: the
+/// answering loop's bounded wait returns and `poll` drains.
+pub fn wake() {
+    let _ = RUNTIME.wake.lock().send(());
+}
+
+/// The receiver of the signals sent after this call. One answering loop at a
+/// time holds it; `Answerer::new` takes it.
+pub(crate) fn take_wake() -> std::sync::mpsc::Receiver<()> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    *RUNTIME.wake.lock() = sender;
+    receiver
 }
 
 /// A companion relation the executor writes (`fetch_json_error`) must be
