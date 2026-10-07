@@ -18,7 +18,7 @@ use crate::_2_lower::Lowered;
 use crate::_6_eval::term::{TermId, Universe};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// The checked program of one input key: the wholesale result and the
 /// resolution middle a later delta resolves against.
@@ -54,14 +54,14 @@ impl Key {
 
 #[derive(Default)]
 pub struct CheckKeep {
-    entries: RefCell<Vec<(Key, Rc<UnitChecked>)>>,
+    entries: RefCell<Vec<(Key, Arc<UnitChecked>)>>,
     /// Resolved rules by raw rule row: every entry holding the row, with its
     /// resolution slot. The first candidate whose consult notes still hold wins.
-    by_rule: RefCell<HashMap<TermId, Vec<(Rc<UnitChecked>, usize)>>>,
+    by_rule: RefCell<HashMap<TermId, Vec<(Arc<UnitChecked>, usize)>>>,
 }
 
 impl CheckKeep {
-    fn hit(&self, key: &Key) -> Option<Rc<UnitChecked>> {
+    fn hit(&self, key: &Key) -> Option<Arc<UnitChecked>> {
         self.entries
             .borrow()
             .iter()
@@ -74,7 +74,7 @@ impl CheckKeep {
         if entries.iter().any(|(k, _)| *k == key) {
             return;
         }
-        let unit = Rc::new(unit);
+        let unit = Arc::new(unit);
         let mut by_rule = self.by_rule.borrow_mut();
         for (slot, row) in unit.resolved.rule_rows.iter().enumerate() {
             by_rule.entry(*row).or_default().push((unit.clone(), slot));
@@ -90,7 +90,7 @@ impl CheckKeep {
         row: TermId,
         graph: &CheckerGraph,
         arities: &HashMap<TermId, i64>,
-    ) -> Option<(Rc<UnitChecked>, usize)> {
+    ) -> Option<(Arc<UnitChecked>, usize)> {
         let candidates = self.by_rule.borrow().get(&row).cloned().unwrap_or_default();
         candidates.into_iter().find(|(source, slot)| {
             source.resolved.rule_reads[*slot].iter().all(|note| match note {

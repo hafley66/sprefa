@@ -19,16 +19,16 @@ use crate::_6_eval::ir_eval::{IrSession, Pending, Pool, SharedPool};
 use crate::_6_eval::ir_lower::Declared;
 use crate::_6_eval::one_engine::{Attach, Stdlib};
 use crate::_6_eval::term::{TermId, Universe};
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
-/// Holds `TermId`s of one `Universe`: one per universe.
+/// Holds `TermId`s of one `Universe`: one per universe. `Send`: the pool,
+/// stdlib and keeps share state by `Arc`, the universe stays `&mut`.
 #[derive(Default)]
 pub struct OneEngine {
     pub pool: SharedPool,
     pub macro_program: Option<MacroProgram>,
     pub macro_session: Option<MacroSession>,
-    pub stdlib: Option<Rc<RefCell<Stdlib>>>,
+    pub stdlib: Option<Arc<Mutex<Stdlib>>>,
     /// The A1 lower and check keeps, one per process engine.
     pub lower: crate::_2_lower::keep::LowerKeep,
     pub check: crate::_3_check::keep::CheckKeep,
@@ -37,7 +37,7 @@ pub struct OneEngine {
 impl OneEngine {
     pub fn new() -> Self {
         Self {
-            pool: Rc::new(RefCell::new(Pool::default())),
+            pool: Arc::new(Mutex::new(Pool::default())),
             ..Self::default()
         }
     }
@@ -154,7 +154,7 @@ pub fn one_macro_program(
         pending.push(Pending::lower(u, "p2.", &cone, &declared).map_err(|d| Stop::Load(format!("one engine macro cone lowering {}", u.display(d.payload))))?);
     }
     pending.push(lowered_stdlib);
-    one.pool.borrow_mut().pending = pending;
+    one.pool.lock().expect("pool poisoned").pending = pending;
     let (compiled, diagnostics) = compile_units_attached(
         u,
         &[unit.unit],
@@ -180,14 +180,14 @@ pub fn one_macro_program(
         tracing::info!(target: "dl8::one", "one engine macro mismatch");
         sliced
     };
-    if !one.pool.borrow().pending.is_empty() {
+    if !one.pool.lock().expect("pool poisoned").pending.is_empty() {
         tracing::info!(target: "dl8::one", "one engine pool never installed");
-        one.pool.borrow_mut().pending.clear();
+        one.pool.lock().expect("pool poisoned").pending.clear();
     }
     let session = IrSession::configured().with_pool(one.pool.clone());
     one.macro_session = Some(MacroSession::with_ir(session));
     let stdlib = Stdlib::adopt(u, one.pool.clone(), &stdlib).map_err(|d| Stop::Load(format!("one engine stdlib part {}", u.display(d.payload))))?;
-    one.stdlib = Some(Rc::new(RefCell::new(stdlib)));
+    one.stdlib = Some(Arc::new(Mutex::new(stdlib)));
     one.macro_program = Some(program.clone());
     Ok((Some(program), Vec::new()))
 }

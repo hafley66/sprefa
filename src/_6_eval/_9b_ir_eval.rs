@@ -10,7 +10,7 @@ use ivm_engine::Engine;
 use ivm_ir::{self as ir, Cell};
 use std::cell::{Cell as ThreadCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
@@ -98,9 +98,9 @@ struct Kept {
 }
 
 struct EngineSession<E: Engine> {
-    core: Rc<RefCell<Core<E>>>,
+    core: Arc<Mutex<Core<E>>>,
     /// A part of a composed install: its relation ids to the engine's (`ivm_ir::compose`).
-    relocation: Option<Rc<BTreeMap<ir::RelId, ir::RelId>>>,
+    relocation: Option<Arc<BTreeMap<ir::RelId, ir::RelId>>>,
     /// A part's IR in engine relation ids, relocated once in `on`: the relocation map and the
     /// part's IR are fixed for the session's life. `local` lends it to one call, `restore` takes
     /// it back.
@@ -189,8 +189,8 @@ impl<E: Engine> EngineSession<E> {
     }
 
     fn on(
-        core: Rc<RefCell<Core<E>>>,
-        relocation: Option<Rc<BTreeMap<ir::RelId, ir::RelId>>>,
+        core: Arc<Mutex<Core<E>>>,
+        relocation: Option<Arc<BTreeMap<ir::RelId, ir::RelId>>>,
         lowered: &Lowered,
     ) -> Self {
         let local_ir = relocation.as_ref().map(|map| relocate_ir(&lowered.ir, map));
@@ -227,8 +227,8 @@ impl<E: Engine> EngineSession<E> {
 }
 
 impl<E: Engine> Core<E> {
-    fn new(engine: E) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
+    fn new(engine: E) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self {
             engine,
             mapped: HashMap::new(),
             decoded: Decoded::default(),
@@ -335,7 +335,7 @@ impl<E: Engine> Session for EngineSession<E> {
     fn snapshot(&mut self, u: &mut Universe, lowered: &Lowered) -> Result<Closure, ivm_engine::EngineError> {
         let local = self.local(lowered);
         let result = {
-            let mut core = self.core.borrow_mut();
+            let mut core = self.core.lock().expect("core poisoned");
             let core = &mut *core;
             snapshot_closure(u, local.as_ref().unwrap_or(lowered), &core.engine, &mut core.decoded, &mut self.kept, core.settles)
         };
@@ -345,7 +345,7 @@ impl<E: Engine> Session for EngineSession<E> {
 
     fn bootstrap(&mut self, lowered: &Lowered) -> Result<Vec<ir::SourceChange>, ivm_engine::EngineError> {
         let local = self.local(lowered);
-        let changes = bootstrap_changes(local.as_ref().unwrap_or(lowered), &mut self.core.borrow_mut(), Some(&mut self.known));
+        let changes = bootstrap_changes(local.as_ref().unwrap_or(lowered), &mut self.core.lock().expect("core poisoned"), Some(&mut self.known));
         self.restore(local);
         let changes = changes?;
         self.last_seeds = changes.iter().map(|change| (change.rel, change.row.clone())).collect();
@@ -355,7 +355,7 @@ impl<E: Engine> Session for EngineSession<E> {
 
     fn settle_raw(&mut self, changes: Vec<ir::SourceChange>) -> Result<ir::Delta, ivm_engine::EngineError> {
         let sent = changes.len();
-        let mut core = self.core.borrow_mut();
+        let mut core = self.core.lock().expect("core poisoned");
         let core = &mut *core;
         let delta = settle_kept(&mut core.engine, &mut core.settles, &mut self.kept, changes)?;
         tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir settle");
@@ -366,7 +366,7 @@ impl<E: Engine> Session for EngineSession<E> {
         let local = self.local(lowered);
         let result = {
             let lowered = local.as_ref().unwrap_or(lowered);
-            let mut core = self.core.borrow_mut();
+            let mut core = self.core.lock().expect("core poisoned");
             decode_delta(u, lowered, &mut core, delta).and_then(|(rows, intern_read)| {
                 let diagnostics = fold_diagnostics(u, lowered, &mut core, &mut self.kept)?;
                 Ok(Applied { rows, diagnostics, sent, intern_read })
@@ -378,11 +378,11 @@ impl<E: Engine> Session for EngineSession<E> {
 
     /// A part of a composed install never rewinds: a rewind would return every part.
     fn rewinds(&self) -> bool {
-        self.relocation.is_none() && self.core.borrow().engine.rewinds()
+        self.relocation.is_none() && self.core.lock().expect("core poisoned").engine.rewinds()
     }
 
     fn mark(&mut self) -> Result<(), ivm_engine::EngineError> {
-        let mut core = self.core.borrow_mut();
+        let mut core = self.core.lock().expect("core poisoned");
         core.engine.mark()?;
         self.marked = Some(Marked {
             mapped: core.mapped.clone(),
@@ -403,7 +403,7 @@ impl<E: Engine> Session for EngineSession<E> {
                 ivm_engine::ErrorKind::Unsupported("rewind without mark"),
             ));
         };
-        let mut core = self.core.borrow_mut();
+        let mut core = self.core.lock().expect("core poisoned");
         // The engine returns to the mark; the kept closure is stale until the next snapshot.
         self.kept.at = None;
         core.engine.rewind()?;
@@ -417,12 +417,12 @@ impl<E: Engine> Session for EngineSession<E> {
     }
 }
 
-fn install_session<E: Engine + 'static>(
+fn install_session<E: Engine + Send + 'static>(
     u: &mut Universe,
     lowered: &Lowered,
     fingerprint: u64,
     measured: bool,
-) -> Result<Box<dyn Session>, Diagnostic> {
+) -> Result<Box<dyn Session + Send>, Diagnostic> {
     let session = EngineSession::<E>::install(lowered, fingerprint, measured)
         .map_err(|error| engine_diagnostic(u, error))?;
     Ok(Box::new(session))
@@ -436,7 +436,7 @@ fn open_session(
     lowered: &Lowered,
     fingerprint: u64,
     measured: bool,
-) -> Result<Box<dyn Session>, Diagnostic> {
+) -> Result<Box<dyn Session + Send>, Diagnostic> {
     match backend {
         Backend::Dd => install_session::<ivm_dd::Dd>(u, lowered, fingerprint, measured),
         Backend::Sqlite => install_session::<ivm_sqlite::Sqlite>(u, lowered, fingerprint, measured),
@@ -446,14 +446,14 @@ fn open_session(
 }
 
 /// A session several `IrSession`s may hold: a part of a composed install.
-type Slot = Rc<RefCell<Box<dyn Session>>>;
+type Slot = Arc<Mutex<Box<dyn Session + Send>>>;
 
 /// One program installed beside others (`ivm_ir::compose`), bootstrapped, waiting for an
 /// `IrSession` whose `prepare` or `evaluate` lowers the same IR.
 pub struct Part {
     pub name: String,
     session: Slot,
-    lowered: Rc<Lowered>,
+    lowered: Arc<Lowered>,
     fingerprint: u64,
     applied: Applied,
     /// The lowering inputs of `lowered`: `prepare` adopts the part by them without lowering again.
@@ -500,9 +500,9 @@ pub struct Pool {
     pub parts: Vec<Part>,
 }
 
-pub type SharedPool = Rc<RefCell<Pool>>;
+pub type SharedPool = Arc<Mutex<Pool>>;
 
-fn install_composed<E: Engine + 'static>(
+fn install_composed<E: Engine + Send + 'static>(
     u: &mut Universe,
     composed: &ir::Composed,
     parts: &[(&str, &Lowered)],
@@ -526,8 +526,8 @@ fn install_composed<E: Engine + 'static>(
         .iter()
         .zip(&composed.rels)
         .map(|((_, lowered), map)| {
-            let session = EngineSession::on(core.clone(), Some(Rc::new(map.clone())), lowered);
-            Rc::new(RefCell::new(Box::new(session) as Box<dyn Session>))
+            let session = EngineSession::on(core.clone(), Some(Arc::new(map.clone())), lowered);
+            Arc::new(Mutex::new(Box::new(session) as Box<dyn Session + Send>))
         })
         .collect())
 }
@@ -555,11 +555,11 @@ pub struct IrSession {
     /// `evaluate` adopt a part whose IR they lower.
     pool: Option<SharedPool>,
     /// One-engine mode: `evaluate` runs the stdlib rules on their part.
-    stdlib: Option<Rc<RefCell<super::one_engine::Stdlib>>>,
+    stdlib: Option<Arc<Mutex<super::one_engine::Stdlib>>>,
     /// The rule interpreter installed for `evaluate` in `RulesMode::Interpret`.
-    interp: Option<Box<dyn InterpRun>>,
+    interp: Option<Box<dyn InterpRun + Send>>,
     /// The program `prepare` lowered (or adopted from a pool part) and installed; `apply` feeds it.
-    prepared: Option<Rc<Lowered>>,
+    prepared: Option<Arc<Lowered>>,
     /// `structural_fingerprint` of the prepared IR.
     fingerprint: Option<u64>,
 }
@@ -596,7 +596,7 @@ impl IrSession {
         self
     }
 
-    pub fn with_stdlib(mut self, stdlib: Rc<RefCell<super::one_engine::Stdlib>>) -> Self {
+    pub fn with_stdlib(mut self, stdlib: Arc<Mutex<super::one_engine::Stdlib>>) -> Self {
         self.stdlib = Some(stdlib);
         self
     }
@@ -611,9 +611,9 @@ impl IrSession {
         fingerprint: u64,
     ) -> Result<(Slot, Option<Applied>), Diagnostic> {
         let Some(pool) = self.pool.clone() else {
-            return Ok((Rc::new(RefCell::new(open_session(u, backend, lowered, fingerprint, false)?)), None));
+            return Ok((Arc::new(Mutex::new(open_session(u, backend, lowered, fingerprint, false)?)), None));
         };
-        let mut pool = pool.borrow_mut();
+        let mut pool = pool.lock().expect("pool poisoned");
         if let Some(part) = pool
             .parts
             .iter()
@@ -624,7 +624,7 @@ impl IrSession {
         }
         if pool.pending.is_empty() {
             tracing::info!(target: "dl8::one", nodes = lowered.ir.nodes.len(), "one engine separate install");
-            return Ok((Rc::new(RefCell::new(open_session(u, backend, lowered, fingerprint, false)?)), None));
+            return Ok((Arc::new(Mutex::new(open_session(u, backend, lowered, fingerprint, false)?)), None));
         }
         let pending = std::mem::take(&mut pool.pending);
         let mut parts: Vec<(&str, &Lowered)> = vec![("p0.", lowered)];
@@ -633,20 +633,20 @@ impl IrSession {
         let failed = |u: &mut Universe, error| engine_diagnostic(u, error);
         let mut changes = Vec::new();
         for (slot, part) in slots[1..].iter().zip(&pending) {
-            changes.extend(slot.borrow_mut().bootstrap(&part.lowered).map_err(|e| failed(u, e))?);
+            changes.extend(slot.lock().expect("slot poisoned").bootstrap(&part.lowered).map_err(|e| failed(u, e))?);
         }
         let sent = changes.len();
-        let delta = slots[1].borrow_mut().settle_raw(changes).map_err(|e| failed(u, e))?;
+        let delta = slots[1].lock().expect("slot poisoned").settle_raw(changes).map_err(|e| failed(u, e))?;
         for (slot, part) in slots[1..].iter().zip(pending) {
             let Pending { name, lowered: part, inputs } = part;
             let fingerprint = structural_fingerprint(&part.ir);
-            let applied = slot.borrow_mut().decode(u, &part, &delta, sent).map_err(|e| failed(u, e))?;
+            let applied = slot.lock().expect("slot poisoned").decode(u, &part, &delta, sent).map_err(|e| failed(u, e))?;
             tracing::info!(target: "dl8::one", part = %name, nodes = part.ir.nodes.len(), rows = applied.rows.len(), "one engine part");
             pool.parts.push(Part {
                 name,
                 session: slot.clone(),
                 fingerprint,
-                lowered: Rc::new(part),
+                lowered: Arc::new(part),
                 applied,
                 inputs,
             });
@@ -659,7 +659,7 @@ impl IrSession {
         let (Some(session), Some(lowered)) = (self.session.as_ref(), self.prepared.as_ref()) else {
             return Err(diagnostic(u, "engine", "snapshot without a prepared program"));
         };
-        let result = session.borrow_mut().snapshot(u, lowered);
+        let result = session.lock().expect("session slot poisoned").snapshot(u, lowered);
         result.map_err(|error| engine_diagnostic(u, error))
     }
 
@@ -680,7 +680,7 @@ impl IrSession {
         };
         // A pool part lowered from these inputs is adopted with its pooled lowering.
         let pooled = self.pool.as_ref().and_then(|pool| {
-            pool.borrow()
+            pool.lock().expect("pool poisoned")
                 .parts
                 .iter()
                 .find(|part| same_inputs(&part.inputs, program, declared))
@@ -699,12 +699,12 @@ impl IrSession {
         let applied = match adopted {
             Some(applied) => applied,
             None => {
-                let started = session.borrow_mut().start(u, &lowered);
+                let started = session.lock().expect("session slot poisoned").start(u, &lowered);
                 started.map_err(|error| engine_diagnostic(u, error))?
             }
         };
         self.session = Some(session);
-        self.prepared = Some(Rc::new(lowered));
+        self.prepared = Some(Arc::new(lowered));
         self.fingerprint = Some(fingerprint);
         Ok(applied)
     }
@@ -723,7 +723,7 @@ impl IrSession {
 
     /// The prepared engine can `mark` and `rewind`.
     pub fn rewinds(&self) -> bool {
-        self.session.as_ref().is_some_and(|session| session.borrow().rewinds())
+        self.session.as_ref().is_some_and(|session| session.lock().expect("session slot poisoned").rewinds())
     }
 
     /// Record the prepared engine's state for `rewind`.
@@ -731,7 +731,7 @@ impl IrSession {
         let Some(session) = self.session.as_mut() else {
             return Err(diagnostic(u, "engine", "mark without a prepared program"));
         };
-        let marked = session.borrow_mut().mark();
+        let marked = session.lock().expect("session slot poisoned").mark();
         marked.map_err(|error| engine_diagnostic(u, error))
     }
 
@@ -740,7 +740,7 @@ impl IrSession {
         let Some(session) = self.session.as_mut() else {
             return Err(diagnostic(u, "engine", "rewind without a prepared program"));
         };
-        let rewound = session.borrow_mut().rewind();
+        let rewound = session.lock().expect("session slot poisoned").rewind();
         let result = rewound.map_err(|error| engine_diagnostic(u, error));
         if result.is_err() {
             self.session = None;
@@ -759,7 +759,7 @@ impl IrSession {
         let (Some(session), Some(lowered)) = (self.session.as_mut(), self.prepared.as_ref()) else {
             return Err(ApplyError::Unprepared("no prepared program"));
         };
-        let result = session.borrow_mut().apply(u, lowered, changes);
+        let result = session.lock().expect("session slot poisoned").apply(u, lowered, changes);
         if let Err(ApplyError::Failed(_)) = &result {
             self.session = None;
             self.prepared = None;
@@ -776,7 +776,7 @@ impl IrSession {
         fx: &mut dyn FnMut(Trace),
     ) -> Closure {
         match self.stdlib.clone() {
-            Some(stdlib) => stdlib.borrow_mut().evaluate(u, program, answerer, fx, self),
+            Some(stdlib) => stdlib.lock().expect("stdlib poisoned").evaluate(u, program, answerer, fx, self),
             None => self.evaluate_plain(u, program, answerer, fx),
         }
     }
@@ -897,7 +897,7 @@ impl IrSession {
         if self
             .session
             .as_ref()
-            .is_none_or(|session| !session.borrow().matches(&lowered))
+            .is_none_or(|session| !session.lock().expect("session slot poisoned").matches(&lowered))
         {
             let fingerprint = structural_fingerprint(&lowered.ir);
             self.session = match self.open(u, backend, &lowered, fingerprint) {
@@ -914,7 +914,8 @@ impl IrSession {
             .session
             .as_ref()
             .unwrap()
-            .borrow_mut()
+            .lock()
+            .expect("session slot poisoned")
             .run(u, &lowered, answerer, &[], None, None, fx);
         match result {
             Ok((closure, _, counters)) => {
@@ -1626,10 +1627,10 @@ fn start_session<E: Engine>(
     session: &mut EngineSession<E>,
 ) -> Result<Applied, ivm_engine::EngineError> {
     let changes = if session.relocation.is_some() {
-        bootstrap_changes(lowered, &mut session.core.borrow_mut(), Some(&mut session.known))?
+        bootstrap_changes(lowered, &mut session.core.lock().expect("core poisoned"), Some(&mut session.known))?
     } else {
-        let changes = bootstrap_changes(lowered, &mut session.core.borrow_mut(), None)?;
-        session.known = session.core.borrow().mapped.keys().copied().collect();
+        let changes = bootstrap_changes(lowered, &mut session.core.lock().expect("core poisoned"), None)?;
+        session.known = session.core.lock().expect("core poisoned").mapped.keys().copied().collect();
         changes
     };
     session.last_seeds = changes
@@ -1638,7 +1639,7 @@ fn start_session<E: Engine>(
         .collect();
     session.initialized = true;
     let sent = changes.len();
-    let mut core = session.core.borrow_mut();
+    let mut core = session.core.lock().expect("core poisoned");
     let core = &mut *core;
     let delta = settle_kept(&mut core.engine, &mut core.settles, &mut session.kept, changes)?;
     tracing::info!(target: "dl8::ir", sent, changed = delta.changes.len(), "ir settle");
@@ -1750,7 +1751,7 @@ fn install_fresh<E: Engine>(
     roots: &[TermId],
 ) -> Result<Vec<TermId>, ApplyError> {
     let dynamic = session.relocation.is_some();
-    let mut core = session.core.borrow_mut();
+    let mut core = session.core.lock().expect("core poisoned");
     let mut fresh = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut todo = roots.to_vec();
@@ -1859,7 +1860,7 @@ fn apply_session<E: Engine>(
     let plains: Vec<TermId> = plain_pairs.iter().map(|(_, plain)| *plain).collect();
     fresh.extend(install_fresh(u, lowered, session, &plains)?);
     let core_rc = session.core.clone();
-    let mut core = core_rc.borrow_mut();
+    let mut core = core_rc.lock().expect("core poisoned");
     let mut frontier = Vec::with_capacity(changes.len() + fresh.len());
     for &term in &fresh {
         frontier.push(ir::SourceChange {
@@ -1943,7 +1944,7 @@ fn run_session<E: Engine>(
     fx: &mut dyn FnMut(Trace),
 ) -> Result<(Closure, Vec<FrontierResult>, ivm_engine::Counters), ivm_engine::EngineError> {
     let core_rc = session.core.clone();
-    let mut core_ref = core_rc.borrow_mut();
+    let mut core_ref = core_rc.lock().expect("core poisoned");
     let frontier = if session.initialized {
         let own = session.relocation.is_some();
         reseed_changes(lowered, &mut core_ref, own, &mut session.known, &mut session.last_seeds)?
@@ -2895,11 +2896,11 @@ fn open_interp(
     backend: Backend,
     bucket: u32,
     measured: bool,
-) -> Result<Box<dyn InterpRun>, Diagnostic> {
-    fn install<E: Engine + 'static>(
+) -> Result<Box<dyn InterpRun + Send>, Diagnostic> {
+    fn install<E: Engine + Send + 'static>(
         bucket: u32,
         measured: bool,
-    ) -> Result<Box<dyn InterpRun>, ivm_engine::EngineError> {
+    ) -> Result<Box<dyn InterpRun + Send>, ivm_engine::EngineError> {
         let shape = rule_interp::shape(bucket);
         dump_ir(&shape.ir, || structural_fingerprint(&shape.ir));
         let engine = if measured {

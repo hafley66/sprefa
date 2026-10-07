@@ -9,7 +9,7 @@ use super::program::{Arg, Polarity, Program, Row, Rule};
 use super::term::{TermId, Universe};
 use crate::_9_runtime::Answerer;
 use std::collections::HashSet;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 static MODE: OnceLock<Result<bool, String>> = OnceLock::new();
 
@@ -42,7 +42,7 @@ const LOOP_LIMIT: usize = 64;
 pub enum Attach {
     /// Installs compose with the pool's pending programs or adopt its parts.
     Pool(SharedPool),
-    Stdlib(std::rc::Rc<std::cell::RefCell<Stdlib>>),
+    Stdlib(Arc<Mutex<Stdlib>>),
 }
 
 impl Attach {
