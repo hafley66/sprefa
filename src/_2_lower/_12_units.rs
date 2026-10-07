@@ -90,6 +90,7 @@ pub fn lower_units_flat(
         lower_one(u, policy, *unit, environment, imports, &mut out)?;
         if let Some(keep) = keep {
             keep.insert(
+                u,
                 policy,
                 *unit,
                 environment,
@@ -149,6 +150,7 @@ pub fn lower_units_with_exporter(
                 // :127, :199, :222. The exporter's own basement is the whole result.
                 if let Some(keep) = keep {
                     keep.insert(
+                        u,
                         policy,
                         exporter,
                         exporter_environment,
@@ -167,6 +169,7 @@ pub fn lower_units_with_exporter(
             let environment = module_expression_environment(u, exporter_owner, exporter_basement);
             if let Some(keep) = keep {
                 keep.insert(
+                    u,
                     policy,
                     exporter,
                     exporter_environment,
@@ -190,8 +193,30 @@ pub fn lower_units_with_exporter(
             Some(generated) => merge_expression_environments(u, generated, reowned),
             None => reowned,
         };
+        if let Some(hit) = keep.and_then(|keep| keep.exporter(u, policy, *unit, environment, imports))
+        {
+            out.basements.push(hit.basement);
+            out.origins.push(hit.origins);
+            first_pass_diagnostics.insert(owner, hit.diagnostics);
+            continue;
+        }
         let mut one = Units::default();
         lower_one(u, policy, *unit, environment, imports, &mut one)?;
+        if let Some(keep) = keep {
+            keep.insert(
+                u,
+                policy,
+                *unit,
+                environment,
+                imports,
+                UnitLowered {
+                    basement: one.basements[0],
+                    origins: one.origins[0],
+                    exports: None,
+                    diagnostics: one.diagnostics.clone(),
+                },
+            );
+        }
         first_pass_diagnostics.insert(owner, one.diagnostics);
         out.basements.extend(one.basements);
         out.origins.extend(one.origins);
@@ -239,8 +264,41 @@ pub fn lower_units_with_exporter(
             environment = merge_expression_environments(u, environment, exported);
         }
 
+        if let Some(hit) = keep.and_then(|keep| keep.exporter(u, policy, *unit, environment, imports))
+        {
+            if let Some(slot) = out.basements.iter_mut().find(|row| {
+                u.args::<2>(**row, "module_basement")
+                    .is_some_and(|parts| parts[0] == owner)
+            }) {
+                *slot = hit.basement;
+            }
+            out.origins.retain(|row| {
+                !u.args::<2>(*row, "module_origins")
+                    .is_some_and(|parts| parts[0] == owner)
+            });
+            out.origins.push(hit.origins);
+            importer_diagnostics.extend(hit.diagnostics);
+            rerun.insert(owner);
+            continue;
+        }
+
         let mut one = Units::default();
         lower_one(u, policy, *unit, environment, imports, &mut one)?;
+        if let Some(keep) = keep {
+            keep.insert(
+                u,
+                policy,
+                *unit,
+                environment,
+                imports,
+                UnitLowered {
+                    basement: one.basements[0],
+                    origins: one.origins[0],
+                    exports: None,
+                    diagnostics: one.diagnostics.clone(),
+                },
+            );
+        }
         for replacement in one.basements {
             let Some(parts) = u.args::<2>(replacement, "module_basement") else {
                 continue;

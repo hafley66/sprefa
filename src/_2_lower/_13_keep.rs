@@ -1,8 +1,10 @@
-//! The per-process keep of exporter lowerings. One entry per interned
-//! `(unit, policy, environment, imports)` tuple; a repeat compile takes the
-//! kept `module_basement`, `module_origins` and importer environment instead
-//! of re-running the lowerer on the exporter.
+//! The per-process keep of unit lowerings. One entry per interned
+//! `(unit, policy, environment, imports)` tuple, where `imports` is the
+//! unit's own `import` rows; a repeat compile takes the kept
+//! `module_basement`, `module_origins` and importer environment instead
+//! of re-running the lowerer on the unit.
 
+use super::api::unit_parts;
 use super::cx::CallPolicy;
 use crate::_6_eval::term::{TermId, Universe};
 use std::cell::RefCell;
@@ -43,12 +45,18 @@ pub struct LowerKeep {
 }
 
 impl LowerKeep {
-    fn key(policy: CallPolicy, unit: TermId, environment: TermId, imports: &[TermId]) -> Key {
+    fn key(
+        u: &Universe,
+        policy: CallPolicy,
+        unit: TermId,
+        environment: TermId,
+        imports: &[TermId],
+    ) -> Key {
         Key {
             unit,
             policy,
             environment,
-            imports: imports.to_vec(),
+            imports: read_imports(u, unit, imports),
         }
     }
 
@@ -63,7 +71,7 @@ impl LowerKeep {
         imports: &[TermId],
     ) -> Option<UnitLowered> {
         let entries = self.entries.borrow();
-        let sought = Self::key(policy, unit, environment, imports);
+        let sought = Self::key(u, policy, unit, environment, imports);
         if let Some(entry) = entries.iter().find(|entry| entry.key == sought) {
             let owner = u
                 .args::<2>(entry.lowered.basement, "module_basement")
@@ -93,16 +101,31 @@ impl LowerKeep {
 
     pub fn insert(
         &self,
+        u: &Universe,
         policy: CallPolicy,
         unit: TermId,
         environment: TermId,
         imports: &[TermId],
         lowered: UnitLowered,
     ) {
-        let key = Self::key(policy, unit, environment, imports);
+        let key = Self::key(u, policy, unit, environment, imports);
         let mut entries = self.entries.borrow_mut();
         if !entries.iter().any(|entry| entry.key == key) {
             entries.push(Entry { key, lowered });
         }
     }
+}
+
+/// The `import` rows `lower_one` reads for `unit`: `bind_imports` skips every
+/// row whose importer is another unit's origin, and an invalid unit reads none.
+fn read_imports(u: &Universe, unit: TermId, imports: &[TermId]) -> Vec<TermId> {
+    let identity = unit_parts(u, unit).map(|parts| parts.origin);
+    imports
+        .iter()
+        .copied()
+        .filter(|row| {
+            u.args::<3>(*row, "import")
+                .is_some_and(|parts| Some(parts[0]) == identity)
+        })
+        .collect()
 }

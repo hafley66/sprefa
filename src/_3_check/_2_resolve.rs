@@ -10,13 +10,37 @@ use crate::_2_lower::index::Edge;
 use crate::_2_lower::kernel::{kernel_relation, kernel_variadic};
 use crate::_6_eval::program::AggregateKind;
 use crate::_6_eval::term::{Term, TermId, Universe};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+
+/// What one rule's resolution consulted: a graph owner whose rows a name
+/// walk read, or a relation target whose arity it matched. A later refreeze
+/// keys rule reuse on these.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Note {
+    Owner(TermId),
+    Arity(TermId, i64),
+}
 
 pub struct Cx<'a> {
     pub graph: &'a CheckerGraph,
     /// `memberchk(relation(Target, Arity, _), Relations)` at `:994` over the
     /// sorted, deduplicated list: first row for a target wins.
     pub relations: &'a HashMap<TermId, i64>,
+    /// Scratch consult notes for the keep; `None` records nothing. The rule
+    /// pass snapshots the cell once per rule.
+    pub reads: Option<&'a RefCell<Vec<Note>>>,
+}
+
+impl Cx<'_> {
+    fn note(&self, note: Note) {
+        if let Some(cell) = self.reads {
+            let mut notes = cell.borrow_mut();
+            if !notes.contains(&note) {
+                notes.push(note);
+            }
+        }
+    }
 }
 
 fn atom_name(u: &Universe, id: TermId) -> Option<&str> {
@@ -99,6 +123,7 @@ fn resolve_name_body(
     name: TermId,
     visited: &mut Vec<(TermId, TermId)>,
 ) -> Option<TermId> {
+    cx.note(Note::Owner(owner));
     if let Some(target) = cx.graph.forward(owner, name) {
         return resolve_target(u, cx, target, visited);
     }
@@ -217,6 +242,7 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
         let reason = u.compound("undeclared_relation", vec![label]);
         return Ok(CallResult::Error(reason));
     };
+    cx.note(Note::Arity(target, arity));
     if args.len() as i64 != arity {
         let declared = u.int(arity);
         let observed = u.int(args.len() as i64);
@@ -455,17 +481,31 @@ pub fn intern_calls(
 }
 
 /// `:748`.
+///
+/// One pass over rules: the resolved terms, their diagnostics, and per rule
+/// the consult notes a later refreeze keys reuse on.
+pub struct RuleResolved {
+    pub rules: Vec<TermId>,
+    pub diagnostics: Vec<TermId>,
+    /// Aligned with `rules`.
+    pub reads: Vec<Vec<Note>>,
+}
+
 pub fn resolve_rules(
     u: &mut Universe,
     cx: &Cx,
     rules: &[TermId],
     origins: &OriginArena,
     rule_offset: i64,
-) -> Result<(Vec<TermId>, Vec<TermId>), Stop> {
+) -> Result<RuleResolved, Stop> {
     let check = u.atom("check");
     let mut resolved = Vec::with_capacity(rules.len());
     let mut diagnostics = Vec::new();
+    let mut reads: Vec<Vec<Note>> = Vec::with_capacity(rules.len());
     for (index, rule) in rules.iter().enumerate() {
+        if let Some(cell) = cx.reads {
+            cell.borrow_mut().clear();
+        }
         let rule_index = rule_offset + index as i64;
         let Some(("rule", parts)) = u.functor(*rule) else {
             return Err(Stop::Fail("rule/2 expected"));
@@ -520,8 +560,15 @@ pub fn resolve_rules(
                 diagnostics.extend(goal_diagnostics);
             }
         }
+        if let Some(cell) = cx.reads {
+            reads.push(cell.borrow().clone());
+        }
     }
-    Ok((resolved, diagnostics))
+    Ok(RuleResolved {
+        rules: resolved,
+        diagnostics,
+        reads,
+    })
 }
 
 /// `:778`. `None` is v7's `error(rule)` at `:795`.
