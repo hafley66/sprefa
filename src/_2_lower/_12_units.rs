@@ -42,6 +42,7 @@ fn lower_one(
     out: &mut Units,
 ) -> Result<(), Stop> {
     let owner = unit_module_owner(u, unit).unwrap_or(unit);
+    tracing::info!(target: "dl8::a1", unit = %u.display(owner), policy = ?policy, "lower_run");
     // `0_lowerer.pl:271`: a declaration error is Program `[]`, no origins, one
     // diagnostic, never a failure.
     let lowered = match lower_datalog(u, policy, unit, environment, imports) {

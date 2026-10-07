@@ -187,6 +187,7 @@ pub fn check_datalog(
     u: &mut Universe,
     lowered: &Lowered,
 ) -> Result<(Option<Checked>, Vec<TermId>), Stop> {
+    tracing::info!(target: "dl8::a1", "check_run");
     let Some(program) = lowered.program else {
         return Err(Stop::Fail("unbound basement program"));
     };
@@ -266,7 +267,9 @@ pub fn check_datalog(
 
 /// A resolved rule with a `variable_call` goal.
 pub fn rule_calls(u: &Universe, rule: TermId) -> bool {
-    let body = u.args::<2>(rule, "rule").and_then(|[_, body]| u.as_list(body));
+    let body = u
+        .args::<2>(rule, "rule")
+        .and_then(|[_, body]| u.as_list(body));
     body.unwrap_or_default().iter().any(|goal| {
         goal_call(u, *goal)
             .and_then(|(_, call)| call_parts(u, call))
