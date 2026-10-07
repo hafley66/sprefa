@@ -4,7 +4,7 @@
 use super::{message, text_at};
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::{Row, TermId, Universe};
-use crate::_9_runtime::reconcile::{Cadence, IExecutor};
+use crate::_9_runtime::reconcile::{Cadence, IService};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -19,6 +19,8 @@ pub struct GitRefs {
     error: TermId,
     continuing: bool,
     roots: BTreeMap<String, WatchedRoot>,
+    /// Opening snapshots read inside `call`, drained by `poll`.
+    done: Vec<Row>,
 }
 /// One root's last snapshot and the wake source that says when to re-read it.
 struct WatchedRoot {
@@ -68,6 +70,7 @@ impl GitRefs {
             error,
             continuing: true,
             roots: BTreeMap::new(),
+            done: Vec::new(),
         }
     }
 
@@ -107,6 +110,7 @@ impl GitRefs {
             error,
             continuing: false,
             roots: BTreeMap::new(),
+            done: Vec::new(),
         }
     }
 
@@ -192,7 +196,7 @@ fn peeled(observation: &soopy::RefObservation) -> &str {
     &observation.peeled.as_ref().unwrap_or(&observation.direct).0
 }
 
-impl IExecutor for GitRefs {
+impl IService for GitRefs {
     fn relation(&self) -> &str {
         RELATION
     }
@@ -205,8 +209,7 @@ impl IExecutor for GitRefs {
         }
     }
 
-    fn answer(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) -> Vec<Row> {
-        let mut rows = Vec::new();
+    fn call(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) {
         for &application in pending {
             let Some((root, root_text)) = text_at(u, application, 0) else {
                 continue;
@@ -218,16 +221,16 @@ impl IExecutor for GitRefs {
             if !self.continuing {
                 match Self::snapshot_at(&root_text) {
                     Ok((_, _, snapshot)) => {
-                        rows.extend(self.snapshot_rows(u, root_cell, &snapshot));
+                        self.done.extend(self.snapshot_rows(u, root_cell, &snapshot));
                         tracing::info!(target: "dl8::git_refs", root = %root_text, refs = snapshot.refs.len(), watcher = false, "snapshot");
                     }
-                    Err(failure) => rows.push(self.error_row(u, root_cell, &failure)),
+                    Err(failure) => self.done.push(self.error_row(u, root_cell, &failure)),
                 }
                 continue;
             }
             match Self::open(&root_text) {
                 Ok((refs, query, last, wake)) => {
-                    rows.extend(self.snapshot_rows(u, root_cell, &last));
+                    self.done.extend(self.snapshot_rows(u, root_cell, &last));
                     tracing::info!(target: "dl8::git_refs", root = %root_text, refs = last.refs.len(), watcher = matches!(wake, Wake::Watcher(_)), "armed");
                     self.roots.insert(
                         root_text,
@@ -240,23 +243,22 @@ impl IExecutor for GitRefs {
                         },
                     );
                 }
-                Err(failure) => rows.push(self.error_row(u, root_cell, &failure)),
+                Err(failure) => self.done.push(self.error_row(u, root_cell, &failure)),
             }
         }
-        rows
     }
 
-    fn poll(&mut self, u: &mut Universe, timeout: Duration) -> Vec<Row> {
-        let slice = timeout / self.roots.len().max(1) as u32;
+    /// Non-blocking: each root is checked once without waiting, so a move is
+    /// seen at the answering loop's next bounded wait instead of inside poll.
+    fn poll(&mut self, u: &mut Universe) -> Vec<Row> {
+        let mut rows = std::mem::take(&mut self.done);
         let mut changed: Vec<(String, Result<soopy::RefSnapshot, String>)> = Vec::new();
         for (root_text, watched) in self.roots.iter_mut() {
-            let woke = watched.wake.woke(root_text, slice);
-            if woke {
+            if watched.wake.woke(root_text, Duration::ZERO) {
                 let snapshot = watched.refs.snapshot(&watched.query);
                 changed.push((root_text.clone(), snapshot.map_err(message)));
             }
         }
-        let mut rows = Vec::new();
         for (root_text, snapshot) in changed {
             let watched = &self.roots[&root_text];
             let root_cell = watched.root_cell;

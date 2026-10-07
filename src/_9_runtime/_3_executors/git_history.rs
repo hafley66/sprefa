@@ -4,8 +4,7 @@
 use super::{message, text_at};
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::{Row, TermId, Universe};
-use crate::_9_runtime::reconcile::{Cadence, IExecutor};
-use std::time::Duration;
+use crate::_9_runtime::reconcile::{Cadence, IService};
 
 pub const RELATION: &str = "git.history";
 pub const ERROR: &str = "git.history_error";
@@ -13,11 +12,17 @@ pub const ERROR: &str = "git.history_error";
 pub struct GitHistory {
     relation: TermId,
     error: TermId,
+    /// Parent edges walked inside `call`, drained by `poll`.
+    done: Vec<Row>,
 }
 
 impl GitHistory {
     pub fn new(relation: TermId, error: TermId) -> GitHistory {
-        GitHistory { relation, error }
+        GitHistory {
+            relation,
+            error,
+            done: Vec::new(),
+        }
     }
 }
 
@@ -51,7 +56,7 @@ fn walk(root: &str, start: &str) -> Result<Vec<soopy::CommitParents>, String> {
     Ok(answer.parents)
 }
 
-impl IExecutor for GitHistory {
+impl IService for GitHistory {
     fn relation(&self) -> &str {
         RELATION
     }
@@ -60,8 +65,7 @@ impl IExecutor for GitHistory {
         Cadence::Once
     }
 
-    fn answer(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) -> Vec<Row> {
-        let mut rows = Vec::new();
+    fn call(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) {
         for &application in pending {
             let Some((root, root_text)) = text_at(u, application, 0) else {
                 continue;
@@ -77,7 +81,7 @@ impl IExecutor for GitHistory {
                         let sha_cell = u.compound("const", vec![sha]);
                         for parent in commit.parents {
                             let parent = u.string(&parent.0);
-                            rows.push(Row {
+                            self.done.push(Row {
                                 rel: self.relation,
                                 args: vec![root_cell, sha_cell, u.compound("const", vec![parent])],
                             });
@@ -86,18 +90,17 @@ impl IExecutor for GitHistory {
                 }
                 Err(failure) => {
                     let message = u.string(&failure);
-                    rows.push(Row {
+                    self.done.push(Row {
                         rel: self.error,
                         args: vec![root_cell, u.compound("const", vec![message])],
                     });
                 }
             }
         }
-        rows
     }
 
-    fn poll(&mut self, _u: &mut Universe, _timeout: Duration) -> Vec<Row> {
-        Vec::new()
+    fn poll(&mut self, _u: &mut Universe) -> Vec<Row> {
+        std::mem::take(&mut self.done)
     }
 
     fn armed(&self) -> bool {

@@ -3,7 +3,7 @@
 
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::{Row, Term, TermId, Universe};
-use crate::_9_runtime::reconcile::{application_values, Cadence, IExecutor};
+use crate::_9_runtime::reconcile::{application_values, Cadence, IService};
 use std::time::Duration;
 
 pub const RELATION: &str = "fetch_json";
@@ -19,6 +19,8 @@ pub struct FetchJson {
     relation: TermId,
     error: TermId,
     agent: ureq::Agent,
+    /// Fetches answered inside `call`, drained by `poll`.
+    done: Vec<Row>,
 }
 
 enum Fetched {
@@ -36,6 +38,7 @@ impl FetchJson {
             relation,
             error,
             agent: ureq::Agent::new_with_config(config),
+            done: Vec::new(),
         }
     }
 
@@ -59,7 +62,7 @@ impl FetchJson {
     }
 }
 
-impl IExecutor for FetchJson {
+impl IService for FetchJson {
     fn relation(&self) -> &str {
         RELATION
     }
@@ -68,8 +71,7 @@ impl IExecutor for FetchJson {
         Cadence::Once
     }
 
-    fn answer(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) -> Vec<Row> {
-        let mut rows = Vec::with_capacity(pending.len());
+    fn call(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) {
         for &application in pending {
             let Some(url) = application_values(u, application)
                 .and_then(|values| values.first().copied().flatten())
@@ -83,7 +85,7 @@ impl IExecutor for FetchJson {
             let fetched = self.fetch(&text);
             tracing::info!(target: "dl8::fetch_json", url = %text, ok = matches!(fetched, Fetched::Body(_)));
             let url_cell = u.compound("const", vec![url]);
-            rows.push(match fetched {
+            self.done.push(match fetched {
                 Fetched::Body(body) => {
                     let body = u.string(&body);
                     Row {
@@ -105,11 +107,10 @@ impl IExecutor for FetchJson {
                 }
             });
         }
-        rows
     }
 
-    fn poll(&mut self, _u: &mut Universe, _timeout: Duration) -> Vec<Row> {
-        Vec::new()
+    fn poll(&mut self, _u: &mut Universe) -> Vec<Row> {
+        std::mem::take(&mut self.done)
     }
 
     fn armed(&self) -> bool {

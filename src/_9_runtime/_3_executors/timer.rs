@@ -3,7 +3,7 @@
 
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::{Row, Term, TermId, Universe};
-use crate::_9_runtime::reconcile::{application_values, Cadence, IExecutor};
+use crate::_9_runtime::reconcile::{application_values, Cadence, IService};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
@@ -126,7 +126,7 @@ impl Timer {
     }
 }
 
-impl IExecutor for Timer {
+impl IService for Timer {
     fn relation(&self) -> &str {
         RELATION
     }
@@ -135,7 +135,7 @@ impl IExecutor for Timer {
         Cadence::Continuing
     }
 
-    fn answer(&mut self, u: &mut Universe, rows: &Store, pending: &[TermId]) -> Vec<Row> {
+    fn call(&mut self, u: &mut Universe, rows: &Store, pending: &[TermId]) {
         for &application in pending {
             let period = application_values(u, application)
                 .and_then(|values| values.first().copied().flatten())
@@ -157,20 +157,13 @@ impl IExecutor for Timer {
             }
             tracing::info!(target: "dl8::timer", period, first, "armed");
         }
-        Vec::new()
     }
 
-    fn poll(&mut self, u: &mut Universe, timeout: Duration) -> Vec<Row> {
+    fn poll(&mut self, u: &mut Universe) -> Vec<Row> {
         let Some(clock) = &self.clock else {
             return Vec::new();
         };
-        let mut fired: BTreeSet<u64> = clock.fires.try_iter().collect();
-        if fired.is_empty() && !timeout.is_zero() {
-            if let Ok(period) = clock.fires.recv_timeout(timeout) {
-                fired.insert(period);
-                fired.extend(clock.fires.try_iter());
-            }
-        }
+        let fired: BTreeSet<u64> = clock.fires.try_iter().collect();
         self.rows_for(u, fired)
     }
 

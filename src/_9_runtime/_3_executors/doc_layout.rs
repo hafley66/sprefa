@@ -4,10 +4,9 @@
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::kernel::kernel_ref;
 use crate::_6_eval::{Row, Term, TermId, Universe};
-use crate::_9_runtime::reconcile::{application_values, Cadence, IExecutor};
+use crate::_9_runtime::reconcile::{application_values, Cadence, IService};
 use pretty::RcDoc;
 use std::collections::HashMap;
-use std::time::Duration;
 
 pub const RELATION: &str = "doc.layout";
 const MAX_DOC_DEPTH: usize = 256;
@@ -17,15 +16,20 @@ const MAX_CONCAT_SPINE: usize = 1 << 20;
 
 pub struct DocLayout {
     relation: TermId,
+    /// Documents rendered inside `call`, drained by `poll`.
+    done: Vec<Row>,
 }
 
 impl DocLayout {
     pub fn new(relation: TermId) -> DocLayout {
-        DocLayout { relation }
+        DocLayout {
+            relation,
+            done: Vec::new(),
+        }
     }
 }
 
-impl IExecutor for DocLayout {
+impl IService for DocLayout {
     fn relation(&self) -> &str {
         RELATION
     }
@@ -34,8 +38,7 @@ impl IExecutor for DocLayout {
         Cadence::Once
     }
 
-    fn answer(&mut self, u: &mut Universe, store: &Store, pending: &[TermId]) -> Vec<Row> {
-        let mut rows = Vec::with_capacity(pending.len());
+    fn call(&mut self, u: &mut Universe, store: &Store, pending: &[TermId]) {
         let variants = store_variants(u, store);
         for &application in pending {
             let Some(values) = application_values(u, application) else {
@@ -57,16 +60,15 @@ impl IExecutor for DocLayout {
             let width = u.compound("const", vec![*width_term]);
             let text = u.string(&text);
             let text = u.compound("const", vec![text]);
-            rows.push(Row {
+            self.done.push(Row {
                 rel: self.relation,
                 args: vec![doc, width, text],
             });
         }
-        rows
     }
 
-    fn poll(&mut self, _u: &mut Universe, _timeout: Duration) -> Vec<Row> {
-        Vec::new()
+    fn poll(&mut self, _u: &mut Universe) -> Vec<Row> {
+        std::mem::take(&mut self.done)
     }
 
     fn armed(&self) -> bool {

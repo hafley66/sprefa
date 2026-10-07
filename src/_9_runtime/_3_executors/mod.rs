@@ -19,7 +19,7 @@ pub mod git_refs;
 #[path = "timer.rs"]
 pub mod timer;
 
-use super::reconcile::{application_values, IExecutor};
+use super::reconcile::{application_values, IService};
 use crate::_6_eval::kernel::kernel_ref;
 use crate::_6_eval::{Diagnostic, Term, TermId, Universe};
 use std::collections::HashMap;
@@ -57,7 +57,7 @@ pub fn executors_for(
     u: &mut Universe,
     names: &HashMap<String, TermId>,
     served: &[String],
-) -> Result<Vec<Box<dyn IExecutor>>, Vec<Diagnostic>> {
+) -> Result<Vec<Box<dyn IService>>, Vec<Diagnostic>> {
     executors_for_mode(u, names, served, true)
 }
 
@@ -67,7 +67,7 @@ pub fn query_executors_for(
     u: &mut Universe,
     names: &HashMap<String, TermId>,
     served: &[String],
-) -> Result<Vec<Box<dyn IExecutor>>, Vec<Diagnostic>> {
+) -> Result<Vec<Box<dyn IService>>, Vec<Diagnostic>> {
     executors_for_mode(u, names, served, false)
 }
 
@@ -76,8 +76,8 @@ fn executors_for_mode(
     names: &HashMap<String, TermId>,
     served: &[String],
     continuing_refs: bool,
-) -> Result<Vec<Box<dyn IExecutor>>, Vec<Diagnostic>> {
-    let mut executors: Vec<Box<dyn IExecutor>> = Vec::new();
+) -> Result<Vec<Box<dyn IService>>, Vec<Diagnostic>> {
+    let mut executors: Vec<Box<dyn IService>> = Vec::new();
     let mut diagnostics = Vec::new();
     let mut missing = |u: &mut Universe, reason: &str, name: &str| {
         let atom = u.atom(name);
@@ -177,7 +177,7 @@ pub const ROSTER: [&str; 9] = [
 pub fn once_executors(
     u: &mut Universe,
     names: &HashMap<String, TermId>,
-) -> Vec<Box<dyn IExecutor>> {
+) -> Vec<Box<dyn IService>> {
     ROSTER
         .iter()
         .filter(|name| names.contains_key(**name))
