@@ -1,0 +1,10 @@
+; One hello listener; every GET of /hello answers with plain text.
+(http: (import "@std/http"))
+
+(: Serving (* (: port int)))
+
+(<- (Serving 18471)
+    (http.serve 18471))
+
+(<- (http.response ?Id 200 "text/plain" "hello")
+    (http.request ?Id "GET" "/hello" ?Query ?Body))

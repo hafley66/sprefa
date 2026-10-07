@@ -26,9 +26,9 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
 
 pub const RELATION: &str = "http.serve";
-pub const REQUEST: &str = "request";
-pub const RESPONSE: &str = "response";
-pub const ERROR: &str = "serve_error";
+pub const REQUEST: &str = "http.request";
+pub const RESPONSE: &str = "http.response";
+pub const ERROR: &str = "http.serve_error";
 
 /// The 10-second law: an unanswered request is a 504, never a hang.
 const RESPONSE_BUDGET: Duration = Duration::from_secs(10);
@@ -270,15 +270,22 @@ impl IService for HttpServe {
         if let Some(table) = rows.table(self.response) {
             for index in 0..table.len() {
                 let row = table.row(index as u32);
-                let Some(id) = u.as_int(row[0]) else {
+                // Every cell of a stored row is a `const` wrapper; the
+                // unwrap is the same one Timer's clock reads through.
+                let cell = |term: TermId| u.unary(term, "const");
+                let Some(id) = cell(row[0]).and_then(|value| u.as_int(value)) else {
                     continue;
                 };
                 let Some(answerer) = self.waiting.remove(&id) else {
                     continue;
                 };
-                let status = u.as_int(row[1]).unwrap_or(200);
-                let content_type = text_of(u, row[2]).unwrap_or_default();
-                let body = body_of_term(u, row[3]);
+                let status = cell(row[1])
+                    .and_then(|value| u.as_int(value))
+                    .unwrap_or(200);
+                let content_type = cell(row[2])
+                    .and_then(|value| text_of(u, value))
+                    .unwrap_or_default();
+                let body = body_of_term(u, cell(row[3]).unwrap_or(row[3]));
                 let _ = answerer.send(Answer {
                     status,
                     content_type,
