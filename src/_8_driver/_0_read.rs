@@ -27,11 +27,12 @@ pub const WAVES: &str = include_str!("../../macrotime/3_waves.dl7");
 
 /// `std/*.dl7`, bundled in the binary like the prelude. The first field is the
 /// tail of `@std/<name>`.
-pub const STD: [(&str, &str); 6] = [
+pub const STD: [(&str, &str); 7] = [
     ("dl6", include_str!("../../std/dl6.dl7")),
     ("doc", include_str!("../../std/doc.dl7")),
     ("fs", include_str!("../../std/fs.dl7")),
     ("git", include_str!("../../std/git.dl7")),
+    ("http", include_str!("../../std/http.dl7")),
     ("oai", include_str!("../../std/oai.dl7")),
     ("tsi", include_str!("../../std/tsi.dl7")),
 ];
