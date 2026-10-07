@@ -1,0 +1,60 @@
+; The todo routes served: every request whose path and method match an
+; api.route row answers with the operation id as JSON; the rest 404.
+;
+; The method mapping: an edge label is the one value position that spells an
+; atom, so each rule below derives, per request, one edge named by the
+; document's method atom whose value is that method's request text; the
+; routing join reads the edge by the route's method cell and holds when the
+; request's own method text matches.
+(http: (import "@std/http"))
+
+(api: (import "@std/oai"))
+
+(tsi: (import "@std/tsi"))
+
+(api.document "todo.json")
+
+(: Serving (* (: port int)))
+
+(<- (Serving 18472)
+    (http.serve 18472))
+
+(<- (: ?Id 'get "GET" 0)
+    (http.request ?Id ?Method ?Path ?Query ?RequestBody))
+
+(<- (: ?Id 'post "POST" 0)
+    (http.request ?Id ?Method ?Path ?Query ?RequestBody))
+
+(<- (: ?Id 'put "PUT" 0)
+    (http.request ?Id ?Method ?Path ?Query ?RequestBody))
+
+(<- (: ?Id 'delete "DELETE" 0)
+    (http.request ?Id ?Method ?Path ?Query ?RequestBody))
+
+(<- (: ?Id 'patch "PATCH" 0)
+    (http.request ?Id ?Method ?Path ?Query ?RequestBody))
+
+(<- (: ?Id 'head "HEAD" 0)
+    (http.request ?Id ?Method ?Path ?Query ?RequestBody))
+
+(<- (: ?Id 'options "OPTIONS" 0)
+    (http.request ?Id ?Method ?Path ?Query ?RequestBody))
+
+(: Routed (* (: id int)))
+
+(<- (Routed ?Id)
+    (http.request ?Id ?Method ?Path ?Query ?RequestBody)
+    (api.route ?Path ?RouteMethod ?OperationId ?Request ?Response)
+    (: ?Id ?RouteMethod ?Method ?Index))
+
+(<- (http.response ?Id 200 "application/json" ?Body)
+    (http.request ?Id ?Method ?Path ?Query ?RequestBody)
+    (api.route ?Path ?RouteMethod ?OperationId ?Request ?Response)
+    (: ?Id ?RouteMethod ?Method ?Index)
+    (str.json ?OperationId ?JsonId)
+    (str.cons "{\"operation_id\":" ?JsonId ?WithId)
+    (str.cons ?WithId "}" ?Body))
+
+(<- (http.response ?Id 404 "text/plain" "no route")
+    (http.request ?Id ?Method ?Path ?Query ?RequestBody)
+    (not (Routed ?Id)))
