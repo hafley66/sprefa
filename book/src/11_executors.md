@@ -9,46 +9,50 @@ flowchart LR
   roster -->|no executor| noexec[served_relation_no_executor]
   roster -->|no error relation| noerror[executor_relation_unknown]
   roster --> timer[timer: Continuing]
-  roster --> fetch[fetch_json: Once]
+  roster --> fetch[http.fetch: Once]
+  roster --> serve[http.serve: Continuing]
   roster --> refs[git.refs: Continuing]
   roster --> history[git.history: Once]
   roster --> fsat[fs.at: Once]
   roster --> fsjson[fs.json: Once]
-  roster --> extract[extract: Once, killed past 10 s]
-  fetch -->|non-2xx| fetcherror[fetch_json_error]
-  timer & fetch & refs & history & fsat & fsjson & extract & fetcherror --> answers[answer rows]
+  roster --> extract[extract: Once, one child, 10 s per request]
+  fetch -->|non-2xx or transport failure| fetcherror[fetch_json_error: a rule in @std/http]
+  timer & fetch & serve & refs & history & fsat & fsjson & extract & fetcherror --> answers[answer rows]
   answers -->|insert, evaluate| reconcile
   reconcile -->|nothing new, nothing armed| stop[exit]
 ```
 
 `dl8 run <compile.json> --serve <names>` runs ticks: tick 0 evaluates the program; each later tick hands new `effect` rows to the executor of their relation, inserts the answers, evaluates, and persists with `--db` (`src/_9_runtime/_2_reconcile.rs:1-2`, `README.md:71-86`).
-Each served name maps to one Rust executor (`src/_9_runtime/_3_executors/mod.rs:45-106`). A name with no executor is `served_relation_no_executor`; a missing companion error relation is `executor_relation_unknown`; both exit 1 before tick 0.
-Cadence `Once` answers an application once; `Continuing` arms on an application and then writes rows on its own clock (`_2_reconcile.rs:12-18`).
+Each served name maps to one Rust executor (`src/_9_runtime/_3_executors/mod.rs:169-298`). A name with no executor is `served_relation_no_executor`; a missing companion error relation is `executor_relation_unknown`; both exit 1 before tick 0.
+Cadence `Once` answers an application once; `Continuing` arms on an application and then writes rows on its own clock (`_2_reconcile.rs:12-18`). `call` starts the work and never blocks on it; the answering loop settles while work is in flight, and `poll` drains what finished.
 Each `effect` row reaches its executor once per process (`_2_reconcile.rs:44-47`). The run ends when a tick adds nothing and no executor is armed, or at `--max-ticks`.
 
 | served name | columns | cadence | answers | error relation | source |
 |---|---|---|---|---|---|
 | `timer` | `period_ms int, tick int` | Continuing | one row per fire, ticks from 1; a late fire is skipped | none | `_3_executors/timer.rs` |
-| `fetch_json` | `url str, body str` | Once | the 2xx JSON body | `fetch_json_error url str, status int, message str`; status 0 on transport failure | `_3_executors/fetch_json.rs` |
+| `http.fetch` | `method str, url str, headers type, request_body str, status int, content_type str, response_body str` | Once | every pending request in flight at once on reqwest; a text body lands as a string, any other body as a blob handle, the blake3 hex of bytes the runtime keeps; status 0 on transport failure, message in `response_body` with an empty `content_type` | none | `_3_executors/http_fetch.rs` |
+| `http.serve` | `port int` | Continuing | one listener per row on hyper; each inbound request is a `http.request` row, answered by a `http.response` row with the same id; the request row is retracted when its answer lands; an unanswered request is a 504 after 10 s, written by the connection itself | `http.serve_error port int, message str`; also `served_relation_unknown` when `http.request`, `http.response`, or `http.serve_error` is undeclared | `_3_executors/http_serve.rs` |
 | `git.refs` | `root str, name str, sha str` | Continuing | every ref plus `HEAD` at arming, then each moved or added ref | `git.refs_error root str, message str` | `_3_executors/git_refs.rs` |
 | `git.history` | `root str, sha str, parent str` | Once | one row per parent edge reachable from `sha`, or `HEAD` when unbound | `git.history_error root str, message str` | `_3_executors/git_history.rs` |
 | `fs.at` | `root str, sha str, path str, blob str` | Once | one row per tracked file at the revision | `fs.at_error root str, sha str, message str` | `_3_executors/fs_at.rs` |
 | `fs.json` | `path str, return type` | Once | the document's root node, plus one `:` edge per object member; a file over 16 MiB is an error row | `fs.json_error path str, message str` | `_3_executors/fs_json.rs` |
-| `extract` | `root str, family str, kind str, payload str` | Once | one `extract --family <family> --resolve` run, one row per JSONL record; past 10 s the run is killed | `extract_error root str, family str, message str` | `_3_executors/extract.rs` |
+| `extract` | `root str, family str, kind str, payload str` | Once | one long-lived `ryi --resolve` child; one request per root+family over its stdin, one row per JSONL record; a request past 10 s is an error row, and one respawn follows a child death before error rows take over | `extract_error root str, family str, message str` | `_3_executors/extract.rs` |
 
 Rows from `README.md:115-122`.
 
 ## Why
 
 `README.md:108-113`: git runs only inside `soopy`, a path dependency, and `extract` is the `sprefa-extract` binary.
-The roster is a closed `match` in Rust; any other served name is the `served_relation_no_executor` stop at construction (`_3_executors/mod.rs:100`). No written v8 decision gives the reason.
+The roster is a closed `match` in Rust; any other served name is the `served_relation_no_executor` stop at construction (`_3_executors/mod.rs:291`). No written v8 decision gives the reason.
+`fetch_json` left the roster: it is two rules over `http.fetch` in `@std/http` (`std/http.dl7`), so a program reads it by importing the module, and `--serve fetch_json` on a locally declared `fetch_json` is now `served_relation_no_executor`.
 
 ## When to use
 
 Use it when:
 
 - rows arrive on a clock: `timer`, `fixtures/reconcile/0_timer.dl7`
-- one HTTP JSON body per url: `fetch_json`, `fixtures/reconcile/1_fetch.dl7`
+- one HTTP response per request, all of them in flight at once: `http.fetch`; its JSON reader is the `fetch_json` rule in `@std/http`
+- an HTTP listener inside the program: `http.serve`
 - refs of a repository, live: `git.refs`, `fixtures/hosts/0_refs.dl7`
 - the commit graph: `git.history`, `fixtures/hosts/1_history.dl7`
 - the files at a revision: `fs.at`, `fixtures/hosts/2_fs_at.dl7`
@@ -85,56 +89,25 @@ diagnostic served_relation_no_executor(Fired)
 exit 1
 ```
 
-`fetch_json` without its error relation, then with it and a url that is not one:
-
-```console
-$ bash book/show.sh run fixtures/host_effect/0_pending.dl7 --serve fetch_json
-diagnostic executor_relation_unknown(fetch_json_error)
-exit 1
-```
+`http.fetch` answers every pending request in flight at once; `fetch_json` is no longer an executor but a rule in `@std/http`:
 
 ```dl7
-; fixture: fixtures/reconcile/1_fetch.dl7
-; One url, fetched once; an answer lands as a row the reader joins like a fact.
+; @std/http: the JSON reader over fetch, and every fetch that missed one.
 (: fetch_json
    (* (: url str)
       (: body str)))
 
-(: fetch_json_error
-   (* (: url str)
-      (: status int)
-      (: message str)))
+(<- (fetch_json ?Url ?Body)
+    (fetch "GET" ?Url ?Headers ?RequestBody ?Status ?Type ?Body)
+    (str.contains ?Type "json"))
 
-(: Watch (* (: url str)))
-
-(Watch "__URL__")
-
-(: Body
-   (* (: url str)
-      (: body str)))
-
-(<- (Body ?Url ?Body)
-    (Watch ?Url)
-    (fetch_json ?Url ?Body))
-
-(: Failed
-   (* (: url str)
-      (: status int)))
-
-(<- (Failed ?Url ?Status)
-    (Watch ?Url)
-    (fetch_json_error ?Url ?Status ?Message))
+(<- (fetch_json_error ?Url ?Status ?Message)
+    (fetch "GET" ?Url ?Headers ?RequestBody ?Status ?Type ?Message)
+    (int.to_str ?Status ?Code)
+    (not (str.starts_with ?Code "2")))
 ```
 
-```console
-$ bash book/show.sh run fixtures/reconcile/1_fetch.dl7 --serve fetch_json
-(effect fetch_json ref(application(fetch_json, ["__URL__" none])))
-(fetch_json_error "__URL__" 0 "bad uri: __URL__ is missing scheme")
-(Watch "__URL__")
-(Failed "__URL__" 0)
-ticks 1
-exit 0
-```
+A program imports the module and serves `http.fetch`; the two rules split the answers. A transport failure is status 0 with the message in `response_body` and an empty `content_type`; a non-2xx lands as its real status, so the error rule takes it and the JSON rule does not.
 
 `git.history` and `fs.at` over a two-commit repository made on the spot:
 
@@ -316,9 +289,9 @@ const jsonEdges = (path$: Observable<string>): Observable<Edge> =>
 | claim | path | command |
 |---|---|---|
 | timer fires, count reads every fire, numbering continues past a db | `tests/_17_reconcile.rs:161-201` | `cargo test --test _17_reconcile` |
-| fetch body, non-2xx, non-JSON, closed port | `tests/_17_reconcile.rs:203-267` | `cargo test --test _17_reconcile` |
+| fetch in flight: body, transport failure as status 0 | `tests/_17_reconcile.rs:203-267` (regold pending: the fixtures declare `fetch_json`, which is now `served_relation_no_executor`) | `cargo test --test _17_reconcile` |
 | no executor, no error relation | `tests/_17_reconcile.rs:291-326` | `cargo test --test _17_reconcile` |
 | refs snapshot then moved ref; history; files per revision; missing repository | `tests/_20_hosts.rs:228-343` | `cargo test --test _20_hosts` |
 | object, array, scalar, present-null, absent key, nested object, unreadable file | `tests/_20_hosts.rs:394-494` | `cargo test --test _20_hosts` |
 | extract rows per family over the corpus, and with no binary | `tests/_20_hosts.rs:558-617` | `cargo test --test _20_hosts` |
-| the roster in code | `src/_9_runtime/_3_executors/mod.rs:65-120` | `sed -n 65,120p src/_9_runtime/_3_executors/mod.rs` |
+| the roster in code | `src/_9_runtime/_3_executors/mod.rs:312-323` | `sed -n 312,323p src/_9_runtime/_3_executors/mod.rs` |
