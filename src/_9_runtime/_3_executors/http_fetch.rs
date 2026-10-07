@@ -71,7 +71,8 @@ fn header_list(u: &Universe, term: Option<TermId>) -> Vec<(String, String)> {
     items
         .into_iter()
         .filter_map(|item| {
-            let (name, value) = text_of(u, item)?.split_once(':')?;
+            let header = text_of(u, item)?;
+            let (name, value) = header.split_once(':')?;
             Some((name.trim().to_string(), value.trim().to_string()))
         })
         .collect()

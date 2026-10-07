@@ -9,12 +9,13 @@ use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::{Row, TermId, Universe};
 use crate::_9_runtime::reconcile::{Cadence, IService};
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 pub const RELATION: &str = "extract";
 pub const ERROR: &str = "extract_error";
@@ -343,6 +344,16 @@ impl IService for Extract {
         rows
     }
 
+    fn in_flight(&self) -> usize {
+        self.waiting.len()
+    }
+
+    fn armed(&self) -> bool {
+        false
+    }
+}
+
+impl Extract {
     /// Requests past the 10-second law become error rows now; their late
     /// records drop on arrival. The loop is bounded by the waiting map, one
     /// entry per live request.
@@ -378,13 +389,7 @@ impl IService for Extract {
                     let (Some(kind), Some(pending)) = (kind, self.waiting.get(&id)) else {
                         continue;
                     };
-                    rows.push(self.record_row(
-                        u,
-                        &pending.root,
-                        &pending.family,
-                        &kind,
-                        &line,
-                    ));
+                    rows.push(self.record_row(u, &pending.root, &pending.family, &kind, &line));
                 }
                 Finished::Done { id } => {
                     self.waiting.remove(&id);
@@ -406,7 +411,12 @@ impl IService for Extract {
         self.deaths += 1;
         if self.deaths > RESPAWNS {
             for (_, pending) in std::mem::take(&mut self.waiting) {
-                rows.push(self.error_row(u, &pending.root, &pending.family, "extract child exited"));
+                rows.push(self.error_row(
+                    u,
+                    &pending.root,
+                    &pending.family,
+                    "extract child exited",
+                ));
             }
             return;
         }
@@ -424,13 +434,5 @@ impl IService for Extract {
                 }
             }
         }
-    }
-
-    fn in_flight(&self) -> usize {
-        self.waiting.len()
-    }
-
-    fn armed(&self) -> bool {
-        false
     }
 }

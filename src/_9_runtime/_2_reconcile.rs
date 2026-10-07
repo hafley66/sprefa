@@ -214,6 +214,13 @@ impl Answerer {
         rows
     }
 
+    pub fn cancel_request(&mut self, u: &Universe, relation: TermId, application: TermId) {
+        self.seen.remove(&(relation, application));
+        if let Some((_, executor)) = self.executors.iter_mut().find(|(rel, _)| *rel == relation) {
+            executor.cancel(u, application);
+        }
+    }
+
     /// Signed rows from the Continuing services' clocks: one bounded wait on
     /// the runtime's completion signal, then a drain. The caller applies all
     /// returned changes in one frontier.
@@ -230,10 +237,7 @@ impl Answerer {
         self.poll_continuing(u)
     }
 
-    fn poll_continuing(
-        &mut self,
-        u: &mut Universe,
-    ) -> Vec<crate::_6_eval::ir_eval::SignedRow> {
+    fn poll_continuing(&mut self, u: &mut Universe) -> Vec<crate::_6_eval::ir_eval::SignedRow> {
         let mut changes = Vec::new();
         for (_, service) in &mut self.executors {
             if service.cadence() == Cadence::Continuing {

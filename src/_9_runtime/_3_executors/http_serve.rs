@@ -129,18 +129,17 @@ impl HttpServe {
         self.ports.insert(port);
         let sender = self.sender.clone();
         handle().spawn(async move {
-            let listener =
-                match tokio::net::TcpListener::bind(("127.0.0.1", port as u16)).await {
-                    Ok(listener) => listener,
-                    Err(failure) => {
-                        let _ = sender.send(Inbound::Failed {
-                            port,
-                            message: message(failure),
-                        });
-                        super::wake();
-                        return;
-                    }
-                };
+            let listener = match tokio::net::TcpListener::bind(("127.0.0.1", port as u16)).await {
+                Ok(listener) => listener,
+                Err(failure) => {
+                    let _ = sender.send(Inbound::Failed {
+                        port,
+                        message: message(failure),
+                    });
+                    super::wake();
+                    return;
+                }
+            };
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
@@ -150,10 +149,13 @@ impl HttpServe {
                         // connection.
                         tokio::spawn(async move {
                             let _ = http1::Builder::new()
-                                .serve_connection(io, service_fn(move |request| {
-                                    let inbound = inbound.clone();
-                                    async move { respond(request, inbound) }
-                                }))
+                                .serve_connection(
+                                    io,
+                                    service_fn(move |request| {
+                                        let inbound = inbound.clone();
+                                        async move { respond(request, inbound).await }
+                                    }),
+                                )
                                 .await;
                         });
                     }
@@ -197,7 +199,10 @@ async fn respond(
         Err(_) => bytes::Bytes::new(),
     };
     if bytes.len() > BODY_CAP {
-        return Ok(plain(StatusCode::PAYLOAD_TOO_LARGE, "request body too large"));
+        return Ok(plain(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "request body too large",
+        ));
     }
     let request_body = classify_body(&media, &bytes);
     let (answerer, answer) = tokio::sync::oneshot::channel();
@@ -246,7 +251,11 @@ impl IService for HttpServe {
             let Some(values) = application_values(u, application) else {
                 continue;
             };
-            let Some(port) = values.first().copied().flatten().and_then(|term| u.as_int(term))
+            let Some(port) = values
+                .first()
+                .copied()
+                .flatten()
+                .and_then(|term| u.as_int(term))
             else {
                 continue;
             };
@@ -307,7 +316,13 @@ impl IService for HttpServe {
                         u.compound("const", vec![query_term]),
                         u.compound("const", vec![body_term]),
                     ];
-                    self.request_rows.insert(id, Row { rel, args: args.clone() });
+                    self.request_rows.insert(
+                        id,
+                        Row {
+                            rel,
+                            args: args.clone(),
+                        },
+                    );
                     self.waiting.insert(id, answerer);
                     rows.push(Row { rel, args });
                 }

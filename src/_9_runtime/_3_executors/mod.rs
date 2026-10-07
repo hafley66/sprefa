@@ -14,12 +14,12 @@ pub mod fs_watch;
 pub mod git_history;
 #[path = "git_refs.rs"]
 pub mod git_refs;
-#[path = "timer.rs"]
-pub mod timer;
 #[path = "http_fetch.rs"]
 pub mod http_fetch;
 #[path = "http_serve.rs"]
 pub mod http_serve;
+#[path = "timer.rs"]
+pub mod timer;
 
 use super::reconcile::{application_values, IService};
 use crate::_6_eval::kernel::kernel_ref;
@@ -29,13 +29,14 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 pub use doc_layout::DocLayout;
-pub use http_fetch::HttpFetch;
-pub use http_serve::HttpServe;
+pub use extract::Extract;
 pub use fs_at::FsAt;
 pub use fs_json::FsJson;
 pub use fs_watch::FsWatch;
 pub use git_history::GitHistory;
 pub use git_refs::GitRefs;
+pub use http_fetch::HttpFetch;
+pub use http_serve::HttpServe;
 pub use timer::Timer;
 
 /// The bound text value at `index` of an application, with its term.
@@ -101,7 +102,8 @@ impl Runtime {
 
 /// The shared runtime's spawn handle.
 pub fn handle() -> &'static tokio::runtime::Handle {
-    &RUNTIME.tokio
+    let runtime: &'static Runtime = &RUNTIME;
+    runtime.tokio.handle()
 }
 
 /// Tasks call this once a result is on their service's channel: the
@@ -178,7 +180,7 @@ pub(crate) fn body_bytes(body: &HttpBody) -> bytes::Bytes {
 }
 
 /// The row cell of a body column value; both spellings are strings.
-pub(crate) fn body_cell(u: &Universe, body: &HttpBody) -> TermId {
+pub(crate) fn body_cell(u: &mut Universe, body: &HttpBody) -> TermId {
     match body {
         HttpBody::Text(text) => u.string(text),
         HttpBody::Blob(handle) => u.string(handle),
@@ -242,20 +244,15 @@ fn executors_for_mode(
                     names.get(http_serve::RESPONSE),
                     names.get(http_serve::ERROR),
                 ) {
-                    (Some(rel), Some(request), Some(response), Some(error)) => executors
-                        .push(Box::new(HttpServe::new(
-                            *rel, *request, *response, *error,
-                        ))),
-                    (None, _, _, _) => missing(u, "served_relation_unknown", name),
-                    (_, None, _, _) => {
-                        missing(u, "executor_relation_unknown", http_serve::REQUEST)
+                    (Some(rel), Some(request), Some(response), Some(error)) => {
+                        executors.push(Box::new(HttpServe::new(*rel, *request, *response, *error)))
                     }
+                    (None, _, _, _) => missing(u, "served_relation_unknown", name),
+                    (_, None, _, _) => missing(u, "executor_relation_unknown", http_serve::REQUEST),
                     (_, _, None, _) => {
                         missing(u, "executor_relation_unknown", http_serve::RESPONSE)
                     }
-                    (_, _, _, None) => {
-                        missing(u, "executor_relation_unknown", http_serve::ERROR)
-                    }
+                    (_, _, _, None) => missing(u, "executor_relation_unknown", http_serve::ERROR),
                 }
             }
             fs_json::RELATION => {
@@ -324,10 +321,7 @@ pub const ROSTER: [&str; 10] = [
 
 /// The Once executors the program's names can build. A name whose companion
 /// relation is undeclared builds nothing here; the runtime still reports it.
-pub fn once_executors(
-    u: &mut Universe,
-    names: &HashMap<String, TermId>,
-) -> Vec<Box<dyn IService>> {
+pub fn once_executors(u: &mut Universe, names: &HashMap<String, TermId>) -> Vec<Box<dyn IService>> {
     ROSTER
         .iter()
         .filter(|name| names.contains_key(**name))
