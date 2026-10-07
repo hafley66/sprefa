@@ -40,7 +40,7 @@ parking_lot = "0.12"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "io-std", "sync", "process"] }
 which = "8.0.6"
 lasso = "0.7"
 hashbrown = "0.16"
