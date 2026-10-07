@@ -6,6 +6,7 @@
 //! `dense_index_diagnostics_scanned/4` (`:532`) is the non-ground fallback and
 //! is unreachable for a ground program, so only the indexed path is ported.
 
+use crate::_2_lower::index::Edge;
 use super::graph::{CheckerGraph, OriginArena};
 use crate::_6_eval::term::{TermId, Universe};
 use std::collections::HashSet;
@@ -14,6 +15,7 @@ pub fn bind_diagnostics(
     u: &mut Universe,
     graph: &CheckerGraph,
     origins: &OriginArena,
+    edges: &[Edge],
 ) -> Vec<TermId> {
     let check = u.atom("check");
     let mut names: Vec<TermId> = Vec::new();
@@ -22,7 +24,7 @@ pub fn bind_diagnostics(
     let mut seen_name: HashSet<(TermId, TermId)> = HashSet::new();
     let mut seen_index: HashSet<(TermId, i64)> = HashSet::new();
 
-    for edge in &graph.edges {
+    for edge in edges {
         let node = origins.edge_origin(edge.owner, edge.name, edge.index);
         if !seen_name.insert((edge.owner, edge.name)) {
             let reason = u.compound("duplicate_bind", vec![edge.owner, edge.name]);

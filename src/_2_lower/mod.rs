@@ -34,6 +34,8 @@ pub mod promote;
 pub mod slots;
 #[path = "_12_units.rs"]
 pub mod units;
+#[path = "_13_keep.rs"]
+pub mod keep;
 pub mod _7a_tuple_positions;
 
 pub use api::{lower_datalog, Lowered};

@@ -11,7 +11,7 @@ use super::resolve::{resolve_edges, resolve_rules, resolve_seeds, Cx};
 use super::strata::{depends_rows, locate_strata_diagnostics, strata_rows, stratify_rules};
 use crate::_2_lower::Lowered;
 use crate::_6_eval::term::{TermId, Universe};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Where v7's `check_datalog/4` fails instead of returning a diagnostic
 /// (defect D1 in the PLAN).
@@ -23,6 +23,7 @@ pub enum Stop {
 /// `checked_datalog(root_graph(Nodes, Edges),
 ///                  datalog_program(Relations, Seeds, Rules),
 ///                  Depends, Strata)` at `:427`, one field per argument.
+#[derive(Clone)]
 pub struct Checked {
     pub nodes: Vec<TermId>,
     pub edges: Vec<TermId>,
@@ -63,16 +64,16 @@ pub fn prolog_msort(u: &Universe, mut rows: Vec<TermId>) -> Vec<TermId> {
     rows
 }
 
-struct Basement {
-    nodes: Vec<TermId>,
-    edges: Vec<TermId>,
-    relations: Vec<TermId>,
-    seeds: Vec<TermId>,
-    rules: Vec<TermId>,
+pub(crate) struct Basement {
+    pub(crate) nodes: Vec<TermId>,
+    pub(crate) edges: Vec<TermId>,
+    pub(crate) relations: Vec<TermId>,
+    pub(crate) seeds: Vec<TermId>,
+    pub(crate) rules: Vec<TermId>,
 }
 
 /// `:190`.
-fn basement_parts(u: &Universe, program: TermId) -> Option<Basement> {
+pub(crate) fn basement_parts(u: &Universe, program: TermId) -> Option<Basement> {
     let (name, args) = u.functor(program)?;
     if name != "basement_program" || args.len() != 2 {
         return None;
@@ -109,7 +110,7 @@ pub fn return_key_sets(u: &mut Universe, arity: i64, return_indices: &[i64]) -> 
 
 /// Arity is the product's own `:` edge count, keys its one `return` edge.
 /// `origin(relation(Id), _)` declares; `product(Id)` only classifies a type.
-fn product_relation_rows(
+pub(crate) fn product_relation_rows(
     u: &mut Universe,
     graph: &CheckerGraph,
     origins: &[TermId],
@@ -141,7 +142,11 @@ fn product_relation_rows(
 
 /// `:1099`. `relation(Target, A, K)` becomes `relation(ref(Target), A, K)`.
 /// Left on this channel: loader families and the comptime `def` rows only.
-fn relations_refs(u: &mut Universe, rows: &[TermId], covered: &[TermId]) -> Option<Vec<TermId>> {
+pub(crate) fn relations_refs(
+    u: &mut Universe,
+    rows: &[TermId],
+    covered: &[TermId],
+) -> Option<Vec<TermId>> {
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let (name, args) = u.functor(*row).map(|(n, a)| (n.to_string(), a.to_vec()))?;
@@ -158,7 +163,7 @@ fn relations_refs(u: &mut Universe, rows: &[TermId], covered: &[TermId]) -> Opti
 }
 
 /// First arity per reference over the sorted, deduplicated relation list.
-fn relation_arities(u: &Universe, rows: &[TermId]) -> HashMap<TermId, i64> {
+pub(crate) fn relation_arities(u: &Universe, rows: &[TermId]) -> HashMap<TermId, i64> {
     let mut out = HashMap::new();
     for row in rows {
         let Some(("relation", args)) = u.functor(*row) else {
@@ -197,9 +202,45 @@ pub fn check_datalog(
     let Some(graph) = CheckerGraph::build(u, &basement.edges, &basement.nodes) else {
         return Err(Stop::Fail("pending_edge/4 expected"));
     };
-    let origins = OriginArena::build(u, &lowered.origins);
+    let resolved = resolve_fresh(u, graph, basement, &lowered.origins)?;
+    emit_checked(u, &resolved)
+}
 
-    let declared = product_relation_rows(u, &graph, &lowered.origins);
+/// The middle of one full check, before stratification. The keep holds it so
+/// a later program's delta resolves alone against the union graph.
+pub(crate) struct Resolved {
+    pub graph: CheckerGraph,
+    pub origins: OriginArena,
+    /// `prolog_sort` of the declared, supplied and kernel relation rows.
+    pub relations: Vec<TermId>,
+    /// `resolve_seeds` output: the resolved seeds, their value mints apart.
+    pub resolved_seeds: Vec<TermId>,
+    pub seed_mints: Vec<TermId>,
+    /// All rules resolved, before the `calls` partition.
+    pub resolved_rules: Vec<TermId>,
+    /// `resolve_edges` output and its instance intern rows.
+    pub colon_edges: Vec<TermId>,
+    pub edge_mints: Vec<TermId>,
+    /// Application owners whose intern rows are already minted.
+    pub built: HashSet<TermId>,
+    pub diagnostics: Vec<TermId>,
+    // The raw basement shape: the delta prefix compares against it.
+    pub nodes: Vec<TermId>,
+    pub edge_rows: Vec<TermId>,
+    pub relation_rows: Vec<TermId>,
+    pub seed_rows: Vec<TermId>,
+    pub rule_rows: Vec<TermId>,
+}
+
+/// The four resolution passes over one whole basement, at offsets zero.
+pub(crate) fn resolve_fresh(
+    u: &mut Universe,
+    graph: CheckerGraph,
+    basement: Basement,
+    origin_rows: &[TermId],
+) -> Result<Resolved, Stop> {
+    let origins = OriginArena::build(u, origin_rows);
+    let declared = product_relation_rows(u, &graph, origin_rows);
     let covered: Vec<TermId> = declared
         .iter()
         .filter_map(|row| match u.functor(*row) {
@@ -220,36 +261,74 @@ pub fn check_datalog(
         relations: &arities,
     };
 
-    let mut diagnostics = bind_diagnostics(u, &graph, &origins);
-    let (colon_edges, instance_interns, edge_diagnostics) = resolve_edges(u, &cx, &origins);
-    let (mut seeds, seed_diagnostics) = resolve_seeds(u, &cx, &basement.seeds, &origins)?;
-    seeds.extend(instance_interns);
-    let (rules, rule_diagnostics) = resolve_rules(u, &cx, &basement.rules, &origins)?;
+    let mut diagnostics = bind_diagnostics(u, &graph, &origins, &graph.edges);
+    let mut built = HashSet::new();
+    let (colon_edges, edge_mints, edge_diagnostics) =
+        resolve_edges(u, &cx, &origins, &graph.edges, &mut built);
+    let (resolved_seeds, seed_mints, seed_diagnostics) =
+        resolve_seeds(u, &cx, &basement.seeds, &origins, 0)?;
+    let (resolved_rules, rule_diagnostics) = resolve_rules(u, &cx, &basement.rules, &origins, 0)?;
     diagnostics.extend(edge_diagnostics);
     diagnostics.extend(seed_diagnostics);
     diagnostics.extend(rule_diagnostics);
-    if !diagnostics.is_empty() {
-        return Ok((None, prolog_sort(u, diagnostics)));
+    Ok(Resolved {
+        graph,
+        origins,
+        relations,
+        resolved_seeds,
+        seed_mints,
+        resolved_rules,
+        colon_edges,
+        edge_mints,
+        built,
+        diagnostics,
+        nodes: basement.nodes,
+        edge_rows: basement.edges,
+        relation_rows: basement.relations,
+        seed_rows: basement.seeds,
+        rule_rows: basement.rules,
+    })
+}
+
+/// The tail of `check_datalog`: diagnostics, stratification over the union,
+/// then the checked term.
+pub(crate) fn emit_checked(
+    u: &mut Universe,
+    resolved: &Resolved,
+) -> Result<(Option<Checked>, Vec<TermId>), Stop> {
+    if !resolved.diagnostics.is_empty() {
+        return Ok((None, prolog_sort(u, resolved.diagnostics.clone())));
     }
 
-    let stratified = stratify_rules(u, &rules)?;
-    let located = locate_strata_diagnostics(u, &stratified.diagnostics, &rules, &origins);
+    let stratified = stratify_rules(u, &resolved.resolved_rules)?;
+    let located = locate_strata_diagnostics(
+        u,
+        &stratified.diagnostics,
+        &resolved.resolved_rules,
+        &resolved.origins,
+    );
     if !located.is_empty() {
         // `:431` returns the located list unsorted.
         return Ok((None, located));
     }
 
-    let (calls, rules): (Vec<TermId>, Vec<TermId>) =
-        rules.into_iter().partition(|rule| rule_calls(u, *rule));
+    let (calls, rules): (Vec<TermId>, Vec<TermId>) = resolved
+        .resolved_rules
+        .iter()
+        .copied()
+        .partition(|rule| rule_calls(u, *rule));
     let depends = depends_rows(u, &rules);
-    let strata = strata_rows(u, &relations, &stratified.levels);
+    let strata = strata_rows(u, &resolved.relations, &stratified.levels);
     let (kernel_nodes, kernel_edges) = kernel_graph(u);
-    let mut nodes = basement.nodes;
+    let mut nodes = resolved.nodes.clone();
     nodes.extend(kernel_nodes);
-    let mut edges = colon_edges;
+    let mut seeds = resolved.resolved_seeds.clone();
+    seeds.extend(resolved.seed_mints.iter().copied());
+    seeds.extend(resolved.edge_mints.iter().copied());
+    let mut edges = resolved.colon_edges.clone();
     edges.extend(kernel_edges);
     let edges = prolog_msort(u, edges);
-    let sorted_relations = prolog_msort(u, relations);
+    let sorted_relations = prolog_msort(u, resolved.relations.clone());
     Ok((
         Some(Checked {
             nodes,

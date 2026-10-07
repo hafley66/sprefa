@@ -4,6 +4,7 @@
 use super::api::{lower_datalog, Lowered};
 use super::cx::CallPolicy;
 use super::derived::Stop;
+use super::keep::{LowerKeep, UnitLowered};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::kernel::PRIMITIVES;
 use crate::_6_eval::term::{TermId, Universe};
@@ -73,10 +74,34 @@ pub fn lower_units_flat(
     units: &[TermId],
     environment: TermId,
     imports: &[TermId],
+    keep: Option<&LowerKeep>,
 ) -> Result<Units, Stop> {
     let mut out = Units::default();
     for unit in units {
+        let hit = keep.and_then(|keep| keep.exporter(u, policy, *unit, environment, imports));
+        if let Some(hit) = hit {
+            out.basements.push(hit.basement);
+            out.origins.push(hit.origins);
+            out.diagnostics.extend(hit.diagnostics);
+            continue;
+        }
+        let basements = out.basements.len();
+        let diagnostics = out.diagnostics.len();
         lower_one(u, policy, *unit, environment, imports, &mut out)?;
+        if let Some(keep) = keep {
+            keep.insert(
+                policy,
+                *unit,
+                environment,
+                imports,
+                UnitLowered {
+                    basement: out.basements[basements],
+                    origins: out.origins[basements],
+                    exports: None,
+                    diagnostics: out.diagnostics[diagnostics..].to_vec(),
+                },
+            );
+        }
     }
     Ok(out)
 }
@@ -90,6 +115,7 @@ pub fn lower_units_with_exporter(
     importers: &[TermId],
     generated: Option<TermId>,
     imports: &[TermId],
+    keep: Option<&LowerKeep>,
 ) -> Result<Units, Stop> {
     let exporter_owner = unit_module_owner(u, exporter).unwrap_or(exporter);
     let exporter_environment = match generated {
@@ -97,14 +123,65 @@ pub fn lower_units_with_exporter(
         None => empty_environment(u),
     };
     let mut out = Units::default();
-    lower_one(u, policy, exporter, exporter_environment, imports, &mut out)?;
-    if !out.diagnostics.is_empty() {
-        // :127, :199, :222. The exporter's own basement is the whole result.
-        return Ok(out);
-    }
-    let exporter_basement = exported_basement(u, &out.basements, exporter_owner);
-    let prelude = module_expression_environment(u, exporter_owner, exporter_basement);
-
+    let prelude = match keep
+        .and_then(|keep| keep.exporter(u, policy, exporter, exporter_environment, imports))
+    {
+        Some(hit) => {
+            out.basements.push(hit.basement);
+            out.origins.push(hit.origins);
+            if !hit.diagnostics.is_empty() {
+                // :127, :199, :222. The exporter's own basement is the whole result.
+                out.diagnostics = hit.diagnostics;
+                return Ok(out);
+            }
+            match hit.exports {
+                Some(environment) => environment,
+                None => module_expression_environment(
+                    u,
+                    exporter_owner,
+                    exported_basement(u, &out.basements, exporter_owner),
+                ),
+            }
+        }
+        None => {
+            lower_one(u, policy, exporter, exporter_environment, imports, &mut out)?;
+            if !out.diagnostics.is_empty() {
+                // :127, :199, :222. The exporter's own basement is the whole result.
+                if let Some(keep) = keep {
+                    keep.insert(
+                        policy,
+                        exporter,
+                        exporter_environment,
+                        imports,
+                        UnitLowered {
+                            basement: out.basements[0],
+                            origins: out.origins[0],
+                            exports: None,
+                            diagnostics: out.diagnostics.clone(),
+                        },
+                    );
+                }
+                return Ok(out);
+            }
+            let exporter_basement = exported_basement(u, &out.basements, exporter_owner);
+            let environment = module_expression_environment(u, exporter_owner, exporter_basement);
+            if let Some(keep) = keep {
+                keep.insert(
+                    policy,
+                    exporter,
+                    exporter_environment,
+                    imports,
+                    UnitLowered {
+                        basement: out.basements[0],
+                        origins: out.origins[0],
+                        exports: Some(environment),
+                        diagnostics: Vec::new(),
+                    },
+                );
+            }
+            environment
+        }
+    };
     let mut first_pass_diagnostics = HashMap::new();
     for unit in importers {
         let owner = unit_module_owner(u, *unit).unwrap_or(*unit);
@@ -581,6 +658,7 @@ pub fn lower_compiler_units(
     units: &[TermId],
     environment: Option<TermId>,
     imports: &[TermId],
+    keep: Option<&LowerKeep>,
 ) -> Result<Units, Stop> {
     let prelude = u.atom("prelude");
     let exporter = units.iter().position(|unit| match u.functor(*unit) {
@@ -591,14 +669,14 @@ pub fn lower_compiler_units(
         Some(slot) => {
             let mut importers = units.to_vec();
             let exporter = importers.remove(slot);
-            lower_units_with_exporter(u, policy, exporter, &importers, environment, imports)
+            lower_units_with_exporter(u, policy, exporter, &importers, environment, imports, keep)
         }
         None => {
             let environment = match environment {
                 Some(environment) => environment,
                 None => empty_environment(u),
             };
-            lower_units_flat(u, policy, units, environment, imports)
+            lower_units_flat(u, policy, units, environment, imports, keep)
         }
     }
 }
