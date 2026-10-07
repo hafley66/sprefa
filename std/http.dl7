@@ -1,0 +1,36 @@
+; `@std/http`: `fetch` answers one HTTP request per row, all of them in
+; flight at once. A text body lands as a string; any other body lands as a
+; blob handle, the blake3 hex of bytes the runtime keeps. Status 0 marks a
+; transport failure, where no response arrived; the message stands in
+; `response_body` with an empty `content_type`.
+
+(: fetch
+   (* (: method str)
+      (: url str)
+      (: headers type)
+      (: request_body str)
+      (: status int)
+      (: content_type str)
+      (: response_body str)))
+
+; `fetch_json` is the GET-plus-JSON reader over `fetch`: the raw response
+; text of every request whose content type says JSON.
+(: fetch_json
+   (* (: url str)
+      (: body str)))
+
+(<- (fetch_json ?Url ?Body)
+    (fetch "GET" ?Url ?Headers ?RequestBody ?Status ?Type ?Body)
+    (str.contains ?Type "json"))
+
+; Every fetch that did not yield a `fetch_json` body: a non-2xx status or a
+; transport failure.
+(: fetch_json_error
+   (* (: url str)
+      (: status int)
+      (: message str)))
+
+(<- (fetch_json_error ?Url ?Status ?Message)
+    (fetch "GET" ?Url ?Headers ?RequestBody ?Status ?Type ?Message)
+    (int.to_str ?Status ?Code)
+    (not (str.starts_with ?Code "2")))

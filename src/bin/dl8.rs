@@ -109,7 +109,7 @@ enum Command {
     /// of served relations to their executors, and inserts the answers.
     Run {
         program: PathBuf,
-        /// Relations an executor settles: `timer`, `fetch_json`, `git.refs`,
+        /// Relations an executor settles: `timer`, `http.fetch`, `git.refs`,
         /// `git.history`, `fs.at`, `fs.watch`, `extract`.
         #[arg(long, value_delimiter = ',')]
         serve: Vec<String>,

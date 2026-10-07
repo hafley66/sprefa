@@ -4,8 +4,6 @@
 pub mod doc_layout;
 #[path = "extract.rs"]
 pub mod extract;
-#[path = "fetch_json.rs"]
-pub mod fetch_json;
 #[path = "fs_at.rs"]
 pub mod fs_at;
 #[path = "fs_json.rs"]
@@ -18,6 +16,8 @@ pub mod git_history;
 pub mod git_refs;
 #[path = "timer.rs"]
 pub mod timer;
+#[path = "http_fetch.rs"]
+pub mod http_fetch;
 
 use super::reconcile::{application_values, IService};
 use crate::_6_eval::kernel::kernel_ref;
@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 
 pub use doc_layout::DocLayout;
 pub use extract::Extract;
-pub use fetch_json::FetchJson;
+pub use http_fetch::HttpFetch;
 pub use fs_at::FsAt;
 pub use fs_json::FsJson;
 pub use fs_watch::FsWatch;
@@ -97,7 +97,74 @@ pub(crate) fn take_wake() -> std::sync::mpsc::Receiver<()> {
     receiver
 }
 
-/// A companion relation the executor writes (`fetch_json_error`) must be
+/// The bytes behind blob handles: response and request bodies too large or
+/// too binary to live in a row. One map per process, keyed by blake3 hex.
+static BLOBS: LazyLock<Mutex<HashMap<String, bytes::Bytes>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// A body column value: text, or the blake3 handle of bytes in the blob map.
+#[derive(Clone)]
+pub(crate) enum HttpBody {
+    Text(String),
+    Blob(String),
+}
+
+/// The stored bytes behind a handle, if any.
+pub(crate) fn blob_bytes(handle: &str) -> Option<bytes::Bytes> {
+    BLOBS.lock().get(handle).cloned()
+}
+
+/// The lowercased media type of a `Content-Type` header value, without
+/// parameters; empty when the header is absent.
+pub(crate) fn media_type(content_type: Option<&str>) -> String {
+    content_type
+        .unwrap_or_default()
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+}
+
+/// Media types whose bytes read back as a string column value.
+fn is_text_media(media: &str) -> bool {
+    media.starts_with("text/")
+        || media.contains("json")
+        || media.contains("xml")
+        || media.contains("javascript")
+        || media.contains("x-www-form-urlencoded")
+}
+
+/// Text media keep their bytes as a string; anything else is stored once and
+/// answered as its handle.
+pub(crate) fn classify_body(media: &str, bytes: &[u8]) -> HttpBody {
+    if is_text_media(media) {
+        return HttpBody::Text(String::from_utf8_lossy(bytes).into_owned());
+    }
+    let handle = blake3::hash(bytes).to_hex().to_string();
+    BLOBS
+        .lock()
+        .insert(handle.clone(), bytes::Bytes::copy_from_slice(bytes));
+    HttpBody::Blob(handle)
+}
+
+/// The request bytes a body column value stands for.
+pub(crate) fn body_bytes(body: &HttpBody) -> bytes::Bytes {
+    match body {
+        HttpBody::Text(text) => bytes::Bytes::from(text.clone()),
+        HttpBody::Blob(handle) => blob_bytes(handle).unwrap_or_default(),
+    }
+}
+
+/// The row cell of a body column value; both spellings are strings.
+pub(crate) fn body_cell(u: &Universe, body: &HttpBody) -> TermId {
+    match body {
+        HttpBody::Text(text) => u.string(text),
+        HttpBody::Blob(handle) => u.string(handle),
+    }
+}
+
+/// A companion relation the executor writes (`fs_at_error`) must be
 /// declared, so a missing one is a diagnostic at construction.
 pub fn executors_for(
     u: &mut Universe,
@@ -143,18 +210,10 @@ fn executors_for_mode(
                 Some(rel) => executors.push(Box::new(DocLayout::new(*rel))),
                 None => missing(u, "served_relation_unknown", name),
             },
-            fetch_json::RELATION => {
-                match (
-                    names.get(fetch_json::RELATION),
-                    names.get(fetch_json::ERROR),
-                ) {
-                    (Some(rel), Some(error)) => {
-                        executors.push(Box::new(FetchJson::new(*rel, *error)))
-                    }
-                    (None, _) => missing(u, "served_relation_unknown", name),
-                    (_, None) => missing(u, "executor_relation_unknown", fetch_json::ERROR),
-                }
-            }
+            http_fetch::RELATION => match names.get(http_fetch::RELATION) {
+                Some(rel) => executors.push(Box::new(HttpFetch::new(*rel))),
+                None => missing(u, "served_relation_unknown", name),
+            },
             fs_json::RELATION => {
                 match (
                     names.get(fs_json::RELATION),
@@ -209,7 +268,7 @@ fn executors_for_mode(
 pub const ROSTER: [&str; 9] = [
     doc_layout::RELATION,
     timer::RELATION,
-    fetch_json::RELATION,
+    http_fetch::RELATION,
     fs_json::RELATION,
     fs_watch::RELATION,
     git_refs::RELATION,
