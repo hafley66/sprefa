@@ -968,7 +968,11 @@ fn run_cli(
             Ok(closure) if closure.diagnostics.is_empty() => ExitCode::SUCCESS,
             Ok(_) => ExitCode::from(1),
             Err(diagnostic) => {
-                tracing::error!(phase = "run", error = ?diagnostic);
+                tracing::error!(
+                    phase = "run",
+                    error_phase = diagnostic.phase,
+                    error = %u.display(diagnostic.payload)
+                );
                 ExitCode::from(1)
             }
         };
