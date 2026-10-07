@@ -5,8 +5,7 @@ use super::text_at;
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::json::{rows_from_json, Json};
 use crate::_6_eval::{Row, TermId, Universe};
-use crate::_9_runtime::reconcile::{Cadence, IExecutor};
-use std::time::Duration;
+use crate::_9_runtime::reconcile::{Cadence, IService};
 
 pub const RELATION: &str = "fs.json";
 pub const ERROR: &str = "fs.json_error";
@@ -23,6 +22,8 @@ pub struct FsJson {
     error: TermId,
     colon: TermId,
     none: TermId,
+    /// Documents read inside `call`, drained by `poll`.
+    done: Vec<Row>,
 }
 
 impl FsJson {
@@ -32,6 +33,7 @@ impl FsJson {
             error,
             colon,
             none,
+            done: Vec::new(),
         }
     }
 }
@@ -47,7 +49,7 @@ fn read(path: &str) -> Result<Json, String> {
     serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))
 }
 
-impl IExecutor for FsJson {
+impl IService for FsJson {
     fn relation(&self) -> &str {
         RELATION
     }
@@ -56,8 +58,7 @@ impl IExecutor for FsJson {
         Cadence::Once
     }
 
-    fn answer(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) -> Vec<Row> {
-        let mut rows = Vec::new();
+    fn call(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) {
         for &application in pending {
             let Some((path, path_text)) = text_at(u, application, 0) else {
                 continue;
@@ -71,26 +72,25 @@ impl IExecutor for FsJson {
                     let (root, members) =
                         rows_from_json(u, self.colon, self.none, identity, &document);
                     tracing::info!(target: "dl8::fs_json", path = %path_text, edges = members.len());
-                    rows.push(Row {
+                    self.done.push(Row {
                         rel: self.relation,
                         args: vec![path_cell, root],
                     });
-                    rows.extend(members);
+                    self.done.extend(members);
                 }
                 Err(failure) => {
                     let failure = u.string(&failure);
-                    rows.push(Row {
+                    self.done.push(Row {
                         rel: self.error,
                         args: vec![path_cell, u.compound("const", vec![failure])],
                     });
                 }
             }
         }
-        rows
     }
 
-    fn poll(&mut self, _u: &mut Universe, _timeout: Duration) -> Vec<Row> {
-        Vec::new()
+    fn poll(&mut self, _u: &mut Universe) -> Vec<Row> {
+        std::mem::take(&mut self.done)
     }
 
     fn armed(&self) -> bool {

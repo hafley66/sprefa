@@ -4,8 +4,7 @@
 use super::{message, text_at};
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::{Row, TermId, Universe};
-use crate::_9_runtime::reconcile::{Cadence, IExecutor};
-use std::time::Duration;
+use crate::_9_runtime::reconcile::{Cadence, IService};
 
 pub const RELATION: &str = "fs.at";
 pub const ERROR: &str = "fs.at_error";
@@ -13,11 +12,17 @@ pub const ERROR: &str = "fs.at_error";
 pub struct FsAt {
     relation: TermId,
     error: TermId,
+    /// Files answered inside `call`, drained by `poll`.
+    done: Vec<Row>,
 }
 
 impl FsAt {
     pub fn new(relation: TermId, error: TermId) -> FsAt {
-        FsAt { relation, error }
+        FsAt {
+            relation,
+            error,
+            done: Vec::new(),
+        }
     }
 }
 
@@ -43,7 +48,7 @@ fn files_at(root: &str, revision: &str) -> Result<Vec<(String, String)>, String>
         .collect()
 }
 
-impl IExecutor for FsAt {
+impl IService for FsAt {
     fn relation(&self) -> &str {
         RELATION
     }
@@ -52,8 +57,7 @@ impl IExecutor for FsAt {
         Cadence::Once
     }
 
-    fn answer(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) -> Vec<Row> {
-        let mut rows = Vec::new();
+    fn call(&mut self, u: &mut Universe, _rows: &Store, pending: &[TermId]) {
         for &application in pending {
             let (Some((root, root_text)), Some((sha, sha_text))) =
                 (text_at(u, application, 0), text_at(u, application, 1))
@@ -68,7 +72,7 @@ impl IExecutor for FsAt {
                     for (path, blob) in files {
                         let path = u.string(&path);
                         let blob = u.string(&blob);
-                        rows.push(Row {
+                        self.done.push(Row {
                             rel: self.relation,
                             args: vec![
                                 root_cell,
@@ -81,18 +85,17 @@ impl IExecutor for FsAt {
                 }
                 Err(failure) => {
                     let message = u.string(&failure);
-                    rows.push(Row {
+                    self.done.push(Row {
                         rel: self.error,
                         args: vec![root_cell, sha_cell, u.compound("const", vec![message])],
                     });
                 }
             }
         }
-        rows
     }
 
-    fn poll(&mut self, _u: &mut Universe, _timeout: Duration) -> Vec<Row> {
-        Vec::new()
+    fn poll(&mut self, _u: &mut Universe) -> Vec<Row> {
+        std::mem::take(&mut self.done)
     }
 
     fn armed(&self) -> bool {

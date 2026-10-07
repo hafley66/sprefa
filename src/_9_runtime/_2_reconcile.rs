@@ -17,26 +17,33 @@ pub enum Cadence {
     Continuing,
 }
 
-/// One executor answers the `effect` rows of one served relation.
-pub trait IExecutor {
+/// One service answers the `effect` rows of one served relation.
+pub trait IService {
     fn relation(&self) -> &str;
     fn cadence(&self) -> Cadence;
-    /// Applications this executor has not seen; returns rows to insert, possibly
-    /// for another relation (`fetch_json_error`). `rows` is the closure so far.
-    fn answer(&mut self, u: &mut Universe, rows: &Store, pending: &[TermId]) -> Vec<Row>;
-    /// Rows that arrived on the executor's own clock. Blocks up to `timeout`
-    /// when nothing has arrived; `Duration::ZERO` never blocks.
-    fn poll(&mut self, u: &mut Universe, timeout: Duration) -> Vec<Row>;
-    /// A Continuing executor with at least one live clock.
+    /// Starts work for the applications this service has not seen. A
+    /// synchronous service finishes here and buffers its rows; an asynchronous
+    /// one spawns tasks holding plain data on the shared runtime. A service
+    /// that watches the store (`http.serve` reads `http.response` rows) also
+    /// sees it here: the answering loop calls with an empty `pending` once per
+    /// tick.
+    fn call(&mut self, u: &mut Universe, rows: &Store, pending: &[TermId]);
+    /// Buffered and task-finished rows, drained without blocking. Terms are
+    /// minted here, on the tick thread, so `Universe` never crosses threads.
+    fn poll(&mut self, u: &mut Universe) -> Vec<Row>;
+    /// Tasks started by `call` and not yet drained.
+    fn in_flight(&self) -> usize {
+        0
+    }
+    /// A Continuing service with at least one live clock.
     fn armed(&self) -> bool;
-    /// Signed replacements from an executor's clock. Insert-only executors
-    /// retain their existing poll implementation.
+    /// Signed rows from a Continuing service's clock, retractions included.
     fn poll_signed(
         &mut self,
         u: &mut Universe,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Vec<crate::_6_eval::ir_eval::SignedRow> {
-        self.poll(u, timeout)
+        self.poll(u)
             .into_iter()
             .map(|row| crate::_6_eval::ir_eval::SignedRow { row, weight: 1 })
             .collect()
@@ -48,6 +55,13 @@ pub trait IExecutor {
 /// How long one idle wait lasts before the loop polls the next armed executor.
 const IDLE_SLICE: Duration = Duration::from_millis(50);
 
+/// The settle loop waits this long between drains before rechecking.
+const SETTLE_SLICE: Duration = Duration::from_millis(50);
+
+/// The settle loop's overall cap. Every request already caps at its own
+/// 10-second timeout; this guards a task that never signals at all.
+const SETTLE_BUDGET: Duration = Duration::from_secs(30);
+
 pub struct Reconciled {
     pub ticks: usize,
     pub closure: Closure,
@@ -56,11 +70,13 @@ pub struct Reconciled {
 /// The one answer step both loops take: new `effect` rows in, executor rows
 /// out. The tick loop and the comptime round loop each hold one.
 pub struct Answerer {
-    executors: Vec<(TermId, Box<dyn IExecutor>)>,
+    executors: Vec<(TermId, Box<dyn IService>)>,
     effect: TermId,
     /// `(Relation, Application)` pairs already handed out. The comptime store is
     /// rebuilt every round, so an index into the effect table cannot be kept.
     seen: HashSet<(TermId, TermId)>,
+    /// Completed-task signals from the shared runtime; `wait` blocks on it.
+    wake: std::sync::mpsc::Receiver<()>,
 }
 
 impl Answerer {
@@ -69,7 +85,7 @@ impl Answerer {
     pub fn new(
         u: &mut Universe,
         names: &HashMap<String, TermId>,
-        executors: Vec<Box<dyn IExecutor>>,
+        executors: Vec<Box<dyn IService>>,
     ) -> Result<Answerer, Vec<Diagnostic>> {
         let mut bound = Vec::with_capacity(executors.len());
         let mut diagnostics = Vec::new();
@@ -97,10 +113,11 @@ impl Answerer {
             executors: bound,
             effect: kernel_ref(u, "effect"),
             seen: HashSet::new(),
+            wake: super::executors::take_wake(),
         })
     }
 
-    /// Hands each new effect row to its relation's executor. A Once application
+    /// Hands each new effect row to its relation's service. A Once application
     /// whose data row already exists (a reloaded db) is answered. Returns the
     /// rows to insert and the number of applications handed out.
     pub fn answer(&mut self, u: &mut Universe, rows: &Store) -> (Vec<Row>, usize) {
@@ -114,7 +131,7 @@ impl Answerer {
         self.answer_requests(u, rows, requests)
     }
 
-    /// Hands signed-IR request additions to executors. Request removals are
+    /// Hands signed-IR request additions to services. Request removals are
     /// handled by the IR host because it owns the answer rows for each key.
     pub fn answer_requests(
         &mut self,
@@ -137,13 +154,64 @@ impl Answerer {
             pending[slot].push(application);
         }
         let asked = pending.iter().map(Vec::len).sum();
-        let mut answers = Vec::new();
-        for ((_, executor), applications) in self.executors.iter_mut().zip(pending) {
+        for ((_, service), applications) in self.executors.iter_mut().zip(pending) {
             if !applications.is_empty() {
-                answers.extend(executor.answer(u, rows, &applications));
+                service.call(u, rows, &applications);
             }
         }
+        // Every service sees the store once per handout: `http.serve` hands
+        // matching `http.response` rows to their connection tasks here.
+        for (_, service) in &mut self.executors {
+            service.call(u, rows, &[]);
+        }
+        let mut answers = self.settle(u);
+        answers.extend(self.drain(u));
         (answers, asked)
+    }
+
+    /// Waits for the Once services' tasks while their answers keep landing.
+    fn settle(&mut self, u: &mut Universe) -> Vec<Row> {
+        let mut answers = Vec::new();
+        let deadline = std::time::Instant::now() + SETTLE_BUDGET;
+        while self.in_flight() > 0 && std::time::Instant::now() < deadline {
+            match self.wake.recv_timeout(SETTLE_SLICE) {
+                Ok(()) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            answers.extend(self.drain(u));
+        }
+        if self.in_flight() > 0 {
+            tracing::warn!(
+                target: "dl8::reconcile",
+                in_flight = self.in_flight(),
+                "settle budget expired with work in flight"
+            );
+        }
+        answers
+    }
+
+    /// Tasks started by `call` and not yet drained.
+    pub fn in_flight(&self) -> usize {
+        self.executors
+            .iter()
+            .map(|(_, service)| service.in_flight())
+            .sum()
+    }
+
+    /// Blocks up to `timeout` for one runtime completion: the tick loop's
+    /// bounded wait instead of a spin while work is in flight.
+    pub fn wait(&self, timeout: Duration) {
+        let _ = self.wake.recv_timeout(timeout);
+    }
+
+    /// Rows every service has finished, drained without blocking.
+    fn drain(&mut self, u: &mut Universe) -> Vec<Row> {
+        let mut rows = Vec::new();
+        for (_, service) in &mut self.executors {
+            rows.extend(service.poll(u));
+        }
+        rows
     }
 
     pub fn cancel_request(&mut self, u: &Universe, relation: TermId, application: TermId) {
@@ -153,19 +221,27 @@ impl Answerer {
         }
     }
 
-    /// Poll one armed continuing executor for a bounded slice. The caller
-    /// applies all returned changes in one frontier.
+    /// Signed rows from the Continuing services' clocks: one bounded wait on
+    /// the runtime's completion signal, then a drain. The caller applies all
+    /// returned changes in one frontier.
     pub fn poll_signed(
         &mut self,
         u: &mut Universe,
         timeout: Duration,
     ) -> Vec<crate::_6_eval::ir_eval::SignedRow> {
-        let armed = self.executors.iter().filter(|(_, e)| e.armed()).count();
-        let slice = timeout / armed.max(1) as u32;
+        let mut changes = self.poll_continuing(u);
+        if !changes.is_empty() {
+            return changes;
+        }
+        let _ = self.wake.recv_timeout(timeout);
+        self.poll_continuing(u)
+    }
+
+    fn poll_continuing(&mut self, u: &mut Universe) -> Vec<crate::_6_eval::ir_eval::SignedRow> {
         let mut changes = Vec::new();
-        for (_, executor) in &mut self.executors {
-            if executor.cadence() == Cadence::Continuing {
-                changes.extend(executor.poll_signed(u, slice));
+        for (_, service) in &mut self.executors {
+            if service.cadence() == Cadence::Continuing {
+                changes.extend(service.poll_signed(u, Duration::ZERO));
             }
         }
         changes
@@ -207,7 +283,7 @@ impl Reconciler {
     pub fn new(
         u: &mut Universe,
         names: &HashMap<String, TermId>,
-        executors: Vec<Box<dyn IExecutor>>,
+        executors: Vec<Box<dyn IService>>,
     ) -> Result<Reconciler, Vec<Diagnostic>> {
         Ok(Reconciler {
             answerer: Answerer::new(u, names, executors)?,
@@ -229,9 +305,12 @@ impl Reconciler {
         let mut ticks = 0;
         while closure.diagnostics.is_empty() && ticks < max_ticks {
             let (mut answers, _) = self.answerer.answer(u, rows);
-            answers.extend(self.poll(u, Duration::ZERO));
+            answers.extend(self.poll(u));
             if answers.is_empty() && self.armed() {
-                answers = self.poll(u, IDLE_SLICE);
+                // One bounded wait for the next runtime completion instead
+                // of spinning while work is in flight.
+                self.answerer.wait(IDLE_SLICE);
+                answers = self.poll(u);
             }
             let mut new = 0;
             for row in answers {
@@ -329,14 +408,11 @@ impl Reconciler {
         self.answerer.executors.iter().any(|(_, e)| e.armed())
     }
 
-    fn poll(&mut self, u: &mut Universe, timeout: Duration) -> Vec<Row> {
-        let executors = &mut self.answerer.executors;
-        let armed = executors.iter().filter(|(_, e)| e.armed()).count();
-        let slice = timeout / armed.max(1) as u32;
+    fn poll(&mut self, u: &mut Universe) -> Vec<Row> {
         let mut rows = Vec::new();
-        for (_, executor) in executors.iter_mut() {
-            if executor.cadence() == Cadence::Continuing {
-                rows.extend(executor.poll(u, slice));
+        for (_, service) in &mut self.answerer.executors {
+            if service.cadence() == Cadence::Continuing {
+                rows.extend(service.poll(u));
             }
         }
         rows
