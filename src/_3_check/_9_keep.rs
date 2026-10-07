@@ -16,7 +16,7 @@ use super::Stop;
 use crate::_2_lower::index::{edge_parts, Edge};
 use crate::_2_lower::Lowered;
 use crate::_6_eval::term::{TermId, Universe};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -54,24 +54,26 @@ impl Key {
 
 #[derive(Default)]
 pub struct CheckKeep {
-    entries: RefCell<Vec<(Key, Arc<UnitChecked>)>>,
+    /// Each entry with the last `generation` a compile read or wrote it.
+    entries: RefCell<Vec<(Key, Arc<UnitChecked>, Cell<u64>)>>,
     /// Resolved rules by raw rule row: every entry holding the row, with its
     /// resolution slot. The first candidate whose consult notes still hold wins.
     by_rule: RefCell<HashMap<TermId, Vec<(Arc<UnitChecked>, usize)>>>,
+    generation: Cell<u64>,
 }
 
 impl CheckKeep {
     fn hit(&self, key: &Key) -> Option<Arc<UnitChecked>> {
-        self.entries
-            .borrow()
-            .iter()
-            .find(|(k, _)| *k == *key)
-            .map(|(_, unit)| unit.clone())
+        let entries = self.entries.borrow();
+        let (_, unit, used) = entries.iter().find(|(k, _, _)| *k == *key)?;
+        used.set(self.generation.get());
+        Some(unit.clone())
     }
 
     fn insert(&self, key: Key, unit: UnitChecked) {
         let mut entries = self.entries.borrow_mut();
-        if entries.iter().any(|(k, _)| *k == key) {
+        if let Some((_, _, used)) = entries.iter().find(|(k, _, _)| *k == key) {
+            used.set(self.generation.get());
             return;
         }
         let unit = Arc::new(unit);
@@ -79,7 +81,33 @@ impl CheckKeep {
         for (slot, row) in unit.resolved.rule_rows.iter().enumerate() {
             by_rule.entry(*row).or_default().push((unit.clone(), slot));
         }
-        entries.push((key, unit));
+        entries.push((key, unit, Cell::new(self.generation.get())));
+    }
+
+    /// Marks the entry holding `unit` as read by this compile.
+    fn touch(&self, unit: &Arc<UnitChecked>) {
+        let generation = self.generation.get();
+        for (_, kept, used) in self.entries.borrow().iter() {
+            if Arc::ptr_eq(kept, unit) {
+                used.set(generation);
+            }
+        }
+    }
+
+    /// Ends one compile: drops every entry this compile did not read or write,
+    /// and every rule candidate pointing into a dropped entry.
+    pub fn sweep(&self) {
+        let generation = self.generation.get();
+        let mut entries = self.entries.borrow_mut();
+        entries.retain(|(_, _, used)| used.get() == generation);
+        let live: HashSet<*const UnitChecked> =
+            entries.iter().map(|(_, unit, _)| Arc::as_ptr(unit)).collect();
+        let mut by_rule = self.by_rule.borrow_mut();
+        by_rule.retain(|_, candidates| {
+            candidates.retain(|(unit, _)| live.contains(&Arc::as_ptr(unit)));
+            !candidates.is_empty()
+        });
+        self.generation.set(generation + 1);
     }
 
     /// A kept resolution of `row` whose consult notes hold against `graph`
@@ -92,12 +120,14 @@ impl CheckKeep {
         arities: &HashMap<TermId, i64>,
     ) -> Option<(Arc<UnitChecked>, usize)> {
         let candidates = self.by_rule.borrow().get(&row).cloned().unwrap_or_default();
-        candidates.into_iter().find(|(source, slot)| {
+        let found = candidates.into_iter().find(|(source, slot)| {
             source.resolved.rule_reads[*slot].iter().all(|note| match note {
                 Note::Owner(owner) => owner_unchanged(&source.resolved.graph, graph, *owner),
                 Note::Arity(target, arity) => arities.get(target) == Some(arity),
             })
-        })
+        })?;
+        self.touch(&found.0);
+        Some(found)
     }
 }
 

@@ -150,7 +150,10 @@ pub fn compile_in(
     path: &Path,
     fx: &mut dyn FnMut(Event),
 ) -> Result<Compile, Stop> {
-    compile_with(u, Some(one), path, fx)
+    let compiled = compile_with(u, Some(&mut *one), path, fx);
+    one.lower.sweep();
+    one.check.sweep();
+    compiled
 }
 
 fn compile_with(
@@ -229,7 +232,10 @@ pub fn compile_project_in(
     streams: &[&Path],
     fx: &mut dyn FnMut(Event),
 ) -> Result<Compile, Stop> {
-    compile_project_with(u, Some(one), root, paths, streams, fx)
+    let compiled = compile_project_with(u, Some(&mut *one), root, paths, streams, fx);
+    one.lower.sweep();
+    one.check.sweep();
+    compiled
 }
 
 fn compile_project_with(

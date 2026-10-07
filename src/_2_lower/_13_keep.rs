@@ -7,7 +7,7 @@
 use super::api::unit_parts;
 use super::cx::CallPolicy;
 use crate::_6_eval::term::{TermId, Universe};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 /// The kept lowering of one unit under one input key.
 #[derive(Clone)]
@@ -27,6 +27,8 @@ pub struct UnitLowered {
 struct Entry {
     key: Key,
     lowered: UnitLowered,
+    /// The last `generation` a compile read or wrote this entry.
+    used: Cell<u64>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -42,6 +44,7 @@ struct Key {
 #[derive(Default)]
 pub struct LowerKeep {
     entries: RefCell<Vec<Entry>>,
+    generation: Cell<u64>,
 }
 
 impl LowerKeep {
@@ -73,6 +76,7 @@ impl LowerKeep {
         let entries = self.entries.borrow();
         let sought = Self::key(u, policy, unit, environment, imports);
         if let Some(entry) = entries.iter().find(|entry| entry.key == sought) {
+            entry.used.set(self.generation.get());
             let owner = u
                 .args::<2>(entry.lowered.basement, "module_basement")
                 .map(|parts| parts[0])
@@ -110,9 +114,21 @@ impl LowerKeep {
     ) {
         let key = Self::key(u, policy, unit, environment, imports);
         let mut entries = self.entries.borrow_mut();
-        if !entries.iter().any(|entry| entry.key == key) {
-            entries.push(Entry { key, lowered });
+        match entries.iter().position(|entry| entry.key == key) {
+            Some(slot) => entries[slot].used.set(self.generation.get()),
+            None => entries.push(Entry {
+                key,
+                lowered,
+                used: Cell::new(self.generation.get()),
+            }),
         }
+    }
+
+    /// Ends one compile: drops every entry this compile did not read or write.
+    pub fn sweep(&self) {
+        let generation = self.generation.get();
+        self.entries.borrow_mut().retain(|entry| entry.used.get() == generation);
+        self.generation.set(generation + 1);
     }
 }
 
