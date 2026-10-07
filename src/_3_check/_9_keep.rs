@@ -296,6 +296,8 @@ fn delta(
         &origins,
         kept.seed_rows.len() as i64,
     )?;
+    diagnostics.extend(edge_diagnostics);
+    diagnostics.extend(seed_diagnostics);
     // Rules position by position: a kept or cached resolution whose consult
     // notes still hold is reused, everything else resolves alone at its own
     // index. Stratification reads the union in emit_checked.
