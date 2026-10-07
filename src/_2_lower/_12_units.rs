@@ -90,6 +90,7 @@ pub fn lower_units_flat(
         lower_one(u, policy, *unit, environment, imports, &mut out)?;
         if let Some(keep) = keep {
             keep.insert(
+                u,
                 policy,
                 *unit,
                 environment,
@@ -149,6 +150,7 @@ pub fn lower_units_with_exporter(
                 // :127, :199, :222. The exporter's own basement is the whole result.
                 if let Some(keep) = keep {
                     keep.insert(
+                        u,
                         policy,
                         exporter,
                         exporter_environment,
@@ -167,6 +169,7 @@ pub fn lower_units_with_exporter(
             let environment = module_expression_environment(u, exporter_owner, exporter_basement);
             if let Some(keep) = keep {
                 keep.insert(
+                    u,
                     policy,
                     exporter,
                     exporter_environment,
