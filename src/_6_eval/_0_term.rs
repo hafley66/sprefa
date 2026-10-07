@@ -270,9 +270,9 @@ impl Universe {
     }
 
     pub fn get(&self, id: TermId) -> &Term {
-        self.terms[id.0 as usize]
-            .as_ref()
-            .expect("live term slot")
+        self.terms[id.0 as usize].as_ref().unwrap_or_else(|| {
+            panic!("get on a freed TermId({})", id.0)
+        })
     }
 
     /// The slot holding `t`, if that exact term was interned.
@@ -300,6 +300,53 @@ impl Universe {
             .iter()
             .enumerate()
             .filter_map(|(index, slot)| slot.as_ref().map(|term| (TermId(index as u32), term)))
+    }
+
+    /// Marks every slot below `pinned_below` and every root, transitively
+    /// every child of a marked compound, then frees every live slot no mark
+    /// reached: its index entry is removed and the slot becomes `None`.
+    /// Slots are never reused, so a freed `TermId` stays freed and `intern`
+    /// always pushes a new slot. Returns the number freed.
+    pub fn sweep(&mut self, pinned_below: u32, roots: impl IntoIterator<Item = TermId>) -> usize {
+        let mut marked = vec![false; self.terms.len()];
+        let mut worklist: Vec<u32> = Vec::new();
+        let mut mark = |id: u32, marked: &mut Vec<bool>, worklist: &mut Vec<u32>| {
+            let index = id as usize;
+            if index < marked.len() && !marked[index] {
+                marked[index] = true;
+                worklist.push(id);
+            }
+        };
+        for id in 0..pinned_below.min(self.terms.len() as u32) {
+            mark(id, &mut marked, &mut worklist);
+        }
+        for root in roots {
+            mark(root.0, &mut marked, &mut worklist);
+        }
+        while let Some(id) = worklist.pop() {
+            if let Term::Compound(_, args) =
+                self.terms[id as usize].as_ref().expect("live term slot")
+            {
+                for &arg in args {
+                    mark(arg.0, &mut marked, &mut worklist);
+                }
+            }
+        }
+        let freed = self
+            .terms
+            .iter()
+            .zip(&marked)
+            .filter(|(slot, marked)| slot.is_some() && !**marked)
+            .count();
+        if freed > 0 {
+            for (index, slot) in self.terms.iter_mut().enumerate() {
+                if slot.is_some() && !marked[index] {
+                    *slot = None;
+                }
+            }
+            self.term_index.retain(|id| self.terms[*id as usize].is_some());
+        }
+        freed
     }
 
     pub fn int(&mut self, n: i64) -> TermId {
@@ -551,5 +598,70 @@ impl fmt::Display for TermDisplay<'_> {
                 write!(f, ")")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sweep_from_a_root_frees_only_unreached_terms() {
+        let mut u = Universe::new();
+        let a = u.atom("a");
+        let b = u.atom("b");
+        let g = u.compound("g", vec![b]);
+        let f = u.compound("f", vec![a, g]);
+        let c = u.atom("c");
+        let h = u.compound("h", vec![c]);
+
+        assert_eq!(u.sweep(0, [f]), 2);
+
+        for kept in [f, a, g, b] {
+            assert_eq!(
+                u.find(u.get(kept)),
+                Some(kept),
+                "TermId({}) should survive the sweep",
+                kept.0
+            );
+        }
+        let c_sym = u.sym("c");
+        let h_sym = u.sym("h");
+        assert_eq!(u.find(&Term::Atom(c_sym)), None);
+        assert_eq!(u.find(&Term::Compound(h_sym, vec![c])), None);
+    }
+
+    #[test]
+    fn a_freed_term_reinterns_at_a_new_id() {
+        let mut u = Universe::new();
+        let c = u.atom("c");
+        let h = u.compound("h", vec![c]);
+        assert_eq!(u.sweep(0, [c]), 1);
+
+        let h2 = u.compound("h", vec![c]);
+        assert_ne!(h2, h, "a freed term must re-intern at a new slot");
+        let h_sym = u.sym("h");
+        assert_eq!(u.find(&Term::Compound(h_sym, vec![c])), Some(h2));
+    }
+
+    #[test]
+    fn pinned_below_survives_without_roots() {
+        let mut u = Universe::new();
+        let a = u.atom("a");
+        let b = u.compound("b", vec![a]);
+        let pinned = u.len() as u32;
+        let c = u.atom("c");
+        let d_sym = u.sym("d");
+        u.compound("d", vec![c]);
+        let total = u.len();
+
+        let freed = u.sweep(pinned, []);
+        assert_eq!(freed, total - pinned as usize);
+
+        assert_eq!(u.find(u.get(a)), Some(a));
+        assert_eq!(u.find(u.get(b)), Some(b));
+        let c_sym = u.sym("c");
+        assert_eq!(u.find(&Term::Atom(c_sym)), None);
+        assert_eq!(u.find(&Term::Compound(d_sym, vec![c])), None);
     }
 }
