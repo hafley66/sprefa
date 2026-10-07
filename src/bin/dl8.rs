@@ -415,6 +415,17 @@ fn output_slice(
     program
 }
 
+/// A cell as a plain JSON value: the string or int a const-wrapped term
+/// carries. Anything else is its display.
+fn plain_value(u: &Universe, term: TermId) -> serde_json::Value {
+    let inner = u.unary(term, "const").unwrap_or(term);
+    match u.get(inner) {
+        Term::Str(text) => serde_json::json!(u.sym_str(*text)),
+        Term::Int(int) => serde_json::json!(int),
+        _ => serde_json::json!(u.display(term).to_string()),
+    }
+}
+
 fn eval_cli(path: &Path, serve: &[String], trace: bool, db: Option<&Path>) -> ExitCode {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -833,6 +844,18 @@ fn run_cli(
             }
         };
         let mut tick = 0usize;
+        // A served `lsp.stdin` owns stdout: every settle writes the signed
+        // `lsp.hover` and `lsp.diagnostic` rows as JSON lines, then one
+        // `settled` line per inserted `lsp.hover_at` id, and nothing else.
+        // The rows are tracked per settle, so the closure diff is the signed
+        // delta.
+        let echo_rels: Vec<(&str, TermId)> = ["lsp.hover", "lsp.diagnostic"]
+            .iter()
+            .filter_map(|name| names.get(*name).map(|rel| (*name, *rel)))
+            .collect();
+        let hover_at = names.get("lsp.hover_at").copied();
+        let mut previous: Vec<(String, serde_json::Value)> = Vec::new();
+        let mut previous_hovers: Vec<serde_json::Value> = Vec::new();
         let public_names: std::collections::HashMap<TermId, String> = names
             .iter()
             .map(|(name, relation)| (*relation, name.clone()))
@@ -841,6 +864,65 @@ fn run_cli(
                              closure: &dl8::_6_eval::evaluate::Closure,
                              deltas: &[dl8::_6_eval::ir_eval::NamedDelta],
                              counters: &ivm_engine::Counters| {
+            if stdin_owned {
+                // Signed deltas of `lsp.hover` and `lsp.diagnostic`: the
+                // closure diff against the previous settle is the delta.
+                let mut current: Vec<(String, serde_json::Value, Vec<serde_json::Value>)> =
+                    Vec::new();
+                for (name, rel) in &echo_rels {
+                    for row in closure.rows.iter().filter(|row| row.rel == *rel) {
+                        let args: Vec<serde_json::Value> =
+                            row.args.iter().map(|term| plain_value(u, *term)).collect();
+                        current.push((name.to_string(), serde_json::json!(args), args));
+                    }
+                }
+                for (name, row, _) in &current {
+                    match previous
+                        .iter()
+                        .position(|(seen, seen_row)| seen == name && seen_row == row)
+                    {
+                        Some(index) => {
+                            previous.swap_remove(index);
+                        }
+                        None => {
+                            println!(
+                                "{{\"rel\":{},\"sign\":1,\"args\":{}}}",
+                                serde_json::to_string(name).unwrap(),
+                                serde_json::to_string(row).unwrap(),
+                            );
+                        }
+                    }
+                }
+                for (name, row) in &previous {
+                    println!(
+                        "{{\"rel\":{},\"sign\":-1,\"args\":{}}}",
+                        serde_json::to_string(name).unwrap(),
+                        serde_json::to_string(row).unwrap(),
+                    );
+                }
+                // One `settled` line per inserted `lsp.hover_at` id.
+                let mut hovers: Vec<serde_json::Value> = Vec::new();
+                if let Some(hover_at) = hover_at {
+                    for row in closure.rows.iter().filter(|row| row.rel == hover_at) {
+                        let args: Vec<serde_json::Value> =
+                            row.args.iter().map(|term| plain_value(u, *term)).collect();
+                        hovers.push(serde_json::json!(args));
+                    }
+                }
+                for row in &hovers {
+                    if !previous_hovers.contains(row) {
+                        println!("{{\"rel\":\"settled\",\"args\":[{}]}}", row[0]);
+                    }
+                }
+                previous_hovers = hovers;
+                previous = current
+                    .into_iter()
+                    .map(|(name, row, _)| (name, row))
+                    .collect();
+                let _ = std::io::stdout().flush();
+                tick += 1;
+                return;
+            }
             let mut out = closure_to_json(u, &closure.rows, &closure.diagnostics);
             out["ticks"] = serde_json::json!(tick);
             out["deltas"] = serde_json::json!(deltas.iter().map(|delta| {
@@ -886,7 +968,11 @@ fn run_cli(
             Ok(closure) if closure.diagnostics.is_empty() => ExitCode::SUCCESS,
             Ok(_) => ExitCode::from(1),
             Err(diagnostic) => {
-                tracing::error!(phase = "run", error = ?diagnostic);
+                tracing::error!(
+                    phase = "run",
+                    error_phase = diagnostic.phase,
+                    error = %u.display(diagnostic.payload)
+                );
                 ExitCode::from(1)
             }
         };

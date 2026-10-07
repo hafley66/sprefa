@@ -2253,11 +2253,10 @@ fn run_session<E: Engine>(
                     .sources
                     .get(&(change.row.rel.0, change.row.args.len()))
                 else {
-                    return Err(ivm_engine::EngineError::new(
-                        ivm_engine::Stage::Settle,
-                        None,
-                        ivm_engine::ErrorKind::Unsupported("live relation is not a source"),
-                    ));
+                    // A product the installed program does not read has no
+                    // source to land on; the line is accepted and dropped.
+                    tracing::debug!(target: "dl8::ir", rel = ?change.row.rel, "live line for an unread product");
+                    continue;
                 };
                 let cells: Vec<_> = change.row.args.iter().map(|term| mapped[term]).collect();
                 if let Some(served) = lowered.served.iter().find(|served| {
@@ -2743,6 +2742,25 @@ fn run_interpreted(
                 continue;
             }
             event_settles += 1;
+            // A product the installed program does not read has no source to
+            // land on; such lines are accepted and dropped.
+            let frontier: Vec<SignedRow> = frontier
+                .into_iter()
+                .filter(|change| {
+                    let read = plan
+                        .keys
+                        .contains(&(change.row.rel.0, change.row.args.len()));
+                    if !read {
+                        tracing::debug!(target: "dl8::ir", rel = change.row.rel.0, "live line for an unread product");
+                    }
+                    read
+                })
+                .collect();
+            if frontier.is_empty() {
+                let closure = interp.closure(u)?;
+                (live.on_settle)(u, &closure, &[], &interp.counters());
+                continue;
+            }
             interp.change(plan, &frontier, "live relation is not a source")?;
             let closure = interp.closure(u)?;
             (live.on_settle)(u, &closure, &[], &interp.counters());

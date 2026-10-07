@@ -1,10 +1,11 @@
 //! `(lsp.stdin 1)`: a Continuing reader over the process stdin. tiny-serve
 //! writes one JSON line per signed row,
 //! `{"rel":"lsp.buffer","sign":1,"args":[...]}`, and the same line with sign
-//! -1 to retract. Every line whose relation is `lsp.buffer` lands as a
-//! `SignedRow` on the buffer product with weight = sign; other relations are
-//! warned and skipped. A goal on `(lsp.stdin 1)` arms the reader; stdin EOF
-//! disarms it, so the live loop settles instead of waiting.
+//! -1 to retract. Every line whose relation is `lsp.buffer` or
+//! `lsp.hover_at` lands as a `SignedRow` on that product with weight =
+//! sign; other relations are warned and skipped. A goal on `(lsp.stdin 1)`
+//! arms the reader; stdin EOF disarms it, so the live loop settles instead
+//! of waiting.
 
 use crate::_6_eval::evaluate::Store;
 use crate::_6_eval::ir_eval::SignedRow;
@@ -16,9 +17,18 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 pub const RELATION: &str = "lsp.stdin";
 pub const BUFFER: &str = "lsp.buffer";
+pub const HOVER_AT: &str = "lsp.hover_at";
+
+/// The product a parsed line lands on.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum LineRel {
+    Buffer,
+    HoverAt,
+}
 
 /// One parsed line: plain data only, terms are minted on the tick thread.
 struct Line {
+    rel: LineRel,
     /// 1 adds, -1 retracts, 0 marks stdin EOF.
     sign: i64,
     args: Vec<Cell>,
@@ -33,6 +43,7 @@ enum Cell {
 pub struct LspStdin {
     relation: TermId,
     buffer: TermId,
+    hover_at: TermId,
     /// Parsed lines the reader task has handed over, in arrival order.
     lines: Receiver<Line>,
     feed: Option<Sender<Line>>,
@@ -43,11 +54,12 @@ pub struct LspStdin {
 }
 
 impl LspStdin {
-    pub fn new(relation: TermId, buffer: TermId) -> LspStdin {
+    pub fn new(relation: TermId, buffer: TermId, hover_at: TermId) -> LspStdin {
         let (feed, lines) = channel();
         LspStdin {
             relation,
             buffer,
+            hover_at,
             lines,
             feed: Some(feed),
             armed: false,
@@ -79,6 +91,7 @@ impl LspStdin {
                 }
             }
             let _ = feed.send(Line {
+                rel: LineRel::Buffer,
                 sign: 0,
                 args: vec![],
             });
@@ -95,6 +108,7 @@ fn parse_line(line: &str) -> Line {
     let skip = |reason: &str| {
         tracing::warn!(target: "dl8::lsp_stdin", line = %line, reason, "skipping stdin line");
         Line {
+            rel: LineRel::Buffer,
             sign: 0,
             args: vec![],
         }
@@ -106,9 +120,11 @@ fn parse_line(line: &str) -> Line {
     let Some(rel) = value.get("rel").and_then(|value| value.as_str()) else {
         return skip("missing rel");
     };
-    if rel != BUFFER {
-        return skip("unknown rel");
-    }
+    let rel = match rel {
+        BUFFER => LineRel::Buffer,
+        HOVER_AT => LineRel::HoverAt,
+        _ => return skip("unknown rel"),
+    };
     let Some(sign) = value.get("sign").and_then(|value| value.as_i64()) else {
         return skip("missing sign");
     };
@@ -129,9 +145,13 @@ fn parse_line(line: &str) -> Line {
         }
     }
     if cells.len() != 4 {
-        return skip("buffer takes four columns");
+        return skip("the product takes four columns");
     }
-    Line { sign, args: cells }
+    Line {
+        rel,
+        sign,
+        args: cells,
+    }
 }
 
 impl IService for LspStdin {
@@ -185,11 +205,12 @@ impl IService for LspStdin {
                 };
                 args.push(u.compound("const", vec![term]));
             }
+            let rel = match line.rel {
+                LineRel::Buffer => self.buffer,
+                LineRel::HoverAt => self.hover_at,
+            };
             changes.push(SignedRow {
-                row: Row {
-                    rel: self.buffer,
-                    args,
-                },
+                row: Row { rel, args },
                 weight: line.sign,
             });
         }

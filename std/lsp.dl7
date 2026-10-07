@@ -1,9 +1,11 @@
 ; `@std/lsp`: the editor seam. `stdin` is the served relation; a goal on
 ; `(lsp.stdin 1)` arms the reader. tiny-serve writes one JSON line per
 ; signed row, `{"rel":"lsp.buffer","sign":1,"args":[...]}` to add and the
-; same line with sign -1 to retract. Every `lsp.buffer` line lands as a
-; signed row on `buffer`; lines naming another relation are warned and
-; skipped.
+; same line with sign -1 to retract. Every `buffer` and `hover_at` line
+; lands as a signed row on its product; lines naming another relation are
+; warned and skipped. While `stdin` is served, every settle writes signed
+; `hover` and `diagnostic` rows back out as JSON lines, then one `settled`
+; line per inserted `hover_at` id.
 
 (: buffer
    (* (: uri str)
@@ -13,3 +15,22 @@
 
 (: stdin
    (* (: on int)))
+
+(: hover_at
+   (* (: id int)
+      (: uri str)
+      (: line int)
+      (: character int)))
+
+(: hover
+   (* (: id int)
+      (: markdown str)))
+
+(: diagnostic
+   (* (: uri str)
+      (: start_line int)
+      (: start_char int)
+      (: end_line int)
+      (: end_char int)
+      (: severity int)
+      (: message str)))

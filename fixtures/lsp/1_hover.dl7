@@ -1,0 +1,12 @@
+; One hover answer. A goal on `(lsp.stdin 1)` arms the stdin reader; every
+; hover_at row is answered with the same markdown, which tiny-serve reads
+; back as signed `lsp.hover` lines between settles.
+(lsp: (import "@std/lsp"))
+
+(: Armed (* (: on int)))
+
+(<- (Armed 1)
+    (lsp.stdin 1))
+
+(<- (lsp.hover ?Id "hello from dl8")
+    (lsp.hover_at ?Id ?Uri ?Line ?Character))

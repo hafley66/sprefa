@@ -285,12 +285,17 @@ fn executors_for_mode(
                     (_, _, None) => missing(u, "executor_relation_unknown", fs_json::NONE),
                 }
             }
-            lsp_stdin::RELATION => match names.get(lsp_stdin::BUFFER) {
-                Some(buffer) => match names.get(lsp_stdin::RELATION) {
-                    Some(rel) => executors.push(Box::new(LspStdin::new(*rel, *buffer))),
-                    None => missing(u, "served_relation_unknown", name),
-                },
-                None => missing(u, "executor_relation_unknown", lsp_stdin::BUFFER),
+            lsp_stdin::RELATION => match (
+                names.get(lsp_stdin::RELATION),
+                names.get(lsp_stdin::BUFFER),
+                names.get(lsp_stdin::HOVER_AT),
+            ) {
+                (Some(rel), Some(buffer), Some(hover_at)) => {
+                    executors.push(Box::new(LspStdin::new(*rel, *buffer, *hover_at)))
+                }
+                (None, _, _) => missing(u, "served_relation_unknown", name),
+                (_, None, _) => missing(u, "executor_relation_unknown", lsp_stdin::BUFFER),
+                (_, _, None) => missing(u, "executor_relation_unknown", lsp_stdin::HOVER_AT),
             },
             fs_watch::RELATION => match names.get(fs_watch::RELATION) {
                 Some(rel) => executors.push(Box::new(FsWatch::new(*rel))),
