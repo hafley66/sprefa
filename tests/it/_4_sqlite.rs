@@ -200,7 +200,7 @@ pub fn arena_round_trip_preserves_every_id() {
     let written = store.commit_arena(&u, Watermark::default()).unwrap();
     store.commit_tick().unwrap();
     drop(store);
-    assert_eq!(written.terms, u.terms.len());
+    assert_eq!(written.terms, u.len());
     assert_eq!(written.syms, u.syms.len());
 
     let mut back = Universe::new();
@@ -647,13 +647,13 @@ fn check(directory: &str, source: &Path, expected: &Value) -> Result<Receipt, Ve
         .map(|(name, _)| name.clone())
         .unwrap();
     let args = seed["args"].as_array().unwrap();
-    let before = arena.terms.len();
+    let before = arena.len();
     let cells: Vec<i64> = args
         .iter()
         .map(|arg| term_from_json(&mut arena, arg).unwrap().0 as i64)
         .collect();
     assert_eq!(
-        arena.terms.len(),
+        arena.len(),
         before,
         "{fixture}: seed cell missing from the arena"
     );

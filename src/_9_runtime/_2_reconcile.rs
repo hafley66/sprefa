@@ -514,7 +514,7 @@ fn tagged(u: &Universe, value: TermId) -> Vec<TermId> {
         .filter_map(|name| {
             let sym = u.syms.get_index_of(*name)?;
             let term = Term::Compound(crate::_6_eval::Sym(sym as u32), vec![value]);
-            u.terms.get_index_of(&term).map(|i| TermId(i as u32))
+            u.find(&term)
         })
         .collect()
 }

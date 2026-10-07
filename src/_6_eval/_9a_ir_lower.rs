@@ -2913,7 +2913,7 @@ pub fn lower_declared(
     }
     // Term indices reachable from the program, marked in `seen`; sorted before each read.
     let mut needed: Vec<u32> = Vec::new();
-    let mut seen = vec![false; u.terms.len()];
+    let mut seen = vec![false; u.len()];
     let mut todo = vec![none, empty, tuple, intern_rel, effect_rel, snapshot_rel];
     todo.extend(program.served.iter().copied());
     for seed in &program.seeds {
@@ -3024,7 +3024,7 @@ pub fn lower_declared(
     let dynamic_atom_base = 1;
     let existing_terms: Vec<_> = needed
         .iter()
-        .map(|index| (*index as usize, u.terms[*index as usize].clone()))
+        .map(|index| (*index as usize, u.get(TermId(*index)).clone()))
         .collect();
     for (index, term) in &existing_terms {
         let (name, args, raw) = match term {

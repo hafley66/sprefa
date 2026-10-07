@@ -711,7 +711,7 @@ impl IRowStore for SqliteRowStore {
     fn commit_arena(&mut self, u: &Universe, from: Watermark) -> Result<Watermark, StoreError> {
         let to = Watermark {
             syms: u.syms.len(),
-            terms: u.terms.len(),
+            terms: u.len(),
         };
         if to == from {
             return Ok(to);
@@ -730,7 +730,7 @@ impl IRowStore for SqliteRowStore {
         let mut terms = Vec::with_capacity((to.terms - from.terms) * 5);
         let mut args = Vec::new();
         for index in from.terms..to.terms {
-            let term = &u.terms[index];
+            let term = u.get(TermId(index as u32));
             let (kind, ival, rval, sym) = term_row(term);
             terms.extend([
                 Value::Integer(index as i64),

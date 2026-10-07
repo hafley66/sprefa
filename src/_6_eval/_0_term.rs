@@ -3,13 +3,12 @@
 //! arena following SWI-Prolog standard order of terms.
 
 use hashbrown::HashTable;
-use indexmap::IndexSet;
 use lasso::{Key, Rodeo, Spur};
 use ordered_float::OrderedFloat;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::fmt;
-use std::hash::BuildHasher;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::Arc;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -170,7 +169,12 @@ impl std::ops::Index<usize> for Syms {
 
 pub struct Universe {
     pub syms: Syms,
-    pub terms: IndexSet<Term, hashbrown::DefaultHashBuilder>,
+    /// Term slots: a `TermId` is the slot index and is never reused, so a
+    /// slot stays live for the whole life of the `Universe` (no freeing yet).
+    terms: Vec<Option<Term>>,
+    /// Slot index of each term, keyed by the term's hash, for dedup lookup.
+    term_index: HashTable<u32>,
+    hasher: hashbrown::DefaultHashBuilder,
     pub nil: Sym,
     pub cons: Sym,
 }
@@ -185,7 +189,9 @@ impl Universe {
     pub fn new() -> Self {
         let mut u = Universe {
             syms: Syms::default(),
-            terms: IndexSet::default(),
+            terms: Vec::new(),
+            term_index: HashTable::new(),
+            hasher: hashbrown::DefaultHashBuilder::default(),
             nil: Sym(0),
             cons: Sym(0),
         };
@@ -234,12 +240,66 @@ impl Universe {
     }
 
     pub fn intern(&mut self, t: Term) -> TermId {
-        let (i, _) = self.terms.insert_full(t);
-        TermId(i as u32)
+        let Universe {
+            terms,
+            term_index,
+            hasher,
+            ..
+        } = self;
+        let hash = {
+            let mut h = hasher.build_hasher();
+            t.hash(&mut h);
+            h.finish()
+        };
+        if let Some(&id) = term_index.find(hash, |&id| {
+            terms[id as usize].as_ref().expect("live term slot") == &t
+        }) {
+            return TermId(id);
+        }
+        let id = terms.len() as u32;
+        terms.push(Some(t));
+        term_index.insert_unique(hash, id, |&id| {
+            let mut h = hasher.build_hasher();
+            terms[id as usize]
+                .as_ref()
+                .expect("live term slot")
+                .hash(&mut h);
+            h.finish()
+        });
+        TermId(id)
     }
 
     pub fn get(&self, id: TermId) -> &Term {
-        &self.terms[id.0 as usize]
+        self.terms[id.0 as usize]
+            .as_ref()
+            .expect("live term slot")
+    }
+
+    /// The slot holding `t`, if that exact term was interned.
+    pub fn find(&self, t: &Term) -> Option<TermId> {
+        let mut h = self.hasher.build_hasher();
+        t.hash(&mut h);
+        let hash = h.finish();
+        self.term_index
+            .find(hash, |&id| self.terms[id as usize].as_ref() == Some(t))
+            .map(|&id| TermId(id))
+    }
+
+    /// The slot count; slots are never reused, so this only grows.
+    pub fn len(&self) -> usize {
+        self.terms.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.terms.is_empty()
+    }
+
+    /// Every live slot as `(TermId, &Term)`, in insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (TermId, &Term)> {
+        self.terms
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| slot.as_ref().map(|term| (TermId(index as u32), term)))
     }
 
     pub fn int(&mut self, n: i64) -> TermId {
