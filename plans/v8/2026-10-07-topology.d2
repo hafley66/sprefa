@@ -1,0 +1,41 @@
+vars: {d2-config: {layout-engine: elk}}
+direction: right
+
+vscode: VS Code {
+  ext: extension\nspawns tiny-serve --stdio
+}
+
+tiny: tiny-serve process (tokio) {
+  lsp: stdio LSP\ntower-lsp-server\neditor enum, Arc<str> docs
+  httpws: HTTP / WS\nunused
+}
+
+dl8: dl8 run process {
+  tick: tick thread\nevaluate, call, poll
+  engine: dd engine\nOneEngine
+  rules: dl7 rules\nhover, diagnostic, http.response
+  execs: executors\nlsp.stdin, http.serve,\nhttp.fetch, extract, fs, git
+  soopy: soopy lib\nfs, git, watch
+}
+
+bufs: .buf files\nmmap per doc version {shape: cylinder}
+web: HTTP clients {shape: person}
+remote: remote APIs {shape: cloud}
+child: extract child\nJSONL
+
+vscode.ext -> tiny.lsp: "1 LSP JSON-RPC: didOpen, hover"
+tiny.lsp -> bufs: "2 write + mmap text"
+tiny.lsp -> dl8.execs: "3 stdin rows: lsp.buffer, lsp.hover_at"
+dl8.execs -> dl8.tick: "4 signed rows"
+dl8.tick -> dl8.engine: "5 settle"
+dl8.engine -> dl8.rules: "6 derive lsp.hover"
+dl8.tick -> tiny.lsp: "7 stdout rows: lsp.hover, settled"
+tiny.lsp -> vscode.ext: "8 Hover markdown"
+
+web -> dl8.execs: "HTTP in (http.serve)"
+dl8.execs -> remote: "HTTP out (http.fetch)"
+dl8.execs -> child: "JSONL"
+dl8.execs -> dl8.soopy: "Rust calls"
+
+bufs -> dl8.execs: "read text (not built)" {style.stroke-dash: 5}
+dl8.soopy -> bufs: "overlay (not built)" {style.stroke-dash: 5}
