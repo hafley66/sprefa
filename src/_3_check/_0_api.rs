@@ -11,6 +11,7 @@ use super::resolve::{resolve_edges, resolve_rules, resolve_seeds, Cx};
 use super::strata::{depends_rows, locate_strata_diagnostics, strata_rows, stratify_rules};
 use crate::_2_lower::Lowered;
 use crate::_6_eval::term::{TermId, Universe};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 /// Where v7's `check_datalog/4` fails instead of returning a diagnostic
@@ -230,6 +231,9 @@ pub(crate) struct Resolved {
     pub relation_rows: Vec<TermId>,
     pub seed_rows: Vec<TermId>,
     pub rule_rows: Vec<TermId>,
+    /// Aligned with `rule_rows`: the graph owners and relation arities each
+    /// rule's resolution consulted, the key a refreeze reuses rules on.
+    pub rule_reads: Vec<Vec<super::resolve::Note>>,
 }
 
 /// The four resolution passes over one whole basement, at offsets zero.
@@ -256,9 +260,11 @@ pub(crate) fn resolve_fresh(
     all.extend(kernel_relation_rows(u));
     let relations = prolog_sort(u, all);
     let arities = relation_arities(u, &relations);
+    let notes = RefCell::new(Vec::new());
     let cx = Cx {
         graph: &graph,
         relations: &arities,
+        reads: Some(&notes),
     };
 
     let mut diagnostics = bind_diagnostics(u, &graph, &origins, &graph.edges);
@@ -267,7 +273,9 @@ pub(crate) fn resolve_fresh(
         resolve_edges(u, &cx, &origins, &graph.edges, &mut built);
     let (resolved_seeds, seed_mints, seed_diagnostics) =
         resolve_seeds(u, &cx, &basement.seeds, &origins, 0)?;
-    let (resolved_rules, rule_diagnostics) = resolve_rules(u, &cx, &basement.rules, &origins, 0)?;
+    let rule_pass = resolve_rules(u, &cx, &basement.rules, &origins, 0)?;
+    let resolved_rules = rule_pass.rules;
+    let rule_diagnostics = rule_pass.diagnostics;
     diagnostics.extend(edge_diagnostics);
     diagnostics.extend(seed_diagnostics);
     diagnostics.extend(rule_diagnostics);
@@ -287,6 +295,7 @@ pub(crate) fn resolve_fresh(
         relation_rows: basement.relations,
         seed_rows: basement.seeds,
         rule_rows: basement.rules,
+        rule_reads: rule_pass.reads,
     })
 }
 
