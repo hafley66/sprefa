@@ -16,12 +16,14 @@ engine = install(compose(                                   // INSTALL x1: 1,727
 
 compile$ = path$.pipe(
   map(read),                                                // Rust parse, 11 ms
+  map(loadImportChain),                                     // Rust: imported units + rows
   concatMap(unit => engine.p2.settle(+syntaxRows(unit))),   // DELTA: 48 rows for hello
   expand(wave => wave.claims.length === 0 ? EMPTY
     : engine.p2.settle(rustRewrite(wave))),                 // DELTA settle; rewrite in Rust
                                                             //   (DL8_MACROTIME=engine: rewrite as rules, 7x work)
   last(),
-  map(lowerUnits), map(check),                              // FULL: Rust batch passes
+  map(lowerUnits), map(check),                              // FULL: Rust batch passes, prelude included
+                                                            //   (lib.rs finish_compile: lower, merge, check)
   concatMap(prog => engine.p3.settle(+programRows(prog))),  // DELTA on the stdlib part
   concatMap(round => round.programRules.length === 0
     ? of(round)                                             // hello: 0 program rules, no install
