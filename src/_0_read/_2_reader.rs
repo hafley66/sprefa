@@ -633,7 +633,8 @@ impl Reader<'_> {
         if token.is_empty() {
             return Err(self.plain_error(node_id, "expected_term", start));
         }
-        if let Some(segments) = dotted_segments(&token) {
+        // A lone `.` is an atom (the scm anchor); a path dot has a segment on both sides.
+        if let Some(segments) = dotted_segments(&token).filter(|_| token != ".") {
             if segments.iter().any(|segment| !valid_identifier(segment)) {
                 return Err(self.named_error(node_id, "invalid_path", &token, start));
             }

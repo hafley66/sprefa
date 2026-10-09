@@ -25,10 +25,10 @@ pub fn valid_identifier(token: &str) -> bool {
     }
 }
 
-/// Any token is an atom except a special: `.` is a path, `:` stands alone or ends
-/// a field name, `^` stands alone (`^x` is read as `(^ x)` before this test).
+/// Any token is an atom except a special: `.` stands alone or joins a path, `:` stands
+/// alone or ends a field name, `^` stands alone (`^x` is read as `(^ x)` first).
 pub fn valid_atom(token: &str) -> bool {
-    if matches!(token, ":" | "^") {
+    if matches!(token, ":" | "^" | ".") {
         return true;
     }
     let name = token.strip_suffix(':').unwrap_or(token);
