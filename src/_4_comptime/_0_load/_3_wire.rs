@@ -63,7 +63,7 @@ pub const GRAPH_RELATIONS: [&str; 11] = [
 
 /// `:145-200`. `types.rs:2976` FlatFact less the TSI six, plus the astgrep and
 /// ast-rule records. A name here is skipped without a diagnostic.
-pub const FOREIGN_RECORDS: [&str; 56] = [
+pub const FOREIGN_RECORDS: [&str; 57] = [
     "arg",
     "ast_rule",
     "capture",
@@ -80,6 +80,7 @@ pub const FOREIGN_RECORDS: [&str; 56] = [
     "doc_node",
     "doc_tag",
     "edge",
+    "external_crate_decline",
     "file",
     "file_edge",
     "file_unresolved",
