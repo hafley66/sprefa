@@ -24,6 +24,7 @@ mod _9k_next;
 mod _9l_macrotime_waves;
 mod _9l_rule_counts;
 mod _9m_one_engine;
+mod _9n_memory_ladder;
 
 /// `DL8_RULES` as the binary reads it: unset is `compile`. Work-count pins differ by mode.
 fn rules_interpreted() -> bool {
