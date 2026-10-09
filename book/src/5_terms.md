@@ -46,7 +46,7 @@ The snapshot pair is the port of v7 `2_compiler.pl:1505-1517`: the last round's 
 
 Use it when:
 
-- a rule builds a list: `nil` then `cons`, `fixtures/ladder/2_cons_lists.pl`
+- a rule builds a list: `nil` then `cons`, `fixtures/ladder/2_tuple_lists.pl`
 - a rule mints one identity per argument list: `intern`, `fixtures/ladder/11_intern_row_reuse.pl`
 - a rule reads a declared field: `edge_snapshot`, `oracle/compile/sources/test/fixtures/2_partial.dl7:35-42`
 - a rule reads the arguments of an application it did not build: `intern_snapshot` then `cons`, `fixtures/host_effect/3_loading.dl7:23-26`
@@ -63,7 +63,7 @@ Do not use it when:
 Lists by construction and by split:
 
 ```prolog
-% fixture: fixtures/ladder/2_cons_lists.pl
+% fixture: fixtures/ladder/2_tuple_lists.pl
 program(
     [ rule(call(ref(item), [var(head)]),
            [ checked_goal(positive, call(ref(suffix), [var(list)])),
@@ -90,7 +90,7 @@ program(
 ```
 
 ```console
-$ bash book/show.sh eval fixtures/ladder/2_cons_lists.json
+$ bash book/show.sh eval fixtures/ladder/2_tuple_lists.json
 (item one)
 (item three)
 (item two)
@@ -186,7 +186,7 @@ builder `(tuple ..)` for the same reason.
 |---|---|---|
 | `[a b]`, `[]`, `[a [b c]]`, `[a.b ^c]` macrotime-expand to one `(tuple ..)` call, `[a [b c]]` to `(tuple a (tuple b c))` | `oracle/macrotime/list_literal_*.json` | `cargo test --test it _0_read_lower_check::every_macrotime_case_matches_v7` |
 | `[?Ok ?Err]` in `intern` builds the same rows as the spelled `(tuple ..)` call | `plans/v8/probes/2026-09-18-generic-result-literal.dl7` | `bash book/show.sh compile plans/v8/probes/2026-09-18-generic-result-literal.dl7` |
-| `cons` splits and builds, never splits `[]` | `fixtures/ladder/2_cons_lists.json` | `cargo test -j 4 --test it rung_11_handwritten_oracle_constructs` |
+| `cons` splits and builds, never splits `[]` | `fixtures/ladder/2_tuple_lists.json` | `cargo test -j 4 --test it rung_11_handwritten_oracle_constructs` |
 | `edge_ref` and `intern` terms | `fixtures/ladder/5_edge_ref.json` | `bash book/show.sh eval fixtures/ladder/5_edge_ref.json` |
 | an `intern` row from a lower stratum matches with the constructor unbound | `fixtures/ladder/11_intern_row_reuse.pl:1-2` | `bash book/show.sh eval fixtures/ladder/11_intern_row_reuse.json` |
 | kernel names, arities and keys | `src/_3_check/_5_kernel.rs:16-79` | `sed -n 16,79p src/_3_check/_5_kernel.rs` |
