@@ -25,18 +25,14 @@ pub fn valid_identifier(token: &str) -> bool {
     }
 }
 
-/// A lone `^` is the head atom of the `(^ x)` form the reader makes of `^x`;
-/// no other atom carries a caret.
+/// Any token is an atom except a special: `.` is a path, `:` stands alone or ends
+/// a field name, `^` stands alone (`^x` is read as `(^ x)` before this test).
 pub fn valid_atom(token: &str) -> bool {
-    if matches!(token, ":" | "*" | "+" | "->" | "<-" | "<+" | "^") {
+    if matches!(token, ":" | "^") {
         return true;
     }
-    if let Some(name) = token.strip_suffix(':') {
-        if valid_identifier(name) {
-            return true;
-        }
-    }
-    valid_identifier(token)
+    let name = token.strip_suffix(':').unwrap_or(token);
+    !name.is_empty() && !name.contains(['.', ':', '^'])
 }
 
 /// `a.b` and its malformed neighbours `.a`, `a.`, `a..b`: identifier characters
