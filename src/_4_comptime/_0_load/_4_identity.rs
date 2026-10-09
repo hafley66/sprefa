@@ -4,33 +4,36 @@
 use super::api::{atom_text, diagnostic, parts, sorted, wire_id};
 use super::wire::{Fact, IDENTITY_PASSES};
 use crate::_6_eval::term::{TermId, Universe};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-/// `identity(Id, Term)` rows, in v7's list order. `identity_of/3` is
-/// `memberchk/2`, so the FIRST entry for an id wins and the primitive block
-/// sits in front of the base block (`:420`).
+/// `identity(Id, Term)` rows by wire id, each id's terms in v7's list order.
+/// `identity_of/3` is `memberchk/2`, so the FIRST entry for an id wins and the
+/// primitive block sits in front of the base block (`:420`).
 pub struct Identities {
-    pub rows: Vec<(i64, TermId)>,
+    /// Every term claimed for a wire id, first claim first.
+    pub by_id: HashMap<i64, Vec<TermId>>,
 }
 
 impl Identities {
+    fn from_rows(rows: Vec<(i64, TermId)>) -> Self {
+        let mut by_id: HashMap<i64, Vec<TermId>> = HashMap::new();
+        for (id, term) in rows {
+            by_id.entry(id).or_default().push(term);
+        }
+        Identities { by_id }
+    }
+
     pub fn of(&self, id: i64) -> Option<TermId> {
-        self.rows
-            .iter()
-            .find(|(wire, _)| *wire == id)
-            .map(|(_, term)| *term)
+        self.by_id.get(&id).and_then(|terms| terms.first()).copied()
     }
 
     pub fn holds(&self, id: i64, term: TermId) -> bool {
-        self.rows
-            .iter()
-            .any(|(wire, held)| *wire == id && *held == term)
+        self.by_id.get(&id).is_some_and(|terms| terms.contains(&term))
     }
 
     /// `:536-541`. Every row for the id goes, the replacement goes in front.
     pub fn replace(&mut self, id: i64, term: TermId) {
-        self.rows.retain(|(wire, _)| *wire != id);
-        self.rows.insert(0, (id, term));
+        self.by_id.insert(id, vec![term]);
     }
 }
 
@@ -43,7 +46,7 @@ pub fn identity_map(
 ) -> (Identities, Vec<TermId>) {
     let (mut rows, primitive_diagnostics) = primitive_identities(u, accepted, basements);
     rows.extend(base_identities(u, owner, accepted));
-    let mut identities = Identities { rows };
+    let mut identities = Identities::from_rows(rows);
     application_identities(u, accepted, &mut identities, IDENTITY_PASSES);
 
     let mut diagnostics = primitive_diagnostics;
