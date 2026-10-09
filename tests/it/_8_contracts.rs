@@ -78,9 +78,10 @@ fn trace_prints_waves_and_rounds_without_rust_log() {
 // `*CAP*`, `*MAX*`, `*BOUND*`, `*DEPTH*`), or a repeat check (`== previous`
 // and friends), plus a named diagnostic: a string literal naming the cap
 // (`"..._exceeded"`, `"..._budget"`, ...) or a `tracing::warn`/`error`
-// call. A `while let Some(..)` line that drains its source (`next`, `pop`,
-// `next_entry`, `next_element`) is bounded by construction and needs no
-// further evidence.
+// call. A `while let Some(..)` or `while let Ok(..)` line that drains its
+// source (`next`, `pop`, `next_entry`, `next_element`, a channel's `recv` or
+// `try_recv`, a reader's `next_line`) is bounded by construction: it ends when
+// the source is empty or closed, and needs no further evidence.
 //
 // Sites without a budget today are listed in `UNBUDGETED` as
 // (path, trimmed line text). The list only shrinks: a listed site that
@@ -122,6 +123,8 @@ const UNBUDGETED: &[(&str, &str)] = &[
     ("src/_6_eval/_5_evaluate.rs", "loop {"),
     ("src/_6_eval/_9b_ir_eval.rs", "while event_settles < live.max_settles {"),
     ("src/_9_runtime/_2_reconcile.rs", "while closure.diagnostics.is_empty() && ticks < max_ticks {"),
+    ("src/_9_runtime/_3_executors/http_serve.rs", "loop {"),
+    ("src/_9_runtime/_3_executors/lsp_stdin.rs", "loop {"),
     ("src/_9_runtime/_3_executors/timer.rs", "loop {"),
 ];
 
@@ -298,7 +301,15 @@ fn has_named_diagnostic(body: &str) -> bool {
 }
 
 fn is_drain_line(line: &str) -> bool {
-    let drains = [".next(", ".pop(", ".next_entry(", ".next_element("];
+    let drains = [
+        ".next(",
+        ".pop(",
+        ".next_entry(",
+        ".next_element(",
+        ".recv(",
+        ".try_recv(",
+        ".next_line(",
+    ];
     (line.contains("while let Some(") || line.contains("while let Ok("))
         && drains.iter().any(|mark| line.contains(mark))
 }

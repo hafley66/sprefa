@@ -134,14 +134,9 @@ impl Extract {
         handle().spawn(async move {
             let mut child = child;
             let mut stdout = BufReader::new(stdout).lines();
-            loop {
-                match stdout.next_line().await {
-                    Ok(Some(line)) => {
-                        if let Some(event) = parse_line(&line) {
-                            let _ = done.send(event);
-                        }
-                    }
-                    _ => break,
+            while let Ok(Some(line)) = stdout.next_line().await {
+                if let Some(event) = parse_line(&line) {
+                    let _ = done.send(event);
                 }
             }
             let _ = child.wait().await;
