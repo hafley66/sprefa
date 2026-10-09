@@ -333,7 +333,7 @@ fn dl8_compile_consumes_the_extracted_stream() {
 // point `route_fact` at no relation and every route seed disappears.
 
 const ROOT_TOKEN: &str = "/V8ROOT";
-const OWNER: &str = "module(tsi('openapi',['/V8ROOT/fixtures/openapi/todo.json']))";
+const OWNER: &str = "module(tsi('openapi',-689554781764172196))";
 
 fn s21openapi_v8_root() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));

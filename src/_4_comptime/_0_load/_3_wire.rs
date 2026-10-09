@@ -508,8 +508,32 @@ pub fn stream_owner(u: &mut Universe, rows: &[TermId]) -> Owner {
     let last = *claims.last().expect("non-empty");
     let pair = parts(u, last, "-", 2).expect("run pair");
     let owner = parts(u, pair[1], "owner", 2).expect("owner pair");
-    let tsi = u.compound("tsi", vec![owner[0], owner[1]]);
+    let scope = scope_id(u, owner[1]);
+    let tsi = u.compound("tsi", vec![owner[0], scope]);
     Owner::Owner(u.compound("module", vec![tsi]))
+}
+
+/// The run's scope as one integer: the first eight bytes of the blake3 of its sorted entries,
+/// each path relative to the working directory so the checkout's location never changes it.
+/// The owner rides every row; the scope list in it grew each row with the crawl (hafley-rxjs
+/// packages: 333 GB of output).
+fn scope_id(u: &mut Universe, scope: TermId) -> TermId {
+    let base = format!("{}/", crate::working_directory().display());
+    let mut entries: Vec<String> = u
+        .as_list(scope)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| atom_text(u, entry).map(|text| text.strip_prefix(&base).unwrap_or(text).to_owned()))
+        .collect();
+    entries.sort_unstable();
+    let mut hasher = blake3::Hasher::new();
+    for entry in &entries {
+        hasher.update(entry.as_bytes());
+        hasher.update(b"\n");
+    }
+    let digest = hasher.finalize();
+    let head: [u8; 8] = digest.as_bytes()[..8].try_into().expect("blake3 is 32 bytes");
+    u.int(i64::from_le_bytes(head))
 }
 
 /// `:691-704`. Registry relations that are not graph relations, plus a

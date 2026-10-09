@@ -218,7 +218,7 @@ fn compile_with(
 }
 
 /// The one base every ordinary import path resolves against.
-fn working_directory() -> std::path::PathBuf {
+pub(crate) fn working_directory() -> std::path::PathBuf {
     std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
