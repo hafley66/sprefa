@@ -172,6 +172,9 @@ fn main() -> ExitCode {
     #[cfg(feature = "alloc-ledger")]
     hafley_observe::allocation::enable();
     let cli = Cli::parse();
+    // Exits 137 past HAFLEY_MEMCAP_GB (default 8) of physical footprint, before the kernel
+    // pages the machine to a stall.
+    hafley_observe::memcap::spawn("dl8");
     let ansi = std::io::stderr().is_terminal();
     let default_filter = if trace_requested(&cli.command) {
         "dl8=debug"
