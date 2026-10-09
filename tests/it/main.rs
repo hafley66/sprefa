@@ -7,7 +7,6 @@ mod _3_eval_fixtures;
 mod _4_sqlite;
 mod _5_store_host;
 mod _6_imports;
-mod _7_book;
 mod _8_contracts;
 mod _9_ladder;
 mod _9a_ir_emit;

@@ -1,6 +1,0 @@
-node_modules/
-dist/
-storybook-static/
-review-shots/
-.playwright-results/
-*.tsbuildinfo

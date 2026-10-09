@@ -1,6 +1,0 @@
-; A module file one directory down: its module path is api, todos.
-(: list
-   (* (: url str)
-      (: body str)))
-
-(list "https://example.com/todos" "[]")

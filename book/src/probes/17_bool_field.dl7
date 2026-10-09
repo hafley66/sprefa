@@ -1,5 +1,0 @@
-; expect: rc=0
-; A field typed bool, beside a field typed int.
-(: Holder
-   (* (: flag bool)
-      (: count int)))

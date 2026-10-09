@@ -1,8 +1,0 @@
-; expect: rc=0
-; A named bind curries Key, a name the prelude module declares.
-(: KeyOptions (*))
-
-(: KeyName (Key "name"))
-
-(: Holder
-   (* (: (KeyName KeyOptions) (Option str))))

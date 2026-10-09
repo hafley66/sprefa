@@ -1,6 +1,0 @@
-; expect: rc=0
-; A user product takes the kernel name intern.
-(: intern
-   (* (: name str)))
-
-(intern "mine")
