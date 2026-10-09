@@ -503,16 +503,46 @@ enum Transport {
 }
 
 /// `term_to_json`'s text appended to an in-memory buffer.
-fn term_text(u: &Universe, id: TermId, w: &mut Vec<u8>) {
-    write_term_json(u, id, w).expect("a Vec takes every write");
+/// A writer that keeps the first io error and drops every write after it, so the
+/// program walk reports a transport error or an io error, never half of each.
+struct Out<'w> {
+    w: &'w mut dyn std::io::Write,
+    error: Option<std::io::Error>,
 }
 
-fn str_text(text: &str, w: &mut Vec<u8>) {
-    serde_json::to_writer(&mut *w, text).expect("a Vec takes every write");
+impl Out<'_> {
+    fn push(&mut self, byte: u8) {
+        self.extend_from_slice(&[byte]);
+    }
+
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        if self.error.is_none() {
+            self.error = self.w.write_all(bytes).err();
+        }
+    }
+}
+
+impl std::io::Write for Out<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn term_text(u: &Universe, id: TermId, w: &mut Out) {
+    write_term_json(u, id, w).expect("Out keeps its error");
+}
+
+fn str_text(text: &str, w: &mut Out) {
+    serde_json::to_writer(&mut *w, text).expect("Out keeps its error");
 }
 
 /// Keys are written in sorted order, the order `serde_json::Map` prints.
-fn arg_text(u: &Universe, id: TermId, w: &mut Vec<u8>) {
+fn arg_text(u: &Universe, id: TermId, w: &mut Out) {
     /// One wrapper around the argument inside it, outermost first.
     enum Layer<'u> {
         Aggregate(&'u str),
@@ -575,7 +605,7 @@ fn arg_text(u: &Universe, id: TermId, w: &mut Vec<u8>) {
     }
 }
 
-fn call_text(u: &Universe, id: TermId, polarity: Option<&str>, w: &mut Vec<u8>) -> Result<(), Transport> {
+fn call_text(u: &Universe, id: TermId, polarity: Option<&str>, w: &mut Out) -> Result<(), Transport> {
     let [rel, args] = u
         .args::<2>(id, "call")
         .ok_or(Transport::Shape("bad_call"))?;
@@ -598,7 +628,7 @@ fn call_text(u: &Universe, id: TermId, polarity: Option<&str>, w: &mut Vec<u8>) 
     Ok(())
 }
 
-fn goal_text(u: &Universe, id: TermId, w: &mut Vec<u8>) -> Result<(), Transport> {
+fn goal_text(u: &Universe, id: TermId, w: &mut Out) -> Result<(), Transport> {
     let [polarity, call] = u
         .args::<2>(id, "checked_goal")
         .ok_or(Transport::Shape("bad_goal"))?;
@@ -608,7 +638,7 @@ fn goal_text(u: &Universe, id: TermId, w: &mut Vec<u8>) -> Result<(), Transport>
     call_text(u, call, Some(u.sym_str(*s)), w)
 }
 
-fn rule_text(u: &Universe, id: TermId, w: &mut Vec<u8>) -> Result<(), Transport> {
+fn rule_text(u: &Universe, id: TermId, w: &mut Out) -> Result<(), Transport> {
     let [head, body] = u
         .args::<2>(id, "rule")
         .ok_or(Transport::Shape("bad_rule"))?;
@@ -629,7 +659,7 @@ fn rule_text(u: &Universe, id: TermId, w: &mut Vec<u8>) -> Result<(), Transport>
 /// Every `:(module(M), Name, ref(Relation), _)` bind in the root graph. A file
 /// module shadows the prelude's bind of one name; two files disagreeing do not.
 /// A `@std/<space>` member carries its namespace, so `--serve git.refs` names it.
-fn names_text(u: &Universe, graph: TermId, w: &mut Vec<u8>) -> Result<(), Transport> {
+fn names_text(u: &Universe, graph: TermId, w: &mut Out) -> Result<(), Transport> {
     let [_, edges] = u
         .args::<2>(graph, "root_graph")
         .ok_or(Transport::Shape("no_root_graph"))?;
@@ -694,7 +724,7 @@ fn names_text(u: &Universe, graph: TermId, w: &mut Vec<u8>) -> Result<(), Transp
     Ok(())
 }
 
-fn transport(u: &Universe, checked_datalog: TermId, w: &mut Vec<u8>) -> Result<(), Transport> {
+fn transport(u: &Universe, checked_datalog: TermId, w: &mut Out) -> Result<(), Transport> {
     let [graph, datalog, _, _] = u
         .args::<4>(checked_datalog, "checked_datalog")
         .ok_or(Transport::Shape("not_checked_datalog"))?;
@@ -727,31 +757,52 @@ fn transport(u: &Universe, checked_datalog: TermId, w: &mut Vec<u8>) -> Result<(
     Ok(())
 }
 
-/// The runtime program as `dl8 eval` reads it, `{"names", "rules", "seeds"}`, as JSON
-/// text. `Err` is a diagnostic payload term.
-pub fn program_json_text(u: &mut Universe, checked_datalog: TermId) -> Result<Vec<u8>, TermId> {
-    let mut text = Vec::new();
-    match transport(u, checked_datalog, &mut text) {
-        Ok(()) => Ok(text),
-        Err(Transport::Shape(reason)) => {
+fn transport_term(u: &mut Universe, error: Transport) -> TermId {
+    match error {
+        Transport::Shape(reason) => {
             let reason = u.atom(reason);
-            Err(u.compound("program_transport", vec![reason]))
+            u.compound("program_transport", vec![reason])
         }
-        Err(Transport::DuplicateName {
+        Transport::DuplicateName {
             name,
             first,
             second,
-        }) => {
+        } => {
             let name = u.atom(&name);
-            Err(u.compound("duplicate_relation_name", vec![name, first, second]))
+            u.compound("duplicate_relation_name", vec![name, first, second])
         }
     }
 }
 
-/// `program_json_text` parsed.
+/// The runtime program as `dl8 eval` reads it, `{"names", "rules", "seeds"}`, written
+/// to `w`. `None` is a transport error, after `w` took a prefix; callers that write
+/// to a stream run `program_transport_error` first.
+pub fn write_program_json(
+    u: &Universe,
+    checked_datalog: TermId,
+    w: &mut dyn std::io::Write,
+) -> Option<std::io::Result<()>> {
+    let mut out = Out { w, error: None };
+    transport(u, checked_datalog, &mut out).ok()?;
+    Some(out.error.map_or(Ok(()), Err))
+}
+
+/// The diagnostic payload term `write_program_json` would stop on, from a walk into
+/// `io::sink()`.
+pub fn program_transport_error(u: &mut Universe, checked_datalog: TermId) -> Option<TermId> {
+    let mut sink = std::io::sink();
+    let error = transport(u, checked_datalog, &mut Out { w: &mut sink, error: None }).err()?;
+    Some(transport_term(u, error))
+}
+
+/// `write_program_json` into memory, parsed. `Err` is a diagnostic payload term.
 pub fn program_to_json(u: &mut Universe, checked_datalog: TermId) -> Result<Value, TermId> {
-    program_json_text(u, checked_datalog)
-        .map(|text| serde_json::from_slice(&text).expect("program_json_text writes JSON"))
+    let mut text = Vec::new();
+    match write_program_json(u, checked_datalog, &mut text) {
+        Some(written) => written.expect("a Vec takes every write"),
+        None => return Err(program_transport_error(u, checked_datalog).expect("the walk stopped")),
+    }
+    Ok(serde_json::from_slice(&text).expect("write_program_json writes JSON"))
 }
 
 pub fn program_from_json(u: &mut Universe, v: &Value) -> Result<Program, String> {

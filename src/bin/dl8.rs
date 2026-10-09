@@ -6,7 +6,7 @@ use dl8::_6_eval::evaluate::{Evaluate, Store};
 use dl8::_6_eval::ir_bundle;
 use dl8::_6_eval::ir_lower;
 use dl8::_6_eval::json::{
-    closure_to_json, diagnostic_to_json, program_from_json, program_json_text, program_names, program_to_json,
+    closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json, program_transport_error, write_program_json,
     serve_relations,
 };
 use dl8::_6_eval::json::{term_from_json, term_to_json, write_term_json};
@@ -165,7 +165,12 @@ fn trace_requested(command: &Command) -> bool {
     }
 }
 
+#[cfg(feature = "alloc-ledger")]
+hafley_observe::counting_allocator!();
+
 fn main() -> ExitCode {
+    #[cfg(feature = "alloc-ledger")]
+    hafley_observe::allocation::enable();
     let cli = Cli::parse();
     let ansi = std::io::stderr().is_terminal();
     let default_filter = if trace_requested(&cli.command) {
@@ -1235,16 +1240,12 @@ fn compile_cli(
     let empty = u
         .as_list(compiled.runtime_program)
         .is_some_and(|l| l.is_empty());
-    let program = match empty {
-        true => b"null".to_vec(),
-        false => match program_json_text(&mut u, compiled.runtime_program) {
-            Ok(program) => program,
-            Err(payload) => {
-                diagnostics.push(payload);
-                b"null".to_vec()
-            }
-        },
-    };
+    dl8::memory_mark("compile");
+    let transport_error = (!empty)
+        .then(|| program_transport_error(&mut u, compiled.runtime_program))
+        .flatten();
+    diagnostics.extend(transport_error);
+    let program = (!empty && transport_error.is_none()).then_some(compiled.runtime_program);
     // Keys in `serde_json::Map` order, so the bytes match the old whole-`Value` print.
     let written = (|| -> std::io::Result<()> {
         let mut w = std::io::BufWriter::new(std::io::stdout().lock());
@@ -1263,12 +1264,16 @@ fn compile_cli(
         w.write_all(b",\"diagnostics\":")?;
         encode(&diagnostics, &mut w)?;
         w.write_all(b",\"program\":")?;
-        w.write_all(&program)?;
+        match program {
+            Some(program) => write_program_json(&u, program, &mut w).expect("program_transport_error passed")?,
+            None => w.write_all(b"null")?,
+        }
         w.write_all(b",\"runtime_program\":")?;
         write_term_json(&u, compiled.runtime_program, &mut w)?;
         w.write_all(b"}\n")?;
         w.flush()
     })();
+    dl8::memory_mark("program_and_write");
     if let Err(error) = written {
         tracing::error!(phase = "compile", error = %error);
         return ExitCode::from(2);

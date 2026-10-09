@@ -50,6 +50,8 @@ smallvec = "1"
 # `DL8_ENGINE=ir:duckdb`: drives an external OpenIVM DuckDB CLI (IVM_DUCKDB_CLI,
 # IVM_DUCKDB_EXTENSION). Off by default.
 duckdb = ["dep:ivm-duckdb"]
+# Counting global allocator: every `dl8::phase` event carries `live_bytes` and `peak_bytes`.
+alloc-ledger = []
 
 [build-dependencies]
 cc = "1"

@@ -73,6 +73,23 @@ fn phase_event(name: &'static str, start: Instant, rows: usize, diagnostics: usi
         rows,
         diagnostics,
     );
+    memory_mark(name);
+}
+
+/// Live heap bytes now and the peak since the previous mark, then a fresh peak. Zero unless
+/// the binary runs the counting allocator (feature `alloc-ledger`).
+pub fn memory_mark(name: &'static str) {
+    use hafley_observe::allocation;
+    if !allocation::active() {
+        return;
+    }
+    tracing::info!(
+        target: "dl8::memory",
+        name,
+        live_bytes = allocation::live_bytes() as u64,
+        peak_bytes = allocation::peak_bytes() as u64,
+    );
+    allocation::reset_peak();
 }
 
 /// `:112`. The whole pipe as a reducer over the term universe.
