@@ -73,6 +73,8 @@ pub struct RoundState {
     pub frozen_generated_rules: Vec<TermId>,
     /// Executor answers as `call/2` rows, re-seeded every round.
     pub frozen_answers: Vec<TermId>,
+    /// `frozen_answers` as a set, for the membership test before each push.
+    pub frozen_seen: HashSet<TermId>,
     /// Built on the first round from the module binds in the base seeds;
     /// `None` when no declared relation has a Once executor.
     pub answerer: Option<Answerer>,
@@ -190,6 +192,7 @@ impl RoundState {
             frozen_generated_relations,
             frozen_generated_rules,
             frozen_answers: Vec::new(),
+            frozen_seen: HashSet::new(),
             answerer: None,
             ir_session: None,
             round: 1,
@@ -387,7 +390,7 @@ impl<'a> Slice for Rounds<'a> {
                 for answer in answers {
                     let args = u.list(&answer.args);
                     let row = u.compound("call", vec![answer.rel, args]);
-                    if !st.frozen_answers.contains(&row) {
+                    if st.frozen_seen.insert(row) {
                         st.frozen_answers.push(row);
                         rows += 1;
                     }
@@ -467,7 +470,7 @@ fn comptime_answerer(u: &mut Universe, base_seeds: &[TermId]) -> Option<Answerer
 }
 
 /// The `:(module(M), Name, ref(Relation), _)` binds among the graph seeds, the
-/// in-memory twin of `program.names` (`_6_eval/_6_json.rs` `names_to_json`).
+/// in-memory twin of `program.names` (`_6_eval/_6_json.rs` `names_text`).
 /// A `@std/<space>` member carries its namespace; a file bind shadows the
 /// prelude's.
 fn module_names(u: &mut Universe, base_seeds: &[TermId]) -> HashMap<String, TermId> {
@@ -532,7 +535,7 @@ fn answer_round(
     for answer in answers {
         let args = u.list(&answer.args);
         let row = u.compound("call", vec![answer.rel, args]);
-        if !st.frozen_answers.contains(&row) {
+        if st.frozen_seen.insert(row) {
             st.frozen_answers.push(row);
             rows += 1;
         }

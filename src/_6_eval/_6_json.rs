@@ -361,6 +361,69 @@ pub fn term_to_json(u: &Universe, id: TermId) -> Value {
     done.pop().expect("one value")
 }
 
+/// `term_to_json`'s bytes, written as the walk goes: no `Value` tree, so a shared
+/// subterm costs its text once per use and no node per use.
+pub fn write_term_json(u: &Universe, id: TermId, w: &mut impl std::io::Write) -> std::io::Result<()> {
+    enum Step {
+        Enter(TermId),
+        Text(&'static str),
+        Name(Sym),
+    }
+    let mut steps = vec![Step::Enter(id)];
+    while let Some(step) = steps.pop() {
+        let id = match step {
+            Step::Enter(id) => id,
+            Step::Text(text) => {
+                w.write_all(text.as_bytes())?;
+                continue;
+            }
+            Step::Name(s) => {
+                serde_json::to_writer(&mut *w, u.sym_str(s))?;
+                w.write_all(b"}")?;
+                continue;
+            }
+        };
+        let (open, close, items, name) = match (u.as_list(id), u.get(id)) {
+            (Some(items), _) => ("[", Step::Text("]"), items, None),
+            (None, Term::Compound(s, args)) => ("{\"args\":[", Step::Text("],\"f\":"), args.to_vec(), Some(*s)),
+            (None, Term::Int(n)) => {
+                serde_json::to_writer(&mut *w, n)?;
+                continue;
+            }
+            (None, Term::Float(x)) => {
+                serde_json::to_writer(&mut *w, &x.0)?;
+                continue;
+            }
+            (None, Term::Bool(b)) => {
+                serde_json::to_writer(&mut *w, b)?;
+                continue;
+            }
+            (None, Term::Atom(s)) => {
+                w.write_all(b"{\"a\":")?;
+                serde_json::to_writer(&mut *w, u.sym_str(*s))?;
+                w.write_all(b"}")?;
+                continue;
+            }
+            (None, Term::Str(s)) => {
+                w.write_all(b"{\"s\":")?;
+                serde_json::to_writer(&mut *w, u.sym_str(*s))?;
+                w.write_all(b"}")?;
+                continue;
+            }
+        };
+        w.write_all(open.as_bytes())?;
+        steps.extend(name.map(Step::Name));
+        steps.push(close);
+        for (index, item) in items.iter().enumerate().rev() {
+            steps.push(Step::Enter(*item));
+            if index > 0 {
+                steps.push(Step::Text(","));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// One aggregate or fold wrapper around a rule argument, outermost first.
 enum ArgLayer {
     Aggregate(AggregateKind),
@@ -439,7 +502,17 @@ enum Transport {
     },
 }
 
-fn arg_to_json(u: &Universe, id: TermId) -> Value {
+/// `term_to_json`'s text appended to an in-memory buffer.
+fn term_text(u: &Universe, id: TermId, w: &mut Vec<u8>) {
+    write_term_json(u, id, w).expect("a Vec takes every write");
+}
+
+fn str_text(text: &str, w: &mut Vec<u8>) {
+    serde_json::to_writer(&mut *w, text).expect("a Vec takes every write");
+}
+
+/// Keys are written in sorted order, the order `serde_json::Map` prints.
+fn arg_text(u: &Universe, id: TermId, w: &mut Vec<u8>) {
     /// One wrapper around the argument inside it, outermost first.
     enum Layer<'u> {
         Aggregate(&'u str),
@@ -450,7 +523,7 @@ fn arg_to_json(u: &Universe, id: TermId) -> Value {
     let mut base = None;
     while let Some(id) = pending.pop() {
         if let Some(identity) = u.unary(id, "var") {
-            base = Some(json!({ "v": term_to_json(u, identity) }));
+            base = Some((true, identity));
             continue;
         }
         if let Some([kind, subject]) = u.args::<2>(id, "aggregate") {
@@ -468,63 +541,95 @@ fn arg_to_json(u: &Universe, id: TermId) -> Value {
             pending.push(subject);
             continue;
         }
-        base = Some(term_to_json(u, id));
+        base = Some((false, id));
     }
-    let base = base.expect("the innermost argument");
-    layers.into_iter().rev().fold(base, |inner, layer| match layer {
-        Layer::Aggregate(name) => json!({ name: inner }),
-        Layer::Fold(step, seed) => json!({
-            "f": "fold",
-            "args": [
-                term_to_json(u, step),
-                term_to_json(u, seed),
-                inner,
-            ],
-        }),
-    })
+    for layer in &layers {
+        match layer {
+            Layer::Aggregate(name) => {
+                w.push(b'{');
+                str_text(name, w);
+                w.push(b':');
+            }
+            Layer::Fold(step, seed) => {
+                w.extend_from_slice(b"{\"args\":[");
+                term_text(u, *step, w);
+                w.push(b',');
+                term_text(u, *seed, w);
+                w.push(b',');
+            }
+        }
+    }
+    match base.expect("the innermost argument") {
+        (true, identity) => {
+            w.extend_from_slice(b"{\"v\":");
+            term_text(u, identity, w);
+            w.push(b'}');
+        }
+        (false, id) => term_text(u, id, w),
+    }
+    for layer in layers.iter().rev() {
+        w.extend_from_slice(match layer {
+            Layer::Aggregate(_) => b"}".as_slice(),
+            Layer::Fold(..) => b"],\"f\":\"fold\"}".as_slice(),
+        });
+    }
 }
 
-fn call_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
+fn call_text(u: &Universe, id: TermId, polarity: Option<&str>, w: &mut Vec<u8>) -> Result<(), Transport> {
     let [rel, args] = u
         .args::<2>(id, "call")
         .ok_or(Transport::Shape("bad_call"))?;
     let args = u.as_list(args).ok_or(Transport::Shape("bad_call"))?;
-    Ok(json!({
-        "rel": term_to_json(u, rel),
-        "args": args.iter().map(|a| arg_to_json(u, *a)).collect::<Vec<_>>(),
-    }))
+    w.extend_from_slice(b"{\"args\":[");
+    for (index, arg) in args.iter().enumerate() {
+        if index > 0 {
+            w.push(b',');
+        }
+        arg_text(u, *arg, w);
+    }
+    w.push(b']');
+    if let Some(polarity) = polarity {
+        w.extend_from_slice(b",\"polarity\":");
+        str_text(polarity, w);
+    }
+    w.extend_from_slice(b",\"rel\":");
+    term_text(u, rel, w);
+    w.push(b'}');
+    Ok(())
 }
 
-fn goal_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
+fn goal_text(u: &Universe, id: TermId, w: &mut Vec<u8>) -> Result<(), Transport> {
     let [polarity, call] = u
         .args::<2>(id, "checked_goal")
         .ok_or(Transport::Shape("bad_goal"))?;
     let Term::Atom(s) = u.get(polarity) else {
         return Err(Transport::Shape("bad_goal"));
     };
-    let mut out = call_to_json(u, call)?;
-    out["polarity"] = json!(u.sym_str(*s));
-    Ok(out)
+    call_text(u, call, Some(u.sym_str(*s)), w)
 }
 
-fn rule_to_json(u: &Universe, id: TermId) -> Result<Value, Transport> {
+fn rule_text(u: &Universe, id: TermId, w: &mut Vec<u8>) -> Result<(), Transport> {
     let [head, body] = u
         .args::<2>(id, "rule")
         .ok_or(Transport::Shape("bad_rule"))?;
     let body = u.as_list(body).ok_or(Transport::Shape("bad_rule"))?;
-    Ok(json!({
-        "head": call_to_json(u, head)?,
-        "body": body
-            .iter()
-            .map(|g| goal_to_json(u, *g))
-            .collect::<Result<Vec<_>, _>>()?,
-    }))
+    w.extend_from_slice(b"{\"body\":[");
+    for (index, goal) in body.iter().enumerate() {
+        if index > 0 {
+            w.push(b',');
+        }
+        goal_text(u, *goal, w)?;
+    }
+    w.extend_from_slice(b"],\"head\":");
+    call_text(u, head, None, w)?;
+    w.push(b'}');
+    Ok(())
 }
 
 /// Every `:(module(M), Name, ref(Relation), _)` bind in the root graph. A file
 /// module shadows the prelude's bind of one name; two files disagreeing do not.
 /// A `@std/<space>` member carries its namespace, so `--serve git.refs` names it.
-fn names_to_json(u: &Universe, graph: TermId) -> Result<Value, Transport> {
+fn names_text(u: &Universe, graph: TermId, w: &mut Vec<u8>) -> Result<(), Transport> {
     let [_, edges] = u
         .args::<2>(graph, "root_graph")
         .ok_or(Transport::Shape("no_root_graph"))?;
@@ -576,14 +681,20 @@ fn names_to_json(u: &Universe, graph: TermId) -> Result<Value, Transport> {
             }
         }
     }
-    Ok(Value::Object(
-        out.into_iter()
-            .map(|(name, (_, relation))| (name, term_to_json(u, relation)))
-            .collect(),
-    ))
+    w.push(b'{');
+    for (index, (name, (_, relation))) in out.iter().enumerate() {
+        if index > 0 {
+            w.push(b',');
+        }
+        str_text(name, w);
+        w.push(b':');
+        term_text(u, *relation, w);
+    }
+    w.push(b'}');
+    Ok(())
 }
 
-fn transport(u: &Universe, checked_datalog: TermId) -> Result<Value, Transport> {
+fn transport(u: &Universe, checked_datalog: TermId, w: &mut Vec<u8>) -> Result<(), Transport> {
     let [graph, datalog, _, _] = u
         .args::<4>(checked_datalog, "checked_datalog")
         .ok_or(Transport::Shape("not_checked_datalog"))?;
@@ -596,24 +707,32 @@ fn transport(u: &Universe, checked_datalog: TermId) -> Result<Value, Transport> 
     let rules = u
         .as_list(rules)
         .ok_or(Transport::Shape("no_datalog_program"))?;
-    Ok(json!({
-        "rules": rules
-            .iter()
-            .map(|r| rule_to_json(u, *r))
-            .collect::<Result<Vec<_>, _>>()?,
-        "seeds": seeds
-            .iter()
-            .map(|s| call_to_json(u, *s))
-            .collect::<Result<Vec<_>, _>>()?,
-        "names": names_to_json(u, graph)?,
-    }))
+    w.extend_from_slice(b"{\"names\":");
+    names_text(u, graph, w)?;
+    w.extend_from_slice(b",\"rules\":[");
+    for (index, rule) in rules.iter().enumerate() {
+        if index > 0 {
+            w.push(b',');
+        }
+        rule_text(u, *rule, w)?;
+    }
+    w.extend_from_slice(b"],\"seeds\":[");
+    for (index, seed) in seeds.iter().enumerate() {
+        if index > 0 {
+            w.push(b',');
+        }
+        call_text(u, *seed, None, w)?;
+    }
+    w.extend_from_slice(b"]}");
+    Ok(())
 }
 
-/// The runtime program as `dl8 eval` reads it: `{"rules", "seeds", "names"}`.
-/// `Err` is a diagnostic payload term.
-pub fn program_to_json(u: &mut Universe, checked_datalog: TermId) -> Result<Value, TermId> {
-    match transport(u, checked_datalog) {
-        Ok(value) => Ok(value),
+/// The runtime program as `dl8 eval` reads it, `{"names", "rules", "seeds"}`, as JSON
+/// text. `Err` is a diagnostic payload term.
+pub fn program_json_text(u: &mut Universe, checked_datalog: TermId) -> Result<Vec<u8>, TermId> {
+    let mut text = Vec::new();
+    match transport(u, checked_datalog, &mut text) {
+        Ok(()) => Ok(text),
         Err(Transport::Shape(reason)) => {
             let reason = u.atom(reason);
             Err(u.compound("program_transport", vec![reason]))
@@ -627,6 +746,12 @@ pub fn program_to_json(u: &mut Universe, checked_datalog: TermId) -> Result<Valu
             Err(u.compound("duplicate_relation_name", vec![name, first, second]))
         }
     }
+}
+
+/// `program_json_text` parsed.
+pub fn program_to_json(u: &mut Universe, checked_datalog: TermId) -> Result<Value, TermId> {
+    program_json_text(u, checked_datalog)
+        .map(|text| serde_json::from_slice(&text).expect("program_json_text writes JSON"))
 }
 
 pub fn program_from_json(u: &mut Universe, v: &Value) -> Result<Program, String> {

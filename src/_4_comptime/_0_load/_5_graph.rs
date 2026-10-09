@@ -212,19 +212,18 @@ fn graph_edges(
     let claims = sorted(u, claims);
 
     let mut unique: Vec<Vec<TermId>> = Vec::new();
-    let mut seen: Vec<(TermId, TermId)> = Vec::new();
+    let mut seen: std::collections::HashSet<(TermId, TermId)> = std::collections::HashSet::new();
     let mut diagnostics = Vec::new();
     for claim in &claims {
         let row = parts(u, *claim, "claim", 4).expect("claim shape");
         let key = (row[0], row[2]);
-        if seen.contains(&key) {
+        if !seen.insert(key) {
             let payload = u.compound("tsi_duplicate_edge_label", vec![row[0], row[2]]);
             let none = u.atom("none");
             diagnostics.push(diagnostic(u, "extract", none, payload));
         } else {
             unique.push(row.clone());
         }
-        seen.push(key);
     }
 
     let mut edges = Vec::with_capacity(unique.len());

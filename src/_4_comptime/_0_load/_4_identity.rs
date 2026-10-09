@@ -330,7 +330,7 @@ fn unresolved_diagnostics(
     accepted: &[Fact],
     identities: &Identities,
 ) -> Vec<TermId> {
-    let values: Vec<i64> = accepted
+    let values: std::collections::HashSet<i64> = accepted
         .iter()
         .filter(|fact| fact.relation == "tsi.value" && fact.arguments.len() == 2)
         .filter_map(|fact| wire_id(u, fact.arguments[0]))

@@ -6,10 +6,10 @@ use dl8::_6_eval::evaluate::{Evaluate, Store};
 use dl8::_6_eval::ir_bundle;
 use dl8::_6_eval::ir_lower;
 use dl8::_6_eval::json::{
-    closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json,
+    closure_to_json, diagnostic_to_json, program_from_json, program_json_text, program_names, program_to_json,
     serve_relations,
 };
-use dl8::_6_eval::json::{term_from_json, term_to_json};
+use dl8::_6_eval::json::{term_from_json, term_to_json, write_term_json};
 use dl8::_6_eval::{Arg, Row, Term, TermId, Trace, Universe};
 use dl8::_7_effect::Slice;
 use dl8::_8_driver::{Event, Stop};
@@ -1236,30 +1236,43 @@ fn compile_cli(
         .as_list(compiled.runtime_program)
         .is_some_and(|l| l.is_empty());
     let program = match empty {
-        true => serde_json::Value::Null,
-        false => match program_to_json(&mut u, compiled.runtime_program) {
+        true => b"null".to_vec(),
+        false => match program_json_text(&mut u, compiled.runtime_program) {
             Ok(program) => program,
             Err(payload) => {
                 diagnostics.push(payload);
-                serde_json::Value::Null
+                b"null".to_vec()
             }
         },
     };
-    let encode = |ids: &[dl8::_6_eval::TermId]| {
-        serde_json::Value::Array(ids.iter().map(|t| term_to_json(&u, *t)).collect())
-    };
-    let mut out = serde_json::Map::new();
-    out.insert("compiler_rows".into(), encode(&compiled.compiler_rows));
-    out.insert(
-        "runtime_program".into(),
-        term_to_json(&u, compiled.runtime_program),
-    );
-    out.insert("diagnostics".into(), encode(&diagnostics));
-    out.insert("program".into(), program);
-    println!(
-        "{}",
-        serde_json::to_string(&serde_json::Value::Object(out)).unwrap()
-    );
+    // Keys in `serde_json::Map` order, so the bytes match the old whole-`Value` print.
+    let written = (|| -> std::io::Result<()> {
+        let mut w = std::io::BufWriter::new(std::io::stdout().lock());
+        let encode = |ids: &[TermId], w: &mut std::io::BufWriter<_>| -> std::io::Result<()> {
+            w.write_all(b"[")?;
+            for (index, id) in ids.iter().enumerate() {
+                if index > 0 {
+                    w.write_all(b",")?;
+                }
+                write_term_json(&u, *id, w)?;
+            }
+            w.write_all(b"]")
+        };
+        w.write_all(b"{\"compiler_rows\":")?;
+        encode(&compiled.compiler_rows, &mut w)?;
+        w.write_all(b",\"diagnostics\":")?;
+        encode(&diagnostics, &mut w)?;
+        w.write_all(b",\"program\":")?;
+        w.write_all(&program)?;
+        w.write_all(b",\"runtime_program\":")?;
+        write_term_json(&u, compiled.runtime_program, &mut w)?;
+        w.write_all(b"}\n")?;
+        w.flush()
+    })();
+    if let Err(error) = written {
+        tracing::error!(phase = "compile", error = %error);
+        return ExitCode::from(2);
+    }
     if diagnostics.is_empty() {
         ExitCode::SUCCESS
     } else {

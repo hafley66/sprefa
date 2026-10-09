@@ -321,7 +321,7 @@ pub fn unmet_bound_diagnostics(
             .map(|rows| rows.iter().map(|(_, items)| items.clone()).collect())
             .unwrap_or_default()
     };
-    let passed: Vec<Vec<TermId>> = arguments(discharged)
+    let passed: std::collections::HashSet<Vec<TermId>> = arguments(discharged)
         .into_iter()
         .filter(|items| items.len() == 4)
         .map(|items| items[..3].to_vec())
@@ -333,7 +333,7 @@ pub fn unmet_bound_diagnostics(
         let [site, parameter, argument, bound] = items[..] else {
             continue;
         };
-        if passed.contains(&items[..3].to_vec()) {
+        if passed.contains(&items[..3]) {
             continue;
         }
         let at = u.unary(site, "const").unwrap_or(site);
