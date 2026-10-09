@@ -1576,19 +1576,49 @@ fn intern_lowered<E: Engine>(lowered: &Lowered, core: &mut Core<E>) -> Result<()
     for (_, value) in &lowered.texts {
         text_cells.push(engine.intern_text(value)?);
     }
-    let mut pending: BTreeSet<usize> = (0..lowered.terms.len())
-        .filter(|&index| !mapped.contains_key(&lowered.terms[index].original))
-        .collect();
-    // Each pass adds at least one term. The cap also guards malformed cyclic arenas.
-    for _ in 0..lowered.terms.len().min(TERM_BUDGET) + 1 {
-        if pending.is_empty() {
-            break;
+    // A term is ready once its args are mapped. Its level is one past its deepest unmapped
+    // arg's, read in one pass because `lowered.terms` follows ascending `TermId`, children
+    // first. Level k is exactly the set the k-th ready-scan would find, in index order.
+    let mut level_of: HashMap<TermId, usize> = HashMap::new();
+    let mut levels: Vec<Vec<usize>> = Vec::new();
+    let mut unordered = Vec::new();
+    for (index, spec) in lowered.terms.iter().enumerate() {
+        if mapped.contains_key(&spec.original) {
+            continue;
         }
-        let mut ready = Vec::new();
-        let mut terms = Vec::new();
-        for &index in &pending {
-            let spec = &lowered.terms[index];
-            if spec.args.iter().all(|id| mapped.contains_key(id)) {
+        let mut level = 0;
+        for arg in &spec.args {
+            match (mapped.contains_key(arg), level_of.get(arg)) {
+                (true, _) => {}
+                (false, Some(&below)) => level = level.max(below + 1),
+                (false, None) => {
+                    unordered.push(index);
+                    level = usize::MAX;
+                    break;
+                }
+            }
+        }
+        if level == usize::MAX {
+            continue;
+        }
+        level_of.insert(spec.original, level);
+        if levels.len() <= level {
+            levels.resize_with(level + 1, Vec::new);
+        }
+        levels[level].push(index);
+    }
+    if !unordered.is_empty() || levels.len() > TERM_BUDGET + 1 {
+        return Err(ivm_engine::EngineError::new(
+            ivm_engine::Stage::Settle,
+            None,
+            ivm_engine::ErrorKind::Unsupported("term bootstrap budget or cycle"),
+        ));
+    }
+    for ready in levels {
+        let terms: Vec<_> = ready
+            .iter()
+            .map(|&index| {
+                let spec = &lowered.terms[index];
                 let row = if let Some(raw) = spec.raw {
                     vec![raw]
                 } else if let Some(text) = spec.text {
@@ -1596,26 +1626,14 @@ fn intern_lowered<E: Engine>(lowered: &Lowered, core: &mut Core<E>) -> Result<()
                 } else {
                     spec.args.iter().map(|id| mapped[id]).collect()
                 };
-                terms.push((spec.functor, row));
-                ready.push(index);
-            }
-        }
-        if ready.is_empty() {
-            break;
-        }
+                (spec.functor, row)
+            })
+            .collect();
         let cells = engine.intern_terms(&terms)?;
         for (index, cell) in ready.into_iter().zip(cells) {
             mapped.insert(lowered.terms[index].original, cell);
             decoded.insert(cell, lowered.terms[index].original);
-            pending.remove(&index);
         }
-    }
-    if !pending.is_empty() {
-        return Err(ivm_engine::EngineError::new(
-            ivm_engine::Stage::Settle,
-            None,
-            ivm_engine::ErrorKind::Unsupported("term bootstrap budget or cycle"),
-        ));
     }
     Ok(())
 }
