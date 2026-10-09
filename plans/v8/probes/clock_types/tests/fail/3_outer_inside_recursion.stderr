@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/fail/3_outer_inside_recursion.rs:5:41
+  |
+5 |     iterate(&edges, |inner| join(inner, &edges));
+  |                             ----        ^^^^^^ expected `&Rel<B, Inner<Tick>>`, found `&Rel<B, Tick>`
+  |                             |
+  |                             arguments to this function are incorrect
+  |
+  = note: expected reference `&clock_types::Rel<clock_types::B, Inner<clock_types::Tick>>`
+             found reference `&clock_types::Rel<clock_types::B, clock_types::Tick>`
+note: function defined here
+ --> src/lib.rs
+  |
+  | pub fn join<R, C>(_left: &Rel<R, C>, _right: &Rel<R, C>) -> Rel<R, C> {
+  |        ^^^^

@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/fail/0_join_across_ticks.rs:6:16
+  |
+6 |     join(&now, &before);
+  |     ----       ^^^^^^^ expected `&Rel<B, Tick>`, found `&Rel<B, Prev<Tick>>`
+  |     |
+  |     arguments to this function are incorrect
+  |
+  = note: expected reference `&clock_types::Rel<clock_types::B, clock_types::Tick>`
+             found reference `&clock_types::Rel<clock_types::B, Prev<clock_types::Tick>>`
+note: function defined here
+ --> src/lib.rs
+  |
+  | pub fn join<R, C>(_left: &Rel<R, C>, _right: &Rel<R, C>) -> Rel<R, C> {
+  |        ^^^^

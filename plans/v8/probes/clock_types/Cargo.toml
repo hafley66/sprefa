@@ -1,0 +1,9 @@
+[package]
+name = "clock_types"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dev-dependencies]
+trybuild = "1.0.121"

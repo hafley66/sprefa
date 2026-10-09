@@ -1,0 +1,20 @@
+error[E0277]: the trait bound `Inner<clock_types::Tick>: Finished` is not satisfied
+ --> tests/fail/4_negate_inside_recursion.rs:5:36
+  |
+5 |     iterate(&edges, |inner| negate(inner));
+  |                             ------ ^^^^^ the trait `Finished` is not implemented for `Inner<clock_types::Tick>`
+  |                             |
+  |                             required by a bound introduced by this call
+  |
+help: the following other types implement trait `Finished`
+ --> src/lib.rs
+  |
+  | impl Finished for Tick {}
+  | ^^^^^^^^^^^^^^^^^^^^^^ `clock_types::Tick`
+  | impl<C: Finished> Finished for Prev<C> {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Prev<C>`
+note: required by a bound in `clock_types::negate`
+ --> src/lib.rs
+  |
+  | pub fn negate<C: Finished>(_set: &Rel<B, C>) -> Rel<B, C> {
+  |                  ^^^^^^^^ required by this bound in `negate`
