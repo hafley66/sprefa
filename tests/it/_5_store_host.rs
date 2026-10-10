@@ -1204,6 +1204,26 @@ pub fn extract_answers_rows_for_each_family_over_the_corpus() {
 }
 
 #[test]
+pub fn extract_flags_are_flags_ryi_lists() {
+    let Some(binary) = extract_bin() else {
+        println!("SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset");
+        return;
+    };
+    let help = std::process::Command::new(&binary)
+        .args(["help", "flags"])
+        .output()
+        .unwrap();
+    assert!(help.status.success(), "ryi help flags exit {}", help.status);
+    let listed: Vec<&str> = std::str::from_utf8(&help.stdout)
+        .unwrap()
+        .split(|c: char| c.is_whitespace())
+        .collect();
+    for flag in dl8::_9_runtime::executors::extract::FLAGS {
+        assert!(listed.contains(&flag), "ryi help flags lists no {flag}");
+    }
+}
+
+#[test]
 pub fn extract_with_no_binary_is_one_error_row_per_family() {
     let directory = s20hosts_scratch("extract-missing");
     let missing = directory.join("no-extract").to_string_lossy().to_string();
