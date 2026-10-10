@@ -429,3 +429,74 @@ fn every_loop_and_recursion_in_src_carries_its_budget() {
         UNBUDGETED.len()
     );
 }
+
+// ryi's record names, frozen in `src/_4_comptime/_0_load/ryi_records.txt`,
+// match its schema. `DL8_REFREEZE=1` rewrites the frozen copy and its stamp.
+#[test]
+fn ryi_records_match_the_schema() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let schema = root.join("hafley-rs/crates/sprefa-extract/schema/generated/5_facts.json");
+    let Ok(text) = fs::read_to_string(&schema) else {
+        println!("SKIP: no {}", schema.display());
+        return;
+    };
+    let shapes: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+    let mut names: Vec<&str> = shapes
+        .iter()
+        .map(|shape| shape["record"].as_str().unwrap())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    let frozen_path = root.join("src/_4_comptime/_0_load/ryi_records.txt");
+    if std::env::var_os("DL8_REFREEZE").is_some() {
+        let hash = Command::new("git")
+            .arg("-C")
+            .arg(root.join("hafley-rs/"))
+            .args(["log", "-1", "--format=%h", "--"])
+            .arg("crates/sprefa-extract/schema/generated/5_facts.json")
+            .output()
+            .unwrap();
+        let hash = String::from_utf8(hash.stdout).unwrap();
+        let stamp = format!(
+            "# ryi record names, frozen from hafley-rs {} crates/sprefa-extract/schema/generated/5_facts.json",
+            hash.trim()
+        );
+        fs::write(&frozen_path, format!("{stamp}\n{}\n", names.join("\n"))).unwrap();
+    }
+    let frozen = fs::read_to_string(&frozen_path).unwrap();
+    let mut lines = frozen.lines();
+    let stamp = lines.next().unwrap_or_default();
+    let frozen_names: Vec<&str> = lines.collect();
+    assert_eq!(
+        frozen_names, names,
+        "ryi's schema moved past the frozen copy ({stamp}); rerun with DL8_REFREEZE=1"
+    );
+    for decoded in dl8::_4_comptime::load::wire::DECODED_RECORDS {
+        assert!(
+            names.contains(&decoded),
+            "ryi's schema has no {decoded} record"
+        );
+    }
+}
+
+// Every ryi record the loader does not decode is skipped without a
+// diagnostic; a malformed decoded record still is one.
+#[test]
+fn ryi_records_the_loader_skips_raise_no_diagnostic() {
+    let mut u = dl8::_6_eval::Universe::new();
+    let origin = u.atom("ryi");
+    let lines = vec![
+        r#"{"record":"symbol"}"#.to_string(),
+        r#"{"record":"occurrence"}"#.to_string(),
+        r#"{"record":"graph_edge"}"#.to_string(),
+    ];
+    let loaded = dl8::_4_comptime::load::wire::load_tsi_lines(&mut u, origin, &lines);
+    assert!(
+        loaded.diagnostics.is_empty(),
+        "{} diagnostics",
+        loaded.diagnostics.len()
+    );
+    let malformed = vec![r#"{"record":"fact"}"#.to_string()];
+    let loaded = dl8::_4_comptime::load::wire::load_tsi_lines(&mut u, origin, &malformed);
+    assert_eq!(loaded.diagnostics.len(), 1);
+}

@@ -61,67 +61,24 @@ pub const GRAPH_RELATIONS: [&str; 11] = [
     "tsi.origin",
 ];
 
-/// `:145-200`. `types.rs:2976` FlatFact less the TSI six, plus the astgrep and
-/// ast-rule records. A name here is skipped without a diagnostic.
-pub const FOREIGN_RECORDS: [&str; 57] = [
-    "arg",
-    "ast_rule",
-    "capture",
-    "cfg_scope",
-    "const",
-    "data_doc",
-    "data_value",
-    "df_allocates",
-    "df_field",
-    "df_lit",
-    "df_loop",
-    "df_nest",
-    "doc",
-    "doc_node",
-    "doc_tag",
-    "edge",
-    "external_crate_decline",
-    "file",
-    "file_edge",
-    "file_unresolved",
-    "flow_edge",
-    "macro_site",
-    "method_owner",
-    "node",
-    "package_edge",
-    "param",
-    "projectedge",
-    "reference",
-    "resolved_edge",
-    "resolved_import",
-    "resolved_type_edge",
-    "scip_callee_type",
-    "scip_def",
-    "scip_diagnostic",
-    "scip_document",
-    "scip_documentation",
-    "scip_edge",
-    "scip_fn_edge",
-    "scip_impl",
-    "scip_index",
-    "scip_local",
-    "scip_metadata",
-    "scip_name",
-    "scip_occurrence",
-    "scip_occurrence_doc",
-    "scip_ref",
-    "scip_relationship",
-    "scip_signature",
-    "scip_signature_occurrence",
-    "scip_skip",
-    "scip_symbol",
-    "sig",
-    "site",
-    "size_skip",
-    "specifier",
-    "test_only_call",
-    "unresolved",
+/// ryi's record names, frozen from its schema by
+/// `_8_contracts::ryi_records_match_the_schema`; the first line is the stamp.
+pub const RYI_RECORDS: &str = include_str!("ryi_records.txt");
+
+/// The records `decode_record` reads. A malformed one is a diagnostic.
+pub const DECODED_RECORDS: [&str; 6] = [
+    "protocol",
+    "run",
+    "fact",
+    "witness",
+    "coverage",
+    "diagnostic",
 ];
+
+/// A ryi record this loader does not read: skipped without a diagnostic.
+pub fn foreign_record(record: &str) -> bool {
+    !DECODED_RECORDS.contains(&record) && RYI_RECORDS.lines().skip(1).any(|line| line == record)
+}
 
 pub fn tsi_relation_arity(name: &str) -> Option<i64> {
     TSI_RELATIONS
@@ -219,7 +176,7 @@ fn decode_line(u: &mut Universe, value: &Value) -> Decoded {
     };
     match decode_record(u, record, object) {
         Some(row) => Decoded::Row(row),
-        None if FOREIGN_RECORDS.contains(&record.as_str()) => Decoded::Skip,
+        None if foreign_record(record) => Decoded::Skip,
         None => Decoded::Malformed(record.clone()),
     }
 }
@@ -523,7 +480,9 @@ fn scope_id(u: &mut Universe, scope: TermId) -> TermId {
         .as_list(scope)
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|entry| atom_text(u, entry).map(|text| text.strip_prefix(&base).unwrap_or(text).to_owned()))
+        .filter_map(|entry| {
+            atom_text(u, entry).map(|text| text.strip_prefix(&base).unwrap_or(text).to_owned())
+        })
         .collect();
     entries.sort_unstable();
     let mut hasher = blake3::Hasher::new();
@@ -532,7 +491,9 @@ fn scope_id(u: &mut Universe, scope: TermId) -> TermId {
         hasher.update(b"\n");
     }
     let digest = hasher.finalize();
-    let head: [u8; 8] = digest.as_bytes()[..8].try_into().expect("blake3 is 32 bytes");
+    let head: [u8; 8] = digest.as_bytes()[..8]
+        .try_into()
+        .expect("blake3 is 32 bytes");
     u.int(i64::from_le_bytes(head))
 }
 
