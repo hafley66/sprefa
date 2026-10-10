@@ -1419,7 +1419,7 @@ fn install_terms<E: Engine>(
     // Children first, by dependency: a vec's flat term (`ir_lower::flat_vec`) is created here,
     // so its id is above its parent's and id order is not an install order.
     let vec_head = u.atom("vec");
-    let mut text_terms: Vec<(TermId, String)> = Vec::new();
+    let mut text_terms: Vec<(TermId, std::sync::Arc<str>)> = Vec::new();
     let mut engine_args: HashMap<TermId, Vec<TermId>> = HashMap::new();
     let mut lists: HashMap<TermId, TermId> = HashMap::new();
     let mut seen: HashSet<TermId> = HashSet::new();
@@ -1442,7 +1442,7 @@ fn install_terms<E: Engine>(
             }
             None => match u.get(term) {
                 Term::Str(sym) => {
-                    text_terms.push((term, u.sym_str(*sym).to_owned()));
+                    text_terms.push((term, std::sync::Arc::from(u.sym_str(*sym))));
                     Vec::new()
                 }
                 Term::Compound(_, args) => args.clone(),
@@ -1452,9 +1452,8 @@ fn install_terms<E: Engine>(
         stack.push((term, true));
         stack.extend(args.into_iter().map(|arg| (arg, false)));
     }
-    let texts: Vec<String> = text_terms.iter().map(|(_, text)| text.clone()).collect();
-    let text_cells: HashMap<TermId, Cell> =
-        text_terms.iter().map(|(term, _)| *term).zip(engine.intern_texts(&texts)?).collect();
+    let (text_ids, texts): (Vec<TermId>, Vec<std::sync::Arc<str>>) = text_terms.into_iter().unzip();
+    let text_cells: HashMap<TermId, Cell> = text_ids.into_iter().zip(engine.intern_texts(texts)?).collect();
     let mut batch_index: HashMap<TermId, usize> = HashMap::new();
     let mut batch = Vec::with_capacity(order.len());
     for &term in &order {
@@ -1658,8 +1657,8 @@ fn intern_lowered<E: Engine>(lowered: &Lowered, core: &mut Core<E>) -> Result<()
     let engine = &mut core.engine;
     let mapped = &mut core.mapped;
     let decoded = &mut core.decoded.cells;
-    let texts: Vec<String> = lowered.texts.iter().map(|(_, value)| value.clone()).collect();
-    let text_cells = engine.intern_texts(&texts)?;
+    let texts = lowered.texts.iter().map(|(_, value)| std::sync::Arc::from(value.as_str())).collect();
+    let text_cells = engine.intern_texts(texts)?;
     // Children first by dependency, so every unmapped arg of a term is an earlier entry of the
     // batch and the whole bootstrap is one engine call. Ascending `TermId` is not that order: a
     // flat vec's spec (`ir_lower::flat_vec`) is created after the term that holds it.
