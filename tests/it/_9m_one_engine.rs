@@ -10,7 +10,7 @@ const HELLO: &str = "plans/v8/probes/2026-10-05-one-dd-engine/0_hello.dl7";
 const SECOND: &str = "fixtures/literals/3_str_cons.dl7";
 const MARK: &str = "ONE ENGINE SECOND PROGRAM";
 const END: &str = "ONE ENGINE SECOND PROGRAM END";
-const ENGINES: [&str; 2] = ["ir:dd", "ir:sqlite"];
+const ENGINES: [&str; 1] = ["ir:dd"];
 
 type Counts = BTreeMap<String, u64>;
 

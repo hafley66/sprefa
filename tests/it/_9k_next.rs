@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::process::Command;
 
-const ENGINES: [&str; 2] = ["ir:sqlite", "ir:dd"];
+const ENGINES: [&str; 1] = ["ir:dd"];
 
 fn cell(arg: &Value) -> Value {
     arg["args"][0].clone()
@@ -142,7 +142,6 @@ fn negation_inside_one_wave_is_a_strict_cycle() {
     assert_eq!(
         diagnostics("3_same_wave_negation"),
         vec![
-            json!(["ir:sqlite", ["stratify", "strict_dependency_cycle", null]]),
             json!(["ir:dd", ["stratify", "strict_dependency_cycle", null]]),
         ]
     );
@@ -200,7 +199,6 @@ fn wave_limit() {
     assert_eq!(
         diagnostics("5_wave_limit"),
         vec![
-            json!(["ir:sqlite", ["ir_eval", "wave_limit", null]]),
             json!(["ir:dd", ["ir_eval", "wave_limit", null]]),
         ]
     );

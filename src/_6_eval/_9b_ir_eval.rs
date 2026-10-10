@@ -33,9 +33,6 @@ pub fn take_answers() -> (usize, Vec<Row>) {
 #[derive(Copy, Clone, Debug)]
 pub enum Backend {
     Dd,
-    Sqlite,
-    #[cfg(feature = "duckdb")]
-    DuckDb,
 }
 
 #[derive(Clone)]
@@ -467,9 +464,6 @@ fn open_session(
 ) -> Result<Box<dyn Session + Send>, Diagnostic> {
     match backend {
         Backend::Dd => install_session::<ivm_dd::Dd>(u, lowered, fingerprint, measured),
-        Backend::Sqlite => install_session::<ivm_sqlite::Sqlite>(u, lowered, fingerprint, measured),
-        #[cfg(feature = "duckdb")]
-        Backend::DuckDb => install_session::<ivm_duckdb::DuckDb>(u, lowered, fingerprint, measured),
     }
 }
 
@@ -592,9 +586,6 @@ fn open_composed(
     let composed = ir::compose(&programs).map_err(|error| diagnostic(u, "engine", error))?;
     match backend {
         Backend::Dd => install_composed::<ivm_dd::Dd>(u, &composed, parts),
-        Backend::Sqlite => install_composed::<ivm_sqlite::Sqlite>(u, &composed, parts),
-        #[cfg(feature = "duckdb")]
-        Backend::DuckDb => install_composed::<ivm_duckdb::DuckDb>(u, &composed, parts),
     }
 }
 
@@ -1229,24 +1220,12 @@ fn snapshot_closure<E: Engine>(
     Ok(Closure { rows, diagnostics })
 }
 
-/// `DL8_ENGINE`: unset is `ir:dd`.
+/// `DL8_ENGINE`: unset is `ir:dd`, the one connected engine.
 pub fn configured_backend() -> Result<Backend, String> {
     match std::env::var("DL8_ENGINE").as_deref() {
         Err(std::env::VarError::NotPresent) | Ok("ir:dd") => Ok(Backend::Dd),
-        Ok("ir:sqlite") => Ok(Backend::Sqlite),
-        #[cfg(feature = "duckdb")]
-        Ok("ir:duckdb") => Ok(Backend::DuckDb),
-        #[cfg(not(feature = "duckdb"))]
-        Ok("ir:duckdb") => Err(
-            "DL8_ENGINE \"ir:duckdb\" needs the `duckdb` cargo feature; this dl8 build lacks it (rebuild with --features duckdb)"
-                .into(),
-        ),
-        Ok(other) => Err(format!(
-            "unknown DL8_ENGINE {other:?}; expected ir:dd, ir:sqlite, or ir:duckdb"
-        )),
-        Err(error) => Err(format!(
-            "DL8_ENGINE {error}; expected ir:dd, ir:sqlite, or ir:duckdb"
-        )),
+        Ok(other) => Err(format!("DL8_ENGINE {other:?} is not connected; the one engine is ir:dd")),
+        Err(error) => Err(format!("DL8_ENGINE {error}; the one engine is ir:dd")),
     }
 }
 
@@ -3076,9 +3055,6 @@ fn open_interp(
     }
     match backend {
         Backend::Dd => install::<ivm_dd::Dd>(bucket, measured),
-        Backend::Sqlite => install::<ivm_sqlite::Sqlite>(bucket, measured),
-        #[cfg(feature = "duckdb")]
-        Backend::DuckDb => install::<ivm_duckdb::DuckDb>(bucket, measured),
     }
     .map_err(|error| engine_diagnostic(u, error))
 }

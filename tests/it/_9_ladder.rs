@@ -9,7 +9,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
-const ENGINES: [&str; 2] = ["ir:sqlite", "ir:dd"];
+const ENGINES: [&str; 1] = ["ir:dd"];
 
 fn run(
     rung: usize,
@@ -221,7 +221,7 @@ fn rung_7_declared_fold_growth() {
             "polarity": "positive",
         })],
     );
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         let small = fold_frontier(8, engine, int_add.clone(), None, 9);
         let large = fold_frontier(80, engine, int_add.clone(), None, 81);
         for (size, frontier) in [(8, &small), (80, &large)] {
@@ -280,7 +280,7 @@ fn rung_7_declared_fold_algebras() {
         (json!({"f":"kernel","args":[{"a":"min_step"}]}), 0, 0),
         (json!({"f":"kernel","args":[{"a":"max_step"}]}), 0, 3),
     ];
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         for (step, seed, expected) in &steps {
             let seeds = (1..=3)
                 .map(|value| call("input", vec![constant(value)]))
@@ -438,7 +438,7 @@ fn rung_2_join() {
             );
         }
     }
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         let measure = |size| {
             let mut seeds: Vec<_> = (0..size)
                 .map(|i| call("padding", vec![json!({"f":"const","args":[i]})]))
@@ -597,7 +597,7 @@ fn rung_5_recursion() {
             }
         }
     }
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         let measure = |size| {
             let seeds = (0..size)
                 .map(|i| call("edge", vec![constant(i as i8), constant((i + 1) as i8)]))
@@ -708,7 +708,7 @@ fn rung_6_kernels() {
             );
         }
     }
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         let measure = |size| {
             let rules = (0..size)
                 .map(|i| {
@@ -877,7 +877,7 @@ fn rung_6_scalar_kernel_edges() {
             )],
         ),
     ];
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         let (closure, _, _) = run(6, 4, engine, program(vec![], rules.clone()));
         assert_eq!(
             rows(&closure, "counted"),
@@ -1066,8 +1066,8 @@ fn rung_9_ir_reuses_one_comptime_install() {
             String::from_utf8(output.stderr).unwrap(),
         )
     };
-    let (fresh, _) = compile("ir:sqlite");
-    for engine in ["ir:sqlite", "ir:dd"] {
+    let (fresh, _) = compile("ir:dd");
+    for engine in ["ir:dd"] {
         let (retained, trace) = compile(engine);
         assert_eq!(retained["diagnostics"], json!([]), "{engine}");
         assert_eq!(

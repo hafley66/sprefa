@@ -499,7 +499,7 @@ pub fn every_fold_fixture_matches_expected() {
     let binary = env!("CARGO_BIN_EXE_dl8");
     let s15fold_fixtures = s15fold_fixtures();
     assert!(!s15fold_fixtures.is_empty(), "no fold fixtures found");
-    let failures: Vec<String> = [Some("ir:sqlite"), Some("ir:dd")]
+    let failures: Vec<String> = [Some("ir:dd")]
         .into_iter()
         .flat_map(|engine| {
             s15fold_fixtures
@@ -524,7 +524,7 @@ pub fn every_fold_fixture_carries_its_written_answer() {
         ("3_step_no_row", None, "fold_step_no_row"),
     ];
     let mut failures: Vec<String> = Vec::new();
-    for engine in [Some("ir:sqlite"), Some("ir:dd")] {
+    for engine in [Some("ir:dd")] {
         for source in s15fold_fixtures() {
             let (stem, got) = observed(binary, &source, engine).unwrap();
             let Some((_, value, diagnostic)) = wanted.iter().find(|(name, _, _)| *name == stem)

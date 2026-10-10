@@ -46,7 +46,7 @@ fn generic_bind_evaluates_and_inserts() {
     std::fs::write(&program_path, &compiled.stdout).unwrap();
     let names = &program["program"]["names"];
 
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         let evaluated = Command::new(env!("CARGO_BIN_EXE_dl8"))
             .args(["eval"])
             .arg(&program_path)
@@ -125,7 +125,7 @@ fn nested_generic_argument_builds_inner_instance_first() {
     std::fs::create_dir_all(&directory).unwrap();
     let program_path = directory.join("program.json");
     std::fs::write(&program_path, &compiled.stdout).unwrap();
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         let evaluated = Command::new(env!("CARGO_BIN_EXE_dl8"))
             .args(["eval"])
             .arg(&program_path)

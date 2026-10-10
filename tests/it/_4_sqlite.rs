@@ -1457,39 +1457,3 @@ fn rust_time_is_separable_from_sql_time() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
-/// Objects the ir:sqlite engine creates for the prelude's comptime program.
-/// A rule that reads a generic back and builds another one is not demanded,
-/// so no reader of `:` gets an adorned copy of every `:` rule.
-const PRELUDE_COMPTIME_SQLITE_OBJECTS: usize = 2895;
-
-#[test]
-fn ir_sqlite_comptime_objects_for_the_prelude() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let compiled = Command::new(env!("CARGO_BIN_EXE_dl8"))
-        .arg("compile")
-        .arg(root.join("fixtures/generic/2_variable_goal.dl7"))
-        .env("DL8_ENGINE", "ir:sqlite")
-        .env("DL8_RULES", "compile")
-        .env("RUST_LOG", "info")
-        .output()
-        .unwrap();
-    assert!(compiled.status.success());
-    let log = String::from_utf8(compiled.stderr).unwrap();
-    let created: Vec<usize> = log
-        .lines()
-        .filter(|line| line.contains("name=\"comptime\"") && line.contains("sqlite_create_count="))
-        .filter_map(|line| {
-            line.rsplit("sqlite_create_count=")
-                .next()?
-                .trim()
-                .parse()
-                .ok()
-        })
-        .collect();
-    assert_eq!(created.len(), 1, "{log}");
-    assert!(
-        created[0] <= PRELUDE_COMPTIME_SQLITE_OBJECTS,
-        "{}",
-        created[0]
-    );
-}
