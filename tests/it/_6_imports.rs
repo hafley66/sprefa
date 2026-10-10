@@ -306,6 +306,10 @@ fn dl8_compile_consumes_the_extracted_stream() {
         "no compiler row names a corpus type; the TSI stream did not reach the compiler"
     );
     let expected_path = fixture_root().join("expected_tsi_rows.json");
+    if std::env::var_os("DL8_REFREEZE").is_some() {
+        let text = serde_json::to_string_pretty(&Value::Array(named.clone())).unwrap();
+        std::fs::write(&expected_path, text + "\n").unwrap();
+    }
     let expected: Value = serde_json::from_str(
         &std::fs::read_to_string(&expected_path).expect("expected rows are committed"),
     )

@@ -89,6 +89,8 @@ impl Extract {
     /// diagnostics logger on its stderr, and a reader that owns the process.
     fn spawn_child(&mut self) -> Result<(), String> {
         let binary = extract_bin()?;
+        // tokio's process driver registers the child with the runtime's reactor.
+        let _runtime = handle().enter();
         let mut child = Command::new(&binary)
             .arg("--resolve")
             .stdin(std::process::Stdio::piped())
