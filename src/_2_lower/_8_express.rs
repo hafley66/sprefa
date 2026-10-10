@@ -305,12 +305,10 @@ fn expression_start(cx: &mut Cx, node: TermId, owner: TermId) -> ExprOutcome {
             }
             return lower_path_walk(cx, parsed.id, &items[1..], owner);
         }
-        if cx
-            .u
-            .functor_or_atom(head)
-            .is_some_and(|(text, _)| text == "tuple")
-        {
-            return construction(Constructed::Tuple, parsed.id, &items[1..], owner);
+        match cx.u.functor_or_atom(head).map(|(text, _)| text) {
+            Some("tuple") => return construction(Constructed::Tuple, parsed.id, &items[1..], owner),
+            Some("vec") => return construction(Constructed::Vec, parsed.id, &items[1..], owner),
+            _ => {}
         }
         return match expression_callable(cx, head, owner) {
             Ok(Applied::Relation(callable, arity, key_sets)) => lower_expression_call(
@@ -564,12 +562,13 @@ fn construction_var(cx: &mut Cx, node_id: TermId, ordinal: i64) -> TermId {
     cx.compound("var", vec![key])
 }
 
-/// What a construction interns: a constructor's instance, or the anonymous
-/// product `tuple`.
+/// What a construction interns: a constructor's instance, the anonymous
+/// product `tuple`, or the any-length `vec`.
 #[derive(Clone, Copy)]
 enum Constructed {
     By(TermId),
     Tuple,
+    Vec,
 }
 
 /// A construction part way through its arguments, each lowered in order.
@@ -608,6 +607,7 @@ impl Construction {
                 let constructor = match self.kind {
                     Constructed::By(constructor) => constructor,
                     Constructed::Tuple => cx.atom("tuple"),
+                    Constructed::Vec => cx.atom("vec"),
                 };
                 let reason = cx.compound("partial_construction_argument", vec![constructor]);
                 let diagnostic = cx.diagnostic(self.node_id, reason);
@@ -626,7 +626,8 @@ impl Construction {
             Constructed::By(constructor) => {
                 finish_construction(cx, constructor, self.node_id, self.goals, self.origins, self.values)
             }
-            Constructed::Tuple => finish_tuple(cx, self.node_id, self.goals, self.origins, self.values),
+            Constructed::Tuple => finish_tuple(cx, "tuple", self.node_id, self.goals, self.origins, self.values),
+            Constructed::Vec => finish_tuple(cx, "vec", self.node_id, self.goals, self.origins, self.values),
         })
     }
 }
@@ -718,22 +719,29 @@ fn lower_generic_value(
     construction(Constructed::By(constructor), node_id, argument_nodes, owner)
 }
 
-/// `(tuple Element...)`, the expansion of `[a b c]`: the anonymous product of
-/// that arity, one `:` edge per element, labels are positions.
+/// `(tuple Element...)`, the anonymous product of that arity, and `(vec
+/// Element...)`, the any-length sequence: one `:` edge per element, labels are
+/// positions. `label` is the head atom and the kernel goal.
 fn finish_tuple(
     cx: &mut Cx,
+    label: &str,
     node_id: TermId,
     mut goals: Vec<TermId>,
     mut origins: Vec<TermId>,
     values: Vec<TermId>,
 ) -> Lowering {
+    // A ground `vec` holds ground `vec`s: the checker tags each one as it
+    // resolves the outer value.
     let ground = cx.ground_values
         && goals.is_empty()
-        && values.iter().all(|v| {
-            cx.u.functor(*v)
-                .is_some_and(|(n, _)| matches!(n, "const" | "name" | "ref"))
+        && values.iter().all(|v| match cx.u.functor(*v) {
+            Some(("const" | "name" | "ref", _)) => true,
+            Some(("application", [head, _])) => {
+                label == "vec" && cx.u.functor_or_atom(*head).is_some_and(|(n, a)| n == "vec" && a.is_empty())
+            }
+            _ => false,
         });
-    let constructor = cx.atom("tuple");
+    let constructor = cx.atom(label);
     if ground {
         let list = cx.u.list(&values);
         let value = cx.compound("application", vec![constructor, list]);
@@ -748,7 +756,7 @@ fn finish_tuple(
     let value = cx.compound("var", vec![output_key]);
     let mut arguments = values;
     arguments.push(value);
-    goals.push(cx.kernel_goal(None, "tuple", &arguments));
+    goals.push(cx.kernel_goal(None, label, &arguments));
     origins.push(node_id);
     Lowering {
         value,

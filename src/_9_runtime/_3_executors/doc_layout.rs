@@ -253,13 +253,14 @@ fn doc_term(
     done.pop()
 }
 
-/// `application(tuple, Items)`, `ref`-wrapped or bare: the positional
-/// elements of one anonymous product.
+/// `application(tuple, Items)` or `application(vec, Items)`, `ref`-wrapped or
+/// bare: the positional elements.
 fn tuple_parts(u: &mut Universe, term: TermId) -> Option<Vec<TermId>> {
     let term = u.unary(term, "ref").unwrap_or(term);
     let [constructor, items] = u.args::<2>(term, "application")?;
-    let tuple = u.atom("tuple");
-    (u.get(constructor) == u.get(tuple)).then_some(())?;
+    u.functor_or_atom(constructor)
+        .is_some_and(|(name, args)| args.is_empty() && matches!(name, "tuple" | "vec"))
+        .then_some(())?;
     u.as_list(items)
 }
 

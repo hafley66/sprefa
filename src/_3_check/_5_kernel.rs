@@ -12,10 +12,10 @@ use crate::_6_eval::str_ops::{STR_KERNEL_RELATIONS, STR_OPS, STR_TYPED_OPS};
 use crate::_6_eval::term::{TermId, Universe};
 
 pub const COMPARISONS: [&str; 6] = ["lt", "le", "eq", "ne", "ge", "gt"];
-pub const PRIMITIVES: [&str; 6] = ["int", "float", "bool", "str", "any", "type"];
+pub const PRIMITIVES: [&str; 7] = ["int", "float", "bool", "str", "any", "type", "vec"];
 
 /// `0_lowerer.pl:1958-1973`, in declaration order: `(owner, label, arity)`.
-pub const KERNEL_RELATIONS: [(Option<&str>, &str, i64); 20] = [
+pub const KERNEL_RELATIONS: [(Option<&str>, &str, i64); 23] = [
     (None, "node", 1),
     (None, "module", 1),
     (None, "product", 1),
@@ -36,10 +36,13 @@ pub const KERNEL_RELATIONS: [(Option<&str>, &str, i64); 20] = [
     (Some("int"), "gt", 2),
     (Some("str"), "cons", 3),
     (Some("str"), "nil", 1),
+    (Some("vec"), "iter", 3),
+    (Some("vec"), "len", 2),
+    (Some("vec"), "get", 3),
 ];
 
 /// The typed ops, each an edge off its primitive node: `(owner, label, slots)`.
-const TYPED_OPS: [(&str, &str, &[(&str, &str)]); 10] = [
+const TYPED_OPS: [(&str, &str, &[(&str, &str)]); 13] = [
     ("int", "lt", &[("left", "int"), ("right", "int")]),
     ("int", "le", &[("left", "int"), ("right", "int")]),
     ("int", "eq", &[("left", "int"), ("right", "int")]),
@@ -58,6 +61,17 @@ const TYPED_OPS: [(&str, &str, &[(&str, &str)]); 10] = [
         &[("head", "str"), ("tail", "str"), ("return", "str")],
     ),
     ("str", "nil", &[("return", "str")]),
+    (
+        "vec",
+        "iter",
+        &[("vec", "vec"), ("index", "int"), ("item", "any")],
+    ),
+    ("vec", "len", &[("vec", "vec"), ("return", "int")]),
+    (
+        "vec",
+        "get",
+        &[("vec", "vec"), ("index", "int"), ("return", "any")],
+    ),
 ];
 
 /// `:617`.
@@ -79,6 +93,8 @@ pub fn kernel_relation_keys(owner: Option<&str>, label: &str) -> Vec<Vec<i64>> {
         (Some("str"), "cons") => vec![vec![0, 1], vec![2]],
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![vec![0, 1]],
         (Some("int"), "add") | (None, "effect") | (Some("any"), "lt") => vec![vec![0, 1]],
+        (Some("vec"), "iter" | "len") => vec![vec![0]],
+        (Some("vec"), "get") => vec![vec![0, 1]],
         _ if is_comparison(owner, label) => vec![vec![0, 1]],
         (Some(owner), _) => STR_OPS
             .iter()
@@ -166,7 +182,7 @@ fn labelled_edge(
 /// `msort/2` runs at `:425`.
 pub fn kernel_graph(u: &mut Universe) -> (Vec<TermId>, Vec<TermId>) {
     let mut nodes = Vec::new();
-    for name in ["int", "str", "any", "type"] {
+    for name in ["int", "str", "any", "type", "vec"] {
         let atom = u.atom(name);
         let primitive = u.compound("primitive", vec![atom]);
         nodes.push(u.compound("node", vec![primitive]));

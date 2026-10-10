@@ -24,6 +24,8 @@ pub fn kernel_relation(owner: Option<&str>, label: &str) -> Option<u32> {
         (Some("any"), "lt") => 2,
         (Some("str"), "cons") => 3,
         (Some("str"), "nil") => 1,
+        (Some("vec"), "iter" | "get") => 3,
+        (Some("vec"), "len") => 2,
         _ if is_integer_comparison(owner, label) => 2,
         (Some(owner), label) => str_op_arity(owner, label)?,
         _ => return None,
@@ -31,10 +33,10 @@ pub fn kernel_relation(owner: Option<&str>, label: &str) -> Option<u32> {
     Some(arity)
 }
 
-/// A kernel goal whose written arity is its argument count: `tuple` carries
-/// the elements and the value, so it has no fixed table arity.
+/// A kernel goal whose written arity is its argument count: `tuple` and `vec`
+/// carry the elements and the value, so they have no fixed table arity.
 pub fn kernel_variadic(owner: Option<&str>, label: &str) -> bool {
-    owner.is_none() && label == "tuple"
+    owner.is_none() && matches!(label, "tuple" | "vec")
 }
 
 /// `:1278`. `None` reproduces the `slot(Index, none)` fallback at `:1276`.
@@ -60,6 +62,10 @@ pub fn kernel_slot_label(owner: Option<&str>, label: &str, index: u32) -> Option
         (None, "effect", 1) => "application",
         (Some("any"), "lt", 0) => "left",
         (Some("any"), "lt", 1) => "right",
+        (Some("vec"), _, 0) => "vec",
+        (Some("vec"), "iter" | "get", 1) => "index",
+        (Some("vec"), "iter", 2) => "item",
+        (Some("vec"), "get", 2) | (Some("vec"), "len", 1) => "return",
         (_, _, 0) if is_integer_comparison(owner, label) => "left",
         (_, _, 1) if is_integer_comparison(owner, label) => "right",
         (Some(owner), _, _) => return str_slot_label(owner, label, index),
@@ -76,6 +82,8 @@ pub fn kernel_keys(owner: Option<&str>, label: &str) -> Vec<Vec<u32>> {
         (Some("str"), "cons") => vec![vec![0, 1], vec![2]],
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![vec![0, 1]],
         (Some("int"), "add") | (None, "effect") | (Some("any"), "lt") => vec![vec![0, 1]],
+        (Some("vec"), "iter" | "len") => vec![vec![0]],
+        (Some("vec"), "get") => vec![vec![0, 1]],
         _ if is_integer_comparison(owner, label) => vec![vec![0, 1]],
         (Some(owner), _) => str_op_inputs(owner, label).map_or(vec![], |inputs| vec![(0..inputs).collect()]),
         _ => vec![],
@@ -89,6 +97,8 @@ pub fn kernel_return_positions(owner: Option<&str>, label: &str) -> Vec<u32> {
         (Some("str"), "cons") => vec![2],
         (None, "edge_ref" | "intern" | "intern_snapshot") => vec![2],
         (Some("int"), "add") => vec![2],
+        (Some("vec"), "get") => vec![2],
+        (Some("vec"), "len") => vec![1],
         (Some(owner), _) => str_op_inputs(owner, label)
             .filter(|_| str_op_has_result(owner, label))
             .map_or(vec![], |inputs| vec![inputs]),

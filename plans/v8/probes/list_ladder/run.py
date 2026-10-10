@@ -1,16 +1,25 @@
 """List ladder: one seed holding one list of N atoms; per N, the bootstrap levels and terms, phase ms, peak RSS.
-Run from the repo root: python3 plans/v8/probes/list_ladder/run.py target/rcargo/aarch64-apple-darwin/debug/dl8"""
+Run from the repo root: python3 plans/v8/probes/list_ladder/run.py target/rcargo/aarch64-apple-darwin/debug/dl8 [--ops] [N..]"""
 import json, os, re, resource, subprocess, sys, tempfile, time
 
 binary = sys.argv[1]
-sizes = [int(n) for n in (sys.argv[2:] or ["1", "16", "128", "1024", "4096"])]
+# `--ops`: the seed's vec is also read by `vec.iter` and `vec.len` rules.
+ops = "--ops" in sys.argv[2:]
+sizes = [int(n) for n in ([a for a in sys.argv[2:] if a != "--ops"] or ["1", "16", "128", "1024", "4096"])]
 print("n\tread_ms\tmacro_ms\tmacro_rows_sent\tlower_ms\tcheck_ms\tcomptime_ms\tboot_calls_max\tboot_terms\twall_ms\tmax_rss_mb\tdiagnostics")
 for n in sizes:
     items = " ".join(f"\"f{i}\"" for i in range(n))
     source = (
-        f"(files: (* (run: str) (list: any)))\n(files \"r\" [{items}])\n"
+        f"(files: (* (run: str) (list: any)))\n(files \"r\" (vec {items}))\n"
         "(copy: (* (run: str) (list: any)))\n(<- (copy ?Run ?List) (files ?Run ?List))\n"
     )
+    if ops:
+        source += (
+            "(each: (* (run: str) (index: int) (item: any)))\n"
+            "(<- (each ?Run ?Index ?Item) (files ?Run ?List) (vec.iter ?List ?Index ?Item))\n"
+            "(size: (* (run: str) (len: int)))\n"
+            "(<- (size ?Run ?Len) (files ?Run ?List) (vec.len ?List ?Len))\n"
+        )
     with tempfile.NamedTemporaryFile("w", suffix=".dl7", delete=False) as handle:
         handle.write(source)
     env = dict(os.environ, RUST_LOG="dl8::ir=info,dl8::phase=info,dl8::macrotime=info", NO_COLOR="1")

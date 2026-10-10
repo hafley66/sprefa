@@ -60,8 +60,7 @@ fn instance(
     let Some([callee, list]) = u.args::<2>(application, "application") else {
         return Err(u.atom("invalid_application"));
     };
-    let tuple = u.atom("tuple");
-    if u.get(callee) == u.get(tuple) {
+    if sequence_head(u, callee) {
         return tuple_instance(u, cx, application, list, 0, rows);
     }
     let mut visited = Vec::new();
@@ -125,11 +124,18 @@ fn instance(
     Ok(root_ref)
 }
 
-/// Nesting of `[..]` literals inside one tuple.
+/// Nesting of `tuple` and `vec` literals inside one another.
 const TUPLE_DEPTH: usize = 16;
 
-/// `application(tuple, Items)`: one `:` row per item, label and index both
-/// the position. Nested tuple applications mint their own rows.
+/// The atom `tuple` or `vec`: a callee whose items are positions.
+fn sequence_head(u: &Universe, callee: TermId) -> bool {
+    u.functor_or_atom(callee)
+        .is_some_and(|(name, args)| args.is_empty() && matches!(name, "tuple" | "vec"))
+}
+
+/// `application(tuple, Items)` and `application(vec, Items)`: one `:` row per
+/// item, label and index both the position. Nested applications mint their own
+/// rows.
 fn tuple_instance(
     u: &mut Universe,
     cx: &Cx,
@@ -142,11 +148,10 @@ fn tuple_instance(
     if depth_exceeded {
         return Err(u.atom("tuple_depth_exceeded"));
     }
-    let tuple = u.atom("tuple");
     let items = u.as_list(list).unwrap_or_default();
     for (position, item) in items.iter().enumerate() {
         if let Some([callee, inner]) = u.args::<2>(*item, "application") {
-            if u.get(callee) == u.get(tuple) {
+            if sequence_head(u, callee) {
                 tuple_instance(u, cx, *item, inner, depth + 1, rows)?;
             }
         }

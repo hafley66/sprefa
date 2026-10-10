@@ -21,6 +21,10 @@ pub enum Kernel {
     MinStep,
     MaxStep,
     Tuple,
+    Vec,
+    VecIter,
+    VecLen,
+    VecGet,
 }
 
 /// `ref(kernel(Name))`.
@@ -88,6 +92,7 @@ impl Kernel {
             (None, "edge_ref") => Kernel::EdgeRef,
             (None, "intern") => Kernel::Intern,
             (None, "tuple") => Kernel::Tuple,
+            (None, "vec") => Kernel::Vec,
             (None, "count_step") => Kernel::CountStep,
             (None, "min_step") => Kernel::MinStep,
             (None, "max_step") => Kernel::MaxStep,
@@ -99,6 +104,9 @@ impl Kernel {
             (Some("int"), "gt") => Kernel::Int(IntCmp::Gt),
             (Some("int"), "add") => Kernel::IntAdd,
             (Some("any"), "lt") => Kernel::TermLt,
+            (Some("vec"), "iter") => Kernel::VecIter,
+            (Some("vec"), "len") => Kernel::VecLen,
+            (Some("vec"), "get") => Kernel::VecGet,
             (Some("str"), "cons") => Kernel::StrCons,
             (Some("str"), "nil") => Kernel::StrNil,
             (Some(owner), label) => Kernel::Str(
@@ -141,6 +149,7 @@ pub fn term_pair(u: &Universe, args: &[Option<TermId>]) -> Option<(TermId, TermI
 /// argument vector, with the caller unifying the unbound positions.
 pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<TermId>> {
     let solution = match k {
+        Kernel::VecIter => return vec_iter_rows(u, args),
         Kernel::StrNil => str_nil_row(u, args),
         Kernel::StrCons => str_cons_row(u, args),
         Kernel::Str(op) => str_op_row(u, op, args),
@@ -153,6 +162,10 @@ pub fn solve(u: &mut Universe, k: Kernel, args: &[Option<TermId>]) -> Vec<Vec<Te
         Kernel::MinStep => extremum_step_row(u, args, Ordering::Less),
         Kernel::MaxStep => extremum_step_row(u, args, Ordering::Greater),
         Kernel::Tuple => tuple_row(u, args),
+        Kernel::Vec => vec_row(u, args),
+        Kernel::VecLen => vec_len_row(u, args),
+        Kernel::VecGet => vec_get_row(u, args),
+        Kernel::VecIter => unreachable!("vec.iter returned above"),
     };
     solution.map(|row| vec![row]).unwrap_or_default()
 }
@@ -261,8 +274,6 @@ pub fn edge_ref_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<Ter
     Some(vec![owner_tagged, label, result])
 }
 
-/// `tuple(Element.., Value)`: with every element bound, `Value` is
-/// `ref(application(tuple, [elements]))`; with `Value` bound, its elements.
 /// A tuple element as stored in the argument vector: its `ref` or `const` tag
 /// is dropped.
 fn tuple_element(u: &Universe, tagged: TermId) -> TermId {
@@ -271,13 +282,24 @@ fn tuple_element(u: &Universe, tagged: TermId) -> TermId {
         .unwrap_or(tagged)
 }
 
+/// `tuple(Element.., Value)`: with every element bound, `Value` is
+/// `ref(application(tuple, [elements]))`; with `Value` bound, its elements.
 pub fn tuple_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    sequence_row(u, "tuple", args)
+}
+
+/// `vec(Element.., Value)`: `tuple_row` under the head atom `vec`.
+pub fn vec_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    sequence_row(u, "vec", args)
+}
+
+fn sequence_row(u: &mut Universe, head: &str, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
     let (value, elements) = args.split_last()?;
     if let Some(whole) = *value {
         let application = u.unary(whole, "ref")?;
         let [constructor, list] = u.args::<2>(application, "application")?;
-        let tuple = u.atom("tuple");
-        if u.get(constructor) != u.get(tuple) {
+        let expected = u.atom(head);
+        if u.get(constructor) != u.get(expected) {
             return None;
         }
         let items = u.as_list(list)?;
@@ -293,12 +315,81 @@ pub fn tuple_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId
         tagged.push((*element)?);
     }
     let list = u.list(&tagged);
-    let constructor = u.atom("tuple");
+    let constructor = u.atom(head);
     let application = u.compound("application", vec![constructor, list]);
     let whole = u.compound("ref", vec![application]);
     let mut row: Vec<TermId> = elements.iter().filter_map(|e| *e).collect();
     row.push(whole);
     Some(row)
+}
+
+/// `ref(application(vec, Items))`: the tagged items, in order.
+pub fn vec_items(u: &Universe, whole: TermId) -> Option<Vec<TermId>> {
+    let application = u.unary(whole, "ref")?;
+    let [constructor, list] = u.args::<2>(application, "application")?;
+    let (name, args) = u.functor_or_atom(constructor)?;
+    (name == "vec" && args.is_empty()).then_some(())?;
+    u.as_list(list)
+}
+
+fn int_const(u: &mut Universe, value: i64) -> TermId {
+    let value = u.int(value);
+    u.compound("const", vec![value])
+}
+
+/// The child rows of one vec as terms: `vec_item(Vec, const(Index), Item)` per
+/// item and one `vec_len(Vec, const(Len))`. The IR answers `vec.iter`,
+/// `vec.get` and `vec.len` by joining their constructor relations.
+pub fn vec_parts(u: &mut Universe, whole: TermId) -> Option<Vec<TermId>> {
+    let items = vec_items(u, whole)?;
+    let mut parts = Vec::with_capacity(items.len() + 1);
+    for (index, item) in items.iter().enumerate() {
+        let index = int_const(u, index as i64);
+        parts.push(u.compound("vec_item", vec![whole, index, *item]));
+    }
+    let len = int_const(u, items.len() as i64);
+    parts.push(u.compound("vec_len", vec![whole, len]));
+    Some(parts)
+}
+
+/// `vec.iter(Vec, Index, Item)`: one row per item, `Index` from 0. A bound
+/// `Index` narrows to that item.
+pub fn vec_iter_rows(u: &mut Universe, args: &[Option<TermId>]) -> Vec<Vec<TermId>> {
+    let [Some(whole), index, _] = args[..] else {
+        return Vec::new();
+    };
+    let Some(items) = vec_items(u, whole) else {
+        return Vec::new();
+    };
+    if let Some(index) = index {
+        return vec_get_row(u, args).into_iter().map(|row| vec![row[0], index, row[2]]).collect();
+    }
+    let mut rows = Vec::with_capacity(items.len());
+    for (at, item) in items.into_iter().enumerate() {
+        let index = int_const(u, at as i64);
+        rows.push(vec![whole, index, item]);
+    }
+    rows
+}
+
+/// `vec.len(Vec, Len)`: the item count.
+pub fn vec_len_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    let [Some(whole), _] = args[..] else {
+        return None;
+    };
+    let count = vec_items(u, whole)?.len();
+    Some(vec![whole, int_const(u, count as i64)])
+}
+
+/// `vec.get(Vec, Index, Item)`: the item at `Index`; an index past the end or
+/// below zero has no row.
+pub fn vec_get_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
+    let [Some(whole), Some(index), _] = args[..] else {
+        return None;
+    };
+    let at = u.as_int(u.unary(index, "const")?)?;
+    let item = *vec_items(u, whole)?.get(usize::try_from(at).ok()?)?;
+    Some(vec![whole, index, item])
 }
 
 pub fn intern_row(u: &mut Universe, args: &[Option<TermId>]) -> Option<Vec<TermId>> {
@@ -440,5 +531,47 @@ mod tests {
         assert!(!linear((None, "min_step")));
         assert!(!linear((None, "max_step")));
         assert!(!linear((None, "intern")));
+    }
+
+    #[test]
+    fn vec_builds_and_reads_items_len_and_index() {
+        let mut u = Universe::new();
+        let text = |u: &mut Universe, value: &str| {
+            let value = u.string(value);
+            u.compound("const", vec![value])
+        };
+        let (a, b) = (text(&mut u, "a"), text(&mut u, "b"));
+        let whole = solve(&mut u, Kernel::Vec, &[Some(a), Some(b), None]).remove(0)[2];
+        let empty = solve(&mut u, Kernel::Vec, &[None]).remove(0)[0];
+        let one = int_const(&mut u, 1);
+        let two = int_const(&mut u, 2);
+        let mut shown = Vec::new();
+        for (label, kernel, args) in [
+            ("vec", Kernel::Vec, vec![None, None, Some(whole)]),
+            ("iter", Kernel::VecIter, vec![Some(whole), None, None]),
+            ("iter at 1", Kernel::VecIter, vec![Some(whole), Some(one), None]),
+            ("iter empty", Kernel::VecIter, vec![Some(empty), None, None]),
+            ("len", Kernel::VecLen, vec![Some(whole), None]),
+            ("len empty", Kernel::VecLen, vec![Some(empty), None]),
+            ("get 1", Kernel::VecGet, vec![Some(whole), Some(one), None]),
+            ("get 2", Kernel::VecGet, vec![Some(whole), Some(two), None]),
+        ] {
+            for row in solve(&mut u, kernel, &args) {
+                let row: Vec<String> = row.iter().map(|id| u.display(*id).to_string()).collect();
+                shown.push(format!("{label}: {}", row.join(", ")));
+            }
+        }
+        assert_eq!(
+            shown,
+            [
+                "vec: const(\"a\"), const(\"b\"), ref(application(vec,[const(\"a\"),const(\"b\")]))",
+                "iter: ref(application(vec,[const(\"a\"),const(\"b\")])), const(0), const(\"a\")",
+                "iter: ref(application(vec,[const(\"a\"),const(\"b\")])), const(1), const(\"b\")",
+                "iter at 1: ref(application(vec,[const(\"a\"),const(\"b\")])), const(1), const(\"b\")",
+                "len: ref(application(vec,[const(\"a\"),const(\"b\")])), const(2)",
+                "len empty: ref(application(vec,[])), const(0)",
+                "get 1: ref(application(vec,[const(\"a\"),const(\"b\")])), const(1), const(\"b\")",
+            ]
+        );
     }
 }

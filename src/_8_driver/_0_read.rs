@@ -15,11 +15,10 @@ pub const PRELUDE: [&str; 6] = [
 ];
 
 /// `macrotime/*.dl7`: the v7 standard library at `f5018ad23`, then the caret
-/// macro, then the list-literal macro.
-pub const MACROTIME: [&str; 3] = [
+/// macro.
+pub const MACROTIME: [&str; 2] = [
     include_str!("../../macrotime/0_standard.dl7"),
     include_str!("../../macrotime/1_caret.dl7"),
-    include_str!("../../macrotime/2_list.dl7"),
 ];
 
 /// The wave loop as rules, appended to `MACROTIME` under `DL8_MACROTIME=engine`.

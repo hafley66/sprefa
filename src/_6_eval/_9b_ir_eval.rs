@@ -1062,6 +1062,7 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>, ir: ir::Pro
             })
             .collect(),
         literals: lowered.literals.clone(),
+        vec_parts: lowered.vec_parts,
     }
 }
 
@@ -1403,7 +1404,7 @@ fn decode_terms<E: Engine>(
 }
 
 fn install_terms<E: Engine>(
-    u: &Universe,
+    u: &mut Universe,
     lowered: &Lowered,
     engine: &mut E,
     mapped: &mut HashMap<TermId, Cell>,
@@ -1417,6 +1418,9 @@ fn install_terms<E: Engine>(
     while let Some(term) = todo.pop() {
         if mapped.contains_key(&term) || !pending.insert(term.0) {
             continue;
+        }
+        if lowered.vec_parts {
+            todo.extend(super::kernel::vec_parts(u, term).unwrap_or_default());
         }
         match u.get(term) {
             Term::Str(sym) => {

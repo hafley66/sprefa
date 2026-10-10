@@ -1,0 +1,7 @@
+n	read_ms	macro_ms	macro_rows_sent	lower_ms	check_ms	comptime_ms	boot_calls_max	boot_terms	wall_ms	max_rss_mb	diagnostics
+1	13	70	0	0	1	22	1	1482	120	52	0
+64	12	68	0	0	1	23	1	1855	121	52	0
+512	15	68	0	0	1	31	1	4543	130	57	0
+2048	19	76	0	1	1	57	1	13759	173	75	0
+8192	42	91	0	12	1	170	1	50622	349	143	0
+16384	83	119	0	4	2	347	1	99774	610	236	0

@@ -240,7 +240,19 @@ fn check_positive(
                 Some(underconstrained(u, name, &[&[2], &[0, 1]]))
             }
         }
-        Some("tuple") => {
+        Some(name @ ("vec.iter" | "vec.len" | "vec.get")) => {
+            let inputs: &[i64] = if name == "vec.get" { &[0, 1] } else { &[0] };
+            if inputs
+                .iter()
+                .all(|at| argument_is_bound(u, arguments[*at as usize], bound))
+            {
+                bound.add_all(variables);
+                None
+            } else {
+                Some(underconstrained(u, name, &[inputs]))
+            }
+        }
+        Some(name @ ("tuple" | "vec")) => {
             let value = arguments.len() - 1;
             let elements: Vec<i64> = (0..value as i64).collect();
             let ready = argument_is_bound(u, arguments[value], bound)
@@ -251,7 +263,7 @@ fn check_positive(
                 bound.add_all(variables);
                 None
             } else {
-                Some(underconstrained(u, "tuple", &[&elements, &[value as i64]]))
+                Some(underconstrained(u, name, &[&elements, &[value as i64]]))
             }
         }
         Some(name) if str_op_name(name).is_some_and(|(_, arity)| arguments.len() == arity) => {
@@ -308,7 +320,8 @@ fn check_negative(
     if let Some(name) = kernel_name(u, relation) {
         if matches!(
             name.as_str(),
-            "edge_ref" | "intern" | "str.cons" | "str.nil" | "tuple"
+            "edge_ref" | "intern" | "str.cons" | "str.nil" | "tuple" | "vec" | "vec.iter"
+                | "vec.len" | "vec.get"
         ) || str_op_name(&name).is_some_and(|(inputs, arity)| arity > inputs)
         {
             let name = u.atom(&name);

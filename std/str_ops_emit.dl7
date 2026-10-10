@@ -27,51 +27,51 @@
 ; ivm-ir: enum variants, the variant list, name and kind tables.
 (<- (piece "ir_variant" ?Index 0
        (doc.Doc.concat
-          [(doc.Doc.text "    ")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text ",")]))
+          (vec (doc.Doc.text "    ")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text ","))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant))
 
 (<- (piece "ir_all" ?Index 0
        (doc.Doc.concat
-          [(doc.Doc.text "        StrOp::")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text ",")]))
+          (vec (doc.Doc.text "        StrOp::")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text ","))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant))
 
 (<- (piece "ir_name" ?Index 0
        (doc.Doc.concat
-          [(doc.Doc.text "            StrOp::")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text " => \"")
-           (doc.Doc.text ?Owner)
-           (doc.Doc.text ".")
-           (doc.Doc.text ?Name)
-           (doc.Doc.text "\",")]))
+          (vec (doc.Doc.text "            StrOp::")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text " => \"")
+               (doc.Doc.text ?Owner)
+               (doc.Doc.text ".")
+               (doc.Doc.text ?Name)
+               (doc.Doc.text "\","))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant))
 
 (<- (piece "ir_from_name" ?Index 0
        (doc.Doc.concat
-          [(doc.Doc.text "            \"")
-           (doc.Doc.text ?Owner)
-           (doc.Doc.text ".")
-           (doc.Doc.text ?Name)
-           (doc.Doc.text "\" => Some(StrOp::")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text "),")]))
+          (vec (doc.Doc.text "            \"")
+               (doc.Doc.text ?Owner)
+               (doc.Doc.text ".")
+               (doc.Doc.text ?Name)
+               (doc.Doc.text "\" => Some(StrOp::")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text "),"))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant))
 
 (<- (piece "ir_out" ?Index 0
        (doc.Doc.concat
-          [(doc.Doc.text "            StrOp::")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text " => ")
-           (doc.Doc.text ?OutRust)
-           (doc.Doc.text ",")]))
+          (vec (doc.Doc.text "            StrOp::")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text " => ")
+               (doc.Doc.text ?OutRust)
+               (doc.Doc.text ","))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant)
     (kind_out ?Out ?OutRust))
@@ -79,17 +79,17 @@
 ; ivm-ir: argument kinds, one line per argument between a header and a close.
 (<- (piece "ir_args" ?Index 0
        (doc.Doc.concat
-          [(doc.Doc.text "            StrOp::")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text " => &[")]))
+          (vec (doc.Doc.text "            StrOp::")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text " => &["))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant))
 
 (<- (piece "ir_args" ?Index ?Position
        (doc.Doc.concat
-          [(doc.Doc.text "StrKind::")
-           (doc.Doc.text ?KindRust)
-           (doc.Doc.text ", ")]))
+          (vec (doc.Doc.text "StrKind::")
+               (doc.Doc.text ?KindRust)
+               (doc.Doc.text ", "))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant)
     (ops.str_op_arg ?Owner ?Name ?ArgPosition ?Slot ?Kind)
@@ -104,21 +104,21 @@
 ; ivm-ir: the apply arm, argument bindings then the table expression.
 (<- (piece "ir_apply" ?Index 0
        (doc.Doc.concat
-          [(doc.Doc.text "            StrOp::")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text " => {")]))
+          (vec (doc.Doc.text "            StrOp::")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text " => {"))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant))
 
 (<- (piece "ir_apply" ?Index ?Position
        (doc.Doc.concat
-          [(doc.Doc.text "                let a")
-           (doc.Doc.text ?ArgText)
-           (doc.Doc.text " = ")
-           (doc.Doc.text ?Reader)
-           (doc.Doc.text "(args, ")
-           (doc.Doc.text ?ArgText)
-           (doc.Doc.text ")?;")]))
+          (vec (doc.Doc.text "                let a")
+               (doc.Doc.text ?ArgText)
+               (doc.Doc.text " = ")
+               (doc.Doc.text ?Reader)
+               (doc.Doc.text "(args, ")
+               (doc.Doc.text ?ArgText)
+               (doc.Doc.text ")?;"))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant)
     (ops.str_op_arg ?Owner ?Name ?ArgPosition ?Slot ?Kind)
@@ -128,8 +128,8 @@
 
 (<- (piece "ir_apply" ?Index 100
        (doc.Doc.concat
-          [(doc.Doc.text "                ")
-           (doc.Doc.text ?Expression)]))
+          (vec (doc.Doc.text "                ")
+               (doc.Doc.text ?Expression))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant))
 
@@ -145,15 +145,15 @@
 ; dl8: the name and arity table.
 (<- (piece "dl8_table" ?Index 0
        (doc.Doc.concat
-          [(doc.Doc.text "    (\"")
-           (doc.Doc.text ?Owner)
-           (doc.Doc.text "\", \"")
-           (doc.Doc.text ?Name)
-           (doc.Doc.text "\", ")
-           (doc.Doc.text ?ArityText)
-           (doc.Doc.text ", StrOp::")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text "),")]))
+          (vec (doc.Doc.text "    (\"")
+               (doc.Doc.text ?Owner)
+               (doc.Doc.text "\", \"")
+               (doc.Doc.text ?Name)
+               (doc.Doc.text "\", ")
+               (doc.Doc.text ?ArityText)
+               (doc.Doc.text ", StrOp::")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text "),"))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant)
     (int.to_str ?Arity ?ArityText))
@@ -161,13 +161,13 @@
 ; dl8: the kernel relation row `(Some("str"), name, arity)`.
 (<- (piece "dl8_relation" ?Index 0
        (doc.Doc.concat
-          [(doc.Doc.text "    (Some(\"")
-           (doc.Doc.text ?Owner)
-           (doc.Doc.text "\"), \"")
-           (doc.Doc.text ?Name)
-           (doc.Doc.text "\", ")
-           (doc.Doc.text ?ArityText)
-           (doc.Doc.text "),")]))
+          (vec (doc.Doc.text "    (Some(\"")
+               (doc.Doc.text ?Owner)
+               (doc.Doc.text "\"), \"")
+               (doc.Doc.text ?Name)
+               (doc.Doc.text "\", ")
+               (doc.Doc.text ?ArityText)
+               (doc.Doc.text "),"))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant)
     (int.to_str ?Arity ?ArityText))
@@ -175,15 +175,15 @@
 ; dl8: slot labels, one arm per argument and one for the return position.
 (<- (piece "dl8_slot" ?Index ?Position
        (doc.Doc.concat
-          [(doc.Doc.text "        (\"")
-           (doc.Doc.text ?Owner)
-           (doc.Doc.text "\", \"")
-           (doc.Doc.text ?Name)
-           (doc.Doc.text "\", ")
-           (doc.Doc.text ?ArgText)
-           (doc.Doc.text ") => \"")
-           (doc.Doc.text ?Slot)
-           (doc.Doc.text "\",")]))
+          (vec (doc.Doc.text "        (\"")
+               (doc.Doc.text ?Owner)
+               (doc.Doc.text "\", \"")
+               (doc.Doc.text ?Name)
+               (doc.Doc.text "\", ")
+               (doc.Doc.text ?ArgText)
+               (doc.Doc.text ") => \"")
+               (doc.Doc.text ?Slot)
+               (doc.Doc.text "\","))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant)
     (ops.str_op_arg ?Owner ?Name ?Position ?Slot ?Kind)
@@ -191,13 +191,13 @@
 
 (<- (piece "dl8_slot" ?Index 100
        (doc.Doc.concat
-          [(doc.Doc.text "        (\"")
-           (doc.Doc.text ?Owner)
-           (doc.Doc.text "\", \"")
-           (doc.Doc.text ?Name)
-           (doc.Doc.text "\", ")
-           (doc.Doc.text ?ReturnText)
-           (doc.Doc.text ") => \"return\",")]))
+          (vec (doc.Doc.text "        (\"")
+               (doc.Doc.text ?Owner)
+               (doc.Doc.text "\", \"")
+               (doc.Doc.text ?Name)
+               (doc.Doc.text "\", ")
+               (doc.Doc.text ?ReturnText)
+               (doc.Doc.text ") => \"return\","))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant)
     (kind_rust ?Out ?OutRust)
@@ -207,21 +207,21 @@
 ; dl8: the typed-op rows the checker's kernel graph reads.
 (<- (piece "dl8_typed" ?Index 0
        (doc.Doc.concat
-          [(doc.Doc.text "    (\"")
-           (doc.Doc.text ?Owner)
-           (doc.Doc.text "\", \"")
-           (doc.Doc.text ?Name)
-           (doc.Doc.text "\", &[")]))
+          (vec (doc.Doc.text "    (\"")
+               (doc.Doc.text ?Owner)
+               (doc.Doc.text "\", \"")
+               (doc.Doc.text ?Name)
+               (doc.Doc.text "\", &["))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant))
 
 (<- (piece "dl8_typed" ?Index ?Position
        (doc.Doc.concat
-          [(doc.Doc.text "(\"")
-           (doc.Doc.text ?Slot)
-           (doc.Doc.text "\", \"")
-           (doc.Doc.text ?Kind)
-           (doc.Doc.text "\"), ")]))
+          (vec (doc.Doc.text "(\"")
+               (doc.Doc.text ?Slot)
+               (doc.Doc.text "\", \"")
+               (doc.Doc.text ?Kind)
+               (doc.Doc.text "\"), "))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant)
     (ops.str_op_arg ?Owner ?Name ?ArgPosition ?Slot ?Kind)
@@ -229,9 +229,9 @@
 
 (<- (piece "dl8_typed" ?Index 100
        (doc.Doc.concat
-          [(doc.Doc.text "(\"return\", \"")
-           (doc.Doc.text ?Out)
-           (doc.Doc.text "\"), ")]))
+          (vec (doc.Doc.text "(\"return\", \"")
+               (doc.Doc.text ?Out)
+               (doc.Doc.text "\"), "))))
     (ops.str_op ?Index ?Owner ?Name ?Arity ?Out ?Group ?Expression)
     (str.pascal ?Name ?Variant)
     (kind_rust ?Out ?OutRust))
@@ -254,16 +254,16 @@
 (<- (line_item ?Section
        (tuple (tuple ?Index ?Position)
           (doc.Doc.concat
-             [(doc.Doc.text "\n")
-              ?Document])))
+             (vec (doc.Doc.text "\n")
+                  ?Document))))
     (piece ?Section ?Index ?Position ?Document)
     (not (inline_section ?Section)))
 
 (<- (line_item ?Section
        (tuple (tuple ?Index 0)
           (doc.Doc.concat
-             [(doc.Doc.text "\n")
-              ?Document])))
+             (vec (doc.Doc.text "\n")
+                  ?Document))))
     (piece ?Section ?Index 0 ?Document)
     (inline_section ?Section))
 

@@ -537,6 +537,8 @@ pub struct Lowered {
     pub declared_folds: Vec<DeclaredFoldSpec>,
     /// The term of each `ir.terms` entry.
     pub literals: Vec<TermId>,
+    /// Every vec installed after lowering also installs its `kernel::vec_parts` terms.
+    pub vec_parts: bool,
 }
 
 impl Lowered {
@@ -618,6 +620,13 @@ struct Builder {
     /// tagged element columns. An `intern` over one builds the plain list from
     /// the elements and never waits on `__ir_plain_lists` for a fresh tuple.
     built_tuples: HashMap<ir::ColId, Vec<ir::ColId>>,
+    /// The atom `vec`, in the term table when a rule body holds a `vec` goal.
+    vec_atom: Option<TermId>,
+    /// A rule body reads `vec.iter`, `vec.len` or `vec.get`: every vec carries its
+    /// `vec_item` and `vec_len` terms (`kernel::vec_parts`).
+    vec_parts: bool,
+    /// `const(N)` for every index and length a rule-built vec names, by `N`.
+    vec_index_terms: Vec<TermId>,
     /// One node per structurally equal op: the op (a `Union` with its inputs sorted) to its node.
     /// Every op denotes a function of its operator and its inputs' collections (a `Mint` of a
     /// functor and columns, a `Get` of a relation with one binder), so equal ops are one collection.
@@ -669,6 +678,9 @@ impl Builder {
             effect_nodes: BTreeMap::new(),
             snapshot_nodes: Vec::new(),
             built_tuples: HashMap::new(),
+            vec_atom: None,
+            vec_parts: false,
+            vec_index_terms: Vec::new(),
             declared_folds: Vec::new(),
             semantic: None,
             consed: HashMap::new(),
@@ -1305,10 +1317,15 @@ fn compile_kernel(
             output[2] = Some(assert_width(*width));
             *width += 1;
         }
-        Kernel::Tuple => {
+        Kernel::Tuple | Kernel::Vec => {
             if inputs.is_empty() {
                 return Err("tuple arity");
             }
+            let head = if kernel == Kernel::Vec {
+                b.vec_atom.ok_or("vec head outside the term table")?
+            } else {
+                tuple
+            };
             let cons = constructor(constructors, "9:2:[|]", 2, false)?;
             let ref_ctor = constructor(constructors, "9:1:ref", 1, false)?;
             let app_ctor = constructor(constructors, "9:2:application", 2, false)?;
@@ -1321,7 +1338,7 @@ fn compile_kernel(
                 let constructor_col = assert_width(*width + 1);
                 let mut list = assert_width(*width + 2);
                 *width += 3;
-                *current = join_ground(b, *current, None, tuple)?;
+                *current = join_ground(b, *current, None, head)?;
                 let tuple_col = assert_width(*width + 1);
                 *width += 2;
                 *current = b.mfp(
@@ -1368,7 +1385,7 @@ fn compile_kernel(
                     list = assert_width(*width);
                     *width += 1;
                 }
-                *current = join_ground(b, *current, None, tuple)?;
+                *current = join_ground(b, *current, None, head)?;
                 let tuple_col = assert_width(*width + 1);
                 *width += 2;
                 *current = b.node(ir::Op::Mint {
@@ -1386,8 +1403,38 @@ fn compile_kernel(
                 let whole = assert_width(*width);
                 output[value_at] = Some(whole);
                 *width += 1;
-                b.built_tuples.insert(whole, elements);
+                if kernel == Kernel::Tuple {
+                    b.built_tuples.insert(whole, elements);
+                } else if b.vec_parts {
+                    mint_vec_parts(b, constructors, current, width, whole, &elements)?;
+                }
             }
+        }
+        Kernel::VecIter | Kernel::VecGet | Kernel::VecLen => {
+            let (name, arity) = if kernel == Kernel::VecLen { ("9:2:vec_len", 2) } else { ("9:3:vec_item", 3) };
+            if inputs.len() != arity {
+                return Err("vec op arity");
+            }
+            let keys = if kernel == Kernel::VecGet { 2 } else { 1 };
+            if inputs[..keys].iter().any(Option::is_none) {
+                *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
+                return Ok(());
+            }
+            // Columns of the joined row: `id`, then the term's arguments.
+            let parts = constructor(constructors, name, arity, false)?;
+            let rows = b.get_constructor(parts);
+            let equivalences = (0..keys)
+                .map(|at| vec![(0, inputs[at].unwrap()), (1, assert_width(at + 1))])
+                .collect();
+            *current = b.node(ir::Op::Join {
+                inputs: vec![*current, rows],
+                equivalences,
+                project: vec![],
+            });
+            for (at, slot) in output.iter_mut().enumerate() {
+                *slot = Some(assert_width(*width + 1 + at));
+            }
+            *width += 1 + arity;
         }
         Kernel::Intern => {
             if inputs.len() != 3 {
@@ -1628,6 +1675,42 @@ fn compile_kernel(
                     .all(|element| usize::from(*element) < base_width)
         });
     }
+    Ok(())
+}
+
+/// The `vec_item` row of each element and the `vec_len` row of a vec a rule body
+/// just built at `whole`, minted beside it so the vec read ops join them.
+fn mint_vec_parts(
+    b: &mut Builder,
+    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
+    current: &mut ir::NodeId,
+    width: &mut usize,
+    whole: ir::ColId,
+    elements: &[ir::ColId],
+) -> Result<(), &'static str> {
+    let item = constructor(constructors, "9:3:vec_item", 3, false)?;
+    let len = constructor(constructors, "9:2:vec_len", 2, false)?;
+    let index_term = |b: &Builder, at: usize| b.vec_index_terms.get(at).copied().ok_or("vec index outside the term table");
+    for (at, element) in elements.iter().enumerate() {
+        *current = join_ground(b, *current, None, index_term(b, at)?)?;
+        let index = assert_width(*width + 1);
+        *width += 2;
+        *current = b.node(ir::Op::Mint {
+            input: *current,
+            functor: item,
+            args: vec![whole, index, *element],
+        });
+        *width += 1;
+    }
+    *current = join_ground(b, *current, None, index_term(b, elements.len())?)?;
+    let count = assert_width(*width + 1);
+    *width += 2;
+    *current = b.node(ir::Op::Mint {
+        input: *current,
+        functor: len,
+        args: vec![whole, count],
+    });
+    *width += 1;
     Ok(())
 }
 
@@ -2953,6 +3036,36 @@ pub fn lower_declared(
     let mut needed: Vec<u32> = Vec::new();
     let mut seen = vec![false; u.len()];
     let mut todo = vec![none, empty, tuple, intern_rel, effect_rel, snapshot_rel];
+    let vec_goals = program.rules.iter().any(|rule| {
+        rule.body.iter().any(|goal| Kernel::of(u, goal.rel) == Some(Kernel::Vec))
+    });
+    let vec_atom = vec_goals.then(|| u.atom("vec"));
+    todo.extend(vec_atom);
+    let vec_parts = program.rules.iter().any(|rule| {
+        rule.body.iter().any(|goal| {
+            matches!(
+                Kernel::of(u, goal.rel),
+                Some(Kernel::VecIter | Kernel::VecLen | Kernel::VecGet)
+            )
+        })
+    });
+    // A rule-built vec of `N` elements names `const(0)` to `const(N)`.
+    let longest_built = program
+        .rules
+        .iter()
+        .flat_map(|rule| &rule.body)
+        .filter(|goal| Kernel::of(u, goal.rel) == Some(Kernel::Vec))
+        .map(|goal| goal.args.len())
+        .max()
+        .filter(|_| vec_parts)
+        .unwrap_or(0);
+    let vec_index_terms: Vec<TermId> = (0..longest_built as i64)
+        .map(|at| {
+            let at = u.int(at);
+            u.compound("const", vec![at])
+        })
+        .collect();
+    todo.extend(vec_index_terms.iter().copied());
     todo.extend(program.served.iter().copied());
     for seed in &program.seeds {
         todo.push(seed.rel);
@@ -2985,6 +3098,16 @@ pub fn lower_declared(
         }
     }
     needed.sort_unstable();
+    if vec_parts {
+        let vecs: Vec<TermId> = needed
+            .iter()
+            .map(|index| TermId(*index))
+            .filter(|term| super::kernel::vec_items(u, *term).is_some())
+            .collect();
+        for whole in vecs {
+            todo.extend(super::kernel::vec_parts(u, whole).unwrap_or_default());
+        }
+    }
     let dynamic_lists = program.rules.iter().any(|rule| {
         rule.body.iter().any(|goal| {
             Kernel::of(u, goal.rel) == Some(Kernel::Intern)
@@ -3032,6 +3155,9 @@ pub fn lower_declared(
         })
         .collect();
     let mut b = Builder::new();
+    b.vec_atom = vec_atom;
+    b.vec_parts = vec_parts;
+    b.vec_index_terms = vec_index_terms;
     let unit = b.rel("__ir_unit".into(), vec![ir::Ty::Id], ir::RelKind::Source);
     let term_map = b.rel(
         "__ir_term_map".into(),
@@ -3115,6 +3241,10 @@ pub fn lower_declared(
         constructor_keys.insert((name.to_string(), args, raw));
     }
     constructor_keys.extend(declared.shapes.iter().cloned());
+    if vec_parts {
+        constructor_keys.insert(("9:3:vec_item".to_string(), 3, false));
+        constructor_keys.insert(("9:2:vec_len".to_string(), 2, false));
+    }
     // Terms are interned through `Engine::intern_terms` (`bootstrap_changes`), never by an
     // operator: a constructor is a relation no node needs to mint into at install.
     let mut constructors = BTreeMap::new();
@@ -3818,5 +3948,6 @@ pub fn lower_declared(
         fold_program,
         declared_folds: b.declared_folds,
         literals: b.literal_terms,
+        vec_parts,
     })
 }

@@ -80,7 +80,7 @@ fn table(title: &str, columns: &[String], runs: &[Counts]) -> String {
     out
 }
 
-/// Hello world: three installs with the switch off, one with it on, output equal, on both engines.
+/// Hello world: two installs with the switch off, one with it on, output equal, on both engines.
 #[test]
 fn hello_world_installs_once() {
     let mut runs = Vec::new();
@@ -92,7 +92,7 @@ fn hello_world_installs_once() {
         assert_eq!(on.0, Some(0), "{engine} on: {}", on.2);
         assert!(off.1 == on.1, "{engine}: stdout differs between switch off and on");
         let (off, on) = (counts(&off.2), counts(&on.2));
-        assert_eq!(off["installs"], 3, "{engine} off");
+        assert_eq!(off["installs"], 2, "{engine} off");
         assert_eq!(on["installs"], 1, "{engine} on");
         assert_eq!(on.get("one engine fallbacks"), None, "{engine} on");
         runs.extend([off, on]);

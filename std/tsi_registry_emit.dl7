@@ -26,31 +26,31 @@
 ; ArgKind: the enum, its wire words, its match on `Arg`, its import list.
 (<- (piece "variant" ?Index
        (doc.Doc.concat
-          [(doc.Doc.text "    ")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text ",")]))
+          (vec (doc.Doc.text "    ")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text ","))))
     (tsi.arg_kind ?Index ?Word ?Pattern)
     (variant_of ?Word ?Variant))
 
 (<- (piece "word" ?Index
        (doc.Doc.concat
-          [(doc.Doc.text "            ArgKind::")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text " => \"")
-           (doc.Doc.text ?Word)
-           (doc.Doc.text "\",")]))
+          (vec (doc.Doc.text "            ArgKind::")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text " => \"")
+               (doc.Doc.text ?Word)
+               (doc.Doc.text "\","))))
     (tsi.arg_kind ?Index ?Word ?Pattern)
     (variant_of ?Word ?Variant))
 
 (<- (piece "of" ?Index
        (doc.Doc.concat
-          [(doc.Doc.text "            Arg::")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text "(")
-           (doc.Doc.text ?Pattern)
-           (doc.Doc.text ") => ArgKind::")
-           (doc.Doc.text ?Variant)
-           (doc.Doc.text ",")]))
+          (vec (doc.Doc.text "            Arg::")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text "(")
+               (doc.Doc.text ?Pattern)
+               (doc.Doc.text ") => ArgKind::")
+               (doc.Doc.text ?Variant)
+               (doc.Doc.text ","))))
     (tsi.arg_kind ?Index ?Word ?Pattern)
     (variant_of ?Word ?Variant))
 
@@ -66,8 +66,8 @@
 
 (<- (piece "use" ?Variant
        (doc.Doc.concat
-          [(doc.Doc.text ", ")
-           (doc.Doc.text ?Variant)]))
+          (vec (doc.Doc.text ", ")
+               (doc.Doc.text ?Variant))))
     (variant_of ?Word ?Variant)
     (not (first_variant ?Variant)))
 
@@ -83,8 +83,8 @@
 (<- (args_item ?Name
        (tuple ?Position
           (doc.Doc.concat
-             [(doc.Doc.text ", ")
-              (doc.Doc.text ?Variant)])))
+             (vec (doc.Doc.text ", ")
+                  (doc.Doc.text ?Variant)))))
     (tsi.registry_arg ?Name ?Position ?Kind)
     (int.ne ?Position 0)
     (variant_of ?Kind ?Variant))
@@ -105,8 +105,8 @@
 
 (<- (role_suffix ?Name
        (doc.Doc.concat
-          [(doc.Doc.text " // ")
-           (doc.Doc.text ?Role)]))
+          (vec (doc.Doc.text " // ")
+               (doc.Doc.text ?Role))))
     (tsi.registry ?Index ?Name ?Role)
     (str.len ?Role ?Length)
     (int.gt ?Length 0))
@@ -120,8 +120,8 @@
 (<- (note_item ?Name
        (tuple ?Line
           (doc.Doc.concat
-             [(doc.Doc.text "\n    // ")
-              (doc.Doc.text ?Note)])))
+             (vec (doc.Doc.text "\n    // ")
+                  (doc.Doc.text ?Note)))))
     (tsi.registry_note ?Name ?Line ?Note))
 
 (notes_document:
@@ -145,14 +145,14 @@
 ; one item per relation, not one per line.
 (<- (piece "entries" ?Index
        (doc.Doc.concat
-          [?Notes
-           (doc.Doc.text "\n    Relation {\n        name: \"")
-           (doc.Doc.text ?Name)
-           (doc.Doc.text "\",\n        args: &[")
-           ?Args
-           (doc.Doc.text "],")
-           ?Suffix
-           (doc.Doc.text "\n    },")]))
+          (vec ?Notes
+               (doc.Doc.text "\n    Relation {\n        name: \"")
+               (doc.Doc.text ?Name)
+               (doc.Doc.text "\",\n        args: &[")
+               ?Args
+               (doc.Doc.text "],")
+               ?Suffix
+               (doc.Doc.text "\n    },"))))
     (tsi.registry ?Index ?Name ?Role)
     (notes_document ?Name ?Notes)
     (args_document ?Name ?Args)
@@ -174,8 +174,8 @@
 (<- (section_item ?Section
        (tuple ?Key
           (doc.Doc.concat
-             [(doc.Doc.text "\n")
-              ?Document])))
+             (vec (doc.Doc.text "\n")
+                  ?Document))))
     (piece ?Section ?Key ?Document)
     (not (inline_section ?Section)))
 

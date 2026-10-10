@@ -208,6 +208,18 @@ pub fn resolve_call(u: &mut Universe, cx: &Cx, call: TermId) -> Result<CallResul
         ("name", &[owner, label]) => {
             let mut visited = Vec::new();
             match resolve_path(u, cx, owner, label, &mut visited) {
+                // `vec` names the primitive that owns `vec.iter`; called, it is the kernel.
+                Ok(target)
+                    if u
+                        .unary(target, "ref")
+                        .and_then(|inner| u.unary(inner, "primitive"))
+                        .and_then(|primitive| atom_name(u, primitive))
+                        .is_some_and(|primitive| kernel_variadic(None, primitive)) =>
+                {
+                    let primitive = u.unary(u.unary(target, "ref").unwrap(), "primitive").unwrap();
+                    let inner = u.compound("kernel", vec![primitive]);
+                    (u.compound("ref", vec![inner]), label)
+                }
                 Ok(target) => (target, label),
                 Err(segment) => {
                     let reason = u.compound("unresolved_name", vec![segment]);
@@ -283,6 +295,17 @@ pub fn resolve_argument(u: &mut Universe, cx: &Cx, argument: TermId) -> Result<T
                 Ok(resolved) => Ok(resolved),
                 Err(segment) => Err(u.compound("unresolved_name", vec![segment])),
             };
+        }
+        if name == "application" && parts.len() == 2 && atom_name(u, parts[0]) == Some("vec") {
+            // The term the `vec` kernel builds: the tagged items under `ref`.
+            let items = u.as_list(parts[1]).unwrap_or_default();
+            let mut tagged = Vec::with_capacity(items.len());
+            for item in items {
+                tagged.push(resolve_argument(u, cx, item)?);
+            }
+            let list = u.list(&tagged);
+            let node = u.compound("application", vec![parts[0], list]);
+            return Ok(u.compound("ref", vec![node]));
         }
         if name == "application" && parts.len() == 2 {
             let constructor = resolve_argument(u, cx, parts[0])?;
@@ -440,7 +463,8 @@ fn mint_rows(u: &mut Universe, value: TermId, depth: usize, out: &mut Vec<TermId
     let Some([constructor, list]) = u.args::<2>(node, "application") else {
         return;
     };
-    if depth_exceeded {
+    // A `vec` is the `vec` kernel's term, never an `intern` instance.
+    if depth_exceeded || atom_name(u, constructor) == Some("vec") {
         return;
     }
     let items = u.as_list(list).unwrap_or_default();

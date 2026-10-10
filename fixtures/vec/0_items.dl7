@@ -1,0 +1,47 @@
+; `(vec ...)` is the one any-length call. Its items read back through
+; `vec.iter` (one row per item), `vec.len` and `vec.get`.
+(files: (* (run: str) (list: any)))
+(files "r" (vec "a" "b" "c"))
+(files "e" (vec))
+(files "n" (vec (vec 1 2) (vec 3)))
+
+(each: (* (run: str) (index: int) (item: any)))
+(<- (each ?Run ?Index ?Item)
+    (files ?Run ?List)
+    (vec.iter ?List ?Index ?Item))
+
+(size: (* (run: str) (len: int)))
+(<- (size ?Run ?Len)
+    (files ?Run ?List)
+    (vec.len ?List ?Len))
+
+(at_one: (* (run: str) (item: any)))
+(<- (at_one ?Run ?Item)
+    (files ?Run ?List)
+    (vec.get ?List 1 ?Item))
+
+(built: (* (run: str) (both: any)))
+(<- (built ?Run (vec ?Run "x" ?Run))
+    (files ?Run ?List))
+
+(built_each: (* (run: str) (index: int) (item: any)))
+(<- (built_each ?Run ?Index ?Item)
+    (built ?Run ?Both)
+    (vec.iter ?Both ?Index ?Item))
+
+(built_size: (* (run: str) (len: int)))
+(<- (built_size ?Run ?Len)
+    (built ?Run ?Both)
+    (vec.len ?Both ?Len))
+
+; A rule-built vec and a written one with the same items are one value.
+(same: (* (run: str)))
+(<- (same ?Run)
+    (vec "a" "b" "c" ?Built)
+    (files ?Run ?Built))
+
+(inner_size: (* (index: int) (len: int)))
+(<- (inner_size ?Index ?Len)
+    (files "n" ?List)
+    (vec.iter ?List ?Index ?Inner)
+    (vec.len ?Inner ?Len))

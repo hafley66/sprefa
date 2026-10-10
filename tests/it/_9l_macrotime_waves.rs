@@ -74,11 +74,11 @@ fn a_64th_rewriting_wave_is_the_round_limit() {
 
 #[test]
 fn a_63rd_rewriting_wave_settles() {
-    // 63 nested brackets nest the JSON past serde_json's depth limit: read the text.
+    // 63 nested caret marks, one dropped per wave; the text is read, not parsed.
     let bytes = agreed_bytes("2_last_wave");
     let text = String::from_utf8(bytes).unwrap();
     assert_eq!(&text[..39], r#"{"diagnostics":[],"expanded_rows":[{"ar"#);
-    assert_eq!(text.matches(r#""f":"node"}"#).count(), 387);
+    assert_eq!(text.matches(r#""f":"node"}"#).count(), 135);
 }
 
 const RUNS: [(&str, &str); 4] = [
