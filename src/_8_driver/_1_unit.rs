@@ -4,7 +4,7 @@
 use crate::_0_read::digest::sha256_hex;
 use crate::_0_read::expand::{expand_dl7, Stop};
 use crate::_0_read::read;
-use crate::_1_macrotime::_1_reify::reify_terms;
+use crate::_1_macrotime::_1_reify::check_terms;
 use crate::_6_eval::term::{TermId, Universe};
 
 pub struct Unit {
@@ -25,8 +25,7 @@ pub fn text_unit(
     let result = read(u, reader_path, text);
     let mut diagnostics = result.diagnostics;
     if diagnostics.is_empty() {
-        let (_, reify_diagnostics) = reify_terms(u, &result.forms, &result.source_rows);
-        diagnostics = reify_diagnostics;
+        diagnostics = check_terms(u, &result.forms, &result.source_rows);
     }
     let (forms, source_rows, expansion_rows) = if diagnostics.is_empty() {
         let expanded = expand_dl7(u, &result.forms, &result.source_rows)?;
