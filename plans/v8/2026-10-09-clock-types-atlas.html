@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clocks, weights and checkers: an atlas for dl8</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@500;700;800&family=Instrument+Sans:ital,wght@0,400;0,600;1,400&family=Recursive:slnt,wght,CASL@-15..0,300..800,0..1&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/roughjs@4.6.6/bundled/rough.js"></script>
+<style>
+  :root {
+    /* @comment-ok: CSS custom properties, which the html marker union reads as -- comments */
+    --ink: #e9e4d8;
+    --dim: #a59f92;
+    --bg: #14131a;
+    --panel: #1d1b25;
+    --line: #34303f;
+    --acid: #c8f560;
+    --hot: #ff6b9a;
+    --sky: #7fd3ff;
+    --sun: #ffcf5c;
+    --head: "Syne", sans-serif;
+    --body: "Instrument Sans", sans-serif;
+    --mono: "Recursive", monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0 auto; max-width: 1080px; padding: 48px 28px 160px;
+    color: var(--ink); font: 17px/1.6 var(--body);
+  }
+  a { color: var(--sky); }
+  h1 {
+    font: 800 64px/0.95 var(--head); letter-spacing: -0.03em; margin: 0 0 12px;
+    transform: rotate(-1.2deg);
+  }
+  h1 em { font-style: normal; color: var(--acid); }
+  .lede { color: var(--dim); max-width: 720px; font-size: 19px; }
+  h2 {
+    position: relative; display: inline-block;
+    font: 700 34px/1.1 var(--head); margin: 88px 0 28px; padding-bottom: 18px;
+  }
+  h2::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 14px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='14'%3E%3Cpath d='M0 7 Q10 0 20 7 T40 7' fill='none' stroke='%23c8f560' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x;
+  }
+  h2::before {
+    content: ""; position: absolute; right: -54px; bottom: -14px; width: 50px; height: 40px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='50' height='40'%3E%3Cpath d='M2 26 C10 30 14 38 22 34' fill='none' stroke='%23c8f560' stroke-width='3' stroke-linecap='round'/%3E%3Ccircle cx='30' cy='18' r='9' fill='%23fff' stroke='%2314131a' stroke-width='2'/%3E%3Ccircle cx='42' cy='14' r='7' fill='%23fff' stroke='%2314131a' stroke-width='2'/%3E%3Ccircle cx='33' cy='21' r='4' fill='%2314131a'/%3E%3Ccircle cx='40' cy='12' r='3' fill='%2314131a'/%3E%3C/svg%3E") no-repeat;
+    transform-origin: 10% 80%; animation: derp 3.2s ease-in-out infinite;
+  }
+  h2:nth-of-type(even)::before { animation-duration: 2.3s; transform: scaleX(-1); }
+  @keyframes derp {
+    0%, 100% { transform: rotate(-8deg); }
+    50% { transform: rotate(14deg) translateY(-3px); }
+  }
+  h3 { font: 700 21px/1.2 var(--head); margin: 36px 0 10px; color: var(--sun); }
+  p, li { max-width: 760px; }
+  code, kbd {
+    font-family: var(--mono); font-variation-settings: "CASL" 1; font-size: 0.92em;
+    background: var(--panel); padding: 1px 6px; border-radius: 5px;
+  }
+  pre.src {
+    margin: 0; padding: 16px 18px; background: #101016; border: 1px solid var(--line);
+    border-radius: 10px; overflow-x: auto; font: 14px/1.55 var(--mono);
+    font-variation-settings: "CASL" 0.6; white-space: pre;
+  }
+  .shiki { margin: 0; padding: 16px 18px; border-radius: 10px; border: 1px solid var(--line);
+    overflow-x: auto; font: 14px/1.55 var(--mono) !important; font-variation-settings: "CASL" 0.6; }
+  .shiki code { background: none; padding: 0; font: inherit; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 15px; }
+  th, td { border-bottom: 1px dashed var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { font: 600 13px var(--head); text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }
+  td code { white-space: nowrap; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+  .card h4 { margin: 0 0 6px; font: 700 18px var(--head); }
+  .tag { display: inline-block; font: 600 12px var(--mono); padding: 2px 8px; border-radius: 99px;
+    margin-right: 6px; border: 1px solid currentColor; }
+  .b { color: var(--sky); } .z { color: var(--hot); } .n { color: var(--sun); } .ok { color: var(--acid); }
+  .tabs { margin: 18px 0 26px; }
+  .tabs nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .tabs button {
+    font: 600 14px var(--mono); color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 99px; padding: 5px 13px; cursor: pointer;
+  }
+  .tabs button[aria-selected="true"] { background: var(--acid); color: #14131a; border-color: var(--acid); transform: rotate(-2deg); }
+  .tabs .pane { display: none; }
+  .tabs .pane.on { display: block; }
+  .pane .read { margin: 12px 0 0; color: var(--dim); font-size: 15px; }
+  .pane .read b { color: var(--ink); }
+  figure { margin: 26px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 10px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { color: var(--dim); font-size: 14px; padding: 4px 10px 6px; }
+  .toc { columns: 2; font: 15px var(--mono); margin-top: 26px; }
+  .toc a { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--dim); }
+  .callout { border-left: 4px solid var(--hot); padding: 6px 16px; background: #221a22; border-radius: 0 10px 10px 0; }
+  footer { margin-top: 90px; color: var(--dim); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<h1>Clocks, weights<br>and <em>checkers</em></h1>
+<p class="lede">What dl8's clock checker does, why one-shot programs should skip DD, and how
+other languages put time and change into their type systems. Written for someone whose
+native tongue is RxJS.</p>
+
+<nav class="toc">
+  <div><a href="#why">1. Why any of this</a></div>
+  <div><a href="#weights">2. Weights (the "rings")</a></div>
+  <div><a href="#clocks">3. Clocks and delays</a></div>
+  <div><a href="#v6">4. The v6 formula</a></div>
+  <div><a href="#algos">5. The checker, drawn</a></div>
+  <div><a href="#strategy">6. Picking how each part runs</a></div>
+  <div><a href="#langs">7. Same rules, many languages</a></div>
+  <div><a href="#live">8. Live edges: CSP, backpressure, AsyncAPI</a></div>
+  <div><a href="#limits">9. What types cannot check</a></div>
+  <div><a href="#map">10. Where it lives in the repo</a></div>
+</nav>
+
+<h2 id="why">Why any of this</h2>
+<p>Most dl8 programs read a file once and write a file once. Today every one of them runs
+through differential dataflow (DD), the engine built for inputs that keep changing. That is
+the overhead. The fix: before running, label every relation with <b>when</b> its rows can
+change. If nothing upstream is live, run plain loops. Only the live part needs DD.</p>
+<pre class="src" data-lang="typescript">// most dl8 programs look like this: one value, then complete
+of(readFile("node-types.json")).pipe(map(parse), filter(isNamed))   // → just array.map/filter
+
+// only this shape needs real incremental machinery: never completes
+fromEvent(watcher, "change").pipe(scan(applyDiff, index))         // → kept state + deltas (DD)</pre>
+
+<h2 id="weights">Weights (the "rings")</h2>
+<p>Every row carries a weight. The weight type says what the row means. v6 called these
+<b>rings</b>; "weight type" is the plain name.</p>
+<table>
+  <tr><th>weight</th><th>values</th><th>adding</th><th>a row means</th><th>RxJS twin</th><th>DD Rust type</th></tr>
+  <tr><td><span class="tag b">B</span></td><td>true / false</td><td>OR</td><td>is it there now</td><td><code>BehaviorSubject&lt;Set&gt;</code></td><td><code>Present</code></td></tr>
+  <tr><td><span class="tag n">N</span></td><td>0, 1, 2 …</td><td>+, never below 0</td><td>how many times</td><td>an append-only <code>ReplaySubject</code> count</td><td><code>u64</code></td></tr>
+  <tr><td><span class="tag z">Z</span></td><td>… −1, 0, +1 …</td><td>+, negatives allowed</td><td>how it changed</td><td><code>Subject&lt;{added, removed}&gt;</code></td><td><code>isize</code></td></tr>
+</table>
+<pre class="src" data-lang="text">before: a imports b          after: a no longer imports b
+B (state)   before = true          after = false
+Z (change)  this tick = −1         (one removal)
+N (log)     import_events = 1      (logs never go down)</pre>
+<p class="callout">Only Z can say "removed". <code>not X</code> asks "is X absent right now",
+which is a B question, so negation reads B and never Z.</p>
+
+<h2 id="clocks">Clocks and delays</h2>
+<p>A clock says which tick a relation's rows belong to. A delay (v6: grade) is how many
+ticks a read moves you.</p>
+<table>
+  <tr><th>clock</th><th>meaning</th><th>RxJS twin</th></tr>
+  <tr><td><code>Tick</code></td><td>now</td><td>the current emission</td></tr>
+  <tr><td><code>Prev&lt;C&gt;</code></td><td>one tick before C (<code>pre</code>, grade −1)</td><td><code>pairwise()</code>'s first element</td></tr>
+  <tr><td><code>Inner&lt;C&gt;</code></td><td>inside a recursion that finishes within C</td><td><code>expand()</code> until nothing new, synchronously</td></tr>
+</table>
+<p>Lustre's rule: two things combined in lockstep must share a clock. In RxJS terms,
+<code>zip(now$, now$.pipe(pairwise()))</code> lines up values from different ticks: legal in
+RxJS, a type error in Lustre and in the Rust probe below.</p>
+
+<h2 id="v6">The v6 formula</h2>
+<p>Source: <code>v6/prolog/3_clock_check.pl</code> and the role table
+<code>v6/prolog/compile/registry.pl:206</code>. Every read inside a rule body is a dependency
+edge carrying a weight type, a sign and a grade.</p>
+<table>
+  <tr><th>how a rule reads</th><th>weight</th><th>sign</th><th>grade</th></tr>
+  <tr><td>plain read (<code>level_read</code>)</td><td><span class="tag b">B</span></td><td>+</td><td>0</td></tr>
+  <tr><td><code>not</code> (<code>level_absence</code>)</td><td><span class="tag b">B</span></td><td>−</td><td>0</td></tr>
+  <tr><td>fires on add (<code>edge_trigger</code>)</td><td><span class="tag z">Z</span></td><td>+</td><td>0 or 1, by writer</td></tr>
+  <tr><td>fires on remove (<code>edge_departure</code>)</td><td><span class="tag z">Z</span></td><td>−</td><td>1</td></tr>
+  <tr><td><code>latest</code> (<code>edge_sample</code>)</td><td><span class="tag b">B</span></td><td>state</td><td>0</td></tr>
+  <tr><td><code>pre</code> (<code>edge_pre</code>)</td><td><span class="tag b">B</span></td><td>previous</td><td>−1</td></tr>
+</table>
+<pre class="src" data-lang="text">clock(R) = origin + sum of grades along a path from an input to R
+
+reject when:
+  1. two paths to R give different sums           (clock_path_conflict)
+  2. a cycle has total grade 0 through Z          (unconstructive_clock_cycle: an event triggers itself)
+allow:
+  3. a cycle of positive B reads with grade 0     (an ordinary fixpoint inside one tick)</pre>
+<h3>The same rules as datalog (Prolog spelling)</h3>
+<pre class="src" data-lang="prolog">% every input starts at offset 0; a read moves the offset by its grade
+offset(R, 0) :- input(R).
+offset(To, N) :- offset(From, M), dep(From, To, _Weight, _Sign, Grade), N is M + Grade.
+
+% rule 1: two different offsets for one relation
+clock_path_conflict(R, A, B) :- offset(R, A), offset(R, B), A < B.
+
+% rule 2: a zero-grade cycle that goes through a Z read
+self_trigger(R) :- cycle_through(R, z, 0).</pre>
+<h3>And as SQL, for the SQL-brained</h3>
+<pre class="src" data-lang="sql">WITH RECURSIVE offset(rel, n) AS (
+  SELECT rel, 0 FROM input
+  UNION
+  SELECT d.to_rel, o.n + d.grade FROM offset o JOIN dep d ON d.from_rel = o.rel
+)
+SELECT rel, MIN(n), MAX(n) FROM offset GROUP BY rel HAVING MIN(n) <> MAX(n);  -- conflicts</pre>
+<p class="callout">A real checker needs a cap on <code>n</code>: a cycle with grade +1 makes
+the recursion count forever. v6 bounds it by the number of grade-1 edges
+(<code>3_clock_check.pl:556</code>).</p>
+
+<h2 id="algos">The checker, drawn</h2>
+<figure><svg id="d-pipeline" viewBox="0 0 1000 350"></svg>
+<figcaption>Where the clock checker sits in dl8's pipeline, and what comes out of it.</figcaption></figure>
+<figure><svg id="d-conflict" viewBox="0 0 1000 260"></svg>
+<figcaption>Rule 1: <code>diff</code> is reached at offset 0 and at offset −1. Two clocks, one relation: rejected.</figcaption></figure>
+<figure><svg id="d-cycles" viewBox="0 0 1000 250"></svg>
+<figcaption>Rules 2 and 3: three cycles and their verdicts.</figcaption></figure>
+
+<h2 id="strategy">Picking how each part runs</h2>
+<p>The checker's output is one label per relation, the maximum over its inputs:</p>
+<table>
+  <tr><th>label</th><th>when</th><th>runs as</th><th>RxJS twin</th></tr>
+  <tr><td><span class="tag ok">const</span></td><td>only literals</td><td>computed at compile time</td><td>a constant</td></tr>
+  <tr><td><span class="tag b">once</span></td><td>reads inputs fixed for this run</td><td>one pass: loops, sort, hash join</td><td><code>of(array)</code></td></tr>
+  <tr><td><span class="tag n">stratum</span></td><td>recursion or <code>not</code> over once-data</td><td>a loop to a fixpoint, stratum by stratum</td><td><code>expand</code> then complete</td></tr>
+  <tr><td><span class="tag z">effect</span></td><td>asks an executor; answer next round</td><td>one round boundary, batched</td><td><code>mergeMap(request)</code></td></tr>
+  <tr><td><span class="tag z">live</span></td><td>reads something that keeps changing</td><td>DD: arrangements, deltas, backpressure</td><td><code>fromEvent</code></td></tr>
+</table>
+<figure><svg id="d-split" viewBox="0 0 1000 280"></svg>
+<figcaption>One program, split by label. Only the live corner touches DD.</figcaption></figure>
+
+<h2 id="langs">Same rules, many languages</h2>
+<p>The same five rules in every language that can say them. Each tab ends with
+<b>how to read it as TypeScript</b>.</p>
+
+<div class="tabs" id="t-langs">
+  <nav></nav>
+
+  <div class="pane" data-tab="RxJS">
+<pre class="src" data-lang="typescript">import { BehaviorSubject, Subject, zip, of, pairwise, withLatestFrom, expand, EMPTY } from "rxjs";
+
+const edges$   = new BehaviorSubject&lt;Set&lt;string&gt;&gt;(new Set());   // weight B
+const changes$ = new Subject&lt;{ added: string[]; removed: string[] }&gt;(); // weight Z
+
+zip(edges$, edges$.pipe(pairwise()));            // lockstep now + previous: RxJS allows it
+changes$.pipe(withLatestFrom(edges$));           // `latest`: read B at a Z event
+of(seed).pipe(expand(next => next.size ? of(step(next)) : EMPTY)); // recursion to a fixpoint</pre>
+    <p class="read"><b>Reading:</b> RxJS checks none of the five rules. Every mistake in the
+    other tabs is legal here and shows up at runtime as wrong values.</p>
+  </div>
+
+  <div class="pane" data-tab="Rust">
+<pre class="src" data-lang="rust">pub struct B; pub struct Z;                       // weights
+pub struct Tick; pub struct Prev&lt;C&gt;(PhantomData&lt;C&gt;); pub struct Inner&lt;C&gt;(PhantomData&lt;C&gt;);
+pub struct Rel&lt;R, C&gt;(PhantomData&lt;(R, C)&gt;);
+
+pub trait Finished {}                             // clocks whose rows are done
+impl Finished for Tick {}
+impl&lt;C: Finished&gt; Finished for Prev&lt;C&gt; {}      // Inner&lt;C&gt; deliberately has no impl
+
+fn join&lt;R, C&gt;(l: &amp;Rel&lt;R, C&gt;, r: &amp;Rel&lt;R, C&gt;) -&gt; Rel&lt;R, C&gt;           // same weight, same clock
+fn pre&lt;R, C&gt;(now: &amp;Rel&lt;R, C&gt;) -&gt; Rel&lt;R, Prev&lt;C&gt;&gt;                 // one tick back
+fn negate&lt;C: Finished&gt;(set: &amp;Rel&lt;B, C&gt;) -&gt; Rel&lt;B, C&gt;              // B only, finished only
+fn iterate&lt;C&gt;(seed: &amp;Rel&lt;B, C&gt;,
+              step: impl FnOnce(&amp;Rel&lt;B, Inner&lt;C&gt;&gt;) -&gt; Rel&lt;B, Inner&lt;C&gt;&gt;) -&gt; Rel&lt;B, C&gt;
+
+iterate(&amp;edges, |inner| negate(inner));
+// error[E0277]: the trait `Finished` is not implemented for `Inner&lt;Tick&gt;`</pre>
+    <p class="read"><b>Reading:</b> <code>&lt;R, C&gt;</code> is TS generics; reusing the same
+    letter on both arguments is what forces "same clock". <code>C: Finished</code> is
+    <code>C extends Finished</code>. Probe with passing tests:
+    <code>plans/v8/probes/clock_types/</code>.</p>
+  </div>
+
+  <div class="pane" data-tab="Haskell">
+<pre class="src" data-lang="haskell">{-# LANGUAGE DataKinds, KindSignatures #-}
+data Weight = B | Z
+data Clock  = Tick | Prev Clock | Inner Clock
+
+newtype Rel (w :: Weight) (c :: Clock) = Rel ()
+
+join    :: Rel w c -> Rel w c -> Rel w c
+pre     :: Rel w c -> Rel w ('Prev c)
+sample  :: Rel 'Z c -> Rel 'B c
+
+class Finished (c :: Clock)
+instance Finished 'Tick
+instance Finished c => Finished ('Prev c)
+
+negate  :: Finished c => Rel 'B c -> Rel 'B c
+iterate :: Rel 'B c -> (Rel 'B ('Inner c) -> Rel 'B ('Inner c)) -> Rel 'B c</pre>
+    <table class="read">
+      <tr><th>Haskell</th><th>TypeScript</th></tr>
+      <tr><td><code>join :: A -> B -> C</code></td><td><code>declare function join(a: A, b: B): C</code> (curried)</td></tr>
+      <tr><td>lowercase <code>w</code>, <code>c</code> in a type</td><td>generics <code>&lt;W, C&gt;</code>, declared implicitly</td></tr>
+      <tr><td><code>'Tick</code> (tick mark)</td><td>a literal type, like <code>"Tick"</code></td></tr>
+      <tr><td><code>class Finished c</code> + <code>instance</code></td><td>an interface plus "this type implements it"</td></tr>
+      <tr><td><code>Finished c =&gt; …</code></td><td><code>&lt;C extends Finished&gt;</code></td></tr>
+      <tr><td><code>data Clock = Tick | Prev Clock</code></td><td><code>type Clock = "Tick" | { prev: Clock }</code></td></tr>
+    </table>
+  </div>
+
+  <div class="pane" data-tab="Lean 4">
+<pre class="src" data-lang="lean">inductive Weight | B | Z
+
+-- the clock is a plain number: ticks behind now
+structure Rel (w : Weight) (behind : Nat) where
+
+def pre  {w : Weight} {n : Nat} (_ : Rel w n) : Rel w (n + 1) := ⟨⟩
+def join {w : Weight} {n : Nat} (_ _ : Rel w n) : Rel w n := ⟨⟩
+
+-- arithmetic on clocks is checked: two pres from now equal one pre of a pre
+example (x : Rel .B 0) : Rel .B 2 := pre (pre x)
+
+-- rule 1 as a theorem the compiler must accept, over a dependency graph
+theorem no_path_conflict (g : Graph) (r : Rel) :
+    ∀ p q : Path g input r, p.grade = q.grade := by
+  sorry  -- the proof obligation dl8 checks with datalog instead</pre>
+    <p class="read"><b>Reading:</b> <code>{n : Nat}</code> is an implicit generic that is a
+    <i>number</i>, so <code>Rel w (n + 1)</code> does real arithmetic in the type. A
+    <code>theorem</code> is a type whose value is a proof; <code>sorry</code> means "unproven".
+    This is the only family that can state rule 1 at all.</p>
+  </div>
+
+  <div class="pane" data-tab="Idris 2">
+<pre class="src" data-lang="haskell">data Weight = B | Z
+
+data Rel : Weight -> Nat -> Type where
+  MkRel : Rel w n
+
+pre : Rel w n -> Rel w (S n)        -- S n = n + 1
+pre MkRel = MkRel
+
+join : Rel w n -> Rel w n -> Rel w n
+join MkRel MkRel = MkRel</pre>
+    <p class="read"><b>Reading:</b> Haskell syntax with types that take values:
+    <code>Rel : Weight -> Nat -> Type</code> means "Rel takes a weight and a number and gives a
+    type". <code>S n</code> is the successor, n + 1.</p>
+  </div>
+
+  <div class="pane" data-tab="Lustre">
+<pre class="src" data-lang="ocaml">node counter(tick: bool) returns (n: int);
+let
+  n = 0 -> pre(n) + (if tick then 1 else 0);
+tel
+
+-- rejected, a cycle with no delay:
+n = n + 1;
+
+-- rejected, two clocks in one expression:
+m = n + (x when tick);</pre>
+    <p class="read"><b>Reading:</b> <code>a -> b</code> is "a on the first tick, b after"
+    (<code>startWith</code>). <code>pre(n)</code> is last tick's n (<code>pairwise</code>).
+    <code>x when tick</code> is a stream on a slower clock (<code>filter</code>, but tracked in
+    the type). The original clock calculus; Vélus is a Lustre compiler proven correct in Coq.</p>
+  </div>
+
+  <div class="pane" data-tab="Clash">
+<pre class="src" data-lang="haskell">counter :: HiddenClockResetEnable dom => Signal dom Int
+counter = register 0 (counter + 1)
+
+-- rejected, two clock domains in one expression:
+mixed :: Signal Fast Int -> Signal Slow Int -> Signal Fast Int
+mixed a b = a + b</pre>
+    <p class="read"><b>Reading:</b> Haskell to hardware. <code>Signal dom Int</code> is a
+    stream of ints on clock <code>dom</code>; <code>register 0 x</code> is <code>pre</code> with
+    an initial value. Mixing domains is a type error: the v6 rule, shipping in chips.</p>
+  </div>
+
+  <div class="pane" data-tab="Reflex">
+<pre class="src" data-lang="haskell">count :: (Reflex t, MonadHold t m, MonadFix m)
+      => Event t () -> m (Dynamic t Int)
+count clicks = foldDyn (\_ n -> n + 1) 0 clicks</pre>
+    <p class="read"><b>Reading:</b> Haskell FRP. <code>Behavior t a</code> is weight B (the
+    current value), <code>Event t a</code> a change stream (Z-like), <code>Dynamic t a</code>
+    both, like a BehaviorSubject. <code>t</code> is the timeline, a phantom
+    type that keeps two apps' events apart. <code>foldDyn</code> is <code>scan</code> that
+    yields a BehaviorSubject.</p>
+  </div>
+
+  <div class="pane" data-tab="Flix">
+<pre class="src" data-lang="scala">def reach(edges: List[(Int32, Int32)]): Vector[(Int32, Int32)] =
+    let db = inject edges into Edge/2;
+    let rules = #{
+        Path(x, y) :- Edge(x, y).
+        Path(x, z) :- Path(x, y), Edge(y, z).
+    };
+    query db, rules select (x, y) from Path(x, y) |> List.toVector</pre>
+    <p class="read"><b>Reading:</b> a JVM ML-family language with Datalog as a first-class
+    value: <code>#{ … }</code> is a program you pass around. Flix checks stratification of
+    negation at compile time, and its effect system marks functions that do IO. Closest
+    living cousin of dl8.</p>
+  </div>
+
+  <div class="pane" data-tab="Mercury">
+<pre class="src" data-lang="prolog">:- pred path(int::in, int::out) is nondet.
+path(X, Y) :- edge(X, Y).
+path(X, Z) :- edge(X, Y), path(Y, Z).
+
+:- pred lookup(string::in, int::out) is semidet.   % zero or one answer</pre>
+    <p class="read"><b>Reading:</b> Prolog with types. <code>::in</code>/<code>::out</code>
+    are modes (which arguments are known). <code>det</code> = exactly one answer,
+    <code>semidet</code> = zero or one, <code>nondet</code> = any number. That determinism
+    label is the same idea as dl8's once/stratum/live label: the compiler picks the code shape
+    from it.</p>
+  </div>
+
+  <div class="pane" data-tab="Koka">
+<pre class="src" data-lang="ocaml">fun read-index(path : string) : &lt;io,exn&gt; index
+  parse(read-text-file(path))
+
+fun pure-count(xs : list&lt;int&gt;) : total int
+  xs.length</pre>
+    <p class="read"><b>Reading:</b> the part after <code>:</code> lists effects:
+    <code>&lt;io,exn&gt;</code> touches the world and may throw; <code>total</code> touches
+    nothing. dl8's labels are effect rows for relations: <code>once</code> is "reads the
+    world at start", <code>live</code> is "reads it forever".</p>
+  </div>
+</div>
+
+<h3>Which language can say which rule</h3>
+<table>
+  <tr><th>rule</th><th>RxJS</th><th>Rust</th><th>Haskell / Clash</th><th>Lean / Idris</th><th>dl8 checker</th></tr>
+  <tr><td>weight per relation</td><td>—</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td></tr>
+  <tr><td>join needs one clock</td><td>—</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td></tr>
+  <tr><td>no <code>not</code> inside recursion</td><td>—</td><td class="ok">trait trick</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td></tr>
+  <tr><td>tick arithmetic (T+2 = T+1+1)</td><td>—</td><td>typenum crate</td><td class="ok">type-level nats</td><td class="ok">yes</td><td class="ok">yes</td></tr>
+  <tr><td>every path has one total delay</td><td>—</td><td>—</td><td>—</td><td class="ok">as a proof</td><td class="ok">datalog rule</td></tr>
+</table>
+
+<h2 id="live">Live edges: CSP, backpressure, AsyncAPI</h2>
+<p>Only the live corner needs any of this. Each formalism covers one part:</p>
+<div class="grid">
+  <div class="card"><h4>CSP</h4>Every live input is a channel. A sender blocks when the
+  channel is full. In Rust: <code>tokio::sync::mpsc::channel(64)</code>, bounded.</div>
+  <div class="card"><h4>Backpressure</h4>DD takes one batch per frontier. The producer waits on
+  <code>send().await</code>, so nothing piles up in memory. RxJS has no real backpressure, only
+  lossy <code>throttle</code>/<code>buffer</code>.</div>
+  <div class="card"><h4>Rx vocabulary</h4><code>map</code>, <code>filter</code>, <code>scan</code>,
+  <code>combineLatest</code> (join, one clock), <code>withLatestFrom</code> (<code>latest</code>),
+  <code>pairwise</code> (<code>pre</code>), <code>expand</code> (recursion).</div>
+  <div class="card"><h4>AsyncAPI</h4>The contract per channel: name, message schema (the row
+  type), direction, capacity. Generated from dl8's <code>live</code> declarations; its message
+  types become the Rust structs on the channel.</div>
+</div>
+<pre class="src" data-lang="rust">let (tx, rx) = tokio::sync::mpsc::channel::&lt;Vec&lt;(Row, isize)&gt;&gt;(64); // bounded: CSP
+watcher.for_each(|batch| async { tx.send(batch).await.ok(); });         // waits when full
+while let Some(batch) = rx.recv().await {                               // one batch per frontier
+    input.advance_to(next_tick); input.extend(batch); worker.step_while(|| probe.less_than(&amp;next_tick));
+    sqlite.write_batch(&amp;output_delta)?;                                 // one transaction per frontier
+}</pre>
+
+<h2 id="limits">What types cannot check</h2>
+<p>Rule 1, "every path to a relation has the same total delay", is a fact about the whole
+graph. A type checker sees one expression at a time, so only proof languages (Lean, Idris)
+can state it, and only with a hand-written proof. dl8 is already a datalog engine, and the
+rule is three lines of datalog over the dependency rows. So the split is:</p>
+<ul>
+  <li><b>dl8's clock checker</b> owns whole-graph rules (path sums, cycles) and gives readable errors.</li>
+  <li><b>Generated Rust</b> carries weight and clock as types, so rustc backstops the local rules.</li>
+  <li><b>Haskell, Lean, Clash, Reflex, Flix, Mercury, Koka</b> are references for shapes, not targets.</li>
+</ul>
+
+<h2 id="map">Where it lives in the repo</h2>
+<table>
+  <tr><th>thing</th><th>path</th></tr>
+  <tr><td>v6 checker</td><td><code>v6/prolog/3_clock_check.pl</code></td></tr>
+  <tr><td>v6 role table</td><td><code>v6/prolog/compile/registry.pl:206</code></td></tr>
+  <tr><td>v6 tick model</td><td><code>v6/prolog/compile/TICK-MODEL.md</code></td></tr>
+  <tr><td>proof traditions (Rust, Lustre, Esterel)</td><td><code>plans/2026-07-29-clock-checker-proof-payoff.md</code></td></tr>
+  <tr><td>September plan: checker as dl8 rules</td><td><code>plans/2026-09-03-dl7-native-rust-sqlite-runtime.md:994</code></td></tr>
+  <tr><td>strategy labels</td><td><code>plans/v8/2026-10-09-clock-checker-strategy.design.md</code></td></tr>
+  <tr><td>Rust type probe</td><td><code>plans/v8/probes/clock_types/</code></td></tr>
+</table>
+
+<footer>dl8 atlas, 2026-10-09. Fonts: Syne, Instrument Sans, Recursive. Highlighting: Shiki.
+Drawings: rough.js.</footer>
+
+<script>
+// tabs
+document.querySelectorAll(".tabs").forEach(tabs => {
+  const nav = tabs.querySelector("nav");
+  const panes = [...tabs.querySelectorAll(".pane")];
+  panes.forEach((pane, index) => {
+    const button = document.createElement("button");
+    button.textContent = pane.dataset.tab;
+    button.setAttribute("aria-selected", index === 0);
+    button.onclick = () => {
+      panes.forEach(other => other.classList.toggle("on", other === pane));
+      nav.querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", b === button));
+    };
+    nav.appendChild(button);
+    pane.classList.toggle("on", index === 0);
+  });
+});
+
+// drawings
+const NS = "http://www.w3.org/2000/svg";
+function draw(id, nodes, edges) {
+  const svg = document.getElementById(id);
+  const rc = window.rough ? rough.svg(svg) : null;
+  const at = Object.fromEntries(nodes.map(n => [n.id, n]));
+  const later = [];
+  const stroke = { stroke: "#e9e4d8", strokeWidth: 1.6, roughness: 1.6, bowing: 1.4 };
+  for (const e of edges) {
+    const a = at[e.from], b = at[e.to];
+    const x1 = a.x + a.w / 2, y1 = a.y + a.h / 2, x2 = b.x + b.w / 2, y2 = b.y + b.h / 2;
+    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
+    const sx = x1 + dx * (a.w / 2) / Math.max(Math.abs(dx), 1) * (Math.abs(dx) > Math.abs(dy) ? 1 : Math.abs(dx) / Math.max(Math.abs(dy), 1));
+    const tx = x2 - dx / len * 18, ty = y2 - dy / len * 18;
+    const fx = x1 + dx / len * 18, fy = y1 + dy / len * 18;
+    const color = e.color || "#a59f92";
+    const opt = { ...stroke, stroke: color };
+    if (e.loop) {
+      const path = `M ${a.x + a.w * 0.3} ${a.y} C ${a.x - 20} ${a.y - 70}, ${a.x + a.w + 20} ${a.y - 70}, ${a.x + a.w * 0.7} ${a.y}`;
+      svg.appendChild(rc ? rc.path(path, { ...opt, fill: "none" }) : line(path, color));
+      later.push([a.x + a.w / 2, a.y - 58, e.label, color]);
+      continue;
+    }
+    const sxp = clip(a, x2, y2), txp = clip(b, x1, y1);
+    svg.appendChild(rc ? rc.line(sxp[0], sxp[1], txp[0], txp[1], opt) : line(`M${sxp} L${txp}`, color));
+    const ang = Math.atan2(txp[1] - sxp[1], txp[0] - sxp[0]);
+    const head = [[txp[0], txp[1]], [txp[0] - 12 * Math.cos(ang - 0.45), txp[1] - 12 * Math.sin(ang - 0.45)], [txp[0] - 12 * Math.cos(ang + 0.45), txp[1] - 12 * Math.sin(ang + 0.45)]];
+    svg.appendChild(rc ? rc.polygon(head, { ...opt, fill: color, fillStyle: "solid" }) : line(`M${head.join(" L")} Z`, color));
+    if (e.label) later.push([(sxp[0] + txp[0]) / 2, (sxp[1] + txp[1]) / 2 - 10, e.label, color]);
+  }
+  for (const n of nodes) {
+    const fill = n.fill || "#1d1b25";
+    svg.appendChild(rc ? rc.rectangle(n.x, n.y, n.w, n.h, { ...stroke, stroke: n.stroke || "#e9e4d8", fill, fillStyle: "solid" })
+                       : rect(n, fill));
+    const lines = n.label.split("\n");
+    lines.forEach((text, i) => label(svg, n.x + n.w / 2, n.y + n.h / 2 + (i - (lines.length - 1) / 2) * 17 + 5, text, n.ink || "#e9e4d8", n.bold));
+  }
+  for (const [x, y, text, color] of later) pill(svg, x, y, text, color);
+}
+function pill(svg, x, y, text, color) {
+  const width = text.length * 8.4 + 14;
+  const r = document.createElementNS(NS, "rect");
+  for (const [k, v] of Object.entries({ x: x - width / 2, y: y - 15, width, height: 21, rx: 10, fill: "#14131a", stroke: color, "stroke-width": 1 })) r.setAttribute(k, v);
+  svg.appendChild(r);
+  label(svg, x, y + 0.5, text, color);
+}
+function clip(n, tx, ty) {
+  const cx = n.x + n.w / 2, cy = n.y + n.h / 2, dx = tx - cx, dy = ty - cy;
+  const s = Math.min((n.w / 2 + 4) / Math.max(Math.abs(dx), 0.01), (n.h / 2 + 4) / Math.max(Math.abs(dy), 0.01));
+  return [cx + dx * s, cy + dy * s];
+}
+function label(svg, x, y, text, color, bold) {
+  if (!text) return;
+  const t = document.createElementNS(NS, "text");
+  t.setAttribute("x", x); t.setAttribute("y", y); t.setAttribute("text-anchor", "middle");
+  t.setAttribute("fill", color); t.setAttribute("font-family", "Recursive, monospace");
+  t.setAttribute("font-size", "14"); if (bold) t.setAttribute("font-weight", "700");
+  t.textContent = text; svg.appendChild(t);
+}
+function line(d, color) {
+  const p = document.createElementNS(NS, "path");
+  p.setAttribute("d", d); p.setAttribute("stroke", color); p.setAttribute("fill", "none"); return p;
+}
+function rect(n, fill) {
+  const r = document.createElementNS(NS, "rect");
+  for (const [k, v] of Object.entries({ x: n.x, y: n.y, width: n.w, height: n.h, rx: 8, fill, stroke: "#e9e4d8" })) r.setAttribute(k, v);
+  return r;
+}
+
+const acid = "#c8f560", hot = "#ff6b9a", sky = "#7fd3ff", sun = "#ffcf5c";
+draw("d-pipeline", [
+  { id: "src", x: 20, y: 40, w: 120, h: 50, label: "dl8 source" },
+  { id: "read", x: 180, y: 40, w: 120, h: 50, label: "read +\nmacrotime" },
+  { id: "lower", x: 340, y: 40, w: 120, h: 50, label: "lower +\ncheck" },
+  { id: "deps", x: 500, y: 40, w: 150, h: 50, label: "dependency rows\nweight sign grade", stroke: sun },
+  { id: "sums", x: 690, y: 40, w: 130, h: 50, label: "path sums\n+ cycles", stroke: sun },
+  { id: "label", x: 850, y: 40, w: 130, h: 50, label: "label per\nrelation", stroke: sun },
+  { id: "diag", x: 690, y: 150, w: 130, h: 44, label: "diagnostics", stroke: hot, ink: hot },
+  { id: "loops", x: 420, y: 200, w: 170, h: 50, label: "plain Rust loops\n(once, stratum)", stroke: sky },
+  { id: "dd", x: 850, y: 200, w: 130, h: 50, label: "DD Rust\n(live)", stroke: hot },
+  { id: "rustc", x: 600, y: 285, w: 170, h: 46, label: "rustc: types\nbackstop", stroke: acid, ink: acid },
+], [
+  { from: "src", to: "read" }, { from: "read", to: "lower" }, { from: "lower", to: "deps" },
+  { from: "deps", to: "sums" }, { from: "sums", to: "label" }, { from: "sums", to: "diag", color: hot, label: "reject" },
+  { from: "label", to: "loops", color: sky, label: "no live input" }, { from: "label", to: "dd", color: hot, label: "live" },
+  { from: "loops", to: "rustc", color: acid }, { from: "dd", to: "rustc", color: acid },
+]);
+
+draw("d-conflict", [
+  { id: "in", x: 30, y: 100, w: 140, h: 50, label: "file_changed\nZ · offset 0" },
+  { id: "re", x: 250, y: 100, w: 140, h: 50, label: "reindex\noffset 0" },
+  { id: "ix", x: 470, y: 100, w: 140, h: 50, label: "index\noffset 0" },
+  { id: "pv", x: 470, y: 200, w: 140, h: 44, label: "prev_index\noffset −1" },
+  { id: "df", x: 760, y: 100, w: 190, h: 60, label: "diff\noffsets {0, −1} ✗", stroke: hot, ink: hot, bold: true },
+], [
+  { from: "in", to: "re", label: "trigger +0" }, { from: "re", to: "ix", label: "read +0" },
+  { from: "ix", to: "pv", label: "pre −1", color: sun }, { from: "ix", to: "df", label: "+0" },
+  { from: "pv", to: "df", label: "+0", color: hot },
+]);
+
+draw("d-cycles", [
+  { id: "a", x: 70, y: 130, w: 220, h: 60, label: "reach ← reach, edge\nB · grade 0", stroke: acid },
+  { id: "b", x: 390, y: 130, w: 220, h: 60, label: "on_add ← on_add\nZ · grade 0", stroke: hot },
+  { id: "c", x: 710, y: 130, w: 220, h: 60, label: "next ← delay(next)\nZ · grade +1", stroke: acid },
+], [
+  { from: "a", to: "a", loop: true, label: "fixpoint in one tick ✓", color: acid },
+  { from: "b", to: "b", loop: true, label: "triggers itself now ✗", color: hot },
+  { from: "c", to: "c", loop: true, label: "next tick ✓", color: acid },
+]);
+
+draw("d-split", [
+  { id: "json", x: 20, y: 40, w: 160, h: 50, label: "fs.json grammar\nonce", stroke: sky },
+  { id: "kinds", x: 270, y: 40, w: 160, h: 50, label: "kind, field rows\nonce", stroke: sky },
+  { id: "super", x: 520, y: 40, w: 170, h: 50, label: "supertype closure\nstratum", stroke: sun },
+  { id: "file", x: 790, y: 40, w: 170, h: 50, label: "fs.file\nwrite once", stroke: sky },
+  { id: "watch", x: 20, y: 190, w: 160, h: 50, label: "fs.watch\nlive", stroke: hot },
+  { id: "chan", x: 270, y: 190, w: 160, h: 50, label: "bounded mpsc\ncap 64", stroke: hot },
+  { id: "dd", x: 520, y: 190, w: 170, h: 50, label: "DD collections\nZ weights", stroke: hot },
+  { id: "sql", x: 790, y: 190, w: 170, h: 50, label: "sqlite: one txn\nper frontier", stroke: hot },
+], [
+  { from: "json", to: "kinds", color: sky }, { from: "kinds", to: "super", color: sun },
+  { from: "super", to: "file", color: sky },
+  { from: "watch", to: "chan", color: hot, label: "batches" }, { from: "chan", to: "dd", color: hot, label: "backpressure" },
+  { from: "dd", to: "sql", color: hot, label: "deltas" },
+]);
+</script>
+
+<script type="module">
+import { codeToHtml } from "https://esm.sh/shiki@1.22.0";
+for (const block of document.querySelectorAll("pre.src")) {
+  const lang = block.dataset.lang || "text";
+  const code = block.textContent;
+  let html;
+  try {
+    html = await codeToHtml(code, { lang, theme: "vitesse-dark" });
+  } catch {
+    html = await codeToHtml(code, { lang: "text", theme: "vitesse-dark" });
+  }
+  block.outerHTML = html;
+}
+</script>
+</body>
+</html>
