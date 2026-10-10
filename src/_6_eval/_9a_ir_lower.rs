@@ -134,7 +134,7 @@ fn waves(u: &Universe, rules: &[Rule], keys: &BTreeSet<RelationKey>) -> Result<O
 fn op_inputs(op: &ir::Op) -> Vec<ir::NodeId> {
     match op {
         ir::Op::Get(_) => Vec::new(),
-        ir::Op::Mint { input, .. } | ir::Op::StrCons { input, .. } | ir::Op::Str { input, .. }
+        ir::Op::Mint { input, .. } | ir::Op::StrCons { input, .. } | ir::Op::Str { input, .. } | ir::Op::Vec { input, .. }
         | ir::Op::Mfp { input, .. } | ir::Op::Negate(input) | ir::Op::Threshold(input)
         | ir::Op::Delay(input) | ir::Op::Reduce { input, .. } | ir::Op::TopK { input, .. }
         | ir::Op::Window { input, .. } => vec![*input],
@@ -148,7 +148,7 @@ fn op_with_inputs(op: &ir::Op, map: impl Fn(ir::NodeId) -> ir::NodeId) -> ir::Op
     let mut op = op.clone();
     match &mut op {
         ir::Op::Get(_) => {}
-        ir::Op::Mint { input, .. } | ir::Op::StrCons { input, .. } | ir::Op::Str { input, .. }
+        ir::Op::Mint { input, .. } | ir::Op::StrCons { input, .. } | ir::Op::Str { input, .. } | ir::Op::Vec { input, .. }
         | ir::Op::Mfp { input, .. } | ir::Op::Negate(input) | ir::Op::Threshold(input)
         | ir::Op::Delay(input) | ir::Op::Reduce { input, .. } | ir::Op::TopK { input, .. }
         | ir::Op::Window { input, .. } => *input = map(*input),
@@ -511,6 +511,9 @@ pub struct TermSpec {
     pub raw: Option<ir::Cell>,
     /// Index into `Lowered::texts`: the one argument of a `2:str` term is that text's cell.
     pub text: Option<usize>,
+    /// The term an engine cell of this spec reads back as: `original`, except a flat vec
+    /// (`FLAT_VEC`) reads back as the list it was made from.
+    pub decodes_to: TermId,
 }
 
 #[derive(Clone)]
@@ -537,8 +540,6 @@ pub struct Lowered {
     pub declared_folds: Vec<DeclaredFoldSpec>,
     /// The term of each `ir.terms` entry.
     pub literals: Vec<TermId>,
-    /// Every vec installed after lowering also installs its `kernel::vec_parts` terms.
-    pub vec_parts: bool,
 }
 
 impl Lowered {
@@ -620,13 +621,8 @@ struct Builder {
     /// tagged element columns. An `intern` over one builds the plain list from
     /// the elements and never waits on `__ir_plain_lists` for a fresh tuple.
     built_tuples: HashMap<ir::ColId, Vec<ir::ColId>>,
-    /// The atom `vec`, in the term table when a rule body holds a `vec` goal.
+    /// The atom `vec`, always in the term table.
     vec_atom: Option<TermId>,
-    /// A rule body reads `vec.iter`, `vec.len` or `vec.get`: every vec carries its
-    /// `vec_item` and `vec_len` terms (`kernel::vec_parts`).
-    vec_parts: bool,
-    /// `const(N)` for every index and length a rule-built vec names, by `N`.
-    vec_index_terms: Vec<TermId>,
     /// One node per structurally equal op: the op (a `Union` with its inputs sorted) to its node.
     /// Every op denotes a function of its operator and its inputs' collections (a `Mint` of a
     /// functor and columns, a `Get` of a relation with one binder), so equal ops are one collection.
@@ -679,8 +675,6 @@ impl Builder {
             snapshot_nodes: Vec::new(),
             built_tuples: HashMap::new(),
             vec_atom: None,
-            vec_parts: false,
-            vec_index_terms: Vec::new(),
             declared_folds: Vec::new(),
             semantic: None,
             consed: HashMap::new(),
@@ -822,6 +816,20 @@ fn assert_width(width: usize) -> ir::ColId {
 /// `input` extended by a ground term's two columns, its `TermId` and its cell (an IR literal,
 /// interned at install). `key`: the input column that must hold the term; none appends it to every
 /// row.
+/// The functor of the flat term that stands for a vec's items at the engine: one
+/// `Engine::intern_term_batch` entry under `VEC_FUNCTOR`, never a constructor row.
+pub const FLAT_VEC: &str = "[vec]";
+
+/// `[vec](Items..)` for `application(vec, List)` with `List` a proper list: the vec's engine form.
+pub fn flat_vec(u: &mut Universe, vec_head: TermId, term: TermId) -> Option<TermId> {
+    let [head, list] = u.args::<2>(term, "application")?;
+    if head != vec_head {
+        return None;
+    }
+    let items = u.as_list(list)?;
+    Some(u.compound(FLAT_VEC, items))
+}
+
 fn join_ground(
     b: &mut Builder,
     input: ir::NodeId,
@@ -1040,6 +1048,69 @@ fn served_effect(
     let effect = b.mfp(node, vec![], vec![], vec![rel, application]);
     b.effect_nodes.entry(goal.rel.0).or_default().push(effect);
     Ok(())
+}
+
+/// The flat vec cell of the `ref(application(vec, Flat))` value in column `whole`.
+fn vec_flat_cell(
+    b: &mut Builder,
+    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
+    current: &mut ir::NodeId,
+    width: &mut usize,
+    whole: ir::ColId,
+) -> Result<ir::ColId, &'static str> {
+    let ref_ctor = constructor(constructors, "9:1:ref", 1, false)?;
+    let app_ctor = constructor(constructors, "9:2:application", 2, false)?;
+    let head = b.vec_atom.ok_or("vec head outside the term table")?;
+    *current = join_constructor(b, *current, *width, ref_ctor, whole);
+    let application = assert_width(*width + 1);
+    *width += 2;
+    *current = join_constructor(b, *current, *width, app_ctor, application);
+    let constructor_col = assert_width(*width + 1);
+    let flat = assert_width(*width + 2);
+    *width += 3;
+    *current = join_ground(b, *current, None, head)?;
+    let head_col = assert_width(*width + 1);
+    *width += 2;
+    *current = b.mfp(*current, vec![equal_columns(constructor_col, head_col)], vec![], vec![]);
+    Ok(flat)
+}
+
+/// `const(int(N))` of the raw integer `N` in column `raw`.
+fn int_term(
+    b: &mut Builder,
+    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
+    current: &mut ir::NodeId,
+    width: &mut usize,
+    raw: ir::ColId,
+) -> Result<ir::ColId, &'static str> {
+    let wrap = constructor(constructors, "9:1:const", 1, false)?;
+    let int = constructor(constructors, "0:int", 0, true)?;
+    *current = b.node(ir::Op::Mint { input: *current, functor: int, args: vec![raw] });
+    let int_id = assert_width(*width);
+    *width += 1;
+    *current = b.node(ir::Op::Mint { input: *current, functor: wrap, args: vec![int_id] });
+    let term = assert_width(*width);
+    *width += 1;
+    Ok(term)
+}
+
+/// The raw integer `N` of the `const(int(N))` term in column `term`.
+fn int_raw(
+    b: &mut Builder,
+    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
+    current: &mut ir::NodeId,
+    width: &mut usize,
+    term: ir::ColId,
+) -> Result<ir::ColId, &'static str> {
+    let wrap = constructor(constructors, "9:1:const", 1, false)?;
+    let int = constructor(constructors, "0:int", 0, true)?;
+    *current = join_constructor(b, *current, *width, wrap, term);
+    let inner = assert_width(*width + 1);
+    *width += 2;
+    *current = join_constructor(b, *current, *width, int, inner);
+    let number = assert_width(*width + 1);
+    *width += 2;
+    Ok(number)
 }
 
 fn compile_kernel(
@@ -1317,15 +1388,51 @@ fn compile_kernel(
             output[2] = Some(assert_width(*width));
             *width += 1;
         }
-        Kernel::Tuple | Kernel::Vec => {
+        Kernel::Vec => {
+            let value_at = inputs.len().checked_sub(1).ok_or("vec arity")?;
+            if let Some(whole) = inputs[value_at] {
+                // Take apart: exactly `value_at` items, each read by position.
+                let flat = vec_flat_cell(b, constructors, current, width, whole)?;
+                *current = b.node(ir::Op::Vec { input: *current, op: ir::VecOp::Len, args: vec![flat] });
+                let len = assert_width(*width);
+                *width += 1;
+                let exact = ir::Expr::Call(ir::Func::Eq, vec![ir::Expr::Col(len), ir::Expr::Lit(value_at as i64)]);
+                *current = b.mfp(*current, vec![exact], vec![], vec![]);
+                for position in 0..value_at {
+                    *current = b.mfp(*current, vec![], vec![ir::Expr::Lit(position as i64)], vec![]);
+                    let at = assert_width(*width);
+                    *current = b.node(ir::Op::Vec { input: *current, op: ir::VecOp::Get, args: vec![flat, at] });
+                    output[position] = Some(assert_width(*width + 1));
+                    *width += 2;
+                }
+            } else {
+                // Build: every item bound; the value is `ref(application(vec, Flat))`.
+                let Some(items) = inputs[..value_at].iter().copied().collect::<Option<Vec<_>>>() else {
+                    *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
+                    return Ok(());
+                };
+                let ref_ctor = constructor(constructors, "9:1:ref", 1, false)?;
+                let app_ctor = constructor(constructors, "9:2:application", 2, false)?;
+                let head = b.vec_atom.ok_or("vec head outside the term table")?;
+                *current = b.node(ir::Op::Vec { input: *current, op: ir::VecOp::Build, args: items });
+                let flat = assert_width(*width);
+                *width += 1;
+                *current = join_ground(b, *current, None, head)?;
+                let head_col = assert_width(*width + 1);
+                *width += 2;
+                *current = b.node(ir::Op::Mint { input: *current, functor: app_ctor, args: vec![head_col, flat] });
+                let application = assert_width(*width);
+                *width += 1;
+                *current = b.node(ir::Op::Mint { input: *current, functor: ref_ctor, args: vec![application] });
+                output[value_at] = Some(assert_width(*width));
+                *width += 1;
+            }
+        }
+        Kernel::Tuple => {
             if inputs.is_empty() {
                 return Err("tuple arity");
             }
-            let head = if kernel == Kernel::Vec {
-                b.vec_atom.ok_or("vec head outside the term table")?
-            } else {
-                tuple
-            };
+            let head = tuple;
             let cons = constructor(constructors, "9:2:[|]", 2, false)?;
             let ref_ctor = constructor(constructors, "9:1:ref", 1, false)?;
             let app_ctor = constructor(constructors, "9:2:application", 2, false)?;
@@ -1405,13 +1512,11 @@ fn compile_kernel(
                 *width += 1;
                 if kernel == Kernel::Tuple {
                     b.built_tuples.insert(whole, elements);
-                } else if b.vec_parts {
-                    mint_vec_parts(b, constructors, current, width, whole, &elements)?;
                 }
             }
         }
         Kernel::VecIter | Kernel::VecGet | Kernel::VecLen => {
-            let (name, arity) = if kernel == Kernel::VecLen { ("9:2:vec_len", 2) } else { ("9:3:vec_item", 3) };
+            let arity = if kernel == Kernel::VecLen { 2 } else { 3 };
             if inputs.len() != arity {
                 return Err("vec op arity");
             }
@@ -1420,21 +1525,28 @@ fn compile_kernel(
                 *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
                 return Ok(());
             }
-            // Columns of the joined row: `id`, then the term's arguments.
-            let parts = constructor(constructors, name, arity, false)?;
-            let rows = b.get_constructor(parts);
-            let equivalences = (0..keys)
-                .map(|at| vec![(0, inputs[at].unwrap()), (1, assert_width(at + 1))])
-                .collect();
-            *current = b.node(ir::Op::Join {
-                inputs: vec![*current, rows],
-                equivalences,
-                project: vec![],
-            });
-            for (at, slot) in output.iter_mut().enumerate() {
-                *slot = Some(assert_width(*width + 1 + at));
+            let flat = vec_flat_cell(b, constructors, current, width, inputs[0].unwrap())?;
+            match kernel {
+                Kernel::VecIter => {
+                    *current = b.node(ir::Op::Vec { input: *current, op: ir::VecOp::Iter, args: vec![flat] });
+                    let raw = assert_width(*width);
+                    output[2] = Some(assert_width(*width + 1));
+                    *width += 2;
+                    output[1] = Some(int_term(b, constructors, current, width, raw)?);
+                }
+                Kernel::VecLen => {
+                    *current = b.node(ir::Op::Vec { input: *current, op: ir::VecOp::Len, args: vec![flat] });
+                    let raw = assert_width(*width);
+                    *width += 1;
+                    output[1] = Some(int_term(b, constructors, current, width, raw)?);
+                }
+                _ => {
+                    let index = int_raw(b, constructors, current, width, inputs[1].unwrap())?;
+                    *current = b.node(ir::Op::Vec { input: *current, op: ir::VecOp::Get, args: vec![flat, index] });
+                    output[2] = Some(assert_width(*width));
+                    *width += 1;
+                }
             }
-            *width += 1 + arity;
         }
         Kernel::Intern => {
             if inputs.len() != 3 {
@@ -1675,42 +1787,6 @@ fn compile_kernel(
                     .all(|element| usize::from(*element) < base_width)
         });
     }
-    Ok(())
-}
-
-/// The `vec_item` row of each element and the `vec_len` row of a vec a rule body
-/// just built at `whole`, minted beside it so the vec read ops join them.
-fn mint_vec_parts(
-    b: &mut Builder,
-    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
-    current: &mut ir::NodeId,
-    width: &mut usize,
-    whole: ir::ColId,
-    elements: &[ir::ColId],
-) -> Result<(), &'static str> {
-    let item = constructor(constructors, "9:3:vec_item", 3, false)?;
-    let len = constructor(constructors, "9:2:vec_len", 2, false)?;
-    let index_term = |b: &Builder, at: usize| b.vec_index_terms.get(at).copied().ok_or("vec index outside the term table");
-    for (at, element) in elements.iter().enumerate() {
-        *current = join_ground(b, *current, None, index_term(b, at)?)?;
-        let index = assert_width(*width + 1);
-        *width += 2;
-        *current = b.node(ir::Op::Mint {
-            input: *current,
-            functor: item,
-            args: vec![whole, index, *element],
-        });
-        *width += 1;
-    }
-    *current = join_ground(b, *current, None, index_term(b, elements.len())?)?;
-    let count = assert_width(*width + 1);
-    *width += 2;
-    *current = b.node(ir::Op::Mint {
-        input: *current,
-        functor: len,
-        args: vec![whole, count],
-    });
-    *width += 1;
     Ok(())
 }
 
@@ -3036,36 +3112,9 @@ pub fn lower_declared(
     let mut needed: Vec<u32> = Vec::new();
     let mut seen = vec![false; u.len()];
     let mut todo = vec![none, empty, tuple, intern_rel, effect_rel, snapshot_rel];
-    let vec_goals = program.rules.iter().any(|rule| {
-        rule.body.iter().any(|goal| Kernel::of(u, goal.rel) == Some(Kernel::Vec))
-    });
-    let vec_atom = vec_goals.then(|| u.atom("vec"));
-    todo.extend(vec_atom);
-    let vec_parts = program.rules.iter().any(|rule| {
-        rule.body.iter().any(|goal| {
-            matches!(
-                Kernel::of(u, goal.rel),
-                Some(Kernel::VecIter | Kernel::VecLen | Kernel::VecGet)
-            )
-        })
-    });
-    // A rule-built vec of `N` elements names `const(0)` to `const(N)`.
-    let longest_built = program
-        .rules
-        .iter()
-        .flat_map(|rule| &rule.body)
-        .filter(|goal| Kernel::of(u, goal.rel) == Some(Kernel::Vec))
-        .map(|goal| goal.args.len())
-        .max()
-        .filter(|_| vec_parts)
-        .unwrap_or(0);
-    let vec_index_terms: Vec<TermId> = (0..longest_built as i64)
-        .map(|at| {
-            let at = u.int(at);
-            u.compound("const", vec![at])
-        })
-        .collect();
-    todo.extend(vec_index_terms.iter().copied());
+    // A vec's items reach the engine as one flat vec (`flat_vec`), never as cons cells.
+    let vec_head = u.atom("vec");
+    todo.push(vec_head);
     todo.extend(program.served.iter().copied());
     for seed in &program.seeds {
         todo.push(seed.rel);
@@ -3092,22 +3141,17 @@ pub fn lower_declared(
         if !seen[index] {
             seen[index] = true;
             needed.push(term.0);
-            if let Term::Compound(_, args) = u.get(term) {
-                todo.extend(args.iter().copied());
+            match flat_vec(u, vec_head, term) {
+                Some(flat) => todo.extend([vec_head, flat]),
+                None => {
+                    if let Term::Compound(_, args) = u.get(term) {
+                        todo.extend(args.iter().copied());
+                    }
+                }
             }
         }
     }
     needed.sort_unstable();
-    if vec_parts {
-        let vecs: Vec<TermId> = needed
-            .iter()
-            .map(|index| TermId(*index))
-            .filter(|term| super::kernel::vec_items(u, *term).is_some())
-            .collect();
-        for whole in vecs {
-            todo.extend(super::kernel::vec_parts(u, whole).unwrap_or_default());
-        }
-    }
     let dynamic_lists = program.rules.iter().any(|rule| {
         rule.body.iter().any(|goal| {
             Kernel::of(u, goal.rel) == Some(Kernel::Intern)
@@ -3139,8 +3183,13 @@ pub fn lower_declared(
         if !seen[index] {
             seen[index] = true;
             needed.push(term.0);
-            if let Term::Compound(_, args) = u.get(term) {
-                todo.extend(args.iter().copied());
+            match flat_vec(u, vec_head, term) {
+                Some(flat) => todo.extend([vec_head, flat]),
+                None => {
+                    if let Term::Compound(_, args) = u.get(term) {
+                        todo.extend(args.iter().copied());
+                    }
+                }
             }
         }
     }
@@ -3155,9 +3204,7 @@ pub fn lower_declared(
         })
         .collect();
     let mut b = Builder::new();
-    b.vec_atom = vec_atom;
-    b.vec_parts = vec_parts;
-    b.vec_index_terms = vec_index_terms;
+    b.vec_atom = Some(vec_head);
     let unit = b.rel("__ir_unit".into(), vec![ir::Ty::Id], ir::RelKind::Source);
     let term_map = b.rel(
         "__ir_term_map".into(),
@@ -3213,9 +3260,16 @@ pub fn lower_declared(
                 vec![],
                 Some(if *sym == u.nil { 0 } else { *index as i64 + 1 }),
             ),
+            Term::Compound(sym, children) if u.sym_str(*sym) == FLAT_VEC => {
+                shapes.push((TermId(*index as u32), FLAT_VEC.to_string(), children.clone(), None, None));
+                continue;
+            }
             Term::Compound(sym, children) => (
                 format!("9:{}:{}", children.len(), u.sym_str(*sym)),
-                children.clone(),
+                match flat_vec(u, vec_head, TermId(*index as u32)) {
+                    Some(flat) => vec![vec_head, flat],
+                    None => children.clone(),
+                },
                 None,
             ),
         };
@@ -3241,10 +3295,6 @@ pub fn lower_declared(
         constructor_keys.insert((name.to_string(), args, raw));
     }
     constructor_keys.extend(declared.shapes.iter().cloned());
-    if vec_parts {
-        constructor_keys.insert(("9:3:vec_item".to_string(), 3, false));
-        constructor_keys.insert(("9:2:vec_len".to_string(), 2, false));
-    }
     // Terms are interned through `Engine::intern_terms` (`bootstrap_changes`), never by an
     // operator: a constructor is a relation no node needs to mint into at install.
     let mut constructors = BTreeMap::new();
@@ -3265,13 +3315,18 @@ pub fn lower_declared(
         .into_iter()
         .map(|(original, name, args, raw, text)| {
             let width = if text.is_some() { 1 } else { args.len() };
-            let ctor = constructors[&(name, width, raw.is_some())];
+            let (ctor, decodes_to) = if name == FLAT_VEC {
+                (ivm_engine::VEC_FUNCTOR, u.list(&args))
+            } else {
+                (constructors[&(name, width, raw.is_some())], original)
+            };
             TermSpec {
                 original,
                 functor: ctor,
                 args,
                 raw,
                 text,
+                decodes_to,
             }
         })
         .collect();
@@ -3948,6 +4003,5 @@ pub fn lower_declared(
         fold_program,
         declared_folds: b.declared_folds,
         literals: b.literal_terms,
-        vec_parts,
     })
 }
