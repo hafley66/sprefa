@@ -1569,6 +1569,7 @@ fn reseed_changes<E: Engine>(
 
 /// Intern every term `lowered` names that the engine has not mapped.
 fn intern_lowered<E: Engine>(lowered: &Lowered, core: &mut Core<E>) -> Result<(), ivm_engine::EngineError> {
+    let started = std::time::Instant::now();
     let engine = &mut core.engine;
     let mapped = &mut core.mapped;
     let decoded = &mut core.decoded.cells;
@@ -1614,6 +1615,8 @@ fn intern_lowered<E: Engine>(lowered: &Lowered, core: &mut Core<E>) -> Result<()
             ivm_engine::ErrorKind::Unsupported("term bootstrap budget or cycle"),
         ));
     }
+    let level_count = levels.len();
+    let term_count: usize = levels.iter().map(Vec::len).sum();
     for ready in levels {
         let terms: Vec<_> = ready
             .iter()
@@ -1635,6 +1638,14 @@ fn intern_lowered<E: Engine>(lowered: &Lowered, core: &mut Core<E>) -> Result<()
             decoded.insert(cell, lowered.terms[index].original);
         }
     }
+    tracing::info!(
+        target: "dl8::ir",
+        terms = term_count,
+        texts = lowered.texts.len(),
+        levels = level_count,
+        ms = started.elapsed().as_millis() as u64,
+        "ir bootstrap"
+    );
     Ok(())
 }
 
