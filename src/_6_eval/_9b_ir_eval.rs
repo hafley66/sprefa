@@ -1536,27 +1536,11 @@ fn bootstrap_changes<E: Engine>(
 ) -> Result<Vec<ir::SourceChange>, ivm_engine::EngineError> {
     intern_lowered(lowered, core)?;
     let mapped = &core.mapped;
+    // No operator reads `__ir_term_map` (terms reach operators as literal cells), so its rows
+    // stay out of the frontier; `ir_bundle` writes them for the `ir-json` target.
     let mut changes = seed_rows(lowered, mapped);
-    match known {
-        Some(known) => {
-            known.extend(lowered.terms.iter().map(|spec| spec.original));
-            for original in known.iter() {
-                changes.push(ir::SourceChange {
-                    rel: lowered.term_map,
-                    row: vec![original.0 as i64, mapped[original]],
-                    w: 1,
-                });
-            }
-        }
-        None => {
-            for (&original, &id) in mapped.iter() {
-                changes.push(ir::SourceChange {
-                    rel: lowered.term_map,
-                    row: vec![original.0 as i64, id],
-                    w: 1,
-                });
-            }
-        }
+    if let Some(known) = known {
+        known.extend(lowered.terms.iter().map(|spec| spec.original));
     }
     changes.sort_by(|a, b| (a.rel, &a.row).cmp(&(b.rel, &b.row)));
     changes.dedup_by(|a, b| a.rel == b.rel && a.row == b.row);
@@ -1610,13 +1594,11 @@ fn reseed_changes<E: Engine>(
         .into_iter()
         .map(|change| (change.rel, change.row))
         .collect();
-    let fresh: Vec<TermId> = if own {
-        lowered.terms.iter().map(|spec| spec.original).filter(|term| known.insert(*term)).collect()
+    if own {
+        known.extend(lowered.terms.iter().map(|spec| spec.original));
     } else {
-        let fresh: Vec<TermId> = mapped.keys().copied().filter(|term| !known.contains(term)).collect();
-        known.extend(fresh.iter().copied());
-        fresh
-    };
+        known.extend(mapped.keys().copied());
+    }
     let term_map = lowered.term_map;
     let below = last_seeds.range(..(term_map, Vec::new()));
     let above = term_map
@@ -1631,12 +1613,6 @@ fn reseed_changes<E: Engine>(
         .into_iter()
         .filter(|row| !last_seeds.contains(row))
         .collect();
-    added.extend(
-        fresh
-            .iter()
-            .map(|term| (term_map, vec![term.0 as i64, mapped[term]]))
-            .filter(|row| !last_seeds.contains(row)),
-    );
     added.sort();
     added.dedup();
     let mut changes = Vec::with_capacity(retracted.len() + added.len());
@@ -1971,13 +1947,6 @@ fn apply_session<E: Engine>(
     let core_rc = session.core.clone();
     let mut core = core_rc.lock().expect("core poisoned");
     let mut frontier = Vec::with_capacity(changes.len() + fresh.len());
-    for &term in &fresh {
-        frontier.push(ir::SourceChange {
-            rel: lowered.term_map,
-            row: vec![term.0 as i64, core.mapped[&term]],
-            w: 1,
-        });
-    }
     for (tagged, plain) in &plain_pairs {
         frontier.push(ir::SourceChange {
             rel: lowered.plain_source,
