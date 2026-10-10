@@ -1030,7 +1030,6 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>, ir: ir::Pro
             .map(|(id, terms)| (rel(*id), terms.clone()))
             .collect(),
         plain_source: rel(lowered.plain_source),
-        bad_lists: rel(lowered.bad_lists),
         served: lowered
             .served
             .iter()
@@ -1952,22 +1951,16 @@ fn apply_session<E: Engine>(
         .collect();
     let mut fresh = install_fresh(u, lowered, session, &roots)?;
     let mut plain_items = Vec::new();
-    let mut bad_lists = Vec::new();
     for &term in &fresh {
-        let Some(payload) = u.unary(term, "const") else {
+        let Some(list) = u.unary(term, "const").and_then(|payload| u.as_list(payload)) else {
             continue;
         };
-        match u.as_list(payload) {
-            Some(list) => {
-                if let Some(plain) = list
-                    .iter()
-                    .map(|id| super::kernel::semantic(u, *id))
-                    .collect::<Option<Vec<_>>>()
-                {
-                    plain_items.push((term, plain));
-                }
-            }
-            None => bad_lists.push(term),
+        if let Some(plain) = list
+            .iter()
+            .map(|id| super::kernel::semantic(u, *id))
+            .collect::<Option<Vec<_>>>()
+        {
+            plain_items.push((term, plain));
         }
     }
     let plain_pairs: Vec<(TermId, TermId)> = plain_items
@@ -1983,13 +1976,6 @@ fn apply_session<E: Engine>(
         frontier.push(ir::SourceChange {
             rel: lowered.plain_source,
             row: vec![core.mapped[tagged], core.mapped[plain]],
-            w: 1,
-        });
-    }
-    for term in &bad_lists {
-        frontier.push(ir::SourceChange {
-            rel: lowered.bad_lists,
-            row: vec![core.mapped[term]],
             w: 1,
         });
     }

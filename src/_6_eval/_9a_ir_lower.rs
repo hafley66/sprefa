@@ -526,10 +526,9 @@ pub struct Lowered {
     pub unit: ir::RelId,
     pub visible: Vec<(ir::RelId, TermId, usize)>,
     pub internal_seeds: Vec<(ir::RelId, Vec<TermId>)>,
-    /// `__ir_plain_list_seeds` and `__ir_bad_lists`: where a `const` term
-    /// installed after lowering sends its `internal_seeds` row.
+    /// `__ir_plain_list_seeds`: where a `const` term installed after
+    /// lowering sends its `internal_seeds` row.
     pub plain_source: ir::RelId,
-    pub bad_lists: ir::RelId,
     pub served: Vec<ServedSpec>,
     pub sources: BTreeMap<(u32, usize), ir::RelId>,
     /// Constructor relation per term shape `(name, arity, raw)`.
@@ -3466,15 +3465,6 @@ pub fn lower_declared(
         }
     }
     needed.sort_unstable();
-    let bad_list_terms: Vec<TermId> = needed
-        .iter()
-        .copied()
-        .map(TermId)
-        .filter(|&id| {
-            u.unary(id, "const")
-                .is_some_and(|payload| u.as_list(payload).is_none())
-        })
-        .collect();
     let mut b = Builder::new();
     b.vec_atom = Some(vec_head);
     let unit = b.rel("__ir_unit".into(), vec![ir::Ty::Id], ir::RelKind::Source);
@@ -3486,11 +3476,6 @@ pub fn lower_declared(
     let plain_source = b.rel(
         "__ir_plain_list_seeds".into(),
         vec![ir::Ty::Id, ir::Ty::Id],
-        ir::RelKind::Source,
-    );
-    let bad_lists = b.rel(
-        "__ir_bad_lists".into(),
-        vec![ir::Ty::Id],
         ir::RelKind::Source,
     );
     let plain_lists = b.rel(
@@ -4281,14 +4266,8 @@ pub fn lower_declared(
         internal_seeds: plain_list_pairs
             .into_iter()
             .map(|(tagged, plain)| (plain_source, vec![tagged, plain]))
-            .chain(
-                bad_list_terms
-                    .into_iter()
-                    .map(|term| (bad_lists, vec![term])),
-            )
             .collect(),
         plain_source,
-        bad_lists,
         served,
         sources,
         constructors,
