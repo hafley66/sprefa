@@ -97,6 +97,25 @@
   .toc a { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--dim); }
   .callout { border-left: 4px solid var(--hot); padding: 6px 16px; background: #221a22; border-radius: 0 10px 10px 0; }
   footer { margin-top: 90px; color: var(--dim); font-size: 14px; }
+
+  .stage { background: #101016; border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 14px 0 6px; }
+  .stage .row { display: flex; align-items: center; gap: 8px; margin: 10px 0; min-height: 44px; flex-wrap: wrap; }
+  .stage .lane { font: 600 13px var(--mono); color: var(--dim); width: 150px; flex: none; }
+  .cell {
+    font: 600 14px var(--mono); padding: 7px 11px; border-radius: 8px; border: 1.5px solid var(--line);
+    background: var(--panel); color: var(--ink); transition: all .35s ease; white-space: nowrap;
+  }
+  .cell.nest { border-color: #6b6578; }
+  .cell.on { border-color: var(--acid); color: #14131a; background: var(--acid); transform: translateY(-3px) rotate(-1.5deg); }
+  .cell.gone { border-color: var(--hot); color: var(--hot); text-decoration: line-through; opacity: .55; }
+  .cell.new { border-color: var(--acid); color: var(--acid); box-shadow: 0 0 0 3px #c8f56033; }
+  .cell.fly { animation: fly .6s ease both; }
+  @keyframes fly { from { opacity: 0; transform: translate(-60px, -30px) scale(.6); } to { opacity: 1; transform: none; } }
+  .arrow { color: var(--dim); font: 14px var(--mono); }
+  .meter { font: 700 15px var(--mono); color: var(--sun); margin-left: auto; padding-left: 16px; }
+  .controls { display: flex; gap: 10px; align-items: center; margin: 4px 0 18px; font: 14px var(--mono); color: var(--dim); }
+  .controls button { font: 600 13px var(--mono); background: var(--acid); color: #14131a; border: 0; border-radius: 99px; padding: 5px 14px; cursor: pointer; }
+  .controls input { accent-color: var(--acid); }
 </style>
 </head>
 <body>
@@ -115,8 +134,9 @@ native tongue is RxJS.</p>
   <div><a href="#strategy">6. Picking how each part runs</a></div>
   <div><a href="#langs">7. Same rules, many languages</a></div>
   <div><a href="#live">8. Live edges: CSP, backpressure, AsyncAPI</a></div>
-  <div><a href="#limits">9. What types cannot check</a></div>
-  <div><a href="#map">10. Where it lives in the repo</a></div>
+  <div><a href="#lists">9. Lists, three ways</a></div>
+  <div><a href="#limits">10. What types cannot check</a></div>
+  <div><a href="#map">11. Where it lives in the repo</a></div>
 </nav>
 
 <h2 id="why">Why any of this</h2>
@@ -442,6 +462,65 @@ while let Some(batch) = rx.recv().await {                               // one b
     sqlite.write_batch(&amp;output_delta)?;                                 // one transaction per frontier
 }</pre>
 
+<h2 id="lists">Lists, three ways</h2>
+<p>A list can live as <b>cons cells</b> (a chain, Prolog's shape and dl8's storage today), as
+<b>one value</b> (a flat array inside a row), or as <b>rows</b> (one row per item, like a child
+table). The animations count what each one costs.</p>
+
+<h3>1. Building a list: rounds</h3>
+<p>dl8 interns a term only after its parts exist. A cons chain of n items is n levels deep, so
+it takes n rounds. Tonight's 488-file scope list took 488 rounds, and an 8,192-item list hit the
+round budget and stopped the compile.</p>
+<div class="stage" id="a-build"></div>
+<div class="controls"><button data-play="build">play</button>
+  <label>items <input type="range" min="3" max="9" value="5" id="a-build-n"></label><span id="a-build-label">5</span></div>
+
+<h3>2. Changing one item: diff size</h3>
+<p>DD ships changes as rows with +1 or −1. Edit one file in a five-file list and count the rows
+that move.</p>
+<div class="stage" id="a-edit"></div>
+<div class="controls"><button data-play="edit">play</button></div>
+
+<h3>3. "For each item": flat_map, unnest, tuple.item</h3>
+<p>A list stored as one value must be exploded into item rows before a rule can join on an item.
+DD calls it <code>flat_map</code>, Postgres and DuckDB <code>unnest</code>, SQLite
+<code>json_each</code>, DDlog <code>FlatMap</code>. In the row layout the rows already exist.</p>
+<div class="stage" id="a-unnest"></div>
+<div class="controls"><button data-play="unnest">play</button></div>
+
+<h3>How other systems store lists</h3>
+<table>
+  <tr><th>system</th><th>a list is</th><th>"for each item"</th></tr>
+  <tr><td>Prolog</td><td>cons cells <code>[H|T]</code>; open list = unbound tail</td><td>recursion on the tail</td></tr>
+  <tr><td>Soufflé</td><td>nested records, interned in a record table</td><td>recursion (cons depth again)</td></tr>
+  <tr><td>DDlog</td><td><code>Vec&lt;T&gt;</code> as one value</td><td><code>FlatMap</code> → DD <code>flat_map</code></td></tr>
+  <tr><td>Materialize, DuckDB</td><td><code>list</code> column</td><td><code>unnest</code></td></tr>
+  <tr><td>Postgres</td><td><code>int[]</code> column</td><td><code>unnest(..) WITH ORDINALITY</code></td></tr>
+  <tr><td>SQLite</td><td>JSON text, or a child table</td><td><code>json_each</code>, or a join</td></tr>
+  <tr><td>relational 1NF</td><td>child table <code>(list, ord, item)</code></td><td>a join</td></tr>
+</table>
+
+<h3>The proposal for dl8 (F2, not built, needs your approval)</h3>
+<pre class="src" data-lang="scheme">; build and fixed-length deconstruct: unchanged
+(<- (scope ?Run [a.rs b.rs c.rs]) ...)
+(<- (pair_first ?First) (pair ?Whole) (tuple ?First ?Second ?Whole))
+
+; new: any length, one row per item
+(<- (scoped_file ?Run ?File)
+    (scope ?Run ?Files)
+    (tuple.item ?Files ?Ord ?File))</pre>
+<pre class="src" data-lang="typescript">const scope = ["a.rs", "b.rs", "c.rs"];      // build
+const [first, second] = pair;                 // fixed length
+scope.forEach((file, ord) => use(run, file)); // tuple.item: any length</pre>
+<table>
+  <tr><th>layer</th><th>shape</th></tr>
+  <tr><td>dl8 goal</td><td><code>(tuple.item ?List ?Ord ?Item)</code></td></tr>
+  <tr><td>list id</td><td>content hash of its items: the same list gets the same id</td></tr>
+  <tr><td>DD</td><td><code>Collection&lt;(ListId, u32, Cell)&gt;</code>, arranged by <code>ListId</code></td></tr>
+  <tr><td>SQLite</td><td><code>tuple_item(list INTEGER, ord INTEGER, item INTEGER)</code></td></tr>
+  <tr><td>later, for lists always read whole</td><td>value layout <code>(ListId, Vec&lt;Cell&gt;)</code> + <code>flat_map</code></td></tr>
+</table>
+
 <h2 id="limits">What types cannot check</h2>
 <p>Rule 1, "every path to a relation has the same total delay", is a fact about the whole
 graph. A type checker sees one expression at a time, so only proof languages (Lean, Idris)
@@ -611,6 +690,97 @@ draw("d-split", [
   { from: "watch", to: "chan", color: hot, label: "batches" }, { from: "chan", to: "dd", color: hot, label: "backpressure" },
   { from: "dd", to: "sql", color: hot, label: "deltas" },
 ]);
+</script>
+
+<script>
+const sleep = ms => new Promise(done => setTimeout(done, ms));
+const make = (text, cls = "") => { const el = document.createElement("span"); el.className = "cell " + cls; el.textContent = text; return el; };
+const lane = (stage, name) => {
+  const row = document.createElement("div"); row.className = "row";
+  const label = document.createElement("span"); label.className = "lane"; label.textContent = name;
+  row.appendChild(label); stage.appendChild(row); return row;
+};
+const meter = (row, text) => { const m = document.createElement("span"); m.className = "meter"; m.textContent = text; row.appendChild(m); return m; };
+const files = n => "abcdefghi".slice(0, n).split("").map(c => c + ".rs");
+
+const animations = {
+  async build() {
+    const stage = document.getElementById("a-build"); stage.innerHTML = "";
+    const n = +document.getElementById("a-build-n").value;
+    const items = files(n);
+    const consRow = lane(stage, "cons chain");
+    const cells = items.map(item => { const c = make(`cons(${item}, ·)`, "nest"); consRow.appendChild(c); consRow.appendChild(Object.assign(document.createElement("span"), { className: "arrow", textContent: "→" })); return c; });
+    const nil = make("nil", "nest"); consRow.appendChild(nil);
+    const consMeter = meter(consRow, "rounds: 0");
+    const flatRow = lane(stage, "flat / rows");
+    const flatItems = items.map(item => { const c = make(item); flatRow.appendChild(c); return c; });
+    const whole = make(`list#${n}`, "nest"); flatRow.appendChild(whole);
+    const flatMeter = meter(flatRow, "rounds: 0");
+    await sleep(400);
+    nil.classList.add("on"); consMeter.textContent = "rounds: 1";
+    flatItems.forEach(c => c.classList.add("on")); flatMeter.textContent = "rounds: 1";
+    await sleep(600);
+    whole.classList.add("on"); flatMeter.textContent = "rounds: 2 ✓";
+    for (let i = n - 1; i >= 0; i--) {
+      await sleep(550);
+      cells[i].classList.add("on"); consMeter.textContent = `rounds: ${n - i + 1}`;
+    }
+    consMeter.textContent += "  (= items + 1)";
+  },
+
+  async edit() {
+    const stage = document.getElementById("a-edit"); stage.innerHTML = "";
+    const items = files(5);
+    const valueRow = lane(stage, "value layout");
+    const oldValue = make(`(run17, [${items.join(" ")}])`); valueRow.appendChild(oldValue);
+    const valueMeter = meter(valueRow, "diff rows: 0");
+    const rowsLane = lane(stage, "row layout");
+    const rowCells = items.map((item, ord) => { const c = make(`(run17, ${ord}, ${item})`); rowsLane.appendChild(c); return c; });
+    const rowMeter = meter(rowsLane, "diff rows: 0");
+    await sleep(700);
+    oldValue.classList.add("gone"); valueMeter.textContent = "diff rows: 1 (−1, all 5 items)";
+    await sleep(500);
+    const next = items.map(item => item === "c.rs" ? "x.rs" : item);
+    const newValue = make(`(run17, [${next.join(" ")}])`, "new fly"); valueRow.insertBefore(newValue, valueMeter);
+    valueMeter.textContent = "diff rows: 2, carrying 10 items";
+    await sleep(700);
+    rowCells[2].classList.add("gone"); rowMeter.textContent = "diff rows: 1 (−1)";
+    await sleep(500);
+    const added = make("(run17, 2, x.rs)", "new fly"); rowsLane.insertBefore(added, rowMeter);
+    rowMeter.textContent = "diff rows: 2, carrying 2 items ✓";
+  },
+
+  async unnest() {
+    const stage = document.getElementById("a-unnest"); stage.innerHTML = "";
+    const items = files(4);
+    const top = lane(stage, "one value");
+    const value = make(`(run17, [${items.join(" ")}])`); top.appendChild(value);
+    const valueMeter = meter(top, "joinable rows: 0");
+    const bottom = lane(stage, "flat_map / unnest");
+    const bottomMeter = meter(bottom, "");
+    await sleep(600);
+    value.classList.add("on");
+    for (const [ord, item] of items.entries()) {
+      await sleep(420);
+      bottom.insertBefore(make(`(run17, ${ord}, ${item})`, "new fly"), bottomMeter);
+      bottomMeter.textContent = `rows: ${ord + 1}`;
+    }
+    valueMeter.textContent = "joinable rows: 0 until exploded";
+    const rowsLane = lane(stage, "row layout");
+    items.forEach((item, ord) => rowsLane.appendChild(make(`(run17, ${ord}, ${item})`, "on")));
+    meter(rowsLane, "already rows ✓");
+  },
+};
+
+document.querySelectorAll("[data-play]").forEach(button => button.onclick = () => animations[button.dataset.play]());
+const slider = document.getElementById("a-build-n");
+slider.oninput = () => { document.getElementById("a-build-label").textContent = slider.value; animations.build(); };
+const seen = new IntersectionObserver(entries => entries.forEach(entry => {
+  if (entry.isIntersecting) { animations[entry.target.dataset.auto](); seen.unobserve(entry.target); }
+}), { threshold: 0.4 });
+[["a-build", "build"], ["a-edit", "edit"], ["a-unnest", "unnest"]].forEach(([id, name]) => {
+  const el = document.getElementById(id); el.dataset.auto = name; seen.observe(el);
+});
 </script>
 
 <script type="module">
