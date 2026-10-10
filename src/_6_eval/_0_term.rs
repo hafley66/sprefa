@@ -174,6 +174,8 @@ pub struct Universe {
     terms: Vec<Option<Term>>,
     /// Slot index of each term, keyed by the term's hash, for dedup lookup.
     term_index: HashTable<u32>,
+    /// Each slot's hash, so growing `term_index` reads it instead of rehashing the term.
+    hashes: Vec<u64>,
     hasher: hashbrown::DefaultHashBuilder,
     pub nil: Sym,
     pub cons: Sym,
@@ -191,6 +193,7 @@ impl Universe {
             syms: Syms::default(),
             terms: Vec::new(),
             term_index: HashTable::new(),
+            hashes: Vec::new(),
             hasher: hashbrown::DefaultHashBuilder::default(),
             nil: Sym(0),
             cons: Sym(0),
@@ -243,6 +246,7 @@ impl Universe {
         let Universe {
             terms,
             term_index,
+            hashes,
             hasher,
             ..
         } = self;
@@ -258,14 +262,8 @@ impl Universe {
         }
         let id = terms.len() as u32;
         terms.push(Some(t));
-        term_index.insert_unique(hash, id, |&id| {
-            let mut h = hasher.build_hasher();
-            terms[id as usize]
-                .as_ref()
-                .expect("live term slot")
-                .hash(&mut h);
-            h.finish()
-        });
+        hashes.push(hash);
+        term_index.insert_unique(hash, id, |&id| hashes[id as usize]);
         TermId(id)
     }
 
