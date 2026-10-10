@@ -522,6 +522,7 @@ fn same_inputs(inputs: &(Program, ir_lower::Declared), program: &Program, declar
         && inputs.0.rules == program.rules
         && inputs.0.seeds == program.seeds
         && inputs.0.served == program.served
+        && inputs.0.int_columns == program.int_columns
 }
 
 /// Programs to install beside the next program an attached `IrSession` installs, and the parts
@@ -1053,6 +1054,8 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>, ir: ir::Pro
             })
             .collect(),
         literals: lowered.literals.clone(),
+        raw: lowered.raw.iter().map(|(id, cols)| (rel(*id), cols.clone())).collect(),
+        seed_ints: lowered.seed_ints.clone(),
     }
 }
 
@@ -1118,7 +1121,11 @@ fn snapshot_closure<E: Engine>(
         *weight > 0
             && terms.is_none()
             && visible.get(rel).is_some_and(|&(_, arity)| {
-                cells[..arity].iter().any(|cell| !decoded.cells.contains_key(cell))
+                let raw = lowered.raw.get(rel);
+                cells[..arity]
+                    .iter()
+                    .enumerate()
+                    .any(|(column, cell)| !raw.is_some_and(|raw| raw[column]) && !decoded.cells.contains_key(cell))
             })
     });
     if missing {
@@ -1134,9 +1141,12 @@ fn snapshot_closure<E: Engine>(
             continue;
         };
         if terms.is_none() {
+            let raw = lowered.raw.get(rel);
             let mut args = Vec::with_capacity(arity);
-            for &cell in &cells[..arity] {
-                let term = if let Some(&term) = decoded.get(&cell) {
+            for (column, &cell) in cells[..arity].iter().enumerate() {
+                let term = if raw.is_some_and(|raw| raw[column]) {
+                    int_const(u, cell)
+                } else if let Some(&term) = decoded.get(&cell) {
                     term
                 } else if let Some(value) = engine.text(cell)? {
                     let term = u.string(&value);
@@ -1555,10 +1565,18 @@ fn seed_rows(lowered: &Lowered, mapped: &HashMap<TermId, Cell>) -> Vec<ir::Sourc
         w: 1,
     }];
     for (rel, row) in &lowered.seeds {
+        let raw = lowered.raw.get(rel);
         let args = if row.args.is_empty() {
             vec![1]
         } else {
-            row.args.iter().map(|id| mapped[id]).collect()
+            row.args
+                .iter()
+                .enumerate()
+                .map(|(column, id)| match raw.is_some_and(|raw| raw[column]) {
+                    true => lowered.seed_ints[id],
+                    false => mapped[id],
+                })
+                .collect()
         };
         changes.push(ir::SourceChange {
             rel: *rel,
@@ -1767,9 +1785,11 @@ fn decode_delta<E: Engine>(
         .collect();
     let missing = delta.changes.iter().any(|(rel, row, _)| {
         visible.get(rel).is_some_and(|&(_, arity)| {
+            let raw = lowered.raw.get(rel);
             row[..arity]
                 .iter()
-                .any(|cell| !session.decoded.cells.contains_key(cell))
+                .enumerate()
+                .any(|(column, cell)| !raw.is_some_and(|raw| raw[column]) && !session.decoded.cells.contains_key(cell))
         })
     });
     let mut intern_read = 0;
@@ -1781,9 +1801,12 @@ fn decode_delta<E: Engine>(
         let Some(&(original, arity)) = visible.get(rel) else {
             continue;
         };
+        let raw = lowered.raw.get(rel);
         let mut args = Vec::with_capacity(arity);
-        for &cell in &cells[..arity] {
-            let term = if let Some(&term) = session.decoded.cells.get(&cell) {
+        for (column, &cell) in cells[..arity].iter().enumerate() {
+            let term = if raw.is_some_and(|raw| raw[column]) {
+                int_const(u, cell)
+            } else if let Some(&term) = session.decoded.cells.get(&cell) {
                 term
             } else if let Some(value) = session.engine.text(cell)? {
                 let term = u.string(&value);
@@ -1807,6 +1830,12 @@ fn decode_delta<E: Engine>(
         });
     }
     Ok((rows, intern_read))
+}
+
+/// `const(int(N))` of a bare-integer cell `N`.
+fn int_const(u: &mut Universe, cell: Cell) -> TermId {
+    let number = u.int(cell);
+    u.compound("const", vec![number])
 }
 
 /// The constructor key `install_terms` uses for one term.
@@ -1912,6 +1941,9 @@ fn apply_session<E: Engine>(
         else {
             return Err(ApplyError::Unprepared("seed relation"));
         };
+        if lowered.raw.contains_key(&source) {
+            return Err(ApplyError::Unprepared("integer column source"));
+        }
         sources.push(source);
     }
     let roots: Vec<TermId> = changes

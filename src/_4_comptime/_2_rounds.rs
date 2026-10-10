@@ -610,6 +610,7 @@ fn evaluate_round_answered(
         }
     };
     program.seeds = round_program(u, &[], seeds)?.seeds;
+    program.int_columns = crate::_6_eval::ir_lower::int_columns(u, &program.seeds);
     program.served.extend(served.iter().copied());
     let closure = match ir_session {
         Some(session) => session.evaluate(u, &program, answerer, &mut |_: Trace| {}),

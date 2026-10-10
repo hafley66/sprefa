@@ -200,6 +200,7 @@ pub fn split(u: &mut Universe, program: &Program) -> Result<Split, String> {
         rules: Vec::new(),
         seeds: program.seeds.clone(),
         served: program.served.clone(),
+        int_columns: program.int_columns.clone(),
     };
     let mut rules = Program::default();
     let mut feeds = std::collections::HashSet::new();

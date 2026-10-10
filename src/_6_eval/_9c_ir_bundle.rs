@@ -136,16 +136,19 @@ pub fn bundle(u: &Universe, lowered: &Lowered) -> Result<Bundle, String> {
         });
     }
     for (rel, seed) in &lowered.seeds {
+        let raw = lowered.raw.get(rel);
         let row = if seed.args.is_empty() {
             vec![1]
         } else {
             seed.args
                 .iter()
-                .map(|term| {
-                    mapped
+                .enumerate()
+                .map(|(column, term)| match raw.is_some_and(|raw| raw[column]) {
+                    true => Ok(lowered.seed_ints[term]),
+                    false => mapped
                         .get(term)
                         .copied()
-                        .ok_or_else(|| format!("seed term {} missing", term.0))
+                        .ok_or_else(|| format!("seed term {} missing", term.0)),
                 })
                 .collect::<Result<Vec<_>, _>>()?
         };

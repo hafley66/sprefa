@@ -264,12 +264,16 @@ pub struct Program {
     pub seeds: Vec<Row>,
     /// Relation refs the outside settles; a miss on one writes an `effect` row.
     pub served: HashSet<TermId>,
+    /// `(relation, column)`, by the relation's `TermId`, of every column a `:` edge types
+    /// `int`. The IR lowering may hold such a column's cells as the bare `i64`.
+    pub int_columns: HashSet<(u32, usize)>,
 }
 
 impl Program {
     /// Every `TermId` the program names.
     pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
         self.served.iter().copied().for_each(&mut *f);
+        self.int_columns.iter().for_each(|(rel, _)| f(TermId(*rel)));
         for row in &self.seeds {
             row.for_each_term(f);
         }

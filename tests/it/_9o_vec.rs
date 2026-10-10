@@ -111,3 +111,126 @@ fn a_bracket_is_a_reader_diagnostic() {
         .collect();
     assert_eq!(reasons, [&json!({"a": "unexpected_opening_bracket"})]);
 }
+
+const INT_RELATIONS: [&str; 18] = [
+    "each", "size", "next_index", "small", "back", "loose", "counted", "summed", "lowest", "counter",
+    "pair", "diag", "three", "lens", "texts", "anyint", "fixed", "files",
+];
+
+/// Columns typed `int` hold the bare integer at comptime (`ir_lower::raw_columns`); `dl8 eval`
+/// holds every column as a term id. Both print the same rows.
+#[test]
+fn int_columns_hold_bare_integers_and_print_as_at_runtime() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join("fixtures/vec/1_int_columns.dl7");
+    let directory = std::env::temp_dir().join(format!("dl8-int-columns-{}", std::process::id()));
+    let dump = directory.join("ir");
+    std::fs::create_dir_all(&dump).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_dl8"))
+        .args(["compile", source.to_str().unwrap()])
+        .env("DL8_IR_DUMP", &dump)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let program: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(program["diagnostics"], json!([]));
+    let names = &program["program"]["names"];
+    let pick = |rows: &Value| -> Vec<String> {
+        let rendered: BTreeSet<String> = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| render_row(row, names))
+            .filter(|row| INT_RELATIONS.iter().any(|relation| row.starts_with(&format!("{relation}: "))))
+            .collect();
+        rendered.into_iter().collect()
+    };
+    let comptime = pick(&program["compiler_rows"]);
+    let raw_relations: usize = std::fs::read_dir(&dump)
+        .unwrap()
+        .map(|entry| {
+            let ir: Value = serde_json::from_slice(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap();
+            ir["rels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|rel| rel["name"].as_str().unwrap().starts_with("__ir_n") && rel["cols"].as_array().unwrap().contains(&json!("Int")))
+                .count()
+        })
+        .sum();
+    assert!(raw_relations > 0, "no relation holds a bare integer column");
+    let path = directory.join("program.json");
+    std::fs::write(&path, serde_json::to_vec(&program).unwrap()).unwrap();
+    let evaluated = dl8(&["eval", path.to_str().unwrap()], "ir:dd");
+    assert_eq!(evaluated["diagnostics"], json!([]));
+    assert_eq!(pick(&evaluated["closure"]), comptime);
+    let expected: Vec<&str> = vec![
+        "anyint: const(0)",
+        "anyint: const(1)",
+        "anyint: const(2)",
+        "anyint: const(3)",
+        "anyint: const(4)",
+        "anyint: const(5)",
+        "back: const(\"r\"), const(\"bb\")",
+        "back: const(\"r\"), const(\"ccc\")",
+        "back: const(\"s\"), const(5)",
+        "counted: const(\"r\"), const(3)",
+        "counted: const(\"s\"), const(2)",
+        "counter: const(0)",
+        "counter: const(1)",
+        "counter: const(2)",
+        "counter: const(3)",
+        "counter: const(4)",
+        "counter: const(5)",
+        "diag: const(2)",
+        "diag: const(3)",
+        "diag: const(4)",
+        "diag: const(5)",
+        "each: const(\"r\"), const(0), const(\"a\")",
+        "each: const(\"r\"), const(1), const(\"bb\")",
+        "each: const(\"r\"), const(2), const(\"ccc\")",
+        "each: const(\"s\"), const(0), const(4)",
+        "each: const(\"s\"), const(1), const(5)",
+        "files: const(\"r\"), ref(application(vec, [const(\"a\"), const(\"bb\"), const(\"ccc\")]))",
+        "files: const(\"s\"), ref(application(vec, [const(4), const(5)]))",
+        "fixed: const(42)",
+        "lens: const(\"a\"), const(1)",
+        "lens: const(\"bb\"), const(2)",
+        "lens: const(\"ccc\"), const(3)",
+        "loose: const(\"r\"), const(\"a\")",
+        "loose: const(\"r\"), const(\"bb\")",
+        "loose: const(\"r\"), const(\"ccc\")",
+        "loose: const(\"s\"), const(4)",
+        "loose: const(\"s\"), const(5)",
+        "loose: const(\"z\"), const(7)",
+        "lowest: const(\"r\"), const(2)",
+        "lowest: const(\"s\"), const(1)",
+        "next_index: const(\"r\"), const(1)",
+        "next_index: const(\"r\"), const(2)",
+        "next_index: const(\"r\"), const(3)",
+        "next_index: const(\"s\"), const(1)",
+        "next_index: const(\"s\"), const(2)",
+        "pair: const(0), const(0)",
+        "pair: const(1), const(1)",
+        "pair: const(2), const(2)",
+        "pair: const(3), const(3)",
+        "pair: const(4), const(4)",
+        "pair: const(5), const(5)",
+        "size: const(\"r\"), const(3)",
+        "size: const(\"s\"), const(2)",
+        "small: const(\"r\"), const(0)",
+        "small: const(\"r\"), const(1)",
+        "small: const(\"s\"), const(0)",
+        "small: const(\"s\"), const(1)",
+        "summed: const(\"r\"), const(3)",
+        "summed: const(\"s\"), const(1)",
+        "texts: const(0), const(\"0\")",
+        "texts: const(1), const(\"1\")",
+        "texts: const(2), const(\"2\")",
+        "texts: const(3), const(\"3\")",
+        "texts: const(4), const(\"4\")",
+        "texts: const(5), const(\"5\")",
+        "three: const(3)",
+    ];
+    assert_eq!(comptime, expected);
+}

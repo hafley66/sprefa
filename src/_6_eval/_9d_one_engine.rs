@@ -335,6 +335,7 @@ impl Stdlib {
                 rules: theirs.clone(),
                 seeds: part_seeds,
                 served: program.served.clone(),
+                int_columns: program.int_columns.clone(),
             };
             let closure = rest.evaluate_plain(u, &part, answerer.as_deref_mut(), fx);
             let (requests, rows) = take_answers();

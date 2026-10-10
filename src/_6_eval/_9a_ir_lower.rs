@@ -540,6 +540,10 @@ pub struct Lowered {
     pub declared_folds: Vec<DeclaredFoldSpec>,
     /// The term of each `ir.terms` entry.
     pub literals: Vec<TermId>,
+    /// Per program relation, sources and outputs, the columns whose cells are bare integers.
+    pub raw: HashMap<ir::RelId, Vec<bool>>,
+    /// `N` of each `const(int(N))` seed argument at a bare-integer column.
+    pub seed_ints: HashMap<TermId, i64>,
 }
 
 impl Lowered {
@@ -566,6 +570,7 @@ impl Lowered {
             program.for_each_term(f);
         }
         self.literals.iter().copied().for_each(&mut *f);
+        self.seed_ints.keys().copied().for_each(&mut *f);
         self.sources.keys().for_each(|(rel, _)| f(TermId(*rel)));
         for spec in &self.declared_folds {
             spec.fold.for_each_term(f);
@@ -636,6 +641,10 @@ struct Builder {
     /// `Lowered::texts`, by `TermSpec::text`; `ir.texts` holds only the texts the term table names,
     /// so the IR of a program does not change with the strings its seeds carry.
     spec_texts: Vec<String>,
+    /// Per relation, the columns whose cells are bare integers (`raw_columns`).
+    raw_cols: BTreeMap<RelationKey, Vec<bool>>,
+    /// The variables of the rule being compiled whose `bound` column holds the bare integer.
+    raw_vars: HashSet<u32>,
 }
 
 struct FoldAux {
@@ -682,6 +691,8 @@ impl Builder {
             literals: HashMap::new(),
             literal_terms: Vec::new(),
             spec_texts: Vec::new(),
+            raw_cols: BTreeMap::new(),
+            raw_vars: HashSet::new(),
         }
     }
     fn rel(&mut self, name: String, cols: Vec<ir::Ty>, kind: ir::RelKind) -> ir::RelId {
@@ -1113,8 +1124,244 @@ fn int_raw(
     Ok(number)
 }
 
+/// Bound `v`'s column as a bare integer (`raw`) or a term id, converted through `int_term` or
+/// `int_raw` when held the other way; `bound` moves to it. `None`: `v` is unbound.
+fn need(
+    b: &mut Builder,
+    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
+    current: &mut ir::NodeId,
+    width: &mut usize,
+    bound: &mut HashMap<u32, ir::ColId>,
+    v: u32,
+    raw: bool,
+) -> Result<Option<ir::ColId>, &'static str> {
+    let Some(&col) = bound.get(&v) else {
+        return Ok(None);
+    };
+    if b.raw_vars.contains(&v) == raw {
+        return Ok(Some(col));
+    }
+    let converted = if raw {
+        b.raw_vars.insert(v);
+        int_raw(b, constructors, current, width, col)?
+    } else {
+        b.raw_vars.remove(&v);
+        int_term(b, constructors, current, width, col)?
+    };
+    bound.insert(v, converted);
+    Ok(Some(converted))
+}
+
+/// `N` of a ground `const(int(N))`.
+fn ground_int(u: &Universe, term: TermId) -> Option<i64> {
+    u.unary(term, "const").and_then(|number| u.as_int(number))
+}
+
+/// A ground term at a bare-integer column: its integer appended as one column. A term that is no
+/// integer is appended as its term cell and read back with `int_raw`, which keeps no row.
+fn raw_ground_col(
+    b: &mut Builder,
+    u: &Universe,
+    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
+    current: &mut ir::NodeId,
+    width: &mut usize,
+    term: TermId,
+) -> Result<ir::ColId, &'static str> {
+    if let Some(number) = ground_int(u, term) {
+        *current = b.mfp(*current, vec![], vec![ir::Expr::Lit(number)], vec![]);
+        let col = assert_width(*width);
+        *width += 1;
+        return Ok(col);
+    }
+    *current = join_ground(b, *current, None, term)?;
+    let cell = assert_width(*width + 1);
+    *width += 2;
+    int_raw(b, constructors, current, width, cell)
+}
+
+/// The filter that a column at a bare-integer position equals ground `term`; false for a term
+/// that is no integer.
+fn raw_ground_filter(u: &Universe, col: ir::ColId, term: TermId) -> ir::Expr {
+    match ground_int(u, term) {
+        Some(number) => ir::Expr::Call(ir::Func::Eq, vec![ir::Expr::Col(col), ir::Expr::Lit(number)]),
+        None => ir::Expr::Lit(0),
+    }
+}
+
+/// The argument positions of `kernel` that hold a bare integer.
+fn kernel_int_slots(kernel: Kernel, arity: usize) -> Vec<bool> {
+    let mut slots = vec![false; arity];
+    let ints: Vec<usize> = match kernel {
+        Kernel::Int(_) => vec![0, 1],
+        Kernel::IntAdd => vec![0, 1, 2],
+        Kernel::VecIter | Kernel::VecLen | Kernel::VecGet => vec![1],
+        Kernel::Str(op) => {
+            let kinds = op.args();
+            let mut ints: Vec<usize> = kinds
+                .iter()
+                .enumerate()
+                .filter(|(_, kind)| **kind == StrKind::Int)
+                .map(|(position, _)| position)
+                .collect();
+            if op.out() == Some(StrKind::Int) {
+                ints.push(kinds.len());
+            }
+            ints
+        }
+        _ => vec![],
+    };
+    for position in ints {
+        if let Some(slot) = slots.get_mut(position) {
+            *slot = true;
+        }
+    }
+    slots
+}
+
+/// `(relation, column)` of every `:` or `edge_snapshot` row among `seeds` whose target is the
+/// `int` primitive: the columns `Program::int_columns` names.
+pub fn int_columns(u: &mut Universe, seeds: &[Row]) -> HashSet<(u32, usize)> {
+    let colon = kernel_ref(u, ":");
+    let snapshot = kernel_ref(u, "edge_snapshot");
+    let int_name = u.atom("int");
+    let primitive = u.compound("primitive", vec![int_name]);
+    let int_type = u.compound("ref", vec![primitive]);
+    seeds
+        .iter()
+        .filter(|row| (row.rel == colon || row.rel == snapshot) && row.args.len() == 4 && row.args[2] == int_type)
+        .filter_map(|row| Some((row.args[0].0, usize::try_from(ground_int(u, row.args[3])?).ok()?)))
+        .collect()
+}
+
+/// Per relation, the columns declared `int` that every seed and rule head writes an integer to.
+/// `open` sources, served and `special` relations, and term-folded fold heads keep term ids.
+fn raw_columns(
+    u: &Universe,
+    program: &Program,
+    keys: &BTreeSet<RelationKey>,
+    open: bool,
+    special: &[TermId],
+) -> BTreeMap<RelationKey, Vec<bool>> {
+    let mut raw: BTreeMap<RelationKey, Vec<bool>> = BTreeMap::new();
+    if open || program.int_columns.is_empty() {
+        return raw;
+    }
+    for &(rel, width) in keys {
+        if special.contains(&TermId(rel)) || program.served.contains(&TermId(rel)) {
+            continue;
+        }
+        let cols: Vec<bool> = (0..width).map(|column| program.int_columns.contains(&(rel, column))).collect();
+        if cols.contains(&true) {
+            raw.insert((rel, width), cols);
+        }
+    }
+    for rule in &program.rules {
+        if let Some((_, Folding::Declared(fold), _)) = rule.folding_head() {
+            if !matches!(
+                Kernel::of(u, fold.step),
+                Some(Kernel::IntAdd | Kernel::CountStep | Kernel::MinStep | Kernel::MaxStep)
+            ) {
+                raw.remove(&rule_key(u, rule).0);
+                raw.remove(&(fold.step.0, 3));
+            }
+        }
+    }
+    for seed in &program.seeds {
+        if let Some(cols) = raw.get_mut(&(seed.rel.0, seed.args.len())) {
+            for (col, arg) in cols.iter_mut().zip(&seed.args) {
+                if *col && ground_int(u, *arg).is_none() {
+                    *col = false;
+                }
+            }
+        }
+    }
+    // Each pass turns at least one column to term ids or stops.
+    let total: usize = raw.values().map(Vec::len).sum();
+    for _ in 0..=total {
+        let mut changed = false;
+        for rule in &program.rules {
+            let mut ints: HashSet<u32> = HashSet::new();
+            for goal in rule.body.iter().filter(|goal| goal.polarity == Polarity::Positive) {
+                let slots = match Kernel::of(u, goal.rel).filter(|_| !rule.is_aggregate()) {
+                    Some(kernel) => kernel_int_slots(kernel, goal.args.len()),
+                    None => raw.get(&(goal.rel.0, goal.args.len())).cloned().unwrap_or_default(),
+                };
+                for (arg, slot) in goal.args.iter().zip(slots) {
+                    if let (Some(v), true) = (var(arg), slot) {
+                        ints.insert(v);
+                    }
+                }
+            }
+            // One variable at a bare-integer and a term position of one relation goal.
+            for goal in &rule.body {
+                if Kernel::of(u, goal.rel).is_some() && !(rule.is_aggregate() && goal.polarity == Polarity::Positive) {
+                    continue;
+                }
+                let Some(cols) = raw.get_mut(&(goal.rel.0, goal.args.len())) else {
+                    continue;
+                };
+                let mut seen: HashMap<u32, bool> = HashMap::new();
+                let mut mixed: HashSet<u32> = HashSet::new();
+                for (arg, col) in goal.args.iter().zip(cols.iter()) {
+                    if let Some(v) = var(arg) {
+                        if *seen.entry(v).or_insert(*col) != *col {
+                            mixed.insert(v);
+                        }
+                    }
+                }
+                for (arg, col) in goal.args.iter().zip(cols.iter_mut()) {
+                    if *col && var(arg).is_some_and(|v| mixed.contains(&v)) {
+                        *col = false;
+                        changed = true;
+                    }
+                }
+            }
+            let Some(cols) = raw.get_mut(&rule_key(u, rule).0) else {
+                continue;
+            };
+            for (arg, col) in rule.head.iter().zip(cols.iter_mut()) {
+                if !*col {
+                    continue;
+                }
+                let subject_int = |subject: &Arg| match subject {
+                    Arg::Var(v) => ints.contains(&v.0),
+                    Arg::Ground(term) => ground_int(u, *term).is_some(),
+                    _ => false,
+                };
+                let writes_int = match arg {
+                    Arg::Var(v) => ints.contains(&v.0),
+                    Arg::Ground(term) => ground_int(u, *term).is_some(),
+                    Arg::Aggregate(AggregateKind::Count | AggregateKind::Sum, _) => true,
+                    Arg::Aggregate(AggregateKind::Min | AggregateKind::Max, subject) => subject_int(subject),
+                    Arg::Fold(fold, subject) => match Kernel::of(u, fold.step) {
+                        Some(Kernel::IntAdd | Kernel::CountStep) => true,
+                        Some(Kernel::MinStep | Kernel::MaxStep) => {
+                            subject_int(subject)
+                                && match fold.seed {
+                                    super::program::Seed::Term(seed) => ground_int(u, seed).is_some(),
+                                    _ => true,
+                                }
+                        }
+                        _ => false,
+                    },
+                };
+                if !writes_int {
+                    *col = false;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    raw.retain(|_, cols| cols.contains(&true));
+    raw
+}
+
 fn compile_kernel(
     b: &mut Builder,
+    u: &Universe,
     goal: &super::program::Goal,
     kernel: Kernel,
     constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
@@ -1126,10 +1373,12 @@ fn compile_kernel(
     empty: TermId,
     tuple: TermId,
 ) -> Result<(), &'static str> {
+    let slots = kernel_int_slots(kernel, goal.args.len());
     let mut inputs = Vec::new();
-    for arg in &goal.args {
+    for (arg, raw) in goal.args.iter().zip(&slots) {
         match arg {
-            Arg::Var(v) => inputs.push(bound.get(&v.0).copied()),
+            Arg::Var(v) => inputs.push(need(b, constructors, current, width, bound, v.0, *raw)?),
+            Arg::Ground(id) if *raw => inputs.push(Some(raw_ground_col(b, u, constructors, current, width, *id)?)),
             Arg::Ground(id) => {
                 *current = join_ground(b, *current, None, *id)?;
                 inputs.push(Some(assert_width(*width + 1)));
@@ -1183,25 +1432,8 @@ fn compile_kernel(
                 *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
                 return Ok(());
             };
-            let (left_value, right_value, order) = if matches!(kernel, Kernel::Int(_)) {
-                let wrap = constructor(constructors, "9:1:const", 1, false)?;
-                let int = constructor(constructors, "0:int", 0, true)?;
-                *current = join_constructor(b, *current, *width, wrap, left);
-                let left_inner = assert_width(*width + 1);
-                *width += 2;
-                *current = join_constructor(b, *current, *width, wrap, right);
-                let right_inner = assert_width(*width + 1);
-                *width += 2;
-                *current = join_constructor(b, *current, *width, int, left_inner);
-                let left_raw = assert_width(*width + 1);
-                *width += 2;
-                *current = join_constructor(b, *current, *width, int, right_inner);
-                let right_raw = assert_width(*width + 1);
-                *width += 2;
-                (left_raw, right_raw, ir::Func::Lt)
-            } else {
-                (left, right, ir::Func::TermLt)
-            };
+            let order = if matches!(kernel, Kernel::Int(_)) { ir::Func::Lt } else { ir::Func::TermLt };
+            let (left_value, right_value) = (left, right);
             let a = ir::Expr::Col(left_value);
             let z = ir::Expr::Col(right_value);
             let lt = || ir::Expr::Call(order, vec![a.clone(), z.clone()]);
@@ -1270,8 +1502,6 @@ fn compile_kernel(
             if inputs.len() != kinds.len() + usize::from(op.out().is_some()) {
                 return Err("str op arity");
             }
-            let wrap = constructor(constructors, "9:1:const", 1, false)?;
-            let int = constructor(constructors, "0:int", 0, true)?;
             let mut columns = Vec::with_capacity(kinds.len());
             for (input, kind) in inputs.iter().zip(kinds) {
                 let Some(input) = *input else {
@@ -1279,13 +1509,7 @@ fn compile_kernel(
                     return Ok(());
                 };
                 let column = if *kind == StrKind::Int {
-                    *current = join_constructor(b, *current, *width, wrap, input);
-                    let inner = assert_width(*width + 1);
-                    *width += 2;
-                    *current = join_constructor(b, *current, *width, int, inner);
-                    let column = assert_width(*width + 1);
-                    *width += 2;
-                    column
+                    input
                 } else {
                     const_text(b, constructors, current, width, input)?
                 };
@@ -1297,20 +1521,6 @@ fn compile_kernel(
                 args: columns,
             });
             if op.out() == Some(StrKind::Int) {
-                let result = assert_width(*width);
-                *width += 1;
-                *current = b.node(ir::Op::Mint {
-                    input: *current,
-                    functor: int,
-                    args: vec![result],
-                });
-                let result = assert_width(*width);
-                *width += 1;
-                *current = b.node(ir::Op::Mint {
-                    input: *current,
-                    functor: wrap,
-                    args: vec![result],
-                });
                 output[kinds.len()] = Some(assert_width(*width));
                 *width += 1;
             } else if op.out().is_some() {
@@ -1327,22 +1537,8 @@ fn compile_kernel(
                 *current = b.mfp(*current, vec![ir::Expr::Lit(0)], vec![], vec![]);
                 return Ok(());
             };
-            let wrap = constructor(constructors, "9:1:const", 1, false)?;
-            let int = constructor(constructors, "0:int", 0, true)?;
-            *current = join_constructor(b, *current, *width, wrap, left);
-            let left_inner = assert_width(*width + 1);
-            *width += 2;
-            *current = join_constructor(b, *current, *width, wrap, right);
-            let right_inner = assert_width(*width + 1);
-            *width += 2;
-            *current = join_constructor(b, *current, *width, int, left_inner);
-            let left_number = assert_width(*width + 1);
-            *width += 2;
-            *current = join_constructor(b, *current, *width, int, right_inner);
-            let right_number = assert_width(*width + 1);
-            *width += 2;
-            let a = ir::Expr::Col(left_number);
-            let z = ir::Expr::Col(right_number);
+            let a = ir::Expr::Col(left);
+            let z = ir::Expr::Col(right);
             *current = b.mfp(
                 *current,
                 vec![],
@@ -1373,20 +1569,7 @@ fn compile_kernel(
                 )],
             );
             *current = b.mfp(*current, vec![safe], vec![], vec![]);
-            *current = b.node(ir::Op::Mint {
-                input: *current,
-                functor: int,
-                args: vec![sum],
-            });
-            let int_id = assert_width(*width);
-            *width += 1;
-            *current = b.node(ir::Op::Mint {
-                input: *current,
-                functor: wrap,
-                args: vec![int_id],
-            });
-            output[2] = Some(assert_width(*width));
-            *width += 1;
+            output[2] = Some(sum);
         }
         Kernel::Vec => {
             let value_at = inputs.len().checked_sub(1).ok_or("vec arity")?;
@@ -1529,19 +1712,17 @@ fn compile_kernel(
             match kernel {
                 Kernel::VecIter => {
                     *current = b.node(ir::Op::Vec { input: *current, op: ir::VecOp::Iter, args: vec![flat] });
-                    let raw = assert_width(*width);
+                    output[1] = Some(assert_width(*width));
                     output[2] = Some(assert_width(*width + 1));
                     *width += 2;
-                    output[1] = Some(int_term(b, constructors, current, width, raw)?);
                 }
                 Kernel::VecLen => {
                     *current = b.node(ir::Op::Vec { input: *current, op: ir::VecOp::Len, args: vec![flat] });
-                    let raw = assert_width(*width);
+                    output[1] = Some(assert_width(*width));
                     *width += 1;
-                    output[1] = Some(int_term(b, constructors, current, width, raw)?);
                 }
                 _ => {
-                    let index = int_raw(b, constructors, current, width, inputs[1].unwrap())?;
+                    let index = inputs[1].unwrap();
                     *current = b.node(ir::Op::Vec { input: *current, op: ir::VecOp::Get, args: vec![flat, index] });
                     output[2] = Some(assert_width(*width));
                     *width += 1;
@@ -1750,7 +1931,7 @@ fn compile_kernel(
         }
     }
     let mut filters = Vec::new();
-    for (arg, (before, after)) in goal.args.iter().zip(inputs.iter().zip(&output)) {
+    for ((arg, raw), (before, after)) in goal.args.iter().zip(&slots).zip(inputs.iter().zip(&output)) {
         let Some(after) = after else {
             return Err("kernel unbound output");
         };
@@ -1760,6 +1941,11 @@ fn compile_kernel(
             }
         } else if let Arg::Var(v) = arg {
             bound.insert(v.0, *after);
+            if *raw {
+                b.raw_vars.insert(v.0);
+            } else {
+                b.raw_vars.remove(&v.0);
+            }
         }
     }
     if !filters.is_empty() {
@@ -1793,26 +1979,32 @@ fn compile_kernel(
 /// `(not (Relation Args..))` in a fold step: the step rows whose bound
 /// arguments have no row in the relation. The right side reads the stored
 /// relation, never the step's own recursive rows.
+#[allow(clippy::too_many_arguments)]
 fn fold_step_antijoin(
     b: &mut Builder,
+    u: &Universe,
     goal: &Goal,
-    current: ir::NodeId,
-    bound: &HashMap<u32, ir::ColId>,
+    current: &mut ir::NodeId,
+    width: &mut usize,
+    bound: &mut HashMap<u32, ir::ColId>,
     relations: &BTreeMap<(u32, usize), ir::RelId>,
+    constructors: &BTreeMap<(String, usize, bool), ir::RelId>,
 ) -> Result<ir::NodeId, &'static str> {
-    let mut right = b.get(
-        *relations
-            .get(&(goal.rel.0, goal.args.len()))
-            .ok_or("unresolved fold step relation")?,
-    );
+    let key = (goal.rel.0, goal.args.len());
+    let raw_at = b.raw_cols.get(&key).cloned().unwrap_or_default();
+    let mut right = b.get(*relations.get(&key).ok_or("unresolved fold step relation")?);
     let mut lk = Vec::new();
     let mut rk = Vec::new();
     for (position, arg) in goal.args.iter().enumerate() {
+        let raw = raw_at.get(position).copied().unwrap_or(false);
         let position = assert_width(position);
         match arg {
             Arg::Var(v) => {
-                lk.push(*bound.get(&v.0).ok_or("unbound negative fold step goal")?);
+                lk.push(need(b, constructors, current, width, bound, v.0, raw)?.ok_or("unbound negative fold step goal")?);
                 rk.push(position);
+            }
+            Arg::Ground(id) if raw => {
+                right = b.mfp(right, vec![raw_ground_filter(u, position, *id)], vec![], vec![]);
             }
             Arg::Ground(id) => {
                 right = join_ground(b, right, Some(position), *id)?;
@@ -1820,6 +2012,7 @@ fn fold_step_antijoin(
             _ => return Err("fold step aggregate"),
         }
     }
+    let current = *current;
     let projected = b.mfp(right, vec![], vec![], rk);
     let columns = (0..lk.len()).map(assert_width).collect();
     Ok(b.node(ir::Op::Antijoin {
@@ -1850,6 +2043,7 @@ fn compile_fold_step_rule(
         if let Some(kernel) = Kernel::of(u, goal.rel) {
             compile_kernel(
                 b,
+                u,
                 goal,
                 kernel,
                 constructors,
@@ -1864,32 +2058,35 @@ fn compile_fold_step_rule(
             continue;
         }
         if goal.polarity == Polarity::Negative {
-            current = fold_step_antijoin(b, goal, current, &bound, relations)?;
+            current = fold_step_antijoin(b, u, goal, &mut current, &mut width, &mut bound, relations, constructors)?;
             continue;
         }
-        let right = b.get(
-            *relations
-                .get(&(goal.rel.0, goal.args.len()))
-                .ok_or("unresolved fold step relation")?,
-        );
+        let key = (goal.rel.0, goal.args.len());
+        let raw_at = b.raw_cols.get(&key).cloned().unwrap_or_default();
+        let right = b.get(*relations.get(&key).ok_or("unresolved fold step relation")?);
         let mut equivalences = Vec::new();
         let mut first_here = HashMap::new();
         for (position, arg) in goal.args.iter().enumerate() {
+            let raw = raw_at.get(position).copied().unwrap_or(false);
             let position = assert_width(position);
             match arg {
                 Arg::Var(v) => {
-                    if let Some(&left) = bound.get(&v.0) {
+                    if let Some(left) = need(b, constructors, &mut current, &mut width, &mut bound, v.0, raw)? {
                         equivalences.push(vec![(0, left), (1, position)]);
-                    } else if let Some(&prior) = first_here.get(&v.0) {
+                    } else if let Some(&(prior, _)) = first_here.get(&v.0) {
                         equivalences.push(vec![(1, prior), (1, position)]);
                     } else {
-                        first_here.insert(v.0, position);
+                        first_here.insert(v.0, (position, raw));
                     }
                 }
                 Arg::Ground(id) => {
-                    current = join_ground(b, current, None, *id)?;
-                    let ground_col = assert_width(width + 1);
-                    width += 2;
+                    let ground_col = if raw {
+                        raw_ground_col(b, u, constructors, &mut current, &mut width, *id)?
+                    } else {
+                        current = join_ground(b, current, None, *id)?;
+                        width += 2;
+                        assert_width(width - 1)
+                    };
                     equivalences.push(vec![(0, ground_col), (1, position)]);
                 }
                 _ => return Err("fold step aggregate"),
@@ -1900,13 +2097,18 @@ fn compile_fold_step_rule(
             equivalences,
     project: vec![],
         });
-        for (variable, position) in first_here {
+        for (variable, (position, raw)) in first_here {
             bound.insert(variable, assert_width(width + position as usize));
+            if raw {
+                b.raw_vars.insert(variable);
+            } else {
+                b.raw_vars.remove(&variable);
+            }
         }
         width += goal.args.len().max(1);
     }
     let next = match rule.head.get(2) {
-        Some(Arg::Var(v)) => *bound.get(&v.0).ok_or("unbound fold step output")?,
+        Some(Arg::Var(v)) => need(b, constructors, &mut current, &mut width, &mut bound, v.0, false)?.ok_or("unbound fold step output")?,
         Some(Arg::Ground(id)) => {
             current = join_ground(b, current, None, *id)?;
             assert_width(width + 1)
@@ -1998,6 +2200,7 @@ fn compile_rule(
     all_rules: &[Rule],
 ) -> Result<CompiledRule, &'static str> {
     b.built_tuples.clear();
+    b.raw_vars.clear();
     // A positive relation read first supplies the first row itself (`current = right` below,
     // before anything reads `current`); every other first goal starts from the unit row.
     let reads_first = rule.body.first().is_some_and(|goal| {
@@ -2012,6 +2215,9 @@ fn compile_rule(
     for (goal_index, goal) in rule.body.iter().enumerate() {
         let live = &later[goal_index];
         if served.contains(&goal.rel) {
+            for v in goal.args.iter().filter_map(var) {
+                need(b, constructors, &mut current, &mut width, &mut bound, v, false)?;
+            }
             served_effect(
                 b,
                 goal,
@@ -2030,6 +2236,7 @@ fn compile_rule(
         {
             compile_kernel(
                 b,
+                u,
                 goal,
                 kernel,
                 constructors,
@@ -2047,14 +2254,27 @@ fn compile_rule(
         let rel = *relations
             .get(&(goal.rel.0, goal.args.len()))
             .ok_or("unresolved relation")?;
+        let raw_at = b.raw_cols.get(&(goal.rel.0, goal.args.len())).cloned().unwrap_or_default();
+        let is_raw = |position: usize| raw_at.get(position).copied().unwrap_or(false);
+        let mut lefts: HashMap<usize, ir::ColId> = HashMap::new();
+        if goal_index > 0 {
+            for (position, arg) in goal.args.iter().enumerate() {
+                if let Some(v) = var(arg) {
+                    if let Some(col) = need(b, constructors, &mut current, &mut width, &mut bound, v, is_raw(position))? {
+                        lefts.insert(position, col);
+                    }
+                }
+            }
+        }
         let mut equivalences = Vec::new();
         let mut repeated = Vec::new();
         let mut first_here: HashMap<u32, ir::ColId> = HashMap::new();
         let mut grounds = Vec::new();
         for (position, arg) in goal.args.iter().enumerate() {
+            let left = lefts.get(&position).copied();
             let position = assert_width(position);
             if let Some(v) = var(arg) {
-                if let Some(&left) = bound.get(&v) {
+                if let Some(left) = left {
                     equivalences.push(vec![(0, left), (1, position)]);
                 } else if let Some(&prior) = first_here.get(&v) {
                     repeated.push(equal_columns(prior, position));
@@ -2093,6 +2313,10 @@ fn compile_rule(
                 let mut filtered = right;
                 let mut size = goal.args.len().max(1);
                 for (position, original) in &grounds {
+                    if is_raw(*position as usize) {
+                        filtered = b.mfp(filtered, vec![raw_ground_filter(u, *position, *original)], vec![], vec![]);
+                        continue;
+                    }
                     filtered = join_ground(b, filtered, Some(*position), *original)?;
                     filtered = b.mfp(
                         filtered,
@@ -2106,8 +2330,8 @@ fn compile_rule(
             let mut lk = Vec::new();
             let mut rk = Vec::new();
             for (position, arg) in goal.args.iter().enumerate() {
-                if let Some(v) = var(arg) {
-                    if let Some(&col) = bound.get(&v) {
+                if var(arg).is_some() {
+                    if let Some(&col) = lefts.get(&position) {
                         lk.push(col);
                         rk.push(assert_width(position));
                     }
@@ -2251,13 +2475,25 @@ fn compile_rule(
         let total = width + if narrowed { kept.len() } else { goal.args.len().max(1) };
         let mut grown = total;
         for (position, original) in &grounds {
+            let raw = is_raw(*position as usize);
             let position = at(*position).ok_or("ground position projected away")?;
-            current = join_ground(b, current, Some(assert_width(width + position as usize)), *original)?;
+            let col = assert_width(width + position as usize);
+            if raw {
+                current = b.mfp(current, vec![raw_ground_filter(u, col, *original)], vec![], vec![]);
+                continue;
+            }
+            current = join_ground(b, current, Some(col), *original)?;
             grown += 2;
         }
         for (v, position) in first_here {
+            let raw = is_raw(position as usize);
             if let Some(position) = at(position) {
                 bound.insert(v, assert_width(width + position as usize));
+                if raw {
+                    b.raw_vars.insert(v);
+                } else {
+                    b.raw_vars.remove(&v);
+                }
             }
         }
         width = grown;
@@ -2272,8 +2508,28 @@ fn compile_rule(
             return Err("aggregate head arity");
         }
         let (position, folding, subject) = rule.folding_head().ok_or("aggregate head")?;
+        let head_raw = b.raw_cols.get(&rule_key(u, rule).0).cloned().unwrap_or_default();
+        let head_is_raw = |index: usize| head_raw.get(index).copied().unwrap_or(false);
+        let step_kernel = match folding {
+            Folding::Declared(fold) => Kernel::of(u, fold.step),
+            Folding::Builtin(_) => None,
+        };
+        let counts = matches!(folding, Folding::Builtin(AggregateKind::Count)) || step_kernel == Some(Kernel::CountStep);
+        let subject_raw = match folding {
+            Folding::Builtin(AggregateKind::Sum) => true,
+            Folding::Builtin(AggregateKind::Min | AggregateKind::Max) => head_is_raw(position),
+            Folding::Builtin(AggregateKind::Count) => false,
+            Folding::Declared(_) => match step_kernel {
+                Some(Kernel::IntAdd) => true,
+                Some(Kernel::MinStep | Kernel::MaxStep) => head_is_raw(position),
+                _ => false,
+            },
+        };
         let subject = match subject {
-            Arg::Var(v) => *bound.get(&v.0).ok_or("unbound aggregate subject")?,
+            Arg::Var(v) if counts => *bound.get(&v.0).ok_or("unbound aggregate subject")?,
+            Arg::Var(v) => need(b, constructors, &mut current, &mut width, &mut bound, v.0, subject_raw)?
+                .ok_or("unbound aggregate subject")?,
+            Arg::Ground(id) if subject_raw => raw_ground_col(b, u, constructors, &mut current, &mut width, *id)?,
             Arg::Ground(id) => {
                 current = join_ground(b, current, None, *id)?;
                 let col = assert_width(width + 1);
@@ -2288,7 +2544,13 @@ fn compile_rule(
                 continue;
             }
             match arg {
-                Arg::Var(v) => keys.push(*bound.get(&v.0).ok_or("unbound aggregate key")?),
+                Arg::Var(v) => keys.push(
+                    need(b, constructors, &mut current, &mut width, &mut bound, v.0, head_is_raw(index))?
+                        .ok_or("unbound aggregate key")?,
+                ),
+                Arg::Ground(id) if head_is_raw(index) => {
+                    keys.push(raw_ground_col(b, u, constructors, &mut current, &mut width, *id)?)
+                }
                 Arg::Ground(id) => {
                     current = join_ground(b, current, None, *id)?;
                     keys.push(assert_width(width + 1));
@@ -2309,18 +2571,11 @@ fn compile_rule(
                 let mut window_input;
                 let func;
                 if kernel == Kernel::IntAdd {
-                    let wrap = constructor(constructors, "9:1:const", 1, false)?;
-                    let int = constructor(constructors, "0:int", 0, true)?;
-                    current = join_constructor(b, current, width, wrap, subject);
-                    let inner = assert_width(width + 1);
-                    width += 2;
-                    current = join_constructor(b, current, width, int, inner);
-                    let raw = assert_width(width + 1);
                     window_input = b.mfp(
                         current,
                         vec![],
                         vec![],
-                        keys.iter().copied().chain([subject, raw]).collect(),
+                        keys.iter().copied().chain([subject, subject]).collect(),
                     );
                     func = ir::WinFn::Sum(assert_width(key_count + 1));
                 } else {
@@ -2379,20 +2634,24 @@ fn compile_rule(
                         key_count + 2
                     });
                 }
-                let int = constructor(constructors, "0:int", 0, true)?;
-                let wrap = constructor(constructors, "9:1:const", 1, false)?;
-                current = b.node(ir::Op::Mint {
-                    input: current,
-                    functor: int,
-                    args: vec![folded_raw],
-                });
-                let inner = folded_raw + 1;
-                current = b.node(ir::Op::Mint {
-                    input: current,
-                    functor: wrap,
-                    args: vec![inner],
-                });
-                let result = inner + 1;
+                let result = if head_is_raw(position) {
+                    folded_raw
+                } else {
+                    let int = constructor(constructors, "0:int", 0, true)?;
+                    let wrap = constructor(constructors, "9:1:const", 1, false)?;
+                    current = b.node(ir::Op::Mint {
+                        input: current,
+                        functor: int,
+                        args: vec![folded_raw],
+                    });
+                    let inner = folded_raw + 1;
+                    current = b.node(ir::Op::Mint {
+                        input: current,
+                        functor: wrap,
+                        args: vec![inner],
+                    });
+                    inner + 1
+                };
                 let mut projected = Vec::new();
                 let mut key_index = 0;
                 for index in 0..rule.head.len() {
@@ -2424,16 +2683,29 @@ fn compile_rule(
                         key: (0..key_count).map(assert_width).collect(),
                         aggs: vec![ir::Agg::Count],
                     });
-                    let seeded = join_ground(b, groups, None, seed)?;
-                    let seeded = b.mfp(
-                        seeded,
-                        vec![],
-                        vec![],
-                        (0..key_count)
-                            .map(assert_width)
-                            .chain([assert_width(key_count + 2)])
-                            .collect(),
-                    );
+                    let seeded = if subject_raw {
+                        let number = ground_int(u, seed).ok_or("extremum fold seed is not an integer")?;
+                        b.mfp(
+                            groups,
+                            vec![],
+                            vec![ir::Expr::Lit(number)],
+                            (0..key_count)
+                                .map(assert_width)
+                                .chain([assert_width(key_count + 1)])
+                                .collect(),
+                        )
+                    } else {
+                        let seeded = join_ground(b, groups, None, seed)?;
+                        b.mfp(
+                            seeded,
+                            vec![],
+                            vec![],
+                            (0..key_count)
+                                .map(assert_width)
+                                .chain([assert_width(key_count + 2)])
+                                .collect(),
+                        )
+                    };
                     current = b.node(ir::Op::Union(vec![current, seeded]));
                 } else if fold.seed != super::program::Seed::FirstValue {
                     return Err("extremum fold seed");
@@ -2579,7 +2851,8 @@ fn compile_rule(
                         _ => return Err("fold step head aggregate"),
                     }
                 }
-                let (step_body, next) = compile_fold_step_rule(
+                let outer_raw = std::mem::take(&mut b.raw_vars);
+                let stepped = compile_fold_step_rule(
                     b,
                     u,
                     step_rule,
@@ -2592,7 +2865,9 @@ fn compile_rule(
                     plain_lists,
                     empty,
                     tuple,
-                )?;
+                );
+                b.raw_vars = outer_raw;
+                let (step_body, next) = stepped?;
                 recursive_parts.push(
                     b.mfp(
                         step_body,
@@ -2705,16 +2980,7 @@ fn compile_rule(
             AggregateKind::Count => ir::Agg::Count,
             AggregateKind::Min => ir::Agg::Min(subject),
             AggregateKind::Max => ir::Agg::Max(subject),
-            AggregateKind::Sum => {
-                let wrap = constructor(constructors, "9:1:const", 1, false)?;
-                let int = constructor(constructors, "0:int", 0, true)?;
-                current = join_constructor(b, current, width, wrap, subject);
-                let inner = assert_width(width + 1);
-                width += 2;
-                current = join_constructor(b, current, width, int, inner);
-                let raw = assert_width(width + 1);
-                ir::Agg::Sum(raw)
-            }
+            AggregateKind::Sum => ir::Agg::Sum(subject),
         };
         current = b.node(ir::Op::Reduce {
             input: current,
@@ -2722,7 +2988,7 @@ fn compile_rule(
             aggs: vec![aggregate],
         });
         let mut result = assert_width(keys.len());
-        if matches!(kind, AggregateKind::Count | AggregateKind::Sum) {
+        if matches!(kind, AggregateKind::Count | AggregateKind::Sum) && !head_is_raw(position) {
             let int = constructor(constructors, "0:int", 0, true)?;
             let wrap = constructor(constructors, "9:1:const", 1, false)?;
             current = b.node(ir::Op::Mint {
@@ -2753,10 +3019,12 @@ fn compile_rule(
             fold_aux: None,
         });
     }
+    let head_raw = b.raw_cols.get(&rule_key(u, rule).0).cloned().unwrap_or_default();
     let mut head_cols = Vec::new();
-    for arg in &rule.head {
+    for (index, arg) in rule.head.iter().enumerate() {
+        let raw = head_raw.get(index).copied().unwrap_or(false);
         if let Some(v) = var(arg) {
-            let Some(&col) = bound.get(&v) else {
+            let Some(col) = need(b, constructors, &mut current, &mut width, &mut bound, v, raw)? else {
                 let out_width = rule.head.len().max(1);
                 let mapped = b.mfp(
                     current,
@@ -2771,6 +3039,10 @@ fn compile_rule(
             };
             head_cols.push(col);
         } else if let Some(id) = ground(arg) {
+            if raw {
+                head_cols.push(raw_ground_col(b, u, constructors, &mut current, &mut width, id)?);
+                continue;
+            }
             current = join_ground(b, current, None, id)?;
             head_cols.push(assert_width(width + 1));
             width += 2;
@@ -3434,11 +3706,15 @@ pub fn lower_declared(
         })
         .map(|rule| rule_key(u, rule).0)
         .collect();
+    b.raw_cols = raw_columns(u, &program, &keys, open, &[intern_rel, effect_rel, snapshot_rel]);
     let mut relations = BTreeMap::new();
     let mut sources = BTreeMap::new();
     let mut visible = Vec::new();
     for (rel, width) in keys.iter().copied() {
-        let cols = vec![ir::Ty::Id; width.max(1)];
+        let cols = match b.raw_cols.get(&(rel, width)) {
+            Some(raw) => raw.iter().map(|raw| if *raw { ir::Ty::Int } else { ir::Ty::Id }).collect(),
+            None => vec![ir::Ty::Id; width.max(1)],
+        };
         if seeded(&(rel, width)) {
             let source = b.rel(
                 if program.served.contains(&TermId(rel)) {
@@ -3971,6 +4247,24 @@ pub fn lower_declared(
     share_equal_lets(&mut b.ir);
     fuse_projections(&mut b.ir);
     let fold_program = (!b.declared_folds.is_empty()).then(|| program.clone());
+    let mut seed_ints = HashMap::new();
+    for seed in &program.seeds {
+        let Some(raw) = b.raw_cols.get(&(seed.rel.0, seed.args.len())) else {
+            continue;
+        };
+        for (arg, raw) in seed.args.iter().zip(raw) {
+            if *raw {
+                seed_ints.insert(*arg, ground_int(u, *arg).ok_or_else(|| unsupported(u, "integer column seed"))?);
+            }
+        }
+    }
+    let mut raw = HashMap::new();
+    for (key, cols) in &b.raw_cols {
+        raw.insert(relations[key], cols.clone());
+        if let Some(source) = sources.get(key) {
+            raw.insert(*source, cols.clone());
+        }
+    }
     let seeds = program
         .seeds
         .into_iter()
@@ -4003,5 +4297,7 @@ pub fn lower_declared(
         fold_program,
         declared_folds: b.declared_folds,
         literals: b.literal_terms,
+        raw,
+        seed_ints,
     })
 }
