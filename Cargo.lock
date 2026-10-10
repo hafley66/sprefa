@@ -444,7 +444,6 @@ dependencies = [
  "ivm-duckdb",
  "ivm-engine",
  "ivm-ir",
- "ivm-rxjs",
  "ivm-sqlite",
  "lasso",
  "libc",
@@ -1164,15 +1163,6 @@ name = "ivm-ir"
 version = "0.1.0"
 dependencies = [
  "heck",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "ivm-rxjs"
-version = "0.1.0"
-dependencies = [
- "ivm-ir",
  "serde",
  "serde_json",
 ]

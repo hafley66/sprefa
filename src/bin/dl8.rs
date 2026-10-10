@@ -148,8 +148,6 @@ enum QueryFormat {
 enum EmitTarget {
     /// One `sqlite_ivm` view per derived relation over the `eval --db` tables.
     Sqlite,
-    /// TypeScript module using the RxJS IVM runtime.
-    IrRxjs,
     /// IVM program, first frontier and term table as JSON.
     IrJson,
 }
@@ -321,8 +319,7 @@ fn emit_cli(target: EmitTarget, path: &Path) -> ExitCode {
             }
         };
         let emitter = match target {
-            EmitTarget::IrRxjs => &IR_TARGETS[0],
-            EmitTarget::IrJson => &IR_TARGETS[1],
+            EmitTarget::IrJson => &IR_TARGETS[0],
             EmitTarget::Sqlite => unreachable!(),
         };
         let artifact = ir_bundle::bundle(&u, &lowered).and_then(|bundle| (emitter.emit)(&bundle));
