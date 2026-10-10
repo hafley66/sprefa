@@ -371,7 +371,7 @@ import { createRoot } from "react-dom/client";
 import htm from "htm";
 import { highlight, Pre, InnerPre, InnerLine, InnerToken, getPreRef } from "codehike/code";
 import { SelectionProvider, Selectable, Selection, useSelectedIndex } from "codehike/utils/selection";
-import { getStartingSnapshot, calculateTransitions } from "codehike/utils/token-transitions";
+import { getStartingSnapshot, calculateTransitions, diffList } from "codehike/utils/token-transitions";
 
 const html = htm.bind(React.createElement);
 
@@ -593,7 +593,28 @@ both = now + (x when tick);
 const MAX_MS = 900;
 
 // Code Hike's token transitions: snapshot token positions before React updates the DOM, then
-// animate each token from its old place to its new one.
+// animate each token from its old place to its new one. Code Hike pairs tokens by a longest
+// common subsequence of their text. Leftovers with the same text as a token on the other side:
+// an extra new copy flies out of the nearest old copy (duplicating), and an old copy with no
+// partner flies into the nearest new copy as a ghost, then vanishes (merging).
+const TOKEN_SELECTOR = ":not(:has(*))"; // Code Hike's default token selector; indexes must line up with its snapshot
+const MOVE_MS = 0.28 * MAX_MS;
+
+function pagePosition(element) {
+  let x = 0, y = 0;
+  for (let at = element; at; at = at.offsetParent) { x += at.offsetLeft; y += at.offsetTop; }
+  return { x, y };
+}
+
+function nearest(from, candidates) {
+  let best = null, bestDistance = Infinity;
+  for (const candidate of candidates) {
+    const distance = Math.hypot(candidate.x - from.x, candidate.y - from.y);
+    if (distance < bestDistance) { best = candidate; bestDistance = distance; }
+  }
+  return best;
+}
+
 class SmoothPre extends React.Component {
   constructor(props) {
     super(props);
@@ -603,10 +624,29 @@ class SmoothPre extends React.Component {
     return html`<${InnerPre} merge=${this.props} style=${{ position: "relative" }} />`;
   }
   getSnapshotBeforeUpdate() {
+    this.ref.current.querySelectorAll(".token-ghost").forEach((ghost) => ghost.remove());
     return getStartingSnapshot(this.ref.current);
   }
   componentDidUpdate(_props, _state, snapshot) {
-    calculateTransitions(this.ref.current, snapshot).forEach(({ element, keyframes, options }) => {
+    const pre = this.ref.current;
+    const elements = Array.from(pre.querySelectorAll(TOKEN_SELECTOR));
+    const after = elements.map((element) => ({ element, content: element.textContent, ...pagePosition(element) }));
+    const pairs = diffList(snapshot.map((token) => token.content), after.map((token) => token.content));
+    const matchedBefore = new Set(pairs.map(([beforeIndex]) => beforeIndex));
+    const matchedAfter = new Set(pairs.map(([, afterIndex]) => afterIndex));
+    const word = (content) => content.trim() !== "";
+    const extraCopies = new Map(after.filter((token, index) => !matchedAfter.has(index) && word(token.content)).map((token) => [token.element, token]));
+
+    calculateTransitions(pre, snapshot).forEach(({ element, keyframes, options }) => {
+      const extra = extraCopies.get(element);
+      const source = extra && nearest(extra, snapshot.filter((token) => token.content === extra.content));
+      if (source) {
+        element.animate({
+          translate: [`${source.x - extra.x}px ${source.y - extra.y}px`, "0px 0px"],
+          color: [source.color, window.getComputedStyle(element).color],
+        }, { duration: MOVE_MS, easing: "ease-in-out", fill: "both" });
+        return;
+      }
       const { translateX, translateY, ...frames } = keyframes;
       if (translateX && translateY) {
         frames.translate = [`${translateX[0]}px ${translateY[0]}px`, `${translateX[1]}px ${translateY[1]}px`];
@@ -618,13 +658,38 @@ class SmoothPre extends React.Component {
         fill: "both",
       });
     });
+
+    const preAt = pagePosition(pre);
+    snapshot.forEach((gone, index) => {
+      if (matchedBefore.has(index) || !word(gone.content)) return;
+      const target = nearest(gone, after.filter((token) => token.content === gone.content));
+      if (!target) return;
+      const ghost = document.createElement("span");
+      ghost.className = "token-ghost";
+      ghost.textContent = gone.content;
+      Object.assign(ghost.style, {
+        position: "absolute", left: `${gone.x - preAt.x}px`, top: `${gone.y - preAt.y}px`,
+        display: "inline-block", whiteSpace: "pre", pointerEvents: "none", color: gone.color,
+      });
+      pre.appendChild(ghost);
+      ghost.animate({
+        translate: ["0px 0px", `${target.x - gone.x}px ${target.y - gone.y}px`],
+        opacity: [1, 1, 0],
+      }, { duration: MOVE_MS, easing: "ease-in-out", fill: "both" }).finished.then(() => ghost.remove(), () => {});
+    });
   }
 }
 
 const tokenTransitions = {
   name: "token-transitions",
   PreWithRef: SmoothPre,
-  Token: (props) => html`<${InnerToken} merge=${props} style=${{ display: "inline-block" }} />`,
+  // One highlighted token can hold several words; each word gets its own span so it transitions alone.
+  Token: (props) => {
+    const parts = props.value.split(/(\s+)/).filter((part) => part !== "");
+    const value = parts.length < 2 ? props.value
+      : parts.map((part, index) => part.trim() === "" ? part : html`<span key=${index} style=${{ display: "inline-block" }}>${part}</span>`);
+    return html`<${InnerToken} merge=${{ ...props, value }} style=${{ display: "inline-block" }} />`;
+  },
 };
 const mark = {
   name: "mark",
