@@ -1,8 +1,8 @@
 use clock_types::*;
 
 fn main() {
-    let edges: Rel<B, Tick> = input();
-    let files: Rel<Z, Tick> = input();
+    let edges: Rel<Present, Tick> = input();
+    let files: Rel<Change, Tick> = input();
     let shown = sample(&files);
     let joined = join(&edges, &shown);
     let gone = negate(&joined);

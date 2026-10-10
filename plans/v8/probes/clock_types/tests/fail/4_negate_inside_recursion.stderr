@@ -11,10 +11,10 @@ help: the following other types implement trait `Finished`
   |
   | impl Finished for Tick {}
   | ^^^^^^^^^^^^^^^^^^^^^^ `clock_types::Tick`
-  | impl<C: Finished> Finished for Prev<C> {}
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Prev<C>`
+  | impl<Clock: Finished> Finished for Prev<Clock> {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Prev<Clock>`
 note: required by a bound in `clock_types::negate`
  --> src/lib.rs
   |
-  | pub fn negate<C: Finished>(_set: &Rel<B, C>) -> Rel<B, C> {
-  |                  ^^^^^^^^ required by this bound in `negate`
+  | pub fn negate<Clock: Finished>(_set: &Rel<Present, Clock>) -> Rel<Present, Clock> {
+  |                      ^^^^^^^^ required by this bound in `negate`

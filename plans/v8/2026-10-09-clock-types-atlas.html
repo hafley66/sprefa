@@ -150,12 +150,12 @@ place.</p>
 
 <h2 id="weights">Weights (the "rings")</h2>
 <p>Every row carries a weight. The weight type says what the row means. v6 called these
-<b>rings</b>; "weight type" is the plain name.</p>
+<b>rings</b> and named them B, Z and N; this page uses <b>present</b>, <b>change</b> and <b>count</b>.</p>
 <table>
-  <tr><th>weight</th><th>values</th><th>adding</th><th>a row means</th><th>RxJS twin</th><th>DD Rust type</th></tr>
-  <tr><td><span class="tag b">B</span></td><td>true / false</td><td>OR</td><td>is it there now</td><td><code>BehaviorSubject&lt;Set&gt;</code></td><td><code>Present</code></td></tr>
-  <tr><td><span class="tag n">N</span></td><td>0, 1, 2 …</td><td>+, never below 0</td><td>how many times</td><td>an append-only count</td><td><code>u64</code></td></tr>
-  <tr><td><span class="tag z">Z</span></td><td>… −1, 0, +1 …</td><td>+, negatives allowed</td><td>how it changed</td><td><code>Subject&lt;{added, removed}&gt;</code></td><td><code>isize</code></td></tr>
+  <tr><th>weight</th><th>v6 name</th><th>values</th><th>adding</th><th>a row means</th><th>RxJS twin</th><th>DD Rust type</th></tr>
+  <tr><td><span class="tag b">present</span></td><td>B</td><td>true / false</td><td>OR</td><td>is it there now</td><td><code>BehaviorSubject&lt;Set&gt;</code></td><td><code>Present</code></td></tr>
+  <tr><td><span class="tag n">count</span></td><td>N</td><td>0, 1, 2 …</td><td>+, never below 0</td><td>how many times</td><td>an append-only count</td><td><code>u64</code></td></tr>
+  <tr><td><span class="tag z">change</span></td><td>Z</td><td>… −1, 0, +1 …</td><td>+, negatives allowed</td><td>how it changed</td><td><code>Subject&lt;{added, removed}&gt;</code></td><td><code>isize</code></td></tr>
 </table>
 <div class="scrolly" data-scrolly="weights"></div>
 
@@ -165,12 +165,12 @@ place.</p>
 carrying a weight, a sign and a grade (how many ticks the read moves).</p>
 <table>
   <tr><th>how a rule reads</th><th>weight</th><th>sign</th><th>grade</th></tr>
-  <tr><td>plain read</td><td><span class="tag b">B</span></td><td>+</td><td>0</td></tr>
-  <tr><td><code>not</code></td><td><span class="tag b">B</span></td><td>−</td><td>0</td></tr>
-  <tr><td>fires on add</td><td><span class="tag z">Z</span></td><td>+</td><td>0 or 1, by writer</td></tr>
-  <tr><td>fires on remove</td><td><span class="tag z">Z</span></td><td>−</td><td>1</td></tr>
-  <tr><td><code>latest</code></td><td><span class="tag b">B</span></td><td>state</td><td>0</td></tr>
-  <tr><td><code>pre</code></td><td><span class="tag b">B</span></td><td>previous</td><td>−1</td></tr>
+  <tr><td>plain read</td><td><span class="tag b">present</span></td><td>+</td><td>0</td></tr>
+  <tr><td><code>not</code></td><td><span class="tag b">present</span></td><td>−</td><td>0</td></tr>
+  <tr><td>fires on add</td><td><span class="tag z">change</span></td><td>+</td><td>0 or 1, by writer</td></tr>
+  <tr><td>fires on remove</td><td><span class="tag z">change</span></td><td>−</td><td>1</td></tr>
+  <tr><td><code>latest</code></td><td><span class="tag b">present</span></td><td>state</td><td>0</td></tr>
+  <tr><td><code>pre</code></td><td><span class="tag b">present</span></td><td>previous</td><td>−1</td></tr>
 </table>
 <div class="scrolly" data-scrolly="v6"></div>
 
@@ -178,7 +178,7 @@ carrying a weight, a sign and a grade (how many ticks the read moves).</p>
 <figure><svg id="d-pipeline" viewBox="0 0 1000 350"></svg>
 <figcaption>Where the clock checker sits in dl8's pipeline, and what comes out of it.</figcaption></figure>
 <figure><svg id="d-cycles" viewBox="0 0 1000 250"></svg>
-<figcaption>Cycles and their verdicts: a grade-0 cycle through B is a fixpoint; through Z it triggers itself.</figcaption></figure>
+<figcaption>Cycles and their verdicts: a grade-0 cycle through present reads is a fixpoint; through change reads it triggers itself.</figcaption></figure>
 
 <h2 id="strategy">Picking how each part runs</h2>
 <p>The checker's output is one label per relation, the maximum over its inputs:</p>
@@ -208,7 +208,7 @@ it with this tick's value in lockstep. The tokens that carry over between langua
   <tr><td>weight per relation</td><td>—</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td></tr>
   <tr><td>join needs one clock</td><td>—</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td></tr>
   <tr><td>no <code>not</code> inside recursion</td><td>—</td><td class="ok">trait trick</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td></tr>
-  <tr><td>tick arithmetic (T+2 = T+1+1)</td><td>—</td><td>typenum crate</td><td class="ok">type-level nats</td><td class="ok">yes</td><td class="ok">yes</td></tr>
+  <tr><td>tick arithmetic (tick + 2 = tick + 1 + 1)</td><td>—</td><td>typenum crate</td><td class="ok">type-level nats</td><td class="ok">yes</td><td class="ok">yes</td></tr>
   <tr><td>every path has one total delay</td><td>—</td><td>—</td><td>—</td><td class="ok">as a proof</td><td class="ok">datalog rule</td></tr>
 </table>
 
@@ -227,7 +227,7 @@ it with this tick's value in lockstep. The tokens that carry over between langua
 </div>
 
 <h2 id="lists">Lists, measured</h2>
-<p>Numbers from <code>plans/v8/probes/list_ladder/</code>: one fact holding one list of n strings,
+<p>Numbers from <code>plans/v8/probes/list_ladder/</code>: one fact holding one list of strings,
 compiled by the debug <code>dl8</code> binary. Baseline in <code>0_baseline.tsv</code>, after the
 fix in <code>1_one_batch.tsv</code>.</p>
 <div class="scrolly" data-scrolly="lists"></div>
@@ -340,9 +340,9 @@ draw("d-pipeline", [
   { from: "loops", to: "rustc", color: acid }, { from: "dd", to: "rustc", color: acid },
 ]);
 draw("d-cycles", [
-  { id: "a", x: 70, y: 130, w: 220, h: 60, label: "reach ← reach, edge\nB · grade 0", stroke: acid },
-  { id: "b", x: 390, y: 130, w: 220, h: 60, label: "on_add ← on_add\nZ · grade 0", stroke: hot },
-  { id: "c", x: 710, y: 130, w: 220, h: 60, label: "next ← delay(next)\nZ · grade +1", stroke: acid },
+  { id: "a", x: 70, y: 130, w: 220, h: 60, label: "reach ← reach, edge\npresent · grade 0", stroke: acid },
+  { id: "b", x: 390, y: 130, w: 220, h: 60, label: "on_add ← on_add\nchange · grade 0", stroke: hot },
+  { id: "c", x: 710, y: 130, w: 220, h: 60, label: "next ← delay(next)\nchange · grade +1", stroke: acid },
 ], [
   { from: "a", to: "a", loop: true, label: "fixpoint in one tick ✓", color: acid },
   { from: "b", to: "b", loop: true, label: "triggers itself now ✗", color: hot },
@@ -355,7 +355,7 @@ draw("d-split", [
   { id: "file", x: 790, y: 40, w: 170, h: 50, label: "fs.file\nwrite once", stroke: sky },
   { id: "watch", x: 20, y: 190, w: 160, h: 50, label: "fs.watch\nlive", stroke: hot },
   { id: "chan", x: 270, y: 190, w: 160, h: 50, label: "bounded mpsc\ncap 64", stroke: hot },
-  { id: "dd", x: 520, y: 190, w: 170, h: 50, label: "DD collections\nZ weights", stroke: hot },
+  { id: "dd", x: 520, y: 190, w: 170, h: 50, label: "DD collections\nchange weights", stroke: hot },
   { id: "sql", x: 790, y: 190, w: 170, h: 50, label: "sqlite: one txn\nper frontier", stroke: hot },
 ], [
   { from: "json", to: "kinds", color: sky }, { from: "kinds", to: "super", color: sun },
@@ -396,59 +396,59 @@ const label = maxOver(inputs, (input) => input.label)
 // "live"             -> DD` },
   ],
   weights: [
-    { lang: "clojure", h: "B: is it there now", p: "Tick 1: file a imports b. Read as weight B, the row is present.", code:
-`; tick 1: a imports b
-(imports "a" "b")   ; B  present = true` },
-    { lang: "clojure", h: "Z: how it changed", p: "Tick 2: the import is deleted. B now says absent. Z carries the change itself: one row with weight −1.", code:
-`; tick 2: a no longer imports b
-(imports "a" "b")   ; B  present = false
-(imports "a" "b")   ; Z  weight  = -1` },
-    { lang: "clojure", h: "N: how many times", p: "A log of import events only grows. Its weight is a count that never goes below zero.", code:
-`; tick 2: a no longer imports b
-(imports "a" "b")        ; B  present = false
-(imports "a" "b")        ; Z  weight  = -1
-(import_events "a" "b")  ; N  count   = 1` },
-    { lang: "clojure", h: "not reads B, never Z", p: "<code>not</code> asks whether a row is absent right now. That is a B question. A rule that negates a Z read is rejected.", code:
+    { lang: "clojure", h: "present: is it there now", p: "Tick 1: file <code>app.ts</code> imports <code>db.ts</code>. Read with weight present, the row is there.", code:
+`; tick 1: app.ts imports db.ts
+(imports "app.ts" "db.ts")   ; present: true` },
+    { lang: "clojure", h: "change: how it changed", p: "Tick 2: the import is deleted. Weight present now says false. Weight change carries the edit itself: one row with weight −1.", code:
+`; tick 2: app.ts no longer imports db.ts
+(imports "app.ts" "db.ts")   ; present: false
+(imports "app.ts" "db.ts")   ; change:  -1` },
+    { lang: "clojure", h: "count: how many times", p: "A log of import events only grows. Its weight is a count that never goes below zero.", code:
+`; tick 2: app.ts no longer imports db.ts
+(imports "app.ts" "db.ts")        ; present: false
+(imports "app.ts" "db.ts")        ; change:  -1
+(import_events "app.ts" "db.ts")  ; count:   1` },
+    { lang: "clojure", h: "not reads present, never change", p: "<code>not</code> asks whether a row is absent right now. That is a present question. A rule that negates a change read is rejected.", code:
 `(<- (orphan ?File)
     (file ?File)
     ; !mark
-    (not (imports ?Any ?File)))   ; reads B: absent now` },
+    (not (imports ?Any ?File)))   ; reads present: absent now` },
   ],
   v6: [
     { lang: "clojure", h: "1. The dependency rows", p: "The program below reindexes on a file change, keeps last tick's index with <code>pre</code>, and diffs the two. Each read becomes one row: from, to, weight, sign, grade.", code:
 `; (dep From To Weight Sign Grade)
-(dep file_changed reindex    z +   0)
-(dep reindex      index      b +   0)
-(dep index        prev_index b pre -1)
-(dep index        diff       b +   0)
-(dep prev_index   diff       b +   0)` },
-    { lang: "clojure", h: "2. Inputs start at offset 0", p: "Rule: <code>offset(R, 0) :- input(R)</code>. The input relation <code>file_changed</code> gets offset 0.", code:
+(dep file_changed reindex    change  +   0)
+(dep reindex      index      present +   0)
+(dep index        prev_index present pre -1)
+(dep index        diff       present +   0)
+(dep prev_index   diff       present +   0)` },
+    { lang: "clojure", h: "2. Inputs start at offset 0", p: "Rule: <code>offset(Relation, 0) :- input(Relation)</code>. The input relation <code>file_changed</code> gets offset 0.", code:
 `; (dep From To Weight Sign Grade)
-(dep file_changed reindex    z +   0)
-(dep reindex      index      b +   0)
-(dep index        prev_index b pre -1)
-(dep index        diff       b +   0)
-(dep prev_index   diff       b +   0)
+(dep file_changed reindex    change  +   0)
+(dep reindex      index      present +   0)
+(dep index        prev_index present pre -1)
+(dep index        diff       present +   0)
+(dep prev_index   diff       present +   0)
 
 (offset file_changed 0)` },
-    { lang: "clojure", h: "3. Each read adds its grade", p: "Rule: <code>offset(To, M + G) :- offset(From, M), dep(From, To, _, _, G)</code>. Grade 0 reads keep the offset.", code:
+    { lang: "clojure", h: "3. Each read adds its grade", p: "Rule: <code>offset(To, Before + Grade) :- offset(From, Before), dep(From, To, _, _, Grade)</code>. Grade 0 reads keep the offset.", code:
 `; (dep From To Weight Sign Grade)
-(dep file_changed reindex    z +   0)
-(dep reindex      index      b +   0)
-(dep index        prev_index b pre -1)
-(dep index        diff       b +   0)
-(dep prev_index   diff       b +   0)
+(dep file_changed reindex    change  +   0)
+(dep reindex      index      present +   0)
+(dep index        prev_index present pre -1)
+(dep index        diff       present +   0)
+(dep prev_index   diff       present +   0)
 
 (offset file_changed 0)
 (offset reindex      0)
 (offset index        0)` },
     { lang: "clojure", h: "4. pre moves one tick back", p: "The <code>pre</code> read has grade −1, so <code>prev_index</code> lives at offset −1.", code:
 `; (dep From To Weight Sign Grade)
-(dep file_changed reindex    z +   0)
-(dep reindex      index      b +   0)
-(dep index        prev_index b pre -1)
-(dep index        diff       b +   0)
-(dep prev_index   diff       b +   0)
+(dep file_changed reindex    change  +   0)
+(dep reindex      index      present +   0)
+(dep index        prev_index present pre -1)
+(dep index        diff       present +   0)
+(dep prev_index   diff       present +   0)
 
 (offset file_changed 0)
 (offset reindex      0)
@@ -456,11 +456,11 @@ const label = maxOver(inputs, (input) => input.label)
 (offset prev_index   -1)` },
     { lang: "clojure", h: "5. Two offsets for diff: rejected", p: "<code>diff</code> is reached at 0 through <code>index</code> and at −1 through <code>prev_index</code>. Two clocks for one relation is <code>clock_path_conflict</code>. Fixed point reached: no new rows after this step.", code:
 `; (dep From To Weight Sign Grade)
-(dep file_changed reindex    z +   0)
-(dep reindex      index      b +   0)
-(dep index        prev_index b pre -1)
-(dep index        diff       b +   0)
-(dep prev_index   diff       b +   0)
+(dep file_changed reindex    change  +   0)
+(dep reindex      index      present +   0)
+(dep index        prev_index present pre -1)
+(dep index        diff       present +   0)
+(dep prev_index   diff       present +   0)
 
 (offset file_changed 0)
 (offset reindex      0)
@@ -472,28 +472,28 @@ const label = maxOver(inputs, (input) => input.label)
 (clock_path_conflict diff 0 -1)` },
   ],
   rust: [
-    { lang: "rust", h: "Weights and clocks as types", p: "<code>Rel&lt;R, C&gt;</code> carries a weight and a clock and no data. The checks happen in rustc. <code>Inner&lt;C&gt;</code> has no <code>Finished</code> impl on purpose.", code:
-`pub struct B; pub struct Z;
+    { lang: "rust", h: "Weights and clocks as types", p: "<code>Rel&lt;Weight, Clock&gt;</code> carries a weight and a clock and no data. The checks happen in rustc. <code>Inner&lt;Clock&gt;</code> has no <code>Finished</code> impl on purpose.", code:
+`pub struct Present; pub struct Change;
 pub struct Tick;
-pub struct Prev<C>(PhantomData<C>);
-pub struct Inner<C>(PhantomData<C>);
-pub struct Rel<R, C>(PhantomData<(R, C)>);
+pub struct Prev<Clock>(PhantomData<Clock>);
+pub struct Inner<Clock>(PhantomData<Clock>);
+pub struct Rel<Weight, Clock>(PhantomData<(Weight, Clock)>);
 
 pub trait Finished {}
 impl Finished for Tick {}
-impl<C: Finished> Finished for Prev<C> {}` },
-    { lang: "rust", h: "The operators", p: "Reusing the letter <code>C</code> on both arguments of <code>join</code> is what forces one clock. <code>negate</code> takes only B on a finished clock.", code:
-`fn join<R, C>(l: &Rel<R, C>, r: &Rel<R, C>) -> Rel<R, C>
-fn pre<R, C>(now: &Rel<R, C>) -> Rel<R, Prev<C>>
-fn sample<C>(changes: &Rel<Z, C>) -> Rel<B, C>
-fn negate<C: Finished>(set: &Rel<B, C>) -> Rel<B, C>
-fn iterate<C>(
-    seed: &Rel<B, C>,
-    step: impl FnOnce(&Rel<B, Inner<C>>) -> Rel<B, Inner<C>>,
-) -> Rel<B, C>` },
-    { lang: "rust", h: "A legal program compiles", p: "From <code>tests/pass/0_legal.rs</code>: sample Z into B, join, negate a finished relation, recurse.", code:
-`let edges: Rel<B, Tick> = input();
-let files: Rel<Z, Tick> = input();
+impl<Clock: Finished> Finished for Prev<Clock> {}` },
+    { lang: "rust", h: "The operators", p: "Reusing the name <code>Clock</code> on both arguments of <code>join</code> is what forces one clock. <code>negate</code> takes only present on a finished clock.", code:
+`fn join<Weight, Clock>(left: &Rel<Weight, Clock>, right: &Rel<Weight, Clock>) -> Rel<Weight, Clock>
+fn pre<Weight, Clock>(now: &Rel<Weight, Clock>) -> Rel<Weight, Prev<Clock>>
+fn sample<Clock>(changes: &Rel<Change, Clock>) -> Rel<Present, Clock>
+fn negate<Clock: Finished>(set: &Rel<Present, Clock>) -> Rel<Present, Clock>
+fn iterate<Clock>(
+    seed: &Rel<Present, Clock>,
+    step: impl FnOnce(&Rel<Present, Inner<Clock>>) -> Rel<Present, Inner<Clock>>,
+) -> Rel<Present, Clock>` },
+    { lang: "rust", h: "A legal program compiles", p: "From <code>tests/pass/0_legal.rs</code>: sample changes into present, join, negate a finished relation, recurse.", code:
+`let edges: Rel<Present, Tick> = input();
+let files: Rel<Change, Tick> = input();
 let shown = sample(&files);
 let joined = join(&edges, &shown);
 let gone = negate(&joined);
@@ -501,14 +501,14 @@ let reach = iterate(&edges, |inner| {
     join(inner, &enter(&edges))
 });` },
     { lang: "rust", h: "Join across ticks: E0308", p: "From <code>tests/fail/0_join_across_ticks.rs</code>. <code>before</code> is one tick back, so the clocks differ.", code:
-`let now: Rel<B, Tick> = input();
+`let now: Rel<Present, Tick> = input();
 let before = pre(&now);
 // !mark
 join(&now, &before);
 // error[E0308]: mismatched types
-// expected &Rel<B, Tick>, found &Rel<B, Prev<Tick>>` },
+// expected &Rel<Present, Tick>, found &Rel<Present, Prev<Tick>>` },
     { lang: "rust", h: "not inside recursion: E0277", p: "From <code>tests/fail/4_negate_inside_recursion.rs</code>. The recursion's clock is <code>Inner&lt;Tick&gt;</code>, which is never finished.", code:
-`let edges: Rel<B, Tick> = input();
+`let edges: Rel<Present, Tick> = input();
 // !mark
 iterate(&edges, |inner| negate(inner));
 // error[E0277]: the trait bound
@@ -522,21 +522,21 @@ const both$ = zip(now$, prev$)
     { lang: "rust", h: "Rust: E0308", p: "The probe's types. <code>pre</code> returns <code>Prev&lt;Tick&gt;</code> and <code>join</code> wants one clock.", code:
 `let prev = pre(&now);
 let both = join(&now, &prev);
-// error[E0308]: expected Rel<B, Tick>, found Rel<B, Prev<Tick>>` },
+// error[E0308]: expected Rel<Present, Tick>, found Rel<Present, Prev<Tick>>` },
     { lang: "haskell", h: "Haskell: kind mismatch", p: "<code>DataKinds</code> lifts <code>Tick</code> and <code>Prev</code> into types. Same rule, same error, different spelling.", code:
 `prev = pre now
 both = join now prev
 -- error: Couldn't match type 'Tick with 'Prev 'Tick` },
     { lang: "haskell", label: "lean (haskell colors)", h: "Lean: the clock is a number", p: "The clock is a natural number of ticks behind now, so the type does arithmetic: <code>pre</code> adds one.", code:
-`def prev := pre now          -- Rel .B 1
-def both := join now prev    -- error: type mismatch, Rel .B 0 vs Rel .B 1` },
+`def prev := pre now          -- Rel .present 1
+def both := join now prev    -- error: type mismatch, Rel .present 0 vs Rel .present 1` },
     { lang: "ocaml", label: "lustre (ocaml colors)", h: "Lustre: the original", p: "Lustre's clock calculus rejects combining streams on different clocks. Here <code>x when tick</code> is a slower clock; <code>pre</code> keeps the clock and shifts the value.", code:
 `prev = pre(now);
 both = now + (x when tick);
 -- error: clock mismatch` },
   ],
   lists: [
-    { lang: "clojure", h: "1. One fact, one list", p: "The probe program: one fact holding a list of n strings, plus one rule that copies it.", code:
+    { lang: "clojure", h: "1. One fact, one list", p: "The probe program: one fact holding a list of strings, plus one rule that copies it. The ladder runs it at 1 to 16384 items.", code:
 `(files: (* (run: str) (list: any)))
 (files "r" ["f0" "f1" "f2" "f3"])
 
@@ -546,7 +546,7 @@ both = now + (x when tick);
 `(files "r" ["f0" "f1" "f2" "f3"])
 ; is stored as
 (cons "f0" (cons "f1" (cons "f2" (cons "f3" nil))))` },
-    { lang: "clojure", h: "3. Before: one engine call per depth", p: "The engine gives a term its id only after its arguments have ids. The bootstrap grouped terms by depth and made one engine call per depth. A chain of n items is n deep. Ids below are illustrative.", code:
+    { lang: "clojure", h: "3. Before: one engine call per depth", p: "The engine gives a term its id only after its arguments have ids. The bootstrap grouped terms by depth and made one engine call per depth. A chain is as deep as it has items. Ids below are illustrative.", code:
 `; engine call 1
 (cons "f3" nil)   ; -> 41
 ; engine call 2
@@ -555,7 +555,7 @@ both = now + (x when tick);
 (cons "f1" 42)    ; -> 43
 ; engine call 4
 (cons "f0" 43)    ; -> 44
-; n items: n + 3 calls, budget 8192` },
+; calls = items + 3, budget 8192` },
     { lang: "clojure", h: "4. Now: one batch, earlier refs", p: "<code>intern_term_batch</code> takes the whole chain. An argument may name an earlier entry of the same batch. The DD worker mints in order, so the batch is one round trip.", code:
 `; one engine call: intern_term_batch
 [0] (cons "f3" nil)
