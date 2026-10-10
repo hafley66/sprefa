@@ -18,11 +18,8 @@ clap = { version = "4", features = ["derive"] }
 hafley-observe = { path = "sqlite_ivm/hafley-rs/crates/hafley-observe" }
 indexmap = "2"
 ivm-ir = { path = "sqlite_ivm/crates/ivm-ir" }
-ivm-rxjs = { path = "sqlite_ivm/crates/ivm-rxjs" }
 ivm-engine = { path = "sqlite_ivm/crates/ivm-engine" }
 ivm-dd = { path = "sqlite_ivm/crates/ivm-dd" }
-ivm-duckdb = { path = "sqlite_ivm/crates/ivm-duckdb", optional = true }
-ivm-sqlite = { path = "sqlite_ivm/crates/ivm-sqlite" }
 ordered-float = "3"
 pretty = "0.12.5"
 notify-debouncer-full = "0.7"
@@ -47,9 +44,6 @@ hashbrown = "0.16"
 smallvec = "1"
 
 [features]
-# `DL8_ENGINE=ir:duckdb`: drives an external OpenIVM DuckDB CLI (IVM_DUCKDB_CLI,
-# IVM_DUCKDB_EXTENSION). Off by default.
-duckdb = ["dep:ivm-duckdb"]
 # Counting global allocator: every `dl8::phase` event carries `live_bytes` and `peak_bytes`.
 alloc-ledger = []
 

@@ -327,26 +327,64 @@ fn atom_anywhere_name(u: &mut Universe, p: &Protocol, rule: &Rule) -> Option<Ter
     Some(atom_of_text(u, text))
 }
 
-/// `macro_dispatch/4`: when every claim and diagnostic writer names an atom it
-/// needs, the absence of those names in the graph proves an empty claim and
-/// diagnostic set without running the evaluator. A name taken from an
-/// item-zero edge must sit at item zero; any other name anywhere.
-pub fn macro_dispatch(u: &mut Universe, p: &Protocol, rules: &[Rule], g: &Graph) -> Dispatch {
-    let writers: Vec<&Rule> = rules
-        .iter()
-        .filter(|r| r.rel == p.claim || Some(r.rel) == p.diagnostic)
-        .collect();
+/// The names `macro_dispatch` looks for: macro heads, which must sit at item zero, and names
+/// needed anywhere. `None` when a writer names no atom, so only the evaluator can tell.
+fn dispatch_names(
+    u: &mut Universe,
+    p: &Protocol,
+    rules: &[Rule],
+) -> Option<(HashSet<TermId>, HashSet<TermId>)> {
     let mut heads: HashSet<TermId> = HashSet::new();
     let mut anywhere: HashSet<TermId> = HashSet::new();
-    for rule in &writers {
+    for rule in rules.iter().filter(|r| r.rel == p.claim || Some(r.rel) == p.diagnostic) {
         if let Some(name) = claim_rule_name(u, p, rule) {
             heads.insert(name);
         } else if let Some(name) = atom_anywhere_name(u, p, rule) {
             anywhere.insert(name);
         } else {
-            return Dispatch::Unknown;
+            return None;
         }
     }
+    Some((heads, anywhere))
+}
+
+/// `macro_dispatch` over reader forms (`node(Id, Payload)`), before any syntax row is built:
+/// an `atom(Name)` payload is a name anywhere, a form's first child's atom its item-zero head.
+pub fn forms_dispatch(u: &mut Universe, p: &Protocol, rules: &[Rule], forms: &[TermId]) -> Dispatch {
+    let Some((heads, anywhere)) = dispatch_names(u, p, rules) else {
+        return Dispatch::Unknown;
+    };
+    let atom_of = |u: &Universe, node: TermId| {
+        let payload = args_of(u, node, "node", 2)?[1];
+        args_of(u, payload, "atom", 1).map(|args| args[0])
+    };
+    let mut todo: Vec<TermId> = forms.to_vec();
+    while let Some(node) = todo.pop() {
+        if atom_of(u, node).is_some_and(|name| anywhere.contains(&name)) {
+            return Dispatch::Present;
+        }
+        let Some(payload) = args_of(u, node, "node", 2).map(|args| args[1]) else {
+            continue;
+        };
+        let Some(children) = args_of(u, payload, "form", 1).and_then(|args| u.as_list(args[0])) else {
+            continue;
+        };
+        if children.first().and_then(|head| atom_of(u, *head)).is_some_and(|name| heads.contains(&name)) {
+            return Dispatch::Present;
+        }
+        todo.extend(children);
+    }
+    Dispatch::Absent
+}
+
+/// `macro_dispatch/4`: when every claim and diagnostic writer names an atom it
+/// needs, the absence of those names in the graph proves an empty claim and
+/// diagnostic set without running the evaluator. A name taken from an
+/// item-zero edge must sit at item zero; any other name anywhere.
+pub fn macro_dispatch(u: &mut Universe, p: &Protocol, rules: &[Rule], g: &Graph) -> Dispatch {
+    let Some((heads, anywhere)) = dispatch_names(u, p, rules) else {
+        return Dispatch::Unknown;
+    };
     if g.names.values().any(|name| anywhere.contains(name)) {
         return Dispatch::Present;
     }

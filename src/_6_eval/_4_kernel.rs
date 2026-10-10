@@ -337,21 +337,6 @@ fn int_const(u: &mut Universe, value: i64) -> TermId {
     u.compound("const", vec![value])
 }
 
-/// The child rows of one vec as terms: `vec_item(Vec, const(Index), Item)` per
-/// item and one `vec_len(Vec, const(Len))`. The IR answers `vec.iter`,
-/// `vec.get` and `vec.len` by joining their constructor relations.
-pub fn vec_parts(u: &mut Universe, whole: TermId) -> Option<Vec<TermId>> {
-    let items = vec_items(u, whole)?;
-    let mut parts = Vec::with_capacity(items.len() + 1);
-    for (index, item) in items.iter().enumerate() {
-        let index = int_const(u, index as i64);
-        parts.push(u.compound("vec_item", vec![whole, index, *item]));
-    }
-    let len = int_const(u, items.len() as i64);
-    parts.push(u.compound("vec_len", vec![whole, len]));
-    Some(parts)
-}
-
 /// `vec.iter(Vec, Index, Item)`: one row per item, `Index` from 0. A bound
 /// `Index` narrows to that item.
 pub fn vec_iter_rows(u: &mut Universe, args: &[Option<TermId>]) -> Vec<Vec<TermId>> {

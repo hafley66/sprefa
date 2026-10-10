@@ -5,7 +5,8 @@ use super::_0_read::macrotime_text;
 use super::_1_unit::macrotime_unit;
 use super::_3_units::compile_units;
 use super::Stop;
-use crate::_1_macrotime::_1_reify::reify_terms;
+use crate::_1_macrotime::_1_reify::{check_terms, reify_terms};
+use crate::_1_macrotime::_2_protocol::{forms_dispatch, macro_protocol, Dispatch};
 use crate::_1_macrotime::_4_expand::{expand_terms, MacroSession};
 use crate::_1_macrotime::_5_materialize::materialize_terms;
 use crate::_1_macrotime::_7_slice::slice_macro_program;
@@ -100,6 +101,14 @@ pub fn expand_unit_with_macros(
     let source_rows = u.as_list(args[3]).unwrap_or_default();
     let expansion_rows = u.as_list(args[4]).unwrap_or_default();
 
+    // No macro head and no needed name in the forms: no rewrite, so the unit is its own
+    // expansion, and the syntax rows the macro engine would read are never built.
+    if let (Some(protocol), _) = macro_protocol(u, macro_program) {
+        if let Dispatch::Absent = forms_dispatch(u, &protocol, &macro_program.program.rules, &forms) {
+            let diagnostics = check_terms(u, &forms, &source_rows);
+            return if diagnostics.is_empty() { (Some(unit), Vec::new()) } else { (None, diagnostics) };
+        }
+    }
     let (syntax, reify_diagnostics) = reify_terms(u, &forms, &source_rows);
     if !reify_diagnostics.is_empty() {
         return (None, reify_diagnostics);

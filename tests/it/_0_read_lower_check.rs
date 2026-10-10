@@ -129,7 +129,7 @@ fn every_macrotime_case_matches_v7() {
         };
         let want = &case["expected"];
         for key in keys {
-            if got[key] != want[key] {
+            if !same(key, &want[key], &got[key]) {
                 failures.push(format!(
                     "{}: {key} differs\n  want {} rows\n  got  {} rows\n  first difference: {}",
                     path.display(),
@@ -153,6 +153,17 @@ fn every_macrotime_case_matches_v7() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Equal outputs: a `*_rows` key is a set of rows, compared without order; every other key
+/// in order.
+fn same(key: &str, want: &serde_json::Value, got: &serde_json::Value) -> bool {
+    let rows = |value: &serde_json::Value| {
+        let mut rows: Vec<String> = value.as_array().into_iter().flatten().map(|row| row.to_string()).collect();
+        rows.sort();
+        rows
+    };
+    if key.ends_with("_rows") { rows(want) == rows(got) } else { want == got }
 }
 
 const MACROTIME_KEYS: [&str; 7] = [
@@ -192,7 +203,7 @@ fn macrotime_cases_share_one_engine() {
             dl8::_1_macrotime::run_case(&mut u, &input, &mut session, &mut |_| {}).unwrap();
         fingerprints.extend(session.ir.fingerprint());
         for key in MACROTIME_KEYS {
-            if got[key] != want[key] {
+            if !same(key, &want[key], &got[key]) {
                 failures.push(format!(
                     "{}: {key} differs: {}",
                     path.display(),
@@ -256,7 +267,7 @@ fn macrotime_reprepares_for_an_undeclared_shape() {
         serde_json::from_str(&reprepared.to_string().replace("reader_nodf", "reader_node"))
             .unwrap();
     for key in MACROTIME_KEYS {
-        assert_eq!(back[key], want[key], "{key}");
+        assert!(same(key, &want[key], &back[key]), "{key}");
     }
 }
 

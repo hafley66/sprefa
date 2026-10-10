@@ -11,9 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const CONFIGS: [(&str, &str); 4] = [
-    ("ir:sqlite", "compile"),
-    ("ir:sqlite", "interpret"),
+const CONFIGS: [(&str, &str); 2] = [
     ("ir:dd", "compile"),
     ("ir:dd", "interpret"),
 ];

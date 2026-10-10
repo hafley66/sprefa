@@ -149,7 +149,7 @@ fn check_fixture(
 pub fn every_effect_fixture_matches_expected() {
     let binary = env!("CARGO_BIN_EXE_dl8");
     let mut failures = Vec::new();
-    for engine in [Some("ir:sqlite"), Some("ir:dd")] {
+    for engine in [Some("ir:dd")] {
         for (stem, served) in SERVED {
             if let Err(error) = check_fixture(binary, stem, served, engine) {
                 failures.push(format!("{}: {error}", engine.unwrap_or("default")));
@@ -979,7 +979,7 @@ pub fn ir_fs_json_answers_once_per_request() {
     let path = document_path.to_string_lossy().to_string();
     let compiled = s20hosts_compile(&directory, "4_fs_json.dl7", &[("__DOC__", &path)]);
 
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         let (out, code) = s20hosts_run(
             &compiled.program,
             &["--serve", "fs.json"],
@@ -1009,7 +1009,7 @@ pub fn served_rows_reach_readers_of_a_demanded_product() {
     let document_path = std::fs::canonicalize(s20hosts_fixture("todo.json")).unwrap();
     let path = document_path.to_string_lossy().to_string();
     let compiled = s20hosts_compile(&directory, "6_generic_readback.dl7", &[("__DOC__", &path)]);
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         let (out, code) = s20hosts_run(
             &compiled.program,
             &["--serve", "fs.json"],
@@ -1392,7 +1392,7 @@ pub fn a_once_executor_answers_its_effect_row_at_comptime() {
 
 #[test]
 pub fn ir_comptime_stops_when_the_fs_json_request_is_stable() {
-    for engine in ["ir:sqlite", "ir:dd"] {
+    for engine in ["ir:dd"] {
         let compiled = s23comptimeeffect_compile_with_engine("0_fs_json", Some(engine));
         assert_clean(engine, &compiled);
         assert_eq!(named(&compiled, "Member"), 2, "{engine}: title and done");

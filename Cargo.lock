@@ -441,11 +441,8 @@ dependencies = [
  "hyper-util",
  "indexmap",
  "ivm-dd",
- "ivm-duckdb",
  "ivm-engine",
  "ivm-ir",
- "ivm-rxjs",
- "ivm-sqlite",
  "lasso",
  "libc",
  "notify-debouncer-full",
@@ -1141,17 +1138,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ivm-duckdb"
-version = "0.1.0"
-dependencies = [
- "ivm-engine",
- "ivm-ir",
- "serde_json",
- "tempfile",
- "tracing",
-]
-
-[[package]]
 name = "ivm-engine"
 version = "0.1.0"
 dependencies = [
@@ -1166,28 +1152,6 @@ dependencies = [
  "heck",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "ivm-rxjs"
-version = "0.1.0"
-dependencies = [
- "ivm-ir",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "ivm-sqlite"
-version = "0.1.0"
-dependencies = [
- "hafley-observe",
- "ivm-engine",
- "ivm-ir",
- "rusqlite",
- "serde_json",
- "sqlite-ext",
- "tracing",
 ]
 
 [[package]]
@@ -2242,16 +2206,6 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "tracing",
-]
-
-[[package]]
-name = "sqlite-ext"
-version = "0.1.0"
-dependencies = [
- "hafley-observe",
- "rusqlite",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::process::Command;
 
-const ENGINES: [&str; 2] = ["ir:sqlite", "ir:dd"];
+const ENGINES: [&str; 1] = ["ir:dd"];
 const MODES: [&str; 2] = ["rust", "engine"];
 
 fn expand(stem: &str, engine: &str, mode: &str) -> Vec<u8> {
@@ -81,9 +81,7 @@ fn a_63rd_rewriting_wave_settles() {
     assert_eq!(text.matches(r#""f":"node"}"#).count(), 135);
 }
 
-const RUNS: [(&str, &str); 4] = [
-    ("ir:sqlite", "rust"),
-    ("ir:sqlite", "engine"),
+const RUNS: [(&str, &str); 2] = [
     ("ir:dd", "rust"),
     ("ir:dd", "engine"),
 ];

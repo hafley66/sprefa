@@ -8,20 +8,11 @@ pub struct IrEmitter {
     pub emit: fn(&Bundle) -> Result<String, String>,
 }
 
-fn emit_rxjs(bundle: &Bundle) -> Result<String, String> {
-    ivm_rxjs::emit(&bundle.program)
-}
-
 fn emit_json(bundle: &Bundle) -> Result<String, String> {
     serde_json::to_string_pretty(bundle).map_err(|error| error.to_string())
 }
 
-pub const IR_TARGETS: [IrEmitter; 2] = [
-    IrEmitter {
-        name: "ir-rxjs",
-        extension: "ts",
-        emit: emit_rxjs,
-    },
+pub const IR_TARGETS: [IrEmitter; 1] = [
     IrEmitter {
         name: "ir-json",
         extension: "json",

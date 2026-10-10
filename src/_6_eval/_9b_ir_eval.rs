@@ -33,9 +33,6 @@ pub fn take_answers() -> (usize, Vec<Row>) {
 #[derive(Copy, Clone, Debug)]
 pub enum Backend {
     Dd,
-    Sqlite,
-    #[cfg(feature = "duckdb")]
-    DuckDb,
 }
 
 #[derive(Clone)]
@@ -467,9 +464,6 @@ fn open_session(
 ) -> Result<Box<dyn Session + Send>, Diagnostic> {
     match backend {
         Backend::Dd => install_session::<ivm_dd::Dd>(u, lowered, fingerprint, measured),
-        Backend::Sqlite => install_session::<ivm_sqlite::Sqlite>(u, lowered, fingerprint, measured),
-        #[cfg(feature = "duckdb")]
-        Backend::DuckDb => install_session::<ivm_duckdb::DuckDb>(u, lowered, fingerprint, measured),
     }
 }
 
@@ -592,9 +586,6 @@ fn open_composed(
     let composed = ir::compose(&programs).map_err(|error| diagnostic(u, "engine", error))?;
     match backend {
         Backend::Dd => install_composed::<ivm_dd::Dd>(u, &composed, parts),
-        Backend::Sqlite => install_composed::<ivm_sqlite::Sqlite>(u, &composed, parts),
-        #[cfg(feature = "duckdb")]
-        Backend::DuckDb => install_composed::<ivm_duckdb::DuckDb>(u, &composed, parts),
     }
 }
 
@@ -1062,7 +1053,6 @@ fn relocate(lowered: &Lowered, map: &BTreeMap<ir::RelId, ir::RelId>, ir: ir::Pro
             })
             .collect(),
         literals: lowered.literals.clone(),
-        vec_parts: lowered.vec_parts,
     }
 }
 
@@ -1230,24 +1220,12 @@ fn snapshot_closure<E: Engine>(
     Ok(Closure { rows, diagnostics })
 }
 
-/// `DL8_ENGINE`: unset is `ir:dd`.
+/// `DL8_ENGINE`: unset is `ir:dd`, the one connected engine.
 pub fn configured_backend() -> Result<Backend, String> {
     match std::env::var("DL8_ENGINE").as_deref() {
         Err(std::env::VarError::NotPresent) | Ok("ir:dd") => Ok(Backend::Dd),
-        Ok("ir:sqlite") => Ok(Backend::Sqlite),
-        #[cfg(feature = "duckdb")]
-        Ok("ir:duckdb") => Ok(Backend::DuckDb),
-        #[cfg(not(feature = "duckdb"))]
-        Ok("ir:duckdb") => Err(
-            "DL8_ENGINE \"ir:duckdb\" needs the `duckdb` cargo feature; this dl8 build lacks it (rebuild with --features duckdb)"
-                .into(),
-        ),
-        Ok(other) => Err(format!(
-            "unknown DL8_ENGINE {other:?}; expected ir:dd, ir:sqlite, or ir:duckdb"
-        )),
-        Err(error) => Err(format!(
-            "DL8_ENGINE {error}; expected ir:dd, ir:sqlite, or ir:duckdb"
-        )),
+        Ok(other) => Err(format!("DL8_ENGINE {other:?} is not connected; the one engine is ir:dd")),
+        Err(error) => Err(format!("DL8_ENGINE {error}; the one engine is ir:dd")),
     }
 }
 
@@ -1365,7 +1343,33 @@ fn decode_terms<E: Engine>(
     }
     pending.retain(|(id, _, name, _)| !decoded.contains_key(id) && *name != "3:atom");
     // A term's arguments are interned before it, so one ascending pass decodes most terms.
+    // An argument no row names is a flat vec a rule built (`Op::Vec`): it decodes to the
+    // list of its items once they decode, a vec inside a vec one round later.
+    let mut not_vecs: HashSet<Cell> = HashSet::new();
     for _ in 0..pending.len().min(TERM_BUDGET) + 1 {
+        let rows: HashSet<Cell> = pending.iter().map(|(id, ..)| *id).collect();
+        let missing: BTreeSet<Cell> = pending
+            .iter()
+            .filter(|(_, _, functor, _)| functor.starts_with("9:"))
+            .flat_map(|(_, _, _, args)| args.iter().copied())
+            .filter(|arg| !decoded.contains_key(arg) && !rows.contains(arg) && !not_vecs.contains(arg))
+            .collect();
+        let mut vecs: Vec<Cell> = missing.into_iter().collect();
+        while let Some(cell) = vecs.pop() {
+            if decoded.contains_key(&cell) || not_vecs.contains(&cell) {
+                continue;
+            }
+            let Some(items) = engine.vec_items(cell)? else {
+                not_vecs.insert(cell);
+                continue;
+            };
+            match items.iter().map(|item| decoded.get(item).copied()).collect::<Option<Vec<_>>>() {
+                Some(terms) => {
+                    decoded.insert(cell, u.list(&terms));
+                }
+                None => vecs.extend(items.iter().filter(|item| !decoded.contains_key(item) && !rows.contains(item) && !not_vecs.contains(item))),
+            }
+        }
         let before = pending.len();
         pending.retain(|(id, _, functor, args)| {
             let term = match *functor {
@@ -1412,30 +1416,47 @@ fn install_terms<E: Engine>(
     dynamic: &BTreeMap<(String, usize, bool), ir::RelId>,
     roots: &[TermId],
 ) -> Result<(), ivm_engine::EngineError> {
-    let mut pending = BTreeSet::new();
-    let mut text_cells = HashMap::new();
-    let mut todo = roots.to_vec();
-    while let Some(term) = todo.pop() {
-        if mapped.contains_key(&term) || !pending.insert(term.0) {
+    // Children first, by dependency: a vec's flat term (`ir_lower::flat_vec`) is created here,
+    // so its id is above its parent's and id order is not an install order.
+    let vec_head = u.atom("vec");
+    let mut text_terms: Vec<(TermId, std::sync::Arc<str>)> = Vec::new();
+    let mut engine_args: HashMap<TermId, Vec<TermId>> = HashMap::new();
+    let mut lists: HashMap<TermId, TermId> = HashMap::new();
+    let mut seen: HashSet<TermId> = HashSet::new();
+    let mut order: Vec<TermId> = Vec::new();
+    let mut stack: Vec<(TermId, bool)> = roots.iter().map(|root| (*root, false)).collect();
+    while let Some((term, children_done)) = stack.pop() {
+        if children_done {
+            order.push(term);
             continue;
         }
-        if lowered.vec_parts {
-            todo.extend(super::kernel::vec_parts(u, term).unwrap_or_default());
+        if mapped.contains_key(&term) || !seen.insert(term) {
+            continue;
         }
-        match u.get(term) {
-            Term::Str(sym) => {
-                text_cells.insert(term, engine.intern_text(u.sym_str(*sym))?);
+        let args = match ir_lower::flat_vec(u, vec_head, term) {
+            Some(flat) => {
+                let list = u.args::<2>(term, "application").map(|[_, list]| list).unwrap();
+                lists.insert(flat, list);
+                engine_args.insert(term, vec![vec_head, flat]);
+                vec![vec_head, flat]
             }
-            Term::Compound(_, args) => todo.extend(args.iter().copied()),
-            _ => {}
-        }
+            None => match u.get(term) {
+                Term::Str(sym) => {
+                    text_terms.push((term, std::sync::Arc::from(u.sym_str(*sym))));
+                    Vec::new()
+                }
+                Term::Compound(_, args) => args.clone(),
+                _ => Vec::new(),
+            },
+        };
+        stack.push((term, true));
+        stack.extend(args.into_iter().map(|arg| (arg, false)));
     }
-    // A compound's args intern before it, so they hold lower ids: ascending `pending` puts every
-    // unmapped arg earlier in the batch and the whole install is one engine call.
+    let (text_ids, texts): (Vec<TermId>, Vec<std::sync::Arc<str>>) = text_terms.into_iter().unzip();
+    let text_cells: HashMap<TermId, Cell> = text_ids.into_iter().zip(engine.intern_texts(texts)?).collect();
     let mut batch_index: HashMap<TermId, usize> = HashMap::new();
-    let mut batch = Vec::with_capacity(pending.len());
-    let mut order = Vec::with_capacity(pending.len());
-    for term in pending.iter().copied().map(TermId) {
+    let mut batch = Vec::with_capacity(order.len());
+    for &term in &order {
         let value = u.get(term);
         let (shape, raw, args): ((String, usize, bool), Option<i64>, &[TermId]) = match value {
             Term::Int(n) => (("0:int".into(), 0, true), Some(*n), &[]),
@@ -1460,10 +1481,12 @@ fn install_terms<E: Engine>(
                     false,
                 ),
                 None,
-                args,
+                engine_args.get(&term).map_or(args.as_slice(), Vec::as_slice),
             ),
         };
-        let Some(&functor) = lowered.constructors.get(&shape).or_else(|| dynamic.get(&shape)) else {
+        let flat = shape.0 == format!("9:{}:{}", shape.1, ir_lower::FLAT_VEC);
+        let found = lowered.constructors.get(&shape).or_else(|| dynamic.get(&shape)).copied();
+        let Some(functor) = (if flat { Some(ivm_engine::VEC_FUNCTOR) } else { found }) else {
             return Err(ivm_engine::EngineError::new(
                 ivm_engine::Stage::Settle,
                 None,
@@ -1493,12 +1516,11 @@ fn install_terms<E: Engine>(
         };
         batch_index.insert(term, batch.len());
         batch.push((functor, row));
-        order.push(term);
     }
     let cells = engine.intern_term_batch(&batch)?;
     for (term, cell) in order.into_iter().zip(cells) {
         mapped.insert(term, cell);
-        decoded.cells.insert(cell, term);
+        decoded.cells.insert(cell, lists.get(&term).copied().unwrap_or(term));
     }
     Ok(())
 }
@@ -1635,16 +1657,34 @@ fn intern_lowered<E: Engine>(lowered: &Lowered, core: &mut Core<E>) -> Result<()
     let engine = &mut core.engine;
     let mapped = &mut core.mapped;
     let decoded = &mut core.decoded.cells;
-    let mut text_cells = Vec::with_capacity(lowered.texts.len());
-    for (_, value) in &lowered.texts {
-        text_cells.push(engine.intern_text(value)?);
+    let texts = lowered.texts.iter().map(|(_, value)| std::sync::Arc::from(value.as_str())).collect();
+    let text_cells = engine.intern_texts(texts)?;
+    // Children first by dependency, so every unmapped arg of a term is an earlier entry of the
+    // batch and the whole bootstrap is one engine call. Ascending `TermId` is not that order: a
+    // flat vec's spec (`ir_lower::flat_vec`) is created after the term that holds it.
+    let index_of: HashMap<TermId, usize> =
+        lowered.terms.iter().enumerate().map(|(at, spec)| (spec.original, at)).collect();
+    let mut done = vec![false; lowered.terms.len()];
+    let mut order = Vec::with_capacity(lowered.terms.len());
+    for start in 0..lowered.terms.len() {
+        let mut stack = vec![(start, false)];
+        while let Some((at, children_done)) = stack.pop() {
+            if children_done {
+                order.push(at);
+                continue;
+            }
+            if std::mem::replace(&mut done[at], true) {
+                continue;
+            }
+            stack.push((at, true));
+            let unvisited = lowered.terms[at].args.iter().filter_map(|arg| index_of.get(arg)).filter(|child| !done[**child]);
+            stack.extend(unvisited.map(|child| (*child, false)));
+        }
     }
-    // `lowered.terms` follows ascending `TermId`, children first, so every unmapped arg of a
-    // term is an earlier entry of the batch and a cons chain of any length is one engine call.
     let mut batch_index: HashMap<TermId, usize> = HashMap::new();
     let mut batch: Vec<(ir::RelId, Vec<ivm_engine::BatchArg>)> = Vec::new();
     let mut originals = Vec::new();
-    for spec in &lowered.terms {
+    for spec in order.into_iter().map(|at| &lowered.terms[at]) {
         if mapped.contains_key(&spec.original) || batch_index.contains_key(&spec.original) {
             continue;
         }
@@ -1671,13 +1711,13 @@ fn intern_lowered<E: Engine>(lowered: &Lowered, core: &mut Core<E>) -> Result<()
         };
         batch_index.insert(spec.original, batch.len());
         batch.push((spec.functor, row));
-        originals.push(spec.original);
+        originals.push((spec.original, spec.decodes_to));
     }
     let term_count = batch.len();
     let cells = engine.intern_term_batch(&batch)?;
-    for (original, cell) in originals.into_iter().zip(cells) {
+    for ((original, decodes_to), cell) in originals.into_iter().zip(cells) {
         mapped.insert(original, cell);
-        decoded.insert(cell, original);
+        decoded.insert(cell, decodes_to);
     }
     tracing::info!(
         target: "dl8::ir",
@@ -3015,9 +3055,6 @@ fn open_interp(
     }
     match backend {
         Backend::Dd => install::<ivm_dd::Dd>(bucket, measured),
-        Backend::Sqlite => install::<ivm_sqlite::Sqlite>(bucket, measured),
-        #[cfg(feature = "duckdb")]
-        Backend::DuckDb => install::<ivm_duckdb::DuckDb>(bucket, measured),
     }
     .map_err(|error| engine_diagnostic(u, error))
 }

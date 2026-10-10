@@ -89,7 +89,7 @@ fn build_reports_a_path_with_two_texts() {
     let built = build(
         &root().join("fixtures/build/1_conflict.dl7"),
         &directory,
-        "ir:sqlite",
+        "ir:dd",
         false,
     );
     assert_eq!(built.status.code(), Some(1));
@@ -148,67 +148,4 @@ fn tsi_registry_matches_hafley_scm() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
-/// The ir:sqlite work counts (`ivm_sqlite::work` events, summed per phase) of the registry
-/// build under one `DL8_MACROTIME` mode.
-fn registry_sqlite_work(mode: &str) -> String {
-    let directory = scratch(&format!("registry-work-{mode}"));
-    let built = Command::new(env!("CARGO_BIN_EXE_dl8"))
-        .current_dir(root())
-        .arg("build")
-        .arg(root().join("std/tsi_registry_emit.dl7"))
-        .arg("--out")
-        .arg(&directory)
-        .env("DL8_ENGINE", "ir:sqlite")
-        .env("DL8_MACROTIME", mode)
-        .env("DL8_RULES", "compile")
-        .env("DL8_ONE_ENGINE", "0")
-        .env("RUST_LOG", "ivm_sqlite::work=info")
-        .env("NO_COLOR", "1")
-        .output()
-        .unwrap();
-    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let mut phases: std::collections::BTreeMap<String, Vec<(String, u64)>> = Default::default();
-    for line in String::from_utf8_lossy(&built.stderr).lines() {
-        let Some((_, fields)) = line.split_once("ivm_sqlite::work: sqlite work ") else { continue };
-        let mut fields = fields.split(' ').filter_map(|field| field.split_once('='));
-        let phase = fields.next().unwrap().1.trim_matches('"').to_owned();
-        let sums = phases.entry(phase).or_default();
-        for (i, (name, value)) in fields.enumerate() {
-            if sums.len() <= i {
-                sums.push((name.to_owned(), 0));
-            }
-            sums[i].1 += value.parse::<u64>().unwrap();
-        }
-    }
-    let got = phases
-        .iter()
-        .map(|(phase, sums)| {
-            let fields = sums.iter().map(|(name, value)| format!("{name}={value}")).collect::<Vec<_>>();
-            format!("{phase}: {}", fields.join(" "))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    std::fs::remove_dir_all(directory).unwrap();
-    got
-}
 
-/// A change in the work SQLite does shows up here as a count change, per macrotime mode.
-#[test]
-fn tsi_registry_sqlite_work_counts() {
-    assert_eq!(
-        registry_sqlite_work("rust"),
-        concat!(
-            "between: creates=0 schema_rows_parsed=0 prepared=87 prepared_bytes=27471 unfolded_bytes=27471 executions=5806 zero_row_executions=2473 vm_steps=371263 fullscan_steps=10122 sorts=0 autoindexes=0 reprepares=15 rows_returned=27626 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=0 written_term=4498\n",
-            "install: creates=2426 schema_rows_parsed=54360 prepared=2801 prepared_bytes=830627 unfolded_bytes=830627 executions=3846 zero_row_executions=278 vm_steps=92156 fullscan_steps=90 sorts=238 autoindexes=0 reprepares=2 rows_returned=586 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=18 written_term=565\n",
-            "settle: creates=0 schema_rows_parsed=0 prepared=3130 prepared_bytes=1873081 unfolded_bytes=2011536 executions=47605 zero_row_executions=9094 vm_steps=15289166 fullscan_steps=388219 sorts=41192 autoindexes=29147 reprepares=0 rows_returned=31765 written_d=98150 written_i=44593 written_x=0 written_scratch=28445 written_source=5620 written_catalog=44 written_term=6368",
-        )
-    );
-    assert_eq!(
-        registry_sqlite_work("engine"),
-        concat!(
-            "between: creates=0 schema_rows_parsed=0 prepared=93 prepared_bytes=36993 unfolded_bytes=36993 executions=6922 zero_row_executions=3577 vm_steps=431475 fullscan_steps=10122 sorts=0 autoindexes=0 reprepares=15 rows_returned=28673 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=0 written_term=6464\n",
-            "install: creates=4899 schema_rows_parsed=112883 prepared=5355 prepared_bytes=1372235 unfolded_bytes=1372235 executions=6408 zero_row_executions=281 vm_steps=164314 fullscan_steps=92 sorts=340 autoindexes=0 reprepares=2 rows_returned=593 written_d=0 written_i=0 written_x=0 written_scratch=0 written_source=0 written_catalog=19 written_term=571\n",
-            "settle: creates=0 schema_rows_parsed=0 prepared=5833 prepared_bytes=3544926 unfolded_bytes=3752804 executions=52978 zero_row_executions=11996 vm_steps=17862553 fullscan_steps=502949 sorts=47452 autoindexes=29147 reprepares=0 rows_returned=35281 written_d=119976 written_i=59767 written_x=0 written_scratch=35834 written_source=6851 written_catalog=44 written_term=6368",
-        )
-    );
-}
