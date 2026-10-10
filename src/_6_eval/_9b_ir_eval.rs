@@ -1426,83 +1426,77 @@ fn install_terms<E: Engine>(
             _ => {}
         }
     }
-    for _ in 0..pending.len().min(TERM_BUDGET) + 1 {
-        if pending.is_empty() {
-            return Ok(());
-        }
-        let ready: Vec<_> = pending
-            .iter()
-            .copied()
-            .map(TermId)
-            .filter(|term| match u.get(*term) {
-                Term::Compound(_, args) => args.iter().all(|arg| mapped.contains_key(arg)),
-                _ => true,
-            })
-            .collect();
-        if ready.is_empty() {
-            break;
-        }
-        let mut terms = Vec::with_capacity(ready.len());
-        for term in &ready {
-            let value = u.get(*term);
-            let (shape, raw, args): ((String, usize, bool), Option<i64>, &[TermId]) = match value {
-                Term::Int(n) => (("0:int".into(), 0, true), Some(*n), &[]),
-                Term::Float(f) => (("0:float".into(), 0, true), Some(f.0.to_bits() as i64), &[]),
-                Term::Str(_) => (("2:str".into(), 1, false), None, &[]),
-                Term::Bool(v) => (("1:bool".into(), 0, true), Some(i64::from(*v)), &[]),
-                Term::Atom(_) => (
-                    ("3:atom".into(), 0, true),
-                    Some(
-                        lowered
-                            .atom_raws
-                            .get(term)
-                            .copied()
-                            .unwrap_or(lowered.dynamic_atom_base + i64::from(term.0)),
-                    ),
-                    &[],
+    // A compound's args intern before it, so they hold lower ids: ascending `pending` puts every
+    // unmapped arg earlier in the batch and the whole install is one engine call.
+    let mut batch_index: HashMap<TermId, usize> = HashMap::new();
+    let mut batch = Vec::with_capacity(pending.len());
+    let mut order = Vec::with_capacity(pending.len());
+    for term in pending.iter().copied().map(TermId) {
+        let value = u.get(term);
+        let (shape, raw, args): ((String, usize, bool), Option<i64>, &[TermId]) = match value {
+            Term::Int(n) => (("0:int".into(), 0, true), Some(*n), &[]),
+            Term::Float(f) => (("0:float".into(), 0, true), Some(f.0.to_bits() as i64), &[]),
+            Term::Str(_) => (("2:str".into(), 1, false), None, &[]),
+            Term::Bool(v) => (("1:bool".into(), 0, true), Some(i64::from(*v)), &[]),
+            Term::Atom(_) => (
+                ("3:atom".into(), 0, true),
+                Some(
+                    lowered
+                        .atom_raws
+                        .get(&term)
+                        .copied()
+                        .unwrap_or(lowered.dynamic_atom_base + i64::from(term.0)),
                 ),
-                Term::Compound(sym, args) => (
-                    (
-                        format!("9:{}:{}", args.len(), u.sym_str(*sym)),
-                        args.len(),
-                        false,
-                    ),
-                    None,
-                    args,
+                &[],
+            ),
+            Term::Compound(sym, args) => (
+                (
+                    format!("9:{}:{}", args.len(), u.sym_str(*sym)),
+                    args.len(),
+                    false,
                 ),
-            };
-            let Some(&functor) = lowered.constructors.get(&shape).or_else(|| dynamic.get(&shape)) else {
-                return Err(ivm_engine::EngineError::new(
-                    ivm_engine::Stage::Settle,
-                    None,
-                    ivm_engine::ErrorKind::Unsupported("dynamic term constructor"),
-                ));
-            };
-            let row = if let Some(raw) = raw {
-                vec![raw]
-            } else if let Some(&cell) = text_cells.get(term) {
-                vec![cell]
-            } else {
-                args.iter().map(|arg| mapped[arg]).collect()
-            };
-            terms.push((functor, row));
-        }
-        let cells = engine.intern_terms(&terms)?;
-        for (term, cell) in ready.into_iter().zip(cells) {
-            mapped.insert(term, cell);
-            decoded.cells.insert(cell, term);
-            pending.remove(&term.0);
-        }
+                None,
+                args,
+            ),
+        };
+        let Some(&functor) = lowered.constructors.get(&shape).or_else(|| dynamic.get(&shape)) else {
+            return Err(ivm_engine::EngineError::new(
+                ivm_engine::Stage::Settle,
+                None,
+                ivm_engine::ErrorKind::Unsupported("dynamic term constructor"),
+            ));
+        };
+        let row = if let Some(raw) = raw {
+            vec![ivm_engine::BatchArg::Cell(raw)]
+        } else if let Some(&cell) = text_cells.get(&term) {
+            vec![ivm_engine::BatchArg::Cell(cell)]
+        } else {
+            let mut row = Vec::with_capacity(args.len());
+            for arg in args {
+                match (mapped.get(arg), batch_index.get(arg)) {
+                    (Some(&cell), _) => row.push(ivm_engine::BatchArg::Cell(cell)),
+                    (None, Some(&earlier)) => row.push(ivm_engine::BatchArg::Earlier(earlier)),
+                    (None, None) => {
+                        return Err(ivm_engine::EngineError::new(
+                            ivm_engine::Stage::Settle,
+                            None,
+                            ivm_engine::ErrorKind::Unsupported("dynamic term install: an argument follows its term"),
+                        ))
+                    }
+                }
+            }
+            row
+        };
+        batch_index.insert(term, batch.len());
+        batch.push((functor, row));
+        order.push(term);
     }
-    if pending.is_empty() {
-        Ok(())
-    } else {
-        Err(ivm_engine::EngineError::new(
-            ivm_engine::Stage::Settle,
-            None,
-            ivm_engine::ErrorKind::Unsupported("dynamic term install budget or cycle"),
-        ))
+    let cells = engine.intern_term_batch(&batch)?;
+    for (term, cell) in order.into_iter().zip(cells) {
+        mapped.insert(term, cell);
+        decoded.cells.insert(cell, term);
     }
+    Ok(())
 }
 
 /// Intern every term the lowered program names and list its whole seed
@@ -1641,72 +1635,50 @@ fn intern_lowered<E: Engine>(lowered: &Lowered, core: &mut Core<E>) -> Result<()
     for (_, value) in &lowered.texts {
         text_cells.push(engine.intern_text(value)?);
     }
-    // A term is ready once its args are mapped. Its level is one past its deepest unmapped
-    // arg's, read in one pass because `lowered.terms` follows ascending `TermId`, children
-    // first. Level k is exactly the set the k-th ready-scan would find, in index order.
-    let mut level_of: HashMap<TermId, usize> = HashMap::new();
-    let mut levels: Vec<Vec<usize>> = Vec::new();
-    let mut unordered = Vec::new();
-    for (index, spec) in lowered.terms.iter().enumerate() {
-        if mapped.contains_key(&spec.original) {
+    // `lowered.terms` follows ascending `TermId`, children first, so every unmapped arg of a
+    // term is an earlier entry of the batch and a cons chain of any length is one engine call.
+    let mut batch_index: HashMap<TermId, usize> = HashMap::new();
+    let mut batch: Vec<(ir::RelId, Vec<ivm_engine::BatchArg>)> = Vec::new();
+    let mut originals = Vec::new();
+    for spec in &lowered.terms {
+        if mapped.contains_key(&spec.original) || batch_index.contains_key(&spec.original) {
             continue;
         }
-        let mut level = 0;
-        for arg in &spec.args {
-            match (mapped.contains_key(arg), level_of.get(arg)) {
-                (true, _) => {}
-                (false, Some(&below)) => level = level.max(below + 1),
-                (false, None) => {
-                    unordered.push(index);
-                    level = usize::MAX;
-                    break;
+        let row = if let Some(raw) = spec.raw {
+            vec![ivm_engine::BatchArg::Cell(raw)]
+        } else if let Some(text) = spec.text {
+            vec![ivm_engine::BatchArg::Cell(text_cells[text])]
+        } else {
+            let mut row = Vec::with_capacity(spec.args.len());
+            for arg in &spec.args {
+                match (mapped.get(arg), batch_index.get(arg)) {
+                    (Some(&cell), _) => row.push(ivm_engine::BatchArg::Cell(cell)),
+                    (None, Some(&earlier)) => row.push(ivm_engine::BatchArg::Earlier(earlier)),
+                    (None, None) => {
+                        return Err(ivm_engine::EngineError::new(
+                            ivm_engine::Stage::Settle,
+                            None,
+                            ivm_engine::ErrorKind::Unsupported("term bootstrap: an argument follows its term"),
+                        ))
+                    }
                 }
             }
-        }
-        if level == usize::MAX {
-            continue;
-        }
-        level_of.insert(spec.original, level);
-        if levels.len() <= level {
-            levels.resize_with(level + 1, Vec::new);
-        }
-        levels[level].push(index);
+            row
+        };
+        batch_index.insert(spec.original, batch.len());
+        batch.push((spec.functor, row));
+        originals.push(spec.original);
     }
-    if !unordered.is_empty() || levels.len() > TERM_BUDGET + 1 {
-        return Err(ivm_engine::EngineError::new(
-            ivm_engine::Stage::Settle,
-            None,
-            ivm_engine::ErrorKind::Unsupported("term bootstrap budget or cycle"),
-        ));
-    }
-    let level_count = levels.len();
-    let term_count: usize = levels.iter().map(Vec::len).sum();
-    for ready in levels {
-        let terms: Vec<_> = ready
-            .iter()
-            .map(|&index| {
-                let spec = &lowered.terms[index];
-                let row = if let Some(raw) = spec.raw {
-                    vec![raw]
-                } else if let Some(text) = spec.text {
-                    vec![text_cells[text]]
-                } else {
-                    spec.args.iter().map(|id| mapped[id]).collect()
-                };
-                (spec.functor, row)
-            })
-            .collect();
-        let cells = engine.intern_terms(&terms)?;
-        for (index, cell) in ready.into_iter().zip(cells) {
-            mapped.insert(lowered.terms[index].original, cell);
-            decoded.insert(cell, lowered.terms[index].original);
-        }
+    let term_count = batch.len();
+    let cells = engine.intern_term_batch(&batch)?;
+    for (original, cell) in originals.into_iter().zip(cells) {
+        mapped.insert(original, cell);
+        decoded.insert(cell, original);
     }
     tracing::info!(
         target: "dl8::ir",
         terms = term_count,
         texts = lowered.texts.len(),
-        levels = level_count,
         ms = started.elapsed().as_millis() as u64,
         "ir bootstrap"
     );

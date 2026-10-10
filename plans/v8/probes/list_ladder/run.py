@@ -4,7 +4,7 @@ import json, os, re, resource, subprocess, sys, tempfile, time
 
 binary = sys.argv[1]
 sizes = [int(n) for n in (sys.argv[2:] or ["1", "16", "128", "1024", "4096"])]
-print("n\tread_ms\tmacro_ms\tmacro_rows_sent\tlower_ms\tcheck_ms\tcomptime_ms\tboot_levels_max\tboot_terms\twall_ms\tmax_rss_mb\tdiagnostics")
+print("n\tread_ms\tmacro_ms\tmacro_rows_sent\tlower_ms\tcheck_ms\tcomptime_ms\tboot_calls_max\tboot_terms\twall_ms\tmax_rss_mb\tdiagnostics")
 for n in sizes:
     items = " ".join(f"\"f{i}\"" for i in range(n))
     source = (
@@ -20,13 +20,14 @@ for n in sizes:
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     wall = (time.time() - started) * 1000
     err = err.decode()
-    boots = re.findall(r"ir bootstrap terms=(\d+) texts=\d+ levels=(\d+) ms=(\d+)", err)
-    levels = max((int(b[1]) for b in boots), default=0)
+    boots = re.findall(r"ir bootstrap terms=(\d+) texts=\d+ (?:levels=(\d+) )?ms=(\d+)", err)
+    levels = max((int(b[1] or 1) for b in boots), default=0)
     terms = sum(int(b[0]) for b in boots)
     boot_ms = sum(int(b[2]) for b in boots)
     phase = lambda name: sum(int(m) for m in re.findall(rf'name="{name}" ms=(\d+)', err))
     try:
-        diagnostics = len(json.loads(out)["diagnostics"])
+        found = json.loads(out)["diagnostics"]
+        diagnostics = len(found) if not found else json.dumps(found)[:160]
     except Exception:
         diagnostics = "no-json"
     sent = sum(int(m) for m in re.findall(r"macrotime wave wave=\d+ sent=(\d+)", err))
