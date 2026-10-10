@@ -157,6 +157,18 @@ pub fn macro_cone(u: &mut Universe, macro_program: &MacroProgram) -> Option<(Pro
 }
 
 impl MacroSession {
+    /// Every `TermId` the session's engine, program and protocol rows name.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        self.ir.for_each_term(f);
+        if let Some(program) = &self.program {
+            program.for_each_term(f);
+        }
+        self.declared.for_each_term(f);
+        self.base.iter().for_each(|signed| signed.row.for_each_term(f));
+        self.resident.iter().for_each(|row| row.for_each_term(f));
+        self.net.keys().for_each(|row| row.for_each_term(f));
+    }
+
     /// A session on `ir`: one-engine mode hands it the process engine's pool.
     pub fn with_ir(ir: IrSession) -> Self {
         Self { ir, ..Self::configured() }

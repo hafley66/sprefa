@@ -244,6 +244,8 @@ type RunResult =
 trait Session {
     /// The session's IR equals `lowered`'s.
     fn matches(&self, lowered: &Lowered) -> bool;
+    /// Every `TermId` the session and its engine core can decode to or read.
+    fn for_each_term(&self, f: &mut dyn FnMut(TermId));
     #[allow(clippy::too_many_arguments)]
     fn run(
         &mut self,
@@ -282,6 +284,32 @@ trait Session {
 impl<E: Engine> Session for EngineSession<E> {
     fn matches(&self, lowered: &Lowered) -> bool {
         self.structure == lowered.ir
+    }
+
+    fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        {
+            let core = self.core.lock().expect("core poisoned");
+            core.mapped.keys().copied().for_each(&mut *f);
+            core.decoded.cells.values().copied().for_each(&mut *f);
+        }
+        self.known.iter().copied().for_each(&mut *f);
+        for (_, terms) in self.kept.rows.values() {
+            terms.iter().flatten().copied().for_each(&mut *f);
+        }
+        let answered = |answered: &HashMap<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>, f: &mut dyn FnMut(TermId)| {
+            for ((relation, request), rows) in answered {
+                f(*relation);
+                f(*request);
+                rows.iter().for_each(|(_, _, row)| row.for_each_term(f));
+            }
+        };
+        answered(&self.answered, f);
+        if let Some(marked) = &self.marked {
+            marked.mapped.keys().copied().for_each(&mut *f);
+            marked.known.iter().copied().for_each(&mut *f);
+            marked.decoded.cells.values().copied().for_each(&mut *f);
+            answered(&marked.answered, f);
+        }
     }
 
     fn run(
@@ -467,6 +495,16 @@ pub struct Pending {
     pub inputs: (Program, ir_lower::Declared),
 }
 
+impl Part {
+    /// Every `TermId` the part's session, lowering and inputs name.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        self.session.lock().expect("session poisoned").for_each_term(f);
+        self.lowered.for_each_term(f);
+        self.inputs.0.for_each_term(f);
+        self.inputs.1.for_each_term(f);
+    }
+}
+
 impl Pending {
     /// `program` lowered with `declared` (`ir_lower::lower_declared`) as the pool part `name`.
     pub fn lower(
@@ -498,6 +536,18 @@ fn same_inputs(inputs: &(Program, ir_lower::Declared), program: &Program, declar
 pub struct Pool {
     pub pending: Vec<Pending>,
     pub parts: Vec<Part>,
+}
+
+impl Pool {
+    /// Every `TermId` the pending programs and the installed parts name.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        for pending in &self.pending {
+            pending.lowered.for_each_term(f);
+            pending.inputs.0.for_each_term(f);
+            pending.inputs.1.for_each_term(f);
+        }
+        self.parts.iter().for_each(|part| part.for_each_term(f));
+    }
 }
 
 pub type SharedPool = Arc<Mutex<Pool>>;
@@ -565,6 +615,20 @@ pub struct IrSession {
 }
 
 impl IrSession {
+    /// Every `TermId` the session's own install, prepared IR and interpreter name. The pool and
+    /// stdlib it attaches to are walked by their owner.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        if let Some(session) = &self.session {
+            session.lock().expect("session poisoned").for_each_term(f);
+        }
+        if let Some(prepared) = &self.prepared {
+            prepared.for_each_term(f);
+        }
+        if let Some(interp) = &self.interp {
+            interp.for_each_term(f);
+        }
+    }
+
     pub fn new(backend: Backend) -> Self {
         Self {
             backend: Ok(backend),
@@ -2920,6 +2984,8 @@ struct InterpEngine<E: Engine> {
 
 trait InterpRun {
     fn bucket(&self) -> u32;
+    /// Every cell the interpreter holds, read as a `TermId`: a superset of its terms.
+    fn for_each_term(&self, f: &mut dyn FnMut(TermId));
     /// Settles the source rows of `plan` and `seeds` in place of the rows installed before.
     fn settle_rows(
         &mut self,
@@ -2983,6 +3049,16 @@ fn open_interp(
 impl<E: Engine> InterpRun for InterpEngine<E> {
     fn bucket(&self) -> u32 {
         self.shape.bucket
+    }
+
+    fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        let mut cell = |cell: Cell| {
+            if let Ok(id) = u32::try_from(cell) {
+                f(TermId(id));
+            }
+        };
+        self.installed.iter().flat_map(|(_, cells)| cells).for_each(|c| cell(*c));
+        self.interner.for_each_cell(&mut cell);
     }
 
     fn settle_rows(

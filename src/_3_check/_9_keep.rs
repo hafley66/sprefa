@@ -96,6 +96,85 @@ impl CheckKeep {
 
     /// Ends one compile: drops every entry this compile did not read or write,
     /// and every rule candidate pointing into a dropped entry.
+    /// Every `TermId` the kept entries and the rule index name.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        let mut ids = |ids: &[TermId]| ids.iter().copied().for_each(&mut *f);
+        for (key, unit, _) in self.entries.borrow().iter() {
+            for list in [&key.nodes, &key.edges, &key.relations, &key.seeds, &key.rules, &key.origins] {
+                ids(list);
+            }
+            let checked = &unit.checked;
+            for list in [
+                &checked.nodes,
+                &checked.edges,
+                &checked.relations,
+                &checked.seeds,
+                &checked.rules,
+                &checked.depends,
+                &checked.strata,
+                &checked.calls,
+            ] {
+                ids(list);
+            }
+            let resolved = &unit.resolved;
+            for list in [
+                &resolved.relations,
+                &resolved.resolved_seeds,
+                &resolved.seed_mints,
+                &resolved.resolved_rules,
+                &resolved.colon_edges,
+                &resolved.edge_mints,
+                &resolved.diagnostics,
+                &resolved.nodes,
+                &resolved.edge_rows,
+                &resolved.relation_rows,
+                &resolved.seed_rows,
+                &resolved.rule_rows,
+            ] {
+                ids(list);
+            }
+            ids(&resolved.built.iter().copied().collect::<Vec<_>>());
+            for notes in &resolved.rule_reads {
+                for note in notes {
+                    match note {
+                        Note::Owner(id) | Note::Arity(id, _) => ids(&[*id]),
+                    }
+                }
+            }
+            let graph = &resolved.graph;
+            for edge in &graph.edges {
+                ids(&[edge.row, edge.owner, edge.name, edge.target]);
+            }
+            for ((a, b), _) in &graph.forward {
+                ids(&[*a, *b]);
+            }
+            for (child, parent) in &graph.parent {
+                ids(&[*child, *parent]);
+            }
+            for set in [
+                graph.by_owner.keys().copied().collect::<Vec<_>>(),
+                graph.modules.iter().copied().collect(),
+                graph.owner_edge_count.keys().copied().collect(),
+                graph.owner_return_indices.keys().copied().collect(),
+                graph.owner_slots.keys().copied().collect(),
+            ] {
+                ids(&set);
+            }
+            let origins = &resolved.origins;
+            for ((a, b, _), id) in &origins.edge {
+                ids(&[*a, *b, *id]);
+            }
+            for id in origins.seed.values().chain(origins.rule.values()).chain(origins.goal.values()) {
+                ids(&[*id]);
+            }
+            ids(&[origins.none]);
+            ids(&unit.origin_rows);
+        }
+        for row in self.by_rule.borrow().keys() {
+            ids(&[*row]);
+        }
+    }
+
     pub fn sweep(&self) {
         let generation = self.generation.get();
         let mut entries = self.entries.borrow_mut();

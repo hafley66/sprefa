@@ -76,6 +76,16 @@ pub struct Stdlib {
 }
 
 impl Stdlib {
+    /// Every `TermId` the stdlib rules, relation keys, session and resident rows name.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        self.rules.iter().for_each(|rule| rule.for_each_term(f));
+        for (relation, _) in self.keys.iter().chain(&self.reads).chain(&self.demanded) {
+            f(TermId(*relation));
+        }
+        self.session.for_each_term(f);
+        self.resident.iter().for_each(|row| row.for_each_term(f));
+    }
+
     /// `rules` with the seeds of their relation keys: the program the stdlib part installs.
     pub fn program(u: &mut Universe, rules: Vec<Rule>, seeds: &[Row]) -> Program {
         let keys = Self::keys_of(u, &rules);

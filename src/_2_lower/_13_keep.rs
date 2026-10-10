@@ -124,6 +124,20 @@ impl LowerKeep {
         }
     }
 
+    /// Every `TermId` the kept entries name.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        for entry in self.entries.borrow().iter() {
+            f(entry.key.unit);
+            f(entry.key.environment);
+            entry.key.imports.iter().copied().for_each(&mut *f);
+            let lowered = &entry.lowered;
+            f(lowered.basement);
+            f(lowered.origins);
+            lowered.exports.into_iter().for_each(&mut *f);
+            lowered.diagnostics.iter().copied().for_each(&mut *f);
+        }
+    }
+
     /// Ends one compile: drops every entry this compile did not read or write.
     pub fn sweep(&self) {
         let generation = self.generation.get();

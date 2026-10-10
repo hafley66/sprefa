@@ -32,14 +32,56 @@ pub struct OneEngine {
     /// The A1 lower and check keeps, one per process engine.
     pub lower: crate::_2_lower::keep::LowerKeep,
     pub check: crate::_3_check::keep::CheckKeep,
+    /// `DL8_TERM_SWEEP=1`: every compile after the first sweeps the universe first.
+    pub term_sweep: bool,
+    /// The universe length after the first compile on this engine; the sweep before every later
+    /// compile keeps every term below it.
+    pub pinned: Option<u32>,
 }
 
 impl OneEngine {
     pub fn new() -> Self {
         Self {
             pool: Arc::new(Mutex::new(Pool::default())),
+            term_sweep: std::env::var_os("DL8_TERM_SWEEP").is_some_and(|value| value == "1"),
             ..Self::default()
         }
+    }
+
+    /// Every `TermId` the engine holds between compiles: the pool, the macro program and
+    /// session, the stdlib and the keeps.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        self.pool.lock().expect("pool poisoned").for_each_term(f);
+        if let Some(program) = &self.macro_program {
+            program.for_each_term(f);
+        }
+        if let Some(session) = &self.macro_session {
+            session.for_each_term(f);
+        }
+        if let Some(stdlib) = &self.stdlib {
+            stdlib.lock().expect("stdlib poisoned").for_each_term(f);
+        }
+        self.lower.for_each_term(f);
+        self.check.for_each_term(f);
+    }
+
+    /// `term_sweep`, before a compile: frees every term above the first compile's universe that
+    /// the engine no longer holds, and returns how many. A `TermId` the caller kept from an
+    /// earlier compile on this engine may be freed by it.
+    pub fn sweep_terms(&mut self, u: &mut Universe) -> usize {
+        let (true, Some(pinned)) = (self.term_sweep, self.pinned) else {
+            return 0;
+        };
+        let mut roots = Vec::new();
+        self.for_each_term(&mut |id| roots.push(id));
+        let freed = u.sweep(pinned, roots);
+        tracing::info!(target: "dl8::one", freed, slots = u.len(), "term sweep");
+        freed
+    }
+
+    /// After a compile: the first compile's universe length pins every term below it.
+    pub fn pin_terms(&mut self, u: &Universe) {
+        self.pinned.get_or_insert(u.len() as u32);
     }
 
     /// The comptime round loops of a program compiled with this engine attach here.

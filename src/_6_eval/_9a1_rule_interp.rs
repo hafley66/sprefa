@@ -814,6 +814,19 @@ pub struct Interner {
     rule_ids: HashMap<String, Cell>,
 }
 
+impl Interner {
+    /// Every key and value cell the interner holds.
+    pub fn for_each_cell(&self, f: &mut dyn FnMut(Cell)) {
+        for ((head, tail), cell) in &self.conses {
+            [*head, *tail, *cell].into_iter().for_each(&mut *f);
+        }
+        for (item, cell) in &self.items {
+            item.iter().copied().chain([*cell]).for_each(&mut *f);
+        }
+        self.rule_ids.values().copied().for_each(&mut *f);
+    }
+}
+
 impl Default for Interner {
     fn default() -> Self {
         Self {

@@ -19,6 +19,14 @@ pub struct MacroProgram {
     pub program: Program,
 }
 
+impl MacroProgram {
+    /// Every `TermId` the macro program names.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        self.edges.iter().chain(&self.relations).copied().for_each(&mut *f);
+        self.program.for_each_term(f);
+    }
+}
+
 pub struct Protocol {
     pub frontier: TermId,
     pub form: TermId,

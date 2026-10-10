@@ -539,6 +539,37 @@ pub struct Lowered {
     pub literals: Vec<TermId>,
 }
 
+impl Lowered {
+    /// Every `TermId` the lowering names: the terms its rows and the IR mint
+    /// rows decode against.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        self.texts.iter().for_each(|(id, _)| f(*id));
+        for spec in &self.terms {
+            f(spec.original);
+            spec.args.iter().copied().for_each(&mut *f);
+        }
+        for (_, row) in &self.seeds {
+            row.for_each_term(f);
+        }
+        self.visible.iter().for_each(|(_, id, _)| f(*id));
+        for (_, ids) in &self.internal_seeds {
+            ids.iter().copied().for_each(&mut *f);
+        }
+        for spec in &self.served {
+            f(spec.relation);
+        }
+        self.atom_raws.keys().copied().for_each(&mut *f);
+        if let Some(program) = &self.fold_program {
+            program.for_each_term(f);
+        }
+        self.literals.iter().copied().for_each(&mut *f);
+        self.sources.keys().for_each(|(rel, _)| f(TermId(*rel)));
+        for spec in &self.declared_folds {
+            spec.fold.for_each_term(f);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct DeclaredFoldSpec {
     pub ranked: ir::RelId,
@@ -2797,6 +2828,13 @@ pub struct Declared {
     /// served relation gives no seed source to a relation a rule heads and no seed names. Unsealed,
     /// every relation keeps one: runtime frontiers and `IrSession::apply` may send rows to any.
     pub sealed: bool,
+}
+
+impl Declared {
+    /// Every `TermId` the declaration names.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        self.sources.iter().for_each(|(id, _)| f(*id));
+    }
 }
 
 /// One LetRec for every wave relation, one round per wave, `limit` the wave limit. Its

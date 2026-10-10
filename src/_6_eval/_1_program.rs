@@ -70,6 +70,15 @@ pub enum Seed {
     Term(TermId),
 }
 
+impl Seed {
+    /// Every `TermId` the seed names.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        if let Seed::Term(id) = self {
+            f(*id);
+        }
+    }
+}
+
 /// `step` is called as `(Step Acc Value Next)` and must yield exactly one
 /// `Next` per value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -79,12 +88,35 @@ pub struct Fold {
     pub order: Order,
 }
 
+impl Fold {
+    /// Every `TermId` the fold names.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        f(self.step);
+        self.seed.for_each_term(f);
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Arg {
     Var(VarId),
     Ground(TermId),
     Aggregate(AggregateKind, Box<Arg>),
     Fold(Fold, Box<Arg>),
+}
+
+impl Arg {
+    /// Every `TermId` the argument names, through aggregates and folds.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        match self {
+            Arg::Var(_) => {}
+            Arg::Ground(id) => f(*id),
+            Arg::Aggregate(_, subject) => subject.for_each_term(f),
+            Arg::Fold(fold, subject) => {
+                fold.for_each_term(f);
+                subject.for_each_term(f);
+            }
+        }
+    }
 }
 
 impl Arg {
@@ -123,6 +155,16 @@ pub struct Goal {
     pub args: Vec<Arg>,
 }
 
+impl Goal {
+    /// Every `TermId` the goal names.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        f(self.rel);
+        for arg in &self.args {
+            arg.for_each_term(f);
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Rule {
     pub rel: TermId,
@@ -130,6 +172,20 @@ pub struct Rule {
     pub body: Vec<Goal>,
     /// Variable identities in first-occurrence order; `VarId(i)` indexes here.
     pub vars: Vec<TermId>,
+}
+
+impl Rule {
+    /// Every `TermId` the rule names.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        f(self.rel);
+        self.vars.iter().copied().for_each(&mut *f);
+        for arg in &self.head {
+            arg.for_each_term(f);
+        }
+        for goal in &self.body {
+            goal.for_each_term(f);
+        }
+    }
 }
 
 impl Rule {
@@ -187,6 +243,14 @@ pub struct Row {
     pub args: Vec<TermId>,
 }
 
+impl Row {
+    /// Every `TermId` the row names.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        f(self.rel);
+        self.args.iter().copied().for_each(&mut *f);
+    }
+}
+
 /// `diagnostic(Phase, none, Payload)`; the payload is a term.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Diagnostic {
@@ -200,4 +264,17 @@ pub struct Program {
     pub seeds: Vec<Row>,
     /// Relation refs the outside settles; a miss on one writes an `effect` row.
     pub served: HashSet<TermId>,
+}
+
+impl Program {
+    /// Every `TermId` the program names.
+    pub fn for_each_term(&self, f: &mut dyn FnMut(TermId)) {
+        self.served.iter().copied().for_each(&mut *f);
+        for row in &self.seeds {
+            row.for_each_term(f);
+        }
+        for rule in &self.rules {
+            rule.for_each_term(f);
+        }
+    }
 }
