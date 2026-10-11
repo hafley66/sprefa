@@ -1,0 +1,2 @@
+(seed: (* (value: int)))
+(seed "a")

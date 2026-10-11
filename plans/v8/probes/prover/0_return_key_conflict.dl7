@@ -1,0 +1,3 @@
+(size: (* (run: str) (return: int)))
+(size "r" 1)
+(size "r" 2)

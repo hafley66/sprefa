@@ -1,0 +1,4 @@
+(pair: (* (left: str) (right: str)))
+(pair "a" "b")
+(out: (* (value: str)))
+(<- (out ?Value) (pair ?Left ?Right))

@@ -1,0 +1,4 @@
+(seed: (* (value: int)))
+(seed 1)
+(out: (* (value: int)))
+(<- (out ?Value) (seed ?Value) (int.lt "a" ?Value))

@@ -1,0 +1,4 @@
+(seed: (* (value: str)))
+(seed "a")
+(out: (* (value: str)))
+(<- (out ?Value) (not (seed ?Value)))

@@ -1,0 +1,6 @@
+(seed: (* (value: str)))
+(seed "a")
+(walk: (* (value: str)))
+(stop: (* (value: str)))
+(<- (walk ?Value) (seed ?Value) (not (stop ?Value)))
+(<- (stop ?Value) (seed ?Value) (not (walk ?Value)))

@@ -1,0 +1,2 @@
+(pair: (* (left: str) (right: str)))
+(pair "a")
