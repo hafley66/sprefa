@@ -3,6 +3,7 @@
 
 use super::api::{atom_text, diagnostic, parts, sorted, wire_id, Loaded};
 use crate::_6_eval::term::{TermId, Universe};
+use crate::_9_runtime::executors::ryi_schema::RECORDS;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -61,11 +62,6 @@ pub const GRAPH_RELATIONS: [&str; 11] = [
     "tsi.origin",
 ];
 
-/// ryi's record names, frozen from its schema by
-/// `_8_contracts::ryi_records_match_the_schema`; the first line is the stamp.
-pub const RYI_RECORDS: &str = include_str!("ryi_records.txt");
-
-/// The records `decode_record` reads. A malformed one is a diagnostic.
 pub const DECODED_RECORDS: [&str; 6] = [
     "protocol",
     "run",
@@ -77,7 +73,7 @@ pub const DECODED_RECORDS: [&str; 6] = [
 
 /// A ryi record this loader does not read: skipped without a diagnostic.
 pub fn foreign_record(record: &str) -> bool {
-    !DECODED_RECORDS.contains(&record) && RYI_RECORDS.lines().skip(1).any(|line| line == record)
+    !DECODED_RECORDS.contains(&record) && RECORDS.iter().any(|(name, _)| *name == record)
 }
 
 pub fn tsi_relation_arity(name: &str) -> Option<i64> {

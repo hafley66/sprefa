@@ -18,7 +18,7 @@ pub const RELATION: &str = "extract";
 pub const ERROR: &str = "extract_error";
 
 /// The 10-second law: a slower run is killed and answered as an error row.
-const RUN_BUDGET: Duration = Duration::from_secs(10);
+pub(super) const RUN_BUDGET: Duration = Duration::from_secs(10);
 
 /// The `ryi` flags a run passes; `ryi help flags` must list each one.
 pub const FLAGS: [&str; 2] = ["--resolve", "--arms"];
@@ -94,7 +94,7 @@ impl Extract {
 }
 
 /// The resolve arms one family asks of `ryi`.
-fn arms(family: &str) -> Result<&'static str, String> {
+pub(super) fn arms(family: &str) -> Result<&'static str, String> {
     match family {
         "type" => Ok("type"),
         "call" => Ok("call"),
@@ -106,7 +106,7 @@ fn arms(family: &str) -> Result<&'static str, String> {
 /// One `ryi` run in `root`. Every stdout line carrying a `record` field is a
 /// record; a non-zero exit is a failure carrying stderr's tail. The read
 /// loop is a drain bounded by the child's stdout.
-async fn run(
+pub(super) async fn run(
     binary: PathBuf,
     root: &str,
     arms: &str,
@@ -172,7 +172,7 @@ pub fn extract_bin() -> Result<PathBuf, String> {
 
 /// Files under `root`, relative to it: git's tracked set when `root` sits in a
 /// checkout, else every regular file.
-fn files_under(root: &Path) -> Result<Vec<String>, String> {
+pub(super) fn files_under(root: &Path) -> Result<Vec<String>, String> {
     let root = std::fs::canonicalize(root).map_err(message)?;
     if let Ok(repository) = soopy::discover(&root) {
         let top = std::fs::canonicalize(&repository.root).map_err(message)?;

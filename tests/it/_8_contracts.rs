@@ -430,53 +430,142 @@ fn every_loop_and_recursion_in_src_carries_its_budget() {
     );
 }
 
-// ryi's record names, frozen in `src/_4_comptime/_0_load/ryi_records.txt`,
-// match its schema. `DL8_REFREEZE=1` rewrites the frozen copy and its stamp.
+// `std/ryi.dl7` and `ryi_schema.rs` are rendered from ryi's schema; past
+// their stamp lines they match it. `DL8_REFREEZE=1` rewrites both.
 #[test]
-fn ryi_records_match_the_schema() {
+fn std_ryi_matches_the_schema() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let schema = root.join("hafley-rs/crates/sprefa-extract/schema/generated/5_facts.json");
-    let Ok(text) = fs::read_to_string(&schema) else {
-        println!("SKIP: no {}", schema.display());
+    let schema_path = "crates/sprefa-extract/schema/generated/5_facts.json";
+    let Ok(text) = fs::read_to_string(root.join("hafley-rs").join(schema_path)) else {
+        println!("SKIP: no hafley-rs/{schema_path}");
         return;
     };
     let shapes: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
-    let mut names: Vec<&str> = shapes
-        .iter()
-        .map(|shape| shape["record"].as_str().unwrap())
-        .collect();
-    names.sort_unstable();
-    names.dedup();
-    let frozen_path = root.join("src/_4_comptime/_0_load/ryi_records.txt");
+    let rendered = [
+        ("std/ryi.dl7", render_std_ryi(&shapes)),
+        (
+            "src/_9_runtime/_3_executors/ryi_schema.rs",
+            render_ryi_schema(&shapes),
+        ),
+    ];
     if std::env::var_os("DL8_REFREEZE").is_some() {
         let hash = Command::new("git")
             .arg("-C")
             .arg(root.join("hafley-rs/"))
-            .args(["log", "-1", "--format=%h", "--"])
-            .arg("crates/sprefa-extract/schema/generated/5_facts.json")
+            .args(["log", "-1", "--format=%h", "--", schema_path])
             .output()
             .unwrap();
         let hash = String::from_utf8(hash.stdout).unwrap();
-        let stamp = format!(
-            "# ryi record names, frozen from hafley-rs {} crates/sprefa-extract/schema/generated/5_facts.json",
-            hash.trim()
-        );
-        fs::write(&frozen_path, format!("{stamp}\n{}\n", names.join("\n"))).unwrap();
+        for (path, body) in &rendered {
+            let comment = if path.ends_with(".rs") { "//!" } else { ";" };
+            let stamp = format!("{comment} hafley-rs {} {schema_path}", hash.trim());
+            fs::write(root.join(path), format!("{stamp}\n{body}")).unwrap();
+        }
     }
-    let frozen = fs::read_to_string(&frozen_path).unwrap();
-    let mut lines = frozen.lines();
-    let stamp = lines.next().unwrap_or_default();
-    let frozen_names: Vec<&str> = lines.collect();
-    assert_eq!(
-        frozen_names, names,
-        "ryi's schema moved past the frozen copy ({stamp}); rerun with DL8_REFREEZE=1"
-    );
-    for decoded in dl8::_4_comptime::load::wire::DECODED_RECORDS {
+    for (path, body) in &rendered {
+        let frozen = fs::read_to_string(root.join(path)).unwrap();
+        let (stamp, frozen_body) = frozen.split_once('\n').unwrap_or_default();
         assert!(
-            names.contains(&decoded),
-            "ryi's schema has no {decoded} record"
+            frozen_body == body,
+            "{path} ({stamp}) differs from ryi's schema; rerun with DL8_REFREEZE=1"
         );
     }
+}
+
+/// The product columns of one record: everything but the row number, the
+/// content id and the record tag.
+fn ryi_columns(shape: &serde_json::Value) -> Vec<&serde_json::Value> {
+    shape["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|column| {
+            !matches!(
+                column["name"].as_str(),
+                Some("_row" | "_content_id" | "record")
+            )
+        })
+        .collect()
+}
+
+fn ryi_column_name(column: &serde_json::Value) -> &str {
+    column["name"].as_str().unwrap().trim_start_matches('_')
+}
+
+fn ryi_column_optional(column: &serde_json::Value) -> bool {
+    column["nullable"] == true || column["optional"] == true
+}
+
+fn ryi_column_kind(column: &serde_json::Value) -> (&'static str, &'static str) {
+    match column["kind"].as_str().unwrap() {
+        "int32" | "int64" | "uint32" | "uint64" => ("int", "Int"),
+        "boolean" => ("bool", "Bool"),
+        "json" => ("str", "Json"),
+        _ => ("str", "Str"),
+    }
+}
+
+fn render_std_ryi(shapes: &[serde_json::Value]) -> String {
+    let mut out = String::from(
+        "; `@std/ryi`: every ryi record as a product, `root` first. `resolve` is\n\
+         ; served; a null column is `none`, a json column its text.\n\
+         \n\
+         (: resolve\n   (* (: root str)\n      (: family str)))\n\
+         \n\
+         (: resolve_error\n   (* (: root str)\n      (: family str)\n      (: message str)))\n",
+    );
+    for shape in shapes {
+        let mut fields = vec!["(: root str)".to_string()];
+        for column in ryi_columns(shape) {
+            let (dl7_type, _) = ryi_column_kind(column);
+            let dl7_type = match ryi_column_optional(column) {
+                true => format!("(Option {dl7_type})"),
+                false => dl7_type.to_string(),
+            };
+            fields.push(format!("(: {} {dl7_type})", ryi_column_name(column)));
+        }
+        out.push_str(&format!(
+            "\n(: {}\n   (* {}))\n",
+            shape["record"].as_str().unwrap(),
+            fields.join("\n      ")
+        ));
+    }
+    out
+}
+
+fn render_ryi_schema(shapes: &[serde_json::Value]) -> String {
+    let mut out = String::from(
+        "//! The columns of every `@std/ryi` product, rendered by\n\
+         //! `_8_contracts::std_ryi_matches_the_schema`.\n\
+         \n\
+         use super::ryi_resolve::{Column, Kind::*};\n\
+         \n\
+         pub const RECORDS: &[(&str, &[Column])] = &[\n",
+    );
+    for shape in shapes {
+        out.push_str(&format!(
+            "    (\"{}\", &[\n",
+            shape["record"].as_str().unwrap()
+        ));
+        for column in ryi_columns(shape) {
+            let path: Vec<String> = column["path"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|key| format!("\"{}\"", key.as_str().unwrap()))
+                .collect();
+            out.push_str(&format!(
+                "        Column {{ name: \"{}\", path: &[{}], kind: {}, optional: {} }},\n",
+                ryi_column_name(column),
+                path.join(", "),
+                ryi_column_kind(column).1,
+                ryi_column_optional(column)
+            ));
+        }
+        out.push_str("    ]),\n");
+    }
+    out.push_str("];\n");
+    out
 }
 
 // Every ryi record the loader does not decode is skipped without a

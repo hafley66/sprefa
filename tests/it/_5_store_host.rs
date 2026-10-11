@@ -1204,6 +1204,47 @@ pub fn extract_answers_rows_for_each_family_over_the_corpus() {
 }
 
 #[test]
+pub fn ryi_resolve_answers_typed_rows_over_the_corpus() {
+    let Some(binary) = extract_bin() else {
+        println!("SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset");
+        return;
+    };
+    let directory = s20hosts_scratch("ryi-resolve");
+    let corpus = std::fs::canonicalize(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/extract/corpus"),
+    )
+    .unwrap();
+    let corpus_text = corpus.to_string_lossy().to_string();
+    let binary = binary.to_string_lossy().to_string();
+    let compiled = s20hosts_compile(
+        &directory,
+        "3b_ryi_resolve.dl7",
+        &[("__ROOT__", &corpus_text)],
+    );
+    let (out, code) = s20hosts_run(
+        &compiled.program,
+        &["--serve", "ryi.resolve"],
+        &[("SPREFA_EXTRACT_BIN", &binary)],
+    );
+    assert_eq!(code, 0, "exit code; diagnostics {}", out["diagnostics"]);
+    assert_eq!(
+        s20hosts_rows(&out, &compiled.names, "Failed"),
+        Vec::<Vec<Value>>::new()
+    );
+    assert_eq!(
+        s20hosts_rows(&out, &compiled.names, "Resolved"),
+        [vec![text(&corpus_text), text("call")]]
+    );
+    assert_eq!(
+        s20hosts_rows(&out, &compiled.names, "Call"),
+        [
+            vec![text("formatTeam"), text("formatUser"), text("same_file")],
+            vec![text("reportTeam"), text("formatTeam"), text("module_plane")],
+        ]
+    );
+}
+
+#[test]
 pub fn extract_flags_are_flags_ryi_lists() {
     let Some(binary) = extract_bin() else {
         println!("SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset");

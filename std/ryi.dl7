@@ -1,0 +1,717 @@
+; hafley-rs c093068a crates/sprefa-extract/schema/generated/5_facts.json
+; `@std/ryi`: every ryi record as a product, `root` first. `resolve` is
+; served; a null column is `none`, a json column its text.
+
+(: resolve
+   (* (: root str)
+      (: family str)))
+
+(: resolve_error
+   (* (: root str)
+      (: family str)
+      (: message str)))
+
+(: protocol
+   (* (: root str)
+      (: input_path (Option str))
+      (: version int)))
+
+(: run
+   (* (: root str)
+      (: input_path (Option str))
+      (: run int)
+      (: mode str)
+      (: tool str)
+      (: version str)
+      (: scope str)))
+
+(: fact
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact int)
+      (: relation str)
+      (: args str)))
+
+(: witness
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact int)
+      (: run int)
+      (: method str)))
+
+(: coverage
+   (* (: root str)
+      (: input_path (Option str))
+      (: run int)
+      (: relation str)
+      (: coverage str)))
+
+(: diagnostic
+   (* (: root str)
+      (: input_path (Option str))
+      (: run int)
+      (: relation str)
+      (: detail str)))
+
+(: node
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: span__start int)
+      (: span__end int)
+      (: kind str)
+      (: name (Option str))))
+
+(: edge
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: kind str)
+      (: from__start int)
+      (: from__end int)
+      (: from_kind (Option str))
+      (: to__start int)
+      (: to__end int)
+      (: to_kind (Option str))))
+
+(: param
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: span__start int)
+      (: span__end int)
+      (: pos int)))
+
+(: arg
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: call__start int)
+      (: call__end int)
+      (: pos int)
+      (: arg__start int)
+      (: arg__end int)))
+
+(: df_field
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: owner__start int)
+      (: owner__end int)
+      (: name str)
+      (: value__start int)
+      (: value__end int)))
+
+(: df_lit
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: node__start int)
+      (: node__end int)
+      (: kind str)
+      (: text str)))
+
+(: df_loop
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: span__start int)
+      (: span__end int)
+      (: var (Option str))
+      (: collection (Option str))))
+
+(: df_nest
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: call__start int)
+      (: call__end int)
+      (: loop__start int)
+      (: loop__end int)
+      (: depth int)
+      (: collection (Option str))))
+
+(: df_allocates
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: owner__start int)
+      (: owner__end int)))
+
+(: sig
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: owner__start int)
+      (: owner__end int)
+      (: owner_start int)
+      (: owner_end int)
+      (: slot str)
+      (: pos int)
+      (: ty str)))
+
+(: site
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: span__start int)
+      (: span__end int)
+      (: callee str)
+      (: callee_path (Option str))))
+
+(: const
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: owner__start int)
+      (: owner__end int)
+      (: field (Option str))
+      (: text str)
+      (: kind str)))
+
+(: doc
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: owner__start int)
+      (: owner__end int)
+      (: parent (Option str))
+      (: text str)))
+
+(: doc_tag
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: owner__start int)
+      (: owner__end int)
+      (: tag str)
+      (: arg (Option str))
+      (: text str)))
+
+(: doc_node
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: span__start int)
+      (: span__end int)
+      (: kind str)
+      (: name str)
+      (: parent (Option str))
+      (: target (Option str))
+      (: title (Option str))
+      (: body__start (Option int))
+      (: body__end (Option int))))
+
+(: data_doc
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: ordinal int)
+      (: span__start int)
+      (: span__end int)
+      (: format str)
+      (: doc str)))
+
+(: data_value
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: ordinal int)
+      (: path str)
+      (: kind str)
+      (: text (Option str))
+      (: span__start int)
+      (: span__end int)))
+
+(: specifier
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: span__start int)
+      (: span__end int)
+      (: name str)
+      (: kind str)
+      (: module (Option str))
+      (: imported (Option str))))
+
+(: method_owner
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: owner__start int)
+      (: owner__end int)
+      (: self_type (Option str))
+      (: trait (Option str))))
+
+(: cfg_scope
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: span__start int)
+      (: span__end int)
+      (: cfg str)))
+
+(: test_only_call
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: callee str)
+      (: cfg str)))
+
+(: macro_site
+   (* (: root str)
+      (: input_path (Option str))
+      (: family str)
+      (: span__start int)
+      (: span__end int)
+      (: macro_name str)
+      (: source str)))
+
+(: reference
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: family str)
+      (: span__start int)
+      (: span__end int)
+      (: functor str)
+      (: position str)))
+
+(: unresolved
+   (* (: root str)
+      (: input_path (Option str))
+      (: family str)
+      (: path (Option str))
+      (: span__start int)
+      (: span__end int)
+      (: reason str)
+      (: detail str)))
+
+(: projectedge
+   (* (: root str)
+      (: input_path (Option str))
+      (: family str)
+      (: kind str)
+      (: from__start int)
+      (: from__end int)
+      (: to_blob str)
+      (: to__start int)
+      (: to__end int)))
+
+(: flow_edge
+   (* (: root str)
+      (: input_path (Option str))
+      (: family str)
+      (: kind str)
+      (: from_blob str)
+      (: from__start int)
+      (: from__end int)
+      (: to_blob str)
+      (: to__start int)
+      (: to__end int)))
+
+(: resolved_edge
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: caller_path str)
+      (: caller_name (Option str))
+      (: callee_path str)
+      (: callee_name (Option str))
+      (: caller_site_start int)
+      (: caller_site_end int)
+      (: callee_start int)
+      (: callee_end int)
+      (: kind str)
+      (: resolution_origin str)))
+
+(: graph_node
+   (* (: root str)
+      (: input_path (Option str))
+      (: path str)
+      (: name (Option str))
+      (: depth int)
+      (: grade str)
+      (: line (Option int))))
+
+(: graph_edge
+   (* (: root str)
+      (: input_path (Option str))
+      (: from_path str)
+      (: from_name (Option str))
+      (: to_path str)
+      (: to_name (Option str))
+      (: kind str)
+      (: grade str)
+      (: from_line (Option int))
+      (: to_line (Option int))))
+
+(: external_crate_decline
+   (* (: root str)
+      (: input_path (Option str))
+      (: from_path str)
+      (: from_name (Option str))
+      (: type_name str)
+      (: crate_name str)
+      (: reason str)
+      (: kind str)))
+
+(: graph_decline
+   (* (: root str)
+      (: input_path (Option str))
+      (: from_path str)
+      (: from_name (Option str))
+      (: type_name str)
+      (: crate_name str)
+      (: reason str)
+      (: kind str)))
+
+(: graph_path
+   (* (: root str)
+      (: input_path (Option str))
+      (: plane str)
+      (: from_path str)
+      (: from_name (Option str))
+      (: to_path str)
+      (: to_name (Option str))
+      (: depth int)
+      (: witness str)))
+
+(: graph_path_change
+   (* (: root str)
+      (: input_path (Option str))
+      (: change str)
+      (: revision str)
+      (: plane str)
+      (: from_path str)
+      (: from_name (Option str))
+      (: to_path str)
+      (: to_name (Option str))
+      (: depth int)))
+
+(: graph_root
+   (* (: root str)
+      (: input_path (Option str))
+      (: path str)
+      (: name (Option str))
+      (: span__start (Option int))
+      (: span__end (Option int))
+      (: found bool)))
+
+(: resolved_type_edge
+   (* (: root str)
+      (: input_path (Option str))
+      (: fact (Option int))
+      (: owner_path str)
+      (: owner_name (Option str))
+      (: owner_start int)
+      (: owner_end int)
+      (: target_path str)
+      (: target_name (Option str))
+      (: kind str)
+      (: resolution_origin str)))
+
+(: resolved_import
+   (* (: root str)
+      (: input_path (Option str))
+      (: src_path str)
+      (: name str)
+      (: local str)
+      (: target_path str)
+      (: target_name (Option str))
+      (: kind str)
+      (: hops int)))
+
+(: file_edge
+   (* (: root str)
+      (: input_path (Option str))
+      (: src_path str)
+      (: dst_path str)
+      (: kind str)
+      (: symbols int)))
+
+(: file_unresolved
+   (* (: root str)
+      (: input_path (Option str))
+      (: src_path str)
+      (: module str)
+      (: reason str)))
+
+(: package_edge
+   (* (: root str)
+      (: input_path (Option str))
+      (: src_manifest str)
+      (: dst_manifest str)
+      (: kind str)))
+
+(: file
+   (* (: root str)
+      (: input_path (Option str))
+      (: path str)
+      (: digest str)
+      (: bytes int)
+      (: lines int)))
+
+(: line_start
+   (* (: root str)
+      (: input_path (Option str))
+      (: path str)
+      (: digest str)
+      (: offsets str)))
+
+(: size_skip
+   (* (: root str)
+      (: input_path (Option str))
+      (: path str)
+      (: bytes int)
+      (: limit int)
+      (: reason str)))
+
+(: capture
+   (* (: root str)
+      (: input_path (Option str))
+      (: query str)
+      (: capture str)
+      (: text str)
+      (: start int)
+      (: end int)
+      (: match_start int)
+      (: match_end int)))
+
+(: symbol
+   (* (: root str)
+      (: input_path (Option str))
+      (: symbol str)
+      (: path str)
+      (: kind str)))
+
+(: occurrence
+   (* (: root str)
+      (: input_path (Option str))
+      (: symbol str)
+      (: path str)
+      (: start int)
+      (: end int)
+      (: role str)
+      (: exported bool)
+      (: decl_start int)
+      (: decl_end int)))
+
+(: free_name
+   (* (: root str)
+      (: input_path (Option str))
+      (: path str)
+      (: owner_start int)
+      (: owner_end int)
+      (: name str)
+      (: start int)
+      (: end int)))
+
+(: local
+   (* (: root str)
+      (: input_path (Option str))
+      (: fn str)
+      (: name str)
+      (: path str)
+      (: start int)
+      (: end int)))
+
+(: scip_def
+   (* (: root str)
+      (: input_path (Option str))
+      (: symbol str)
+      (: file str)
+      (: repo str)))
+
+(: scip_name
+   (* (: root str)
+      (: input_path (Option str))
+      (: symbol str)
+      (: name str)))
+
+(: scip_ref
+   (* (: root str)
+      (: input_path (Option str))
+      (: file str)
+      (: symbol str)
+      (: def_file str)
+      (: repo str)))
+
+(: scip_external_ref
+   (* (: root str)
+      (: input_path (Option str))
+      (: file str)
+      (: symbol str)
+      (: origin str)
+      (: repo str)))
+
+(: scip_edge
+   (* (: root str)
+      (: input_path (Option str))
+      (: src str)
+      (: dst str)
+      (: repo str)))
+
+(: scip_fn_edge
+   (* (: root str)
+      (: input_path (Option str))
+      (: caller str)
+      (: callee str)))
+
+(: scip_callee_type
+   (* (: root str)
+      (: input_path (Option str))
+      (: sym str)
+      (: type str)))
+
+(: scip_local
+   (* (: root str)
+      (: input_path (Option str))
+      (: fn str)
+      (: name str)))
+
+(: scip_impl
+   (* (: root str)
+      (: input_path (Option str))
+      (: impl str)
+      (: iface str)))
+
+(: scip_index
+   (* (: root str)
+      (: input_path (Option str))
+      (: reused bool)
+      (: tool_name str)
+      (: tool_version str)
+      (: documents int)
+      (: index_mtime_unix_ms (Option int))
+      (: staleness str)))
+
+(: scip_skip
+   (* (: root str)
+      (: input_path (Option str))
+      (: lang str)
+      (: bin str)
+      (: reason str)
+      (: detail str)))
+
+(: scip_occurrence
+   (* (: root str)
+      (: input_path (Option str))
+      (: path str)
+      (: symbol str)
+      (: start int)
+      (: end int)
+      (: roles int)
+      (: definition bool)
+      (: import bool)
+      (: write_access bool)
+      (: read_access bool)
+      (: generated bool)
+      (: test bool)
+      (: forward_definition bool)
+      (: syntax_kind int)
+      (: enclosing_start (Option int))
+      (: enclosing_end (Option int))
+      (: text (Option str))))
+
+(: scip_occurrence_doc
+   (* (: root str)
+      (: input_path (Option str))
+      (: path str)
+      (: start int)
+      (: end int)
+      (: pos int)
+      (: text str)))
+
+(: scip_diagnostic
+   (* (: root str)
+      (: input_path (Option str))
+      (: path str)
+      (: start int)
+      (: end int)
+      (: severity int)
+      (: code str)
+      (: message str)
+      (: source str)
+      (: tags str)))
+
+(: scip_symbol
+   (* (: root str)
+      (: input_path (Option str))
+      (: path (Option str))
+      (: symbol str)
+      (: display_name str)
+      (: kind int)
+      (: enclosing_symbol str)))
+
+(: scip_documentation
+   (* (: root str)
+      (: input_path (Option str))
+      (: symbol str)
+      (: pos int)
+      (: text str)))
+
+(: scip_signature
+   (* (: root str)
+      (: input_path (Option str))
+      (: symbol str)
+      (: language str)
+      (: text str)))
+
+(: scip_signature_occurrence
+   (* (: root str)
+      (: input_path (Option str))
+      (: symbol str)
+      (: ref_symbol str)
+      (: start int)
+      (: end int)
+      (: roles int)))
+
+(: scip_metadata
+   (* (: root str)
+      (: input_path (Option str))
+      (: version int)
+      (: tool_name str)
+      (: tool_version str)
+      (: tool_arguments str)
+      (: project_root str)
+      (: text_document_encoding int)))
+
+(: scip_document
+   (* (: root str)
+      (: input_path (Option str))
+      (: path str)
+      (: language str)
+      (: position_encoding int)
+      (: text (Option str))))
+
+(: scip_relationship
+   (* (: root str)
+      (: input_path (Option str))
+      (: symbol str)
+      (: related_symbol str)
+      (: is_reference bool)
+      (: is_implementation bool)
+      (: is_type_definition bool)
+      (: is_definition bool)))

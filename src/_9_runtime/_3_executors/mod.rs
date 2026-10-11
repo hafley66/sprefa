@@ -22,6 +22,11 @@ pub mod http_fetch;
 pub mod http_serve;
 #[path = "lsp_stdin.rs"]
 pub mod lsp_stdin;
+#[path = "ryi_resolve.rs"]
+pub mod ryi_resolve;
+#[rustfmt::skip]
+#[path = "ryi_schema.rs"]
+pub mod ryi_schema;
 #[path = "timer.rs"]
 pub mod timer;
 
@@ -43,6 +48,7 @@ pub use git_refs::GitRefs;
 pub use http_fetch::HttpFetch;
 pub use http_serve::HttpServe;
 pub use lsp_stdin::LspStdin;
+pub use ryi_resolve::RyiResolve;
 pub use timer::Timer;
 
 /// The bound text value at `index` of an application, with its term.
@@ -297,6 +303,18 @@ fn executors_for_mode(
                 (_, None, _) => missing(u, "executor_relation_unknown", lsp_stdin::BUFFER),
                 (_, _, None) => missing(u, "executor_relation_unknown", lsp_stdin::HOVER_AT),
             },
+            ryi_resolve::RELATION => match (
+                names.get(ryi_resolve::RELATION),
+                names.get(ryi_resolve::ERROR),
+                names.get(fs_json::NONE),
+            ) {
+                (Some(rel), Some(error), Some(none)) => {
+                    executors.push(Box::new(RyiResolve::new(*rel, *error, *none, names)))
+                }
+                (None, _, _) => missing(u, "served_relation_unknown", name),
+                (_, None, _) => missing(u, "executor_relation_unknown", ryi_resolve::ERROR),
+                (_, _, None) => missing(u, "executor_relation_unknown", fs_json::NONE),
+            },
             fs_watch::RELATION => match names.get(fs_watch::RELATION) {
                 Some(rel) => executors.push(Box::new(FsWatch::new(*rel))),
                 None => missing(u, "served_relation_unknown", name),
@@ -332,7 +350,7 @@ fn executors_for_mode(
 }
 
 /// Every relation name `executors_for` builds an executor for.
-pub const ROSTER: [&str; 12] = [
+pub const ROSTER: [&str; 13] = [
     doc_layout::RELATION,
     timer::RELATION,
     fetch_json::RELATION,
@@ -345,6 +363,7 @@ pub const ROSTER: [&str; 12] = [
     git_history::RELATION,
     fs_at::RELATION,
     extract::RELATION,
+    ryi_resolve::RELATION,
 ];
 
 /// The Once executors the program's names can build. A name whose companion

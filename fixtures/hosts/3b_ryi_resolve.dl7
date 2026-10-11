@@ -1,0 +1,45 @@
+; One root's call records as typed `@std/ryi` rows.
+(ryi: (import "@std/ryi"))
+
+(: Want
+   (* (: root str)
+      (: family str)))
+
+(Want "__ROOT__" "call")
+
+(: Resolved
+   (* (: root str)
+      (: family str)))
+
+(<- (Resolved ?Root ?Family)
+    (Want ?Root ?Family)
+    (ryi.resolve ?Root ?Family))
+
+(: Failed
+   (* (: family str)
+      (: message str)))
+
+(<- (Failed ?Family ?Message)
+    (Want ?Root ?Family)
+    (ryi.resolve_error ?Root ?Family ?Message))
+
+(: Call
+   (* (: caller str)
+      (: callee str)
+      (: origin str)))
+
+(<- (Call ?Caller ?Callee ?Origin)
+    (ryi.resolved_edge
+       ?Root
+       ?InputPath
+       ?Fact
+       ?CallerPath
+       ?Caller
+       ?CalleePath
+       ?Callee
+       ?SiteStart
+       ?SiteEnd
+       ?CalleeStart
+       ?CalleeEnd
+       ?Kind
+       ?Origin))
