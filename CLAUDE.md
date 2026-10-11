@@ -74,6 +74,8 @@ lane load.
   lanes get disjoint file ownership with forbidden paths named.
 - Every worktree branches from `origin/main`. Before a PR: `git diff --stat
   origin/main...HEAD` lists only owned files.
+- Work lands as a GitHub PR against `hafley66/sprefa` `main` (user
+  2026-10-11). Never fast-forward or merge into local `main` by hand.
 - A lane's `rc=0` means nothing. Grade its tree yourself: `git log`, `git
   status`, forbidden-path diff, targeted tests, battery, the slow leg alone three
   times.
