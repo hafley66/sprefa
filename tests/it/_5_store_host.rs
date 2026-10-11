@@ -1244,6 +1244,106 @@ pub fn ryi_resolve_answers_typed_rows_over_the_corpus() {
     );
 }
 
+/// `Reaches` from `3c_ryi_reach.dl7` and `ryi graph --from` over the same
+/// root, each as sorted `(path, name, depth)` rows.
+fn reach_against_ryi_graph(
+    root: &Path,
+    entry_path: &str,
+    entry_name: &str,
+) -> Option<(Vec<Vec<Value>>, Vec<Vec<Value>>)> {
+    let binary = extract_bin()?;
+    let root = std::fs::canonicalize(root).unwrap();
+    let root_text = root.to_string_lossy().to_string();
+    let listed = Command::new("git")
+        .current_dir(&root)
+        .args(["ls-files", "."])
+        .output()
+        .unwrap();
+    let mut files: Vec<String> = String::from_utf8(listed.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    files.sort();
+    let graph = Command::new(&binary)
+        .current_dir(&root)
+        .args([
+            "graph",
+            "--from",
+            &format!("{entry_path}#{entry_name}"),
+            "--root",
+            ".",
+        ])
+        .args(&files)
+        .output()
+        .unwrap();
+    assert!(graph.status.success(), "ryi graph exit {}", graph.status);
+    let mut expected: Vec<Vec<Value>> = String::from_utf8(graph.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|row| row["record"] == "graph_node")
+        .map(|row| {
+            vec![
+                row["path"].clone(),
+                row["name"].clone(),
+                row["depth"].clone(),
+            ]
+        })
+        .collect();
+    expected.sort_by_key(|row| row.iter().map(|v| v.to_string()).collect::<Vec<_>>());
+    let directory = s20hosts_scratch(&format!("ryi-reach-{entry_name}"));
+    let compiled = s20hosts_compile(
+        &directory,
+        "3c_ryi_reach.dl7",
+        &[
+            ("__ROOT__", &root_text),
+            ("__ENTRY_PATH__", entry_path),
+            ("__ENTRY_NAME__", entry_name),
+        ],
+    );
+    let binary = binary.to_string_lossy().to_string();
+    let (out, code) = s20hosts_run(
+        &compiled.program,
+        &["--serve", "ryi.resolve"],
+        &[("SPREFA_EXTRACT_BIN", &binary)],
+    );
+    assert_eq!(code, 0, "exit code; diagnostics {}", out["diagnostics"]);
+    let reached = s20hosts_rows(&out, &compiled.names, "Reaches");
+    Some((reached, expected))
+}
+
+#[test]
+pub fn ryi_reach_equals_ryi_graph_over_the_corpus() {
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/extract/corpus");
+    let Some((reached, expected)) = reach_against_ryi_graph(&corpus, "ts/report.ts", "reportTeam")
+    else {
+        println!("SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset");
+        return;
+    };
+    assert_eq!(
+        reached,
+        [
+            vec![text("ts/format.ts"), text("formatTeam"), json!(1)],
+            vec![text("ts/format.ts"), text("formatUser"), json!(2)],
+        ]
+    );
+    assert_eq!(reached, expected);
+}
+
+#[test]
+pub fn ryi_reach_equals_ryi_graph_over_src() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let Some((reached, expected)) =
+        reach_against_ryi_graph(&src, "_4_comptime/_2_rounds.rs", "comptime_answerer")
+    else {
+        println!("SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset");
+        return;
+    };
+    assert!(!expected.is_empty(), "ryi graph reached nothing");
+    assert_eq!(reached, expected);
+}
+
 #[test]
 pub fn extract_flags_are_flags_ryi_lists() {
     let Some(binary) = extract_bin() else {

@@ -1,0 +1,68 @@
+; Every function the entry reaches through ryi's resolved calls, at its least
+; depth. The hop budget matches ryi's `REACH_DEPTH_CAP`.
+(ryi: (import "@std/ryi"))
+
+(: Want
+   (* (: root str)
+      (: family str)))
+
+(Want "__ROOT__" "call")
+
+(: Entry
+   (* (: path str)
+      (: name str)))
+
+(Entry "__ENTRY_PATH__" "__ENTRY_NAME__")
+
+(: Resolved
+   (* (: root str)
+      (: family str)))
+
+(<- (Resolved ?Root ?Family)
+    (Want ?Root ?Family)
+    (ryi.resolve ?Root ?Family))
+
+(: Calls
+   (* (: caller_path str)
+      (: caller str)
+      (: callee_path str)
+      (: callee str)))
+
+(<- (Calls ?CallerPath ?Caller ?CalleePath ?Callee)
+    (ryi.resolved_edge
+       ?Root
+       ?InputPath
+       ?Fact
+       ?CallerPath
+       ?Caller
+       ?CalleePath
+       ?Callee
+       ?SiteStart
+       ?SiteEnd
+       ?CalleeStart
+       ?CalleeEnd
+       ?Kind
+       ?Origin))
+
+(: ReachedAt
+   (* (: path str)
+      (: name str)
+      (: depth int)))
+
+(<- (ReachedAt ?CalleePath ?Callee 1)
+    (Entry ?EntryPath ?EntryName)
+    (Calls ?EntryPath ?EntryName ?CalleePath ?Callee))
+
+(<- (ReachedAt ?CalleePath ?Callee ?NextDepth)
+    (ReachedAt ?CallerPath ?Caller ?Depth)
+    (int.lt ?Depth 32)
+    (Calls ?CallerPath ?Caller ?CalleePath ?Callee)
+    (int.add ?Depth 1 ?NextDepth))
+
+(: Reaches
+   (* (: path str)
+      (: name str)
+      (: depth int)))
+
+(<- (Reaches ?Path ?Name (min ?Depth))
+    (ReachedAt ?Path ?Name ?Depth))
