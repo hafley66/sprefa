@@ -33,7 +33,7 @@ Key design rulings (the rough-vs-right cut the user forced):
 
 Files: src/hook.rs (whole feature), agent.rs cc_skill_loads + AgentHarness::
 skill_loads, rels/analysis.rs AgentKind (skill_loaded), main.rs --hook flag,
-examples/hook-skill-on-test.dl, docs/skill-injection.md, tests/it/hook_inject.rs
+examples/hook-skill-on-test.dl, docs/archive/v5/skill-injection.md, tests/it/hook_inject.rs
 (4 e2e). Built on the same transcript reader as [[project_dl_self_validation_docs]]
 (agent_touch is git-free, keyed on --root).
 

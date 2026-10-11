@@ -8,7 +8,7 @@ file:line. No interpretation beyond what the cited line states.
 
 | claim | file:line | receipt |
 |---|---|---|
-| `scan` surface form, 2-ary/5-ary, repo default `.`, rev default WORK | `docs/reference/syntax.md:22` | `scan([repo,][rev,] glob, path[, rev_out])` table row |
+| `scan` surface form, 2-ary/5-ary, repo default `.`, rev default WORK | `docs/archive/v5/reference/syntax.md:22` | `scan([repo,][rev,] glob, path[, rev_out])` table row |
 | `WORK` is a literal-text ALIAS, never stored; stored revs match `^[0-9a-f]{40}\+?$` | `src/engine/revid.rs:1-11` | module doc, INV-1 |
 | alias funnel: every scan rev literal resolves through one fn | `src/engine/repo.rs:13-19` | `resolve_rev`: `if rev == WORK_ALIAS { self.worktree_rev.resolve(...) }` |
 | non-alias rev resolves via `git rev-parse`, cached (cross-tick for immutable sha, per-tick for movable ref) | `src/engine/repo.rs:20-35` | two-cache lookup then `Self::rev_parse` |

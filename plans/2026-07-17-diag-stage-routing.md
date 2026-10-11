@@ -12,7 +12,7 @@ are consistent like the comment/todo/plans/architectural techniques".
 ## Current state (what exists)
 
 - diag(path, line, severity, code, msg) is the one findings rel
-  (docs/rails.md:72). Severity drives exit code: `dl --check` exits 2 only on
+  (docs/archive/v5/rails.md:72). Severity drives exit code: `dl --check` exits 2 only on
   error-severity; warnings print but never block.
 - .githooks/pre-commit = `exec dl --check` — every .dl rail runs at commit,
   every rail runs live under the daemon, same set both places.

@@ -190,7 +190,7 @@ One line each, throw site or absent-code citation, unsettled.
 | # | fork | proof it is real |
 |---|---|---|
 | 1 | same-module type-name collision resolution (prefix? suffix? error?) | `type_name/2` non-injective, `compile/7_emit_ts_types.pl:172` + `8_emit_rust_types.pl:172`; both renderers' `colliding_type_name` only fires cross-module, same-module `foo_bar`/`fooBar` silently overwrite (plans/2026-08-15-metamorphic-renames.REPORT.md:89-107) |
-| 2 | generics: templates mint decls only, rules stay author-written | ruling generic_template_rules (rulings.pl:749); `docs/generics-wrapper-inspection.md` is inspection, no impl |
+| 2 | generics: templates mint decls only, rules stay author-written | ruling generic_template_rules (rulings.pl:749); `docs/archive/v6/generics-wrapper-inspection.md` is inspection, no impl |
 | 3 | option over enum (`option(<enum>)`) — allow, or keep the throw? | `0_option_expand.pl:69` `throw(unsupported_construct(option_of_enum_unsupported(...)))` |
 | 4 | per-type added/removed lifecycle (a TypeSpec `@added` analog) | absent-code: no lifecycle in any emitter; axis 4 |
 | 5 | a constraint vocabulary (`@minLength` etc.) — adopt, or structural-only? | absent-code: no length/range/pattern anywhere; the `@` parser is unbuilt (axis 3) |

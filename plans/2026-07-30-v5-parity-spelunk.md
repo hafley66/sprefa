@@ -62,13 +62,13 @@ inventory is obtained by *asking v5*, through an `sh` host running a one-line
 | L1 oracle | `? op_catalog(...)` | 28 | — |
 | L2 regex | `op_docs()` table, `src/engine/decls.rs:222-254` | 28 | exact |
 | L2 regex | parse dispatch ladder, `src/parse/mod.rs:596-637` | 14 | subset by design (source + graph ops only) |
-| L3 doc | `docs/reference/syntax.md` | 28 | exact |
+| L3 doc | `docs/archive/v5/reference/syntax.md` | 28 | exact |
 | L1 oracle | `? fn_catalog(...)` | 16 | — |
 | L2 regex | `fn_docs()` table, `src/engine/decls.rs:165+` | 16 | exact |
-| L3 doc | `docs/reference/functions.md` | 16 | exact |
+| L3 doc | `docs/archive/v5/reference/functions.md` | 16 | exact |
 | L1 oracle | `? rel_catalog(...)` | 112 | — |
 | L2 regex | single-line `RelDecl { name: "…"` over `src/*.rs` | 92 | **−20** |
-| L3 doc | `docs/reference/relations.md` | 108 | **−4** |
+| L3 doc | `docs/archive/v5/reference/relations.md` | 108 | **−4** |
 
 ### Finding A — the line regex misses 20 of 112 built-in relations, for the reason v5 documents
 
@@ -89,7 +89,7 @@ short of shelling out to the fixed extractor.
 
 ### Finding B — a generated v5 doc has drifted from the engine, and it says not to hand-edit it
 
-`docs/reference/relations.md` is headed *"Generated from the engine's
+`docs/archive/v5/reference/relations.md` is headed *"Generated from the engine's
 `rel_catalog` by examples/gen-reference.dl. Do not hand-edit."* It carries 108
 of the live 112. Missing:
 
@@ -113,7 +113,7 @@ takes up to three optional trailing arguments, so the catalog carries a
 not an arity.
 
 For relations the arity *is* well defined (`cols.len()`), and
-`docs/reference/relations.md` renders it as a parenthesised column list, e.g.
+`docs/archive/v5/reference/relations.md` renders it as a parenthesised column list, e.g.
 `(harness, session, idx, path)`. Turning that text into `4` needs a string
 split — and **v6 has no string functions at all**. That is consistent with the
 landed sqlite-udf-graft verdict (`@libsql/client` 0.17.4 exposes no UDF

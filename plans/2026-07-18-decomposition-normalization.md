@@ -380,7 +380,7 @@ Details the split must carry:
   step's gate.
 - **LANG-JUNCTION(typelang-registry)** comment (line 439) stays glued to
   `type_langs()` in mod.rs.
-- **Doc citations**: docs/df-coverage.md and docs/callable-coverage.md carry
+- **Doc citations**: docs/archive/v5/df-coverage.md and docs/archive/v5/callable-coverage.md carry
   ~40 raw `src/graph/typegraph.rs:NNNN` citations. Step 3 of the migration
   rewrites them to `file + fn-name` form (`src/graph/typegraph/rust.rs
   rust_call_defs_from`) — function-name anchors survive future refactors, raw
@@ -505,7 +505,7 @@ create, per the old-branch measurement) and needs the determinism gate.
 | 0 | fix coupling-metrics.dl's reserved-name break (its `file_lines` rel collided with the new builtin, 2.4j — rename the rel, or better: rewrite the rules on the `file_lines` BUILTIN and drop the awk cmds); widen the budget glob to `src/**/*.rs`; rename its single-letter dl vars; record the baseline violation list in the commit message | .dl edit | program runs on the current binary; rail emits exactly the table in section 0 |
 | 1 | typegraph → `src/graph/typegraph/` per-language (mod/rust/kotlin/go/python/analysis + ts single file for now), tests split per-language, markers move with arms | fragmentation | build + suite + determinism oracle (scripts/rails-oracle.sh) byte-identical; callable-coverage.dl rail green |
 | 2 | ts sub-split → ts/{mod,flow,text}.rs | fragmentation | same gate |
-| 3 | rewrite docs/df-coverage.md + docs/callable-coverage.md citations to file+fn-name (marker-relative where @callable exists) | docs | every cited fn greps in its cited file |
+| 3 | rewrite docs/archive/v5/df-coverage.md + docs/archive/v5/callable-coverage.md citations to file+fn-name (marker-relative where @callable exists) | docs | every cited fn greps in its cited file |
 | 4 | modgraph → `src/graph/modgraph/` per-language (harvest old-branch tree shape: mod/rust/ts/kotlin/go/python) | fragmentation | suite + determinism oracle |
 | 5 | `git mv src/cli/daemon.rs src/cli/daemon_cmd.rs` (friction f) | pure git mv | build + `dl daemon status` smoke |
 | 6 | daemon.rs → `src/daemon/` {mod,root,home,budget,dispatch,client} | fragmentation | suite + daemon it-tests; holds for scheduler-plan landing |

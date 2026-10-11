@@ -142,7 +142,7 @@ the Local arm; the Daemon arm opens NO db.
   by faking exe mtime is brittle, so assert the code path via the
   ensure_daemon unit seam instead.
 - **T4 (S) retire divergence debt**: drop the LSP arm of the cache.db
-  default gate comment; update docs/lsp.md + the CLAUDE.md served-copy
+  default gate comment; update docs/archive/v5/lsp.md + the CLAUDE.md served-copy
   ledger item (a stale daemon now self-heals on the next LSP start or
   one-shot; a stale RESIDENT LSP heals on editor reload, which the vsix
   install flow already requires).

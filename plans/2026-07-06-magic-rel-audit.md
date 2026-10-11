@@ -29,7 +29,7 @@ reading them by name is now reading a catalogued builtin — no magic.
   --project`) + **subagent** `.claude/agents/magic-rel-auditor.md`: adding a new
   demand convention = a RelDecl in `demand_rel_decls()` + `DEMAND_RELS`, never a
   hidden name.
-- **Docs** `docs/reference/magic-rels.md` generated from `rel_catalog` group
+- **Docs** `docs/archive/v5/reference/magic-rels.md` generated from `rel_catalog` group
   `demand` by `gen-reference.dl`; the four also appear in `relations.md`.
 
 Suites: lib 219, it 530, both green; binary reinstalled (installed `dl` has the
@@ -174,7 +174,7 @@ Dogfood: `scan` `src/**/*.rs`, `match` every `rels.get("<name>")` /
 string-matched rel that isn't registered fails CI. This is the guarantee that the
 magic set can only shrink or be documented, never silently grow.
 
-### Step 6 — generate `docs/reference/magic-rels.md`
+### Step 6 — generate `docs/archive/v5/reference/magic-rels.md`
 
 From the registry (like `gen-reference.dl` does for `rel_catalog`), with its own
 drift rail. The prose home for the taxonomy above.

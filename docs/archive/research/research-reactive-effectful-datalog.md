@@ -8,9 +8,9 @@ datalog over sqlite. What must the language gain to subsume ghcacher, what did v
 try, how do other systems/datalogs solve the same tension, and what does each path commit
 us to down the road.
 
-Cross-refs: [ext-dbsp-incremental.md](ext-dbsp-incremental.md),
-[research-portable-reactive-core.md](research-portable-reactive-core.md),
-[data-model.md](data-model.md), v4 `docs/v4-ghcache-integration.md` +
+Cross-refs: [ext-dbsp-incremental.md](../v5/ext-dbsp-incremental.md),
+[research-portable-reactive-core.md](../v5/research-portable-reactive-core.md),
+[data-model.md](../v5/data-model.md), v4 `docs/v4-ghcache-integration.md` +
 `docs/v4-runtime-batching.md`.
 
 ---
@@ -85,7 +85,7 @@ is a hand-rolled tx-report-queue + as-of index.
 |---|---|---|
 | **Differential Dataflow / Timely → Materialize** | tuples are `(data, time, diff)`; multidimensional timestamps; recursion incrementalized; views maintained under arbitrary deltas | the exact DD/runtime_graph/support machinery v5 **exorcised**. Heavy runtime, arrangement memory |
 | **DDlog** (VMware, archived) | *compiled* incremental datalog: input rels take insert/delete deltas, output rels emit deltas; the whole program is a delta transformer | relations static at compile time (no dynamic assert), unmaintained, Rust-codegen build step |
-| **DBSP / Feldera** (newest, cleanest) | incremental computation as a **circuit** over z-sets with `integrate`/`differentiate`; strictly simpler than Timely's partial orders | still a delta-circuit runtime under everything. If we ever want real IVM, this is the minimal formalism to copy, not Timely. See [ext-dbsp-incremental.md](ext-dbsp-incremental.md) |
+| **DBSP / Feldera** (newest, cleanest) | incremental computation as a **circuit** over z-sets with `integrate`/`differentiate`; strictly simpler than Timely's partial orders | still a delta-circuit runtime under everything. If we ever want real IVM, this is the minimal formalism to copy, not Timely. See [ext-dbsp-incremental.md](../v5/ext-dbsp-incremental.md) |
 | **LogicBlox / LogiQL** (defunct) | datalog as a transactional DB: ACID txns, delta rules, maintained views, aggregation/lattices | commercial, gone; design lesson only ("the program is a DB with maintained views") |
 | **Noria / ReadySet** | partial-state materialized views over SQL with **eviction** | partial materialization + eviction; relevant if we can't fully hold state (133MB kernel). SQL not datalog |
 

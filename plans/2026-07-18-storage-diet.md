@@ -153,7 +153,7 @@ collision-checked (1b).
 **What it touches.** src/graph/typegraph.rs (push_node signature unchanged,
 sym helper added), src/engine/extract/dataflow.rs (persist),
 src/engine/decls.rs (df_node column set), the ref-spine class-2 residual (the
-lossy `file:line:col` id without repo, docs/rca-exe-swap-write-storm.md:147).
+lossy `file:line:col` id without repo, docs/archive/v5/rca-exe-swap-write-storm.md:147).
 N+1 law: still one `insert_rows` per rel; the coord->id map build is
 in-memory, no per-row SQL. Crash-window (class 5): the df family already
 unmarks/wipes/marks per component; a column-set change keeps that bracket.
@@ -225,7 +225,7 @@ third column must stay byte-identical, which it does because it is the same
 **What it touches.** src/storage.rs:376, src/storage/call.rs (three
 `_strings` DDL sites), src/engine/meta.rs:373 (the index),
 src/engine/extract/mod.rs:442-447 (projection). No dl-facing change;
-docs/reference/functions.md's norm description stays true.
+docs/archive/v5/reference/functions.md's norm description stays true.
 
 **Verdict.** Adopt. 3a is step 1 of the whole arc (the fattest low-risk
 receipt in the repo). 3b follows once the projection change is tested.

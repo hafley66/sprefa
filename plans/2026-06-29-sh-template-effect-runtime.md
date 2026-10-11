@@ -1,6 +1,6 @@
 # Plan: `sh` template decls + the effect runtime increments
 
-Companion to `docs/research-reactive-effectful-datalog.md` §9/§10. The temporal core
+Companion to `docs/archive/research/research-reactive-effectful-datalog.md` §9/§10. The temporal core
 (`@next` carry, `@async` queue, `drain_effects`, `ShellEffectExec`, `DL_POLL_SECS`) is built
 (commits bd7eb6e / 89fc8d7 / f84fa17). This plans the next increments. Signature-first per
 the planning protocol. Nothing here is built.

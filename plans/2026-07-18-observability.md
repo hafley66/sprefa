@@ -243,7 +243,7 @@ possible primitive, not a tracing/correlation framework.
   `ensure_singleton`/`spawn_detached` respawn-storm line, and left
   `src/watchdog.rs`'s wall-timeout `eprintln!`s and `src/lib.rs::run_watch`'s
   progress `eprintln!`s alone — both deliberately (documented in
-  `docs/engine-loops.md`): the watchdog fires as the process is being killed
+  `docs/archive/v5/engine-loops.md`): the watchdog fires as the process is being killed
   by itself (a tracing event mid-rotate is a worse bet than a direct stderr
   write), and `--watch`'s lines are direct user-facing terminal output for a
   mode whose whole purpose is printing progress, not a log.

@@ -95,7 +95,7 @@ Files measured and read. crate total 1077.
 | what lived editor-side that could be LSP | extension.ts is 56 lines: `vscode-languageclient`, spawn `sprefa-server --lsp-stdio`, wide `documentSelector [{scheme:file}]` filtered by `.sprf` middleware, one `FileSystemWatcher('**/*.sprf')` (`extension.ts:28-38`). TmLanguage + language-config declarative |
 | what could NOT be LSP | the `.dl`-program editing experience (squiggles on the program file, `publish_dl_parse_errors`) is still LSP `publishDiagnostics`. Nothing in the editor needed to be client-native beyond the grammar and the watcher |
 | how server learned of changes | LSP didOpen/didSave tick paths (`src/lsp.rs:330-353`; `didChange` deliberately ignored, sync NONE, disk-truth `src/lsp.rs:58-64`) AND a daemon watcher subscription: the LSP attaches to the shared-db daemon and receives `dl/diagChanged` pushes (`src/lsp.rs:196-243`). Also a `--diag-db` poll mode (`src/lsp.rs:495-633`) |
-| testing | `docs/lsp.md:180-205` and `v6/tsv2/scripts/lsp_diag_driver.py` drive a real Content-Length stdio client against the real binary (the brief's cited v5 `publishDiagnostics` measure). Rust unit tests cover handler internals; the wire is exercised by the driver |
+| testing | `docs/archive/v5/lsp.md:180-205` and `v6/tsv2/scripts/lsp_diag_driver.py` drive a real Content-Length stdio client against the real binary (the brief's cited v5 `publishDiagnostics` measure). Rust unit tests cover handler internals; the wire is exercised by the driver |
 | why it did not survive | user constraint: no design may end in keeping the v5 binary running. The net cost of dropping v5 is one feature, diagnostics (v6-native-lsp plan section 2) |
 
 ### 2.4 v4 inlay and the three v4 lint plans (constraint 2, the interesting rows)

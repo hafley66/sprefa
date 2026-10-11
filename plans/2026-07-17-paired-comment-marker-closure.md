@@ -82,7 +82,7 @@ percentage so the rounding and denominator remain inspectable.
 - Add a terse “Paired comment closure ledgers” recipe near the README codegen
   loop. Link the runnable example and state the inventory-completeness caveat.
 - Let `examples/gen-reference.dl` add the example to README and
-  `docs/reference/examples.md`; do not hand-edit generated indexes.
+  `docs/archive/v5/reference/examples.md`; do not hand-edit generated indexes.
 - Keep canonical operator copy in `src/engine/decls.rs::op_docs()` unchanged;
   the technique composes documented `comment_node`, aggregation, arithmetic,
   negation, and `gen(:zone)` behavior.

@@ -163,6 +163,6 @@ lowercase. Uppercase-boundary checks need case-exact alternation branches.
 
 ## Addendum 3: release-eve engine bugs (2026-07-11, found while gating docs-feedback)
 
-<!-- todo(bug): op_catalog rows cached in the db do not fold exe identity — a new binary regenerating docs/reference/syntax.md against an old cache.db emits the OLD op docs; fold exe identity like extract digests -->
-<!-- todo(bug): something during `cargo test --test it` regenerates docs/reference/syntax.md IN-TREE with the installed dl (dirties the repo mid-suite); find the writer, make it hermetic -->
+<!-- todo(bug): op_catalog rows cached in the db do not fold exe identity — a new binary regenerating docs/archive/v5/reference/syntax.md against an old cache.db emits the OLD op docs; fold exe identity like extract digests -->
+<!-- todo(bug): something during `cargo test --test it` regenerates docs/archive/v5/reference/syntax.md IN-TREE with the installed dl (dirties the repo mid-suite); find the writer, make it hermetic -->
 <!-- todo(bug): setup --undo marker strip leaves its separator newlines behind when the marked file pre-existed with content (AGENTS.md/CLAUDE.md gain trailing blank lines per setup/undo cycle) -->

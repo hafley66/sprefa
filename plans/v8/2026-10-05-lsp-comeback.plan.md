@@ -72,7 +72,7 @@ No wiki-link or `@`-mention relation in any version.
 
 ### Library choice already made
 
-`docs/ext-lsp-made-easy.md:224-243`: `lsp-server` 13 vs tower-lsp / async-lsp 2-3.
+`docs/archive/v5/ext-lsp-made-easy.md:224-243`: `lsp-server` 13 vs tower-lsp / async-lsp 2-3.
 
 ### v8 today
 

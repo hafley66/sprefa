@@ -6,7 +6,7 @@ search/measure how clustered specific files/functions/folders/types/
 paths are common to each other for auto factorization, and including
 fake hops like what if we made an interface cut here."
 
-Extends the parked auto-architect umbrella (docs/vision-auto-architect.md)
+Extends the parked auto-architect umbrella (docs/archive/v5/vision-auto-architect.md)
 with the piece it lacked: a MEASURED clustering plane over real
 extracted facts, plus counterfactual cuts graded as data.
 

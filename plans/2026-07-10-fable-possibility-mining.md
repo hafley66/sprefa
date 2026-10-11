@@ -130,6 +130,6 @@ session pattern (query_log is already a rel).
 - This plan + plans/2026-07-10-flow-marks-goto-recorder.md (anti-unify
   idiom) + plans/2026-07-10-lsp-thin-client-daemon.md (RPC list for the
   rail) + plans/2026-07-10-vscode-ext-review.md (panel surfaces).
-- README.md (DSL surface), docs/reference/relations.md (the rel inventory
+- README.md (DSL surface), docs/archive/v5/reference/relations.md (the rel inventory
   the queries draw from), examples/ (the idiom library).
 - CLAUDE.md ledger for what already exists (avoid re-mining shipped ground).

@@ -33,25 +33,10 @@ trace *args:
 trace-query:
     duckdb -readonly {{TRACE_DB}} "WITH t AS (SELECT s.span_id, s.parent_span_id, coalesce(a.value, s.name) AS name, s.start_time, s.end_time FROM spans s LEFT JOIN attributes a ON list_contains(s.attribute_ids, a.id) AND a.key='name'), t0 AS (SELECT min(start_time) AS v FROM t), q AS (SELECT c.parent_span_id AS span_id, sum(try_cast(qa.value AS DOUBLE)) AS sql_ms FROM spans c JOIN attributes qa ON list_contains(c.attribute_ids, qa.id) AND qa.key='ms' GROUP BY c.parent_span_id) SELECT round((t.start_time - (SELECT v FROM t0))/1000000.0,1) AS start_ms, round((t.end_time - t.start_time)/1000000.0,1) AS dur_ms, round(coalesce(q.sql_ms, 0.0),1) AS sql_ms, round((t.end_time - t.start_time)/1000000.0 - coalesce(q.sql_ms, 0.0),1) AS rust_ms, t.name, p.name AS parent FROM t LEFT JOIN t p ON p.span_id = t.parent_span_id LEFT JOIN q ON q.span_id = t.span_id ORDER BY t.start_time"
 
-# Build the sqlite_ivm loadable extension the `_18_sqlite_emit` tests load.
+# Build the sqlite_ivm loadable extension `src/_9_runtime/_1_sqlite.rs` and `tests/it/_4_sqlite.rs` load.
 # --no-default-features: the host supplies SQLite, so the bundled default cannot link.
 ivm-ext:
     CARGO_BUILD_JOBS=4 bash sqlite_ivm/scripts/0_build.sh release
-
-# Default compiler plus native emitted-view insert/delete checks.
-ivm-cases: ivm-ext
-    RUST_LOG=dl8=debug DL8_ENGINE=ir:sqlite cargo nextest run --offline --locked --no-fail-fast --test _18_sqlite_emit --test _6_comptime_oracle --test _8_compile_oracle --test _15_fold --test _23_comptime_effect
-
-# SQLite also evaluates the compiler's own rules. Retains the 60-second test bound.
-ivm-evaluator-cases: ivm-ext
-    RUST_LOG=dl8=debug DL8_ENGINE=ir:sqlite cargo nextest run --offline --locked --no-fail-fast --test _27_eval_sqlite --test _18_sqlite_emit --test _6_comptime_oracle --test _8_compile_oracle --test _15_fold --test _23_comptime_effect
-
-# DD also evaluates the compiler's own rules. Retains the 60-second test bound.
-ivm-dd-cases: ivm-ext
-    CARGO_BUILD_JOBS=4 RUST_LOG=dl8=debug DL8_ENGINE=ir:dd cargo nextest run --offline --locked --no-fail-fast -j 1 --test _27_eval_sqlite --test _18_sqlite_emit --test _6_comptime_oracle --test _8_compile_oracle --test _15_fold --test _23_comptime_effect
-
-book:
-    mdbook build book
 
 v5 *args:
     just --justfile v5/justfile --working-directory v5 {{args}}

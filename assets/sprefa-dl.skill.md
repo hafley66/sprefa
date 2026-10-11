@@ -146,7 +146,7 @@ search: build with `--features embed-fastembed` to swap the stub for an ONNX mod
 
 ## Demand sinks (rels that DO things)
 
-These are pre-declared builtin sinks: HEAD them from rules, never `rel`-declare them. IO runs off-tick, results land on a LATER tick, and demand hops compose one tick each. Outcome rels are the queryable receipt. Grounding: `src/engine/mod.rs` (`DEMAND_RELS`), `src/rels/`, and `docs/reference/magic-rels.md`.
+These are pre-declared builtin sinks: HEAD them from rules, never `rel`-declare them. IO runs off-tick, results land on a LATER tick, and demand hops compose one tick each. Outcome rels are the queryable receipt. Grounding: `src/engine/mod.rs` (`DEMAND_RELS`), `src/rels/`, and `docs/archive/v5/reference/magic-rels.md`.
 
 Lazily load SCIP for a configured repo; the installed indexer runs as needed, then its index loads so `scip_*` relations and call/type joins improve:
 ```dl
@@ -351,7 +351,7 @@ instead of guessing. Schemas can also be COMPUTED: head
 `type_decl_row(shape, pos, col, type)` from a derived rule and a
 `rel name: shape.` using it resolves one tick later (`shape-pending` info diag
 until then). See `dl examples --show type-from-json.dl`; design:
-docs/type-comptime-roadmap.md.
+docs/archive/v5/type-comptime-roadmap.md.
 
 ## Lattice relations: `key(...)` + `merge(...)`
 
@@ -418,7 +418,7 @@ endpoint_status(endpoint, status_code, body_text) <-
 Each family populates lazily the first time a program references one of its
 relations (a bare `scan` seeds the file set; referencing e.g. `type_entity`
 opts type extraction in over that scan, no separate enable step). Full
-schemas: `docs/reference/relations.md` (generated, grouped by `group`).
+schemas: `docs/archive/v5/reference/relations.md` (generated, grouped by `group`).
 
 | family | key relations | opts in via |
 |---|---|---|

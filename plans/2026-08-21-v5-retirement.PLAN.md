@@ -1,7 +1,7 @@
 # v5 retirement
 
-Measured 2026-08-21 at `6967750a7`. Companion: `docs/v5-extraction-parity.md`,
-`docs/v5-rail-census.md`. Plain-words twin with the diagrams:
+Measured 2026-08-21 at `6967750a7`. Companion: `docs/archive/v5/v5-extraction-parity.md`,
+`docs/archive/v5/v5-rail-census.md`. Plain-words twin with the diagrams:
 `plans/2026-08-21-v5-retirement.PLAN.visual.human.unga.md`.
 
 ## Contents
@@ -63,7 +63,7 @@ That is the entire blocking list.
 
 ### Not blocking, but owed: the door gaps
 
-The three gaps in `docs/v5-extraction-parity.md`. None of them keeps v5 alive;
+The three gaps in `docs/archive/v5/v5-extraction-parity.md`. None of them keeps v5 alive;
 they decide whether the 110 still-blocked `.dl` rails are ever REWRITTEN or
 simply archived as reference text.
 
@@ -192,5 +192,5 @@ Stated so a future census does not re-open them.
 | `propose_extract` / `propose_clone` | soopy owns mutation now, and it stages real edits rather than proposing spans |
 | `type_shape` / `type_lgg` | v6 has a real type plane (`v6/prolog/compile/0_type_plane.pl`); anti-unification over shape hashes was v5's substitute for it |
 | v5's self-describing catalogs | v6 answers the same question at compile time from `registry.pl` and `compile/out/manifest.json` |
-| the 12 dead `.dl` files | nothing has named them in seven weeks; see `docs/v5-rail-census.md` section 4 |
-| `plans/2026-07-30-v5-parity-table.tsv` | derived through the paused TypeScript door and not regenerable; superseded by `docs/v5-extraction-parity.md` |
+| the 12 dead `.dl` files | nothing has named them in seven weeks; see `docs/archive/v5/v5-rail-census.md` section 4 |
+| `plans/2026-07-30-v5-parity-table.tsv` | derived through the paused TypeScript door and not regenerable; superseded by `docs/archive/v5/v5-extraction-parity.md` |

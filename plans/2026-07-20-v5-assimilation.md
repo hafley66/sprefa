@@ -157,7 +157,7 @@ Each is a small, self-contained defect with a receipt.
 | 17 | HTML/YAML/TOML/CSS/JSON grammars are compiled into the binary and used by `sg`/datapath, and absent from `AST_LANG_TABLE`, so `comment_node`/`ast`/CST get zero coverage | H210 |
 | 18 | `TsTypes` matches only `.ts`/`.tsx` although oxc parses plain `.js`/`.jsx`, so JS gets zero type/call/df/doc facts | H156 |
 | 19 | positional rels disagree on line base (`comment_node` 1-based, `scip_occurrence` 0-based) and this is documented nowhere | H120 |
-| 20 | `docs/reference/relations.md` states `scip_def` at 2 columns and `scip_ref` at 3; the engine has 3 and 4 | H106 |
+| 20 | `docs/archive/v5/reference/relations.md` states `scip_def` at 2 columns and `scip_ref` at 3; the engine has 3 and 4 | H106 |
 
 Items 16, 17, and 18 are each near-zero cost and each unlock a language or file
 family that currently produces no facts at all.

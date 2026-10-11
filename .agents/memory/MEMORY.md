@@ -4,7 +4,7 @@
 - [.agents not .claude](feedback_agents_dir_open_convention.md) — agent+skill defs live under tracked `.agents/` (skills/<name>/SKILL.md, agents/<name>.md), open tool-agnostic convention; `.claude/` is gitignored + Anthropic-specific; "open ball or none at all"
 
 - [VS Code ext review: wave 1 SHIPPED](project_vscode_ext_review.md) — plan at plans/2026-07-10-vscode-ext-review.md; wave 1 committed main 9f4b5b6 (dl/query paging, telemetry off panel path, watcher delete, wire budget = render caps), suites green, vsix NOT rebuilt; waves 2-4 + C1 in the CLAUDE.md ledger
-- [Type arc SHIPPED v0.6.24](project_type_shapes_prototype.md) — main 43852bd tagged+pushed 2026-07-10: brands/shapes/type_decl_row/json aggs/scip occurrences; roadmap docs/type-comptime-roadmap.md; json(x) wrapper when embedding json text; daemon restart still Chris-only
+- [Type arc SHIPPED v0.6.24](project_type_shapes_prototype.md) — main 43852bd tagged+pushed 2026-07-10: brands/shapes/type_decl_row/json aggs/scip occurrences; roadmap docs/archive/v5/type-comptime-roadmap.md; json(x) wrapper when embedding json text; daemon restart still Chris-only
 
 - [No ty abbreviation](feedback_no_ty_abbreviation.md) — dl surface says `type` not `ty`; Rust internals keep ty; spell out "typescript" vs tree-sitter ambiguity
 - [Descriptive dl var names](feedback_descriptive_dl_var_names.md) — HARD RULE: no single-letter vars in any dl snippet (skills/examples/docs/prompts); carry the rule into agent prompts
@@ -25,7 +25,7 @@
 - [sh effect runtime](project_sh_effect_runtime.md) — sh/sh!/sh* template effects on the rev/tx temporal spine; branch feat/temporal-next-async (~/projects/sprefa-temporal); phases 1/1b/3/4 landed, native http deferred; NOT pushed to main
 - [node2vec graph embed](project_node2vec_graph_embed.md) — node2vec(edge) INTERNAL operator (no shell-out); node_sim rel; digest-skip + recompute-guard rail + vector cache on main 2026-06-29; switchMap async + warm-start deferred
 - [engine.rs refactor epic](project_engine_refactor_epic.md) — break down engine.rs via TRAIT extraction (file-split ruled dead); RelKind = Phase 1; coupling-metrics.dl measured before=93 family members/89 dispatch sites
-- [Refactor exploration with dl](project_refactor_exploration_dl.md) — docs/refactor-exploration.md formula; --no-daemon for ad-hoc runs (daemon hijacks); name-scatter killed; WINNER = signature-shape buckets -> latent traits; embedding only pays at low naming-coverage
+- [Refactor exploration with dl](project_refactor_exploration_dl.md) — docs/archive/v5/refactor-exploration.md formula; --no-daemon for ad-hoc runs (daemon hijacks); name-scatter killed; WINNER = signature-shape buckets -> latent traits; embedding only pays at low naming-coverage
 - [Interprocedural value flow](project_interproc_flow.md) — std/flow.dl shared `use` base (roadmap 1-6 landed 2026-07-02): call_target pins hops PER CALL SITE (factor big joins, stmt_ms finds them); flow_summary/sanitizer = SUPPRESSION models; closure rels can't be read unpinned in a rule body — seed a recursive rule; taint dogfood 161->9
 - [Doc-comment spine](project_doc_comment_spine.md) — doc_comment/doc_tag rels ride TypeFacts (Rust syn, Kotlin KDoc, TS oxc); only the 3 TypeLang langs; NOT a CI gate
 - [Never edit autogen zones](feedback_never_edit_autogen_zones.md) — HARD RULE: never hand-edit inside `BEGIN:`/`END:` marker spans; fix the GENERATOR (examples/builtin-rels.dl, op-table.dl); prose below markers is hand-editable
@@ -35,7 +35,7 @@
 - [Refactor detection direction](project_refactor_detection_direction.md) — shape-iso detectors ruled a DEAD END 2026-06-27 (coincidence-dominated); LLM = candidate brain, dl = deterministic executor; don't re-pitch shape-iso
 - [scip_name not dl split](reference_scip_name_not_dl_split.md) — SCIP descriptor-name extraction belongs in-engine (scip_name rel); dl-split MEASURED 42% wrong on real RA monikers; don't re-attempt
 - [v5 dl engine](project_v5_dl_engine.md) — reactive datalog-over-code, SQLite-welded; SCC-condensed reaches wired (closure() form; a view can't seed point queries -> Rust path); has research doc + book
-- [v5 data model](project_v5_data_model.md) — PINNED contract at docs/data-model.md: repo/rev/content/file layers, content-separate-from-location; invariant = never re-collapse
+- [v5 data model](project_v5_data_model.md) — PINNED contract at docs/archive/v5/data-model.md: repo/rev/content/file layers, content-separate-from-location; invariant = never re-collapse
 - [No casual code names](feedback_no_casual_codenames.md) — say the actual thing, not "E5"/phase labels; shorthand in parens only when repeating
 - [Markdown formatting](feedback_markdown_formatting.md) — lists/tables/links render clean in VSCode webview; code fences for runnable code only; no ASCII diagrams
 - [Build don't analyze](feedback_build_dont_analyze.md) — when Chris is stuck/low, bias to smallest RUNNABLE thing; verify don't assert; be scaffolder, not where the architecture lives

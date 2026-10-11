@@ -16,7 +16,7 @@ and v6 leg.
    DL_STATE_DIR=<scratch> target/release/dl <bench program> --db <scratch>`
    where the program is the receipts doc's org-fan shape:
    `src(p, rev) <- scan(r, "HEAD", "**/*.{go,ts,tsx}", p, rev), repo(r, _, _).`
-   (adapt arity to the real syntax; docs/reference/syntax.md is the
+   (adapt arity to the real syntax; docs/archive/v5/reference/syntax.md is the
    authority). Measure: cold wall time, file-row count, files/s, RSS peak
    (/usr/bin/time -l), db size.
 3. **v6 leg**: the served tsv2 engine + extraction plane over the SAME

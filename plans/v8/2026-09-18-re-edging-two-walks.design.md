@@ -146,7 +146,7 @@ emitter annotation. Own lane after caret 3.
             (: error error)))))
 ```
 
-- `(Result Body str)` interns a node where the return sum's branches resolve with `ok = Body`, `error = str`. That substitution at intern is the generics work (`docs/generics-wrapper-inspection.md`); the caret-3 scope walk is how a branch target finds its parameter column.
+- `(Result Body str)` interns a node where the return sum's branches resolve with `ok = Body`, `error = str`. That substitution at intern is the generics work (`docs/archive/v6/generics-wrapper-inspection.md`); the caret-3 scope walk is how a branch target finds its parameter column.
 - Effect: `(: json (effect (* (: url str)) (Result type str)))`. Input product row = request; output sum variant = answer. Served by rows; `--serve`, `_error` products, Rust cadence retire.
 - AGENTS.md is edited by Chris only. The 2026-09-18 rows there that describe `Result` are superseded by this addendum until he edits them.
 

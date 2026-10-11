@@ -22,7 +22,7 @@ concept — if diet exists, it is not the `dl index` default and was not discove
 
 ## 2. Reference-doc arity drift (bug)
 
-`docs/reference/relations.md` (generated from `rel_catalog`) lists:
+`docs/archive/v5/reference/relations.md` (generated from `rel_catalog`) lists:
 - `scip_def(symbol, file)` — but the engine rejects 2 cols; actual is **3**:
   `(moniker, file, repo)` e.g. `("rust-analyzer cargo smash_core 0.1.0 geo/Geometry#",
   "core/src/geo.rs", "smash")`.

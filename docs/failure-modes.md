@@ -17,7 +17,7 @@ sites but not against new code. **missing** = nothing.
   loop calling a fn whose own body does SQL — one statement per row instead of
   one statement per set.
 - HOW IT BIT US: per-row INSERTs in refresh paths were defect 1 of the exe-swap
-  write storm (docs/rca-exe-swap-write-storm.md:45, fix 4d0d24bf). Deltaflow had
+  write storm (docs/archive/v5/rca-exe-swap-write-storm.md:45, fix 4d0d24bf). Deltaflow had
   4 per-change write loops; batched to chunked multi-row INSERT/DELETE under the
   800-param ceiling inside one BEGIN IMMEDIATE (2bda577c, CLAUDE.md:64).
 - THE LAW: "N+1: never a per-row write. Collect the set, call `Db::insert_rows`
@@ -38,23 +38,23 @@ sites but not against new code. **missing** = nothing.
   corpus emit different rows.
 - HOW IT BIT US: root defect 6 of the write storm. After defects 1–5 were fixed
   an exe-swap boot still wrote 4.4GB with `+0 -0 source facts` on the tick line
-  (docs/rca-exe-swap-write-storm.md:52-54); the fingerprint was
+  (docs/archive/v5/rca-exe-swap-write-storm.md:52-54); the fingerprint was
   `+0 -0 source facts, derived rebuilt | 22193ms, trigger=full, reason=-`
-  (docs/rca-exe-swap-write-storm.md:84). Found via flow_edge counts differing
+  (docs/archive/v5/rca-exe-swap-write-storm.md:84). Found via flow_edge counts differing
   run to run on the same corpus: 235,427 vs 235,439
-  (docs/rca-exe-swap-write-storm.md:96). Fix 80617b6b.
+  (docs/archive/v5/rca-exe-swap-write-storm.md:96). Fix 80617b6b.
 - THE LAW: identical corpus + identical binary = identical rows; "the design
   only works when re-extraction is deterministic; that invariant was assumed,
-  never stated, and never tested" (docs/rca-exe-swap-write-storm.md:116-118) —
+  never stated, and never tested" (docs/archive/v5/rca-exe-swap-write-storm.md:116-118) —
   and "jitter" is rejected as an unproven claim: exact equality or a named
-  moving rel (docs/rca-exe-swap-write-storm.md:97-99).
+  moving rel (docs/archive/v5/rca-exe-swap-write-storm.md:97-99).
 - THE RAIL: enforced. `extraction_is_deterministic_across_identical_rebuilds`
   (tests/it/extraction_determinism.rs:134, a45c34d9) compares every rel's rows
   digest across two rebuilds; warn-tier `.dl/unordered-select.dl` and
   `.dl/lossy-dedup.dl` hunt new code forms, proven against pre-fix revs by
   scripts/rails-oracle.sh (792cc902). Residual: the lossy df_node id
   (`file:line:col`, no repo) still exists — ordering made the winner stable,
-  not principled (docs/rca-exe-swap-write-storm.md:147-148).
+  not principled (docs/archive/v5/rca-exe-swap-write-storm.md:147-148).
 - SAY THIS TO AN AGENT: Put ORDER BY on every file-set query and emit cached
   facts in input order — if two identical rebuilds differ, it is your bug,
   never "jitter".
@@ -120,11 +120,11 @@ sites but not against new code. **missing** = nothing.
 - HOW IT BIT US: defect 4 of the write storm: a kill during `rebuild_derived`
   left EVERY derived rel wiped and unmarked, the next boot full-rebuilt
   everything, re-choked, got re-killed — self-perpetuating (7f4d9c58 commit
-  message; docs/rca-exe-swap-write-storm.md:48). The user's force-kill culture
-  armed the next boot to storm again (docs/rca-exe-swap-write-storm.md:18-19).
+  message; docs/archive/v5/rca-exe-swap-write-storm.md:48). The user's force-kill culture
+  armed the next boot to storm again (docs/archive/v5/rca-exe-swap-write-storm.md:18-19).
 - THE LAW: a kill mid-pass may cost one component, never the layer — bracket
   every long pass unmark → wipe → run → mark per component
-  (docs/rca-exe-swap-write-storm.md:137-138).
+  (docs/archive/v5/rca-exe-swap-write-storm.md:137-138).
 - THE RAIL: enforced. Per-component unmark/wipe/run/mark plus deferred
   source-digest saves and the bulk-rebuild I/O guard (7f4d9c58, 6afd2cf3,
   5cf4be15); live `kill -9` mid-derived receipt 2026-07-17: clean recovery, no
@@ -141,13 +141,13 @@ sites but not against new code. **missing** = nothing.
   running" while the storm is mid-pass.
 - HOW IT BIT US: the worst one on record. Every post-install boot wrote 4.4 to
   6.1GB and pinned CPU 60–90s, for weeks, intermittently
-  (docs/rca-exe-swap-write-storm.md:8-17). Six distinct defects over three
-  sessions (defect table docs/rca-exe-swap-write-storm.md:43-50); the 2s poll
+  (docs/archive/v5/rca-exe-swap-write-storm.md:8-17). Six distinct defects over three
+  sessions (defect table docs/archive/v5/rca-exe-swap-write-storm.md:43-50); the 2s poll
   full-tick storm (7af0e319) and the per-process exe-identity cache forcing
   full rebuilds every tick of the first post-install daemon (c351ed90) were the
   same family (CLAUDE.md:52). Double-swap receipt 2026-07-17: 6.1GB/72.9s cpu →
   110.9MB/8.5s; steady state after settle 0.0MB per 60s window, rss 18MB
-  (docs/rca-exe-swap-write-storm.md:104-111).
+  (docs/archive/v5/rca-exe-swap-write-storm.md:104-111).
 - THE LAW: "Self-diagnosis before execution: ... Never make the user ask 'why
   is it slow' — the system answers that itself" (CLAUDE.md:25-29) and "A change
   that can beachball the machine is a blocking defect, not a follow-up"
@@ -156,12 +156,12 @@ sites but not against new code. **missing** = nothing.
   IOPOL_THROTTLE, thread cap — CLAUDE.md:30-32); `DL_MAX_WALL_SECS` watchdog,
   default 300s, exit 124 naming phase/root (e7d29829, CLAUDE.md:54);
   `dl daemon why` reads the on-disk trail after any exit including SIGKILL
-  (why.jsonl, 1105fe9d; docs/rca-exe-swap-write-storm.md:132-134); per-root
+  (why.jsonl, 1105fe9d; docs/archive/v5/rca-exe-swap-write-storm.md:132-134); per-root
   perf.jsonl carries `full_reason`/`changed_rels`, `reason=` rides the `[tick]`
-  line (docs/rca-exe-swap-write-storm.md:135-136); the four storm code forms
+  line (docs/archive/v5/rca-exe-swap-write-storm.md:135-136); the four storm code forms
   are banned by warn-tier rails with a prev-rev oracle (792cc902). The
   per-tick (rel, rows-written) ledger the RCA asked for
-  (docs/rca-exe-swap-write-storm.md:152) has since landed:
+  (docs/archive/v5/rca-exe-swap-write-storm.md:152) has since landed:
   src/rels/write_ledger.rs, flushed at src/engine/tick.rs:582.
 - SAY THIS TO AN AGENT: After any install or restart, read `dl daemon why` and
   the tick line's `reason=` before concluding anything — and never force-kill
@@ -173,7 +173,7 @@ sites but not against new code. **missing** = nothing.
   `_write_ledger` shows rows landing for the served root tick after tick.
 - HOW IT BIT US: this was the storm's steady-state shape (classes 1–6 all fed
   it); post-fix the receipt is 0.0MB written per 60s quiet window
-  (docs/rca-exe-swap-write-storm.md:111). The budget itself is written down —
+  (docs/archive/v5/rca-exe-swap-write-storm.md:111). The budget itself is written down —
   "on a QUIET tick ... `_write_ledger` for this program's root MUST show zero
   rows" (examples/chaos-soak.dl:23-31) — but documented, never enforced: no
   check fails when a quiet tick writes.
@@ -202,16 +202,16 @@ sites but not against new code. **missing** = nothing.
 - HOW IT BIT US: no recorded deadlock incident in the sources — unverified as a
   bite; catalogued pre-bite from the inventory. The exposure is real: 107
   lock-acquisition sites, 60 of them in src/daemon.rs alone
-  (docs/effect-inventory.md:266, :381), with named nesting edges prog → eng at
+  (docs/archive/v5/effect-inventory.md:266, :381), with named nesting edges prog → eng at
   src/daemon.rs:365-366, 407-408, 434-435, 595-596, 626-627 and
   program_files → eng at src/daemon.rs:522-523
-  (docs/effect-inventory.md:296-299). Adjacent bite: an unguarded recompute
+  (docs/archive/v5/effect-inventory.md:296-299). Adjacent bite: an unguarded recompute
   re-runs "under the daemon lock" (CLAUDE.md:78) — whatever runs under a lock
   is on every other lock-holder's critical path.
 - THE LAW: never hold a lock across a call that can block or take another lock
   — clone the data out, drop the guard, then call.
 - THE RAIL: MISSING. The chokepoint exists: 83 of 107 acquisitions go through
-  the `lock`/`rlock`/`plock` helpers (docs/effect-inventory.md:262, :381), so
+  the `lock`/`rlock`/`plock` helpers (docs/archive/v5/effect-inventory.md:262, :381), so
   one helper-level instrument covers most of the surface. Proposed rail: a
   thread-local hold-set in the helpers (debug_assert/tracing when a second
   acquisition overlaps the first) plus a static `.dl` rail joining helper-call
@@ -228,7 +228,7 @@ sites but not against new code. **missing** = nothing.
   pre-bite. The repo has 4 channel creation sites, 3 of them unbounded:
   src/engine/derive.rs:40, src/daemon.rs:1235, src/lib.rs:633; the one bounded
   site is src/cli/check_deadline.rs:18 (`sync_channel(1)`)
-  (docs/effect-inventory.md:308-315, :382).
+  (docs/archive/v5/effect-inventory.md:308-315, :382).
 - THE LAW: every channel is bounded; an unbounded queue under the daemon poll
   loop is a write storm waiting for a fast producer.
 - THE RAIL: MISSING. Proposed rail: a static `.dl` rail flagging
@@ -258,7 +258,7 @@ sites but not against new code. **missing** = nothing.
   (assets/sprefa-v5-no-magic-rels.skill.md:16-18, :56-57); demand/overlay
   conventions live as catalogued builtin sinks in `demand_rel_decls()` +
   `DEMAND_RELS` (src/engine/mod.rs; assets/sprefa-v5-no-magic-rels.skill.md:33-36);
-  docs/reference/magic-rels.md is generated from the catalog.
+  docs/archive/v5/reference/magic-rels.md is generated from the catalog.
 - SAY THIS TO AN AGENT: Never read a relation by literal string name in engine
   Rust unless it is catalogued in `rel_catalog` — clear a
   `magic-rel-unregistered` finding by declaring the rel, never by narrowing
@@ -296,7 +296,7 @@ sites but not against new code. **missing** = nothing.
   ingests `~/.config/sprefa/config.toml` repos" (CLAUDE.md:70(a)); ambient
   config hermeticity is the top-ranked open friction item (CLAUDE.md:69). Same
   family: something during `cargo test --test it` regenerates
-  docs/reference/syntax.md IN-TREE with the installed dl, dirtying the repo
+  docs/archive/v5/reference/syntax.md IN-TREE with the installed dl, dirtying the repo
   mid-suite (PLANS.md:17), and the empty-scan sharp edge narrowed a served
   snapshot 618 → 68 files (c3c587c9, CLAUDE.md:57).
 - THE LAW: tests and smoke runs are hermetic — "set `SPREFA_CONFIG` for
@@ -373,7 +373,7 @@ sites but not against new code. **missing** = nothing.
 - DETECTION SIDE: `dl daemon health` (src/cli/health.rs) reports orphan `roots/`
   dirs — directories present under `roots/` with no matching entry in
   `roots.json` — so an orphan minted before this rail, or by any other path,
-  surfaces without a manual `du` sweep. See docs/daemon.md.
+  surfaces without a manual `du` sweep. See docs/archive/v5/daemon.md.
 - SAY THIS TO AN AGENT: the rail exists — a `--check` in an unregistered linked
   worktree with a cold db skips green and builds nothing. If you need it to
   really run there, register the root (`dl daemon start` inside it), run from
@@ -388,15 +388,15 @@ sites but not against new code. **missing** = nothing.
   as changed and the cascade re-fires honestly on a lie.
 - HOW IT BIT US: defects 2, 3, and 5 of the write storm. scip/catalog/
   type/dataflow refreshers returned `Ok(true)` unconditionally — 14 rels
-  "changed" every tick (docs/rca-exe-swap-write-storm.md:46, fix 4d0d24bf);
+  "changed" every tick (docs/archive/v5/rca-exe-swap-write-storm.md:46, fix 4d0d24bf);
   `refresh_call_rels` hardcoded `Ok(true)` so an exe-swap re-derive of an
-  unchanged corpus cascaded the flow rails (docs/rca-exe-swap-write-storm.md:49,
+  unchanged corpus cascaded the flow rails (docs/archive/v5/rca-exe-swap-write-storm.md:49,
   fix f48749e0); `stmt_ms`/`rel_count`/`query_log` moved every tick so the root
   never settled and the poll loop re-enqueued full ticks forever
-  (docs/rca-exe-swap-write-storm.md:47, fix 4d0d24bf via
+  (docs/archive/v5/rca-exe-swap-write-storm.md:47, fix 4d0d24bf via
   `RelKind::bookkeeping()`; same family as the 2s poll storm, 7af0e319). The
   storm's own lesson: "The system was telling the truth about garbage"
-  (docs/rca-exe-swap-write-storm.md:79) — change flags are the truth contract.
+  (docs/archive/v5/rca-exe-swap-write-storm.md:79) — change flags are the truth contract.
 - THE LAW: a refresh fn returns the ORed `rows_changed` of what it actually
   wrote — "changed" is a claim you must be able to defend with a delta
   (4d0d24bf, f48749e0).
@@ -576,7 +576,7 @@ sites but not against new code. **missing** = nothing.
   screaming on completion marks, deploy and start costs that "everything
   plausibly explains" (swap, disk, cold extract) while the real generator
   stays silent.
-- HOW IT BIT US (2026-07-18, full chain in docs/rca-phantom-extract-diff.md):
+- HOW IT BIT US (2026-07-18, full chain in docs/archive/v5/rca-phantom-extract-diff.md):
   `eval_extract_rules` compared a `SELECT *` before-snapshot (which includes
   the `__src` bookkeeping column, src/engine/declare.rs:290) against
   declared-columns-only after-rows, and encoded NULL as `"t"` on one side,
@@ -2464,14 +2464,14 @@ ENTRY: this row.
 | # | class | rail status | promotion needed |
 |---|-------|-------------|------------------|
 | 1 | per-row writes / N+1 | half | waiver-audit the 40 HEAD static-n1 findings (792cc902), promote `.dl/static-n1.dl` to error severity |
-| 2 | nondeterministic extraction | enforced | replace the lossy df_node id (`file:line:col`) with a repo-scoped id — ref-spine owns (docs/rca-exe-swap-write-storm.md:147) |
+| 2 | nondeterministic extraction | enforced | replace the lossy df_node id (`file:line:col`) with a repo-scoped id — ref-spine owns (docs/archive/v5/rca-exe-swap-write-storm.md:147) |
 | 3 | full-layer rebuild | mostly enforced | digest-before-write landed for non-recursive components (tests/it/derived_skip.rs, DL_NO_DERIVED_SKIP lever); residual: recursive components still rewrite byte-identical rows on unattributable full rebuilds |
 | 4 | unguarded recompute | enforced | — |
 | 5 | crash-window half-written state | enforced | — |
 | 6 | exe-swap / daemon-restart storm | enforced | — |
 | 7 | quiet-tick write budget | missing | serve examples/chaos-soak.dl under the daemon in CI; fail on any `_write_ledger` row for the root on a quiet tick (examples/chaos-soak.dl:23-31) — and assert WAL byte growth too: `declare_all`'s unconditional per-rel VIEW DROP+CREATE rewrites sqlite_master every tick (~2.5MB/tick noise floor measured in tests/it/derived_skip.rs), invisible to the row ledger |
-| 8 | lock across blocking calls | missing | hold-set instrumentation in the `lock`/`rlock`/`plock` helpers (83/107 sites, docs/effect-inventory.md:262) + static rail on lock-then-block in one fn body |
-| 9 | unbounded channels | missing | static rail banning unbounded ctors without a `// @unbounded:` waiver; drive 3 → 0-or-waivered (docs/effect-inventory.md:308-315) |
+| 8 | lock across blocking calls | missing | hold-set instrumentation in the `lock`/`rlock`/`plock` helpers (83/107 sites, docs/archive/v5/effect-inventory.md:262) + static rail on lock-then-block in one fn body |
+| 9 | unbounded channels | missing | static rail banning unbounded ctors without a `// @unbounded:` waiver; drive 3 → 0-or-waivered (docs/archive/v5/effect-inventory.md:308-315) |
 | 10 | magic rel-name reads | enforced | — |
 | 11 | co-heading source+derived | enforced | — |
 | 12 | ambient config in tests | half | hermetic-by-default it-test harness (fail when `SPREFA_CONFIG` unset); fix the in-tree syntax.md regen (PLANS.md:17) |
@@ -2533,10 +2533,10 @@ The observed standard, in order — no step is optional:
 
 1. **Incident with numbers.** GB written, rows forced, seconds pinned. A vibe
    is not an incident.
-2. **RCA that names the defect chain.** docs/rca-exe-swap-write-storm.md is the
+2. **RCA that names the defect chain.** docs/archive/v5/rca-exe-swap-write-storm.md is the
    model: six defects in firing order, each fix's receipt exposing the next.
    "Jitter" and other unproven claims are rejected at review — exact equality
-   or a named moving rel (docs/rca-exe-swap-write-storm.md:97-99).
+   or a named moving rel (docs/archive/v5/rca-exe-swap-write-storm.md:97-99).
 3. **Discriminating test, proven fail-pre-fix.** The test must be shown to fail
    on the pre-fix code, not merely pass after. Precedents:
    tests/it/derived_scope.rs (CLAUDE.md:55), tests/it/racy_mtime.rs (f2205994),

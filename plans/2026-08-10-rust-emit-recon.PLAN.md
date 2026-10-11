@@ -17,7 +17,7 @@ second printer over the same lowered term
 2,388 lines, measured with `wc -l` at `07b81db7`. These are source masses, not
 port estimates.
 
-One brief source is absent at this base: `docs/v6-rel-catalog-emitters.md` does
+One brief source is absent at this base: `docs/archive/v6/v6-rel-catalog-emitters.md` does
 not exist. The live row authority is `catalog_all_rows/10`, which combines
 declaration and plane rows (`v6/prolog/lower.pl:830-841`), and the emitted TS
 catalog type is `IRelCatalogRow` (`v6/tsv2/runtime/types.ts:376-414`). The first

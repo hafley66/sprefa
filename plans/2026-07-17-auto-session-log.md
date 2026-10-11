@@ -15,7 +15,7 @@ bookkeeping version of the same events.
 - 6 stacked bugs. deepest one: extractor rolled dice.
 - same files in, different rows out. engine believed it. rebuilt the world.
 - fixed. receipt: 4.7GB per boot -> 111MB.
-- war story: docs/rca-exe-swap-write-storm.md
+- war story: docs/archive/v5/rca-exe-swap-write-storm.md
 
 ### finding 1: determinism rail
 - test: tiny fake repo. extract twice. rows must match byte for byte.
@@ -94,7 +94,7 @@ bookkeeping version of the same events.
   sprefa cutoff was 40. every "hot" list came back empty. need top-K.
 - lesson 2: TS call graph 4x sparser than rust. known extraction gap.
   TS conclusions undercount until fixed.
-- verdicts + data: docs/arch-measures-review.md, commit 1c3ff4a6
+- verdicts + data: docs/archive/v5/arch-measures-review.md, commit 1c3ff4a6
 
 ### finding 10: engine now keeps receipts on itself
 - new: per-tick ledger. every relation that wrote rows, recorded.
@@ -213,7 +213,7 @@ of an infinite silent wait.
   rows, db +131KB. Findings 3 and 4 above; verdict material awaits user
   (blast vs fan_in overlap is the main keep/kill call). File left uncommitted;
   the live daemon's doc-gen rail picked it up and touched README.md +
-  docs/reference/examples.md (expected, commit together later).
+  docs/archive/v5/reference/examples.md (expected, commit together later).
 - New task #9: empty-scan-scope wipe guard (Finding 4).
 
 ### kimi railB: files landed, run cut by connection error, resumed
@@ -307,7 +307,7 @@ of an infinite silent wait.
 
 ### R6 closed (1c3ff4a6), #9 committed (c3c587c9), R4+#10 dispatched, R7 specced
 - R6 round 2 (smashy) returned: zero structural edits needed, thresholds and
-  TS sparsity are the portability lessons. docs/arch-measures-review.md holds
+  TS sparsity are the portability lessons. docs/archive/v5/arch-measures-review.md holds
   both rounds + open verdicts. Committed 1c3ff4a6 (incl. doc-gen README/
   examples hunks). Task #6 completed.
 - kimi #9 guard reviewed + committed c3c587c9 (both distinctions pinned:

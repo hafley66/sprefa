@@ -2,7 +2,7 @@
 
 Auditor copy: every claim cites file:line on origin/main `03e441cc6` or the
 branch named. Companion for Chris: `plans/2026-09-03-comptime-bindings.PLAN.visual.human.unga.md`.
-Inventory this plan reads: `docs/comptime-bindings-inventory.md`.
+Inventory this plan reads: `docs/archive/v7/comptime-bindings-inventory.md`.
 
 1. [The ask](#the-ask)
 2. [What exists](#what-exists)
@@ -40,7 +40,7 @@ maintenance)".
 | compile cache | `with_compilation_cache(Key, Producer, Compiled, Diagnostics, Hit)`, `with_prelude_cache` | `v7/src/2_comptime/1c_compiler_cacher.pl:16,39` |
 | content identity | `content_id_of` (blake3 / git blob id) | `v6/sprefa-extract/src/shape.rs`; soopy `ContentId::GitBlob` (`executors/watch.rs`) |
 | dd emit | `dd_plan(Name, rels, arrangements, operators, wires, tick_order)` from `lowered/8`, JSON twin, read by `v6/dd-runner` | `v6/prolog/compile/6_isolated_compiler_dd.pl:73-80` |
-| dbsp crate map | core types, embedder program, retraction, operator surface, memory | `docs/ext-dbsp-incremental.md:16-306` |
+| dbsp crate map | core types, embedder program, retraction, operator surface, memory | `docs/archive/v5/ext-dbsp-incremental.md:16-306` |
 
 ## Fork 1: binding mechanism
 
@@ -56,7 +56,7 @@ Measured 2026-09-03, DEBUG binary (`.boop-worktrees/fix/extract-one-hash/.../tar
 | (a) `process_create` + JSONL, one child per binding call, result cached by content id | the shape `3_rust_type_region_mainer.pl:67` already runs; `library(process)` loads (swipl 10.0.2) | 0.02 s per call measured; zero new build; the JSONL is the decoded wire the loader already reads | the emitted program does not spawn: it links the executor by roster name; the mechanism is comptime-only, the TABLE is shared | RECOMMENDED |
 | (b) swipl `library(ffi)` over a Rust cdylib exposing extract and soopy | `library(ffi)` is absent on this machine (`use_module(library(ffi))`: source_sink does not exist); needs the pack plus a cdylib build of extract and soopy | new build artifact, ABI surface to maintain, no measured win over 0.02 s | no | dismissed on the absent library and the unmeasured need |
 | (c) engine-rs embeds swipl (`swipl` crate) so comptime runs inside the Rust process | inverts ownership: the compiler becomes a library of the runtime; every `just build` of v7 needs the Rust toolchain | large; couples two release trains | yes, one process | deferred: nothing in the ask needs one process; revisit if (a)'s per-call cost ever shows on the 10-second law |
-| (d) resident extract daemon over a socket (v5 `docs/daemon.md` shape) | daemon lifecycle, spawn-if-missing, socket protocol | infra to own; the law says infra is bought | partially | dismissed: (a) at 0.02 s leaves nothing for a daemon to save |
+| (d) resident extract daemon over a socket (v5 `docs/archive/v5/daemon.md` shape) | daemon lifecycle, spawn-if-missing, socket protocol | infra to own; the law says infra is bought | partially | dismissed: (a) at 0.02 s leaves nothing for a daemon to save |
 
 Recommendation: (a). The one change to the mainer's shape: the call moves
 from emit time to a comptime phase, keyed by content id, and the spawn
@@ -149,7 +149,7 @@ with one Key run once (the cacher's Hit).
 
 `binding_columns/3` (section 7) IS the roster with column contracts. The
 emitter reads it the way `6_isolated_compiler_dd.pl` reads `lowered/8`:
-one dbsp input handle per binding the program demands (`docs/ext-dbsp-incremental.md`
+one dbsp input handle per binding the program demands (`docs/archive/v5/ext-dbsp-incremental.md`
 section 2, `add_input_zset`), typed by `binding_columns`. `/soopy/watch`
 deltas (cadence Continuing, `hosts.rs:32-35`) are the change stream: a
 delta row becomes a ZSet insert or retraction on the file rows, and the

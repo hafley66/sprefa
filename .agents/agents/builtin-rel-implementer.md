@@ -25,7 +25,7 @@ group, and the one-line doc. Everything procedural comes from the skills.
 - dl snippets in tests/examples use descriptive variable names, never single
   letters. Banned identifiers: provenance/substrate/load-bearing/regime.
 - Doc drift: after registering the decl, run the doc regen per
-  `assets/sprefa-doc-regen.skill.md` so `docs/reference/relations.md` and the
+  `assets/sprefa-doc-regen.skill.md` so `docs/archive/v5/reference/relations.md` and the
   README zones carry the new rel.
 - Finish by running the magic-rel rail:
   `dl .dl/magic-rel-audit.dl --root . --no-daemon --check` (exit 0 required).

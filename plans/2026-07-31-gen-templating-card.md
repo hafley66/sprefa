@@ -27,7 +27,7 @@ are not double-counted.
 
 | # | shape | v5 spelling (verbatim from the corpus) | sites | v6 status |
 |---|---|---|---|---|
-| A | **file-append** | `gen(:append, "docs/reference/relations.md", "\| \`{name}\` \| {group} \|") <- …` | 47 | **EXPRESSIBLE** — `group_concat(line, '\n', ordinal)` + one `sh` write host |
+| A | **file-append** | `gen(:append, "docs/archive/v5/reference/relations.md", "\| \`{name}\` \| {group} \|") <- …` | 47 | **EXPRESSIBLE** — `group_concat(line, '\n', ordinal)` + one `sh` write host |
 | B | **block splice** (line span from a rel) | `gen(p, l0, l1, "\| \`{op}\` \| {kind} \|") <- op_block(p, l0, l1), …` | 39 | **INEXPRESSIBLE** — v6 has no way to write *into* an existing file at coordinates |
 | C | **named zone** | `gen(:zone, "README.md", "cli", "{row}") <- flag(name), readme_flag_row(name, row).` | 14 | **INEXPRESSIBLE** — same reason; also no `comment()`-located marker pair |
 | D | **whole file** | `gen("examples/interface-soup.d2", "{impl} -> {iface}") <- impl_of(impl, iface).` | 9 | **EXPRESSIBLE** — same as A |

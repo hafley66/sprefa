@@ -36,9 +36,9 @@ or committed. `scan`/`file` walk the FS (`ignore::WalkBuilder`). Only
 **Docs dogfooded** (extends `examples/gen-reference.dl`, run with root=v5; gen
 paths + `scan` globs resolve relative to ROOT): new `op_catalog(op, kind,
 syntax, doc)` built-in (`op_docs()` static table in engine.rs, emitted by
-`CatalogKind` alongside rel_catalog/fn_catalog) -> `docs/reference/syntax.md`;
+`CatalogKind` alongside rel_catalog/fn_catalog) -> `docs/archive/v5/reference/syntax.md`;
 `example_doc` scan+match of every `examples/*.dl` first `#` line ->
-`docs/reference/examples.md` + a spliced README `<!-- BEGIN: examples-index -->`
+`docs/archive/v5/reference/examples.md` + a spliced README `<!-- BEGIN: examples-index -->`
 block (full corpus, hand-curated highlights table kept above it). All converge.
 
 Adding a builtin rel today = RelKind impl in `relkind.rs` + add to `rel_kinds()`

@@ -21,7 +21,7 @@ def door(binary, args, env=None):
     run = subprocess.run(
         [binary] + args,
         capture_output=True,
-        env={**os.environ, **(env or {}), "DL8_ENGINE": "ir:sqlite"},
+        env={**os.environ, **(env or {}), "DL8_ENGINE": "ir:dd"},
     )
     if not run.stdout:
         raise RuntimeError(f"{args}: no stdout; exit {run.returncode}: {run.stderr.decode()[-400:]}")

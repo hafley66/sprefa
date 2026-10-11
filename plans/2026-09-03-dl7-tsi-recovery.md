@@ -105,7 +105,7 @@ Files in scope:
 
 - `plans/2026-09-02-dl7-programmable-source-intelligence-vision.md`;
 - later merged TSI and comptime plans when this branch is rebased;
-- `docs/extract-tsi.md` when it exists in the integration checkout.
+- `docs/archive/v7/extract-tsi.md` when it exists in the integration checkout.
 
 Edits must distinguish completed prototype behavior, pending compiler-effect
 work, and discarded dotted or global-prelude proposals. No code movement is

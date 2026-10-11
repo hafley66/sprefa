@@ -12,7 +12,7 @@ Epic (kicked off 2026-06-29, after the ghcacher chapter closed): break down
 measure coupling before/after. Goal in Chris's words: "more/less highly coupled
 yet readable with type design," plus "fuzzy matching on corresponding type vibes."
 
-**Carried ruling (do NOT relitigate, from `docs/refactor-exploration.md` + prior
+**Carried ruling (do NOT relitigate, from `docs/archive/v5/refactor-exploration.md` + prior
 session):** the file is already laid out by who-calls-what (call-distance: current
 18 vs name-sort 60 vs random 80 — reordering by name DESTROYS locality). So NO
 file-split, NO gather-by-name. The surviving signal points at TRAITS, not file

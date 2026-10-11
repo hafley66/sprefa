@@ -77,7 +77,7 @@ the rels. The saga generalizes the landed `std/arch.dl` work instead of forking 
 A node id is a slash path `engine/tick/fixpoint`. **Pinned**: `<!-- @arch <id> -->`
 in a doc declares the node; the heading above supplies the display title; renames
 never rekey. **Slug fallback**: headings with no pinned marker still yield nodes,
-id from the heading-nesting path (`lower`/`replace_re`, docs/reference/functions.md:12).
+id from the heading-nesting path (`lower`/`replace_re`, docs/archive/v5/reference/functions.md:12).
 A slug-id node that acquires a binding gets an `arch-slug-bound` info diag
 suggesting a pin. Hazard: `doc_node.parent` is heading **text** — duplicate
 sibling titles are resolved to the nearest same-title heading above (`max`

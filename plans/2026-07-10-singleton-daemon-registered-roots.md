@@ -175,7 +175,7 @@ root-local today (index.scip, perf.jsonl). It LOSES: daemon.sock/daemon.pid/db.
   impossible — add the regression test that proves it.
 - **P4 migration + docs**: first singleton attach imports an existing `<root>/.dl/db`
   into `roots/<key>/db.sqlite` (or cold-ticks if schema drifted — digest machinery
-  decides); docs/daemon.md rewritten around ONE daemon kind + the config view;
+  decides); docs/archive/v5/daemon.md rewritten around ONE daemon kind + the config view;
   CHANGELOG + skill regen.
 
 ## Open questions

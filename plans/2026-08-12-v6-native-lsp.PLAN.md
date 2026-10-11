@@ -41,7 +41,7 @@ engine lenses it populates. The complete v5 LSP method dispatch is
 
 | # | feature | how v6 reaches it today | v5 code that serves it | works E2E today |
 |---|---|---|---|---|
-| D1 | diagnostics | `.dl6` rel named `diag_v5`, 9 cols, compiles to bare table `diag_v5` (`lower.pl:176`); served by tsv2; v5 `dl --lsp --diag-db <file>` polls it every 500ms | `run_diag_db_mode` `src/lsp.rs:495`; `diag_db_poll_loop` `src/lsp.rs:515`; `SELECT path,line,col,end_line,end_col,severity,code,msg,hint FROM diag_v5` `src/lsp.rs:633`; `publishDiagnostics` `src/lsp.rs:738`; relative-path resolve `publish_diag_v5_path` | YES, measured. `lsp-diags.sh` phase B drove the real v5 binary over real Content-Length JSON-RPC stdio; `publishDiagnostics` appeared (`b.ts` no-eval + unused-def) and retracted on the same session. `docs/lsp.md:180-205` shows first-poll publish before `initialized`/`didOpen`. Caveats below. |
+| D1 | diagnostics | `.dl6` rel named `diag_v5`, 9 cols, compiles to bare table `diag_v5` (`lower.pl:176`); served by tsv2; v5 `dl --lsp --diag-db <file>` polls it every 500ms | `run_diag_db_mode` `src/lsp.rs:495`; `diag_db_poll_loop` `src/lsp.rs:515`; `SELECT path,line,col,end_line,end_col,severity,code,msg,hint FROM diag_v5` `src/lsp.rs:633`; `publishDiagnostics` `src/lsp.rs:738`; relative-path resolve `publish_diag_v5_path` | YES, measured. `lsp-diags.sh` phase B drove the real v5 binary over real Content-Length JSON-RPC stdio; `publishDiagnostics` appeared (`b.ts` no-eval + unused-def) and retracted on the same session. `docs/archive/v5/lsp.md:180-205` shows first-poll publish before `initialized`/`didOpen`. Caveats below. |
 | D2 | hover (note over span) | `.dl6` rel named `hover_note`, 6 cols, compiles to bare table `hover_note` (`lower.pl:176`); no serve-side reader; intended v5 hover | `hover_notes_at` call `src/lsp.rs:884`; merge `src/lsp.rs:886-897`; `MarkupContent` `src/lsp.rs:906`; impl reads `txt_tbl("hover_note")` `src/engine/lens.rs:294-296` | NO. Broken even with v5. `hover_notes_at` selects `rel_hover_note_txt` (`txt_tbl` naming, `src/lower.rs:10`), never the bare `hover_note` table v6 emits. v5 has no `--hover-db` foreign mode (only `--diag-db`, `src/lsp.rs:495`); `hover_notes_at` runs only in full `--lsp` engine mode against v5's own compiled db. PR #202's own lane measured it could not put a note into an editor. |
 
 D1 caveats: spans are whole-file only (line=col=end_line=end_col=0, the
@@ -156,13 +156,13 @@ Fork B, a separate LSP server process.
   in which case it is Fork A in disguise), a second process contract (which file,
   how deltas cross), duplicate boot wiring. Reproduces the v5 external-db
   handshake: poll cadence `src/lsp.rs:515`, path-cwd agreement
-  `docs/lsp.md:143-169`, poll latency `docs/lsp.md:171-174`.
+  `docs/archive/v5/lsp.md:143-169`, poll latency `docs/archive/v5/lsp.md:171-174`.
 - Forces later: process-pair coordination; two processes on one SQLite file
   (WAL lock choreography the single-process shape does not have).
 - Forecloses: the single-process story; it is the v5 `--diag-db` shape
   (`src/lsp.rs:495-537`) re-homed to a v6-owned process, not removed.
 - Throw sites: the mode being mirrored `src/lsp.rs:495`, `:537`, the gotchas
-  `docs/lsp.md:152-174`.
+  `docs/archive/v5/lsp.md:152-174`.
 
 ### 4.2 Sub-forks, whichever process shape the user picks
 

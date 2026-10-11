@@ -33,7 +33,7 @@ The four demand/overlay conventions are exactly this shape and now live here:
 `scip_want`, `rev_cmp_want`, `def_target`, `effect_cmd` — declared in
 `demand_rel_decls()` and reserved via `DEMAND_RELS` in `src/engine/mod.rs`,
 group `demand`. The engine reading them by name is reading a catalogued builtin,
-not magic. See `docs/reference/magic-rels.md`.
+not magic. See `docs/archive/v5/reference/magic-rels.md`.
 
 ## Adding a new demand/overlay convention
 
@@ -70,7 +70,7 @@ magic set may only shrink or become catalogued.
   (mirrors `diag_rel_decls` / `DIAG_RELS`).
 - The rail: `.dl/magic-rel-audit.dl` (scans `src/**/*.rs` for `rels.get("...")`
   / `FROM rel_...`, anti-joins `rel_catalog`).
-- The doc: `docs/reference/magic-rels.md` (generated from `rel_catalog` group
+- The doc: `docs/archive/v5/reference/magic-rels.md` (generated from `rel_catalog` group
   `demand` by `examples/gen-reference.dl`).
 - Read sites: `src/rels/scip.rs` (scip_want), `src/rels/git.rs` (rev_cmp_want),
   `src/engine/mod.rs` (def_target), `src/lib.rs` + `src/daemon.rs` (effect_cmd).
