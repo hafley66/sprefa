@@ -170,7 +170,8 @@ pub fn finish_final_check(
     facts: &[TermId],
     generated: &Generated,
 ) -> Outcome {
-    let validation = validate_functional_rows(u, &checked.relations, facts);
+    let by_relation = rows_by_relation(u, facts);
+    let validation = validate_functional_rows(u, &checked.relations, &by_relation);
     let validation = prolog_sort(u, validation);
     if !validation.is_empty() {
         return Ok((None, validation));
@@ -297,7 +298,7 @@ fn prelude_relation(u: &mut Universe, base_seeds: &[TermId], name: &str) -> Resu
 pub fn unmet_bound_diagnostics(
     u: &mut Universe,
     base_seeds: &[TermId],
-    rows: &[TermId],
+    by_relation: &RelationRows,
 ) -> Vec<TermId> {
     // Without the prelude, lowering wrote no obligation (`missing_prelude_relation`).
     if !prelude_loaded(u, base_seeds) {
@@ -314,7 +315,6 @@ pub fn unmet_bound_diagnostics(
     let [obligation, discharged, extends_diagnostic, extends_reason] = found[..] else {
         return missing;
     };
-    let by_relation = rows_by_relation(u, rows);
     let arguments = |relation: TermId| -> Vec<Vec<TermId>> {
         by_relation
             .get(&relation)
@@ -367,9 +367,9 @@ fn located(u: &mut Universe, phase: &str, node: TermId, reason: TermId) -> TermI
 }
 
 /// One row and its argument list, grouped by the relation it calls.
-type RelationRows = HashMap<TermId, Vec<(TermId, Vec<TermId>)>>;
+pub type RelationRows = HashMap<TermId, Vec<(TermId, Vec<TermId>)>>;
 
-fn rows_by_relation(u: &mut Universe, rows: &[TermId]) -> RelationRows {
+pub fn rows_by_relation(u: &mut Universe, rows: &[TermId]) -> RelationRows {
     let sorted = prolog_sort(u, rows.to_vec());
     let mut out: RelationRows = HashMap::new();
     for row in &sorted {
@@ -388,9 +388,8 @@ fn rows_by_relation(u: &mut Universe, rows: &[TermId]) -> RelationRows {
 pub fn validate_functional_rows(
     u: &mut Universe,
     relations: &[TermId],
-    rows: &[TermId],
+    by_relation: &RelationRows,
 ) -> Vec<TermId> {
-    let by_relation = rows_by_relation(u, rows);
     let mut out = Vec::new();
     for declaration in relations {
         let Some(args) = u.args::<3>(*declaration, "relation") else {

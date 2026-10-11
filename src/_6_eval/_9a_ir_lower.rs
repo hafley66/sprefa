@@ -631,15 +631,17 @@ struct Builder {
     /// Every op denotes a function of its operator and its inputs' collections (a `Mint` of a
     /// functor and columns, a `Get` of a relation with one binder), so equal ops are one collection.
     consed: HashMap<String, ir::NodeId>,
-    /// Every term the program names, by its `TermId`: the source of `ir.terms` entries.
-    term_specs: HashMap<TermId, TermSpec>,
+    /// Every term the program names: the source of `ir.terms` entries. `Lowered::terms`.
+    term_specs: Vec<TermSpec>,
+    /// `term_specs` index per `TermSpec::original`.
+    term_index: hashbrown::HashMap<TermId, u32>,
     /// `ir.terms` index per term already in the table.
     literals: HashMap<TermId, u32>,
     /// The term of each `ir.terms` entry.
     literal_terms: Vec<TermId>,
     /// `Lowered::texts`, by `TermSpec::text`; `ir.texts` holds only the texts the term table names,
     /// so the IR of a program does not change with the strings its seeds carry.
-    spec_texts: Vec<String>,
+    spec_texts: Vec<(TermId, String)>,
     /// Per relation, the columns whose cells are bare integers (`raw_columns`).
     raw_cols: BTreeMap<RelationKey, Vec<bool>>,
     /// The variables of the rule being compiled whose `bound` column holds the bare integer.
@@ -686,7 +688,8 @@ impl Builder {
             declared_folds: Vec::new(),
             semantic: None,
             consed: HashMap::new(),
-            term_specs: HashMap::new(),
+            term_specs: Vec::new(),
+            term_index: hashbrown::HashMap::new(),
             literals: HashMap::new(),
             literal_terms: Vec::new(),
             spec_texts: Vec::new(),
@@ -746,7 +749,8 @@ impl Builder {
             if self.literals.contains_key(&at) {
                 continue;
             }
-            let spec = self.term_specs.get(&at).ok_or("ground term outside the term table")?;
+            let index = *self.term_index.get(&at).ok_or("ground term outside the term table")?;
+            let spec = &self.term_specs[index as usize];
             if !expanded {
                 stack.push((at, true));
                 stack.extend(spec.args.iter().filter(|arg| !self.literals.contains_key(arg)).map(|arg| (*arg, false)));
@@ -755,7 +759,7 @@ impl Builder {
             let args = if let Some(raw) = spec.raw {
                 vec![ir::TermArg::Raw(raw)]
             } else if let Some(text) = spec.text {
-                let value = self.spec_texts.get(text).ok_or("term text outside the text table")?;
+                let (_, value) = self.spec_texts.get(text).ok_or("term text outside the text table")?;
                 let index = match self.ir.texts.iter().position(|known| known == value) {
                     Some(index) => index,
                     None => {
@@ -3587,8 +3591,13 @@ pub fn lower_declared(
             }
         })
         .collect();
-    b.term_specs = terms.iter().map(|spec: &TermSpec| (spec.original, spec.clone())).collect();
-    b.spec_texts = texts.iter().map(|(_, text)| text.clone()).collect();
+    b.term_index = terms
+        .iter()
+        .enumerate()
+        .map(|(index, spec): (usize, &TermSpec)| (spec.original, index as u32))
+        .collect();
+    b.term_specs = terms;
+    b.spec_texts = texts;
     let semantic = b.rel(
         "__ir_semantic".into(),
         vec![ir::Ty::Id, ir::Ty::Id],
@@ -4257,8 +4266,8 @@ pub fn lower_declared(
         .collect();
     Ok(Lowered {
         ir: b.ir,
-        terms,
-        texts,
+        terms: b.term_specs,
+        texts: b.spec_texts,
         seeds,
         term_map,
         unit,

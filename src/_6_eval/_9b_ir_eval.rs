@@ -1167,7 +1167,8 @@ fn snapshot_closure<E: Engine>(
             args: terms.clone().unwrap_or_default(),
         });
     }
-    rows.sort_by(|a, b| {
+    // Equal rows are identical terms, so an unstable sort orders them the same.
+    rows.sort_unstable_by(|a, b| {
         u.cmp(a.rel, b.rel)
             .then_with(|| u.cmp_rows(&a.args, &b.args))
     });

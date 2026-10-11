@@ -6,7 +6,9 @@ use super::api::{
 };
 use super::assemble::{assemble_indexed, Assembled, Edit, Indexed};
 use super::call::call_rules;
-use super::finish::{derived_bind_diagnostics, unmet_bound_diagnostics, validate_functional_rows};
+use super::finish::{
+    derived_bind_diagnostics, rows_by_relation, unmet_bound_diagnostics, validate_functional_rows,
+};
 use crate::_3_check::api::prolog_sort;
 use crate::_3_check::resolved::Resolved;
 use crate::_3_check::{check_resolved_rules, Stop};
@@ -239,8 +241,9 @@ pub fn stable_outcome(
 ) -> RoundOutcome {
     let all = merged_sorted(u, base_relations, &assembled.relations);
     let mut stable = derived_bind_diagnostics(u, authored_rules, closure);
-    stable.extend(unmet_bound_diagnostics(u, base_seeds, closure));
-    stable.extend(validate_functional_rows(u, &all, closure));
+    let by_relation = rows_by_relation(u, closure);
+    stable.extend(unmet_bound_diagnostics(u, base_seeds, &by_relation));
+    stable.extend(validate_functional_rows(u, &all, &by_relation));
     let stable = prolog_sort(u, stable);
     if !stable.is_empty() {
         return RoundOutcome::failed(stable);

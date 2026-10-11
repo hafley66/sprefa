@@ -3,7 +3,7 @@
 
 use super::api::{evaluate_checked, Compiled, Refreeze, Sources};
 use super::assemble::assemble_generated_program;
-use super::finish::{generated_expression_environment, validate_functional_rows};
+use super::finish::{generated_expression_environment, rows_by_relation, validate_functional_rows};
 use super::rounds::{Outcome, Round};
 use crate::_3_check::{Checked, Stop};
 use crate::_6_eval::json::{term_from_json, term_to_json};
@@ -223,7 +223,8 @@ pub fn run(case: &Value) -> Result<(Value, u8), String> {
         "validate_functional_rows" => {
             let relations = terms(&mut u, input.get("relations"))?;
             let rows = terms(&mut u, input.get("rows"))?;
-            let diagnostics = validate_functional_rows(&mut u, &relations, &rows);
+            let by_relation = rows_by_relation(&mut u, &rows);
+            let diagnostics = validate_functional_rows(&mut u, &relations, &by_relation);
             out.insert("diagnostics".into(), list(&u, &diagnostics));
             let code = u8::from(!diagnostics.is_empty());
             Ok((Value::Object(out), code))
