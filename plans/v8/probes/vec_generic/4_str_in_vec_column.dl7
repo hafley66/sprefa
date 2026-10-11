@@ -1,0 +1,2 @@
+(files: (* (run: str) (list: vec)))
+(files "r" "f0")

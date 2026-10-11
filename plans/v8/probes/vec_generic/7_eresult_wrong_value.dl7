@@ -1,0 +1,21 @@
+(EResult:
+   (* (Next: type)
+      (Error: type)
+      (return:
+         (+ (loading: (*))
+            (next: (* (value: Next)))
+            (error: (* (message: Error)))
+            (complete: (*))))))
+
+(: FetchStatus (EResult str str))
+
+(: Event (* (: status FetchStatus)))
+(Event (FetchStatus.next 1))
+(Event (FetchStatus.error "boom"))
+(Event FetchStatus.loading)
+
+(: Got (* (: value str)))
+(<- (Got ?Value) (Event (FetchStatus.next ?Value)))
+
+(: Failed (* (: message str)))
+(<- (Failed ?Message) (Event (FetchStatus.error ?Message)))

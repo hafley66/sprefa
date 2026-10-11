@@ -1,0 +1,2 @@
+(files: (* (run: str) (list: (Option str))))
+(files "r" "f0")

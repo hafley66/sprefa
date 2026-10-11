@@ -1,0 +1,2 @@
+(files: (* (run: str) (list: (vec str))))
+(files "r" (vec 1 2))

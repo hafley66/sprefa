@@ -1,0 +1,4 @@
+(files: (* (run: str) (list: vec)))
+(files "r" (vec "f0" "f1"))
+(size : (* (run: str) (len: int)))
+(<- (size ?Run ?Len) (files ?Run ?List) (vec.len ?List ?Len))
