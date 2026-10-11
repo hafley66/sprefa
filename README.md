@@ -58,7 +58,7 @@ after lowering (`src/lib.rs:421`, `src/_8_driver/_5_import.rs:205`) and
 The loop is `src/_9_runtime/_2_reconcile.rs`; executors are
 `src/_9_runtime/_3_executors/`. A served name needs every companion relation
 its executor writes declared, or `--serve` fails with
-`executor_relation_unknown` (`executors_for`, `_3_executors/mod.rs:204`).
+`executor_relation_unknown` (`executors_for`, `src/_9_runtime/_3_executors/mod.rs:204`).
 
 | served name | companions it writes | cadence | declared in |
 |---|---|---|---|
@@ -80,7 +80,7 @@ Names come from each executor's `RELATION` constant; cadence from its
 `cadence()`. Tests: `tests/it/_5_store_host.rs`, `tests/it/_11_watchers.rs`.
 
 `extract` runs `$SPREFA_EXTRACT_BIN` when set, else `ryi` on `PATH`
-(`_3_executors/extract.rs:158-170`).
+(`src/_9_runtime/_3_executors/extract.rs:158-170`).
 
 ```bash
 cargo run -- compile fixtures/reconcile/0_timer.dl7 > target/timer.json
