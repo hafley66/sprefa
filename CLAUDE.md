@@ -122,9 +122,9 @@ block is a defect. Textbook register: short sentences, present tense, no "we".
 - Effects are a type constructor `(effect <input product> <output sum>)`; served
   from rows; kernel keeps only `effect/2`; Rust `IService` answers.
 - Generics are rule-body constructors over `intern_snapshot`; no template
-  engine, no generic syntax. `Option` is a prelude constructor
-  (`prelude/0_constructors.dl7:6`); `Result` is declared per program, not in
-  `prelude/`.
+  engine, no generic syntax. `Result` and `Option` are prelude constructors.
+  `Option` is in `prelude/0_constructors.dl7:6`; `Result` is not built in
+  `prelude/` yet (`fixtures/sum/*.dl7` declare their own).
 - Caret uses (`macrotime/1_caret.dl7`):
   - return mark: `(^name: ..)` in a product names the `return` bind;
     two marks in one product are `ambiguous_return`;
