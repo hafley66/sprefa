@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>dl8 zone: value type checking</title>
+<style>
+  :root { color-scheme: light dark; --ink: light-dark(#1b1d21, #e6e6e6); --dim: light-dark(#6b7078, #9aa0a8); --bg: light-dark(#fbfaf7, #14161a); --card: light-dark(#ffffff, #1d2026); --line: light-dark(#e3e0d8, #2c3038); --type: #3b82f6; --value: #e0861a; --gap: #d9433b; --ok: #2f9e5b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--ink); background: var(--bg); }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 24px 80px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin: 40px 0 12px; }
+  .sub { color: var(--dim); margin: 0 0 24px; }
+  .now { border: 2px solid var(--gap); border-radius: 10px; padding: 16px 20px; background: var(--card); }
+  .now b { color: var(--gap); }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; margin: 8px 0; }
+  .pipe { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: stretch; }
+  .stage { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 8px; text-align: center; font-size: 13px; }
+  .stage small { display: block; color: var(--dim); font-size: 11px; }
+  .stage.hot { border-color: var(--gap); }
+  .lanes { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; margin-top: 12px; font-size: 13px; }
+  .lane { height: 22px; border-radius: 5px; position: relative; }
+  .lane.type { background: linear-gradient(90deg, transparent 0 42%, var(--type) 42% 100%); }
+  .lane.value { background: linear-gradient(90deg, transparent 0 56%, var(--value) 56% 100%); }
+  .lane.join { background: repeating-linear-gradient(90deg, var(--gap) 0 8px, transparent 8px 14px); opacity: .7; }
+  .key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 6px; font-size: 15px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; }
+  .yes { color: var(--ok); font-weight: 600; } .no { color: var(--gap); font-weight: 600; }
+  ol li, ul li { margin: 4px 0; }
+  .t { color: var(--type); font-weight: 600; } .v { color: var(--value); font-weight: 600; } .g { color: var(--gap); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>dl8: checking values against types</h1>
+<p class="sub">Context page for <code>plans/v8/ZONE.md</code>. Source of every claim: <code>plans/v8/2026-10-11-generics-trace.md</code>.</p>
+
+<div class="now">
+  <b>Waiting on you:</b> OK to build steps 1 and 2 below.
+  A column declared <code>int</code> that gets a non-int value is silently stored as generic terms today.
+  The fix reports it, one row per column, and a dl7 rule decides if that is an error.
+</div>
+
+<h2>1 · The bug in one program</h2>
+<div class="cols">
+  <div class="card">
+    <h3>dl7</h3>
+<pre>(seed: (* (value: int)))
+(seed "a")</pre>
+    <p><code>dl8 compile</code> → <span class="g">zero diagnostics</span>.</p>
+  </div>
+  <div class="card">
+    <h3>TS twin</h3>
+<pre>class seed { constructor(value: number) {} }
+new seed("a")   // tsc: error</pre>
+    <p>Same gap with generics: <code>(FetchStatus.next 1)</code> where <code>value</code> is <code>str</code>.</p>
+  </div>
+</div>
+
+<h2>2 · Where the two facts live</h2>
+<div class="pipe">
+  <div class="stage">read<small>_0_read</small></div>
+  <div class="stage">macrotime<small>_1_macrotime</small></div>
+  <div class="stage">lower<small>_2_lower</small></div>
+  <div class="stage">check<small>_3_check<br>generics substitute here</small></div>
+  <div class="stage hot">comptime<small>_4_comptime<br>seeds evaluated here</small></div>
+  <div class="stage">finish<small>_5_finish</small></div>
+  <div class="stage">JSON out<small>compiler_rows<br>program.seeds</small></div>
+</div>
+<div class="lanes">
+  <div><span class="key" style="background:var(--type)"></span>type rows</div><div class="lane type"></div>
+  <div><span class="key" style="background:var(--value)"></span>value rows</div><div class="lane value"></div>
+  <div><span class="key" style="background:var(--gap)"></span>a join of both</div><div class="lane join" title="nothing joins them"></div>
+</div>
+<p><span class="t">Type rows</span> (<code>:(seed, value, int, 0)</code>) exist from check onward.
+<span class="v">Value rows</span> (<code>seed("a")</code>) are evaluated in comptime and shipped as <code>program.seeds</code>.
+<span class="g">No rule or pass reads both.</span></p>
+
+<h2>3 · How a generic becomes rows</h2>
+<pre>(EResult: (* (Next: type) (Error: type)
+   (return: (+ (loading: (*)) (next: (* (value: Next))) (error: (* (message: Error))) (complete: (*))))))
+(: FetchStatus (EResult str str))</pre>
+<table>
+  <tr><th>stage</th><th>row</th><th>site</th></tr>
+  <tr><td>lower</td><td><code>pending_edge(module, FetchStatus, application(EResult, [str, str]))</code></td><td><code>_2_lower/_5a_generic.rs:10</code></td></tr>
+  <tr><td>check</td><td><code>:(application(EResult,[str,str]), next, NextVariant, 1)</code><br><code>:(NextVariant, value, <span class="t">str</span>, 0)</code> ← <code>Next</code> substituted</td><td><code>_3_check/_2a_instance.rs:23</code></td></tr>
+  <tr><td>value</td><td><code>intern(NextVariant, tuple(<span class="v">"hi"</span>), Value)</code> in <code>program.seeds</code></td><td>lowering of <code>(FetchStatus.next "hi")</code></td></tr>
+</table>
+
+<h2>4 · The fix: let storage layout report what it already knows</h2>
+<p><code>raw_columns</code> (<code>src/_6_eval/_9a_ir_lower.rs:1241</code>) decides per column whether it can store bare <code>i64</code>.
+It already looks at every seed (<code>:1271</code>) and propagates int-ness through rules (<code>:1281</code>). On <code>"a"</code> it sets the column to term storage and says nothing.</p>
+<div class="cols">
+  <div class="card">
+    <h3>today</h3>
+<pre>seed.value declared int, saw "a"
+  → stored as term ids
+  → no report</pre>
+  </div>
+  <div class="card">
+    <h3>proposed</h3>
+<pre>column_layout(seed, value,
+  declared: int, stored: term,
+  witness: "a")</pre>
+    <p>One row per <b>column</b>. 10 seeds or 1M seeds: still 1 row.</p>
+  </div>
+</div>
+<p>Judging stays in userland, per language:</p>
+<pre>; prelude
+(&lt;- (column_type_mismatch ?Relation ?Column ?Declared ?Witness)
+    (column_layout ?Relation ?Column ?Declared term ?Witness)
+    (primitive_layout ?Declared))</pre>
+
+<table>
+  <tr><th>storage class</th><th>built</th><th>landing in it proves</th></tr>
+  <tr><td>raw i64</td><td class="yes">yes · ecfb51a7e</td><td>every value is an int</td></tr>
+  <tr><td>text dictionary</td><td class="no">no</td><td>every value is a string</td></tr>
+  <tr><td>term of type node T</td><td class="no">no</td><td>every value's <code>intern</code> row names T or a variant</td></tr>
+  <tr><td>term, any</td><td class="yes">yes · fallback</td><td>nothing; the witness says why</td></tr>
+</table>
+
+<h2>5 · Steps</h2>
+<ol>
+  <li><code>raw_columns</code> keeps the witness of each fallback instead of a bare <code>false</code>.</li>
+  <li>One <code>column_layout</code> row per column into the next comptime round; the prelude rule above makes the diagnostic.</li>
+  <li>Probes become tests: <code>plans/v8/probes/prover/7_string_in_int_column.dl7</code>, <code>8_int_flows_into_str_column.dl7</code>.</li>
+</ol>
+
+<h2>6 · What the checker already catches</h2>
+<table>
+  <tr><th>probe</th><th>diagnostic</th></tr>
+  <tr><td>return-key conflict</td><td class="yes">functional_key_conflict</td></tr>
+  <tr><td>undeclared body relation</td><td class="yes">undeclared_relation</td></tr>
+  <tr><td>seed arity</td><td class="yes">variable_in_seed <small>(misleading name)</small></td></tr>
+  <tr><td>unsafe head variable</td><td class="yes">unsafe_head_var</td></tr>
+  <tr><td>negation cycle</td><td class="yes">strict_dependency_cycle</td></tr>
+  <tr><td>unbound negated goal</td><td class="yes">unbound_negative_goal</td></tr>
+  <tr><td>string literal in int compare</td><td class="yes">kernel_argument_type_mismatch</td></tr>
+  <tr><td>string seed in int column</td><td class="no">none</td></tr>
+  <tr><td>int column into str column</td><td class="no">none</td></tr>
+</table>
+
+<h2>7 · Parked, in order</h2>
+<ol>
+  <li>Read phase: 4 passes over 1M items where 1 is needed. <code>plans/v8/probes/read_expand/README.md</code></li>
+  <li>Doc rail: a test that fails when a doc path stops resolving.</li>
+  <li><code>Result</code> in <code>prelude/</code>: decided, not built.</li>
+  <li>Storage classes beyond int.</li>
+  <li>Unaudited: <code>.agents/</code>, <code>.claude/</code>, <code>issues/</code>.</li>
+</ol>
+
+<h2>8 · Done today</h2>
+<ul>
+  <li>comptime 14.6s → 9.9s, peak RSS 4.3G → 3.2G at 1M items (spark-2, paired runs).</li>
+  <li>Docs: old engines archived, README / env doc / AGENTS / CLAUDE match the code.</li>
+</ul>
+
+</main>
+</body>
+</html>
