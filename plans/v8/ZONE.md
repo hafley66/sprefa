@@ -6,7 +6,7 @@ Updated every turn. Top section is the only thing to read when lost.
 
 **Thread:** value type checking, done through memory layout, rules in userland.
 
-**Waiting on you:** OK to build steps 1-2 below.
+**Waiting on you:** OK the namespace heads `proof.` / `edge.` / `value.` (plus `curry.`, `pick.`, `exclude.`, `intersection.`, `program.` for the existing prefix families). Probe: `plans/v8/probes/namespace/0_member_products.dl7` compiles and derives. Then build steps 1-2 below under those names.
 
 1. `raw_columns` (`src/_6_eval/_9a_ir_lower.rs:1241`) keeps the witness when a
    declared-int column falls back to term ids, instead of a bare `false`.
