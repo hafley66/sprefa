@@ -8,11 +8,11 @@ Updated every turn. Top section is the only thing to read when lost.
 
 **Waiting on you:** OK the namespace heads `proof.` / `edge.` / `value.` (plus `curry.`, `pick.`, `exclude.`, `intersection.`, `program.` for the existing prefix families). Probe: `plans/v8/probes/namespace/0_member_products.dl7` compiles and derives. Then build steps 1-2 below under those names.
 
-1. `raw_columns` (`src/_6_eval/_9a_ir_lower.rs:1241`) keeps the witness when a
-   declared-int column falls back to term ids, instead of a bare `false`.
-2. One `column_layout(Relation, Column, Declared, Stored, Witness)` row per
-   column goes into the next comptime round; a prelude rule turns
-   `declared int, stored term` into `column_type_mismatch`.
+1. `raw_columns` (`src/_6_eval/_9a_ir_lower.rs:1241`) keeps the value that
+   knocked a declared-int edge to term storage, instead of a bare `false`.
+2. One `edge.seen(Product, Name, Value)` row per edge goes into the next
+   comptime round; a prelude rule asks the one prover:
+   `proof.asked(ValueType, EdgeType)` from `edge.seen`, `value.type`, `edge.type`.
 3. Probes become tests: `plans/v8/probes/prover/7_string_in_int_column.dl7`,
    `8_int_flows_into_str_column.dl7`.
 
