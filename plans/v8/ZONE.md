@@ -20,6 +20,12 @@ Why this shape: one row per column, never per seed row; the check is a fact
 the storage layout already computes; the rule that judges it is dl7, per
 language.
 
+**Next design thread (named 2026-10-12): pluggable types.** `Extends`
+(`prelude/4_type_algebra.dl7`) split into rule packs, structural default;
+scope option rows (`prover_mode`) inherited down modules; union contracts
+proven per branch (today `undecided`, `:243-252`); variance once function
+types exist. Sketch in chat, nothing built.
+
 ## Facts this rests on
 
 - Generics substitute at check: `plans/v8/2026-10-11-generics-trace.md`.
@@ -39,6 +45,18 @@ language.
 5. Unaudited: `.agents/`, `.claude/`, `issues/`;
    `plans/v8/probes/2026-09-28-compile-gate.py` still forces `ir:sqlite`.
 6. Probe `2_seed_arity_mismatch` reports `variable_in_seed`, a misleading name.
+7. Served body goals emit `effect` rows (`served_effect`,
+   `src/_6_eval/_9a_ir_lower.rs:963`, called per body goal `:2224`); the
+   2026-09-18 decision (`AGENTS.md:120`) says requests are head-derived or
+   seeded input rows. Code and decision disagree.
+
+## Corrections logged
+
+- `intern` in a body is construction only (`Op::Mint`, `_9a_ir_lower.rs:1735`);
+  it yields nothing with type or arguments unbound. Reading "which type built
+  this value" is `intern_snapshot`, one round late.
+- Value checking and `Extends` are one prover: a value enters as its type
+  (`value_type`), the column check is one more `asked` row.
 
 ## Done today (main, local, 6 commits ahead of origin)
 
