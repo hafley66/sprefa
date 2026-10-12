@@ -1,0 +1,5 @@
+(^zone: (*)): (
+  (: first
+     (* (: left str))))
+
+(zone.first "a")

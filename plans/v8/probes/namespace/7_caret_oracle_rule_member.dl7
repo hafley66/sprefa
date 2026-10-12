@@ -1,0 +1,4 @@
+(^User: (* (: name str))): (
+  (: greet (<- (greet ?User ?Out) (User ?User ?Name) (str.cons "hi " ?Name ?Out)))
+)
+

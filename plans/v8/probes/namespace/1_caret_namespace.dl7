@@ -1,0 +1,12 @@
+(^proof: (*)): (
+  (: asked
+     (* (: source type)
+        (: contract type)))
+  (: fits
+     (* (: source type)
+        (: contract type))))
+
+(proof.asked str str)
+
+(<- (proof.fits ?Source ?Contract)
+    (proof.asked ?Source ?Contract))

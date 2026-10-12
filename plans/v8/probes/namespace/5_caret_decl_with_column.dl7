@@ -1,0 +1,3 @@
+(^zone: (* (: id str))): (
+  (: first
+     (* (: left str))))

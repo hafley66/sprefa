@@ -1,0 +1,10 @@
+(^zone: (*)): (
+  (: first
+     (* (: left str)))
+  (: second
+     (* (: left str))))
+
+(zone.first "a")
+
+(<- (zone.second ?Left)
+    (zone.first ?Left))
