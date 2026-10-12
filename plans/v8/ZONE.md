@@ -52,9 +52,16 @@ types exist. Sketch in chat, nothing built.
 
 ## Corrections logged
 
-- `intern` in a body is construction only (`Op::Mint`, `_9a_ir_lower.rs:1735`);
-  it yields nothing with type or arguments unbound. Reading "which type built
-  this value" is `intern_snapshot`, one round late.
+- `intern` in a body is two-way. Bound type and arguments: builds and inserts
+  a row into `__ir_intern_requests_{level}` (`_9a_ir_lower.rs:3736`).
+  Either unbound: reads those rows back, same run (`:1393-1410`).
+  `intern_snapshot` is the previous round's frozen copy.
+- Compound heads lower to body `tuple` + `intern` goals
+  (`plans/v8/probes/prover/9_compound_head.dl7`).
+- Design thread (named 2026-10-12): no implicit inserts in bodies. Compound
+  heads lower to N rules, every insert a head; served requests are head-derived
+  rows. Name for the per-column value feed: `column_value` is taken
+  (`prelude/3_derived_rules.dl7:20`); pick pending.
 - Value checking and `Extends` are one prover: a value enters as its type
   (`value_type`), the column check is one more `asked` row.
 

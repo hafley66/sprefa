@@ -1,0 +1,17 @@
+(EResult:
+   (* (Next: type)
+      (Error: type)
+      (return:
+         (+ (loading: (*))
+            (next: (* (value: Next)))
+            (error: (* (message: Error)))
+            (complete: (*))))))
+
+(: FetchStatus (EResult str str))
+
+(: seed (* (: text str)))
+(seed "hi")
+
+(: Event (* (: status FetchStatus)))
+(<- (Event (FetchStatus.next ?Text))
+    (seed ?Text))
