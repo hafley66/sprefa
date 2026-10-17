@@ -72,12 +72,43 @@ CONFIG = {
             "sync_branches": "",
             "checkout_on_sync": 0,
             "checkout_pr_branches": 0,
-        }
+        },
+        # The firehose routes an event to the repo its payload names; sprefa is
+        # the watched repo the scripted `users/<owner>/events` 200 names, with
+        # sync_events 0 so it mints no repo_events poll of its own and the
+        # firehose row is the ONLY repo_event_seen row on the account leg.
+        {
+            "owner": OWNER,
+            "name": "sprefa",
+            "default_branch": "main",
+            "sync_prs": 0,
+            "sync_events": 0,
+            "sync_notifications": 0,
+            "sync_branches": "",
+            "checkout_on_sync": 0,
+            "checkout_pr_branches": 0,
+        },
     ],
 }
 
 WHOAMI = json.dumps({"login": OWNER}, separators=(",", ":"))
 NO_EVENTS = "[]"
+# The one firehose event: a WatchEvent names hafley66/sprefa (a watched repo),
+# carries a fixed gh_id, and has no dirty_pr arm, so it lands in repo_event_seen
+# and touches nothing downstream.
+FIREHOSE_EVENT = json.dumps(
+    [
+        {
+            "id": "firehose-watch-1",
+            "type": "WatchEvent",
+            "actor": {"login": OWNER},
+            "repo": {"name": f"{OWNER}/sprefa"},
+            "payload": {"action": "started"},
+            "created_at": "2026-08-24T00:00:00Z",
+        }
+    ],
+    separators=(",", ":"),
+)
 
 
 def clock(every, ordinal, bucket):
@@ -154,6 +185,8 @@ def answer_for(url, bucket, remaining):
         return (404, "", remaining, "null")
     if url == "user":
         return (200, f"etag-user-{bucket}", remaining, WHOAMI)
+    if url == USER_EVENTS:
+        return (200, f"etag-firehose-{bucket}", remaining, FIREHOSE_EVENT)
     return (200, f"etag-events-{bucket}", remaining, NO_EVENTS)
 
 
