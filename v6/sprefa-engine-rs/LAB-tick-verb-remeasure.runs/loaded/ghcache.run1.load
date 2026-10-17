@@ -1,0 +1,5 @@
+=== RUN ghcache.run1 ===
+13:47:19
+uptime: 13:47  up 12 days, 23:35, 3 users, load averages: 4.64 6.47 6.03
+pgrep -c cargo: 0
+exit=0 ticks=14
