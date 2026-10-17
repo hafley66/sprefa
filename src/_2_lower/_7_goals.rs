@@ -33,7 +33,30 @@ pub fn lower_executables(
 ) -> Result<Executables, TermId> {
     let mut out = Executables::default();
     let mut seed_index: i64 = 0;
+    let mut scoped_items: Vec<(TermId, TermId)> = Vec::with_capacity(items.len());
     for item in items {
+        let Some(edge) = forms::owner_edge_form(cx.u, *item) else {
+            scoped_items.push((*item, owner));
+            continue;
+        };
+        // The rules of a `(: Owner () (* ..))` body resolve from the body product.
+        let body = forms::node(cx.u, edge.target);
+        let body_items = body
+            .as_ref()
+            .and_then(|body| forms::form(cx.u, body.payload))
+            .unwrap_or_default();
+        let (Some(body), Some(identity)) = (body, cx.u.unary(owner, "module")) else {
+            continue;
+        };
+        let body_owner = cx.compound("owner", vec![identity, body.id]);
+        for body_item in body_items {
+            if forms::rule_form(cx.u, body_item).is_some() {
+                scoped_items.push((body_item, body_owner));
+            }
+        }
+    }
+    for (item, owner) in &scoped_items {
+        let (item, owner) = (item, *owner);
         if forms::bind_form(cx.u, *item).is_some() {
             continue;
         }

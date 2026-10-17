@@ -30,3 +30,4 @@ mod _9o_vec;
 fn rules_interpreted() -> bool {
     std::env::var("DL8_RULES").as_deref() == Ok("interpret")
 }
+mod _9p_caret_namespace;
