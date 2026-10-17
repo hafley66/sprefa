@@ -1,0 +1,23 @@
+{
+  "file": "v6/prolog/emit_ts.pl",
+  "predmap": "emit_ts.predmap.json",
+  "folder": "v6/prolog/emit_ts",
+  "module": "emit_ts",
+  "parts": [
+    {"file": "0_text_helpers.pl", "anchor": "ir_version/1", "owns": "the IR version and the js template, string, identifier and case text helpers"},
+    {"file": "1_header_and_imports.pl", "anchor": "header_lines/2", "owns": "the emitted file's header comment and every import line"},
+    {"file": "2_value_plane.pl", "anchor": "text_intern_plan_lines/3", "owns": "the declared value plane: struct and enum type plans, ref column maps, identity tables and the normalize lines"},
+    {"file": "3_local_types.pl", "anchor": "local_types_lines/2", "owns": "local helper types, the world plan and the host plan json"},
+    {"file": "4_bind_and_query.pl", "anchor": "bind_read_literals/4", "owns": "bind config literals and the query plan json"},
+    {"file": "5_arrival_gate.pl", "anchor": "bind_args_helper_lines/1", "owns": "the bind args helper, the arrival value type gate and the trigger occurrence helper"},
+    {"file": "6_catalog.pl", "anchor": "ddl_lines/2", "owns": "ddl entries, rel columns, physical names, raw and declared column types, and the catalog rows"},
+    {"file": "7_snapshot.pl", "anchor": "boot_lines/2", "owns": "boot entries, the snapshot type and its two readers, and final_select"},
+    {"file": "8_arrivals.pl", "anchor": "arrival_statements_lines/2", "owns": "arrival statements and the function that runs them"},
+    {"file": "9_incremental_plans.pl", "anchor": "incremental_relation_lines/6", "owns": "incremental relation plans: edge and level statements, retention, refCount and dred sql, and the fixpoint IR text"},
+    {"file": "10_ordered_loop.pl", "anchor": "ordered_edge_statement/1", "owns": "the ordered pre-occurrence loop with its carry, arm and departure lines"},
+    {"file": "11_level_recompute.pl", "anchor": "recompute_levels_fn_lines/4", "owns": "level recompute and the row-count sql it reads"},
+    {"file": "12_deltas_and_tick.pl", "anchor": "build_deltas_fn_lines/5", "owns": "build_deltas, snapshot retention, the ordered tick function and the incremental mode lines"},
+    {"file": "13_prune.pl", "anchor": "subscribe_prune_lines/4", "owns": "subscribe-cone pruning, plan export, advance_tick and the incremental tick dispatch"},
+    {"file": "14_top_level.pl", "anchor": "plan_intern_mode/2", "owns": "emit_program/5 and the two statement classifiers"}
+  ]
+}

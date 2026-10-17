@@ -1,0 +1,14 @@
+{
+  "file": "v6/prolog/0_type_plane.pl",
+  "predmap": "0_type_plane.predmap.json",
+  "folder": "v6/prolog/0_type_plane",
+  "module": "type_plane",
+  "parts": [
+    {"file": "0_definitions.pl", "anchor": "type_definitions/2", "owns": "type definitions, declared type names, column storage, list element types and the wrapper unwrapping"},
+    {"file": "1_relation_shape.pl", "anchor": "type_ref_columns/3", "owns": "ref columns, relation columns and their types, and a relation value as a term or an object"},
+    {"file": "2_type_order.pl", "anchor": "type_topological_order/2", "owns": "the topological order over declared types, the cycle witness, and type and field shape errors"},
+    {"file": "3_canonicalize.pl", "anchor": "json_object_value/2", "owns": "world row canonicalization, reference target normalization, and canonical struct and field values"},
+    {"file": "4_row_violations.pl", "anchor": "world_row_shape_violation/3", "owns": "row shape violations, position column names, the wide integer witness and column value shape errors"},
+    {"file": "5_type_json.pl", "anchor": "ref_column_names/4", "owns": "ref column names, type field values and the canonical json renderer with its js float formatting"}
+  ]
+}
