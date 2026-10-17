@@ -62,7 +62,52 @@ pub fn lower_declarations(
             index += 1;
         }
     }
+    for item in items {
+        let Some(edge) = forms::owner_edge_form(u, *item) else {
+            continue;
+        };
+        let declared = lower_owner_edge(u, module_identity, owner, &out.edges, edge)?;
+        out.extend(declared);
+    }
     Ok(out)
+}
+
+/// `(: Owner () Target)` after every bind of the unit: the product `Owner`
+/// binds owns one more edge, named by its index.
+fn lower_owner_edge(
+    u: &mut Universe,
+    module_identity: TermId,
+    module_owner: TermId,
+    edges: &[TermId],
+    edge: forms::OwnerEdge,
+) -> Fallible<Declared> {
+    let product = edges.iter().find_map(|row| {
+        let [owner, name, target, _] = u.args::<4>(*row, "pending_edge")?;
+        (owner == module_owner && name == edge.owner_name)
+            .then(|| u.unary(target, "target"))
+            .flatten()
+    });
+    let Some(product) = product else {
+        let shape = u.atom("owner_edge_on_non_product");
+        let r = u.compound("not_built_yet", vec![shape]);
+        return Err(diagnostic(u, edge.bind_node, r));
+    };
+    let index = edges
+        .iter()
+        .filter(|row| u.args::<4>(**row, "pending_edge").is_some_and(|[owner, ..]| owner == product))
+        .count() as i64;
+    let name = u.int(index);
+    let call = Call::OwnerEdge {
+        bind_node: edge.bind_node,
+        owner: product,
+        name,
+        target: edge.target,
+        index,
+    };
+    let Ret::Declared(declared) = run(u, module_identity, call)? else {
+        unreachable!("an owner edge returns its declarations")
+    };
+    Ok(declared)
 }
 
 /// One function of the declaration passes, started with its arguments.
@@ -76,6 +121,8 @@ enum Call {
     Target { target_node: TermId, owner: TermId },
     /// `:917`, a bind list.
     BindList { bindings: Vec<TermId>, owner: TermId },
+    /// `(: Owner () Target)` on the product `owner`.
+    OwnerEdge { bind_node: TermId, owner: TermId, name: TermId, target: TermId, index: i64 },
     /// A generic application as a body item, from bind index `index`.
     ApplicationItem { item: TermId, owner: TermId, index: i64 },
 }
@@ -186,6 +233,24 @@ fn start(u: &mut Universe, module_identity: TermId, call: Call) -> Fallible<Outc
             index,
         } => lower_edge_bind(u, bind_node, owner, index),
         Call::Target { target_node, owner } => lower_target(u, target_node, owner, module_identity),
+        Call::OwnerEdge {
+            bind_node,
+            owner,
+            name,
+            target,
+            index,
+        } => Ok(Outcome::Await(
+            Frame::FinishBind {
+                bind_node,
+                owner,
+                name,
+                index,
+            },
+            Call::Target {
+                target_node: target,
+                owner,
+            },
+        )),
         Call::BindList { bindings, owner } => BindList {
             bindings,
             owner,
@@ -436,7 +501,7 @@ fn application_head(u: &Universe, item: TermId) -> Option<TermId> {
     }
     let atom = forms::form_head_atom(u, &items)?;
     let text = u.functor_or_atom(atom).map(|(n, _)| n)?;
-    (!matches!(text, ":" | "*" | "+")).then_some(head)
+    (!matches!(text, ":" | "*" | "+" | "<-")).then_some(head)
 }
 
 /// What a bind list waits on.
@@ -475,6 +540,11 @@ impl BindList {
             return Ok(Outcome::Done(Ret::Declared(self.out)));
         };
         self.next += 1;
+        if forms::rule_form(u, bind).is_some() {
+            // A rule in a product body is lowered with the executables.
+            self.pending = Pending::Nothing;
+            return Ok(Outcome::Again(Frame::BindList(self)));
+        }
         let call = if application_head(u, bind).is_some() {
             self.pending = Pending::Item;
             Call::ApplicationItem {

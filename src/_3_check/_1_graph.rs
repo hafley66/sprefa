@@ -14,6 +14,10 @@ fn named_return(u: &Universe, name: TermId) -> bool {
     matches!(u.get(name), Term::Atom(s) if u.sym_str(*s) == "return")
 }
 
+/// Owners one prototype walk visits at most. Protects lookup from a namespace
+/// chain that never closes.
+const PROTO_BUDGET: usize = 256;
+
 #[derive(Clone)]
 pub struct CheckerGraph {
     /// Source-list order. `assertz/1` keeps duplicates in this order, so the
@@ -69,7 +73,10 @@ impl CheckerGraph {
                 self.parent.entry(target).or_insert(part.owner);
             }
             *self.owner_edge_count.entry(part.owner).or_insert(0) += 1;
-            self.owner_slots.entry(part.owner).or_default().insert(part.index);
+            // An index-named edge is a `(: Owner () ..)` namespace, not a column.
+            if !matches!(u.get(part.name), Term::Int(_)) {
+                self.owner_slots.entry(part.owner).or_default().insert(part.index);
+            }
             if named_return(u, part.name) {
                 self.owner_return_indices.entry(part.owner).or_default().push(part.index);
             }
@@ -95,6 +102,36 @@ impl CheckerGraph {
         self.forward
             .get(&(owner, name))
             .map(|i| self.edges[*i].target)
+    }
+
+    /// The first own label `name` along `owner`'s index-named edges,
+    /// `(: Owner () (* ..))`, depth-first in index order.
+    pub fn proto_forward(&self, u: &Universe, owner: TermId, name: TermId) -> Option<TermId> {
+        let steps = |at: TermId| -> Vec<TermId> {
+            self.by_owner
+                .get(&at)
+                .into_iter()
+                .flatten()
+                .map(|i| &self.edges[*i])
+                .filter(|edge| matches!(u.get(edge.name), Term::Int(_)))
+                .filter_map(|edge| u.unary(edge.target, "target"))
+                .rev()
+                .collect()
+        };
+        let mut stack = steps(owner);
+        let mut seen = vec![owner];
+        for _ in 0..PROTO_BUDGET {
+            let next = stack.pop()?;
+            if seen.contains(&next) {
+                continue;
+            }
+            seen.push(next);
+            if let Some(target) = self.forward(next, name) {
+                return Some(target);
+            }
+            stack.extend(steps(next));
+        }
+        None
     }
 
     /// `0_graph_lookup.pl:100`.

@@ -94,6 +94,33 @@ pub fn bind_form(u: &mut Universe, term: TermId) -> Option<Bind> {
     None
 }
 
+/// `(: Owner () Target)`, the caret macro's namespace edge: Target hangs on
+/// the product `Owner` names, at that product's next index.
+pub struct OwnerEdge {
+    pub bind_node: TermId,
+    pub owner_name: TermId,
+    pub target: TermId,
+}
+
+pub fn owner_edge_form(u: &Universe, term: TermId) -> Option<OwnerEdge> {
+    let n = node(u, term)?;
+    let items = form(u, n.payload)?;
+    if items.len() != 4 || !head_is(u, &items, ":") {
+        return None;
+    }
+    let owner = node(u, items[1])?;
+    let owner_name = atom_name(u, owner.payload)?;
+    let label = node(u, items[2])?;
+    if !form(u, label.payload).is_some_and(|inner| inner.is_empty()) {
+        return None;
+    }
+    Some(OwnerEdge {
+        bind_node: n.id,
+        owner_name,
+        target: items[3],
+    })
+}
+
 pub struct EdgeBind {
     pub bind_node: TermId,
     pub label: TermId,

@@ -6,7 +6,17 @@ Updated every turn. Top section is the only thing to read when lost.
 
 **Thread:** value type checking, done through memory layout, rules in userland.
 
-**Waiting on you:** build caret lowering first? `(^proof: (*)): (...)` expands at macrotime but lowering reads each member target as a call (`undeclared_relation(*)`, throw `src/_2_lower/_8_express.rs:498`; probes `plans/v8/probes/namespace/4_*`, `7_*`). The repo's own caret oracle example fails the same way end to end. Before that: OK the namespace heads `proof.` / `edge.` / `value.` (plus `curry.`, `pick.`, `exclude.`, `intersection.`, `program.` for the existing prefix families). Probe: `plans/v8/probes/namespace/0_member_products.dl7` compiles and derives. Then build steps 1-2 below under those names.
+**Landed (feat/caret-namespace):** caret lowering. `(^Owner: (* ..))` expands to
+`(: Owner (* ..))` and `(: Owner () (* ..))` (one anonymous edge, body
+uninspected: `macrotime/1_caret.dl7`); the body's rules scope to the body
+product (`src/_2_lower/_7_goals.rs`), dot reads through the owner's index-named
+edges depth-first (`src/_2_lower/_10_index.rs` `probe_proto`,
+`src/_3_check/_1_graph.rs` `proto_forward`). End to end:
+`tests/it/_9p_caret_namespace.rs` over `fixtures/caret/0_namespace.dl7`.
+
+**Waiting on you:** OK the namespace heads `proof.` / `edge.` / `value.`
+(plus `curry.`, `pick.`, `exclude.`, `intersection.`, `program.` for the
+existing prefix families), then steps 1-2 below under those names.
 
 1. `raw_columns` (`src/_6_eval/_9a_ir_lower.rs:1241`) keeps the value that
    knocked a declared-int edge to term storage, instead of a bare `false`.

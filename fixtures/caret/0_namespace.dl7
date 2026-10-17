@@ -1,0 +1,17 @@
+; Caret namespacing end to end: `User.greet` declared inside the `^` body,
+; its rule reads `User` rows, an outside rule reads `User.greet` by dot.
+(^User: (* (: name str))): (*
+  (: greet
+     (* (: name str)
+        (: out str)))
+  (<- (greet ?Name ?Out)
+      (User ?Name)
+      (str.cons "hi " ?Name ?Out)))
+
+(: greeting
+   (* (: out str)))
+
+(<- (greeting ?Out)
+    (User.greet ?Name ?Out))
+
+(User "ada")

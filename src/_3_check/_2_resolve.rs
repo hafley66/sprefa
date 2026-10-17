@@ -127,6 +127,9 @@ fn resolve_name_body(
     if let Some(target) = cx.graph.forward(owner, name) {
         return resolve_target(u, cx, target, visited);
     }
+    if let Some(target) = cx.graph.proto_forward(u, owner, name) {
+        return resolve_target(u, cx, target, visited);
+    }
     if let Some(primitive) = u.unary(owner, "primitive") {
         let typed = atom_name(u, primitive).map(str::to_owned);
         let label = atom_name(u, name).map(str::to_owned);

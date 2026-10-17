@@ -91,7 +91,14 @@ pub struct ReservationIndex {
     pub by_owner_name: HashMap<(u32, u32, u8), Vec<usize>>,
     pub product_by_owner_name: HashMap<(u32, u32, u8), usize>,
     pub parent_by_target: HashMap<(u32, u8), u32>,
+    /// Targets of an owner's index-named product edges, `(: Owner () (* ..))`,
+    /// in index order: the prototype walk's steps.
+    pub proto_by_owner: HashMap<u32, Vec<u32>>,
 }
+
+/// Owners one prototype walk visits at most. Protects lookup from a namespace
+/// chain that never closes.
+const PROTO_BUDGET: usize = 256;
 
 fn view_key(view: View) -> u8 {
     match view {
@@ -134,6 +141,12 @@ impl ReservationIndex {
                     self.product_by_owner_name
                         .entry((owner, name, v))
                         .or_insert(position);
+                    if matches!(u.get(parts.name), crate::_6_eval::term::Term::Int(_)) {
+                        let proto = self.proto_by_owner.entry(owner).or_default();
+                        if !proto.contains(&target_owner) {
+                            proto.push(target_owner);
+                        }
+                    }
                 }
             }
             self.by_owner_name
@@ -187,21 +200,39 @@ impl ReservationIndex {
             if visited.contains(&owner) {
                 return None;
             }
-            if let Some(row) = self
-                .probe_product(owner, name, View::Promoted)
-                .or_else(|| self.probe_product(owner, name, View::Visible))
-            {
-                return Some(row);
-            }
-            if let Some(row) = self
-                .probe(owner, name, View::Promoted)
-                .or_else(|| self.probe(owner, name, View::Visible))
-            {
+            if let Some(row) = self.probe_own(owner, name).or_else(|| self.probe_proto(owner, name)) {
                 return Some(row);
             }
             visited.push(owner);
             owner = self.parent(owner)?;
         }
+    }
+
+    fn probe_own(&self, owner: u32, name: u32) -> Option<&Reservation> {
+        self.probe_product(owner, name, View::Promoted)
+            .or_else(|| self.probe_product(owner, name, View::Visible))
+            .or_else(|| self.probe(owner, name, View::Promoted))
+            .or_else(|| self.probe(owner, name, View::Visible))
+    }
+
+    /// Depth-first over `owner`'s index-named product edges in index order;
+    /// the first own label wins.
+    fn probe_proto(&self, owner: u32, name: u32) -> Option<&Reservation> {
+        let steps = |at: u32| self.proto_by_owner.get(&at).into_iter().flatten().rev().copied();
+        let mut stack: Vec<u32> = steps(owner).collect();
+        let mut seen: Vec<u32> = vec![owner];
+        for _ in 0..PROTO_BUDGET {
+            let next = stack.pop()?;
+            if seen.contains(&next) {
+                continue;
+            }
+            seen.push(next);
+            if let Some(row) = self.probe_own(next, name) {
+                return Some(row);
+            }
+            stack.extend(steps(next));
+        }
+        None
     }
 }
 
@@ -243,7 +274,9 @@ impl EdgeIndex {
                 .or_default();
             let first_at_slot = slot.is_empty();
             slot.push(position);
-            if first_at_slot {
+            // An index-named edge is a `(: Owner () ..)` namespace, not a column.
+            let column = !matches!(u.get(parts.name), crate::_6_eval::term::Term::Int(_));
+            if first_at_slot && column {
                 *index.owner_count.entry(owner).or_insert(0) += 1;
             }
             if let Some(target) = u.unary(parts.target, "target") {
