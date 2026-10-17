@@ -254,6 +254,7 @@ bound: 59 ms at 150,093 rows deleting 93, against a tick interval of ~13 s.
 | `config.rs:83-98` `[[org]]` | `org_config/7`, `org_exclude/2` |
 | `config.rs:19` `poll_interval_seconds` | `global_setting.poll_period`, the floor candidate |
 | `config.rs:21` `org_repo_discovery_interval_seconds` | its own `period_candidate` arm, `org_repos`/`user_repos` only |
+| `branches_poll_interval_seconds` (optional, default 60) | `branches_period_setting/1`, coalesced to `poll_period` in the `branches` arm |
 | `config.rs:25-27` warn/stop thresholds | `api_tier/3` |
 | `config.rs:105-108` `fs_owner`/`fs_alias` | `watched_repo.fs_alias`, `checkout_task.dest_root` |
 
