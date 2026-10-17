@@ -31,6 +31,7 @@ rel best_config_rank(search_rank: int).
 rel chosen_config(config_path: text, doc: json) key(1).
 
 rel global_setting(poll_period: int, org_discovery_period: int,
+                   branches_period: int,
                    rate_warn_threshold: int, rate_stop_threshold: int,
                    warn_stretch: int, heartbeat_ttl: int,
                    sync_notifications: int, staging_folder: text) key(1).
@@ -108,9 +109,18 @@ chosen_config(ConfigPath, Doc) <+
   config_present(SearchRank, ConfigPath),
   config_doc(ConfigPath, Doc).
 
+# `branches_poll_interval_seconds` is OPTIONAL: a config doc without the key
+# decodes no row, so the coalesce below defaults it to 60. A level view is the
+# shape because `latest/1` samples a level rel in the edge body without turning
+# the optional lookup into a second trigger.
+rel branches_poll_setting(period: int).
+branches_poll_setting(BranchesPeriod) <-
+  chosen_config(Doc),
+  decode(Doc, {global: {branches_poll_interval_seconds: BranchesPeriod: int}}).
+
 # The decode lands in the keyed fold itself: the source column is `json`, and
 # that is the only axis decode/2 lowers on.
-global_setting(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
+global_setting(PollPeriod, OrgDiscoveryPeriod, BranchesPeriod, RateWarnThreshold,
                RateStopThreshold, WarnStretch, HeartbeatTtl,
                SyncNotifications, StagingFolder) <+
   chosen_config(Doc),
@@ -121,7 +131,8 @@ global_setting(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
                         warn_stretch_multiplier: WarnStretch: int,
                         heartbeat_ttl_seconds: HeartbeatTtl: int,
                         sync_notifications: SyncNotifications: int,
-                        staging_folder: StagingFolder: text}}).
+                        staging_folder: StagingFolder: text}}),
+  coalesce(branches_poll_setting(BranchesPeriod), 60).
 
 org_config(Owner, FsAlias, SyncPrs, SyncEvents, SyncNotifications,
            CheckoutOnSync, CheckoutPrBranches) <+
@@ -317,6 +328,7 @@ period_candidate(EndpointPath, PeriodTicks) <-
   poll_endpoint(EndpointPath, EndpointKind),
   EndpointKind != 'org_repos',
   EndpointKind != 'user_repos',
+  EndpointKind != 'branches',
   global_setting(PollPeriod),
   clock_granularity(Granularity),
   Rounded := PollPeriod + Granularity - 1,
@@ -333,6 +345,12 @@ period_candidate(EndpointPath, PeriodTicks) <-
   global_setting(OrgDiscoveryPeriod),
   clock_granularity(Granularity),
   Rounded := OrgDiscoveryPeriod + Granularity - 1,
+  PeriodTicks := Rounded / Granularity.
+period_candidate(EndpointPath, PeriodTicks) <-
+  poll_endpoint(endpoint_path: EndpointPath, endpoint_kind: 'branches'),
+  global_setting(branches_period: BranchesPeriod),
+  clock_granularity(Granularity),
+  Rounded := BranchesPeriod + Granularity - 1,
   PeriodTicks := Rounded / Granularity.
 
 period_candidate(EndpointPath, PeriodTicks) <-
