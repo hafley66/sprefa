@@ -292,3 +292,51 @@ fn git_refs_query_takes_one_snapshot_without_a_watcher() {
         format!("(Head \"{}\")\n", case.second)
     );
 }
+
+#[test]
+fn extract_record_printed_twice_answers_one_row() {
+    use std::os::unix::fs::PermissionsExt;
+    let case = scratch("extract-twice");
+    let binary = case.directory.join("ryi");
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\nline='{\"record\":\"unresolved\",\"detail\":\"std::fs::read\"}'\necho \"$line\"\necho \"$line\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let source = case.directory.join("extract.dl7");
+    std::fs::write(
+        &source,
+        r#"(: extract
+   (* (: root str)
+      (: family str)
+      (: kind str)
+      (: payload str)))
+(: extract_error
+   (* (: root str)
+      (: family str)
+      (: message str)))
+(: Scan (* (: root str)))
+(Scan ".")
+(: Record (* (: kind str) (: payload str)))
+(<- (Record ?Kind ?Payload)
+    (Scan ?Root)
+    (extract ?Root "call" ?Kind ?Payload))
+"#,
+    )
+    .unwrap();
+
+    let table = command_output(
+        Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .args(["query"])
+            .arg(&source)
+            .arg("--repo")
+            .arg(&case.repo)
+            .env("SPREFA_EXTRACT_BIN", &binary),
+        "query extract",
+    );
+    assert_eq!(
+        String::from_utf8(table.stdout).unwrap(),
+        "(Record \"unresolved\" \"{\\\"record\\\":\\\"unresolved\\\",\\\"detail\\\":\\\"std::fs::read\\\"}\")\n"
+    );
+}

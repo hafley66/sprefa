@@ -1,0 +1,52 @@
+; Resolved call edges per crate, from sprefa-extract through ryi,
+; and every caller of one function name across all crates.
+
+(: extract
+   (* (: root str)
+      (: family str)
+      (: kind str)
+      (: payload str)))
+
+(: extract_error
+   (* (: root str)
+      (: family str)
+      (: message str)))
+
+(: Crate
+   (* (: name str)
+      (: root str)))
+
+(Crate "soopy" "/Users/chrishafley/projects/hafley-rs/crates/soopy")
+
+(Crate "ghcache" "/Users/chrishafley/projects/hafley-rs/crates/ghcache")
+
+(: Call
+   (* (: crate str)
+      (: payload str)))
+
+(<- (Call ?Name ?Payload)
+    (Crate ?Name ?Root)
+    (extract ?Root "call" "resolved_edge" ?Payload))
+
+(: Calls
+   (* (: crate str)
+      (: count int)))
+
+(<- (Calls ?Name (count ?Payload))
+    (Call ?Name ?Payload))
+
+(: CallsOpen
+   (* (: crate str)
+      (: payload str)))
+
+(<- (CallsOpen ?Name ?Payload)
+    (Call ?Name ?Payload)
+    (str.contains ?Payload "\"callee_name\":\"open\""))
+
+(: Failed
+   (* (: crate str)
+      (: message str)))
+
+(<- (Failed ?Name ?Message)
+    (Crate ?Name ?Root)
+    (extract_error ?Root "call" ?Message))

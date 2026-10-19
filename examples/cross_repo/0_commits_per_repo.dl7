@@ -1,0 +1,37 @@
+; How many commits does each repo have? One Repo row per checkout.
+; A root commit has no parent, so it has no Edge row and is not counted.
+(git: (import "@std/git"))
+
+(: Repo
+   (* (: name str)
+      (: root str)))
+
+(Repo "sprefa" "/Users/chrishafley/projects/sprefa")
+
+(Repo "hafley-rs" "/Users/chrishafley/projects/hafley-rs")
+
+(Repo "sqlite_ivm" "/Users/chrishafley/projects/sqlite_ivm")
+
+(: Edge
+   (* (: repo str)
+      (: sha str)
+      (: parent str)))
+
+(<- (Edge ?Name ?Sha ?Parent)
+    (Repo ?Name ?Root)
+    (git.history ?Root ?Sha ?Parent))
+
+; A merge has two parents, so one Commit row per sha, not per edge.
+(: Commit
+   (* (: repo str)
+      (: sha str)))
+
+(<- (Commit ?Name ?Sha)
+    (Edge ?Name ?Sha ?Parent))
+
+(: Commits
+   (* (: repo str)
+      (: count int)))
+
+(<- (Commits ?Name (count ?Sha))
+    (Commit ?Name ?Sha))
