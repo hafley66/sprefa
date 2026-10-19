@@ -1,0 +1,12 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for 'dist'. Local-only: scripts/release.sh builds on this Mac and
+# uploads with gh.
+[dist]
+cargo-dist-version = "0.32.0"
+hosting = "github"
+installers = ["shell"]
+install-path = "CARGO_HOME"
+install-updater = false
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]

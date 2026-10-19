@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "dl8", about = "DL7, compiled in Rust")]
+#[command(name = "dl8", version, about = "DL7, compiled in Rust")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

@@ -3,7 +3,8 @@
 # `sqlite_ivm` is a gitignored symlink to the sibling checkout of hafley66/sqlite_ivm.
 [package]
 name = "dl8"
-version = "0.1.0"
+version = "8.0.0"
+repository = "https://github.com/hafley66/sprefa"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
@@ -63,3 +64,11 @@ opt-level = 1
 # Dependencies optimized once; tests drive them hard.
 [profile.dev.package."*"]
 opt-level = 3
+
+# `scripts/release.sh` builds the dl8 binary with cargo-dist on this Mac.
+[package.metadata.dist]
+dist = true
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
