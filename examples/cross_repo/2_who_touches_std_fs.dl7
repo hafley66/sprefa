@@ -1,0 +1,113 @@
+; Which functions touch `std::fs` or `std::path`, directly or through
+; calls, including calls from one crate into soopy?
+;
+; Direct: an external call `std::fs::*` inside a function's span.
+; Local:  a resolved call to a function that touches.
+; Across: an external call `soopy::*::name` to a soopy function that touches.
+(ryi: (import "@std/ryi"))
+
+(: Crate
+   (* (: name str)
+      (: root str)))
+
+(Crate "soopy" "/Users/chrishafley/projects/hafley-rs/crates/soopy")
+
+(Crate "sprefa-extract" "/Users/chrishafley/projects/hafley-rs/crates/sprefa-extract")
+
+(: Resolved
+   (* (: root str)
+      (: family str)))
+
+(<- (Resolved ?Root "call")
+    (Crate ?Crate ?Root)
+    (ryi.resolve ?Root "call"))
+
+(: Failed
+   (* (: crate str)
+      (: message str)))
+
+(<- (Failed ?Crate ?Message)
+    (Crate ?Crate ?Root)
+    (ryi.resolve_error ?Root "call" ?Message))
+
+; caller -> callee, with the callee's extent.
+(: Calls
+   (* (: crate str)
+      (: caller_path str)
+      (: caller str)
+      (: callee_path str)
+      (: callee str)
+      (: callee_start int)
+      (: callee_end int)))
+
+(<- (Calls ?Crate ?CallerPath ?Caller ?CalleePath ?Callee ?CalleeStart ?CalleeEnd)
+    (Crate ?Crate ?Root)
+    (ryi.resolved_edge
+       ?Root
+       ?InputPath
+       ?Fact
+       ?CallerPath
+       ?Caller
+       ?CalleePath
+       ?Callee
+       ?SiteStart
+       ?SiteEnd
+       ?CalleeStart
+       ?CalleeEnd
+       ?Kind
+       ?Origin))
+
+; An external call site: crate, file, offset, `a::b::name`.
+(: External
+   (* (: crate str)
+      (: path str)
+      (: at int)
+      (: target str)))
+
+(<- (External ?Crate ?Path ?At ?Target)
+    (Crate ?Crate ?Root)
+    (ryi.unresolved ?Root ?InputPath "call" ?Path ?At ?End "external" ?Target))
+
+; The function whose extent holds an external call site.
+(: ExternalIn
+   (* (: crate str)
+      (: path str)
+      (: name str)
+      (: target str)))
+
+(<- (ExternalIn ?Crate ?Path ?Name ?Target)
+    (External ?Crate ?Path ?At ?Target)
+    (Calls ?Crate ?AnyPath ?AnyCaller ?Path ?Name ?Start ?End)
+    (int.gt ?At ?Start)
+    (int.lt ?At ?End))
+
+(: Touches
+   (* (: crate str)
+      (: path str)
+      (: name str)
+      (: via str)))
+
+(<- (Touches ?Crate ?Path ?Name ?Target)
+    (ExternalIn ?Crate ?Path ?Name ?Target)
+    (str.starts_with ?Target "std::fs"))
+
+(<- (Touches ?Crate ?Path ?Name ?Target)
+    (ExternalIn ?Crate ?Path ?Name ?Target)
+    (str.starts_with ?Target "std::path"))
+
+(<- (Touches ?Crate ?CallerPath ?Caller ?Callee)
+    (Calls ?Crate ?CallerPath ?Caller ?CalleePath ?Callee ?Start ?End)
+    (Touches ?Crate ?CalleePath ?Callee ?Via))
+
+(<- (Touches ?Crate ?Path ?Name ?Target)
+    (ExternalIn ?Crate ?Path ?Name ?Target)
+    (str.starts_with ?Target "soopy::")
+    (str.split ?Target "::" -1 ?SoopyName)
+    (Touches "soopy" ?SoopyPath ?SoopyName ?Via))
+
+(: TouchCount
+   (* (: crate str)
+      (: count int)))
+
+(<- (TouchCount ?Crate (count ?Name))
+    (Touches ?Crate ?Path ?Name ?Via))

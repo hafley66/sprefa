@@ -166,6 +166,10 @@ impl Answerer {
         }
         let mut answers = self.settle(u);
         answers.extend(self.drain(u));
+        // A handout is a set: `ryi` can print one record twice in a run, and
+        // the engine refuses a second insert of a present row.
+        let mut kept = HashSet::new();
+        answers.retain(|row| kept.insert(row.clone()));
         (answers, asked)
     }
 

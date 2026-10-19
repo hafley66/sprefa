@@ -2988,3 +2988,11 @@ The observed standard, in order — no step is optional:
 - **Fail-pre-fix**: `_8_contracts::ryi_records_the_loader_skips_raise_no_diagnostic` against the old decoder: `3 diagnostics` for one `symbol`, one `occurrence`, one `graph_edge` line.
 - **Rail**: `src/_4_comptime/_0_load/ryi_records.txt` is ryi's record list frozen from the schema, its first line a stamp naming the hafley-rs commit. The decoder skips any listed name outside `DECODED_RECORDS`. `_8_contracts::ryi_records_match_the_schema` fails when the schema's names differ from the frozen copy; `DL8_REFREEZE=1` rewrites it. The test prints `SKIP` when the `hafley-rs` link is absent.
 - **Entry**: a list copied from another repository gets a frozen file and a drift test beside it, never a hand-kept const.
+
+## 119. ryi printed one record twice and `dl8 query` stopped on an engine insert of a present row
+
+- **Incident** (2026-10-18): `dl8 query` over `hafley-rs/crates/sprefa-extract` with `ryi.resolve` returned one `ir_engine_error` diagnostic, `Settle rel Some(45): PresentInsert(...)`, and no rows. The same query with the `type` family over `hafley-rs/crates/soopy` failed the same way. One `ryi --resolve --arms type` run over soopy prints 33 records twice (`sort | uniq -d`), for example `external_crate_decline` lines.
+- **RCA**: the query path settles executor answers inside the engine loop (`src/_6_eval/_9b_ir_eval.rs`, the `answer_requests` call), and each answer row becomes a `+1` source change. The engine refuses a second `+1` on a present row (`sqlite_ivm/crates/ivm-dd/src/2_dd.rs:1581`). `dl8 run` never bit, because `Reconciler::run` inserts answers through `Store::insert`, which drops a repeat.
+- **Fail-pre-fix**: `_10_query::extract_record_printed_twice_answers_one_row`, a fake `ryi` that echoes one line twice: empty stdout and the `PresentInsert` diagnostic before the fix.
+- **Rail**: `Answerer::answer_requests` keeps the first copy of each row in one handout (`src/_9_runtime/_2_reconcile.rs`). Two requests that answer the same row in separate handouts are not covered by this rail.
+- **Entry**: an executor answer is a set. A row that arrives twice from a child process is one row by the time it reaches the engine.
