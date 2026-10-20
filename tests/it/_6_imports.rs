@@ -57,7 +57,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn extract_bin() -> Option<PathBuf> {
-    dl8::_9_runtime::executors::extract::extract_bin().ok()
+    dl8::_9_runtime::executors::ryi_resolve::extract_bin().ok()
 }
 
 fn skip_without_extract() -> bool {

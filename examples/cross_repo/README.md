@@ -29,7 +29,7 @@ which have no parent edge.
 (Calls "soopy" 1985)
 ```
 
-`CallsOpen` lists 190 call sites of functions named `open` across both crates.
+`CallsOpen` lists 187 call sites of functions named `open` across both crates.
 
 ## 2_who_touches_std_fs
 

@@ -1,0 +1,77 @@
+; Three ryi.resolve families, each over its own root; each record is a typed
+; row. Two families over one root answer shared records (`resolved_import`)
+; in separate handouts, and the second insert of a present row is
+; `PresentInsert`.
+(ryi: (import "@std/ryi"))
+
+(: Want
+   (* (: root str)
+      (: family str)))
+
+(Want "__ROOT__/ts" "type")
+
+(Want "__ROOT__/rust" "call")
+
+(Want "__ROOT__" "diet_scip")
+
+(: Resolved
+   (* (: family str)))
+
+(<- (Resolved ?Family)
+    (Want ?Root ?Family)
+    (ryi.resolve ?Root ?Family))
+
+(: Failed
+   (* (: family str)
+      (: message str)))
+
+(<- (Failed ?Family ?Message)
+    (Want ?Root ?Family)
+    (ryi.resolve_error ?Root ?Family ?Message))
+
+(: TypeEdge
+   (* (: owner_path str)
+      (: target_path str)
+      (: kind str)))
+
+(<- (TypeEdge ?OwnerPath ?TargetPath ?Kind)
+    (ryi.resolved_type_edge
+       ?Root
+       ?InputPath
+       ?Fact
+       ?OwnerPath
+       ?OwnerName
+       ?OwnerStart
+       ?OwnerEnd
+       ?TargetPath
+       ?TargetName
+       ?Kind
+       ?Origin))
+
+(: Unresolved
+   (* (: path str)
+      (: detail str)))
+
+(<- (Unresolved ?Path ?Detail)
+    (ryi.unresolved ?Root ?InputPath "call" ?Path ?Start ?End ?Reason ?Detail))
+
+(: CallEdge
+   (* (: caller_path str)
+      (: callee_path str)
+      (: origin str)))
+
+(<- (CallEdge ?CallerPath ?CalleePath ?Origin)
+    (ryi.resolved_edge
+       ?Root
+       ?InputPath
+       ?Fact
+       ?CallerPath
+       ?Caller
+       ?CalleePath
+       ?Callee
+       ?SiteStart
+       ?SiteEnd
+       ?CalleeStart
+       ?CalleeEnd
+       ?Kind
+       ?Origin))

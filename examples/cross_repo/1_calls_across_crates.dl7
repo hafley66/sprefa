@@ -1,16 +1,6 @@
 ; Resolved call edges per crate, from sprefa-extract through ryi,
 ; and every caller of one function name across all crates.
-
-(: extract
-   (* (: root str)
-      (: family str)
-      (: kind str)
-      (: payload str)))
-
-(: extract_error
-   (* (: root str)
-      (: family str)
-      (: message str)))
+(ryi: (import "@std/ryi"))
 
 (: Crate
    (* (: name str)
@@ -20,28 +10,71 @@
 
 (Crate "ghcache" "/Users/chrishafley/projects/hafley-rs/crates/ghcache")
 
+(: Resolved
+   (* (: crate str)))
+
+(<- (Resolved ?Name)
+    (Crate ?Name ?Root)
+    (ryi.resolve ?Root "call"))
+
 (: Call
    (* (: crate str)
-      (: payload str)))
+      (: caller_path str)
+      (: caller (Option str))
+      (: callee_path str)
+      (: callee (Option str))
+      (: caller_site_start int)
+      (: caller_site_end int)
+      (: callee_start int)
+      (: callee_end int)
+      (: kind str)
+      (: origin str)))
 
-(<- (Call ?Name ?Payload)
+(<- (Call ?Name ?CallerPath ?Caller ?CalleePath ?Callee ?SiteStart ?SiteEnd ?CalleeStart ?CalleeEnd ?Kind ?Origin)
     (Crate ?Name ?Root)
-    (extract ?Root "call" "resolved_edge" ?Payload))
+    (ryi.resolved_edge
+       ?Root
+       ?InputPath
+       ?Fact
+       ?CallerPath
+       ?Caller
+       ?CalleePath
+       ?Callee
+       ?SiteStart
+       ?SiteEnd
+       ?CalleeStart
+       ?CalleeEnd
+       ?Kind
+       ?Origin))
 
 (: Calls
    (* (: crate str)
       (: count int)))
 
-(<- (Calls ?Name (count ?Payload))
-    (Call ?Name ?Payload))
+(<- (Calls ?Name (count ?SiteStart))
+    (Call ?Name ?CallerPath ?Caller ?CalleePath ?Callee ?SiteStart ?SiteEnd ?CalleeStart ?CalleeEnd ?Kind ?Origin))
 
 (: CallsOpen
    (* (: crate str)
-      (: payload str)))
+      (: caller_path str)
+      (: caller_site_start int)))
 
-(<- (CallsOpen ?Name ?Payload)
-    (Call ?Name ?Payload)
-    (str.contains ?Payload "\"callee_name\":\"open\""))
+(<- (CallsOpen ?Name ?CallerPath ?SiteStart)
+    (Crate ?Name ?Root)
+    (ryi.resolved_edge
+       ?Root
+       ?InputPath
+       ?Fact
+       ?CallerPath
+       ?Caller
+       ?CalleePath
+       "open"
+       ?SiteStart
+       ?SiteEnd
+       ?CalleeStart
+       ?CalleeEnd
+       ?Kind
+       ?Origin))
 
 (: Failed
    (* (: crate str)
@@ -49,4 +82,4 @@
 
 (<- (Failed ?Name ?Message)
     (Crate ?Name ?Root)
-    (extract_error ?Root "call" ?Message))
+    (ryi.resolve_error ?Root "call" ?Message))

@@ -534,7 +534,7 @@ pub fn fetch_json_without_a_declared_error_relation_is_a_diagnostic() {
 }
 
 // From tests/_20_hosts.rs
-// `dl8 run` through the real binary with the git and extract executors. Each
+// `dl8 run` through the real binary with the git and ryi.resolve executors. Each
 // test makes a throwaway repository with the `git` CLI, the test being the
 // boundary; the executors under test reach git only through soopy. The
 // `fixtures/hosts/*.dl7` programs spell their roots `__ROOT__`. Every run is
@@ -1156,26 +1156,30 @@ pub fn fs_json_on_a_file_that_is_no_document_is_an_error_row() {
 }
 
 fn extract_bin() -> Option<PathBuf> {
-    dl8::_9_runtime::executors::extract::extract_bin().ok()
+    dl8::_9_runtime::executors::ryi_resolve::extract_bin().ok()
 }
 
 #[test]
-pub fn extract_answers_rows_for_each_family_over_the_corpus() {
+pub fn ryi_resolve_answers_rows_for_each_family_over_the_corpus() {
     let Some(binary) = extract_bin() else {
         println!("SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset");
         return;
     };
-    let directory = s20hosts_scratch("extract");
+    let directory = s20hosts_scratch("ryi-families");
     let corpus = std::fs::canonicalize(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/extract/corpus"),
     )
     .unwrap();
     let corpus_text = corpus.to_string_lossy().to_string();
     let binary = binary.to_string_lossy().to_string();
-    let compiled = s20hosts_compile(&directory, "3_extract.dl7", &[("__ROOT__", &corpus_text)]);
+    let compiled = s20hosts_compile(
+        &directory,
+        "3_ryi_families.dl7",
+        &[("__ROOT__", &corpus_text)],
+    );
     let (out, code) = s20hosts_run(
         &compiled.program,
-        &["--serve", "extract"],
+        &["--serve", "ryi.resolve"],
         &[("SPREFA_EXTRACT_BIN", &binary)],
     );
     assert_eq!(code, 0, "exit code; diagnostics {}", out["diagnostics"]);
@@ -1183,24 +1187,26 @@ pub fn extract_answers_rows_for_each_family_over_the_corpus() {
         s20hosts_rows(&out, &compiled.names, "Failed"),
         Vec::<Vec<Value>>::new()
     );
-    let facts = s20hosts_rows(&out, &compiled.names, "Fact");
-    let count = |family: &str| facts.iter().filter(|row| row[0] == text(family)).count();
-    let counts = [count("type"), count("call"), count("diet_scip")];
-    println!("extract rows type/call/diet_scip {counts:?}");
-    assert!(counts.iter().all(|n| *n > 0), "rows per family {counts:?}");
-    let kinds: Vec<&Value> = facts
-        .iter()
-        .filter(|row| row[0] == text("call"))
-        .map(|row| &row[1])
-        .collect();
-    assert!(
-        kinds.contains(&&text("resolved_edge")),
-        "call kinds {kinds:?}"
+    assert_eq!(
+        s20hosts_rows(&out, &compiled.names, "Resolved"),
+        [
+            vec![text("call")],
+            vec![text("diet_scip")],
+            vec![text("type")]
+        ]
     );
-    for row in &facts {
-        let payload: Value = serde_json::from_str(row[2].as_str().unwrap()).unwrap();
-        assert_eq!(payload["record"], row[1], "payload carries its kind");
-    }
+    let type_edges = s20hosts_rows(&out, &compiled.names, "TypeEdge");
+    let unresolved = s20hosts_rows(&out, &compiled.names, "Unresolved");
+    let call_edges = s20hosts_rows(&out, &compiled.names, "CallEdge");
+    println!(
+        "ryi rows type_edge/unresolved/call_edge {}/{}/{}",
+        type_edges.len(),
+        unresolved.len(),
+        call_edges.len()
+    );
+    assert!(!type_edges.is_empty(), "no resolved_type_edge rows");
+    assert!(!unresolved.is_empty(), "no unresolved rows");
+    assert!(!call_edges.is_empty(), "no resolved_edge rows");
 }
 
 #[test]
@@ -1345,7 +1351,7 @@ pub fn ryi_reach_equals_ryi_graph_over_src() {
 }
 
 #[test]
-pub fn extract_flags_are_flags_ryi_lists() {
+pub fn ryi_resolve_flags_are_flags_ryi_lists() {
     let Some(binary) = extract_bin() else {
         println!("SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset");
         return;
@@ -1359,27 +1365,28 @@ pub fn extract_flags_are_flags_ryi_lists() {
         .unwrap()
         .split(|c: char| c.is_whitespace())
         .collect();
-    for flag in dl8::_9_runtime::executors::extract::FLAGS {
+    for flag in dl8::_9_runtime::executors::ryi_resolve::FLAGS {
         assert!(listed.contains(&flag), "ryi help flags lists no {flag}");
     }
 }
 
 #[test]
-pub fn extract_with_no_binary_is_one_error_row_per_family() {
-    let directory = s20hosts_scratch("extract-missing");
-    let missing = directory.join("no-extract").to_string_lossy().to_string();
+pub fn ryi_resolve_with_no_binary_is_one_error_row_per_family() {
+    let directory = s20hosts_scratch("ryi-missing");
+    let missing = directory.join("no-ryi").to_string_lossy().to_string();
     let compiled = s20hosts_compile(
         &directory,
-        "3_extract.dl7",
+        "3_ryi_families.dl7",
         &[("__ROOT__", &directory.to_string_lossy())],
     );
     let (out, code) = s20hosts_run(
         &compiled.program,
-        &["--serve", "extract"],
+        &["--serve", "ryi.resolve"],
         &[("SPREFA_EXTRACT_BIN", &missing)],
     );
     assert_eq!(code, 0, "exit code");
-    assert!(s20hosts_rows(&out, &compiled.names, "Fact").is_empty());
+    assert!(s20hosts_rows(&out, &compiled.names, "Resolved").is_empty());
+    assert!(s20hosts_rows(&out, &compiled.names, "CallEdge").is_empty());
     let failed = s20hosts_rows(&out, &compiled.names, "Failed");
     let families: Vec<&Value> = failed.iter().map(|row| &row[0]).collect();
     assert_eq!(families, [&text("call"), &text("diet_scip"), &text("type")]);

@@ -73,14 +73,13 @@ its executor writes declared, or `--serve` fails with
 | `fs.watch` | | Continuing | `std/fs.dl7` |
 | `doc.layout` | | Once | `std/doc.dl7` |
 | `lsp.stdin` | `lsp.buffer`, `lsp.hover_at` | Continuing | `std/lsp.dl7` |
-| `extract` | `extract_error` | Once | the program |
 | `ryi.resolve` | `ryi.resolve_error` | Once | `std/ryi.dl7` |
 
 Names come from each executor's `RELATION` constant; cadence from its
 `cadence()`. Tests: `tests/it/_5_store_host.rs`, `tests/it/_11_watchers.rs`.
 
-`extract` runs `$SPREFA_EXTRACT_BIN` when set, else `ryi` on `PATH`
-(`src/_9_runtime/_3_executors/extract.rs:158-170`).
+`ryi.resolve` runs `$SPREFA_EXTRACT_BIN` when set, else `ryi` on `PATH`
+(`src/_9_runtime/_3_executors/ryi_resolve.rs:216-228`).
 
 ```bash
 cargo run -- compile fixtures/reconcile/0_timer.dl7 > target/timer.json

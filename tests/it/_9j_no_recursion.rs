@@ -81,7 +81,7 @@ fn cycles(extract: &Path, root: &str) -> Vec<String> {
 
 #[test]
 fn kernel_eval_lowering_and_runtime_have_no_call_cycle() {
-    let Ok(extract) = dl8::_9_runtime::executors::extract::extract_bin() else {
+    let Ok(extract) = dl8::_9_runtime::executors::ryi_resolve::extract_bin() else {
         println!("SKIP: no ryi on PATH and SPREFA_EXTRACT_BIN unset");
         return;
     };
