@@ -294,34 +294,30 @@ fn git_refs_query_takes_one_snapshot_without_a_watcher() {
 }
 
 #[test]
-fn extract_record_printed_twice_answers_one_row() {
+fn ryi_record_printed_twice_answers_one_row() {
     use std::os::unix::fs::PermissionsExt;
-    let case = scratch("extract-twice");
+    let case = scratch("ryi-twice");
     let binary = case.directory.join("ryi");
     std::fs::write(
         &binary,
-        "#!/bin/sh\nline='{\"record\":\"unresolved\",\"detail\":\"std::fs::read\"}'\necho \"$line\"\necho \"$line\"\n",
+        "#!/bin/sh\nline='{\"record\":\"unresolved\",\"family\":\"call\",\"span\":{\"start\":3,\"end\":9},\"reason\":\"external\",\"detail\":\"std::fs::read\"}'\necho \"$line\"\necho \"$line\"\n",
     )
     .unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let source = case.directory.join("extract.dl7");
+    let source = case.directory.join("ryi_twice.dl7");
     std::fs::write(
         &source,
-        r#"(: extract
-   (* (: root str)
-      (: family str)
-      (: kind str)
-      (: payload str)))
-(: extract_error
-   (* (: root str)
-      (: family str)
-      (: message str)))
+        r#"(ryi: (import "@std/ryi"))
 (: Scan (* (: root str)))
 (Scan ".")
-(: Record (* (: kind str) (: payload str)))
-(<- (Record ?Kind ?Payload)
+(: Resolved (* (: root str)))
+(<- (Resolved ?Root)
     (Scan ?Root)
-    (extract ?Root "call" ?Kind ?Payload))
+    (ryi.resolve ?Root "call"))
+(: Record (* (: reason str) (: detail str)))
+(<- (Record ?Reason ?Detail)
+    (Scan ?Root)
+    (ryi.unresolved ?Root ?InputPath "call" ?Path ?Start ?End ?Reason ?Detail))
 "#,
     )
     .unwrap();
@@ -333,10 +329,10 @@ fn extract_record_printed_twice_answers_one_row() {
             .arg("--repo")
             .arg(&case.repo)
             .env("SPREFA_EXTRACT_BIN", &binary),
-        "query extract",
+        "query ryi.resolve",
     );
     assert_eq!(
         String::from_utf8(table.stdout).unwrap(),
-        "(Record \"unresolved\" \"{\\\"record\\\":\\\"unresolved\\\",\\\"detail\\\":\\\"std::fs::read\\\"}\")\n"
+        "(Resolved \".\")\n(Record \"external\" \"std::fs::read\")\n"
     );
 }

@@ -6,8 +6,8 @@ use dl8::_6_eval::evaluate::{Evaluate, Store};
 use dl8::_6_eval::ir_bundle;
 use dl8::_6_eval::ir_lower;
 use dl8::_6_eval::json::{
-    closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json, program_transport_error, write_program_json,
-    serve_relations,
+    closure_to_json, diagnostic_to_json, program_from_json, program_names, program_to_json,
+    program_transport_error, serve_relations, write_program_json,
 };
 use dl8::_6_eval::json::{term_from_json, term_to_json, write_term_json};
 use dl8::_6_eval::{Arg, Row, Term, TermId, Trace, Universe};
@@ -110,7 +110,7 @@ enum Command {
     Run {
         program: PathBuf,
         /// Relations an executor settles: `timer`, `http.fetch`, `git.refs`,
-        /// `git.history`, `fs.at`, `fs.watch`, `extract`.
+        /// `git.history`, `fs.at`, `fs.watch`, `ryi.resolve`.
         #[arg(long, value_delimiter = ',')]
         serve: Vec<String>,
         /// Print one line per stratum, round and tick to stderr.
@@ -1064,7 +1064,7 @@ fn query_cli(path: &Path, repo: Option<&Path>, format: QueryFormat) -> ExitCode 
         Err(e) => return fail(&e),
     };
 
-    let source_names = ["fs.at", "fs.json", "git.refs", "git.history", "extract"];
+    let source_names = ["fs.at", "fs.json", "git.refs", "git.history"];
     let serve: Vec<String> = source_names
         .iter()
         .filter(|name| names.contains_key(**name))
@@ -1265,7 +1265,9 @@ fn compile_cli(
         encode(&diagnostics, &mut w)?;
         w.write_all(b",\"program\":")?;
         match program {
-            Some(program) => write_program_json(&u, program, &mut w).expect("program_transport_error passed")?,
+            Some(program) => {
+                write_program_json(&u, program, &mut w).expect("program_transport_error passed")?
+            }
             None => w.write_all(b"null")?,
         }
         w.write_all(b",\"runtime_program\":")?;

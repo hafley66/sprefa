@@ -2,8 +2,6 @@
 
 #[path = "doc_layout.rs"]
 pub mod doc_layout;
-#[path = "extract.rs"]
-pub mod extract;
 #[path = "fetch_json.rs"]
 pub mod fetch_json;
 #[path = "fs_at.rs"]
@@ -38,7 +36,6 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 pub use doc_layout::DocLayout;
-pub use extract::Extract;
 pub use fetch_json::FetchJson;
 pub use fs_at::FsAt;
 pub use fs_json::FsJson;
@@ -319,12 +316,11 @@ fn executors_for_mode(
                 Some(rel) => executors.push(Box::new(FsWatch::new(*rel))),
                 None => missing(u, "served_relation_unknown", name),
             },
-            git_refs::RELATION | git_history::RELATION | fs_at::RELATION | extract::RELATION => {
+            git_refs::RELATION | git_history::RELATION | fs_at::RELATION => {
                 let error = match name.as_str() {
                     git_refs::RELATION => git_refs::ERROR,
                     git_history::RELATION => git_history::ERROR,
-                    fs_at::RELATION => fs_at::ERROR,
-                    _ => extract::ERROR,
+                    _ => fs_at::ERROR,
                 };
                 match (names.get(name.as_str()), names.get(error)) {
                     (Some(rel), Some(error)) => executors.push(match name.as_str() {
@@ -333,8 +329,7 @@ fn executors_for_mode(
                         }
                         git_refs::RELATION => Box::new(GitRefs::snapshot(*rel, *error)),
                         git_history::RELATION => Box::new(GitHistory::new(*rel, *error)),
-                        fs_at::RELATION => Box::new(FsAt::new(*rel, *error)),
-                        _ => Box::new(Extract::new(*rel, *error)),
+                        _ => Box::new(FsAt::new(*rel, *error)),
                     }),
                     (None, _) => missing(u, "served_relation_unknown", name),
                     (_, None) => missing(u, "executor_relation_unknown", error),
@@ -350,7 +345,7 @@ fn executors_for_mode(
 }
 
 /// Every relation name `executors_for` builds an executor for.
-pub const ROSTER: [&str; 13] = [
+pub const ROSTER: [&str; 12] = [
     doc_layout::RELATION,
     timer::RELATION,
     fetch_json::RELATION,
@@ -362,7 +357,6 @@ pub const ROSTER: [&str; 13] = [
     git_refs::RELATION,
     git_history::RELATION,
     fs_at::RELATION,
-    extract::RELATION,
     ryi_resolve::RELATION,
 ];
 
