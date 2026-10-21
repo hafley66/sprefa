@@ -336,3 +336,51 @@ fn ryi_record_printed_twice_answers_one_row() {
         "(Resolved \".\")\n(Record \"external\" \"std::fs::read\")\n"
     );
 }
+
+#[test]
+fn two_ryi_families_printing_one_row_answer_it_once() {
+    use std::os::unix::fs::PermissionsExt;
+    let case = scratch("ryi-two-families");
+    let binary = case.directory.join("ryi");
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\necho '{\"record\":\"resolved_import\",\"src_path\":\"a.ts\",\"name\":\"foo\",\"local\":\"foo\",\"target_path\":\"b.ts\",\"target_name\":\"foo\",\"kind\":\"named\",\"hops\":1}'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let source = case.directory.join("ryi_two_families.dl7");
+    std::fs::write(
+        &source,
+        r#"(ryi: (import "@std/ryi"))
+(: Scan (* (: root str)))
+(Scan ".")
+(: Family (* (: family str)))
+(Family "call")
+(Family "type")
+(: Resolved (* (: family str)))
+(<- (Resolved ?Family)
+    (Scan ?Root)
+    (Family ?Family)
+    (ryi.resolve ?Root ?Family))
+(: Import (* (: source str) (: target str)))
+(<- (Import ?SourcePath ?TargetPath)
+    (Scan ?Root)
+    (ryi.resolved_import ?Root ?InputPath ?SourcePath ?Name ?Local ?TargetPath ?TargetName ?Kind ?Hops))
+"#,
+    )
+    .unwrap();
+
+    let table = command_output(
+        Command::new(env!("CARGO_BIN_EXE_dl8"))
+            .args(["query"])
+            .arg(&source)
+            .arg("--repo")
+            .arg(&case.repo)
+            .env("SPREFA_EXTRACT_BIN", &binary),
+        "query two ryi.resolve families",
+    );
+    assert_eq!(
+        String::from_utf8(table.stdout).unwrap(),
+        "(Resolved \"call\")\n(Resolved \"type\")\n(Import \"a.ts\" \"b.ts\")\n"
+    );
+}

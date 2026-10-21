@@ -107,6 +107,7 @@ struct EngineSession<E: Engine> {
     /// The visible closure, kept from this session's settle deltas.
     kept: Kept,
     answered: HashMap<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>,
+    held: Held,
     last_seeds: BTreeSet<(ir::RelId, Vec<Cell>)>,
     initialized: bool,
     structure: ir::Program,
@@ -130,9 +131,36 @@ struct Marked {
     mapped: HashMap<TermId, Cell>,
     known: HashSet<TermId>,
     answered: HashMap<(TermId, TermId), Vec<(ir::RelId, Vec<Cell>, Row)>>,
+    held: Held,
     last_seeds: BTreeSet<(ir::RelId, Vec<Cell>)>,
     decoded: Decoded,
     initialized: bool,
+}
+
+/// How many request keys hold each answer row. Two requests can answer the same row (two
+/// `ryi.resolve` families both print one `resolved_import`); the engine keeps a set, so the row
+/// enters on its first holder and leaves with its last.
+type Held = HashMap<(ir::RelId, Vec<Cell>), u32>;
+
+/// Counts one more holder; true when the row is new to the engine.
+fn hold(held: &mut Held, source: ir::RelId, cells: &[Cell]) -> bool {
+    let count = held.entry((source, cells.to_vec())).or_insert(0);
+    *count += 1;
+    *count == 1
+}
+
+/// Drops one holder; true when no holder is left and the row leaves the engine.
+fn release(held: &mut Held, source: ir::RelId, cells: &[Cell]) -> bool {
+    let key = (source, cells.to_vec());
+    let Some(count) = held.get_mut(&key) else {
+        return true;
+    };
+    *count -= 1;
+    if *count > 0 {
+        return false;
+    }
+    held.remove(&key);
+    true
 }
 
 /// Joins that read no constructor relation (a constructor join is a decode, never arranged),
@@ -198,6 +226,7 @@ impl<E: Engine> EngineSession<E> {
             known: HashSet::new(),
             kept: Kept::default(),
             answered: HashMap::new(),
+            held: Held::new(),
             last_seeds: BTreeSet::new(),
             initialized: false,
             structure: lowered.ir.clone(),
@@ -413,6 +442,7 @@ impl<E: Engine> Session for EngineSession<E> {
             mapped: core.mapped.clone(),
             known: self.known.clone(),
             answered: self.answered.clone(),
+            held: self.held.clone(),
             last_seeds: self.last_seeds.clone(),
             decoded: core.decoded.clone(),
             initialized: self.initialized,
@@ -435,6 +465,7 @@ impl<E: Engine> Session for EngineSession<E> {
         core.mapped.clone_from(&marked.mapped);
         self.known.clone_from(&marked.known);
         self.answered.clone_from(&marked.answered);
+        self.held.clone_from(&marked.held);
         self.last_seeds.clone_from(&marked.last_seeds);
         core.decoded.clone_from(&marked.decoded);
         self.initialized = marked.initialized;
@@ -2068,6 +2099,7 @@ fn run_session<E: Engine>(
         settles,
     } = &mut *core_ref;
     let answered = &mut session.answered;
+    let held = &mut session.held;
     let kept = &mut session.kept;
     let sent = frontier.len();
     let mut delta = settle_kept(engine, settles, kept, frontier)?;
@@ -2117,11 +2149,11 @@ fn run_session<E: Engine>(
                     .unwrap()
                     .cancel_request(u, relation, application);
                 if let Some(rows) = answered.remove(&key) {
-                    next.extend(rows.into_iter().map(|(rel, row, _)| ir::SourceChange {
-                        rel,
-                        row,
-                        w: -1,
-                    }));
+                    next.extend(
+                        rows.into_iter()
+                            .filter(|(rel, row, _)| release(held, *rel, row))
+                            .map(|(rel, row, _)| ir::SourceChange { rel, row, w: -1 }),
+                    );
                 }
                 continue;
             }
@@ -2155,11 +2187,13 @@ fn run_session<E: Engine>(
                         cells.push(mapped[term]);
                     }
                 }
-                next.push(ir::SourceChange {
-                    rel: source,
-                    row: cells.clone(),
-                    w: 1,
-                });
+                if hold(held, source, &cells) {
+                    next.push(ir::SourceChange {
+                        rel: source,
+                        row: cells.clone(),
+                        w: 1,
+                    });
+                }
                 recorded.push((source, cells, answer));
             }
             answered.insert(key, recorded);
@@ -2249,11 +2283,13 @@ fn run_session<E: Engine>(
                                 args: answer.args,
                                 weight: -1,
                             });
-                            next.push(ir::SourceChange {
-                                rel: source,
-                                row: cells,
-                                w: -1,
-                            });
+                            if release(held, source, &cells) {
+                                next.push(ir::SourceChange {
+                                    rel: source,
+                                    row: cells,
+                                    w: -1,
+                                });
+                            }
                         }
                     }
                     continue;
@@ -2290,11 +2326,13 @@ fn run_session<E: Engine>(
                         args: answer.args.clone(),
                         weight: 1,
                     });
-                    next.push(ir::SourceChange {
-                        rel: source,
-                        row: cells.clone(),
-                        w: 1,
-                    });
+                    if hold(held, source, &cells) {
+                        next.push(ir::SourceChange {
+                            rel: source,
+                            row: cells.clone(),
+                            w: 1,
+                        });
+                    }
                     recorded.push((source, cells, answer));
                 }
                 answered.insert(key, recorded);
@@ -2356,6 +2394,7 @@ fn run_session<E: Engine>(
                     continue;
                 };
                 let cells: Vec<_> = change.row.args.iter().map(|term| mapped[term]).collect();
+                let mut lands = true;
                 if let Some(served) = lowered.served.iter().find(|served| {
                     served.relation == change.row.rel && served.arity == change.row.args.len()
                 }) {
@@ -2369,12 +2408,14 @@ fn run_session<E: Engine>(
                         let key = (served.relation, application);
                         let owned = answered.entry(key).or_default();
                         if change.weight > 0 {
+                            lands = hold(held, source, &cells);
                             owned.push((source, cells.clone(), change.row.clone()));
                         } else if change.weight < 0 {
                             if let Some(index) =
                                 owned.iter().position(|(_, _, row)| row == &change.row)
                             {
                                 owned.remove(index);
+                                lands = release(held, source, &cells);
                             }
                             if owned.is_empty() {
                                 answered.remove(&key);
@@ -2393,11 +2434,13 @@ fn run_session<E: Engine>(
                         });
                     }
                 }
-                source_changes.push(ir::SourceChange {
-                    rel: source,
-                    row: cells,
-                    w: change.weight,
-                });
+                if lands {
+                    source_changes.push(ir::SourceChange {
+                        rel: source,
+                        row: cells,
+                        w: change.weight,
+                    });
+                }
             }
 
             let mut delta = settle_kept(engine, settles, kept, source_changes)?;
@@ -2454,11 +2497,13 @@ fn run_session<E: Engine>(
                                     args: answer.args,
                                     weight: -1,
                                 });
-                                next.push(ir::SourceChange {
-                                    rel: source,
-                                    row: cells,
-                                    w: -1,
-                                });
+                                if release(held, source, &cells) {
+                                    next.push(ir::SourceChange {
+                                        rel: source,
+                                        row: cells,
+                                        w: -1,
+                                    });
+                                }
                             }
                         }
                         continue;
@@ -2497,11 +2542,13 @@ fn run_session<E: Engine>(
                             args: answer.args.clone(),
                             weight: 1,
                         });
-                        next.push(ir::SourceChange {
-                            rel: source,
-                            row: cells.clone(),
-                            w: 1,
-                        });
+                        if hold(held, source, &cells) {
+                            next.push(ir::SourceChange {
+                                rel: source,
+                                row: cells.clone(),
+                                w: 1,
+                            });
+                        }
                         recorded.push((source, cells, answer));
                     }
                     answered.insert(key, recorded);
