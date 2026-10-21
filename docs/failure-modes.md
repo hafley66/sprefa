@@ -2996,3 +2996,11 @@ The observed standard, in order — no step is optional:
 - **Fail-pre-fix**: `_10_query::extract_record_printed_twice_answers_one_row`, a fake `ryi` that echoes one line twice: empty stdout and the `PresentInsert` diagnostic before the fix.
 - **Rail**: `Answerer::answer_requests` keeps the first copy of each row in one handout (`src/_9_runtime/_2_reconcile.rs`). Two requests that answer the same row in separate handouts are not covered by this rail.
 - **Entry**: an executor answer is a set. A row that arrives twice from a child process is one row by the time it reaches the engine.
+
+## 120. Two `ryi.resolve` families over one root answered the same row and `dl8 query` stopped on `PresentInsert`
+
+- **Incident** (2026-10-20): with `extract` gone, a program asking `(ryi.resolve ?Root "call")` and `(ryi.resolve ?Root "type")` for one root got the `PresentInsert` diagnostic at `src/_6_eval/_9b_ir_eval.rs:1254` and no rows.
+- **RCA**: `@std/ryi` rows such as `resolved_import` carry no family column, so both runs print the same row. The IR host answers one request per handout (`answer_requests(u, &store, [key])`), so the per-handout set of row 119 never held both copies, and each request's answer entered the engine as its own `+1`.
+- **Fail-pre-fix**: `_10_query::two_ryi_families_printing_one_row_answer_it_once`, a fake `ryi` that prints one `resolved_import` for every family: `PresentInsert` before the fix.
+- **Rail**: `Held` in `src/_6_eval/_9b_ir_eval.rs` counts the request keys holding each answer row. The engine gets `+1` when the first holder answers and `-1` when the last holder is cancelled; the live-line path counts through the same map.
+- **Entry**: an answer row is shared by every request that answers it; the engine sees one row per set, never one per request.
