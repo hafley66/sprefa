@@ -1,0 +1,13 @@
+# Effects and locks live in one place each: `src/_1_effects.rs`; nothing else may call these.
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::fs::read", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::fs::read_to_string", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::fs::write", reason = "effects live in src/_1_effects.rs" },
+  { path = "rusqlite::Connection::open", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::thread::spawn", reason = "effects live in src/_1_effects.rs" },
+]
+disallowed-types = [
+  { path = "std::sync::Mutex", reason = "locks are declared in one file" },
+  { path = "std::sync::RwLock", reason = "locks are declared in one file" },
+]
