@@ -1,0 +1,20 @@
+[package]
+name = "v9"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+differential-dataflow = "=0.25.1"
+timely = "=0.31.0"
+rusqlite = { version = "0.40", features = ["bundled"] }
+blake3 = "1"
+serde_json = "1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
