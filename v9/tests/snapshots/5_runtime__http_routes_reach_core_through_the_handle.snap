@@ -1,0 +1,246 @@
+---
+source: tests/5_runtime.rs
+expression: "serde_json::to_string_pretty(&seen).unwrap()"
+---
+[
+  {
+    "body": {
+      "changes": [
+        {
+          "cells": [
+            {
+              "int": null,
+              "text": "a"
+            },
+            {
+              "int": null,
+              "text": "b"
+            }
+          ],
+          "diff": 1,
+          "rel": "edge"
+        },
+        {
+          "cells": [
+            {
+              "int": null,
+              "text": "src/a/long/path.rs"
+            }
+          ],
+          "diff": 1,
+          "rel": "want"
+        },
+        {
+          "cells": [
+            {
+              "int": null,
+              "text": "a"
+            },
+            {
+              "int": null,
+              "text": "b"
+            }
+          ],
+          "diff": 1,
+          "rel": "reach"
+        },
+        {
+          "cells": [
+            {
+              "int": null,
+              "text": "src/a/long/path.rs"
+            }
+          ],
+          "diff": 1,
+          "rel": "ask"
+        },
+        {
+          "cells": [
+            {
+              "int": null,
+              "text": "src/a/long/path.rs"
+            },
+            {
+              "int": 180,
+              "text": null
+            }
+          ],
+          "diff": 1,
+          "rel": "told"
+        },
+        {
+          "cells": [
+            {
+              "int": null,
+              "text": "src/a/long/path.rs"
+            }
+          ],
+          "diff": 1,
+          "rel": "big"
+        }
+      ],
+      "event": 3
+    },
+    "route": "POST /commit",
+    "status": 200
+  },
+  {
+    "body": {
+      "error": "Commit { change: 0, rel: \"reach\", problem: \"kind\", found: \"Derived\" }"
+    },
+    "route": "POST /commit",
+    "status": 500
+  },
+  {
+    "body": {
+      "columns": [
+        "path",
+        "size"
+      ],
+      "rows": [
+        [
+          {
+            "int": null,
+            "text": "src/a/long/path.rs"
+          },
+          {
+            "int": 180,
+            "text": null
+          }
+        ]
+      ]
+    },
+    "route": "POST /query",
+    "status": 200
+  },
+  {
+    "body": {
+      "relations": [
+        {
+          "cols": [
+            {
+              "col_type": "Text",
+              "name": "from"
+            },
+            {
+              "col_type": "Text",
+              "name": "to"
+            }
+          ],
+          "kind": "Base",
+          "name": "edge",
+          "service": null
+        },
+        {
+          "cols": [
+            {
+              "col_type": "Text",
+              "name": "path"
+            }
+          ],
+          "kind": "Base",
+          "name": "want",
+          "service": null
+        },
+        {
+          "cols": [
+            {
+              "col_type": "Int",
+              "name": "n"
+            }
+          ],
+          "kind": "Base",
+          "name": "start",
+          "service": null
+        },
+        {
+          "cols": [
+            {
+              "col_type": "Text",
+              "name": "from"
+            },
+            {
+              "col_type": "Text",
+              "name": "to"
+            }
+          ],
+          "kind": "Derived",
+          "name": "reach",
+          "service": null
+        },
+        {
+          "cols": [
+            {
+              "col_type": "Text",
+              "name": "path"
+            }
+          ],
+          "kind": "Request",
+          "name": "ask",
+          "service": "size"
+        },
+        {
+          "cols": [
+            {
+              "col_type": "Text",
+              "name": "path"
+            },
+            {
+              "col_type": "Int",
+              "name": "size"
+            }
+          ],
+          "kind": "Answer",
+          "name": "told",
+          "service": "size"
+        },
+        {
+          "cols": [
+            {
+              "col_type": "Text",
+              "name": "path"
+            }
+          ],
+          "kind": "Derived",
+          "name": "big",
+          "service": null
+        },
+        {
+          "cols": [
+            {
+              "col_type": "Int",
+              "name": "n"
+            }
+          ],
+          "kind": "Request",
+          "name": "next_ask",
+          "service": "succ"
+        },
+        {
+          "cols": [
+            {
+              "col_type": "Int",
+              "name": "n"
+            },
+            {
+              "col_type": "Int",
+              "name": "m"
+            }
+          ],
+          "kind": "Answer",
+          "name": "next_told",
+          "service": "succ"
+        }
+      ]
+    },
+    "route": "GET /plan",
+    "status": 200
+  },
+  {
+    "body": {
+      "canonical": "engine=dd,store=sqlite,wire=http"
+    },
+    "route": "GET /recipe",
+    "status": 200
+  }
+]
