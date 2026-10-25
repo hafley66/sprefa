@@ -1,68 +1,73 @@
 use axum::Json;
-use axum::extract::Path;
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
-use axum_extra::extract::Query;
-use serde::Deserialize;
+use std::sync::Arc;
 
-use crate::models::change::Change;
-use crate::models::delta::Delta;
-use crate::models::plan::Plan;
-use crate::models::query_request::QueryRequest;
-use crate::models::recipe::Recipe;
-use crate::models::table::Table;
-use crate::ops_auto::CommitArgs;
-use crate::ops_auto::OpError;
-use crate::ops_auto::OpResult;
-use crate::ops_auto::PlanArgs;
-use crate::ops_auto::QueryArgs;
-use crate::ops_auto::RecipeArgs;
+use crate::_9_wire::models::change::Change;
+use crate::_9_wire::models::delta::Delta;
+use crate::_9_wire::models::plan::Plan;
+use crate::_9_wire::models::query_request::QueryRequest;
+use crate::_9_wire::models::recipe::Recipe;
+use crate::_9_wire::models::table::Table;
+use crate::_9_wire::ops_auto::CommitArgs;
+use crate::_9_wire::ops_auto::OpError;
+use crate::_9_wire::ops_auto::OpResult;
+use crate::_9_wire::ops_auto::PlanArgs;
+use crate::_9_wire::ops_auto::QueryArgs;
+use crate::_9_wire::ops_auto::RecipeArgs;
+use crate::_9_wire::ops_auto::Wire;
 
 impl IntoResponse for OpError {
     fn into_response(self) -> Response {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": self.0}))).into_response()
+        match self {
+            OpError::Internal(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": error}))).into_response(),
+            OpError::CommitRefused(body) => (StatusCode::from_u16(400).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body)).into_response(),
+            OpError::SqlRejected(body) => (StatusCode::from_u16(400).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body)).into_response(),
+        }
     }
 }
 
-pub async fn commit(Json(body): Json<Vec<Change>>) -> OpResult<Json<Delta>> {
+pub async fn commit<S: Wire>(State(ops): State<Arc<S>>, Json(body): Json<Vec<Change>>) -> OpResult<Json<Delta>> {
   let args = CommitArgs {
       changes: body,
   };
-  let out = tokio::task::spawn_blocking(move || crate::ops::commit(&args)).await??;
+  let out = tokio::task::spawn_blocking(move || ops.commit(&args)).await??;
   Ok(Json(out))
 }
 
-pub async fn query(Json(body): Json<QueryRequest>) -> OpResult<Json<Table>> {
+pub async fn query<S: Wire>(State(ops): State<Arc<S>>, Json(body): Json<QueryRequest>) -> OpResult<Json<Table>> {
   let args = QueryArgs {
       request: body,
   };
-  let out = tokio::task::spawn_blocking(move || crate::ops::query(&args)).await??;
+  let out = tokio::task::spawn_blocking(move || ops.query(&args)).await??;
   Ok(Json(out))
 }
 
-pub async fn plan() -> OpResult<Json<Plan>> {
+pub async fn plan<S: Wire>(State(ops): State<Arc<S>>) -> OpResult<Json<Plan>> {
   let args = PlanArgs {
 
   };
-  let out = tokio::task::spawn_blocking(move || crate::ops::plan(&args)).await??;
+  let out = tokio::task::spawn_blocking(move || ops.plan(&args)).await??;
   Ok(Json(out))
 }
 
-pub async fn recipe() -> OpResult<Json<Recipe>> {
+pub async fn recipe<S: Wire>(State(ops): State<Arc<S>>) -> OpResult<Json<Recipe>> {
   let args = RecipeArgs {
 
   };
-  let out = tokio::task::spawn_blocking(move || crate::ops::recipe(&args)).await??;
+  let out = tokio::task::spawn_blocking(move || ops.recipe(&args)).await??;
   Ok(Json(out))
 }
 
-pub fn router() -> axum::Router {
+pub fn router<S: Wire>(state: Arc<S>) -> axum::Router {
   axum::Router::new()
-      .route("/commit", post(commit))
-      .route("/query", post(query))
-      .route("/plan", get(plan))
-      .route("/recipe", get(recipe))
+      .route("/commit", post(commit::<S>))
+      .route("/query", post(query::<S>))
+      .route("/plan", get(plan::<S>))
+      .route("/recipe", get(recipe::<S>))
+      .with_state(state)
 }

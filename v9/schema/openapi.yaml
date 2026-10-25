@@ -15,6 +15,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Delta'
+        '400':
+          description: A commit the runtime refuses, or a check failure; `diag` is the `Diag` text.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommitRefused'
       requestBody:
         required: true
         content:
@@ -45,6 +51,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Table'
+        '400':
+          description: SQL the store rejects; `diag` is the `Diag` text.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SqlRejected'
       requestBody:
         required: true
         content:
@@ -65,14 +77,14 @@ paths:
 components:
   schemas:
     Cell:
-      type: object
-      properties:
-        text:
-          type: string
-        int:
-          type: integer
+      anyOf:
+        - type: string
+        - type: integer
           format: int64
-      description: One column value. Exactly one of `text` or `int` is set.
+        - type: number
+          format: double
+      nullable: true
+      description: 'One column value: a JSON string, integer, float or null. A SQL blob has no wire form.'
     Change:
       type: object
       required:
@@ -99,12 +111,20 @@ components:
       type: object
       required:
         - name
-        - col_type
+        - type
       properties:
         name:
           type: string
-        col_type:
+        type:
           $ref: '#/components/schemas/ColType'
+    CommitRefused:
+      type: object
+      required:
+        - diag
+      properties:
+        diag:
+          type: string
+      description: A commit the runtime refuses, or a check failure; `diag` is the `Diag` text.
     Delta:
       type: object
       required:
@@ -168,6 +188,14 @@ components:
         service:
           type: string
           description: Service name, set for Request and Answer relations.
+    SqlRejected:
+      type: object
+      required:
+        - diag
+      properties:
+        diag:
+          type: string
+      description: SQL the store rejects; `diag` is the `Diag` text.
     Table:
       type: object
       required:

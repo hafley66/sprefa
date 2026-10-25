@@ -1,8 +1,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize, Deserialize, clap::Args, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryRequest {
-  #[arg(long)]
   pub sql: String,
 }

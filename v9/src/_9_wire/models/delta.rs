@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::models::change::Change;
+use crate::_9_wire::models::change::Change;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Delta {
