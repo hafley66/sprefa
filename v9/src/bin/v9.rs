@@ -4,25 +4,19 @@
 //! `v9 serve [PROGRAM] <DB> --port N`: a built-in program on Core over HTTP; the system is
 //! `V9_SYSTEM` (unset: the default recipe).
 
-use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use v9::_0_id::{id_of, Dict};
+use std::time::Instant;
+use v9::_0_id::id_of;
 use v9::_1_effects;
 use v9::_3_plan::Row;
 use v9::_4_recipe::Recipe;
-use v9::_5_ends::{Bounds, Cadence, Cell, Change, IService};
-use v9::_6_back::_1_dd::MAX_ROUNDS;
+use v9::_5_ends::{Cell, IService};
 use v9::_8_runtime::_0_programs::{program, reach, PROGRAMS};
 use v9::_8_runtime::_2_ryi::Ryi;
-use v9::_8_runtime::_3_core::build;
-use v9::_8_runtime::_3_core::Core;
-use v9::_8_runtime::_4_handle::start;
-use v9::_9_wire::http_auto::router;
+use v9::_8_runtime::_3_core::{build, Core};
+use v9::_8_runtime::_5_run;
 
 const USAGE: &str = "usage: v9 reach <ROOT> <DB> [--check] | v9 serve [PROGRAM] <DB> --port N";
 
@@ -70,54 +64,14 @@ fn serve(args: &[String]) -> Result<(), String> {
         .ok_or(USAGE)?
         .parse()
         .map_err(|error| format!("--port: {error}"))?;
-    let recipe = Recipe::parse(&_1_effects::v9_system().unwrap_or_default())
-        .map_err(|diag| format!("V9_SYSTEM: {diag:?}"))?;
+    _5_run::system().map_err(|diag| format!("V9_SYSTEM: {diag:?}"))?;
     let chosen = program(name).ok_or_else(|| {
         let known: Vec<&str> = PROGRAMS.iter().map(|(known, _)| *known).collect();
         format!("unknown program {name:?}, known: {known:?}")
     })?;
     let ryi = _1_effects::v9_ryi();
-    let db = PathBuf::from(db);
-    let handle = start(move || {
-        let services: Vec<Box<dyn IService>> = vec![Box::new(Ryi::new(ryi))];
-        let bounds = Bounds {
-            max_rounds: MAX_ROUNDS,
-        };
-        build(recipe, chosen, &db, services, bounds)
-    })
-    .map_err(|diags| format!("{diags:?}"))?;
-    let canonical = handle.recipe.canonical.clone();
-    let listener = _1_effects::bind(port).map_err(|error| format!("bind: {error}"))?;
-    let addr = listener.local_addr().map_err(|error| error.to_string())?;
-    println!("serving {name} on http://{addr} recipe {canonical}");
-    _1_effects::serve_http(listener, router(Arc::new(handle))).map_err(|error| error.to_string())
-}
-
-/// The ryi service shared with `run`: it seeds `answered` from the store, asks again on a rerun,
-/// reads `errors`, and times every `call`.
-struct Shared {
-    ryi: Rc<RefCell<Ryi>>,
-    called: Rc<RefCell<Duration>>,
-}
-
-impl IService for Shared {
-    fn service(&self) -> &str {
-        "ryi"
-    }
-
-    fn cadence(&self) -> Cadence {
-        Cadence::Once
-    }
-
-    fn call(&mut self, requests: &[Change], dict: &Dict) {
-        let started = Instant::now();
-        self.ryi.borrow_mut().call(requests, dict);
-        *self.called.borrow_mut() += started.elapsed();
-    }
-
-    fn poll(&mut self, dict: &mut Dict, out: &mut Vec<Change>) {
-        self.ryi.borrow_mut().poll(dict, out);
-    }
+    let services = move || -> Vec<Box<dyn IService>> { vec![Box::new(Ryi::new(ryi))] };
+    _5_run::serve(name, chosen, services, PathBuf::from(db), port)
 }
 
 /// Plain Rust transitive closure, by search from each caller: the `--check` reference.
@@ -176,21 +130,18 @@ fn count(core: &Core, table: &str) -> Result<u64, String> {
 }
 
 /// Commits ROOT and retracts every other stored root. A stored ROOT has its ask in the replayed
-/// engine and no request change to route, so its ryi call happens here, before the commit polls.
+/// engine and no request change to route, so `refresh` re-asks ryi for it.
 fn run(root: &str, db_path: PathBuf, check: bool) -> Result<(), String> {
-    let ryi = Rc::new(RefCell::new(Ryi::new(_1_effects::v9_ryi())));
-    let called = Rc::new(RefCell::new(Duration::ZERO));
-    let services: Vec<Box<dyn IService>> = vec![Box::new(Shared {
-        ryi: Rc::clone(&ryi),
-        called: Rc::clone(&called),
-    })];
-    let bounds = Bounds {
-        max_rounds: MAX_ROUNDS,
-    };
-
+    let services: Vec<Box<dyn IService>> = vec![Box::new(Ryi::new(_1_effects::v9_ryi()))];
     let started = Instant::now();
-    let mut core = build(Recipe::default(), reach(), &db_path, services, bounds)
-        .map_err(|diags| format!("{diags:?}"))?;
+    let mut core = build(
+        Recipe::default(),
+        reach(),
+        &db_path,
+        services,
+        _5_run::BOUNDS,
+    )
+    .map_err(|diags| format!("{diags:?}"))?;
     let open = started.elapsed();
 
     let root_id = id_of(root.as_bytes());
@@ -198,37 +149,29 @@ fn run(root: &str, db_path: PathBuf, check: bool) -> Result<(), String> {
         .into_iter()
         .map(|row| row[0])
         .collect();
-    let mut answered: HashMap<u64, BTreeSet<Row>> = HashMap::new();
-    for row in ints(&core, "SELECT root, caller, callee FROM ryi_edge")? {
-        answered.entry(row[0]).or_default().insert(row);
-    }
-    ryi.borrow_mut().answered = answered;
     let dict_before = count(&core, "dict")?;
 
     let started = Instant::now();
-    if stored_roots.contains(&root_id) {
-        let ask = Change {
-            rel: core.ids["ryi_ask"],
-            row: vec![root_id],
-            diff: 1,
-        };
-        Shared {
-            ryi: Rc::clone(&ryi),
-            called: Rc::clone(&called),
-        }
-        .call(&[ask], &core.dict);
+    let stored = stored_roots.contains(&root_id);
+    let mut changes = Vec::new();
+    if !stored {
+        changes.push(("root".to_string(), vec![Cell::Text(root.to_string())], 1));
     }
-    let mut changes = vec![("root".to_string(), vec![Cell::Text(root.to_string())], 1)];
     for other in stored_roots.iter().filter(|id| **id != root_id) {
         let text = String::from_utf8_lossy(&core.dict.bytes[other]).into_owned();
         changes.push(("root".to_string(), vec![Cell::Text(text)], -1));
     }
-    let (_, changed) = core.commit(changes).map_err(|diag| format!("{diag:?}"))?;
-    let commit = started.elapsed();
-    if let Some(error) = ryi.borrow().errors.first() {
-        return Err(format!("ryi: {error}"));
+    let mut changed = Vec::new();
+    if !changes.is_empty() {
+        changed = core.commit(changes).map_err(|diag| format!("{diag:?}"))?.1;
     }
-    let ryi_time = *called.borrow();
+    let commit = started.elapsed();
+    let started = Instant::now();
+    if stored {
+        let refreshed = core.refresh("ryi").map_err(|diag| format!("{diag:?}"))?;
+        changed.extend(refreshed.into_iter().flat_map(|(_, named)| named));
+    }
+    let refresh = started.elapsed();
 
     let signed = |rel: &str, sign: isize| {
         changed
@@ -248,10 +191,10 @@ fn run(root: &str, db_path: PathBuf, check: bool) -> Result<(), String> {
         written,
     );
     println!(
-        "ms open {} ryi {} step+write {}",
+        "ms open {} commit {} refresh {}",
         open.as_millis(),
-        ryi_time.as_millis(),
-        commit.saturating_sub(ryi_time).as_millis(),
+        commit.as_millis(),
+        refresh.as_millis(),
     );
     if check {
         let edges = pairs(&core, "SELECT caller, callee FROM edge_text")?;

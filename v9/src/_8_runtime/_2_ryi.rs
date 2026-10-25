@@ -13,10 +13,10 @@ pub struct Ryi {
     pub binary: String,
     /// Edges per asked root, read by `call`, interned by `poll`.
     pub pending: Vec<(Value, Vec<CallEdge>)>,
-    /// Rows last answered per root. A re-ask answers only the difference, so the engine's answer
-    /// input stays a set.
+    /// Rows last answered per root, seeded from the stored `ryi_edge` rows at open. A re-ask
+    /// answers only the difference, so the engine's answer input stays a set.
     pub answered: HashMap<Value, BTreeSet<Row>>,
-    /// `ryi` failures; the trait has no error path, so a failed root answers nothing.
+    /// `ryi` failures since the runtime last drained them; a failed root answers nothing.
     pub errors: Vec<String>,
 }
 
@@ -76,5 +76,18 @@ impl IService for Ryi {
             }
             self.answered.insert(root, rows);
         }
+    }
+
+    fn seed(&mut self, answers: &[Change]) {
+        for answer in answers {
+            self.answered
+                .entry(answer.row[0])
+                .or_default()
+                .insert(answer.row.clone());
+        }
+    }
+
+    fn errors(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.errors)
     }
 }

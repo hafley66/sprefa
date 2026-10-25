@@ -1,0 +1,126 @@
+---
+source: tests/8_examples.rs
+expression: "(first, changed, views(&core).expect(\"views\"), unknown)"
+---
+(
+    [
+        "root(src)",
+        "ryi_ask(src)",
+        "ryi_edge(src, a, b)",
+        "ryi_edge(src, b, c)",
+        "edge(a, b)",
+        "edge(b, c)",
+        "reach(a, b)",
+        "reach(a, c)",
+        "reach(b, c)",
+    ],
+    [
+        (
+            "ryi_edge",
+            [
+                Text(
+                    "src",
+                ),
+                Text(
+                    "c",
+                ),
+                Text(
+                    "d",
+                ),
+            ],
+            1,
+        ),
+        (
+            "ryi_edge",
+            [
+                Text(
+                    "src",
+                ),
+                Text(
+                    "b",
+                ),
+                Text(
+                    "c",
+                ),
+            ],
+            -1,
+        ),
+        (
+            "edge",
+            [
+                Text(
+                    "c",
+                ),
+                Text(
+                    "d",
+                ),
+            ],
+            1,
+        ),
+        (
+            "edge",
+            [
+                Text(
+                    "b",
+                ),
+                Text(
+                    "c",
+                ),
+            ],
+            -1,
+        ),
+        (
+            "reach",
+            [
+                Text(
+                    "c",
+                ),
+                Text(
+                    "d",
+                ),
+            ],
+            1,
+        ),
+        (
+            "reach",
+            [
+                Text(
+                    "a",
+                ),
+                Text(
+                    "c",
+                ),
+            ],
+            -1,
+        ),
+        (
+            "reach",
+            [
+                Text(
+                    "b",
+                ),
+                Text(
+                    "c",
+                ),
+            ],
+            -1,
+        ),
+    ],
+    [
+        "root(src)",
+        "ryi_ask(src)",
+        "ryi_edge(src, a, b)",
+        "ryi_edge(src, c, d)",
+        "edge(a, b)",
+        "edge(c, d)",
+        "reach(a, b)",
+        "reach(c, d)",
+    ],
+    Err(
+        Unknown {
+            what: "service",
+            name: "nope",
+            rule: None,
+        },
+    ),
+)

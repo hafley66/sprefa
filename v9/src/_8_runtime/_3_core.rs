@@ -127,10 +127,19 @@ pub fn build(
 }
 
 impl Core {
-    /// Replays Base and Answer rows. An empty store with rows derived from no input (constant
-    /// bodies) writes them once and serves their requests.
+    /// Replays Base and Answer rows and seeds each service with its stored answers. An empty
+    /// store with rows derived from no input (constant bodies) writes them once and serves their
+    /// requests.
     fn open(&mut self) -> Result<(), Diag> {
         let replay = self.store.replay(&mut self.dict)?;
+        for (route, service) in self.routes.iter().zip(&mut self.services) {
+            let answers: Vec<Change> = replay
+                .iter()
+                .filter(|change| Some(change.rel) == route.answer)
+                .cloned()
+                .collect();
+            service.seed(&answers);
+        }
         let empty = replay.is_empty();
         let delta = self.engine.step(replay)?;
         let Some(first) = delta.changes.first().filter(|_| empty) else {
@@ -145,7 +154,7 @@ impl Core {
         }
         self.write(&delta)?;
         self.route(&delta);
-        let answers = self.poll(|_| true)?;
+        let answers = self.poll(|_, _| true)?;
         if !answers.is_empty() {
             self.rounds(answers)?;
         }
@@ -204,7 +213,58 @@ impl Core {
 
     /// Polls Continuing services; their answers step the engine.
     pub fn tick(&mut self) -> Result<Option<(Event, Vec<Named>)>, Diag> {
-        let answers = self.poll(|cadence| cadence == Cadence::Continuing)?;
+        let answers = self.poll(|_, cadence| cadence == Cadence::Continuing)?;
+        if answers.is_empty() {
+            return Ok(None);
+        }
+        self.rounds(answers).map(Some)
+    }
+
+    /// Re-asks every stored Request row of the Once service `service` and commits the answers it
+    /// polls. A service seeded at open answers the difference against the stored Answer rows, so
+    /// a changed answer set moves the stored one; `None` when nothing changed.
+    pub fn refresh(&mut self, service: &str) -> Result<Option<(Event, Vec<Named>)>, Diag> {
+        let Some(index) = self
+            .services
+            .iter()
+            .position(|known| known.service() == service)
+        else {
+            return Err(Diag::Unknown {
+                what: "service",
+                name: service.to_string(),
+                rule: None,
+            });
+        };
+        if self.services[index].cadence() != Cadence::Once {
+            return Err(Diag::Service {
+                service: service.to_string(),
+                message: "refresh re-asks Once services only".into(),
+            });
+        }
+        let request = self.routes[index].request;
+        let table = self.store.query(&format!(
+            "SELECT * FROM {}",
+            quote(&self.plan.rels[request as usize].name)
+        ))?;
+        let mut asks = Vec::with_capacity(table.rows.len());
+        for cells in table.rows {
+            let row = cells
+                .into_iter()
+                .map(|cell| match cell {
+                    Cell::Int(value) => Ok(value as u64),
+                    other => Err(Diag::Store(format!("request row cell {other:?}"))),
+                })
+                .collect::<Result<Row, Diag>>()?;
+            asks.push(Change {
+                rel: request,
+                row,
+                diff: 1,
+            });
+        }
+        if !asks.is_empty() {
+            self.services[index].call(&asks, &self.dict);
+        }
+        let answers = self.poll(|at, _| at == index)?;
         if answers.is_empty() {
             return Ok(None);
         }
@@ -236,7 +296,7 @@ impl Core {
             for change in &delta.changes {
                 *sums.entry((change.rel, change.row.clone())).or_default() += change.diff;
             }
-            input = self.poll(|_| true)?;
+            input = self.poll(|_, _| true)?;
             if input.is_empty() {
                 let changes = sums
                     .into_iter()
@@ -275,22 +335,27 @@ impl Core {
         }
     }
 
-    /// Answers of the services `cadence` picks, each set to its service's Answer rel.
-    fn poll(&mut self, cadence: impl Fn(Cadence) -> bool) -> Result<Vec<Change>, Diag> {
+    /// Answers of the services `pick` takes by index and cadence, each set to its service's
+    /// Answer rel. A service that reports errors stops the poll with the first.
+    fn poll(&mut self, pick: impl Fn(usize, Cadence) -> bool) -> Result<Vec<Change>, Diag> {
         let mut answers = Vec::new();
-        for (route, service) in self.routes.iter().zip(&mut self.services) {
-            if !cadence(service.cadence()) {
+        for (index, (route, service)) in self.routes.iter().zip(&mut self.services).enumerate() {
+            if !pick(index, service.cadence()) {
                 continue;
             }
             let mut out = Vec::new();
             service.poll(&mut self.dict, &mut out);
-            if out.is_empty() {
-                continue;
-            }
+            let errors = service.errors();
             let failed = |message: String| Diag::Service {
                 service: service.service().to_string(),
                 message,
             };
+            if let Some(error) = errors.into_iter().next() {
+                return Err(failed(error));
+            }
+            if out.is_empty() {
+                continue;
+            }
             let Some(answer) = route.answer else {
                 return Err(failed("answers but the program has no Answer rel".into()));
             };

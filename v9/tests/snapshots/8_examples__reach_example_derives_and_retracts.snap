@@ -1,0 +1,35 @@
+---
+source: tests/8_examples.rs
+expression: seen
+---
+[
+    [
+        "edge(a, b)",
+        "edge(b, c)",
+        "edge(c, a)",
+        "edge(c, d)",
+        "reach(a, a)",
+        "reach(a, b)",
+        "reach(a, c)",
+        "reach(a, d)",
+        "reach(b, a)",
+        "reach(b, b)",
+        "reach(b, c)",
+        "reach(b, d)",
+        "reach(c, a)",
+        "reach(c, b)",
+        "reach(c, c)",
+        "reach(c, d)",
+    ],
+    [
+        "edge(a, b)",
+        "edge(b, c)",
+        "edge(c, d)",
+        "reach(a, b)",
+        "reach(a, c)",
+        "reach(a, d)",
+        "reach(b, c)",
+        "reach(b, d)",
+        "reach(c, d)",
+    ],
+]
