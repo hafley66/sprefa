@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 use v9::_0_id::Dict;
-use v9::{_1_effects, _2_store, _3_reach, _4_oracle};
+use v9::_1_effects;
+use v9::skeleton::{_0_store as _2_store, _1_reach as _3_reach, _2_oracle as _4_oracle};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -27,7 +28,7 @@ fn main() -> ExitCode {
 }
 
 fn run(root: PathBuf, db_path: PathBuf, check: bool) -> Result<(), String> {
-    let ryi = std::env::var("V9_RYI").unwrap_or_else(|_| "ryi".to_string());
+    let ryi = _1_effects::v9_ryi();
     let mut db = _1_effects::open_db(&db_path).map_err(|e| e.to_string())?;
     _2_store::open(&db).map_err(|e| e.to_string())?;
 

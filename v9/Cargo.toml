@@ -12,6 +12,10 @@ timely = "=0.31.0"
 rusqlite = { version = "0.40", features = ["bundled"] }
 blake3 = "1"
 serde_json = "1"
+petgraph = "0.8"
+
+[dev-dependencies]
+insta = "1"
 
 [profile.dev]
 opt-level = 1

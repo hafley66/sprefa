@@ -1,0 +1,114 @@
+---
+source: tests/2_recipe.rs
+expression: out
+---
+[
+    (
+        "",
+        Ok(
+            "engine=dd,store=sqlite,wire=http",
+        ),
+    ),
+    (
+        "engine=dd,store=sqlite,wire=http",
+        Ok(
+            "engine=dd,store=sqlite,wire=http",
+        ),
+    ),
+    (
+        " Store = SQLITE ; engine=dd ",
+        Ok(
+            "engine=dd,store=sqlite,wire=http",
+        ),
+    ),
+    (
+        "wire=http,",
+        Ok(
+            "engine=dd,store=sqlite,wire=http",
+        ),
+    ),
+    (
+        "engine=dd;;store=sqlite",
+        Ok(
+            "engine=dd,store=sqlite,wire=http",
+        ),
+    ),
+    (
+        "engine=timely",
+        Err(
+            Recipe {
+                problem: "unknown value",
+                found: "engine=timely",
+                allowed: [
+                    "dd",
+                ],
+            },
+        ),
+    ),
+    (
+        "store=postgres",
+        Err(
+            Recipe {
+                problem: "unknown value",
+                found: "store=postgres",
+                allowed: [
+                    "sqlite",
+                ],
+            },
+        ),
+    ),
+    (
+        "wire=grpc",
+        Err(
+            Recipe {
+                problem: "unknown value",
+                found: "wire=grpc",
+                allowed: [
+                    "http",
+                ],
+            },
+        ),
+    ),
+    (
+        "cache=lru",
+        Err(
+            Recipe {
+                problem: "unknown key",
+                found: "cache",
+                allowed: [
+                    "engine",
+                    "store",
+                    "wire",
+                ],
+            },
+        ),
+    ),
+    (
+        "engine=dd,engine=dd",
+        Err(
+            Recipe {
+                problem: "duplicate key",
+                found: "engine",
+                allowed: [
+                    "engine",
+                    "store",
+                    "wire",
+                ],
+            },
+        ),
+    ),
+    (
+        "engine",
+        Err(
+            Recipe {
+                problem: "no '='",
+                found: "engine",
+                allowed: [
+                    "engine",
+                    "store",
+                    "wire",
+                ],
+            },
+        ),
+    ),
+]

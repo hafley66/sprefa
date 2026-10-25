@@ -1,0 +1,101 @@
+---
+source: tests/1_plan.rs
+expression: "(&plan.rules, &plan.rels[7], plan.hash, dict.take_new())"
+---
+(
+    [
+        PRule {
+            head: PAtom {
+                rel: 5,
+                args: [
+                    Var(
+                        0,
+                    ),
+                    Var(
+                        2,
+                    ),
+                ],
+            },
+            body: [
+                Pos(
+                    PAtom {
+                        rel: 2,
+                        args: [
+                            Var(
+                                0,
+                            ),
+                            Var(
+                                1,
+                            ),
+                        ],
+                    },
+                ),
+                Neg(
+                    PAtom {
+                        rel: 1,
+                        args: [
+                            Var(
+                                0,
+                            ),
+                        ],
+                    },
+                ),
+                Call(
+                    Add,
+                    [
+                        Var(
+                            1,
+                        ),
+                        Const(
+                            18446744073709551615,
+                        ),
+                        Var(
+                            2,
+                        ),
+                    ],
+                ),
+                Call(
+                    Neq,
+                    [
+                        Var(
+                            0,
+                        ),
+                        Const(
+                            8246774403907953298,
+                        ),
+                    ],
+                ),
+            ],
+            vars: [
+                "node",
+                "n",
+                "m",
+            ],
+        },
+    ],
+    PRel {
+        name: "told",
+        cols: [
+            Text,
+            Text,
+        ],
+        kind: Answer {
+            service: "ryi",
+        },
+        request: Some(
+            6,
+        ),
+    },
+    1056113769316636534,
+    [
+        (
+            8246774403907953298,
+            [
+                114,
+                111,
+                111,
+                116,
+            ],
+        ),
+    ],
+)

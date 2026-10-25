@@ -1,0 +1,171 @@
+---
+source: tests/1_plan.rs
+expression: out
+---
+[
+    (
+        "unknown rel",
+        [
+            Unknown {
+                what: "rel",
+                name: "edges",
+                rule: Some(
+                    0,
+                ),
+            },
+        ],
+    ),
+    (
+        "rel arity",
+        [
+            Arity {
+                rule: 0,
+                name: "edge",
+                expected: 2,
+                found: 3,
+            },
+        ],
+    ),
+    (
+        "builtin arity",
+        [
+            Arity {
+                rule: 0,
+                name: "add",
+                expected: 3,
+                found: 2,
+            },
+        ],
+    ),
+    (
+        "var type disagrees",
+        [
+            Type {
+                rule: 0,
+                term: "b",
+                expected: Int,
+                found: Text,
+            },
+        ],
+    ),
+    (
+        "constant type",
+        [
+            Type {
+                rule: 0,
+                term: "a",
+                expected: Int,
+                found: Text,
+            },
+            Type {
+                rule: 0,
+                term: "1",
+                expected: Text,
+                found: Int,
+            },
+        ],
+    ),
+    (
+        "neq types",
+        [
+            Type {
+                rule: 0,
+                term: "n",
+                expected: Text,
+                found: Int,
+            },
+        ],
+    ),
+    (
+        "unbound head var",
+        [
+            Unbound {
+                rule: 0,
+                goal: None,
+                var: "z",
+            },
+        ],
+    ),
+    (
+        "unbound neg var",
+        [
+            Unbound {
+                rule: 0,
+                goal: Some(
+                    0,
+                ),
+                var: "a",
+            },
+        ],
+    ),
+    (
+        "unbound call input",
+        [
+            Unbound {
+                rule: 0,
+                goal: Some(
+                    0,
+                ),
+                var: "n",
+            },
+        ],
+    ),
+    (
+        "rule into Base",
+        [
+            HeadKind {
+                rule: 0,
+                rel: "edge",
+                kind: Base,
+            },
+        ],
+    ),
+    (
+        "rule into Answer",
+        [
+            HeadKind {
+                rule: 0,
+                rel: "told",
+                kind: Answer {
+                    service: "ryi",
+                },
+            },
+        ],
+    ),
+    (
+        "negation in an SCC",
+        [
+            NegationCycle {
+                rule: 2,
+                head: "open",
+                negated: "reach",
+            },
+        ],
+    ),
+    (
+        "rel declarations",
+        [
+            Duplicate {
+                what: "rel",
+                name: "edge",
+            },
+            Duplicate {
+                what: "column",
+                name: "edge.x",
+            },
+            Duplicate {
+                what: "answer service",
+                name: "ryi",
+            },
+            Unknown {
+                what: "service",
+                name: "gh",
+                rule: None,
+            },
+            AnswerShape {
+                answer: "reply",
+                request: "prompt",
+            },
+        ],
+    ),
+]

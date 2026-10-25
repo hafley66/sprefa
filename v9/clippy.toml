@@ -6,6 +6,8 @@ disallowed-methods = [
   { path = "std::fs::write", reason = "effects live in src/_1_effects.rs" },
   { path = "rusqlite::Connection::open", reason = "effects live in src/_1_effects.rs" },
   { path = "std::thread::spawn", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::env::var", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::env::var_os", reason = "effects live in src/_1_effects.rs" },
 ]
 disallowed-types = [
   { path = "std::sync::Mutex", reason = "locks are declared in one file" },
