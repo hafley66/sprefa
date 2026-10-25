@@ -1,0 +1,14 @@
+---
+source: tests/4_store.rs
+expression: statements
+---
+[
+    "BEGIN DEFERRED",
+    "INSERT INTO dict (id, bytes)\n  SELECT value->>0, unhex(value->>1) FROM json_each(?1) WHERE true ON CONFLICT (id) DO NOTHING",
+    "DELETE FROM \"edge\" WHERE (\"from\", \"to\") IN (SELECT value->>0, value->>1 FROM json_each(?1))",
+    "INSERT INTO \"edge\" (\"from\", \"to\") SELECT value->>0, value->>1 FROM json_each(?1)",
+    "INSERT INTO \"weight\" (\"node\", \"n\") SELECT value->>0, value->>1 FROM json_each(?1)",
+    "DELETE FROM \"reach\" WHERE (\"from\", \"to\") IN (SELECT value->>0, value->>1 FROM json_each(?1))",
+    "INSERT INTO \"reach\" (\"from\", \"to\") SELECT value->>0, value->>1 FROM json_each(?1)",
+    "COMMIT",
+]

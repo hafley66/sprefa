@@ -12,3 +12,6 @@ Slop accepted at review: file, what, why accepted.
 | P5a | `v9/src/_9_wire/ops.rs` | one process-wide `OnceLock<Arc<dyn Wire>>`; `impl FromStr for Change` only to satisfy a derived `clap::Args` | emitter has no axum state and always derives clap (`7_OpsTransports.tsx:76`) |
 | P5a | `v9/src/_9_wire/http_auto.rs` | every `OpError` is HTTP 500, a check `Diag` included | generated error type is a string; status mapping waits for an error model in the contract |
 | P5a | `v9/schema/package.json` | `@hafley66/alloy-rs` is `link:` to the hafley-tsp checkout, no version lock | published versions lack the HTTP emitter; publish a dev version and pin |
+| P3 | `v9/src/_7_store/_1_sqlite.rs` `write` | strict: an insert of a present row or a delete that misses is `Diag::Store`; relies on the engine's Delta being set-valued for every rel | P2 told to distinct Base and Answer too; strictness catches engine drift |
+| P3 | `v9/src/_7_store/_0_sql.rs` | name collisions report `Diag::Store(String)`, no dedicated variant | one impl; promote when a client branches on it |
+| P3 | `v9/src/_7_store/_1_sqlite.rs` `replay` | loads the whole `dict` table | dict holds only ids rows used at write time; prune when retraction GC exists |
