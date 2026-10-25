@@ -7,7 +7,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::Instant;
 use v9::_0_id::id_of;
 use v9::_1_effects;
 use v9::_3_plan::Row;
@@ -21,7 +20,7 @@ use v9::_8_runtime::_5_run;
 const USAGE: &str = "usage: v9 reach <ROOT> <DB> [--check] | v9 serve [PROGRAM] <DB> --port N";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
+    let args = _1_effects::args();
     let result = match args.get(1).map(String::as_str) {
         Some("reach") => {
             let (Some(root), Some(db)) = (args.get(2), args.get(3)) else {
@@ -74,8 +73,22 @@ fn serve(args: &[String]) -> Result<(), String> {
     _5_run::serve(name, chosen, services, PathBuf::from(db), port)
 }
 
+/// Stack pops one `--check` search from one caller may take. A search pushes each edge at most
+/// twice (the caller's own edges at the start, then once more if the caller is reached), so pops
+/// stay under twice the edge count; the bound protects the oracle from a defect that pushes
+/// without end.
+const CLOSURE_MAX_POPS: usize = 1 << 24;
+
+/// The `--check` oracle's search from `start` passed `CLOSURE_MAX_POPS` pops.
+#[derive(Debug)]
+#[allow(dead_code)]
+struct ClosureLimit {
+    start: String,
+    max_pops: usize,
+}
+
 /// Plain Rust transitive closure, by search from each caller: the `--check` reference.
-fn closure(edges: &BTreeSet<(String, String)>) -> BTreeSet<(String, String)> {
+fn closure(edges: &BTreeSet<(String, String)>) -> Result<BTreeSet<(String, String)>, String> {
     let mut out: HashMap<&str, Vec<&str>> = HashMap::new();
     for (from, to) in edges {
         out.entry(from).or_default().push(to);
@@ -84,17 +97,29 @@ fn closure(edges: &BTreeSet<(String, String)>) -> BTreeSet<(String, String)> {
     for (&start, next) in &out {
         let mut seen = BTreeSet::new();
         let mut stack = next.clone();
-        while let Some(node) = stack.pop() {
+        let mut drained = false;
+        for _ in 0..CLOSURE_MAX_POPS {
+            let Some(node) = stack.pop() else {
+                drained = true;
+                break;
+            };
             if seen.insert(node) {
                 stack.extend(out.get(node).into_iter().flatten().copied());
             }
+        }
+        if !drained {
+            let limit = ClosureLimit {
+                start: start.to_string(),
+                max_pops: CLOSURE_MAX_POPS,
+            };
+            return Err(format!("{limit:?}"));
         }
         reach.extend(
             seen.into_iter()
                 .map(|node| (start.to_string(), node.to_string())),
         );
     }
-    reach
+    Ok(reach)
 }
 
 fn ints(core: &Core, sql: &str) -> Result<Vec<Row>, String> {
@@ -133,7 +158,7 @@ fn count(core: &Core, table: &str) -> Result<u64, String> {
 /// engine and no request change to route, so `refresh` re-asks ryi for it.
 fn run(root: &str, db_path: PathBuf, check: bool) -> Result<(), String> {
     let services: Vec<Box<dyn IService>> = vec![Box::new(Ryi::new(_1_effects::v9_ryi()))];
-    let started = Instant::now();
+    let started = _1_effects::now();
     let mut core = build(
         Recipe::default(),
         reach(),
@@ -142,7 +167,7 @@ fn run(root: &str, db_path: PathBuf, check: bool) -> Result<(), String> {
         _5_run::BOUNDS,
     )
     .map_err(|diags| format!("{diags:?}"))?;
-    let open = started.elapsed();
+    let open = _1_effects::now() - started;
 
     let root_id = id_of(root.as_bytes());
     let stored_roots: Vec<u64> = ints(&core, "SELECT root FROM root")?
@@ -151,7 +176,7 @@ fn run(root: &str, db_path: PathBuf, check: bool) -> Result<(), String> {
         .collect();
     let dict_before = count(&core, "dict")?;
 
-    let started = Instant::now();
+    let started = _1_effects::now();
     let stored = stored_roots.contains(&root_id);
     let mut changes = Vec::new();
     if !stored {
@@ -165,13 +190,13 @@ fn run(root: &str, db_path: PathBuf, check: bool) -> Result<(), String> {
     if !changes.is_empty() {
         changed = core.commit(changes).map_err(|diag| format!("{diag:?}"))?.1;
     }
-    let commit = started.elapsed();
-    let started = Instant::now();
+    let commit = _1_effects::now() - started;
+    let started = _1_effects::now();
     if stored {
         let refreshed = core.refresh("ryi").map_err(|diag| format!("{diag:?}"))?;
         changed.extend(refreshed.into_iter().flat_map(|(_, named)| named));
     }
-    let refresh = started.elapsed();
+    let refresh = _1_effects::now() - started;
 
     let signed = |rel: &str, sign: isize| {
         changed
@@ -199,7 +224,7 @@ fn run(root: &str, db_path: PathBuf, check: bool) -> Result<(), String> {
     if check {
         let edges = pairs(&core, "SELECT caller, callee FROM edge_text")?;
         let stored = pairs(&core, "SELECT caller, callee FROM reach_text")?;
-        let oracle = closure(&edges);
+        let oracle = closure(&edges)?;
         if oracle != stored {
             return Err(format!(
                 "reach differs from the oracle: stored {} oracle {}",

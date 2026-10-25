@@ -1,25 +1,35 @@
-# v9 reach probe: skeleton vs Core (P6)
+# v9 reach probe: skeleton vs Core
 
-Fixture: `~/projects/hafley-rs/crates/hafley_scm` (the #820 corpus). Binaries: `--release`, built
-from `v9` at `1e8c95df9` (skeleton) and from branch `v9-p6` (Core). Machine: darwin arm64, no
-other cargo running.
+Fixture: `~/projects/hafley-rs/crates/hafley_scm` (the #820 corpus). Binaries: `--release`. The
+skeleton is built from `v9` at `1e8c95df9`. The Core table below is the F2 rerun, built from branch
+`v9-f2`; the row equality, phase and memory sections were measured on the P6 Core binary (branch
+`v9-p6`). Machine: darwin arm64.
 
 ## Commands
 
-```sh
-cd ~/projects/sprefa-wt/v9-p6/v9
-RCARGO_OFF=1 cargo build --release --bin v9   # binary: target/rcargo/aarch64-apple-darwin/release/v9
-```
-
-`measure.sh BIN TAG` (scratch script): three cold runs, each on a new db, then three warm reruns on
-the third cold db; each run is
+From the repo root:
 
 ```sh
-/usr/bin/time -l BIN reach ~/projects/hafley-rs/crates/hafley_scm DB --check
+cd v9
+RCARGO_OFF=1 cargo build --release --bin v9   # binary: the path cargo prints under target/
 ```
 
-`wall` is `real`, `peak MB` is `maximum resident set size` / 2^20. The skeleton and Core series
-ran back to back.
+`measure.sh BIN DIR` (scratch script, not committed): three cold runs, each on a new db, then three
+warm reruns on the third cold db:
+
+```sh
+BIN=$1; DIR=$2; ROOT=$HOME/projects/hafley-rs/crates/hafley_scm
+run() {
+  /usr/bin/time -l "$BIN" reach "$ROOT" "$2" --check > "$DIR/out.txt" 2> "$DIR/time.txt"
+  real=$(awk '/ real /{print $1}' "$DIR/time.txt")
+  rss=$(awk '/maximum resident set size/{print $1}' "$DIR/time.txt")
+  echo "$1 | $real | $rss | $(tr '\n' ' ' < "$DIR/out.txt")"
+}
+for i in 1 2 3; do rm -f "$DIR/cold$i.db"; run "cold $i" "$DIR/cold$i.db"; done
+for i in 1 2 3; do run "warm $i" "$DIR/cold3.db"; done
+```
+
+`wall` is `real` (10 ms resolution), `peak MB` is `maximum resident set size` / 2^20.
 
 Row equality between the two dbs (third cold run of each):
 
@@ -32,6 +42,8 @@ sqlite3 core-cold3.db "ATTACH 'skel-cold3.db' AS s;
   SELECT count(*) FROM (SELECT caller, callee FROM main.edge EXCEPT SELECT caller, callee FROM s.edge);
   SELECT count(*) FROM (SELECT caller, callee FROM s.edge EXCEPT SELECT caller, callee FROM main.edge);"
 ```
+
+Measured on the P6 Core binary.
 
 | db | edge rows | reach rows | reach text pairs only here | edge id pairs only here |
 | --- | --- | --- | --- | --- |
@@ -51,11 +63,26 @@ Printed line: `ms load L ryi R replay P delta D write W`.
 | warm 2 | 650 | 34.8 | 626 | 16 | 0 | 0 | 4737 (+0 -0) | 24322 (+0 -0) | 0 | equal |
 | warm 3 | 690 | 34.9 | 668 | 16 | 0 | 0 | 4737 (+0 -0) | 24322 (+0 -0) | 0 | equal |
 
-## Core (`v9-p6`)
+## Core (`v9-f2`)
 
-Printed line: `ms open O ryi R step+write S`. `open` is `build` (store replay and the engine's
-first step); `ryi` is the time inside the ryi service's `call`; `step+write` is the commit minus
-`ryi`.
+Printed line: `ms open O commit C refresh R` (`src/bin/v9.rs`). `open` is `build` (store replay and
+the engine's first step). `commit` is `Core::commit` of the root changes: on a cold run it holds the
+ryi call, the engine step and the store write. `refresh` is `Core::refresh("ryi")` on a stored
+root: on a warm run it holds the ryi call.
+
+| run | wall ms | peak MB | open ms | commit ms | refresh ms | edges | reach | rows written | check |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| cold 1 | 3410 | 50.2 | 10 | 3345 | 0 | 4737 (+4737 -0) | 24322 (+24322 -0) | 36579 | equal |
+| cold 2 | 920 | 52.7 | 1 | 868 | 0 | 4737 (+4737 -0) | 24322 (+24322 -0) | 36579 | equal |
+| cold 3 | 940 | 51.1 | 1 | 887 | 0 | 4737 (+4737 -0) | 24322 (+24322 -0) | 36579 | equal |
+| warm 1 | 870 | 62.1 | 62 | 0 | 757 | 4737 (+0 -0) | 24322 (+0 -0) | 0 | equal |
+| warm 2 | 850 | 62.1 | 62 | 0 | 745 | 4737 (+0 -0) | 24322 (+0 -0) | 0 | equal |
+| warm 3 | 860 | 59.4 | 63 | 0 | 744 | 4737 (+0 -0) | 24322 (+0 -0) | 0 | equal |
+
+### Core (`v9-p6`), the earlier line
+
+Printed line: `ms open O ryi R step+write S`. `ryi` is the time inside the ryi service's `call`;
+`step+write` is the commit minus `ryi`.
 
 | run | wall ms | peak MB | open ms | ryi ms | step+write ms | edges | reach | rows written | check |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -67,12 +94,13 @@ first step); `ryi` is the time inside the ryi service's `call`; `step+write` is 
 | warm 3 | 790 | 58.4 | 59 | 678 | 3 | 4737 (+0 -0) | 24322 (+0 -0) | 0 | equal |
 
 The skeleton's cold 1 `ryi` is 2948 ms; in an earlier series Core's cold 1 `ryi` was 2946 ms and
-the skeleton's 3007 ms. The first `ryi fast .` after an idle gap takes about 3 s in either binary.
+the skeleton's 3007 ms. The F2 cold 1 `commit` is 3345 ms against 868 and 887 for cold 2 and 3.
+The first `ryi fast .` after an idle gap takes about 3 s in either binary.
 
 Rows written: skeleton 31839 = dict 2780 + edge 4737 + reach 24322. Core 36579 = dict 2781 +
 root 1 + ryi_ask 1 + ryi_edge 4737 + edge 4737 + reach 24322.
 
-## Phases
+## Phases (P6 binary)
 
 ### Time: step vs write
 

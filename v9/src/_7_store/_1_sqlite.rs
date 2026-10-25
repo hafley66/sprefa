@@ -10,7 +10,8 @@ use crate::_7_store::_0_sql::{
 };
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, ErrorCode};
-use std::time::{Duration, Instant};
+use crate::_1_effects::now;
+use std::time::Duration;
 
 pub struct Sqlite {
     pub db: Connection,
@@ -240,9 +241,9 @@ impl Store for Sqlite {
     /// second statement) is `Diag::Store`. More than `max_rows` rows is `Diag::QueryRows`; a run
     /// past `max_time` is interrupted and is `Diag::QueryTime`.
     fn query(&self, sql: &str) -> Result<Table, Diag> {
-        let deadline = Instant::now() + self.max_time;
+        let deadline = now() + self.max_time;
         self.db
-            .progress_handler(PROGRESS_STEPS, Some(move || Instant::now() > deadline))
+            .progress_handler(PROGRESS_STEPS, Some(move || now() > deadline))
             .map_err(sql_error)?;
         let table = self.bounded_query(sql);
         self.db

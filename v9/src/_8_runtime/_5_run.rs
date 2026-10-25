@@ -3,7 +3,7 @@
 
 use crate::_1_effects;
 use crate::_2_ir::Program;
-use crate::_4_recipe::Recipe;
+use crate::_4_recipe::{Recipe, WireKind};
 use crate::_5_ends::{Bounds, Cell, Diag, IService};
 use crate::_6_back::_1_dd::MAX_ROUNDS;
 use crate::_7_store::_0_sql::quote;
@@ -33,8 +33,9 @@ pub fn run(
     build(recipe, program, db, services, BOUNDS)
 }
 
-/// Builds on the Core thread (a service need not be Send), prints `serving NAME on http://ADDR
-/// recipe CANONICAL`, serves `127.0.0.1:port` until the process ends.
+/// Builds on the Core thread (a service need not be Send), then serves it on the recipe's wire.
+/// `wire=http`: prints `serving NAME on http://ADDR recipe CANONICAL`, serves `127.0.0.1:port`
+/// until the process ends.
 pub fn serve(
     name: &str,
     program: Program,
@@ -43,13 +44,19 @@ pub fn serve(
     port: u16,
 ) -> Result<(), String> {
     let recipe = system().map_err(|diag| format!("V9_SYSTEM: {diag:?}"))?;
+    let wire = recipe.wire;
     let handle = start(move || build(recipe, program, &db, services(), BOUNDS))
         .map_err(|diags| format!("{diags:?}"))?;
-    let canonical = handle.recipe.canonical.clone();
-    let listener = _1_effects::bind(port).map_err(|error| format!("bind: {error}"))?;
-    let addr = listener.local_addr().map_err(|error| error.to_string())?;
-    println!("serving {name} on http://{addr} recipe {canonical}");
-    _1_effects::serve_http(listener, router(Arc::new(handle))).map_err(|error| error.to_string())
+    match wire {
+        WireKind::Http => {
+            let canonical = handle.recipe.canonical.clone();
+            let listener = _1_effects::bind(port).map_err(|error| format!("bind: {error}"))?;
+            let addr = listener.local_addr().map_err(|error| error.to_string())?;
+            println!("serving {name} on http://{addr} recipe {canonical}");
+            _1_effects::serve_http(listener, router(Arc::new(handle)))
+                .map_err(|error| error.to_string())
+        }
+    }
 }
 
 /// Every `<rel>_text` view, rel order then row order, one `rel(cell, ..)` line per row.
@@ -89,8 +96,8 @@ pub fn main(
     program: fn() -> Program,
     services: fn() -> Vec<Box<dyn IService>>,
 ) -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let result = match args.as_slice() {
+    let args = _1_effects::args();
+    let result = match args.get(1..).unwrap_or_default() {
         [db] => run(program(), services(), Path::new(db))
             .map_err(|diags| format!("{diags:?}"))
             .and_then(|core| views(&core).map_err(|diag| format!("{diag:?}")))

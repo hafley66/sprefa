@@ -312,6 +312,7 @@ fn a_multi_row_delta_is_one_statement_per_table_and_sign() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)]
 fn query_stops_at_the_row_cap_and_the_time_budget() {
     let path = dir("query_bounds");
     let mut dict = Dict::default();

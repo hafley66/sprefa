@@ -1,6 +1,6 @@
 //! Every effect of the crate: the `ryi` child process, the SQLite file, threads, the listening
-//! socket. Nothing else spawns, reads files, opens databases or binds (`clippy.toml` bans it
-//! elsewhere).
+//! socket, the process args, the clock. Nothing else spawns, reads files, opens databases, binds,
+//! reads args or reads the clock (`clippy.toml` bans it elsewhere).
 #![allow(clippy::disallowed_methods)]
 
 use crate::_2a_diag::Diag;
@@ -90,6 +90,16 @@ pub fn v9_system() -> Option<String> {
 /// `V9_RYI`, the ryi binary; `ryi` on PATH when unset.
 pub fn v9_ryi() -> String {
     std::env::var("V9_RYI").unwrap_or_else(|_| "ryi".to_string())
+}
+
+/// The process args, the program name first.
+pub fn args() -> Vec<String> {
+    std::env::args().collect()
+}
+
+/// The monotonic clock now.
+pub fn now() -> std::time::Instant {
+    std::time::Instant::now()
 }
 
 /// A named thread running `body`.
