@@ -270,8 +270,7 @@ fn a_service_round_answers_and_a_retracted_request_hides_its_answers() {
 fn service_rounds_stop_at_the_bound_and_core_still_serves() {
     let dir = dir("rounds");
     let log = Log::default();
-    // A derivation's round count is its depth across events, so the chain needs more than BOUNDS.
-    let bounds = Bounds { max_rounds: 1024 };
+    let bounds = BOUNDS;
     let mut core = build(
         Recipe::default(),
         program(),

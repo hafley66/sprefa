@@ -1,5 +1,10 @@
 //! `Engine` on differential dataflow. One worker, one dataflow per plan, one input for Base and
 //! Answer rows. Outer time `t` is the input epoch; recursive strata loop on `Product<t, round>`.
+//!
+//! An update's round is the lattice join of the rounds it was derived from, so work at epoch `t`
+//! that joins rows of earlier epochs starts at their round: a recursion through a service climbs
+//! a few rounds per epoch, forever. `Bounds::max_rounds` therefore counts the distinct rounds a
+//! stratum's loop updates at one epoch, and leaves the round numbers alone.
 
 use crate::_2_ir::RelKind;
 use crate::_3_plan::{PGoal, Plan, RelId, Row, Stratum};
@@ -26,8 +31,52 @@ use timely::WorkerConfig;
 const UNIT: RelId = RelId::MAX;
 /// Worker steps per epoch; protects against a dataflow that never passes the probe.
 const MAX_WORKER_STEPS: usize = 1 << 22;
+/// Default `Bounds::max_rounds`: rounds one recursive stratum may update in one epoch. Protects
+/// against a recursion that derives new rows every round (a counter); one epoch's legit depth is
+/// its longest new derivation chain.
+pub const MAX_ROUNDS: u32 = 1 << 16;
 
 type Updates = Rc<RefCell<Vec<(u64, RelId, Row, isize)>>>;
+
+/// Rounds each recursive stratum's loop updated, per epoch; shared by the loops' filters.
+#[derive(Default)]
+pub struct Rounds {
+    /// `(stratum, outer time)` -> rounds let through the loop at that epoch, at most
+    /// `bounds.max_rounds`. A round once let through stays let through; a round refused stays
+    /// refused, so each `Product` time is kept or dropped whole.
+    pub admitted: HashMap<(usize, u64), BTreeSet<u64>>,
+    /// `(limited, undo)`: the undo epoch lets through exactly the rounds the limited epoch did,
+    /// so its updates cancel the limited epoch's on both sides of the filter.
+    pub mirror: Option<(u64, u64)>,
+    /// `(outer time, stratum)` of each update refused.
+    pub limits: Vec<(u64, usize)>,
+}
+
+impl Rounds {
+    /// Lets `(outer, inner)` through stratum `index`'s loop or records a limit.
+    fn admit(&mut self, index: usize, outer: u64, inner: u64, max: usize) -> bool {
+        let (key, open) = match self.mirror {
+            Some((limited, undo)) if undo == outer => (limited, false),
+            _ => (outer, true),
+        };
+        let rounds = self.admitted.entry((index, key)).or_default();
+        if rounds.contains(&inner) {
+            return true;
+        }
+        if open && rounds.len() < max {
+            rounds.insert(inner);
+            return true;
+        }
+        self.limits.push((outer, index));
+        false
+    }
+
+    fn clear(&mut self) {
+        self.admitted.clear();
+        self.mirror = None;
+        self.limits.clear();
+    }
+}
 
 pub struct Dd {
     pub worker: Worker,
@@ -35,8 +84,7 @@ pub struct Dd {
     pub probe: ProbeHandle<u64>,
     /// Every rel's output updates not yet taken by a step.
     pub out: Updates,
-    /// `(outer time, stratum)` of each update a loop made past `bounds.max_rounds`.
-    pub limits: Rc<RefCell<Vec<(u64, usize)>>>,
+    pub rounds: Rc<RefCell<Rounds>>,
     pub bounds: Bounds,
     pub event: Event,
     /// Rows the dataflow derived before any input (rules with constant bodies); the first
@@ -55,10 +103,10 @@ impl Dd {
         );
         let probe = ProbeHandle::new();
         let out: Updates = Rc::default();
-        let limits = Rc::default();
+        let rounds = Rc::default();
         let input = worker.dataflow::<u64, _, _>(|scope| {
             let (input, all) = scope.new_collection::<(RelId, Row), isize>();
-            let rels = build(plan, bounds, &limits, scope, all);
+            let rels = build(plan, bounds, &rounds, scope, all);
             for (id, rows) in rels.into_iter().enumerate() {
                 let out = Rc::clone(&out);
                 let id = id as RelId;
@@ -74,7 +122,7 @@ impl Dd {
             input,
             probe,
             out,
-            limits,
+            rounds,
             bounds,
             event: 0,
             held: Vec::new(),
@@ -83,6 +131,7 @@ impl Dd {
         dd.input.insert((UNIT, Row::new()));
         let time = dd.advance()?;
         dd.held = dd.take(time, Vec::new());
+        dd.rounds.borrow_mut().clear();
         Ok(dd)
     }
 
@@ -134,14 +183,15 @@ impl Engine for Dd {
         let time = self.advance()?;
         let changes = self.take(time, Vec::new());
         let limit = self
-            .limits
+            .rounds
             .borrow()
+            .limits
             .iter()
             .filter(|(at, _)| *at == time)
             .map(|(_, stratum)| *stratum)
             .min();
-        self.limits.borrow_mut().clear();
         if let Some(stratum) = limit {
+            self.rounds.borrow_mut().mirror = Some((time, *self.input.time()));
             for change in input {
                 self.input.update((change.rel, change.row), -change.diff);
             }
@@ -158,12 +208,13 @@ impl Engine for Dd {
                     .collect::<Vec<_>>(),
                 "rollback undoes the limited epoch"
             );
-            self.limits.borrow_mut().clear();
+            self.rounds.borrow_mut().clear();
             return Err(Diag::FixpointLimit {
                 stratum,
                 max_rounds: self.bounds.max_rounds,
             });
         }
+        self.rounds.borrow_mut().clear();
         self.event += 1;
         let held = std::mem::take(&mut self.held);
         let changes = if held.is_empty() {
@@ -182,7 +233,7 @@ impl Engine for Dd {
 fn build<'s>(
     plan: &Plan,
     bounds: Bounds,
-    limits: &Rc<RefCell<Vec<(u64, usize)>>>,
+    rounds: &Rc<RefCell<Rounds>>,
     scope: Scope<'s, u64>,
     all: differential_dataflow::VecCollection<'s, u64, (RelId, Row)>,
 ) -> Vec<Rows<'s, u64>> {
@@ -236,7 +287,7 @@ fn build<'s>(
             .collect();
         let answers = &answers;
         let unit = unit.clone();
-        let max = u64::from(bounds.max_rounds);
+        let max = bounds.max_rounds as usize;
         let left = scope.iterative::<u64, _, _>(|inner| {
             let mut env: HashMap<RelId, Rows<'_, Product<u64, u64>>> = entered
                 .into_iter()
@@ -252,20 +303,15 @@ fn build<'s>(
             let mut left = Vec::new();
             for (id, variable) in variables {
                 let answer = answers.get(&id).map(|rows| rows.clone().enter(inner));
-                let limits = Rc::clone(limits);
-                let result = define(plan, id, stratum, &env, unit.clone(), answer, inner).inspect(
+                let rounds = Rc::clone(rounds);
+                let result = define(plan, id, stratum, &env, unit.clone(), answer, inner);
+                variable.set(Collection::new(result.inner.clone().filter(
                     move |(_, time, _)| {
-                        if time.inner >= max {
-                            limits.borrow_mut().push((time.outer, index));
-                        }
+                        rounds
+                            .borrow_mut()
+                            .admit(index, time.outer, time.inner, max)
                     },
-                );
-                variable.set(Collection::new(
-                    result
-                        .inner
-                        .clone()
-                        .filter(move |(_, time, _)| time.inner < max),
-                ));
+                )));
                 left.push((id, result.leave(scope)));
             }
             left
