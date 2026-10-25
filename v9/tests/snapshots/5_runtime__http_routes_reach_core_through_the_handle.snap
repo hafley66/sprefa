@@ -8,72 +8,45 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
       "changes": [
         {
           "cells": [
-            {
-              "int": null,
-              "text": "a"
-            },
-            {
-              "int": null,
-              "text": "b"
-            }
+            "a",
+            "b"
           ],
           "diff": 1,
           "rel": "edge"
         },
         {
           "cells": [
-            {
-              "int": null,
-              "text": "src/a/long/path.rs"
-            }
+            "src/a/long/path.rs"
           ],
           "diff": 1,
           "rel": "want"
         },
         {
           "cells": [
-            {
-              "int": null,
-              "text": "a"
-            },
-            {
-              "int": null,
-              "text": "b"
-            }
+            "a",
+            "b"
           ],
           "diff": 1,
           "rel": "reach"
         },
         {
           "cells": [
-            {
-              "int": null,
-              "text": "src/a/long/path.rs"
-            }
+            "src/a/long/path.rs"
           ],
           "diff": 1,
           "rel": "ask"
         },
         {
           "cells": [
-            {
-              "int": null,
-              "text": "src/a/long/path.rs"
-            },
-            {
-              "int": 180,
-              "text": null
-            }
+            "src/a/long/path.rs",
+            180
           ],
           "diff": 1,
           "rel": "told"
         },
         {
           "cells": [
-            {
-              "int": null,
-              "text": "src/a/long/path.rs"
-            }
+            "src/a/long/path.rs"
           ],
           "diff": 1,
           "rel": "big"
@@ -86,27 +59,32 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
   },
   {
     "body": {
-      "error": "Commit { change: 0, rel: \"reach\", problem: \"kind\", found: \"Derived\" }"
+      "diag": "Commit { change: 0, rel: \"reach\", problem: \"kind\", found: \"Derived\" }"
     },
     "route": "POST /commit",
-    "status": 500
+    "status": 400
+  },
+  {
+    "body": {
+      "diag": "Commit { change: 0, rel: \"start\", problem: \"cell type\", found: \"col 0 Int: Null\" }"
+    },
+    "route": "POST /commit",
+    "status": 400
   },
   {
     "body": {
       "columns": [
         "path",
-        "size"
+        "size",
+        "quarter",
+        "absent"
       ],
       "rows": [
         [
-          {
-            "int": null,
-            "text": "src/a/long/path.rs"
-          },
-          {
-            "int": 180,
-            "text": null
-          }
+          "src/a/long/path.rs",
+          180,
+          45.0,
+          null
         ]
       ]
     },
@@ -115,16 +93,30 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
   },
   {
     "body": {
+      "diag": "Store(\"no such table: nowhere\")"
+    },
+    "route": "POST /query",
+    "status": 400
+  },
+  {
+    "body": {
+      "error": "no wire form for Blob([0])"
+    },
+    "route": "POST /query",
+    "status": 500
+  },
+  {
+    "body": {
       "relations": [
         {
           "cols": [
             {
-              "col_type": "Text",
-              "name": "from"
+              "name": "from",
+              "type": "Text"
             },
             {
-              "col_type": "Text",
-              "name": "to"
+              "name": "to",
+              "type": "Text"
             }
           ],
           "kind": "Base",
@@ -134,8 +126,8 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
         {
           "cols": [
             {
-              "col_type": "Text",
-              "name": "path"
+              "name": "path",
+              "type": "Text"
             }
           ],
           "kind": "Base",
@@ -145,8 +137,8 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
         {
           "cols": [
             {
-              "col_type": "Int",
-              "name": "n"
+              "name": "n",
+              "type": "Int"
             }
           ],
           "kind": "Base",
@@ -156,12 +148,12 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
         {
           "cols": [
             {
-              "col_type": "Text",
-              "name": "from"
+              "name": "from",
+              "type": "Text"
             },
             {
-              "col_type": "Text",
-              "name": "to"
+              "name": "to",
+              "type": "Text"
             }
           ],
           "kind": "Derived",
@@ -171,8 +163,8 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
         {
           "cols": [
             {
-              "col_type": "Text",
-              "name": "path"
+              "name": "path",
+              "type": "Text"
             }
           ],
           "kind": "Request",
@@ -182,12 +174,12 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
         {
           "cols": [
             {
-              "col_type": "Text",
-              "name": "path"
+              "name": "path",
+              "type": "Text"
             },
             {
-              "col_type": "Int",
-              "name": "size"
+              "name": "size",
+              "type": "Int"
             }
           ],
           "kind": "Answer",
@@ -197,8 +189,8 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
         {
           "cols": [
             {
-              "col_type": "Text",
-              "name": "path"
+              "name": "path",
+              "type": "Text"
             }
           ],
           "kind": "Derived",
@@ -208,8 +200,8 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
         {
           "cols": [
             {
-              "col_type": "Int",
-              "name": "n"
+              "name": "n",
+              "type": "Int"
             }
           ],
           "kind": "Request",
@@ -219,12 +211,12 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
         {
           "cols": [
             {
-              "col_type": "Int",
-              "name": "n"
+              "name": "n",
+              "type": "Int"
             },
             {
-              "col_type": "Int",
-              "name": "m"
+              "name": "m",
+              "type": "Int"
             }
           ],
           "kind": "Answer",

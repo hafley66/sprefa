@@ -85,11 +85,10 @@ fn serve(args: &[String]) -> Result<(), String> {
     })
     .map_err(|diags| format!("{diags:?}"))?;
     let canonical = handle.recipe.canonical.clone();
-    v9::ops::install(Arc::new(handle)).map_err(|error| error.0)?;
     let listener = _1_effects::bind(port).map_err(|error| format!("bind: {error}"))?;
     let addr = listener.local_addr().map_err(|error| error.to_string())?;
     println!("serving {name} on http://{addr} recipe {canonical}");
-    _1_effects::serve_http(listener, router()).map_err(|error| error.to_string())
+    _1_effects::serve_http(listener, router(Arc::new(handle))).map_err(|error| error.to_string())
 }
 
 fn run(root: PathBuf, db_path: PathBuf, check: bool) -> Result<(), String> {

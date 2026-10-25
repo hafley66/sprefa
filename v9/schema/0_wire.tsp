@@ -7,10 +7,12 @@ using Http;
 @service(#{ title: "v9" })
 namespace V9;
 
-/** One column value. Exactly one of `text` or `int` is set. */
-model Cell {
-  text?: string;
-  int?: int64;
+/** One column value: a JSON string, integer, float or null. A SQL blob has no wire form. */
+union Cell {
+  text: string,
+  int: int64,
+  real: float64,
+  null,
 }
 
 /** One row change of one relation, by relation name. */
@@ -38,7 +40,7 @@ enum ColType {
 
 model Column {
   name: string;
-  col_type: ColType;
+  type: ColType;
 }
 
 enum RelKind {
@@ -70,7 +72,21 @@ model Recipe {
   canonical: string;
 }
 
-@route("/commit") @post op commit(@body changes: Change[]): Delta;
-@route("/query") @post op query(@body request: QueryRequest): Table;
+/** A commit the runtime refuses, or a check failure; `diag` is the `Diag` text. */
+@error
+model CommitRefused {
+  @statusCode _: 400;
+  diag: string;
+}
+
+/** SQL the store rejects; `diag` is the `Diag` text. */
+@error
+model SqlRejected {
+  @statusCode _: 400;
+  diag: string;
+}
+
+@route("/commit") @post op commit(@body changes: Change[]): Delta | CommitRefused;
+@route("/query") @post op query(@body request: QueryRequest): Table | SqlRejected;
 @route("/plan") @get op plan(): Plan;
 @route("/recipe") @get op recipe(): Recipe;

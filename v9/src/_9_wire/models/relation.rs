@@ -1,8 +1,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::models::column::Column;
-use crate::models::rel_kind::RelKind;
+use crate::_9_wire::models::column::Column;
+use crate::_9_wire::models::rel_kind::RelKind;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relation {

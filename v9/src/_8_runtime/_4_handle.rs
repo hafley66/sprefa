@@ -1,13 +1,17 @@
 //! The thread that owns a `Core` (the DD worker is not Send) and the `Handle` that reaches it over
-//! a channel. `Handle` is the `Wire` the generated HTTP routes call.
+//! a channel. `Handle` is the `Wire` the generated HTTP router serves as its axum state.
 
 use crate::_1_effects::spawn;
 use crate::_2_ir::{Col, RelKind};
 use crate::_5_ends::{Cell, Diag, Event, Table};
 use crate::_8_runtime::_3_core::{Core, Named};
-use crate::models;
-use crate::ops::Wire;
-use crate::ops_auto::{OpError, OpResult};
+use crate::_9_wire::models;
+use crate::_9_wire::models::cell::Cell as WireCell;
+use crate::_9_wire::models::commit_refused::CommitRefused;
+use crate::_9_wire::models::sql_rejected::SqlRejected;
+use crate::_9_wire::ops_auto::{
+    CommitArgs, OpError, OpResult, PlanArgs, QueryArgs, RecipeArgs, Wire,
+};
 use std::sync::mpsc::{channel, Sender};
 
 type Reply<T> = Sender<Result<T, Diag>>;
@@ -112,7 +116,7 @@ fn wire_plan(core: &Core) -> models::plan::Plan {
                     .iter()
                     .map(|(name, col)| models::column::Column {
                         name: name.clone(),
-                        col_type: match col {
+                        r#type: match col {
                             Col::Text => models::col_type::ColType::Text,
                             Col::Int => models::col_type::ColType::Int,
                         },
@@ -126,57 +130,70 @@ fn wire_plan(core: &Core) -> models::plan::Plan {
     models::plan::Plan { relations }
 }
 
-fn failed(diag: Diag) -> OpError {
-    OpError(format!("{diag:?}"))
-}
-
-/// Exactly one of `text` and `int`; neither is `Cell::Null`, which every col type refuses.
-fn from_wire(cell: &models::cell::Cell) -> OpResult<Cell> {
-    match cell {
-        models::cell::Cell {
-            text: Some(text),
-            int: None,
-        } => Ok(Cell::Text(text.clone())),
-        models::cell::Cell {
-            text: None,
-            int: Some(int),
-        } => Ok(Cell::Int(*int)),
-        models::cell::Cell {
-            text: None,
-            int: None,
-        } => Ok(Cell::Null),
-        both => Err(OpError(format!("a cell holds text and int: {both:?}"))),
+/// A commit the runtime refuses or a check failure is the client's: 400. The rest is 500.
+fn commit_failed(diag: Diag) -> OpError {
+    match diag {
+        Diag::Commit { .. }
+        | Diag::Unknown { .. }
+        | Diag::Duplicate { .. }
+        | Diag::Arity { .. }
+        | Diag::Type { .. }
+        | Diag::Unbound { .. }
+        | Diag::HeadKind { .. }
+        | Diag::AnswerShape { .. }
+        | Diag::NegationCycle { .. } => CommitRefused {
+            diag: format!("{diag:?}"),
+        }
+        .into(),
+        other => OpError::Internal(format!("{other:?}")),
     }
 }
 
-/// The wire carries text and int; a Real or Blob SQL value is an error.
-fn to_wire(cell: &Cell) -> OpResult<models::cell::Cell> {
-    let (text, int) = match cell {
-        Cell::Null => (None, None),
-        Cell::Int(int) => (None, Some(*int)),
-        Cell::Text(text) => (Some(text.clone()), None),
-        other => return Err(OpError(format!("no wire form for {other:?}"))),
-    };
-    Ok(models::cell::Cell { text, int })
+/// The store's `Diag::Store` on a query is SQL it rejects: 400. The rest is 500.
+fn query_failed(diag: Diag) -> OpError {
+    match diag {
+        Diag::Store(_) => SqlRejected {
+            diag: format!("{diag:?}"),
+        }
+        .into(),
+        other => OpError::Internal(format!("{other:?}")),
+    }
+}
+
+fn from_wire(cell: &Option<WireCell>) -> Cell {
+    match cell {
+        None => Cell::Null,
+        Some(WireCell::text(text)) => Cell::Text(text.clone()),
+        Some(WireCell::int(int)) => Cell::Int(*int),
+        Some(WireCell::real(real)) => Cell::Real(*real),
+    }
+}
+
+/// A Blob SQL value has no wire form.
+fn to_wire(cell: &Cell) -> OpResult<Option<WireCell>> {
+    Ok(match cell {
+        Cell::Null => None,
+        Cell::Int(int) => Some(WireCell::int(*int)),
+        Cell::Real(real) => Some(WireCell::real(*real)),
+        Cell::Text(text) => Some(WireCell::text(text.clone())),
+        Cell::Blob(_) => return Err(OpError::Internal(format!("no wire form for {cell:?}"))),
+    })
 }
 
 impl Wire for Handle {
-    fn commit(&self, changes: &[models::change::Change]) -> OpResult<models::delta::Delta> {
-        let named = changes
+    fn commit(&self, args: &CommitArgs) -> OpResult<models::delta::Delta> {
+        let named = args
+            .changes
             .iter()
             .map(|change| {
-                Ok((
+                (
                     change.rel.clone(),
-                    change
-                        .cells
-                        .iter()
-                        .map(from_wire)
-                        .collect::<OpResult<_>>()?,
+                    change.cells.iter().map(from_wire).collect(),
                     change.diff as isize,
-                ))
+                )
             })
-            .collect::<OpResult<Vec<Named>>>()?;
-        let (event, changes) = Handle::commit(self, named).map_err(failed)?;
+            .collect();
+        let (event, changes) = Handle::commit(self, named).map_err(commit_failed)?;
         Ok(models::delta::Delta {
             event,
             changes: changes
@@ -192,11 +209,8 @@ impl Wire for Handle {
         })
     }
 
-    fn query(
-        &self,
-        request: &models::query_request::QueryRequest,
-    ) -> OpResult<models::table::Table> {
-        let table = Handle::query(self, &request.sql).map_err(failed)?;
+    fn query(&self, args: &QueryArgs) -> OpResult<models::table::Table> {
+        let table = Handle::query(self, &args.request.sql).map_err(query_failed)?;
         Ok(models::table::Table {
             columns: table.columns,
             rows: table
@@ -207,11 +221,11 @@ impl Wire for Handle {
         })
     }
 
-    fn plan(&self) -> OpResult<models::plan::Plan> {
+    fn plan(&self, _args: &PlanArgs) -> OpResult<models::plan::Plan> {
         Ok(self.plan.clone())
     }
 
-    fn recipe(&self) -> OpResult<models::recipe::Recipe> {
+    fn recipe(&self, _args: &RecipeArgs) -> OpResult<models::recipe::Recipe> {
         Ok(self.recipe.clone())
     }
 }

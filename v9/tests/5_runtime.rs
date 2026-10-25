@@ -362,10 +362,10 @@ async fn http_routes_reach_core_through_the_handle() {
         build(Recipe::default(), program(), &db, fakes(&log), BOUNDS)
     })
     .expect("start");
-    v9::ops::install(Arc::new(handle)).expect("install");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move { axum::serve(listener, router()).await });
+    let server =
+        tokio::spawn(async move { axum::serve(listener, router(Arc::new(handle))).await });
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -376,21 +376,34 @@ async fn http_routes_reach_core_through_the_handle() {
             "POST",
             "/commit",
             Some(json!([
-                { "rel": "edge", "cells": [{ "text": "a" }, { "text": "b" }], "diff": 1 },
-                { "rel": "want", "cells": [{ "text": "src/a/long/path.rs" }], "diff": 1 },
+                { "rel": "edge", "cells": ["a", "b"], "diff": 1 },
+                { "rel": "want", "cells": ["src/a/long/path.rs"], "diff": 1 },
             ])),
         ),
         (
             "POST",
             "/commit",
-            Some(
-                json!([{ "rel": "reach", "cells": [{ "text": "a" }, { "text": "b" }], "diff": 1 }]),
-            ),
+            Some(json!([{ "rel": "reach", "cells": ["a", "b"], "diff": 1 }])),
+        ),
+        (
+            "POST",
+            "/commit",
+            Some(json!([{ "rel": "start", "cells": [null], "diff": 1 }])),
         ),
         (
             "POST",
             "/query",
-            Some(json!({ "sql": "SELECT path, size FROM told_text" })),
+            Some(json!({ "sql": "SELECT path, size, size / 4.0 AS quarter, NULL AS absent FROM told_text" })),
+        ),
+        (
+            "POST",
+            "/query",
+            Some(json!({ "sql": "SELECT nope FROM nowhere" })),
+        ),
+        (
+            "POST",
+            "/query",
+            Some(json!({ "sql": "SELECT x'00' AS blob" })),
         ),
         ("GET", "/plan", None),
         ("GET", "/recipe", None),

@@ -1,6 +1,6 @@
 // Compiles 0_wire.tsp with the pinned emitters into a scratch dir, then writes (or with --check
 // compares) the generated Rust under ../src/_9_wire/ and openapi.yaml here.
-// src/_9_wire/ops.rs and src/_9_wire/mod.rs are hand-owned and not routed.
+// src/_9_wire/mod.rs is hand-owned and not routed.
 import { compile, NodeHost } from '@typespec/compiler';
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,6 +29,9 @@ try {
     options: {
       '@hafley66/alloy-rs': {
         'emitter-output-dir': join(scratch, 'rust'),
+        transports: ['http'],
+        'module-prefix': 'crate::_9_wire',
+        'handler-trait': 'Wire',
         routes: [
           { from: 'models', to: 'src/_9_wire/models' },
           { from: 'ops_auto.rs', to: 'src/_9_wire/ops_auto.rs' },
