@@ -15,3 +15,7 @@ pub mod skeleton {
     pub mod _1_reach;
     pub mod _2_oracle;
 }
+pub mod _9_wire;
+
+// The generated wire code names its siblings as `crate::models`, `crate::ops`, `crate::ops_auto`.
+pub use _9_wire::{models, ops, ops_auto};

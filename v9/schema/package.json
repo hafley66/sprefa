@@ -1,0 +1,23 @@
+{
+  "name": "v9-wire-schema",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.5.2",
+  "scripts": {
+    "generate": "node 1_generate.mjs",
+    "check": "node 1_generate.mjs --check"
+  },
+  "devDependencies": {
+    "@hafley66/alloy-rs": "link:/Users/chrishafley/projects/hafley-tsp/packages/rust",
+    "@typespec/compiler": "1.10.0",
+    "@typespec/http": "1.10.0",
+    "@typespec/openapi": "1.10.0",
+    "@typespec/openapi3": "1.10.0",
+    "@typespec/streams": "0.80.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@typespec/asset-emitter": "0.79.1"
+    }
+  }
+}
