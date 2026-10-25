@@ -1,0 +1,186 @@
+openapi: 3.0.0
+info:
+  title: v9
+  version: 0.0.0
+tags: []
+paths:
+  /commit:
+    post:
+      operationId: commit
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delta'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/Change'
+  /plan:
+    get:
+      operationId: plan
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plan'
+  /query:
+    post:
+      operationId: query
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Table'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+  /recipe:
+    get:
+      operationId: recipe
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recipe'
+components:
+  schemas:
+    Cell:
+      type: object
+      properties:
+        text:
+          type: string
+        int:
+          type: integer
+          format: int64
+      description: One column value. Exactly one of `text` or `int` is set.
+    Change:
+      type: object
+      required:
+        - rel
+        - cells
+        - diff
+      properties:
+        rel:
+          type: string
+        cells:
+          type: array
+          items:
+            $ref: '#/components/schemas/Cell'
+        diff:
+          type: integer
+          format: int64
+      description: One row change of one relation, by relation name.
+    ColType:
+      type: string
+      enum:
+        - Text
+        - Int
+    Column:
+      type: object
+      required:
+        - name
+        - col_type
+      properties:
+        name:
+          type: string
+        col_type:
+          $ref: '#/components/schemas/ColType'
+    Delta:
+      type: object
+      required:
+        - event
+        - changes
+      properties:
+        event:
+          type: integer
+          format: uint64
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Change'
+      description: Every relation's row changes at one event.
+    Plan:
+      type: object
+      required:
+        - relations
+      properties:
+        relations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Relation'
+    QueryRequest:
+      type: object
+      required:
+        - sql
+      properties:
+        sql:
+          type: string
+    Recipe:
+      type: object
+      required:
+        - canonical
+      properties:
+        canonical:
+          type: string
+          description: Canonical recipe text, e.g. `engine=dd,store=sqlite,wire=http`.
+    RelKind:
+      type: string
+      enum:
+        - Base
+        - Derived
+        - Request
+        - Answer
+    Relation:
+      type: object
+      required:
+        - name
+        - cols
+        - kind
+      properties:
+        name:
+          type: string
+        cols:
+          type: array
+          items:
+            $ref: '#/components/schemas/Column'
+        kind:
+          $ref: '#/components/schemas/RelKind'
+        service:
+          type: string
+          description: Service name, set for Request and Answer relations.
+    Table:
+      type: object
+      required:
+        - columns
+        - rows
+      properties:
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/Cell'

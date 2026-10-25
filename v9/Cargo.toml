@@ -12,6 +12,15 @@ timely = "=0.31.0"
 rusqlite = { version = "0.40", features = ["bundled"] }
 blake3 = "1"
 serde_json = "1"
+# wire: crates the generated src/_9_wire/ code names
+axum = "0.8"
+axum-extra = { version = "0.10", features = ["query"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 
 [profile.dev]
 opt-level = 1
