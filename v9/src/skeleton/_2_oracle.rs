@@ -1,7 +1,7 @@
 //! The plain Rust reference: transitive closure by search from each caller. The dataflow's stored
 //! `reach` must equal it.
 
-use crate::_2_store::Edge;
+use crate::skeleton::_0_store::Edge;
 use std::collections::{BTreeSet, HashMap};
 
 pub fn closure(edges: &BTreeSet<Edge>) -> BTreeSet<Edge> {

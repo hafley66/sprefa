@@ -46,3 +46,14 @@ pub fn ryi_call_edges(ryi: &str, root: &Path) -> Result<Vec<CallEdge>, String> {
 pub fn open_db(path: &Path) -> rusqlite::Result<rusqlite::Connection> {
     rusqlite::Connection::open(path)
 }
+
+/// `V9_SYSTEM`, the recipe text; `None` when unset. Non-UTF-8 bytes are replaced so the recipe
+/// parse names them.
+pub fn v9_system() -> Option<String> {
+    std::env::var_os("V9_SYSTEM").map(|value| value.to_string_lossy().into_owned())
+}
+
+/// `V9_RYI`, the ryi binary; `ryi` on PATH when unset.
+pub fn v9_ryi() -> String {
+    std::env::var("V9_RYI").unwrap_or_else(|_| "ryi".to_string())
+}

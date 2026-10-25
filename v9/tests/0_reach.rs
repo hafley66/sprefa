@@ -2,8 +2,8 @@
 //! oracle's closure of the run's edges.
 
 use std::collections::BTreeSet;
-use v9::_2_store::Edge;
-use v9::{_3_reach, _4_oracle};
+use v9::skeleton::_0_store::Edge;
+use v9::skeleton::{_1_reach as _3_reach, _2_oracle as _4_oracle};
 
 const CASES: &[(&str, &[Edge], &[Edge])] = &[
     ("cold chain", &[], &[(1, 2), (2, 3), (3, 4)]),

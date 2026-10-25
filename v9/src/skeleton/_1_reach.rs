@@ -1,7 +1,7 @@
 //! Call edges in, transitive reach out. Stored edges replay at time 0, the run's edge changes
 //! enter at time 1, and only reach changes at time 1 leave.
 
-use crate::_2_store::Edge;
+use crate::skeleton::_0_store::Edge;
 use differential_dataflow::input::Input;
 use differential_dataflow::operators::*;
 use differential_dataflow::VecCollection;
