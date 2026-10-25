@@ -12,6 +12,7 @@ use v9::_0_id::Dict;
 use v9::_1_effects;
 use v9::_4_recipe::Recipe;
 use v9::_5_ends::{Bounds, IService};
+use v9::_6_back::_1_dd::MAX_ROUNDS;
 use v9::_8_runtime::_0_programs::{program, PROGRAMS};
 use v9::_8_runtime::_2_ryi::Ryi;
 use v9::_8_runtime::_3_core::build;
@@ -20,9 +21,6 @@ use v9::_9_wire::http_auto::router;
 use v9::skeleton::{_0_store as _2_store, _1_reach as _3_reach, _2_oracle as _4_oracle};
 
 const USAGE: &str = "usage: v9 reach <ROOT> <DB> [--check] | v9 serve [PROGRAM] <DB> --port N";
-
-/// Rounds per recursive stratum per step under `serve`.
-const SERVE_MAX_ROUNDS: u32 = 1 << 20;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -79,7 +77,7 @@ fn serve(args: &[String]) -> Result<(), String> {
     let handle = start(move || {
         let services: Vec<Box<dyn IService>> = vec![Box::new(Ryi::new(ryi))];
         let bounds = Bounds {
-            max_rounds: SERVE_MAX_ROUNDS,
+            max_rounds: MAX_ROUNDS,
         };
         build(recipe, chosen, &db, services, bounds)
     })

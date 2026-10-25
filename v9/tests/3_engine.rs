@@ -566,3 +566,78 @@ fn random_graph_equals_the_oracle_under_inserts_and_retracts() {
     assert!(sizes[2] > 3000, "reach is non-trivial: {sizes:?}");
     assert!(elapsed.as_secs() < 10, "{elapsed:?}");
 }
+
+/// A service chain (`next_ask(n)` answered by `next_told(n, n + 1)`, which asks `n + 1`) runs one
+/// link per event for many events under a small `max_rounds`: no single event runs away, so no
+/// step is limited. `open(1)` makes the same stratum a runaway counter; opened late in the chain
+/// it still stops with `FixpointLimit`, rolls back, and the chain goes on after it.
+#[test]
+fn max_rounds_bounds_one_event_and_a_service_chain_runs_past_it() {
+    const LINKS: u64 = 40;
+    const LATE: u64 = 30;
+    let mut dict = Dict::default();
+    let plan = check(
+        Program {
+            rels: vec![
+                rel("start", [("n", Int)]),
+                request("succ", "next_ask", [("n", Int)]),
+                answer("succ", "next_told", [("n", Int), ("m", Int)]),
+                rel("open", [("x", Int)]),
+            ],
+            rules: vec![
+                rule(atom("next_ask", [v("n")]), [pos("start", [v("n")])]),
+                rule(
+                    atom("next_ask", [v("m")]),
+                    [pos("next_told", [v("n"), v("m")])],
+                ),
+                rule(
+                    atom("next_ask", [v("m")]),
+                    [
+                        pos("next_ask", [v("n")]),
+                        pos("open", [int(1)]),
+                        call(Add, [v("n"), int(1), v("m")]),
+                    ],
+                ),
+            ],
+        },
+        &mut dict,
+    )
+    .expect("checks");
+    let id = |name: &str| {
+        plan.rels
+            .iter()
+            .position(|rel| rel.name == name)
+            .expect("rel") as u32
+    };
+    let change = |name: &str, row: Vec<u64>, diff: isize| Change {
+        rel: id(name),
+        row,
+        diff,
+    };
+    let mut engine = Dd::new(&plan, Bounds { max_rounds: 8 }).expect("engine");
+    let mut log = Vec::new();
+    let mut input = vec![change("start", vec![0], 1)];
+    for link in 0..LINKS {
+        if link == LATE {
+            let runaway = engine.step(vec![change("open", vec![1], 1)]);
+            log.push(format!("link {link} runaway: {runaway:?}"));
+        }
+        let delta = engine
+            .step(input)
+            .unwrap_or_else(|diag| panic!("link {link}: {diag:?}"));
+        let asked: Vec<u64> = delta
+            .changes
+            .iter()
+            .filter(|change| change.rel == id("next_ask") && change.diff > 0)
+            .map(|change| change.row[0])
+            .collect();
+        assert_eq!(asked, [link], "link {link}: {:?}", delta.changes);
+        input = asked
+            .iter()
+            .map(|n| change("next_told", vec![*n, n + 1], 1))
+            .collect();
+    }
+    let delta = engine.step(input).expect("last answer");
+    log.push(format!("last: event {} {:?}", delta.event, delta.changes));
+    insta::assert_debug_snapshot!(log);
+}

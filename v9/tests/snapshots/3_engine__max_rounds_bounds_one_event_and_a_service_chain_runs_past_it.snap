@@ -1,0 +1,8 @@
+---
+source: tests/3_engine.rs
+expression: log
+---
+[
+    "link 30 runaway: Err(FixpointLimit { stratum: 0, max_rounds: 8 })",
+    "last: event 41 [Change { rel: 1, row: [40], diff: 1 }, Change { rel: 2, row: [39, 40], diff: 1 }]",
+]
