@@ -1,27 +1,31 @@
-//! `v9 reach <ROOT> <DB> [--check]`: ryi call edges of ROOT, transitive reach kept in DB. A rerun
-//! replays the stored edges and writes only what changed.
+//! `v9 reach <ROOT> <DB> [--check]`: the `reach` program on Core. ROOT is committed as `root`, the
+//! ryi service answers its call edges, `reach` is derived and kept in DB. A rerun replays the
+//! stored rows, asks ryi again and writes only what changed.
 //! `v9 serve [PROGRAM] <DB> --port N`: a built-in program on Core over HTTP; the system is
 //! `V9_SYSTEM` (unset: the default recipe).
 
-use std::collections::BTreeSet;
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
-use v9::_0_id::Dict;
+use std::time::{Duration, Instant};
+use v9::_0_id::{id_of, Dict};
 use v9::_1_effects;
+use v9::_3_plan::Row;
 use v9::_4_recipe::Recipe;
-use v9::_5_ends::{Bounds, IService};
-use v9::_8_runtime::_0_programs::{program, PROGRAMS};
+use v9::_5_ends::{Bounds, Cadence, Cell, Change, IService};
+use v9::_8_runtime::_0_programs::{program, reach, PROGRAMS};
 use v9::_8_runtime::_2_ryi::Ryi;
 use v9::_8_runtime::_3_core::build;
+use v9::_8_runtime::_3_core::Core;
 use v9::_8_runtime::_4_handle::start;
 use v9::_9_wire::http_auto::router;
-use v9::skeleton::{_0_store as _2_store, _1_reach as _3_reach, _2_oracle as _4_oracle};
 
 const USAGE: &str = "usage: v9 reach <ROOT> <DB> [--check] | v9 serve [PROGRAM] <DB> --port N";
 
-/// Rounds per recursive stratum per step under `serve`.
+/// Rounds per recursive stratum per step under `serve` and `reach`.
 const SERVE_MAX_ROUNDS: u32 = 1 << 20;
 
 fn main() -> ExitCode {
@@ -33,7 +37,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             };
             let check = args.iter().any(|arg| arg == "--check");
-            run(PathBuf::from(root), PathBuf::from(db), check)
+            run(root, PathBuf::from(db), check)
         }
         Some("serve") => serve(&args[2..]),
         _ => {
@@ -91,68 +95,174 @@ fn serve(args: &[String]) -> Result<(), String> {
     _1_effects::serve_http(listener, router(Arc::new(handle))).map_err(|error| error.to_string())
 }
 
-fn run(root: PathBuf, db_path: PathBuf, check: bool) -> Result<(), String> {
-    let ryi = _1_effects::v9_ryi();
-    let mut db = _1_effects::open_db(&db_path).map_err(|e| e.to_string())?;
-    _2_store::open(&db).map_err(|e| e.to_string())?;
+/// The ryi service shared with `run`: it seeds `answered` from the store, asks again on a rerun,
+/// reads `errors`, and times every `call`.
+struct Shared {
+    ryi: Rc<RefCell<Ryi>>,
+    called: Rc<RefCell<Duration>>,
+}
+
+impl IService for Shared {
+    fn service(&self) -> &str {
+        "ryi"
+    }
+
+    fn cadence(&self) -> Cadence {
+        Cadence::Once
+    }
+
+    fn call(&mut self, requests: &[Change], dict: &Dict) {
+        let started = Instant::now();
+        self.ryi.borrow_mut().call(requests, dict);
+        *self.called.borrow_mut() += started.elapsed();
+    }
+
+    fn poll(&mut self, dict: &mut Dict, out: &mut Vec<Change>) {
+        self.ryi.borrow_mut().poll(dict, out);
+    }
+}
+
+/// Plain Rust transitive closure, by search from each caller: the `--check` reference.
+fn closure(edges: &BTreeSet<(String, String)>) -> BTreeSet<(String, String)> {
+    let mut out: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (from, to) in edges {
+        out.entry(from).or_default().push(to);
+    }
+    let mut reach = BTreeSet::new();
+    for (&start, next) in &out {
+        let mut seen = BTreeSet::new();
+        let mut stack = next.clone();
+        while let Some(node) = stack.pop() {
+            if seen.insert(node) {
+                stack.extend(out.get(node).into_iter().flatten().copied());
+            }
+        }
+        reach.extend(
+            seen.into_iter()
+                .map(|node| (start.to_string(), node.to_string())),
+        );
+    }
+    reach
+}
+
+fn ints(core: &Core, sql: &str) -> Result<Vec<Row>, String> {
+    let table = core.query(sql).map_err(|diag| format!("{diag:?}"))?;
+    table
+        .rows
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|cell| match cell {
+                    Cell::Int(value) => Ok(value as u64),
+                    other => Err(format!("{sql}: {other:?}")),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn pairs(core: &Core, sql: &str) -> Result<BTreeSet<(String, String)>, String> {
+    let table = core.query(sql).map_err(|diag| format!("{diag:?}"))?;
+    table
+        .rows
+        .into_iter()
+        .map(|row| match &row[..] {
+            [Cell::Text(a), Cell::Text(b)] => Ok((a.clone(), b.clone())),
+            other => Err(format!("{sql}: {other:?}")),
+        })
+        .collect()
+}
+
+fn count(core: &Core, table: &str) -> Result<u64, String> {
+    Ok(ints(core, &format!("SELECT count(*) FROM {table}"))?[0][0])
+}
+
+/// Commits ROOT and retracts every other stored root. A stored ROOT has its ask in the replayed
+/// engine and no request change to route, so its ryi call happens here, before the commit polls.
+fn run(root: &str, db_path: PathBuf, check: bool) -> Result<(), String> {
+    let ryi = Rc::new(RefCell::new(Ryi::new(_1_effects::v9_ryi())));
+    let called = Rc::new(RefCell::new(Duration::ZERO));
+    let services: Vec<Box<dyn IService>> = vec![Box::new(Shared {
+        ryi: Rc::clone(&ryi),
+        called: Rc::clone(&called),
+    })];
+    let bounds = Bounds {
+        max_rounds: SERVE_MAX_ROUNDS,
+    };
 
     let started = Instant::now();
-    let mut dict = Dict::default();
-    _2_store::load_dict(&db, &mut dict).map_err(|e| e.to_string())?;
-    let stored = _2_store::load_pairs(&db, "edge").map_err(|e| e.to_string())?;
-    let load = started.elapsed();
+    let mut core = build(Recipe::default(), reach(), &db_path, services, bounds)
+        .map_err(|diags| format!("{diags:?}"))?;
+    let open = started.elapsed();
 
-    let started = Instant::now();
-    let found = _1_effects::ryi_call_edges(&ryi, &root)?;
-    let ryi_time = started.elapsed();
-    let current: BTreeSet<_2_store::Edge> = found
-        .iter()
-        .map(|edge| (dict.intern(edge.caller.as_bytes()), dict.intern(edge.callee.as_bytes())))
+    let root_id = id_of(root.as_bytes());
+    let stored_roots: Vec<u64> = ints(&core, "SELECT root FROM root")?
+        .into_iter()
+        .map(|row| row[0])
         .collect();
-
-    let mut edge_changes: Vec<(_2_store::Edge, isize)> =
-        current.difference(&stored).map(|edge| (*edge, 1)).collect();
-    edge_changes.extend(stored.difference(&current).map(|edge| (*edge, -1)));
-
-    let settled = _3_reach::settle(stored.iter().copied().collect(), edge_changes.clone());
+    let mut answered: HashMap<u64, BTreeSet<Row>> = HashMap::new();
+    for row in ints(&core, "SELECT root, caller, callee FROM ryi_edge")? {
+        answered.entry(row[0]).or_default().insert(row);
+    }
+    ryi.borrow_mut().answered = answered;
+    let dict_before = count(&core, "dict")?;
 
     let started = Instant::now();
-    let written = _2_store::write(
-        &mut db,
-        _2_store::Frontier {
-            dict: dict.take_new(),
-            edge: &edge_changes,
-            reach: &settled.reach,
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    let write = started.elapsed();
+    if stored_roots.contains(&root_id) {
+        let ask = Change {
+            rel: core.ids["ryi_ask"],
+            row: vec![root_id],
+            diff: 1,
+        };
+        Shared {
+            ryi: Rc::clone(&ryi),
+            called: Rc::clone(&called),
+        }
+        .call(&[ask], &core.dict);
+    }
+    let mut changes = vec![("root".to_string(), vec![Cell::Text(root.to_string())], 1)];
+    for other in stored_roots.iter().filter(|id| **id != root_id) {
+        let text = String::from_utf8_lossy(&core.dict.bytes[other]).into_owned();
+        changes.push(("root".to_string(), vec![Cell::Text(text)], -1));
+    }
+    let (_, changed) = core.commit(changes).map_err(|diag| format!("{diag:?}"))?;
+    let commit = started.elapsed();
+    if let Some(error) = ryi.borrow().errors.first() {
+        return Err(format!("ryi: {error}"));
+    }
+    let ryi_time = *called.borrow();
 
-    let reach_rows = _2_store::load_pairs(&db, "reach").map_err(|e| e.to_string())?;
+    let signed = |rel: &str, sign: isize| {
+        changed
+            .iter()
+            .filter(|(name, _, diff)| name == rel && diff.signum() == sign)
+            .count()
+    };
+    let written = changed.len() as u64 + count(&core, "dict")? - dict_before;
     println!(
         "edges {} (+{} -{}) reach {} (+{} -{}) rows_written {}",
-        current.len(),
-        edge_changes.iter().filter(|(_, d)| *d > 0).count(),
-        edge_changes.iter().filter(|(_, d)| *d < 0).count(),
-        reach_rows.len(),
-        settled.reach.iter().filter(|(_, d)| *d > 0).count(),
-        settled.reach.iter().filter(|(_, d)| *d < 0).count(),
+        count(&core, "edge")?,
+        signed("edge", 1),
+        signed("edge", -1),
+        count(&core, "reach")?,
+        signed("reach", 1),
+        signed("reach", -1),
         written,
     );
     println!(
-        "ms load {} ryi {} replay {} delta {} write {}",
-        load.as_millis(),
+        "ms open {} ryi {} step+write {}",
+        open.as_millis(),
         ryi_time.as_millis(),
-        settled.replay.as_millis(),
-        settled.delta.as_millis(),
-        write.as_millis(),
+        commit.saturating_sub(ryi_time).as_millis(),
     );
     if check {
-        let oracle = _4_oracle::closure(&current);
-        if oracle != reach_rows {
+        let edges = pairs(&core, "SELECT caller, callee FROM edge_text")?;
+        let stored = pairs(&core, "SELECT caller, callee FROM reach_text")?;
+        let oracle = closure(&edges);
+        if oracle != stored {
             return Err(format!(
                 "reach differs from the oracle: stored {} oracle {}",
-                reach_rows.len(),
+                stored.len(),
                 oracle.len()
             ));
         }
