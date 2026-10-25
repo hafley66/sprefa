@@ -21,7 +21,10 @@ pub struct Delta {
     pub changes: Vec<Change>,
 }
 
-/// A fixpoint that has not settled after `max_rounds` rounds is `Diag::FixpointLimit`.
+/// `max_rounds`: distinct inner rounds one recursive stratum may update in one epoch; one more
+/// is `Diag::FixpointLimit` and the epoch is rolled back. Rounds carry across epochs (an
+/// update's round is the join of its inputs'), so a chain grown one edge per epoch updates more
+/// rounds each epoch and reaches the bound at a fixed length. Default `_6_back::_1_dd::MAX_ROUNDS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bounds {
     pub max_rounds: u32,

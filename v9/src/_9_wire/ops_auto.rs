@@ -1,9 +1,11 @@
+use crate::_9_wire::models::body_rejected::BodyRejected;
 use crate::_9_wire::models::change::Change;
 use crate::_9_wire::models::commit_refused::CommitRefused;
 use crate::_9_wire::models::delta::Delta;
 use crate::_9_wire::models::plan::Plan;
 use crate::_9_wire::models::query_request::QueryRequest;
 use crate::_9_wire::models::recipe::Recipe;
+use crate::_9_wire::models::server_error::ServerError;
 use crate::_9_wire::models::sql_rejected::SqlRejected;
 use crate::_9_wire::models::table::Table;
 
@@ -11,6 +13,8 @@ use crate::_9_wire::models::table::Table;
 pub enum OpError {
   Internal(String),
   CommitRefused(CommitRefused),
+  BodyRejected(BodyRejected),
+  ServerError(ServerError),
   SqlRejected(SqlRejected),
 }
 
@@ -26,6 +30,18 @@ impl From<CommitRefused> for OpError {
     }
 }
 
+impl From<BodyRejected> for OpError {
+    fn from(e: BodyRejected) -> Self {
+        OpError::BodyRejected(e)
+    }
+}
+
+impl From<ServerError> for OpError {
+    fn from(e: ServerError) -> Self {
+        OpError::ServerError(e)
+    }
+}
+
 impl From<SqlRejected> for OpError {
     fn from(e: SqlRejected) -> Self {
         OpError::SqlRejected(e)
@@ -37,6 +53,8 @@ impl std::fmt::Display for OpError {
         match self {
             OpError::Internal(message) => f.write_str(message),
             OpError::CommitRefused(body) => f.write_str(&serde_json::to_string(body).map_err(|_| std::fmt::Error)?),
+            OpError::BodyRejected(body) => f.write_str(&serde_json::to_string(body).map_err(|_| std::fmt::Error)?),
+            OpError::ServerError(body) => f.write_str(&serde_json::to_string(body).map_err(|_| std::fmt::Error)?),
             OpError::SqlRejected(body) => f.write_str(&serde_json::to_string(body).map_err(|_| std::fmt::Error)?),
         }
     }

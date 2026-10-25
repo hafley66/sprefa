@@ -508,6 +508,7 @@ fn next(seed: &mut u64) -> u64 {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // the clock times the run against the 10-second law
 fn random_graph_equals_the_oracle_under_inserts_and_retracts() {
     const NODES: u64 = 4000;
     let mut dict = Dict::default();

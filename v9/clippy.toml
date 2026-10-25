@@ -8,6 +8,12 @@ disallowed-methods = [
   { path = "std::thread::spawn", reason = "effects live in src/_1_effects.rs" },
   { path = "std::env::var", reason = "effects live in src/_1_effects.rs" },
   { path = "std::env::var_os", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::env::args", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::env::args_os", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::time::Instant::now", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::time::Instant::elapsed", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::time::SystemTime::now", reason = "effects live in src/_1_effects.rs" },
+  { path = "tokio::task::spawn_blocking", reason = "effects live in src/_1_effects.rs; generated src/_9_wire/http_auto.rs is allowed at its mod line" },
 ]
 disallowed-types = [
   { path = "std::sync::Mutex", reason = "locks are declared in one file" },

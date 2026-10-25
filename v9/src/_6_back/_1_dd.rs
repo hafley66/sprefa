@@ -31,9 +31,11 @@ use timely::WorkerConfig;
 const UNIT: RelId = RelId::MAX;
 /// Worker steps per epoch; protects against a dataflow that never passes the probe.
 const MAX_WORKER_STEPS: usize = 1 << 22;
-/// Default `Bounds::max_rounds`: rounds one recursive stratum may update in one epoch. Protects
-/// against a recursion that derives new rows every round (a counter); one epoch's legit depth is
-/// its longest new derivation chain.
+/// Default `Bounds::max_rounds`: distinct inner rounds one recursive stratum may update in one
+/// epoch. Protects against a recursion that derives new rows every round (a counter). An
+/// update's round is the join of its inputs' rounds, so an epoch that extends a chain stored by
+/// earlier epochs updates rounds up to the chain's length: the count per epoch still climbs with
+/// chain growth across epochs (`tests/0_reach.rs` `max_rounds_climbs_with_chain_growth_across_epochs`).
 pub const MAX_ROUNDS: u32 = 1 << 16;
 
 type Updates = Rc<RefCell<Vec<(u64, RelId, Row, isize)>>>;

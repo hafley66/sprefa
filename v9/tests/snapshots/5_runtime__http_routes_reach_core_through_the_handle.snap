@@ -100,10 +100,10 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
   },
   {
     "body": {
-      "error": "no wire form for Blob([0])"
+      "diag": "Store(\"no wire form for Blob([0])\")"
     },
     "route": "POST /query",
-    "status": 500
+    "status": 400
   },
   {
     "body": {
