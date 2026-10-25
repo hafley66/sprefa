@@ -1,0 +1,23 @@
+---
+source: tests/4_store.rs
+expression: "(written1, decode(&plan, &replayed_dict, &replayed1), written2,\ndecode(&plan, &replayed_dict2, &replayed2),)"
+---
+(
+    14,
+    [
+        "edge(a, b) +1",
+        "edge(b, c) +1",
+        "weight(c, 9223372036854775807) +1",
+        "weight(a, -5) +1",
+        "weight(b, -9223372036854775808) +1",
+        "told(a, 42) +1",
+    ],
+    9,
+    [
+        "edge(c, d) +1",
+        "edge(a, b) +1",
+        "weight(c, 9223372036854775807) +1",
+        "weight(a, -5) +1",
+        "told(a, 7) +1",
+    ],
+)

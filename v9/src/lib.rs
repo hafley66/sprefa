@@ -9,6 +9,12 @@ pub mod _3_plan;
 pub mod _4_recipe;
 pub mod _5_ends;
 
+/// `Store` impls.
+pub mod _7_store {
+    pub mod _0_sql;
+    pub mod _1_sqlite;
+}
+
 /// The walking skeleton (#820): ryi call edges -> differential dataflow reach -> SQLite.
 pub mod skeleton {
     pub mod _0_store;
