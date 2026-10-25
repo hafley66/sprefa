@@ -1,0 +1,87 @@
+---
+source: tests/4_store.rs
+expression: out
+---
+[
+    (
+        "SELECT count(*) AS edges FROM edge",
+        Ok(
+            Table {
+                columns: [
+                    "edges",
+                ],
+                rows: [
+                    [
+                        Int(
+                            0,
+                        ),
+                    ],
+                ],
+            },
+        ),
+    ),
+    (
+        "INSERT INTO edge (\"from\", \"to\") VALUES (1, 2)",
+        Err(
+            Store(
+                "query is not a read-only select: INSERT INTO edge (\"from\", \"to\") VALUES (1, 2)",
+            ),
+        ),
+    ),
+    (
+        "DELETE FROM dict",
+        Err(
+            Store(
+                "query is not a read-only select: DELETE FROM dict",
+            ),
+        ),
+    ),
+    (
+        "UPDATE meta SET plan_hash = 0",
+        Err(
+            Store(
+                "query is not a read-only select: UPDATE meta SET plan_hash = 0",
+            ),
+        ),
+    ),
+    (
+        "CREATE TABLE extra (x INTEGER)",
+        Err(
+            Store(
+                "query is not a read-only select: CREATE TABLE extra (x INTEGER)",
+            ),
+        ),
+    ),
+    (
+        "DROP VIEW edge_text",
+        Err(
+            Store(
+                "query is not a read-only select: DROP VIEW edge_text",
+            ),
+        ),
+    ),
+    (
+        "BEGIN",
+        Err(
+            Store(
+                "query is not a read-only select: BEGIN",
+            ),
+        ),
+    ),
+    (
+        "ATTACH ':memory:' AS other",
+        Err(
+            Store(
+                "query is not a read-only select: ATTACH ':memory:' AS other",
+            ),
+        ),
+    ),
+    (
+        "SELECT 1; DELETE FROM edge",
+        Err(
+            Store(
+                "Multiple statements provided",
+            ),
+        ),
+    ),
+]

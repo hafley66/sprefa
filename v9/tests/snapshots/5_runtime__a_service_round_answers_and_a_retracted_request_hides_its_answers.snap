@@ -1,0 +1,42 @@
+---
+source: tests/5_runtime.rs
+expression: "(show(&asked), asked_rows, show(&retracted), retracted_rows, show(&again),\nrows(&core), log.borrow().clone(),)"
+---
+(
+    [
+        "want(src/a/long/path.rs) +1",
+        "ask(src/a/long/path.rs) +1",
+        "told(src/a/long/path.rs, 180) +1",
+        "big(src/a/long/path.rs) +1",
+    ],
+    [
+        "want(src/a/long/path.rs)",
+        "ask(src/a/long/path.rs)",
+        "told(src/a/long/path.rs, 180)",
+        "big(src/a/long/path.rs)",
+    ],
+    [
+        "want(src/a/long/path.rs) -1",
+        "ask(src/a/long/path.rs) -1",
+        "told(src/a/long/path.rs, 180) -1",
+        "big(src/a/long/path.rs) -1",
+    ],
+    [],
+    [
+        "want(src/a/long/path.rs) +1",
+        "ask(src/a/long/path.rs) +1",
+        "told(src/a/long/path.rs, 180) +1",
+        "big(src/a/long/path.rs) +1",
+    ],
+    [
+        "want(src/a/long/path.rs)",
+        "ask(src/a/long/path.rs)",
+        "told(src/a/long/path.rs, 180)",
+        "big(src/a/long/path.rs)",
+    ],
+    [
+        "size[8992808471135073505] +1",
+        "size[8992808471135073505] -1",
+        "size[8992808471135073505] +1",
+    ],
+)

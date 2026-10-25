@@ -1,0 +1,270 @@
+openapi: 3.0.0
+info:
+  title: v9
+  version: 0.0.0
+tags: []
+paths:
+  /commit:
+    post:
+      operationId: commit
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delta'
+        '400':
+          description: A commit the runtime refuses, or a check failure; `diag` is the `Diag` text.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommitRefused'
+        '422':
+          description: A request body that does not decode as the declared model; `error` is the decoder's text.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BodyRejected'
+        '500':
+          description: 'A server failure: a Diag the client did not cause, or a stopped core thread.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/Change'
+  /plan:
+    get:
+      operationId: plan
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plan'
+        '500':
+          description: 'A server failure: a Diag the client did not cause, or a stopped core thread.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError'
+  /query:
+    post:
+      operationId: query
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Table'
+        '400':
+          description: |-
+            SQL the store rejects, an answer cell with no wire form, or a query over the store's
+            bounds; `diag` is the `Diag` text.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SqlRejected'
+        '422':
+          description: A request body that does not decode as the declared model; `error` is the decoder's text.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BodyRejected'
+        '500':
+          description: 'A server failure: a Diag the client did not cause, or a stopped core thread.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+  /recipe:
+    get:
+      operationId: recipe
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recipe'
+        '500':
+          description: 'A server failure: a Diag the client did not cause, or a stopped core thread.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError'
+components:
+  schemas:
+    BodyRejected:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+      description: A request body that does not decode as the declared model; `error` is the decoder's text.
+    Cell:
+      anyOf:
+        - type: string
+        - type: integer
+          format: int64
+        - type: number
+          format: double
+      nullable: true
+      description: 'One column value: a JSON string, integer, float or null. A SQL blob has no wire form.'
+    Change:
+      type: object
+      required:
+        - rel
+        - cells
+        - diff
+      properties:
+        rel:
+          type: string
+        cells:
+          type: array
+          items:
+            $ref: '#/components/schemas/Cell'
+        diff:
+          type: integer
+          format: int64
+      description: One row change of one relation, by relation name.
+    ColType:
+      type: string
+      enum:
+        - Text
+        - Int
+    Column:
+      type: object
+      required:
+        - name
+        - type
+      properties:
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/ColType'
+    CommitRefused:
+      type: object
+      required:
+        - diag
+      properties:
+        diag:
+          type: string
+      description: A commit the runtime refuses, or a check failure; `diag` is the `Diag` text.
+    Delta:
+      type: object
+      required:
+        - event
+        - changes
+      properties:
+        event:
+          type: integer
+          format: uint64
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Change'
+      description: Every relation's row changes at one event.
+    Plan:
+      type: object
+      required:
+        - relations
+      properties:
+        relations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Relation'
+    QueryRequest:
+      type: object
+      required:
+        - sql
+      properties:
+        sql:
+          type: string
+    Recipe:
+      type: object
+      required:
+        - canonical
+      properties:
+        canonical:
+          type: string
+          description: Canonical recipe text, e.g. `engine=dd,store=sqlite,wire=http`.
+    RelKind:
+      type: string
+      enum:
+        - Base
+        - Derived
+        - Request
+        - Answer
+    Relation:
+      type: object
+      required:
+        - name
+        - cols
+        - kind
+      properties:
+        name:
+          type: string
+        cols:
+          type: array
+          items:
+            $ref: '#/components/schemas/Column'
+        kind:
+          $ref: '#/components/schemas/RelKind'
+        service:
+          type: string
+          description: Service name, set for Request and Answer relations.
+    ServerError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+      description: 'A server failure: a Diag the client did not cause, or a stopped core thread.'
+    SqlRejected:
+      type: object
+      required:
+        - diag
+      properties:
+        diag:
+          type: string
+      description: |-
+        SQL the store rejects, an answer cell with no wire form, or a query over the store's
+        bounds; `diag` is the `Diag` text.
+    Table:
+      type: object
+      required:
+        - columns
+        - rows
+      properties:
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/Cell'

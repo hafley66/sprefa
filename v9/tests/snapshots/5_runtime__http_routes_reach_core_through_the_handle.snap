@@ -1,0 +1,238 @@
+---
+source: tests/5_runtime.rs
+expression: "serde_json::to_string_pretty(&seen).unwrap()"
+---
+[
+  {
+    "body": {
+      "changes": [
+        {
+          "cells": [
+            "a",
+            "b"
+          ],
+          "diff": 1,
+          "rel": "edge"
+        },
+        {
+          "cells": [
+            "src/a/long/path.rs"
+          ],
+          "diff": 1,
+          "rel": "want"
+        },
+        {
+          "cells": [
+            "a",
+            "b"
+          ],
+          "diff": 1,
+          "rel": "reach"
+        },
+        {
+          "cells": [
+            "src/a/long/path.rs"
+          ],
+          "diff": 1,
+          "rel": "ask"
+        },
+        {
+          "cells": [
+            "src/a/long/path.rs",
+            180
+          ],
+          "diff": 1,
+          "rel": "told"
+        },
+        {
+          "cells": [
+            "src/a/long/path.rs"
+          ],
+          "diff": 1,
+          "rel": "big"
+        }
+      ],
+      "event": 1
+    },
+    "route": "POST /commit",
+    "status": 200
+  },
+  {
+    "body": {
+      "diag": "Commit { change: 0, rel: \"reach\", problem: \"kind\", found: \"Derived\" }"
+    },
+    "route": "POST /commit",
+    "status": 400
+  },
+  {
+    "body": {
+      "diag": "Commit { change: 0, rel: \"start\", problem: \"cell type\", found: \"col 0 Int: Null\" }"
+    },
+    "route": "POST /commit",
+    "status": 400
+  },
+  {
+    "body": {
+      "columns": [
+        "path",
+        "size",
+        "quarter",
+        "absent"
+      ],
+      "rows": [
+        [
+          "src/a/long/path.rs",
+          180,
+          45.0,
+          null
+        ]
+      ]
+    },
+    "route": "POST /query",
+    "status": 200
+  },
+  {
+    "body": {
+      "diag": "Store(\"no such table: nowhere\")"
+    },
+    "route": "POST /query",
+    "status": 400
+  },
+  {
+    "body": {
+      "diag": "Store(\"no wire form for Blob([0])\")"
+    },
+    "route": "POST /query",
+    "status": 400
+  },
+  {
+    "body": {
+      "relations": [
+        {
+          "cols": [
+            {
+              "name": "from",
+              "type": "Text"
+            },
+            {
+              "name": "to",
+              "type": "Text"
+            }
+          ],
+          "kind": "Base",
+          "name": "edge",
+          "service": null
+        },
+        {
+          "cols": [
+            {
+              "name": "path",
+              "type": "Text"
+            }
+          ],
+          "kind": "Base",
+          "name": "want",
+          "service": null
+        },
+        {
+          "cols": [
+            {
+              "name": "n",
+              "type": "Int"
+            }
+          ],
+          "kind": "Base",
+          "name": "start",
+          "service": null
+        },
+        {
+          "cols": [
+            {
+              "name": "from",
+              "type": "Text"
+            },
+            {
+              "name": "to",
+              "type": "Text"
+            }
+          ],
+          "kind": "Derived",
+          "name": "reach",
+          "service": null
+        },
+        {
+          "cols": [
+            {
+              "name": "path",
+              "type": "Text"
+            }
+          ],
+          "kind": "Request",
+          "name": "ask",
+          "service": "size"
+        },
+        {
+          "cols": [
+            {
+              "name": "path",
+              "type": "Text"
+            },
+            {
+              "name": "size",
+              "type": "Int"
+            }
+          ],
+          "kind": "Answer",
+          "name": "told",
+          "service": "size"
+        },
+        {
+          "cols": [
+            {
+              "name": "path",
+              "type": "Text"
+            }
+          ],
+          "kind": "Derived",
+          "name": "big",
+          "service": null
+        },
+        {
+          "cols": [
+            {
+              "name": "n",
+              "type": "Int"
+            }
+          ],
+          "kind": "Request",
+          "name": "next_ask",
+          "service": "succ"
+        },
+        {
+          "cols": [
+            {
+              "name": "n",
+              "type": "Int"
+            },
+            {
+              "name": "m",
+              "type": "Int"
+            }
+          ],
+          "kind": "Answer",
+          "name": "next_told",
+          "service": "succ"
+        }
+      ]
+    },
+    "route": "GET /plan",
+    "status": 200
+  },
+  {
+    "body": {
+      "canonical": "engine=dd,store=sqlite,wire=http"
+    },
+    "route": "GET /recipe",
+    "status": 200
+  }
+]

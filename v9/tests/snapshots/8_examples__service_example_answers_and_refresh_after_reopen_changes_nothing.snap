@@ -1,0 +1,40 @@
+---
+source: tests/8_examples.rs
+expression: "(seen, refreshed, views(&core).expect(\"views\"))"
+---
+(
+    [
+        [
+            "word(datalog)",
+            "word(hi)",
+            "word(kernel)",
+            "ask_len(datalog)",
+            "ask_len(hi)",
+            "ask_len(kernel)",
+            "told_len(datalog, 7)",
+            "told_len(hi, 2)",
+            "told_len(kernel, 6)",
+            "long(datalog, 7)",
+            "long(kernel, 6)",
+        ],
+        [
+            "word(datalog)",
+            "word(hi)",
+            "ask_len(datalog)",
+            "ask_len(hi)",
+            "told_len(datalog, 7)",
+            "told_len(hi, 2)",
+            "long(datalog, 7)",
+        ],
+    ],
+    None,
+    [
+        "word(datalog)",
+        "word(hi)",
+        "ask_len(datalog)",
+        "ask_len(hi)",
+        "told_len(datalog, 7)",
+        "told_len(hi, 2)",
+        "long(datalog, 7)",
+    ],
+)

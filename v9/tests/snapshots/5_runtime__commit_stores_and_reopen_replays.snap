@@ -1,0 +1,57 @@
+---
+source: tests/5_runtime.rs
+expression: "(event, show(&delta), &after_commit, reopened == after_commit, event2,\nshow(&delta2), rows(&core), log.borrow().clone(),)"
+---
+(
+    1,
+    [
+        "edge(a, b) +1",
+        "edge(b, c) +1",
+        "want(src/a/long/path.rs) +1",
+        "want(x.rs) +1",
+        "reach(a, c) +1",
+        "reach(a, b) +1",
+        "reach(b, c) +1",
+        "ask(src/a/long/path.rs) +1",
+        "ask(x.rs) +1",
+        "told(src/a/long/path.rs, 180) +1",
+        "told(x.rs, 40) +1",
+        "big(src/a/long/path.rs) +1",
+    ],
+    [
+        "edge(a, b)",
+        "edge(b, c)",
+        "want(src/a/long/path.rs)",
+        "want(x.rs)",
+        "reach(a, b)",
+        "reach(a, c)",
+        "reach(b, c)",
+        "ask(src/a/long/path.rs)",
+        "ask(x.rs)",
+        "told(src/a/long/path.rs, 180)",
+        "told(x.rs, 40)",
+        "big(src/a/long/path.rs)",
+    ],
+    true,
+    2,
+    [
+        "edge(b, c) -1",
+        "reach(a, c) -1",
+        "reach(b, c) -1",
+    ],
+    [
+        "edge(a, b)",
+        "want(src/a/long/path.rs)",
+        "want(x.rs)",
+        "reach(a, b)",
+        "ask(src/a/long/path.rs)",
+        "ask(x.rs)",
+        "told(src/a/long/path.rs, 180)",
+        "told(x.rs, 40)",
+        "big(src/a/long/path.rs)",
+    ],
+    [
+        "size[8992808471135073505] +1",
+        "size[17493694832070293558] +1",
+    ],
+)

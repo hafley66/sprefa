@@ -1,0 +1,29 @@
+---
+source: tests/5_runtime.rs
+expression: "(stored, show(&next), log.borrow().len())"
+---
+(
+    (
+        [
+            [
+                Int(
+                    0,
+                ),
+                Null,
+            ],
+        ],
+        [
+            [
+                Int(
+                    0,
+                ),
+                Null,
+            ],
+        ],
+    ),
+    [
+        "edge(p, q) +1",
+        "reach(p, q) +1",
+    ],
+    64,
+)

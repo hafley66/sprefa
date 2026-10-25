@@ -1,0 +1,10 @@
+---
+source: tests/0_reach.rs
+expression: seen
+---
+[
+    "edges 2 (+2 -0) reach 3 (+3 -0) rows_written 13 | check: reach equals the oracle (3 rows) exit Some(0)",
+    "edges 2 (+0 -0) reach 3 (+0 -0) rows_written 0 | check: reach equals the oracle (3 rows) exit Some(0)",
+    "edges 1 (+0 -1) reach 1 (+0 -2) rows_written 4 | check: reach equals the oracle (1 rows) exit Some(0)",
+    "edges 1 (+0 -0) reach 1 (+0 -0) rows_written 0 | check: reach equals the oracle (1 rows) exit Some(0)",
+]

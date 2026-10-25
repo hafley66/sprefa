@@ -1,0 +1,174 @@
+---
+source: tests/4_store.rs
+expression: tables
+---
+[
+    (
+        "SELECT * FROM edge_text ORDER BY 1, 2",
+        Table {
+            columns: [
+                "from",
+                "to",
+            ],
+            rows: [
+                [
+                    Text(
+                        "a",
+                    ),
+                    Text(
+                        "b",
+                    ),
+                ],
+                [
+                    Text(
+                        "b",
+                    ),
+                    Text(
+                        "c",
+                    ),
+                ],
+            ],
+        },
+    ),
+    (
+        "SELECT * FROM weight_text ORDER BY 1",
+        Table {
+            columns: [
+                "node",
+                "n",
+            ],
+            rows: [
+                [
+                    Text(
+                        "a",
+                    ),
+                    Int(
+                        -5,
+                    ),
+                ],
+                [
+                    Text(
+                        "b",
+                    ),
+                    Int(
+                        -9223372036854775808,
+                    ),
+                ],
+                [
+                    Text(
+                        "c",
+                    ),
+                    Int(
+                        9223372036854775807,
+                    ),
+                ],
+            ],
+        },
+    ),
+    (
+        "SELECT * FROM reach_text ORDER BY 1, 2",
+        Table {
+            columns: [
+                "from",
+                "to",
+            ],
+            rows: [
+                [
+                    Text(
+                        "a",
+                    ),
+                    Text(
+                        "b",
+                    ),
+                ],
+                [
+                    Text(
+                        "b",
+                    ),
+                    Text(
+                        "c",
+                    ),
+                ],
+            ],
+        },
+    ),
+    (
+        "SELECT * FROM lit_text",
+        Table {
+            columns: [
+                "unit",
+            ],
+            rows: [
+                [
+                    Int(
+                        0,
+                    ),
+                ],
+            ],
+        },
+    ),
+    (
+        "SELECT * FROM ask_text ORDER BY 1",
+        Table {
+            columns: [
+                "path",
+            ],
+            rows: [
+                [
+                    Text(
+                        "a",
+                    ),
+                ],
+                [
+                    Text(
+                        "b",
+                    ),
+                ],
+            ],
+        },
+    ),
+    (
+        "SELECT * FROM told_text",
+        Table {
+            columns: [
+                "path",
+                "size",
+            ],
+            rows: [
+                [
+                    Text(
+                        "a",
+                    ),
+                    Int(
+                        42,
+                    ),
+                ],
+            ],
+        },
+    ),
+    (
+        "SELECT n FROM weight ORDER BY n",
+        Table {
+            columns: [
+                "n",
+            ],
+            rows: [
+                [
+                    Int(
+                        -9223372036854775808,
+                    ),
+                ],
+                [
+                    Int(
+                        -5,
+                    ),
+                ],
+                [
+                    Int(
+                        9223372036854775807,
+                    ),
+                ],
+            ],
+        },
+    ),
+]
