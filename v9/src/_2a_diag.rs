@@ -67,6 +67,18 @@ pub enum Diag {
         hash: u64,
     },
     Store(String),
+    /// A client change the runtime does not take; `change` indexes the commit's changes.
+    /// `problem` is "unknown rel", "kind", "arity" or "cell type".
+    Commit {
+        change: usize,
+        rel: String,
+        problem: &'static str,
+        found: String,
+    },
+    /// A commit's request, answer, request chain had answers left after `max_rounds` rounds.
+    ServiceRounds {
+        max_rounds: u32,
+    },
     Service {
         service: String,
         message: String,

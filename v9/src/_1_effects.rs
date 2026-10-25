@@ -1,5 +1,6 @@
-//! Every effect of the crate: the `ryi` child process and the SQLite file. Nothing else spawns,
-//! reads files or opens databases (`clippy.toml` bans it elsewhere).
+//! Every effect of the crate: the `ryi` child process, the SQLite file, threads, the listening
+//! socket. Nothing else spawns, reads files, opens databases or binds (`clippy.toml` bans it
+//! elsewhere).
 #![allow(clippy::disallowed_methods)]
 
 use std::path::Path;
@@ -56,4 +57,27 @@ pub fn v9_system() -> Option<String> {
 /// `V9_RYI`, the ryi binary; `ryi` on PATH when unset.
 pub fn v9_ryi() -> String {
     std::env::var("V9_RYI").unwrap_or_else(|_| "ryi".to_string())
+}
+
+/// A named thread running `body`.
+pub fn spawn<T: Send + 'static>(
+    name: &str,
+    body: impl FnOnce() -> T + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<T>> {
+    std::thread::Builder::new()
+        .name(name.to_string())
+        .spawn(body)
+}
+
+/// A localhost listener; port 0 takes a free port.
+pub fn bind(port: u16) -> std::io::Result<std::net::TcpListener> {
+    std::net::TcpListener::bind(("127.0.0.1", port))
+}
+
+/// Serves `router` on `listener` until the process ends; the tokio runtime lives in this call.
+pub fn serve_http(listener: std::net::TcpListener, router: axum::Router) -> std::io::Result<()> {
+    listener.set_nonblocking(true)?;
+    tokio::runtime::Runtime::new()?.block_on(async move {
+        axum::serve(tokio::net::TcpListener::from_std(listener)?, router).await
+    })
 }

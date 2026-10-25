@@ -21,6 +21,15 @@ pub mod _7_store {
     pub mod _1_sqlite;
 }
 
+/// `Core`: one engine, one store, the services, picked by the `Recipe`; the thread that owns it.
+pub mod _8_runtime {
+    pub mod _0_programs;
+    pub mod _1_any;
+    pub mod _2_ryi;
+    pub mod _3_core;
+    pub mod _4_handle;
+}
+
 /// The walking skeleton (#820): ryi call edges -> differential dataflow reach -> SQLite.
 pub mod skeleton {
     pub mod _0_store;

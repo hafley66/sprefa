@@ -1,0 +1,54 @@
+---
+source: tests/5_runtime.rs
+expression: refused
+---
+[
+    Commit {
+        change: 1,
+        rel: "reach",
+        problem: "kind",
+        found: "Derived",
+    },
+    Commit {
+        change: 1,
+        rel: "ask",
+        problem: "kind",
+        found: "Request { service: \"size\" }",
+    },
+    Commit {
+        change: 1,
+        rel: "told",
+        problem: "kind",
+        found: "Answer { service: \"size\" }",
+    },
+    Commit {
+        change: 1,
+        rel: "nope",
+        problem: "unknown rel",
+        found: "nope",
+    },
+    Commit {
+        change: 1,
+        rel: "edge",
+        problem: "arity",
+        found: "1 cells for 2 cols",
+    },
+    Commit {
+        change: 1,
+        rel: "edge",
+        problem: "cell type",
+        found: "col 1 Text: Int(3)",
+    },
+    Commit {
+        change: 1,
+        rel: "start",
+        problem: "cell type",
+        found: "col 0 Int: Text(\"3\")",
+    },
+    Commit {
+        change: 1,
+        rel: "start",
+        problem: "cell type",
+        found: "col 0 Int: Null",
+    },
+]

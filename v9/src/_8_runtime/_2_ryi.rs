@@ -1,0 +1,80 @@
+//! The `ryi` service: request `(root text)`, answer `(root text, caller text, callee text)`, the
+//! resolved call edges of `ryi fast .` run inside `root`.
+
+use crate::_0_id::Dict;
+use crate::_1_effects::{ryi_call_edges, CallEdge};
+use crate::_3_plan::{Row, Value};
+use crate::_5_ends::{Cadence, Change, IService};
+use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
+
+pub struct Ryi {
+    /// The ryi binary, `_1_effects::v9_ryi` at the binary edge.
+    pub binary: String,
+    /// Edges per asked root, read by `call`, interned by `poll`.
+    pub pending: Vec<(Value, Vec<CallEdge>)>,
+    /// Rows last answered per root. A re-ask answers only the difference, so the engine's answer
+    /// input stays a set.
+    pub answered: HashMap<Value, BTreeSet<Row>>,
+    /// `ryi` failures; the trait has no error path, so a failed root answers nothing.
+    pub errors: Vec<String>,
+}
+
+impl Ryi {
+    pub fn new(binary: String) -> Ryi {
+        Ryi {
+            binary,
+            pending: Vec::new(),
+            answered: HashMap::new(),
+            errors: Vec::new(),
+        }
+    }
+}
+
+impl IService for Ryi {
+    fn service(&self) -> &str {
+        "ryi"
+    }
+
+    fn cadence(&self) -> Cadence {
+        Cadence::Once
+    }
+
+    /// Runs ryi for every asserted root, in the caller's thread. A retracted root needs no call:
+    /// the engine hides its answers.
+    fn call(&mut self, requests: &[Change], dict: &Dict) {
+        for request in requests.iter().filter(|request| request.diff > 0) {
+            let root_id = request.row[0];
+            let root = String::from_utf8_lossy(&dict.bytes[&root_id]).into_owned();
+            match ryi_call_edges(&self.binary, Path::new(&root)) {
+                Ok(edges) => self.pending.push((root_id, edges)),
+                Err(error) => self.errors.push(format!("{root}: {error}")),
+            }
+        }
+    }
+
+    /// `rel` of each change is 0; the runtime sets the Answer rel.
+    fn poll(&mut self, dict: &mut Dict, out: &mut Vec<Change>) {
+        for (root, edges) in std::mem::take(&mut self.pending) {
+            let rows: BTreeSet<Row> = edges
+                .iter()
+                .map(|edge| {
+                    vec![
+                        root,
+                        dict.intern(edge.caller.as_bytes()),
+                        dict.intern(edge.callee.as_bytes()),
+                    ]
+                })
+                .collect();
+            let before = self.answered.remove(&root).unwrap_or_default();
+            for (rows_from, rows_minus, diff) in [(&rows, &before, 1), (&before, &rows, -1)] {
+                out.extend(rows_from.difference(rows_minus).map(|row| Change {
+                    rel: 0,
+                    row: row.clone(),
+                    diff,
+                }));
+            }
+            self.answered.insert(root, rows);
+        }
+    }
+}

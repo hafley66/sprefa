@@ -1,0 +1,11 @@
+---
+source: tests/5_runtime.rs
+expression: "(good, bad, code)"
+---
+(
+    "serving reach on ADDR recipe engine=dd,store=sqlite,wire=http",
+    "v9: V9_SYSTEM: Recipe { problem: \"unknown value\", found: \"engine=duckdb\", allowed: [\"dd\"] }",
+    Some(
+        1,
+    ),
+)
