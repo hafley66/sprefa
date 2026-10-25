@@ -4,6 +4,7 @@ disallowed-methods = [
   { path = "std::fs::read", reason = "effects live in src/_1_effects.rs" },
   { path = "std::fs::read_to_string", reason = "effects live in src/_1_effects.rs" },
   { path = "std::fs::write", reason = "effects live in src/_1_effects.rs" },
+  { path = "std::fs::canonicalize", reason = "effects live in src/_1_effects.rs" },
   { path = "rusqlite::Connection::open", reason = "effects live in src/_1_effects.rs" },
   { path = "std::thread::spawn", reason = "effects live in src/_1_effects.rs" },
   { path = "std::env::var", reason = "effects live in src/_1_effects.rs" },

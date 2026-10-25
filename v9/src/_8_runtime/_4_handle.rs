@@ -162,7 +162,7 @@ fn commit_failed(diag: Diag) -> OpError {
 /// the query ran over, an answer cell with no wire form. 400. The rest is 500.
 fn query_failed(diag: Diag) -> OpError {
     match diag {
-        Diag::Store(_) => SqlRejected {
+        Diag::Store(_) | Diag::QueryRows { .. } | Diag::QueryTime { .. } => SqlRejected {
             diag: format!("{diag:?}"),
         }
         .into(),

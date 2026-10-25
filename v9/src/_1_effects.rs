@@ -98,6 +98,11 @@ pub fn args() -> Vec<String> {
 }
 
 /// The monotonic clock now.
+/// `path` as an absolute path with symlinks resolved; Err when it does not exist.
+pub fn canonical(path: &str) -> std::io::Result<std::path::PathBuf> {
+    std::fs::canonicalize(path)
+}
+
 pub fn now() -> std::time::Instant {
     std::time::Instant::now()
 }

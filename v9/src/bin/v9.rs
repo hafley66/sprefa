@@ -157,6 +157,9 @@ fn count(core: &Core, table: &str) -> Result<u64, String> {
 /// Commits ROOT and retracts every other stored root. A stored ROOT has its ask in the replayed
 /// engine and no request change to route, so `refresh` re-asks ryi for it.
 fn run(root: &str, db_path: PathBuf, check: bool) -> Result<(), String> {
+    let root = _1_effects::canonical(root).map_err(|error| format!("root {root}: {error}"))?;
+    let root = root.to_string_lossy();
+    let root = root.as_ref();
     let services: Vec<Box<dyn IService>> = vec![Box::new(Ryi::new(_1_effects::v9_ryi()))];
     let started = _1_effects::now();
     let mut core = build(
