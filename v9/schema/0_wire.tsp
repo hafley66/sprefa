@@ -79,14 +79,33 @@ model CommitRefused {
   diag: string;
 }
 
-/** SQL the store rejects; `diag` is the `Diag` text. */
+/** SQL the store rejects, an answer cell with no wire form, or a query over the store's
+ * bounds; `diag` is the `Diag` text. */
 @error
 model SqlRejected {
   @statusCode _: 400;
   diag: string;
 }
 
-@route("/commit") @post op commit(@body changes: Change[]): Delta | CommitRefused;
-@route("/query") @post op query(@body request: QueryRequest): Table | SqlRejected;
-@route("/plan") @get op plan(): Plan;
-@route("/recipe") @get op recipe(): Recipe;
+/** A request body that does not decode as the declared model; `error` is the decoder's text. */
+@error
+model BodyRejected {
+  @statusCode _: 422;
+  error: string;
+}
+
+/** A server failure: a Diag the client did not cause, or a stopped core thread. */
+@error
+model ServerError {
+  @statusCode _: 500;
+  error: string;
+}
+
+@route("/commit") @post op commit(
+  @body changes: Change[],
+): Delta | CommitRefused | BodyRejected | ServerError;
+@route("/query") @post op query(
+  @body request: QueryRequest,
+): Table | SqlRejected | BodyRejected | ServerError;
+@route("/plan") @get op plan(): Plan | ServerError;
+@route("/recipe") @get op recipe(): Recipe | ServerError;

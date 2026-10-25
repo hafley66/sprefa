@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
@@ -7,11 +8,13 @@ use axum::routing::get;
 use axum::routing::post;
 use std::sync::Arc;
 
+use crate::_9_wire::models::body_rejected::BodyRejected;
 use crate::_9_wire::models::change::Change;
 use crate::_9_wire::models::delta::Delta;
 use crate::_9_wire::models::plan::Plan;
 use crate::_9_wire::models::query_request::QueryRequest;
 use crate::_9_wire::models::recipe::Recipe;
+use crate::_9_wire::models::server_error::ServerError;
 use crate::_9_wire::models::table::Table;
 use crate::_9_wire::ops_auto::CommitArgs;
 use crate::_9_wire::ops_auto::OpError;
@@ -24,14 +27,17 @@ use crate::_9_wire::ops_auto::Wire;
 impl IntoResponse for OpError {
     fn into_response(self) -> Response {
         match self {
-            OpError::Internal(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": error}))).into_response(),
+            OpError::Internal(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ServerError { error })).into_response(),
             OpError::CommitRefused(body) => (StatusCode::from_u16(400).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body)).into_response(),
+            OpError::BodyRejected(body) => (StatusCode::from_u16(422).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body)).into_response(),
+            OpError::ServerError(body) => (StatusCode::from_u16(500).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body)).into_response(),
             OpError::SqlRejected(body) => (StatusCode::from_u16(400).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body)).into_response(),
         }
     }
 }
 
-pub async fn commit<S: Wire>(State(ops): State<Arc<S>>, Json(body): Json<Vec<Change>>) -> OpResult<Json<Delta>> {
+pub async fn commit<S: Wire>(State(ops): State<Arc<S>>, body: Result<Json<Vec<Change>>, JsonRejection>) -> OpResult<Json<Delta>> {
+  let Json(body) = body.map_err(|rejection| OpError::BodyRejected(BodyRejected { error: rejection.body_text() }))?;
   let args = CommitArgs {
       changes: body,
   };
@@ -39,7 +45,8 @@ pub async fn commit<S: Wire>(State(ops): State<Arc<S>>, Json(body): Json<Vec<Cha
   Ok(Json(out))
 }
 
-pub async fn query<S: Wire>(State(ops): State<Arc<S>>, Json(body): Json<QueryRequest>) -> OpResult<Json<Table>> {
+pub async fn query<S: Wire>(State(ops): State<Arc<S>>, body: Result<Json<QueryRequest>, JsonRejection>) -> OpResult<Json<Table>> {
+  let Json(body) = body.map_err(|rejection| OpError::BodyRejected(BodyRejected { error: rejection.body_text() }))?;
   let args = QueryArgs {
       request: body,
   };

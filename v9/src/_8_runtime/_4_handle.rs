@@ -8,6 +8,7 @@ use crate::_8_runtime::_3_core::{Core, Named};
 use crate::_9_wire::models;
 use crate::_9_wire::models::cell::Cell as WireCell;
 use crate::_9_wire::models::commit_refused::CommitRefused;
+use crate::_9_wire::models::server_error::ServerError;
 use crate::_9_wire::models::sql_rejected::SqlRejected;
 use crate::_9_wire::ops_auto::{
     CommitArgs, OpError, OpResult, PlanArgs, QueryArgs, RecipeArgs, Wire,
@@ -130,6 +131,14 @@ fn wire_plan(core: &Core) -> models::plan::Plan {
     models::plan::Plan { relations }
 }
 
+/// A failure the client did not cause: 500 `ServerError`.
+fn server_error(diag: Diag) -> OpError {
+    ServerError {
+        error: format!("{diag:?}"),
+    }
+    .into()
+}
+
 /// A commit the runtime refuses or a check failure is the client's: 400. The rest is 500.
 fn commit_failed(diag: Diag) -> OpError {
     match diag {
@@ -145,18 +154,19 @@ fn commit_failed(diag: Diag) -> OpError {
             diag: format!("{diag:?}"),
         }
         .into(),
-        other => OpError::Internal(format!("{other:?}")),
+        other => server_error(other),
     }
 }
 
-/// The store's `Diag::Store` on a query is SQL it rejects: 400. The rest is 500.
+/// On a query every `Diag::Store` is the client's SQL: rejected SQL, a row cap or a time budget
+/// the query ran over, an answer cell with no wire form. 400. The rest is 500.
 fn query_failed(diag: Diag) -> OpError {
     match diag {
         Diag::Store(_) => SqlRejected {
             diag: format!("{diag:?}"),
         }
         .into(),
-        other => OpError::Internal(format!("{other:?}")),
+        other => server_error(other),
     }
 }
 
@@ -169,14 +179,15 @@ fn from_wire(cell: &Option<WireCell>) -> Cell {
     }
 }
 
-/// A Blob SQL value has no wire form.
-fn to_wire(cell: &Cell) -> OpResult<Option<WireCell>> {
+/// A Blob SQL value has no wire form; the `Diag::Store` names it. From a client query it is the
+/// client's SQL (400); from a commit's delta it is a runtime defect (500).
+fn to_wire(cell: &Cell) -> Result<Option<WireCell>, Diag> {
     Ok(match cell {
         Cell::Null => None,
         Cell::Int(int) => Some(WireCell::int(*int)),
         Cell::Real(real) => Some(WireCell::real(*real)),
         Cell::Text(text) => Some(WireCell::text(text.clone())),
-        Cell::Blob(_) => return Err(OpError::Internal(format!("no wire form for {cell:?}"))),
+        Cell::Blob(_) => return Err(Diag::Store(format!("no wire form for {cell:?}"))),
     })
 }
 
@@ -201,7 +212,11 @@ impl Wire for Handle {
                 .map(|(rel, cells, diff)| {
                     Ok(models::change::Change {
                         rel,
-                        cells: cells.iter().map(to_wire).collect::<OpResult<_>>()?,
+                        cells: cells
+                            .iter()
+                            .map(to_wire)
+                            .collect::<Result<_, _>>()
+                            .map_err(server_error)?,
                         diff: diff as i64,
                     })
                 })
@@ -217,7 +232,8 @@ impl Wire for Handle {
                 .rows
                 .iter()
                 .map(|row| row.iter().map(to_wire).collect())
-                .collect::<OpResult<_>>()?,
+                .collect::<Result<_, _>>()
+                .map_err(query_failed)?,
         })
     }
 

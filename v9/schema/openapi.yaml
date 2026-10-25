@@ -21,6 +21,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CommitRefused'
+        '422':
+          description: A request body that does not decode as the declared model; `error` is the decoder's text.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BodyRejected'
+        '500':
+          description: 'A server failure: a Diag the client did not cause, or a stopped core thread.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError'
       requestBody:
         required: true
         content:
@@ -40,6 +52,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Plan'
+        '500':
+          description: 'A server failure: a Diag the client did not cause, or a stopped core thread.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError'
   /query:
     post:
       operationId: query
@@ -52,11 +70,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/Table'
         '400':
-          description: SQL the store rejects; `diag` is the `Diag` text.
+          description: |-
+            SQL the store rejects, an answer cell with no wire form, or a query over the store's
+            bounds; `diag` is the `Diag` text.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SqlRejected'
+        '422':
+          description: A request body that does not decode as the declared model; `error` is the decoder's text.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BodyRejected'
+        '500':
+          description: 'A server failure: a Diag the client did not cause, or a stopped core thread.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError'
       requestBody:
         required: true
         content:
@@ -74,8 +106,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Recipe'
+        '500':
+          description: 'A server failure: a Diag the client did not cause, or a stopped core thread.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError'
 components:
   schemas:
+    BodyRejected:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+      description: A request body that does not decode as the declared model; `error` is the decoder's text.
     Cell:
       anyOf:
         - type: string
@@ -188,6 +234,14 @@ components:
         service:
           type: string
           description: Service name, set for Request and Answer relations.
+    ServerError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+      description: 'A server failure: a Diag the client did not cause, or a stopped core thread.'
     SqlRejected:
       type: object
       required:
@@ -195,7 +249,9 @@ components:
       properties:
         diag:
           type: string
-      description: SQL the store rejects; `diag` is the `Diag` text.
+      description: |-
+        SQL the store rejects, an answer cell with no wire form, or a query over the store's
+        bounds; `diag` is the `Diag` text.
     Table:
       type: object
       required:

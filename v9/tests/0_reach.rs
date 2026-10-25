@@ -186,12 +186,19 @@ fn reach_after_each_run_equals_the_oracle() {
 }
 
 /// Writes the ryi fixture: `c.ts#top -> a.ts#mid -> b.ts#leaf`; `a.ts` without the call when
-/// `cut`. False when ryi does not run.
+/// `cut`. Err names why ryi does not run.
 #[allow(clippy::disallowed_methods)]
-fn ryi_fixture(root: &Path, cut: bool) -> bool {
-    let probe = std::process::Command::new(v9_ryi()).arg("--help").output();
-    if !probe.is_ok_and(|output| output.status.success()) {
-        return false;
+fn ryi_fixture(root: &Path, cut: bool) -> Result<(), String> {
+    let ryi = v9_ryi();
+    match std::process::Command::new(&ryi).arg("--help").output() {
+        Err(error) => return Err(format!("V9_RYI={ryi:?} does not spawn: {error}")),
+        Ok(output) if !output.status.success() => {
+            return Err(format!(
+                "V9_RYI={ryi:?} --help exited {:?}",
+                output.status.code()
+            ))
+        }
+        Ok(_) => {}
     }
     let mid = if cut {
         "import { leaf } from \"./b\";\nexport function mid() { return 2; }\n"
@@ -208,7 +215,7 @@ fn ryi_fixture(root: &Path, cut: bool) -> bool {
     ] {
         std::fs::write(root.join(file), text).expect("fixture");
     }
-    true
+    Ok(())
 }
 
 /// `v9 reach ROOT DB --check`: stdout without the `ms` line, and the exit code.
@@ -234,14 +241,75 @@ fn v9_reach_cold_rerun_edit_rerun() {
     let dir = dir("bin");
     let root = dir.join("src");
     std::fs::create_dir_all(&root).expect("root");
-    if !ryi_fixture(&root, false) {
-        println!("skip: {} does not run", v9_ryi());
+    if let Err(reason) = ryi_fixture(&root, false) {
+        println!("skip: v9_reach_cold_rerun_edit_rerun: {reason}");
         return;
     }
     let db = dir.join("reach.db");
     let mut seen = vec![v9_reach(&root, &db), v9_reach(&root, &db)];
-    ryi_fixture(&root, true);
+    ryi_fixture(&root, true).expect("ryi ran a moment ago");
     seen.push(v9_reach(&root, &db));
     seen.push(v9_reach(&root, &db));
     insta::assert_debug_snapshot!(seen);
+}
+
+/// The round bound today: `max_rounds` counts the distinct inner rounds one recursive stratum
+/// updates at one epoch, and a new edge at the end of a chain derives at rounds that climb with
+/// the chain's length. Reach over an Int chain grown one edge per step, `max_rounds` 8, refuses
+/// once the chain is 9 edges long, though each step adds one edge. A change to what the bound counts changes
+/// this list (`plans/v9/SLOP.md`, the reopened P4 row).
+#[test]
+fn max_rounds_climbs_with_chain_growth_across_epochs() {
+    use v9::_2_ir::Col::Int;
+    use v9::_2_ir::*;
+    use v9::_3_plan::check;
+    use v9::_5_ends::Engine;
+    use v9::_6_back::_1_dd::Dd;
+    const LINKS: u64 = 24;
+    let mut dict = Dict::default();
+    let plan = check(
+        Program {
+            rels: vec![
+                rel("edge", [("from", Int), ("to", Int)]),
+                derived("reach", [("from", Int), ("to", Int)]),
+            ],
+            rules: vec![
+                rule(
+                    atom("reach", [v("a"), v("c")]),
+                    [pos("edge", [v("a"), v("c")])],
+                ),
+                rule(
+                    atom("reach", [v("a"), v("c")]),
+                    [
+                        pos("reach", [v("a"), v("b")]),
+                        pos("edge", [v("b"), v("c")]),
+                    ],
+                ),
+            ],
+        },
+        &mut dict,
+    )
+    .expect("checks");
+    let mut engine = Dd::new(&plan, Bounds { max_rounds: 8 }).expect("engine");
+    let refused: Vec<String> = (0..LINKS)
+        .filter_map(|link| {
+            let edge = Change {
+                rel: 0,
+                row: vec![link, link + 1],
+                diff: 1,
+            };
+            engine
+                .step(vec![edge])
+                .err()
+                .map(|diag| format!("link {link}: {diag:?}"))
+        })
+        .collect();
+    // A refused edge rolls back, so the chain restarts at the next link: 9..=17 refuses at 17.
+    assert_eq!(
+        refused,
+        [
+            "link 8: FixpointLimit { stratum: 0, max_rounds: 8 }",
+            "link 17: FixpointLimit { stratum: 0, max_rounds: 8 }",
+        ]
+    );
 }
