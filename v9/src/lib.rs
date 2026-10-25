@@ -9,6 +9,12 @@ pub mod _3_plan;
 pub mod _4_recipe;
 pub mod _5_ends;
 
+/// `Engine` impls.
+pub mod _6_back {
+    pub mod _0_rule;
+    pub mod _1_dd;
+}
+
 /// `Store` impls.
 pub mod _7_store {
     pub mod _0_sql;

@@ -55,6 +55,11 @@ pub enum Diag {
         stratum: usize,
         max_rounds: u32,
     },
+    /// The dataflow did not pass `time` within `steps` worker steps.
+    StepLimit {
+        time: u64,
+        steps: usize,
+    },
     Mismatch {
         stored_recipe: String,
         stored_hash: u64,

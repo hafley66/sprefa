@@ -15,3 +15,7 @@ Slop accepted at review: file, what, why accepted.
 | P3 | `v9/src/_7_store/_1_sqlite.rs` `write` | strict: an insert of a present row or a delete that misses is `Diag::Store`; relies on the engine's Delta being set-valued for every rel | P2 told to distinct Base and Answer too; strictness catches engine drift |
 | P3 | `v9/src/_7_store/_0_sql.rs` | name collisions report `Diag::Store(String)`, no dedicated variant | one impl; promote when a client branches on it |
 | P3 | `v9/src/_7_store/_1_sqlite.rs` `replay` | loads the whole `dict` table | dict holds only ids rows used at write time; prune when retraction GC exists |
+| P2 | `v9/src/_6_back/_1_dd.rs` `build` | one input of `(RelId, Row)`; each rel filters the whole stream, so input work is rels x rows | one input keeps one epoch clock; split per rel when a probe shows the filter cost |
+| P2 | `v9/src/_6_back/_0_rule.rs` | rows are `Vec<u64>`, one allocation per row and per join key (principle 5 asks fixed-width columnar rows) | generic arity first; columnar containers are a later swap inside the impl |
+| P2 | `v9/src/_6_back/_1_dd.rs` `advance` | `Diag::StepLimit` leaves the engine broken for good, breaking the "Err leaves the engine as before" contract | cap is 4M worker steps; a hit means a dataflow defect, and the runtime should rebuild the Core |
+| P2 | `v9/src/_6_back/_1_dd.rs` `step` | FixpointLimit rollback is checked by `debug_assert` only; the round count is DD's semi-naive rounds | 5-step test proves steps after rollback; release skips the assert |

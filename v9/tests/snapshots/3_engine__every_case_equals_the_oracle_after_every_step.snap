@@ -1,0 +1,114 @@
+---
+source: tests/3_engine.rs
+expression: out
+---
+[
+    (
+        "join",
+        [
+            "edge: (a b)",
+            "label: (b green) (c blue)",
+            "tagged: (a b green)",
+        ],
+    ),
+    (
+        "constants",
+        [
+            "edge: (a b) (a c) (c a)",
+            "from_a: (b) (c)",
+            "self_loop: ",
+            "seven: (7)",
+        ],
+    ),
+    (
+        "recursion chain",
+        [
+            "edge: (0 1) (1 2) (2 3) (3 4) (4 5) (5 6)",
+            "blocked: ",
+            "reach: (0 1) (0 2) (0 3) (0 4) (0 5) (0 6) (1 2) (1 3) (1 4) (1 5) (1 6) (2 3) (2 4) (2 5) (2 6) (3 4) (3 5) (3 6) (4 5) (4 6) (5 6)",
+            "open: ",
+        ],
+    ),
+    (
+        "cycle",
+        [
+            "edge: (a b) (b c) (c a) (c d)",
+            "blocked: ",
+            "reach: (a a) (a b) (a c) (a d) (b a) (b b) (b c) (b d) (c a) (c b) (c c) (c d)",
+            "open: ",
+        ],
+    ),
+    (
+        "retract mid chain",
+        [
+            "edge: (1 2) (4 5)",
+            "blocked: ",
+            "reach: (1 2) (4 5)",
+            "open: ",
+        ],
+    ),
+    (
+        "negation flips on retraction",
+        [
+            "edge: (a b) (b c)",
+            "blocked: ",
+            "reach: (a b) (a c) (b c)",
+            "open: (a b) (a c) (b c)",
+        ],
+    ),
+    (
+        "add lt neq",
+        [
+            "edge: (a a)",
+            "count: (a 4) (b 9) (c -5) (d -1)",
+            "next: (a 5) (c -4) (d 0)",
+            "step: ",
+            "differ: ",
+        ],
+    ),
+    (
+        "two strata",
+        [
+            "edge: (y hub) (y x)",
+            "blocked: ",
+            "reach: (y hub) (y x)",
+            "open: ",
+            "node: (hub) (x) (y)",
+            "apart: (hub x) (hub y) (x hub) (x y)",
+            "lonely: (hub) (y)",
+        ],
+    ),
+    (
+        "answer semijoin request",
+        [
+            "want: (a)",
+            "ask: (a)",
+            "told: (a g)",
+            "callee: (g)",
+        ],
+    ),
+    (
+        "answer feeds its request",
+        [
+            "seed: (a) (b)",
+            "ask: (a) (b) (c)",
+            "told: (b c) (c a)",
+        ],
+    ),
+    (
+        "fixpoint limit rolls back",
+        [
+            "seed: (2)",
+            "cap: (5)",
+            "open: ",
+            "num: (2) (3) (4)",
+        ],
+    ),
+    (
+        "base row counted, set in delta",
+        [
+            "edge: (b c)",
+            "reach: (b c)",
+        ],
+    ),
+]
