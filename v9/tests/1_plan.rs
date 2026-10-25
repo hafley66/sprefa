@@ -85,10 +85,19 @@ fn passing_programs_stratify() {
             [pos("told", [v("node"), v("callee")])],
         ),
     ];
+    // A callee told by the service is asked about in turn: ask and told form one SCC.
+    let service_loop = vec![
+        rule(atom("ask", [v("path")]), [pos("blocked", [v("path")])]),
+        rule(
+            atom("ask", [v("callee")]),
+            [pos("told", [v("path"), v("callee")])],
+        ),
+    ];
     let cases = [
         ("reach", reach_rules()),
         ("negation", negation),
         ("add", add),
+        ("service loop", service_loop),
     ];
     let mut dict = Dict::default();
     let out: Vec<_> = cases

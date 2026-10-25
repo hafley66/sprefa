@@ -15,6 +15,13 @@ expression: out
             ),
             (
                 [
+                    "told",
+                ],
+                false,
+                [],
+            ),
+            (
+                [
                     "next",
                 ],
                 false,
@@ -45,6 +52,13 @@ expression: out
             (
                 [
                     "ask",
+                ],
+                false,
+                [],
+            ),
+            (
+                [
+                    "told",
                 ],
                 false,
                 [],
@@ -89,15 +103,6 @@ expression: out
             ),
             (
                 [
-                    "reach",
-                ],
-                false,
-                [
-                    2,
-                ],
-            ),
-            (
-                [
                     "next",
                 ],
                 false,
@@ -111,6 +116,59 @@ expression: out
                 ],
                 false,
                 [
+                    1,
+                ],
+            ),
+            (
+                [
+                    "told",
+                ],
+                false,
+                [],
+            ),
+            (
+                [
+                    "reach",
+                ],
+                false,
+                [
+                    2,
+                ],
+            ),
+        ],
+    ),
+    (
+        "service loop",
+        [
+            (
+                [
+                    "next",
+                ],
+                false,
+                [],
+            ),
+            (
+                [
+                    "open",
+                ],
+                false,
+                [],
+            ),
+            (
+                [
+                    "reach",
+                ],
+                false,
+                [],
+            ),
+            (
+                [
+                    "ask",
+                    "told",
+                ],
+                true,
+                [
+                    0,
                     1,
                 ],
             ),

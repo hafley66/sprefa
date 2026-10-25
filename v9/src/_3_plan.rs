@@ -49,8 +49,9 @@ pub struct PRule {
     pub vars: Vec<String>,
 }
 
-/// One SCC of Derived and Request rels, in dependency order: every rel a stratum reads is a Base
-/// or Answer rel, or lives in this or an earlier stratum.
+/// One SCC holding a Derived, Request or Answer rel, in dependency order: every rel a stratum
+/// reads is a Base rel or lives in this or an earlier stratum. An Answer rel sits after its
+/// Request rel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stratum {
     pub rels: Vec<RelId>,
@@ -409,6 +410,12 @@ fn written(term: &Term) -> String {
 fn stratify(rels: &[PRel], rules: &[PRule]) -> Result<Vec<Stratum>, Vec<Diag>> {
     let mut graph = DiGraph::<(), bool>::with_capacity(rels.len(), rules.len());
     let nodes: Vec<NodeIndex> = rels.iter().map(|_| graph.add_node(())).collect();
+    // An Answer rel is its input semijoined with its Request rel, so it reads the Request rel.
+    for (index, rel) in rels.iter().enumerate() {
+        if let Some(request) = rel.request {
+            graph.add_edge(nodes[request as usize], nodes[index], false);
+        }
+    }
     for rule in rules {
         for goal in &rule.body {
             match goal {
@@ -457,7 +464,7 @@ fn stratify(rels: &[PRel], rules: &[PRule]) -> Result<Vec<Stratum>, Vec<Diag>> {
             scc.iter().any(|node| {
                 matches!(
                     rels[node.index()].kind,
-                    RelKind::Derived | RelKind::Request { .. }
+                    RelKind::Derived | RelKind::Request { .. } | RelKind::Answer { .. }
                 )
             })
         })
