@@ -71,4 +71,12 @@ pub trait IService {
     fn call(&mut self, requests: &[Change], dict: &Dict);
     /// Answer rows ready now (Answer rel changes); never blocks.
     fn poll(&mut self, dict: &mut Dict, out: &mut Vec<Change>);
+    /// The stored Answer rows, once, when the runtime opens the store. A service that answers a
+    /// re-ask with a difference starts its memory here.
+    fn seed(&mut self, _answers: &[Change]) {}
+    /// Failures since the last drain; the runtime drains after every `poll` and stops the commit
+    /// with `Diag::Service`.
+    fn errors(&mut self) -> Vec<String> {
+        Vec::new()
+    }
 }

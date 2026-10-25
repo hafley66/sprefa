@@ -28,6 +28,7 @@ pub mod _8_runtime {
     pub mod _2_ryi;
     pub mod _3_core;
     pub mod _4_handle;
+    pub mod _5_run;
 }
 
 pub mod _9_wire;
