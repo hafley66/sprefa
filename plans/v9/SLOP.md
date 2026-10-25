@@ -25,3 +25,5 @@ Slop accepted at review: file, what, why accepted.
 | P4 | `v9/src/_8_runtime/_3_core.rs` | a client +1 on a present Base row raises its count; one -1 later leaves it present | refcount semantics, same as v8 `Held` |
 | P4 | `v9/src/_5_ends.rs` `IService` | no error channel; a failed ryi run answers nothing, message stays in `Ryi::errors` | trait change waits for a second service |
 | P4 | `v9/src/bin/v9.rs` `serve` | no ticker; `tick` untested | no Continuing service exists yet |
+| P5b | `v9/src/_8_runtime/_4_handle.rs` | 400 bodies carry `format!("{diag:?}")` as `diag: string`; clients cannot branch on a Diag variant | a typed Diag union in the contract waits for a client that branches |
+| P5b | `v9/schema/0_wire.tsp` `Cell` | `null` in the union makes every reference `Option<Cell>` in Rust | emitter maps `T \| null` to `Option<T>`, matching openapi3 `nullable` |
