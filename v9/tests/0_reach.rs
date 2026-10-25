@@ -87,7 +87,7 @@ fn ints(core: &Core, sql: &str) -> BTreeSet<Row> {
 }
 
 /// Opens Core on `db` with `answered` seeded from the stored `ryi_edge` rows and `edges` ready as
-/// ryi's next answer for ROOT, then commits ROOT. Returns the core and the reach rows before the
+/// ryi's next answer for ROOT, then commits ROOT and refreshes ryi. Returns the core and the reach rows before the
 /// commit.
 fn run(db: &Path, edges: &[Edge]) -> (Core, BTreeSet<Row>, Vec<(Row, isize)>) {
     let ryi = Rc::new(RefCell::new(Ryi::new(String::new())));
@@ -110,9 +110,13 @@ fn run(db: &Path, edges: &[Edge]) -> (Core, BTreeSet<Row>, Vec<(Row, isize)>) {
         ryi.answered = answered;
         ryi.pending.push((id_of(ROOT.as_bytes()), found));
     }
-    let (_, changed) = core
+    let (_, mut changed) = core
         .commit(vec![("root".into(), vec![Cell::Text(ROOT.into())], 1)])
         .expect("commit");
+    // A rerun's commit of the stored ROOT changes nothing; the refresh polls the edges.
+    if let Some((_, refreshed)) = core.refresh("ryi").expect("refresh") {
+        changed.extend(refreshed);
+    }
     let reach_changes = changed
         .into_iter()
         .filter(|(rel, _, _)| rel == "reach")

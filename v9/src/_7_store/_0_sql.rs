@@ -6,11 +6,18 @@ use crate::_2a_diag::Diag;
 use crate::_3_plan::{Plan, RelId};
 use std::collections::HashSet;
 
-/// `dict` and `meta`; created before `meta` is checked.
+/// `dict` and `meta`; created before `meta` is checked. `meta.event` is the last event written.
 pub const FIXED: &str = "
 CREATE TABLE IF NOT EXISTS dict (id INTEGER PRIMARY KEY, bytes BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS meta (recipe TEXT NOT NULL, plan_hash INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS meta (recipe TEXT NOT NULL, plan_hash INTEGER NOT NULL,
+  event INTEGER NOT NULL DEFAULT 0);
 ";
+
+/// A `meta` created before it had `event` gets the column.
+pub const META_EVENT: &str = "ALTER TABLE meta ADD COLUMN event INTEGER NOT NULL DEFAULT 0";
+
+/// `?1` is the event a write stores.
+pub const META_EVENT_SET: &str = "UPDATE meta SET event = ?1";
 
 /// `?1` is `[[id, hex bytes], ...]`.
 pub const DICT_INSERT: &str = "INSERT INTO dict (id, bytes)
@@ -30,6 +37,8 @@ pub struct RelSql {
     pub insert: String,
     pub delete: String,
     pub select: String,
+    /// The rows of `?1` (same shape as `insert`) that are stored.
+    pub present: String,
 }
 
 /// `"name"` with inner quotes doubled.
@@ -121,6 +130,9 @@ pub fn rel_sql(plan: &Plan) -> Result<Vec<RelSql>, Diag> {
                     "DELETE FROM {table} WHERE ({list}) IN (SELECT {values} FROM json_each(?1))"
                 ),
                 select: format!("SELECT {list} FROM {table}"),
+                present: format!(
+                    "SELECT {list} FROM {table} WHERE ({list}) IN (SELECT {values} FROM json_each(?1))"
+                ),
             }
         })
         .collect())

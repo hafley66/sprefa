@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 differential-dataflow = "=0.25.1"
 timely = "=0.31.0"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled", "hooks"] }
 blake3 = "1"
 serde_json = "1"
 petgraph = "0.8"
@@ -17,11 +17,12 @@ petgraph = "0.8"
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+process_control = "5.2"
 
 [dev-dependencies]
 insta = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
-rusqlite = { version = "0.40", features = ["bundled", "trace"] }
+rusqlite = { version = "0.40", features = ["bundled", "hooks", "trace"] }
 
 [profile.dev]
 opt-level = 1

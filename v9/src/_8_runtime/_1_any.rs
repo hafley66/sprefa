@@ -1,7 +1,8 @@
 //! One enum per end, one variant per impl; the `Recipe` picks the variant.
 
 use crate::_0_id::Dict;
-use crate::_5_ends::{Change, Delta, Diag, Engine, Store, Table};
+use crate::_3_plan::{RelId, Row};
+use crate::_5_ends::{Change, Delta, Diag, Engine, Event, Store, Table};
 use crate::_6_back::_1_dd::Dd;
 use crate::_7_store::_1_sqlite::Sqlite;
 
@@ -37,6 +38,24 @@ impl Store for AnyStore {
     fn query(&self, sql: &str) -> Result<Table, Diag> {
         match self {
             AnyStore::Sqlite(sqlite) => sqlite.query(sql),
+        }
+    }
+
+    fn present(&self, rel: RelId, rows: &[&Row]) -> Result<Vec<Row>, Diag> {
+        match self {
+            AnyStore::Sqlite(sqlite) => sqlite.present(rel, rows),
+        }
+    }
+
+    fn rows(&self, rel: RelId) -> Result<Vec<Row>, Diag> {
+        match self {
+            AnyStore::Sqlite(sqlite) => sqlite.rows(rel),
+        }
+    }
+
+    fn event(&self) -> Event {
+        match self {
+            AnyStore::Sqlite(sqlite) => sqlite.event(),
         }
     }
 }

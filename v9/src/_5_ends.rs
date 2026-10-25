@@ -52,10 +52,18 @@ pub trait Engine {
 pub trait Store {
     /// Base and Answer rows stored, with the dict entries they use.
     fn replay(&mut self, dict: &mut Dict) -> Result<Vec<Change>, Diag>;
-    /// One event's delta, one transaction, one statement per table and sign.
+    /// One event's delta, one transaction, one statement per table and sign; `delta.event`
+    /// becomes the stored last event in the same transaction.
     fn write(&mut self, delta: &Delta, fresh: &[(u64, &[u8])]) -> Result<usize, Diag>;
-    /// Read-only SQL over the relation tables and their `<rel>_text` views.
+    /// Read-only SQL over the relation tables and their `<rel>_text` views; at most a bounded
+    /// row count and run time (`Diag::QueryRows`, `Diag::QueryTime`).
     fn query(&self, sql: &str) -> Result<Table, Diag>;
+    /// The `rows` of `rel` that are stored, in one statement.
+    fn present(&self, rel: RelId, rows: &[&Row]) -> Result<Vec<Row>, Diag>;
+    /// Every stored row of `rel`.
+    fn rows(&self, rel: RelId) -> Result<Vec<Row>, Diag>;
+    /// The last event written; 0 when nothing was ever written.
+    fn event(&self) -> Event;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,8 +79,9 @@ pub trait IService {
     fn call(&mut self, requests: &[Change], dict: &Dict);
     /// Answer rows ready now (Answer rel changes); never blocks.
     fn poll(&mut self, dict: &mut Dict, out: &mut Vec<Change>);
-    /// The stored Answer rows, once, when the runtime opens the store. A service that answers a
-    /// re-ask with a difference starts its memory here.
+    /// The stored Answer rows, when the runtime opens the store and after a commit fails. They
+    /// replace the service's memory; answers and errors not yet polled are dropped. A service
+    /// that answers a re-ask with a difference starts its memory here.
     fn seed(&mut self, _answers: &[Change]) {}
     /// Failures since the last drain; the runtime drains after every `poll` and stops the commit
     /// with `Diag::Service`.

@@ -3,7 +3,7 @@ source: tests/5_runtime.rs
 expression: "(event, show(&delta), &after_commit, reopened == after_commit, event2,\nshow(&delta2), rows(&core), log.borrow().clone(),)"
 ---
 (
-    3,
+    1,
     [
         "edge(a, b) +1",
         "edge(b, c) +1",

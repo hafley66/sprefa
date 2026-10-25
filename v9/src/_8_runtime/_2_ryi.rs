@@ -4,9 +4,12 @@
 use crate::_0_id::Dict;
 use crate::_1_effects::{ryi_call_edges, CallEdge};
 use crate::_3_plan::{Row, Value};
-use crate::_5_ends::{Cadence, Change, IService};
+use crate::_5_ends::{Cadence, Change, Diag, IService};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+
+/// One `ryi fast` run at most; protects the Core thread, which waits on it.
+pub const RYI_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub struct Ryi {
     /// The ryi binary, `_1_effects::v9_ryi` at the binary edge.
@@ -46,9 +49,12 @@ impl IService for Ryi {
         for request in requests.iter().filter(|request| request.diff > 0) {
             let root_id = request.row[0];
             let root = String::from_utf8_lossy(&dict.bytes[&root_id]).into_owned();
-            match ryi_call_edges(&self.binary, Path::new(&root)) {
+            match ryi_call_edges(&self.binary, Path::new(&root), RYI_TIMEOUT) {
                 Ok(edges) => self.pending.push((root_id, edges)),
-                Err(error) => self.errors.push(format!("{root}: {error}")),
+                Err(Diag::Service { message, .. }) => {
+                    self.errors.push(format!("{root}: {message}"))
+                }
+                Err(diag) => self.errors.push(format!("{diag:?}")),
             }
         }
     }
@@ -79,6 +85,9 @@ impl IService for Ryi {
     }
 
     fn seed(&mut self, answers: &[Change]) {
+        self.pending.clear();
+        self.answered.clear();
+        self.errors.clear();
         for answer in answers {
             self.answered
                 .entry(answer.row[0])

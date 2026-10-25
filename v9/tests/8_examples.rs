@@ -206,11 +206,14 @@ fn refresh_after_reopen_moves_stored_answers_to_the_new_ones() {
 fn a_service_error_stops_the_commit_with_a_diag() {
     let services: Vec<Box<dyn IService>> =
         vec![Box::new(Ryi::new("/nonexistent/v9-no-ryi".into()))];
-    let mut core = run(reach(), services, &dir("error").join("core.db")).expect("run");
-    let failed = core.commit(vec![("root".into(), vec![Cell::Text("src".into())], 1)]);
+    let dir = dir("error");
+    let mut core = run(reach(), services, &dir.join("core.db")).expect("run");
+    let root = dir.to_string_lossy().into_owned();
+    let failed = core.commit(vec![("root".into(), vec![Cell::Text(root.clone())], 1)]);
     assert!(
         matches!(&failed, Err(Diag::Service { service, message })
-            if service == "ryi" && message.starts_with("src: spawn /nonexistent/v9-no-ryi")),
+            if service == "ryi"
+                && message.starts_with(&format!("{root}: spawn /nonexistent/v9-no-ryi"))),
         "{failed:?}"
     );
 }

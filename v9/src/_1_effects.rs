@@ -3,7 +3,10 @@
 //! elsewhere).
 #![allow(clippy::disallowed_methods)]
 
+use crate::_2a_diag::Diag;
 use std::path::Path;
+use std::process::Stdio;
+use std::time::Duration;
 
 /// One call edge as ryi names it: `path#name` of caller and callee.
 pub struct CallEdge {
@@ -12,18 +15,48 @@ pub struct CallEdge {
 }
 
 /// `ryi fast .` inside `root`: written cross-file call facts, `resolved_edge` records only.
-pub fn ryi_call_edges(ryi: &str, root: &Path) -> Result<Vec<CallEdge>, String> {
+/// `root` is an absolute path to an existing directory (`Diag::RyiRoot` otherwise); a run past
+/// `timeout` is killed (`Diag::RyiTimeout`). Other failures are `Diag::Service`.
+pub fn ryi_call_edges(ryi: &str, root: &Path, timeout: Duration) -> Result<Vec<CallEdge>, Diag> {
+    use process_control::{ChildExt, Control};
+    let shown = root.to_string_lossy().into_owned();
+    let refuse = |problem| Diag::RyiRoot {
+        root: shown.clone(),
+        problem,
+    };
+    if !root.is_absolute() {
+        return Err(refuse("not absolute"));
+    }
+    if !root.is_dir() {
+        return Err(refuse("not a directory"));
+    }
+    let failed = |message: String| Diag::Service {
+        service: "ryi".into(),
+        message,
+    };
     let output = std::process::Command::new(ryi)
         .args(["fast", "."])
         .current_dir(root)
-        .output()
-        .map_err(|error| format!("spawn {ryi}: {error}"))?;
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| failed(format!("spawn {ryi}: {error}")))?
+        .controlled_with_output()
+        .time_limit(timeout)
+        .terminate_for_timeout()
+        .wait()
+        .map_err(|error| failed(format!("wait {ryi}: {error}")))?
+        .ok_or_else(|| Diag::RyiTimeout {
+            root: shown.clone(),
+            max_ms: timeout.as_millis() as u64,
+        })?;
     if !output.status.success() {
-        return Err(format!(
+        return Err(failed(format!(
             "{ryi} fast exited {:?}: {}",
             output.status.code(),
             String::from_utf8_lossy(&output.stderr)
-        ));
+        )));
     }
     let mut edges = Vec::new();
     for line in output.stdout.split(|byte| *byte == b'\n') {
@@ -31,7 +64,7 @@ pub fn ryi_call_edges(ryi: &str, root: &Path) -> Result<Vec<CallEdge>, String> {
             continue;
         }
         let record: serde_json::Value =
-            serde_json::from_slice(line).map_err(|error| format!("ryi line: {error}"))?;
+            serde_json::from_slice(line).map_err(|error| failed(format!("ryi line: {error}")))?;
         if record["record"] != "resolved_edge" {
             continue;
         }

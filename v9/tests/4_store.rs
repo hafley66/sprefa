@@ -310,3 +310,72 @@ fn a_multi_row_delta_is_one_statement_per_table_and_sign() {
     assert_eq!(written, 4 + 16);
     insta::assert_debug_snapshot!(statements);
 }
+
+#[test]
+fn query_stops_at_the_row_cap_and_the_time_budget() {
+    let path = dir("query_bounds");
+    let mut dict = Dict::default();
+    let plan = plan(program(), &mut dict);
+    let mut store = open(&path, &plan, RECIPE).expect("open");
+    store.max_rows = 3;
+    store.max_time = std::time::Duration::from_millis(100);
+    let counted = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 30000000) \
+                   SELECT count(*) FROM c";
+    let started = std::time::Instant::now();
+    let out: Vec<_> = [
+        "SELECT value FROM json_each('[1, 2, 3]')",
+        "SELECT value FROM json_each('[1, 2, 3, 4]')",
+        counted,
+        "SELECT value FROM json_each('[5]')",
+    ]
+    .iter()
+    .map(|sql| (*sql, store.query(sql)))
+    .collect();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+    insta::assert_debug_snapshot!(out);
+}
+
+#[test]
+fn presence_is_one_statement_per_call() {
+    let path = dir("presence");
+    let mut dict = Dict::default();
+    let plan = plan(program(), &mut dict);
+    let mut store = open(&path, &plan, RECIPE).expect("open");
+    store
+        .write(&first(&plan, &mut dict), &dict.take_new())
+        .expect("seed");
+    let asked: Vec<Change> = [["a", "b"], ["a", "z"], ["b", "c"], ["z", "z"]]
+        .iter()
+        .map(|[from, to]| change(&plan, &mut dict, "edge", &[T(from), T(to)], 1))
+        .collect();
+    let rows: Vec<&Row> = asked.iter().map(|change| &change.row).collect();
+    let lit = plan.rels.iter().position(|r| r.name == "lit").expect("lit") as u32;
+    store.db.trace_v2(
+        rusqlite::trace::TraceEventCodes::SQLITE_TRACE_PROFILE,
+        Some(traced),
+    );
+    let present = store.present(asked[0].rel, &rows).expect("present");
+    let unit = store.present(lit, &[&Vec::new()]).expect("present unit");
+    store
+        .db
+        .trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
+    let statements = TRACED.with(|traced| traced.take());
+    let shown: Vec<Change> = present
+        .into_iter()
+        .map(|row| Change {
+            rel: asked[0].rel,
+            row,
+            diff: 1,
+        })
+        .collect();
+    insta::assert_debug_snapshot!((
+        decode(&plan, &dict, &shown),
+        unit,
+        statements,
+        store.event,
+    ));
+}

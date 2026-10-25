@@ -1,0 +1,22 @@
+---
+source: tests/5_runtime.rs
+expression: "(seen, rows(&core))"
+---
+(
+    [
+        "[\"edge(a, b) +1\", \"reach(a, b) +1\"]",
+        "[]",
+        "[]",
+        "[\"edge(x, y) +1\", \"reach(x, y) +1\"]",
+        "[]",
+        "[\"edge(a, b) -1\", \"reach(a, b) -1\"]",
+        "Commit { change: 0, rel: \"edge\", problem: \"diff\", found: \"2\" }",
+        "Commit { change: 0, rel: \"edge\", problem: \"diff\", found: \"0\" }",
+        "Commit { change: 0, rel: \"edge\", problem: \"diff\", found: \"9223372036854775807\" }",
+        "Commit { change: 1, rel: \"edge\", problem: \"diff\", found: \"-9223372036854775808\" }",
+    ],
+    [
+        "edge(x, y)",
+        "reach(x, y)",
+    ],
+)

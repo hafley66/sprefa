@@ -77,6 +77,8 @@ impl IService for Len {
     }
 
     fn seed(&mut self, answers: &[Change]) {
+        self.ready.clear();
+        self.answered.clear();
         for answer in answers {
             self.answered
                 .entry(answer.row[..1].to_vec())
