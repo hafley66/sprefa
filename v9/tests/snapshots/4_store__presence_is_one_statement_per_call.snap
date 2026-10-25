@@ -1,0 +1,18 @@
+---
+source: tests/4_store.rs
+expression: "(decode(&plan, &dict, &shown), unit, statements, store.event,)"
+---
+(
+    [
+        "edge(b, c) +1",
+        "edge(a, b) +1",
+    ],
+    [
+        [],
+    ],
+    [
+        "SELECT \"from\", \"to\" FROM \"edge\" WHERE (\"from\", \"to\") IN (SELECT value->>0, value->>1 FROM json_each(?1))",
+        "SELECT unit FROM \"lit\" WHERE (unit) IN (SELECT 0 FROM json_each(?1))",
+    ],
+    1,
+)

@@ -1,0 +1,10 @@
+---
+source: tests/5_runtime.rs
+expression: found
+---
+[
+    "relative/root: Err(RyiRoot { root: \"relative/root\", problem: \"not absolute\" })",
+    "DIR/missing: Err(RyiRoot { root: \"DIR/missing\", problem: \"not a directory\" })",
+    "DIR/slow-ryi: Err(RyiRoot { root: \"DIR/slow-ryi\", problem: \"not a directory\" })",
+    "DIR: Err(RyiTimeout { root: \"DIR\", max_ms: 200 })",
+]

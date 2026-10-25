@@ -68,7 +68,8 @@ pub enum Diag {
     },
     Store(String),
     /// A client change the runtime does not take; `change` indexes the commit's changes.
-    /// `problem` is "unknown rel", "kind", "arity" or "cell type".
+    /// `problem` is "unknown rel", "kind", "arity", "cell type" or "diff" (a diff other than +1
+    /// or -1).
     Commit {
         change: usize,
         rel: String,
@@ -82,6 +83,25 @@ pub enum Diag {
     Service {
         service: String,
         message: String,
+    },
+    /// A query returned more than `max_rows` rows.
+    QueryRows {
+        max_rows: usize,
+    },
+    /// A query ran longer than `max_ms` milliseconds and was interrupted.
+    QueryTime {
+        max_ms: u64,
+    },
+    /// The ryi root is not an absolute path to an existing directory; `problem` is "not absolute"
+    /// or "not a directory".
+    RyiRoot {
+        root: String,
+        problem: &'static str,
+    },
+    /// ryi ran past `max_ms` milliseconds in `root` and was killed.
+    RyiTimeout {
+        root: String,
+        max_ms: u64,
     },
     /// `problem` is "unknown key", "unknown value", "duplicate key" or "no '='".
     Recipe {

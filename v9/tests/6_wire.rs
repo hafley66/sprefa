@@ -313,7 +313,7 @@ async fn handle_answers_diags_with_the_declared_models() {
                 "route": "POST /commit",
                 "status": 200,
                 "body": {
-                    "event": 2,
+                    "event": 1,
                     "changes": [
                         { "rel": "edge", "cells": ["a", "b"], "diff": 1 },
                         { "rel": "reach", "cells": ["a", "b"], "diff": 1 },

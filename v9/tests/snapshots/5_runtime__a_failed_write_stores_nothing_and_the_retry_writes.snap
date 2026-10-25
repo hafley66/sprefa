@@ -1,0 +1,40 @@
+---
+source: tests/5_runtime.rs
+expression: "(locked, after_locked, show(&retry), chain_counts(&core),\nstate.borrow().calls.clone(),)"
+---
+(
+    Err(
+        Store(
+            "database is locked",
+        ),
+    ),
+    [
+        "root Int(0)",
+        "ask Int(0)",
+        "got Int(0)",
+        "path Int(0)",
+    ],
+    [
+        "root(1) +1",
+        "ask(1) +1",
+        "got(1, 0, 1) +1",
+        "got(1, 1, 2) +1",
+        "path(0, 1) +1",
+        "path(0, 2) +1",
+        "path(1, 2) +1",
+    ],
+    [
+        "root Int(1)",
+        "ask Int(1)",
+        "got Int(2)",
+        "path Int(3)",
+    ],
+    [
+        [
+            1,
+        ],
+        [
+            1,
+        ],
+    ],
+)

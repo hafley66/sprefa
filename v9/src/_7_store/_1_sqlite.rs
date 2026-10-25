@@ -3,16 +3,33 @@
 use crate::_0_id::Dict;
 use crate::_2_ir::RelKind;
 use crate::_2a_diag::Diag;
-use crate::_3_plan::{Plan, Row};
-use crate::_5_ends::{Cell, Change, Delta, Store, Table};
-use crate::_7_store::_0_sql::{rel_sql, RelSql, DICT_INSERT, FIXED};
+use crate::_3_plan::{Plan, RelId, Row};
+use crate::_5_ends::{Cell, Change, Delta, Event, Store, Table};
+use crate::_7_store::_0_sql::{
+    rel_sql, RelSql, DICT_INSERT, FIXED, META_EVENT, META_EVENT_SET,
+};
 use rusqlite::types::ValueRef;
-use rusqlite::Connection;
+use rusqlite::{Connection, ErrorCode};
+use crate::_1_effects::now;
+use std::time::Duration;
 
 pub struct Sqlite {
     pub db: Connection,
     pub rels: Vec<RelSql>,
+    /// Rows one `query` may return; `MAX_QUERY_ROWS` at open.
+    pub max_rows: usize,
+    /// Time one `query` may run; `MAX_QUERY_TIME` at open.
+    pub max_time: Duration,
+    /// `meta.event`: the last event written.
+    pub event: Event,
 }
+
+/// Rows one `query` returns at most; protects the Core thread's memory and the wire body.
+pub const MAX_QUERY_ROWS: usize = 1 << 18;
+/// Time one `query` runs at most; protects the Core thread, which serves every client.
+pub const MAX_QUERY_TIME: Duration = Duration::from_secs(2);
+/// SQLite virtual machine steps between two checks of the query deadline.
+const PROGRESS_STEPS: i32 = 1000;
 
 fn sql_error(error: rusqlite::Error) -> Diag {
     Diag::Store(error.to_string())
@@ -25,25 +42,39 @@ impl Sqlite {
         let rels = rel_sql(plan)?;
         let tx = db.transaction().map_err(sql_error)?;
         tx.execute_batch(FIXED).map_err(sql_error)?;
-        let stored: Vec<(String, i64)> = tx
-            .prepare("SELECT recipe, plan_hash FROM meta")
+        let has_event: bool = tx
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('meta') WHERE name = 'event'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(sql_error)?;
+        if !has_event {
+            tx.execute_batch(META_EVENT).map_err(sql_error)?;
+        }
+        let stored: Vec<(String, i64, i64)> = tx
+            .prepare("SELECT recipe, plan_hash, event FROM meta")
             .and_then(|mut statement| {
                 statement
-                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
                     .collect()
             })
             .map_err(sql_error)?;
-        match stored.as_slice() {
+        let event = match stored.as_slice() {
             [] => {
                 tx.execute(
                     "INSERT INTO meta (recipe, plan_hash) VALUES (?1, ?2)",
                     rusqlite::params![recipe, plan.hash as i64],
                 )
                 .map_err(sql_error)?;
+                0
             }
-            [(stored_recipe, stored_hash)]
-                if stored_recipe == recipe && *stored_hash as u64 == plan.hash => {}
-            [(stored_recipe, stored_hash)] => {
+            [(stored_recipe, stored_hash, event)]
+                if stored_recipe == recipe && *stored_hash as u64 == plan.hash =>
+            {
+                *event as Event
+            }
+            [(stored_recipe, stored_hash, _)] => {
                 return Err(Diag::Mismatch {
                     stored_recipe: stored_recipe.clone(),
                     stored_hash: *stored_hash as u64,
@@ -52,11 +83,35 @@ impl Sqlite {
                 })
             }
             many => return Err(Diag::Store(format!("meta holds {} rows", many.len()))),
-        }
+        };
         let ddl: String = rels.iter().map(|rel| rel.create.as_str()).collect();
         tx.execute_batch(&ddl).map_err(sql_error)?;
         tx.commit().map_err(sql_error)?;
-        Ok(Sqlite { db, rels })
+        Ok(Sqlite {
+            db,
+            rels,
+            max_rows: MAX_QUERY_ROWS,
+            max_time: MAX_QUERY_TIME,
+            event,
+        })
+    }
+
+    /// Rows of `rel` from its `select` or `present` statement, `?1` bound when given.
+    fn read(&self, rel: RelId, sql: &str, json: Option<String>) -> Result<Vec<Row>, Diag> {
+        let Some(declared) = self.rels.get(rel as usize) else {
+            return Err(Diag::Store(format!("no rel {rel}")));
+        };
+        let mut statement = self.db.prepare_cached(sql).map_err(sql_error)?;
+        let read = |row: &rusqlite::Row<'_>| {
+            (0..declared.width)
+                .map(|slot| row.get::<_, i64>(slot).map(|value| value as u64))
+                .collect::<rusqlite::Result<Row>>()
+        };
+        let rows = match json {
+            Some(json) => statement.query_map([json], read),
+            None => statement.query_map([], read),
+        };
+        rows.and_then(|rows| rows.collect()).map_err(sql_error)
     }
 }
 
@@ -102,18 +157,10 @@ impl Store for Sqlite {
             if !matches!(rel.kind, RelKind::Base | RelKind::Answer { .. }) {
                 continue;
             }
-            let mut statement = self.db.prepare(&rel.select).map_err(sql_error)?;
-            let rows = statement
-                .query_map([], |row| {
-                    (0..rel.width)
-                        .map(|slot| row.get::<_, i64>(slot).map(|value| value as u64))
-                        .collect::<rusqlite::Result<Row>>()
-                })
-                .map_err(sql_error)?;
-            for row in rows {
+            for row in self.read(rel.rel, &rel.select, None)? {
                 changes.push(Change {
                     rel: rel.rel,
-                    row: row.map_err(sql_error)?,
+                    row,
                     diff: 1,
                 });
             }
@@ -182,18 +229,69 @@ impl Store for Sqlite {
                 written += count;
             }
         }
+        tx.prepare_cached(META_EVENT_SET)
+            .and_then(|mut statement| statement.execute([delta.event as i64]))
+            .map_err(sql_error)?;
         tx.commit().map_err(sql_error)?;
+        self.event = delta.event;
         Ok(written)
     }
 
     /// One statement, read-only and returning columns; anything else (a write, BEGIN, ATTACH, a
-    /// second statement) is `Diag::Store`.
+    /// second statement) is `Diag::Store`. More than `max_rows` rows is `Diag::QueryRows`; a run
+    /// past `max_time` is interrupted and is `Diag::QueryTime`.
     fn query(&self, sql: &str) -> Result<Table, Diag> {
-        let mut statement = self.db.prepare(sql).map_err(sql_error)?;
+        let deadline = now() + self.max_time;
+        self.db
+            .progress_handler(PROGRESS_STEPS, Some(move || now() > deadline))
+            .map_err(sql_error)?;
+        let table = self.bounded_query(sql);
+        self.db
+            .progress_handler(0, None::<fn() -> bool>)
+            .map_err(sql_error)?;
+        table.map_err(|error| match error {
+            rusqlite::Error::SqliteFailure(failure, _)
+                if failure.code == ErrorCode::OperationInterrupted =>
+            {
+                Diag::QueryTime {
+                    max_ms: self.max_time.as_millis() as u64,
+                }
+            }
+            other => sql_error(other),
+        })?
+    }
+
+    fn present(&self, rel: RelId, rows: &[&Row]) -> Result<Vec<Row>, Diag> {
+        let Some(declared) = self.rels.get(rel as usize) else {
+            return Err(Diag::Store(format!("no rel {rel}")));
+        };
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.read(rel, &declared.present, Some(rows_json(rows)))
+    }
+
+    fn rows(&self, rel: RelId) -> Result<Vec<Row>, Diag> {
+        let Some(declared) = self.rels.get(rel as usize) else {
+            return Err(Diag::Store(format!("no rel {rel}")));
+        };
+        self.read(rel, &declared.select, None)
+    }
+
+    fn event(&self) -> Event {
+        self.event
+    }
+}
+
+impl Sqlite {
+    /// `query` under the progress handler: SQLite errors stay `rusqlite::Error` so the caller
+    /// can tell an interrupt; the row cap and the read-only check are already `Diag`.
+    fn bounded_query(&self, sql: &str) -> rusqlite::Result<Result<Table, Diag>> {
+        let mut statement = self.db.prepare(sql)?;
         if !statement.readonly() || statement.column_count() == 0 {
-            return Err(Diag::Store(format!(
+            return Ok(Err(Diag::Store(format!(
                 "query is not a read-only select: {sql}"
-            )));
+            ))));
         }
         let columns: Vec<String> = statement
             .column_names()
@@ -201,14 +299,21 @@ impl Store for Sqlite {
             .map(String::from)
             .collect();
         let width = columns.len();
-        let rows = statement
-            .query_map([], |row| {
+        let mut rows = Vec::new();
+        let mut cursor = statement.query([])?;
+        // Bounded: returns once `rows` holds `max_rows` and another row comes.
+        while let Some(row) = cursor.next()? {
+            if rows.len() == self.max_rows {
+                return Ok(Err(Diag::QueryRows {
+                    max_rows: self.max_rows,
+                }));
+            }
+            rows.push(
                 (0..width)
                     .map(|slot| row.get_ref(slot).map(cell))
-                    .collect::<rusqlite::Result<Vec<Cell>>>()
-            })
-            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-            .map_err(sql_error)?;
-        Ok(Table { columns, rows })
+                    .collect::<rusqlite::Result<Vec<Cell>>>()?,
+            );
+        }
+        Ok(Ok(Table { columns, rows }))
     }
 }

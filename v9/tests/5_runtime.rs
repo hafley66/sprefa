@@ -19,7 +19,8 @@ use v9::_2_ir::*;
 use v9::_4_recipe::Recipe;
 use v9::_5_ends::{Bounds, Cadence, Cell, Change, Diag, IService};
 use v9::_8_runtime::_0_programs::reach;
-use v9::_8_runtime::_2_ryi::Ryi;
+use v9::_8_runtime::_1_any::AnyStore;
+use v9::_8_runtime::_2_ryi::{Ryi, RYI_TIMEOUT};
 use v9::_8_runtime::_3_core::{build, Core, Named, MAX_SERVICE_ROUNDS};
 use v9::_8_runtime::_4_handle::start;
 use v9::_9_wire::http_auto::router;
@@ -511,7 +512,7 @@ fn ryi_service_answers_the_reach_program() {
             })
             .collect()
     };
-    let edges: BTreeSet<(String, String)> = ryi_call_edges(&v9_ryi(), &root)
+    let edges: BTreeSet<(String, String)> = ryi_call_edges(&v9_ryi(), &root, RYI_TIMEOUT)
         .expect("ryi")
         .into_iter()
         .map(|edge| (edge.caller, edge.callee))
@@ -519,4 +520,340 @@ fn ryi_service_answers_the_reach_program() {
     assert_eq!(decoded("SELECT caller, callee FROM edge_text"), edges);
     let reach = decoded("SELECT caller, callee FROM reach_text");
     insta::assert_debug_snapshot!(reach);
+}
+
+/// What `Chain` answers and every root it was asked, shared with the test.
+#[derive(Default)]
+struct ChainState {
+    /// Each asked root `r` answers `(r, i, i + 1)` for `i < len`.
+    len: u64,
+    /// A call while set answers nothing and reports "down".
+    fail: bool,
+    /// A call while set opens this db and holds an exclusive lock in `locker`.
+    lock: Option<PathBuf>,
+    locker: Option<rusqlite::Connection>,
+    /// Asserted roots per `call`.
+    calls: Vec<Vec<i64>>,
+}
+
+/// A Once service answering the difference against its memory, like `Ryi`.
+struct Chain {
+    state: Rc<RefCell<ChainState>>,
+    ready: Vec<Change>,
+    answered: std::collections::BTreeMap<u64, BTreeSet<Vec<u64>>>,
+    errors: Vec<String>,
+}
+
+impl IService for Chain {
+    fn service(&self) -> &str {
+        "chain"
+    }
+    fn cadence(&self) -> Cadence {
+        Cadence::Once
+    }
+    #[allow(clippy::disallowed_methods)]
+    fn call(&mut self, requests: &[Change], _dict: &Dict) {
+        let mut state = self.state.borrow_mut();
+        let asked: Vec<&Change> = requests.iter().filter(|r| r.diff > 0).collect();
+        state.calls.push(asked.iter().map(|r| r.row[0] as i64).collect());
+        if let Some(path) = state.lock.take() {
+            let locker = rusqlite::Connection::open(path).expect("locker");
+            locker.execute_batch("BEGIN EXCLUSIVE").expect("lock");
+            state.locker = Some(locker);
+        }
+        for request in asked {
+            if state.fail {
+                self.errors.push("down".into());
+                continue;
+            }
+            let root = request.row[0];
+            let rows: BTreeSet<Vec<u64>> = (0..state.len).map(|i| vec![root, i, i + 1]).collect();
+            let before = self.answered.remove(&root).unwrap_or_default();
+            for (from, minus, diff) in [(&rows, &before, 1), (&before, &rows, -1)] {
+                self.ready.extend(from.difference(minus).map(|row| Change {
+                    rel: 0,
+                    row: row.clone(),
+                    diff,
+                }));
+            }
+            self.answered.insert(root, rows);
+        }
+    }
+    fn poll(&mut self, _dict: &mut Dict, out: &mut Vec<Change>) {
+        out.append(&mut self.ready);
+    }
+    fn seed(&mut self, answers: &[Change]) {
+        self.ready.clear();
+        self.answered.clear();
+        for answer in answers {
+            self.answered
+                .entry(answer.row[0])
+                .or_default()
+                .insert(answer.row.clone());
+        }
+    }
+    fn errors(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.errors)
+    }
+}
+
+/// `root` asks `chain`; `path` is the transitive closure of the answered links; `seven` asks 7
+/// with no input.
+fn chain_program(seven: bool) -> Program {
+    let mut rules = vec![
+        rule(atom("ask", [v("r")]), [pos("root", [v("r")])]),
+        rule(
+            atom("path", [v("a"), v("b")]),
+            [pos("got", [v("r"), v("a"), v("b")])],
+        ),
+        rule(
+            atom("path", [v("a"), v("c")]),
+            [
+                pos("path", [v("a"), v("b")]),
+                pos("got", [v("r"), v("b"), v("c")]),
+            ],
+        ),
+    ];
+    if seven {
+        rules.push(rule(atom("ask", [int(7)]), []));
+    }
+    Program {
+        rels: vec![
+            rel("root", [("r", Int)]),
+            request("chain", "ask", [("r", Int)]),
+            answer("chain", "got", [("r", Int), ("a", Int), ("b", Int)]),
+            derived("path", [("a", Int), ("b", Int)]),
+        ],
+        rules,
+    }
+}
+
+fn chain_core(
+    db: &Path,
+    state: &Rc<RefCell<ChainState>>,
+    seven: bool,
+    max_rounds: u32,
+) -> Result<Core, Vec<Diag>> {
+    let chain = Chain {
+        state: Rc::clone(state),
+        ready: Vec::new(),
+        answered: Default::default(),
+        errors: Vec::new(),
+    };
+    build(
+        Recipe::default(),
+        chain_program(seven),
+        db,
+        vec![Box::new(chain)],
+        Bounds { max_rounds },
+    )
+}
+
+/// Row counts of `root`, `ask`, `got`, `path`, and the stored event.
+fn chain_counts(core: &Core) -> Vec<String> {
+    ["root", "ask", "got", "path"]
+        .iter()
+        .map(|rel| {
+            let table = core
+                .query(&format!("SELECT count(*) FROM {rel}"))
+                .expect("count");
+            format!("{rel} {:?}", table.rows[0][0])
+        })
+        .collect()
+}
+
+fn root(r: i64, diff: isize) -> Named {
+    named("root", vec![Cell::Int(r)], diff)
+}
+
+#[test]
+fn client_diffs_are_set_operations_at_the_boundary() {
+    let dir = dir("set_ops");
+    let log = Log::default();
+    let mut core = open(&dir.join("core.db"), &log);
+    let edge = |a: &str, b: &str, diff| named("edge", vec![t(a), t(b)], diff);
+    let mut seen = Vec::new();
+    for changes in [
+        vec![edge("a", "b", 1), edge("a", "b", 1)],
+        vec![edge("a", "b", 1)],
+        vec![edge("x", "y", -1)],
+        vec![edge("x", "y", 1)],
+        vec![edge("p", "q", 1), edge("p", "q", -1)],
+        vec![edge("a", "b", -1)],
+        vec![edge("x", "y", 2)],
+        vec![edge("x", "y", 0)],
+        vec![edge("x", "y", isize::MAX)],
+        vec![edge("x", "y", -1), edge("x", "y", isize::MIN)],
+    ] {
+        seen.push(match core.commit(changes) {
+            Ok((_, delta)) => format!("{:?}", show(&delta)),
+            Err(diag) => format!("{diag:?}"),
+        });
+    }
+    insta::assert_debug_snapshot!((seen, rows(&core)));
+}
+
+#[test]
+fn a_failed_commit_stores_nothing_and_the_retry_asks_again() {
+    let dir = dir("failed_commit");
+    let db = dir.join("core.db");
+    let state = Rc::new(RefCell::new(ChainState {
+        len: 2,
+        fail: true,
+        ..Default::default()
+    }));
+    let mut core = chain_core(&db, &state, false, 8).expect("build");
+    let down = core.commit(vec![root(1, 1)]);
+    let after_down = chain_counts(&core);
+    state.borrow_mut().fail = false;
+    let (_, retry) = core.commit(vec![root(1, 1)]).expect("retry");
+    let after_retry = chain_counts(&core);
+    drop(core);
+    let core = chain_core(&db, &state, false, 8).expect("reopen");
+    let reopened = chain_counts(&core);
+    insta::assert_debug_snapshot!((
+        down,
+        after_down,
+        show(&retry),
+        after_retry,
+        reopened,
+        state.borrow().calls.clone(),
+    ));
+}
+
+#[test]
+fn a_failed_open_writes_nothing_and_the_next_open_serves() {
+    let dir = dir("failed_open");
+    let db = dir.join("core.db");
+    let state = Rc::new(RefCell::new(ChainState {
+        len: 2,
+        fail: true,
+        ..Default::default()
+    }));
+    let failed = chain_core(&db, &state, true, 8).err();
+    state.borrow_mut().fail = false;
+    let core = chain_core(&db, &state, true, 8).expect("reopen");
+    insta::assert_debug_snapshot!((failed, chain_counts(&core), state.borrow().calls.clone()));
+}
+
+#[test]
+fn a_fixpoint_limit_after_a_service_round_stores_nothing() {
+    let dir = dir("limit_after_service");
+    let db = dir.join("core.db");
+    let state = Rc::new(RefCell::new(ChainState {
+        len: 40,
+        ..Default::default()
+    }));
+    let mut core = chain_core(&db, &state, false, 8).expect("build");
+    let limited = core.commit(vec![root(1, 1)]);
+    let after_limit = chain_counts(&core);
+    state.borrow_mut().len = 3;
+    let (_, retry) = core.commit(vec![root(1, 1)]).expect("retry");
+    insta::assert_debug_snapshot!((
+        limited,
+        after_limit,
+        show(&retry),
+        chain_counts(&core),
+        state.borrow().calls.clone(),
+    ));
+}
+
+#[test]
+fn a_failed_write_stores_nothing_and_the_retry_writes() {
+    let dir = dir("failed_write");
+    let db = dir.join("core.db");
+    let state = Rc::new(RefCell::new(ChainState {
+        len: 2,
+        lock: Some(db.clone()),
+        ..Default::default()
+    }));
+    let mut core = chain_core(&db, &state, false, 8).expect("build");
+    let AnyStore::Sqlite(sqlite) = &core.store;
+    sqlite.db.busy_timeout(Duration::ZERO).expect("busy timeout");
+    let locked = core.commit(vec![root(1, 1)]);
+    let locker = state.borrow_mut().locker.take().expect("locker");
+    locker.execute_batch("COMMIT").expect("unlock");
+    drop(locker);
+    let after_locked = chain_counts(&core);
+    let (_, retry) = core.commit(vec![root(1, 1)]).expect("retry");
+    insta::assert_debug_snapshot!((
+        locked,
+        after_locked,
+        show(&retry),
+        chain_counts(&core),
+        state.borrow().calls.clone(),
+    ));
+}
+
+#[test]
+fn event_ids_continue_after_reopen() {
+    let dir = dir("events");
+    let db = dir.join("core.db");
+    let log = Log::default();
+    let mut core = open(&db, &log);
+    let edge = |a: &str, b: &str| vec![named("edge", vec![t(a), t(b)], 1)];
+    let mut events = vec![core.commit(edge("a", "b")).expect("1").0];
+    events.push(core.commit(edge("b", "c")).expect("2").0);
+    events.push(core.commit(edge("b", "c")).expect("no-op").0);
+    drop(core);
+    let mut core = open(&db, &log);
+    events.push(core.commit(edge("c", "d")).expect("3").0);
+    assert_eq!(events, [1, 2, 2, 3]);
+}
+
+/// `size` answers every re-ask with +1 rows already stored; `chain` answers the difference.
+#[test]
+fn refresh_is_none_when_nothing_changed() {
+    let dir = dir("refresh_none");
+    let log = Log::default();
+    let mut core = open(&dir.join("core.db"), &log);
+    core.commit(vec![named("want", vec![t("x.rs")], 1)])
+        .expect("want");
+    let restated = core.refresh("size");
+    let state = Rc::new(RefCell::new(ChainState {
+        len: 2,
+        ..Default::default()
+    }));
+    let mut core = chain_core(&dir.join("chain.db"), &state, false, 8).expect("build");
+    core.commit(vec![root(1, 1)]).expect("commit");
+    let same = core.refresh("chain");
+    state.borrow_mut().len = 3;
+    let longer = core
+        .refresh("chain")
+        .map(|changed| changed.map(|(_, delta)| show(&delta)));
+    insta::assert_debug_snapshot!((
+        restated,
+        same,
+        longer,
+        log.borrow().clone(),
+        state.borrow().calls.clone()
+    ));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)]
+fn ryi_runs_only_in_an_absolute_directory_and_stops_at_its_timeout() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = dir("ryi_bounds");
+    let slow = dir.join("slow-ryi");
+    std::fs::write(&slow, "#!/bin/sh\nsleep 5\n").expect("script");
+    std::fs::set_permissions(&slow, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let slow = slow.to_string_lossy().into_owned();
+    let tag = |path: &Path| path.to_string_lossy().replace(&*dir.to_string_lossy(), "DIR");
+    let started = std::time::Instant::now();
+    let found: Vec<String> = [
+        PathBuf::from("relative/root"),
+        dir.join("missing"),
+        dir.join("slow-ryi"),
+        dir.clone(),
+    ]
+    .iter()
+    .map(|root| {
+        let found = ryi_call_edges(&slow, root, Duration::from_millis(200));
+        format!("{}: {:?}", tag(root), found.map(|edges| edges.len()))
+            .replace(&*dir.to_string_lossy(), "DIR")
+    })
+    .collect();
+    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    insta::assert_debug_snapshot!(found);
 }

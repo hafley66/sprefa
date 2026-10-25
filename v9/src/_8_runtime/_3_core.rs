@@ -10,10 +10,9 @@ use crate::_5_ends::{
     Bounds, Cadence, Cell, Change, Delta, Diag, Diff, Engine, Event, IService, Store, Table,
 };
 use crate::_6_back::_1_dd::Dd;
-use crate::_7_store::_0_sql::quote;
 use crate::_7_store::_1_sqlite::Sqlite;
 use crate::_8_runtime::_1_any::{AnyEngine, AnyStore};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 /// Steps per commit or tick: a request, answer, request chain that keeps producing answers
@@ -39,9 +38,14 @@ pub struct Core {
     pub services: Vec<Box<dyn IService>>,
     pub routes: Vec<Route>,
     pub ids: HashMap<String, RelId>,
+    /// The engine's bounds, kept for a rebuild after a failed step back.
+    pub bounds: Bounds,
+    /// Set when the reseed after a failed commit could not read the store; the next commit, tick
+    /// or refresh reseeds first.
+    pub stale: bool,
 }
 
-/// Replays the store into the engine (event 1, not written). Every Request rel's service must be
+/// Replays the store into the engine (not written). Every Request rel's service must be
 /// in `services`; a service no Request rel names is dropped.
 pub fn build(
     recipe: Recipe,
@@ -121,15 +125,17 @@ pub fn build(
         services: kept,
         routes,
         ids,
+        bounds,
+        stale: false,
     };
     core.open().map_err(|diag| vec![diag])?;
     Ok(core)
 }
 
 impl Core {
-    /// Replays Base and Answer rows and seeds each service with its stored answers. An empty
-    /// store with rows derived from no input (constant bodies) writes them once and serves their
-    /// requests.
+    /// Replays Base and Answer rows and seeds each service with its stored answers. A store that
+    /// was never written takes the rows derived from no input (constant bodies) and their
+    /// requests' answers as one commit; nothing is written unless that commit succeeds.
     fn open(&mut self) -> Result<(), Diag> {
         let replay = self.store.replay(&mut self.dict)?;
         for (route, service) in self.routes.iter().zip(&mut self.services) {
@@ -140,31 +146,22 @@ impl Core {
                 .collect();
             service.seed(&answers);
         }
-        let empty = replay.is_empty();
-        let delta = self.engine.step(replay)?;
-        let Some(first) = delta.changes.first().filter(|_| empty) else {
-            return Ok(());
-        };
-        let table = self.store.query(&format!(
-            "SELECT count(*) FROM {}",
-            quote(&self.plan.rels[first.rel as usize].name)
-        ))?;
-        if table.rows != [[Cell::Int(0)]] {
-            return Ok(());
-        }
-        self.write(&delta)?;
-        self.route(&delta);
-        let answers = self.poll(|_, _| true)?;
-        if !answers.is_empty() {
-            self.rounds(answers)?;
+        if self.store.event() == 0 && replay.is_empty() {
+            self.rounds(Vec::new())?;
+        } else {
+            self.engine.step(replay)?;
         }
         Ok(())
     }
 
-    /// Base rows by name; Derived, Request and Answer rels are `Diag::Commit`. Returns every
-    /// rel's change over all rounds of this commit, consolidated.
+    /// Base rows by name; Derived, Request and Answer rels are `Diag::Commit`. Each diff is +1 or
+    /// -1 (`Diag::Commit` "diff" otherwise) and the commit is a set operation: per row the diffs
+    /// are summed, a positive sum inserts a row the store lacks, a negative sum deletes a row the
+    /// store holds, anything else changes nothing. Returns every rel's change over all rounds of
+    /// this commit, consolidated; a commit that changes nothing returns the last event.
     pub fn commit(&mut self, changes: Vec<Named>) -> Result<(Event, Vec<Named>), Diag> {
-        let mut input = Vec::with_capacity(changes.len());
+        self.fresh_services()?;
+        let mut sums: BTreeMap<RelId, BTreeMap<Row, Diff>> = BTreeMap::new();
         let mut texts = Vec::new();
         for (index, (rel, cells, diff)) in changes.iter().enumerate() {
             let refuse = |problem, found: String| Diag::Commit {
@@ -186,6 +183,9 @@ impl Core {
                     format!("{} cells for {} cols", cells.len(), declared.cols.len()),
                 ));
             }
+            if !matches!(diff, 1 | -1) {
+                return Err(refuse("diff", diff.to_string()));
+            }
             let mut row = Row::with_capacity(cells.len());
             for (slot, (cell, col)) in cells.iter().zip(&declared.cols).enumerate() {
                 row.push(match (cell, col) {
@@ -199,31 +199,56 @@ impl Core {
                     }
                 });
             }
-            input.push(Change {
-                rel: id,
-                row,
-                diff: *diff,
-            });
+            *sums.entry(id).or_default().entry(row).or_default() += diff;
+        }
+        let mut input = Vec::new();
+        for (rel, rows) in sums {
+            let rows: Vec<(Row, Diff)> = rows.into_iter().filter(|(_, sum)| *sum != 0).collect();
+            let asked: Vec<&Row> = rows.iter().map(|(row, _)| row).collect();
+            let present: HashSet<Row> = self.store.present(rel, &asked)?.into_iter().collect();
+            input.extend(
+                rows.into_iter()
+                    .filter(|(row, sum)| (*sum > 0) != present.contains(row))
+                    .map(|(row, sum)| Change {
+                        rel,
+                        row,
+                        diff: sum.signum(),
+                    }),
+            );
         }
         for text in texts {
             self.dict.intern(text.as_bytes());
         }
+        if input.is_empty() {
+            return Ok((self.store.event(), Vec::new()));
+        }
         self.rounds(input)
     }
 
-    /// Polls Continuing services; their answers step the engine.
+    /// Polls Continuing services; their answers step the engine. `None` when the consolidated
+    /// change is empty.
     pub fn tick(&mut self) -> Result<Option<(Event, Vec<Named>)>, Diag> {
-        let answers = self.poll(|_, cadence| cadence == Cadence::Continuing)?;
+        self.fresh_services()?;
+        let answers = self.poll(|_, cadence| cadence == Cadence::Continuing);
+        let answers = match answers {
+            Ok(answers) => answers,
+            Err(diag) => {
+                self.stale = self.reseed().is_err();
+                return Err(diag);
+            }
+        };
         if answers.is_empty() {
             return Ok(None);
         }
-        self.rounds(answers).map(Some)
+        let (event, changes) = self.rounds(answers)?;
+        Ok((!changes.is_empty()).then_some((event, changes)))
     }
 
     /// Re-asks every stored Request row of the Once service `service` and commits the answers it
     /// polls. A service seeded at open answers the difference against the stored Answer rows, so
-    /// a changed answer set moves the stored one; `None` when nothing changed.
+    /// a changed answer set moves the stored one; `None` when the consolidated change is empty.
     pub fn refresh(&mut self, service: &str) -> Result<Option<(Event, Vec<Named>)>, Diag> {
+        self.fresh_services()?;
         let Some(index) = self
             .services
             .iter()
@@ -242,68 +267,81 @@ impl Core {
             });
         }
         let request = self.routes[index].request;
-        let table = self.store.query(&format!(
-            "SELECT * FROM {}",
-            quote(&self.plan.rels[request as usize].name)
-        ))?;
-        let mut asks = Vec::with_capacity(table.rows.len());
-        for cells in table.rows {
-            let row = cells
-                .into_iter()
-                .map(|cell| match cell {
-                    Cell::Int(value) => Ok(value as u64),
-                    other => Err(Diag::Store(format!("request row cell {other:?}"))),
-                })
-                .collect::<Result<Row, Diag>>()?;
-            asks.push(Change {
+        let asks: Vec<Change> = self
+            .store
+            .rows(request)?
+            .into_iter()
+            .map(|row| Change {
                 rel: request,
                 row,
                 diff: 1,
-            });
-        }
+            })
+            .collect();
         if !asks.is_empty() {
             self.services[index].call(&asks, &self.dict);
         }
-        let answers = self.poll(|at, _| at == index)?;
+        let answers = self.poll(|at, _| at == index);
+        let answers = match answers {
+            Ok(answers) => answers,
+            Err(diag) => {
+                self.stale = self.reseed().is_err();
+                return Err(diag);
+            }
+        };
         if answers.is_empty() {
             return Ok(None);
         }
-        self.rounds(answers).map(Some)
+        let (event, changes) = self.rounds(answers)?;
+        Ok((!changes.is_empty()).then_some((event, changes)))
     }
 
     pub fn query(&self, sql: &str) -> Result<Table, Diag> {
         self.store.query(sql)
     }
 
-    /// step, write, route requests, poll every service; again while answers come, at most
-    /// `MAX_SERVICE_ROUNDS` steps.
-    fn rounds(&mut self, mut input: Vec<Change>) -> Result<(Event, Vec<Named>), Diag> {
+    /// One atomic commit: step, route requests, poll every service, again while answers come, at
+    /// most `MAX_SERVICE_ROUNDS` steps; then one store write of the consolidated change. On any
+    /// failure the engine steps back by the negated input of every round, nothing is stored and
+    /// every service is reseeded from the stored Answer rows.
+    fn rounds(&mut self, input: Vec<Change>) -> Result<(Event, Vec<Named>), Diag> {
+        let mut fed: BTreeMap<(RelId, Row), Diff> = BTreeMap::new();
         let mut sums: BTreeMap<(RelId, Row), Diff> = BTreeMap::new();
+        let written = self
+            .settle(input, &mut fed, &mut sums)
+            .and_then(|()| self.write(sums));
+        match written {
+            Ok(done) => Ok(done),
+            Err(diag) => {
+                let undone = self.step_back(fed);
+                self.stale = true;
+                if self.reseed().is_ok() {
+                    self.stale = false;
+                }
+                Err(undone.err().unwrap_or(diag))
+            }
+        }
+    }
+
+    /// The rounds of one commit; `fed` sums the input of every step that succeeded, `sums` its
+    /// output.
+    fn settle(
+        &mut self,
+        mut input: Vec<Change>,
+        fed: &mut BTreeMap<(RelId, Row), Diff>,
+        sums: &mut BTreeMap<(RelId, Row), Diff>,
+    ) -> Result<(), Diag> {
         for _ in 0..MAX_SERVICE_ROUNDS {
             let delta = self.engine.step(input.clone())?;
-            if let Err(diag) = self.write(&delta) {
-                let undo = input
-                    .into_iter()
-                    .map(|change| Change {
-                        diff: -change.diff,
-                        ..change
-                    })
-                    .collect();
-                self.engine.step(undo)?;
-                return Err(diag);
+            for change in input {
+                *fed.entry((change.rel, change.row)).or_default() += change.diff;
             }
-            self.route(&delta);
             for change in &delta.changes {
                 *sums.entry((change.rel, change.row.clone())).or_default() += change.diff;
             }
+            self.route(&delta);
             input = self.poll(|_, _| true)?;
             if input.is_empty() {
-                let changes = sums
-                    .into_iter()
-                    .filter(|(_, diff)| *diff != 0)
-                    .map(|((rel, row), diff)| self.named(rel, &row, diff))
-                    .collect();
-                return Ok((delta.event, changes));
+                return Ok(());
             }
         }
         Err(Diag::ServiceRounds {
@@ -311,14 +349,85 @@ impl Core {
         })
     }
 
-    /// A failed write leaves the dict entries fresh for the next one.
-    fn write(&mut self, delta: &Delta) -> Result<usize, Diag> {
-        let fresh = self.dict.fresh.clone();
-        let written = self.store.write(delta, &self.dict.take_new());
-        if written.is_err() {
-            self.dict.fresh = fresh;
+    /// Writes a commit's consolidated change as the next event; an empty change writes nothing
+    /// and keeps the last event. A failed write leaves the dict entries fresh for the next one.
+    fn write(&mut self, sums: BTreeMap<(RelId, Row), Diff>) -> Result<(Event, Vec<Named>), Diag> {
+        let delta = Delta {
+            event: self.store.event() + 1,
+            changes: sums
+                .into_iter()
+                .filter(|(_, diff)| *diff != 0)
+                .map(|((rel, row), diff)| Change { rel, row, diff })
+                .collect(),
+        };
+        if delta.changes.is_empty() {
+            return Ok((self.store.event(), Vec::new()));
         }
-        written
+        let fresh = self.dict.fresh.clone();
+        if let Err(diag) = self.store.write(&delta, &self.dict.take_new()) {
+            self.dict.fresh = fresh;
+            return Err(diag);
+        }
+        let changes = delta
+            .changes
+            .iter()
+            .map(|change| self.named(change.rel, &change.row, change.diff))
+            .collect();
+        Ok((delta.event, changes))
+    }
+
+    /// Steps the engine back by `fed` negated. That one step can need more rounds than the bound
+    /// (a retraction cascade); then a fresh engine replays the store. A Diag from the replay means
+    /// the engine no longer matches the store.
+    fn step_back(&mut self, fed: BTreeMap<(RelId, Row), Diff>) -> Result<(), Diag> {
+        let undo: Vec<Change> = fed
+            .into_iter()
+            .filter(|(_, diff)| *diff != 0)
+            .map(|((rel, row), diff)| Change {
+                rel,
+                row,
+                diff: -diff,
+            })
+            .collect();
+        if undo.is_empty() || self.engine.step(undo).is_ok() {
+            return Ok(());
+        }
+        let mut engine = match self.recipe.engine {
+            EngineKind::Dd => AnyEngine::Dd(Dd::new(&self.plan, self.bounds)?),
+        };
+        engine.step(self.store.replay(&mut self.dict)?)?;
+        self.engine = engine;
+        Ok(())
+    }
+
+    /// Reseeds the services when a failed commit left them `stale`.
+    fn fresh_services(&mut self) -> Result<(), Diag> {
+        if self.stale {
+            self.reseed()?;
+            self.stale = false;
+        }
+        Ok(())
+    }
+
+    /// Hands every service its stored Answer rows, replacing its memory.
+    fn reseed(&mut self) -> Result<(), Diag> {
+        for (route, service) in self.routes.iter().zip(&mut self.services) {
+            let answers: Vec<Change> = match route.answer {
+                Some(answer) => self
+                    .store
+                    .rows(answer)?
+                    .into_iter()
+                    .map(|row| Change {
+                        rel: answer,
+                        row,
+                        diff: 1,
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
+            service.seed(&answers);
+        }
+        Ok(())
     }
 
     fn route(&mut self, delta: &Delta) {

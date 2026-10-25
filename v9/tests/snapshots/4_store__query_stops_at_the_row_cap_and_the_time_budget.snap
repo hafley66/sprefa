@@ -1,0 +1,66 @@
+---
+source: tests/4_store.rs
+expression: out
+---
+[
+    (
+        "SELECT value FROM json_each('[1, 2, 3]')",
+        Ok(
+            Table {
+                columns: [
+                    "value",
+                ],
+                rows: [
+                    [
+                        Int(
+                            1,
+                        ),
+                    ],
+                    [
+                        Int(
+                            2,
+                        ),
+                    ],
+                    [
+                        Int(
+                            3,
+                        ),
+                    ],
+                ],
+            },
+        ),
+    ),
+    (
+        "SELECT value FROM json_each('[1, 2, 3, 4]')",
+        Err(
+            QueryRows {
+                max_rows: 3,
+            },
+        ),
+    ),
+    (
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 30000000) SELECT count(*) FROM c",
+        Err(
+            QueryTime {
+                max_ms: 100,
+            },
+        ),
+    ),
+    (
+        "SELECT value FROM json_each('[5]')",
+        Ok(
+            Table {
+                columns: [
+                    "value",
+                ],
+                rows: [
+                    [
+                        Int(
+                            5,
+                        ),
+                    ],
+                ],
+            },
+        ),
+    ),
+]

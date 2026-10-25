@@ -1,0 +1,28 @@
+---
+source: tests/5_runtime.rs
+expression: "(failed, chain_counts(&core), state.borrow().calls.clone())"
+---
+(
+    Some(
+        [
+            Service {
+                service: "chain",
+                message: "down",
+            },
+        ],
+    ),
+    [
+        "root Int(0)",
+        "ask Int(1)",
+        "got Int(2)",
+        "path Int(3)",
+    ],
+    [
+        [
+            7,
+        ],
+        [
+            7,
+        ],
+    ],
+)

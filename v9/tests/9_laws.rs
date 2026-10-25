@@ -46,6 +46,14 @@ const SITES: &[Site] = &[
         diag: "Diag::FixpointLimit",
     },
     Site {
+        path: "src/_7_store/_1_sqlite.rs",
+        text: "while let Some(row) = cursor.next()? {",
+        kind: "while",
+        budget: "self.max_rows",
+        constant: "MAX_QUERY_ROWS",
+        diag: "Diag::QueryRows",
+    },
+    Site {
         path: "src/_8_runtime/_3_core.rs",
         text: "for _ in 0..MAX_SERVICE_ROUNDS {",
         kind: "for budget",

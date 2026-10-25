@@ -7,21 +7,17 @@ expression: "(stored, show(&next), log.borrow().len())"
         [
             [
                 Int(
-                    64,
+                    0,
                 ),
-                Int(
-                    63,
-                ),
+                Null,
             ],
         ],
         [
             [
                 Int(
-                    63,
+                    0,
                 ),
-                Int(
-                    62,
-                ),
+                Null,
             ],
         ],
     ),

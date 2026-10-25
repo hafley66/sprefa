@@ -52,7 +52,7 @@ expression: "serde_json::to_string_pretty(&seen).unwrap()"
           "rel": "big"
         }
       ],
-      "event": 3
+      "event": 1
     },
     "route": "POST /commit",
     "status": 200
