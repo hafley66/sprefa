@@ -30,12 +30,6 @@ pub mod _8_runtime {
     pub mod _4_handle;
 }
 
-/// The walking skeleton (#820): ryi call edges -> differential dataflow reach -> SQLite.
-pub mod skeleton {
-    pub mod _0_store;
-    pub mod _1_reach;
-    pub mod _2_oracle;
-}
 pub mod _9_wire;
 
 // The generated wire code names its siblings as `crate::models`, `crate::ops`, `crate::ops_auto`.
