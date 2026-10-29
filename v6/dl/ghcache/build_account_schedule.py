@@ -78,6 +78,22 @@ CONFIG = {
 
 WHOAMI = json.dumps({"login": OWNER}, separators=(",", ":"))
 NO_EVENTS = "[]"
+# The user-events firehose now carries one event naming the ghost repo, so the
+# firehose arm of repo_event_seen has a row to land. WatchEvent is inert to
+# dirty_pr (no arm matches it), so this response is the only schedule change.
+FIREHOSE_EVENT = json.dumps(
+    [
+        {
+            "id": "firehose-1",
+            "type": "WatchEvent",
+            "actor": {"login": OWNER},
+            "repo": {"name": f"{OWNER}/ghost"},
+            "payload": {"action": "started"},
+            "created_at": "2026-08-24T00:00:00Z",
+        }
+    ],
+    separators=(",", ":"),
+)
 
 
 def clock(every, ordinal, bucket):
@@ -154,6 +170,8 @@ def answer_for(url, bucket, remaining):
         return (404, "", remaining, "null")
     if url == "user":
         return (200, f"etag-user-{bucket}", remaining, WHOAMI)
+    if url == USER_EVENTS:
+        return (200, f"etag-events-{bucket}", remaining, FIREHOSE_EVENT)
     return (200, f"etag-events-{bucket}", remaining, NO_EVENTS)
 
 
